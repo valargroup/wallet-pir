@@ -222,7 +222,7 @@ mod tests {
     fn setup_seeds_are_golden() {
         assert_eq!(
             setup_seed(&TXID_2K8, DisplayKind::TxDirectory),
-            0xd56b_6038_d7ca_811f
+            0x04fa_b978_5ce5_c875
         );
         assert_eq!(DisplayTable::Directory(5).kind(), DisplayKind::TxDirectory);
     }

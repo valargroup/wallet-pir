@@ -1,25 +1,43 @@
-//! Assembling one sealed shard's published objects.
+//! Assembling a directory shard's published objects.
 //!
-//! Given the events of a sealed range, this produces the four things a shard
-//! publishes: a public activity filter, a private script directory, private
-//! event pages, and the occupancy counts that go in its manifest.
+//! A directory shard publishes a public activity filter, a private script
+//! directory, and up to [`MAX_PAGE_CHILDREN`] page shards, each its own private
+//! table. Everything here is a deterministic function of the events, the
+//! boundaries the sealer chose and the shard's identity. Two operators with the
+//! same journal must produce byte-identical tables, or the published digests
+//! stop being comparable and the only cross-operator check the design has stops
+//! working. That is why scripts are processed in sorted order, events in their
+//! own total order, and bucket placement resolved by a rule rather than by
+//! iteration order.
 //!
-//! Everything here is a deterministic function of the events and the shard's
-//! identity. Two operators with the same journal must produce byte-identical
-//! tables, or the published digests stop being comparable and the only
-//! cross-operator check the design has stops working. That is why scripts are
-//! processed in sorted order, events in their own total order, and bucket
-//! placement resolved by a rule rather than by iteration order.
+//! # Streaming
+//!
+//! [`DirectoryBuilder`] follows the sealer block by block. It keeps, per
+//! script, only what the directory entry needs (the two newest events and a
+//! pointer to the newest run), plus the blocks of the page shard still open.
+//! When a page shard seals its runs are laid out at once and its table handed
+//! back, so a directory shard spanning many page shards never holds more than
+//! one page shard's history. [`ShardStream`] drives a [`DisplacementSealer`]
+//! and the builders together and checks that every page shard and directory
+//! holds exactly what the sealer sized it for.
+//!
+//! # Pushing out
+//!
+//! A script keeps its two newest events in the directory shard inline. When a
+//! third arrives the oldest inline event is pushed into the script's run in the
+//! page shard open at that block. Each run's first fragment links to the
+//! script's previous run, whose row is fixed because its page shard has
+//! already sealed; the directory entry points at the newest run.
 
-use crate::layout::{segments_for, Geometry, PackedDemand, INLINE_EVENTS};
-use crate::packing::{self, HistoryLayout, ROW_PAYLOAD};
-use crate::page_row::{encode_page_row, PageEntry};
+use crate::layout::{segments_for, Geometry, PackedDemand, INLINE_EVENTS, MAX_PAGE_CHILDREN};
+use crate::packing::{self, HistoryLayout, FRAGMENT_PAYLOAD, ROW_PAYLOAD};
+use crate::page_row::{encode_page_row, PageEntry, RunLink};
 use crate::records::{encode_directory_row, DirectoryEntry, RecordError, MAX_SCRIPT_BYTES};
-use crate::tag::{resolve_tag_salt, script_tag};
+use crate::seal::{Closed, DecoupledPolicy, DisplacementSealer, SealError, SealedDirectory};
+use crate::tag::{resolve_page_tag_salt, resolve_tag_salt, script_tag};
 use sha2::{Digest, Sha256};
 use std::cmp::Reverse;
-use std::collections::BTreeSet;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashSet, VecDeque};
 use transparent_events::TransparentEvent;
 use transparent_filter::{
     build_range_filter_for, BlockHash, FilterBytes, FilterError, ScriptBytes, ShardKey,
@@ -50,21 +68,97 @@ pub enum BuildError {
     Record(#[from] RecordError),
     #[error("filter: {0}")]
     Filter(#[from] FilterError),
+    #[error("seal: {0}")]
+    Seal(#[from] SealError),
     #[error("script {script} fits in neither candidate row at {MAX_DIRECTORY_SEGMENTS} segments")]
     DirectoryFull { script: String },
     #[error("{0}")]
     Invalid(String),
 }
 
-/// One shard's published objects.
-pub struct BuiltShard {
+/// One block's events, as the journal yields them.
+pub type Block = (u64, Vec<(ScriptBytes, TransparentEvent)>);
+
+/// One page shard's published table.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BuiltChild {
     pub shard_id: u64,
-    /// The geometry this shard was built at.
-    ///
-    /// Carried rather than assumed, because a set may mix geometries: archive
-    /// shards before the recent cutoff and recent shards after it. Every offset
-    /// below is taken against this, so a shard cannot be read at the wrong row
-    /// count by a caller that happens to hold a different default.
+    /// Position `j` within the directory shard.
+    pub index: u32,
+    pub start_height: u64,
+    pub end_height: u64,
+    /// The block at `end_height`; part of the page shard's tag salt.
+    pub terminal_block_hash: BlockHash,
+    pub tag_salt_counter: u32,
+    /// False only for the page shard still open in a tail.
+    pub sealed: bool,
+    /// The occupied rows, `page_rows` of them, written from row zero. Every
+    /// later row of every segment is zero, so the zeros are not held: an
+    /// archive directory shard's page shards would otherwise pin gigabytes of
+    /// padding. [`BuiltChild::segment`] materialises a whole segment.
+    pub pages: Vec<u8>,
+    /// Segments the table is published in. Zero when no run was pushed here.
+    pub segments: u32,
+    pub page_rows: u64,
+    pub fragments: u64,
+    /// Scripts with a run here.
+    pub runs: u64,
+    /// Events pushed here.
+    pub events: u64,
+}
+
+impl BuiltChild {
+    /// One row of the page shard's logical row space, which is its segments
+    /// concatenated. Panics outside the space, which is a programming error.
+    pub fn page_row(&self, geometry: &Geometry, row: u64) -> &[u8] {
+        static ZERO_ROW: [u8; crate::layout::PAGE_ROW_BYTES] = [0; crate::layout::PAGE_ROW_BYTES];
+        assert!(row < u64::from(self.segments) * geometry.page_rows, "row {row} is outside the table");
+        let width = geometry.page_row_bytes;
+        let at = row as usize * width;
+        self.pages.get(at..at + width).unwrap_or(&ZERO_ROW[..width])
+    }
+
+    /// Segment `segment` of the published table, zero padded to the
+    /// geometry's full segment size.
+    pub fn segment(&self, geometry: &Geometry, segment: u32) -> Vec<u8> {
+        assert!(segment < self.segments, "segment {segment} is outside the table");
+        let size = geometry.page_rows as usize * geometry.page_row_bytes;
+        let from = (segment as usize * size).min(self.pages.len());
+        let to = (from + size).min(self.pages.len());
+        let mut bytes = Vec::with_capacity(size);
+        bytes.extend_from_slice(&self.pages[from..to]);
+        bytes.resize(size, 0);
+        bytes
+    }
+
+    /// SHA-256 of each published segment, computed over the zero padding
+    /// without materialising it.
+    pub fn segment_digests(&self, geometry: &Geometry) -> Vec<[u8; 32]> {
+        static ZEROS: [u8; 1 << 16] = [0; 1 << 16];
+        let size = geometry.page_rows as usize * geometry.page_row_bytes;
+        (0..self.segments as usize)
+            .map(|segment| {
+                let from = (segment * size).min(self.pages.len());
+                let to = (from + size).min(self.pages.len());
+                let mut hasher = Sha256::new();
+                hasher.update(&self.pages[from..to]);
+                let mut padding = size - (to - from);
+                while padding > 0 {
+                    let take = padding.min(ZEROS.len());
+                    hasher.update(&ZEROS[..take]);
+                    padding -= take;
+                }
+                hasher.finalize().into()
+            })
+            .collect()
+    }
+}
+
+/// A directory shard's directory and filter, once its page shards are built.
+pub struct BuiltDirectory {
+    pub shard_id: u64,
+    /// The geometry this shard was built at. Carried rather than assumed,
+    /// because a set may mix geometries across its tiers.
     pub geometry: &'static Geometry,
     pub start_height: u64,
     pub end_height: u64,
@@ -78,48 +172,32 @@ pub struct BuiltShard {
     /// on its own. Every segment has the same pinned geometry, so the shared
     /// parameter set is unaffected.
     pub directory: Vec<Vec<u8>>,
-    /// The pages table, one entry per segment. Segments concatenate in order
-    /// into the shard's page space, which is what a directory extent indexes.
-    pub pages: Vec<Vec<u8>>,
+    /// Page shards, in order.
+    pub children: u32,
     /// Scripts placed in the directory.
     pub scripts: u64,
-    /// Page rows emitted, after packing. Compared against what the sealer
-    /// sized this shard for; a disagreement is a failed publish.
-    pub page_rows: u64,
-    /// Fragments across every indexed history, which is what a wallet's page
-    /// queries count and what the live-byte accounting charges an entry header
-    /// for. Not the row count: short histories share rows.
-    pub fragments: u64,
     pub events: u64,
+    /// Distinct transaction ids among the shard's events.
+    pub txids: u64,
     /// Which candidate row holds each placed script, for a single-lookup
-    /// directory. See [`crate::choice`].
-    ///
-    /// Always built, because it is a function of the placement just made and
-    /// costs a fraction of it; the publisher decides whether to publish it.
-    /// `None` only if no seed peeled, which leaves the shard on two queries
-    /// rather than failing the build.
+    /// directory. See [`crate::choice`]. `None` only if no seed peeled, which
+    /// leaves the shard on two queries rather than failing the build.
     pub choice: Option<crate::choice::ChoiceTable>,
     /// Scripts in the filter but not the directory, because they exceed
-    /// [`MAX_SCRIPT_BYTES`].
-    ///
-    /// Published so the coverage gap is measured rather than silent. A wallet
-    /// holding such a script is outside coverage and must not read a directory
-    /// miss as absence.
+    /// [`MAX_SCRIPT_BYTES`]. Published so the coverage gap is measured rather
+    /// than silent.
     pub excluded_scripts: u64,
-    /// The tag-salt counter this build settled on. Zero unless a collision
-    /// forced a rebuild.
+    /// The directory's tag-salt counter. Zero unless a collision forced a
+    /// rebuild.
     pub tag_salt_counter: u32,
+    /// Whether the directory shard is sealed rather than a tail.
+    pub sealed: bool,
 }
 
-impl BuiltShard {
+impl BuiltDirectory {
     /// Segments in this shard's directory table. One in the ordinary case.
     pub fn directory_segments(&self) -> u32 {
         self.directory.len() as u32
-    }
-
-    /// Segments in this shard's pages table. One in the ordinary case.
-    pub fn page_segments(&self) -> u32 {
-        self.pages.len() as u32
     }
 
     /// One row of the shard's logical directory space, which is its segments
@@ -130,14 +208,699 @@ impl BuiltShard {
         let at = within as usize * width;
         &self.directory[segment as usize][at..at + width]
     }
+}
 
-    /// One row of the shard's logical page space, which a directory extent
-    /// indexes across segment boundaries as if it were one table.
-    pub fn page_row(&self, page: u64) -> &[u8] {
-        let (segment, within) = crate::layout::split_row(page, self.geometry.page_rows);
-        let width = self.geometry.page_row_bytes;
-        let at = within as usize * width;
-        &self.pages[segment as usize][at..at + width]
+/// A script's place in an open directory shard.
+#[derive(Clone, Debug, Default)]
+struct ScriptState {
+    events: u32,
+    /// The newest events, oldest first, at most [`INLINE_EVENTS`].
+    inline: Vec<TransparentEvent>,
+    /// The newest run's page shard and 1-based first row.
+    head: Option<(u8, u32)>,
+    /// Runs so far.
+    runs: u8,
+}
+
+/// Builds one directory shard, block by block, as the sealer closes its page
+/// shards. See the module documentation.
+pub struct DirectoryBuilder {
+    shard_id: u64,
+    geometry: &'static Geometry,
+    genesis: BlockHash,
+    profile: String,
+    start_height: Option<u64>,
+    last_height: Option<u64>,
+    /// Blocks not yet assigned to a sealed page shard.
+    pending: VecDeque<Block>,
+    /// Indexable scripts.
+    scripts: BTreeMap<Vec<u8>, ScriptState>,
+    /// Scripts too long for a directory entry: filtered, never indexed.
+    excluded: BTreeSet<Vec<u8>>,
+    events: u64,
+    /// The first eight bytes of each distinct transaction id. Transaction ids
+    /// are hashes, so this counts them without holding them whole.
+    txids: HashSet<u64>,
+    children: u32,
+}
+
+impl DirectoryBuilder {
+    pub fn new(
+        shard_id: u64,
+        geometry: &'static Geometry,
+        genesis: BlockHash,
+        profile: &str,
+    ) -> Result<Self, BuildError> {
+        // A geometry this build cannot encode would produce tables no wallet
+        // could read, so it is refused before any bytes are written.
+        geometry
+            .validate_publishable()
+            .map_err(BuildError::Invalid)?;
+        if transparent_filter::range_profile(profile).is_none() {
+            return Err(BuildError::Invalid(format!(
+                "unknown range profile {profile:?}"
+            )));
+        }
+        Ok(Self {
+            shard_id,
+            geometry,
+            genesis,
+            profile: profile.to_string(),
+            start_height: None,
+            last_height: None,
+            pending: VecDeque::new(),
+            scripts: BTreeMap::new(),
+            excluded: BTreeSet::new(),
+            events: 0,
+            txids: HashSet::new(),
+            children: 0,
+        })
+    }
+
+    pub fn shard_id(&self) -> u64 {
+        self.shard_id
+    }
+
+    /// Takes the next block. Blocks must be consecutive, empty ones included.
+    pub fn push_block(&mut self, block: Block) -> Result<(), BuildError> {
+        let (height, events) = &block;
+        if let Some(last) = self.last_height {
+            if *height != last + 1 {
+                return Err(BuildError::Invalid(format!(
+                    "block {height} does not follow {last}"
+                )));
+            }
+        }
+        if let Some((_, event)) = events
+            .iter()
+            .find(|(_, event)| u64::from(event.height()) != *height)
+        {
+            return Err(BuildError::Invalid(format!(
+                "an event at height {} is in block {height}",
+                event.height()
+            )));
+        }
+        self.start_height.get_or_insert(*height);
+        self.last_height = Some(*height);
+        self.pending.push_back(block);
+        Ok(())
+    }
+
+    /// Absorbs one block: inline events advance, and each event pushed out
+    /// joins its script's run in the open page shard.
+    fn absorb(
+        &mut self,
+        (_, events): Block,
+        runs: &mut BTreeMap<Vec<u8>, Vec<TransparentEvent>>,
+    ) {
+        let mut by_script: BTreeMap<Vec<u8>, Vec<TransparentEvent>> = BTreeMap::new();
+        for (script, event) in events {
+            self.events += 1;
+            let txid = event.txid().0;
+            self.txids
+                .insert(u64::from_le_bytes(txid[..8].try_into().expect("8 bytes")));
+            by_script
+                .entry(script.as_slice().to_vec())
+                .or_default()
+                .push(event);
+        }
+        for (script, mut events) in by_script {
+            if script.len() > MAX_SCRIPT_BYTES {
+                self.excluded.insert(script);
+                continue;
+            }
+            events.sort_by_key(TransparentEvent::sort_key);
+            let state = self.scripts.entry(script.clone()).or_default();
+            for event in events {
+                state.events += 1;
+                state.inline.push(event);
+                if state.inline.len() > INLINE_EVENTS as usize {
+                    let pushed = state.inline.remove(0);
+                    runs.entry(script.clone()).or_default().push(pushed);
+                }
+            }
+        }
+    }
+
+    /// Seals the open page shard at `end_height` and lays out its table.
+    ///
+    /// Every pending block at or below `end_height` belongs to it; later ones
+    /// stay for the next page shard. `terminal` is the block at `end_height`.
+    pub fn close_child(
+        &mut self,
+        end_height: u64,
+        terminal: BlockHash,
+        sealed: bool,
+    ) -> Result<BuiltChild, BuildError> {
+        let index = self.children;
+        if index >= MAX_PAGE_CHILDREN {
+            return Err(BuildError::Invalid(format!(
+                "shard {} would hold more than {MAX_PAGE_CHILDREN} page shards",
+                self.shard_id
+            )));
+        }
+        let start_height = match self.pending.front() {
+            Some((height, _)) if *height <= end_height => *height,
+            _ => {
+                return Err(BuildError::Invalid(format!(
+                    "page shard {index} of shard {} holds no block",
+                    self.shard_id
+                )))
+            }
+        };
+        let mut runs: BTreeMap<Vec<u8>, Vec<TransparentEvent>> = BTreeMap::new();
+        while self
+            .pending
+            .front()
+            .is_some_and(|(height, _)| *height <= end_height)
+        {
+            let block = self.pending.pop_front().expect("checked");
+            self.absorb(block, &mut runs);
+        }
+        if self.last_height.is_some_and(|last| last < end_height) {
+            return Err(BuildError::Invalid(format!(
+                "page shard {index} ends at {end_height}, past the last block"
+            )));
+        }
+
+        let scripts: Vec<&[u8]> = runs.keys().map(Vec::as_slice).collect();
+        let (tag_salt_counter, salt) = resolve_page_tag_salt(
+            self.shard_id,
+            index,
+            end_height,
+            &terminal,
+            &scripts,
+            script_tag,
+        )
+        .map_err(BuildError::Invalid)?;
+        let laid = lay_out_runs(&runs, |script| script_tag(&salt, script), |script| {
+            self.scripts
+                .get(script)
+                .and_then(|state| {
+                    state.head.map(|(prev_child, prev_row)| RunLink {
+                        prev_child,
+                        prev_row,
+                        older_runs: state.runs,
+                    })
+                })
+                .unwrap_or_default()
+        })?;
+        for (script, first_row) in &laid.first_rows {
+            let state = self
+                .scripts
+                .get_mut(*script)
+                .expect("a script with a run has a state");
+            state.head = Some((index as u8, *first_row));
+            state.runs += 1;
+        }
+
+        let page_rows = laid.rows.len() as u64;
+        // Unused rows are zero and decode as empty; they are indistinguishable
+        // in a response from occupied ones, and are padded on publication.
+        let segments = if laid.rows.is_empty() {
+            0
+        } else {
+            segments_for(page_rows, self.geometry.page_rows)
+        };
+        let mut pages = Vec::with_capacity(laid.rows.len() * self.geometry.page_row_bytes);
+        for row in &laid.rows {
+            pages.extend_from_slice(&encode_page_row(row)?);
+        }
+        self.children += 1;
+        Ok(BuiltChild {
+            shard_id: self.shard_id,
+            index,
+            start_height,
+            end_height,
+            terminal_block_hash: terminal,
+            tag_salt_counter,
+            sealed,
+            pages,
+            segments,
+            page_rows,
+            fragments: laid.fragments,
+            runs: runs.len() as u64,
+            events: runs.values().map(|run| run.len() as u64).sum(),
+        })
+    }
+
+    /// Builds the directory and filter once the last page shard is closed.
+    ///
+    /// Returns the blocks offered past `end_height`, which belong to the next
+    /// directory shard.
+    pub fn finish(
+        mut self,
+        end_height: u64,
+        terminal: BlockHash,
+        sealed: bool,
+    ) -> Result<(BuiltDirectory, Vec<Block>), BuildError> {
+        if self
+            .pending
+            .front()
+            .is_some_and(|(height, _)| *height <= end_height)
+        {
+            return Err(BuildError::Invalid(format!(
+                "shard {} closes with blocks no page shard holds",
+                self.shard_id
+            )));
+        }
+        let start_height = self
+            .start_height
+            .ok_or_else(|| BuildError::Invalid("a directory shard holds no block".into()))?;
+        if self.children == 0 {
+            return Err(BuildError::Invalid(format!(
+                "shard {} closes with no page shard",
+                self.shard_id
+            )));
+        }
+        let leftover: Vec<Block> = self.pending.drain(..).collect();
+
+        // The filter covers every element, including scripts the private
+        // tables cannot index. Excluding them would tell a wallet holding one
+        // that its script had no activity, which is worse than telling it the
+        // script is outside coverage.
+        let filter_elements: Vec<ScriptBytes> = self
+            .scripts
+            .keys()
+            .chain(self.excluded.iter())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .map(|script| ScriptBytes::new(script.clone()))
+            .collect();
+        let key = ShardKey::derive(
+            &self.profile,
+            self.genesis,
+            self.shard_id,
+            start_height,
+            end_height,
+            terminal,
+        );
+        let range = transparent_filter::range_profile(&self.profile)
+            .ok_or_else(|| BuildError::Invalid(format!("unknown range profile {:?}", self.profile)))?;
+        let filter = build_range_filter_for(range, key, &filter_elements)?;
+
+        let indexed: Vec<&[u8]> = self.scripts.keys().map(Vec::as_slice).collect();
+        let (tag_salt_counter, salt) =
+            resolve_tag_salt(self.shard_id, &terminal, &indexed, script_tag)
+                .map_err(BuildError::Invalid)?;
+        let mut entries: Vec<DirectoryEntry> = self
+            .scripts
+            .iter()
+            .map(|(script, state)| DirectoryEntry {
+                script: script.clone(),
+                tag: script_tag(&salt, script),
+                event_count: state.events,
+                inline: state.inline.clone(),
+                head_child: state.head.map_or(0, |(child, _)| child),
+                head_row: state.head.map_or(0, |(_, row)| row),
+            })
+            .collect();
+        entries.sort_by(|a, b| {
+            (Reverse(a.encoded_len()), &a.script).cmp(&(Reverse(b.encoded_len()), &b.script))
+        });
+        let (directory, scripts, choice) =
+            place_directory(self.shard_id, entries, self.geometry, self.children)?;
+        Ok((
+            BuiltDirectory {
+                shard_id: self.shard_id,
+                geometry: self.geometry,
+                start_height,
+                end_height,
+                filter,
+                directory,
+                children: self.children,
+                scripts,
+                events: self.events,
+                txids: self.txids.len() as u64,
+                choice,
+                excluded_scripts: self.excluded.len() as u64,
+                tag_salt_counter,
+                sealed,
+            },
+            leftover,
+        ))
+    }
+}
+
+/// One page shard's rows, laid out.
+struct LaidOut<'a> {
+    rows: Vec<Vec<PageEntry>>,
+    /// Each script's 1-based first row.
+    first_rows: BTreeMap<&'a [u8], u32>,
+    fragments: u64,
+}
+
+/// Lays out one page shard's runs: long runs in script order on contiguous
+/// rows, then single-fragment runs by descending best fit, including spare
+/// space in long runs' last rows, unless equal-size groups need fewer rows.
+/// The same rule, step for step, as the sealer's [`PackedDemand`] count,
+/// which the row count is checked against.
+fn lay_out_runs<'a>(
+    runs: &'a BTreeMap<Vec<u8>, Vec<TransparentEvent>>,
+    tag_of: impl Fn(&[u8]) -> [u8; crate::tag::SCRIPT_TAG_BYTES],
+    link_of: impl Fn(&[u8]) -> RunLink,
+) -> Result<LaidOut<'a>, BuildError> {
+    let mut demand = PackedDemand::default();
+    let mut summaries = BTreeMap::new();
+    for (script, run) in runs {
+        let mut summary = HistoryLayout::default();
+        for event in run {
+            summary.push_with_payload(*event, 0, FRAGMENT_PAYLOAD);
+        }
+        demand.shift(&HistoryLayout::default(), &summary);
+        summaries.insert(script.as_slice(), summary);
+    }
+    let mut rows: Vec<Vec<PageEntry>> = Vec::new();
+    let mut first_rows: BTreeMap<&[u8], u32> = BTreeMap::new();
+    let mut short = Vec::new();
+    let mut free: BTreeMap<usize, BTreeSet<usize>> = BTreeMap::new();
+    let mixed = demand.use_mixed();
+    let locator = |row: usize| {
+        u32::try_from(row + 1).map_err(|_| BuildError::Invalid("page locator overflow".into()))
+    };
+    // Long runs are allocated in script order and remain contiguous. Only
+    // their last row is offered to single-fragment runs.
+    for (script, run) in runs {
+        let script = script.as_slice();
+        let fragments = packing::fragments(run);
+        let count = summaries[script].fragments;
+        let link = link_of(script);
+        if fragments.len() == 1 {
+            let entry = PageEntry::new(tag_of(script), 0, 1, run.clone())?.with_link(link)?;
+            short.push((script, entry));
+        } else {
+            first_rows.insert(script, locator(rows.len())?);
+            for (ordinal, events) in fragments.iter().enumerate() {
+                let mut entry = PageEntry::new(tag_of(script), ordinal as u32, count, events.to_vec())?;
+                if ordinal == 0 {
+                    entry = entry.with_link(link)?;
+                }
+                rows.push(vec![entry]);
+            }
+            if mixed {
+                let row = rows.len() - 1;
+                free.entry(ROW_PAYLOAD - rows[row][0].encoded_len())
+                    .or_default()
+                    .insert(row);
+            }
+        }
+    }
+    short.sort_by(|a, b| (Reverse(a.1.encoded_len()), a.0).cmp(&(Reverse(b.1.encoded_len()), b.0)));
+    let mut last_size = None;
+    for (script, entry) in short {
+        let size = entry.encoded_len();
+        if !mixed && last_size != Some(size) {
+            free.clear();
+        }
+        last_size = Some(size);
+        let (space, row) = if let Some((&space, indices)) = free.range(size..).next() {
+            let row = *indices.first().expect("nonempty bin set");
+            let indices = free.get_mut(&space).expect("existing bin set");
+            indices.remove(&row);
+            if indices.is_empty() {
+                free.remove(&space);
+            }
+            (space, row)
+        } else {
+            rows.push(Vec::new());
+            (ROW_PAYLOAD, rows.len() - 1)
+        };
+        first_rows.insert(script, locator(row)?);
+        rows[row].push(entry);
+        free.entry(space - size).or_default().insert(row);
+    }
+    if rows.len() as u64 != demand.rows() {
+        return Err(BuildError::Invalid(format!(
+            "emitted {} rows, predicted {}",
+            rows.len(),
+            demand.rows()
+        )));
+    }
+    Ok(LaidOut {
+        rows,
+        first_rows,
+        fragments: demand.fragments(),
+    })
+}
+
+/// What a [`ShardStream`] built.
+pub enum Built {
+    /// A page shard closed. Its directory shard may still be open.
+    Child(BuiltChild),
+    /// A directory shard closed, after its last page shard. `sealed` is what
+    /// the sealer decided about it, including each page shard's occupancy.
+    Directory {
+        built: BuiltDirectory,
+        sealed: SealedDirectory,
+    },
+}
+
+/// Seals and builds a block stream: a [`DisplacementSealer`] deciding
+/// boundaries and a [`DirectoryBuilder`] per directory shard following it.
+///
+/// `terminal(height)` is the hash of the block at `height`; it is asked only
+/// for heights already offered.
+pub struct ShardStream {
+    geometry: &'static Geometry,
+    policy: DecoupledPolicy,
+    sealer: DisplacementSealer,
+    builder: Option<DirectoryBuilder>,
+    genesis: BlockHash,
+    profile: String,
+}
+
+impl ShardStream {
+    /// A stream starting a directory shard at `first_height` under shard id
+    /// `next_shard_id`, sealing under the policy the geometry implies.
+    pub fn new(
+        geometry: &'static Geometry,
+        first_height: u64,
+        next_shard_id: u64,
+        genesis: BlockHash,
+        profile: &str,
+    ) -> Result<Self, BuildError> {
+        Self::with_policy(
+            geometry,
+            DecoupledPolicy::for_geometry(geometry),
+            first_height,
+            next_shard_id,
+            genesis,
+            profile,
+        )
+    }
+
+    /// [`Self::new`] under another policy, for tests that need page shards
+    /// and directory shards to close within a few blocks. A published set
+    /// seals under the policy its geometry implies, which the manifest states.
+    pub fn with_policy(
+        geometry: &'static Geometry,
+        policy: DecoupledPolicy,
+        first_height: u64,
+        next_shard_id: u64,
+        genesis: BlockHash,
+        profile: &str,
+    ) -> Result<Self, BuildError> {
+        geometry
+            .validate_publishable()
+            .map_err(BuildError::Invalid)?;
+        Ok(Self {
+            geometry,
+            policy,
+            sealer: DisplacementSealer::new(policy, *geometry, first_height, next_shard_id),
+            builder: None,
+            genesis,
+            profile: profile.to_string(),
+        })
+    }
+
+    pub fn geometry(&self) -> &'static Geometry {
+        self.geometry
+    }
+
+    /// The policy this stream seals under.
+    pub fn policy(&self) -> &DecoupledPolicy {
+        &self.policy
+    }
+
+    /// The shard id the next directory shard takes.
+    pub fn next_shard_id(&self) -> u64 {
+        self.sealer.next_shard_id()
+    }
+
+    /// The first height of the directory shard still open, if any.
+    pub fn open_start(&self) -> Option<u64> {
+        self.sealer.open_start()
+    }
+
+    /// Offers one block and returns what it closed, in order.
+    pub fn push_block(
+        &mut self,
+        block: Block,
+        terminal: &dyn Fn(u64) -> Option<BlockHash>,
+    ) -> Result<Vec<Built>, BuildError> {
+        let (height, events) = &block;
+        self.sealer.push_block(*height, events)?;
+        let next = self.sealer.next_shard_id();
+        let builder = match self.builder.as_mut() {
+            Some(builder) => builder,
+            None => self.builder.insert(DirectoryBuilder::new(
+                next - u64::from(self.sealer.open_start().is_none()),
+                self.geometry,
+                self.genesis,
+                &self.profile,
+            )?),
+        };
+        builder.push_block(block)?;
+        let closed = self.sealer.drain_closed();
+        self.apply(closed, terminal)
+    }
+
+    /// Closes the open directory shard at a tier boundary; see
+    /// [`DisplacementSealer::seal_at_geometry_change`]. The stream then
+    /// continues under `geometry` at `next_height`.
+    pub fn change_geometry(
+        &mut self,
+        geometry: &'static Geometry,
+        next_height: u64,
+        terminal: &dyn Fn(u64) -> Option<BlockHash>,
+    ) -> Result<Vec<Built>, BuildError> {
+        self.sealer.seal_at_geometry_change();
+        let closed = self.sealer.drain_closed();
+        let built = self.apply(closed, terminal)?;
+        let next_shard_id = self.sealer.next_shard_id();
+        let profile = self.profile.clone();
+        *self = Self::new(geometry, next_height, next_shard_id, self.genesis, &profile)?;
+        Ok(built)
+    }
+
+    /// [`Self::change_geometry`] under an explicit policy for the new tier.
+    pub fn change_geometry_with_policy(
+        &mut self,
+        geometry: &'static Geometry,
+        policy: DecoupledPolicy,
+        next_height: u64,
+        terminal: &dyn Fn(u64) -> Option<BlockHash>,
+    ) -> Result<Vec<Built>, BuildError> {
+        self.sealer.seal_at_geometry_change();
+        let closed = self.sealer.drain_closed();
+        let built = self.apply(closed, terminal)?;
+        let next_shard_id = self.sealer.next_shard_id();
+        let profile = self.profile.clone();
+        *self = Self::with_policy(
+            geometry,
+            policy,
+            next_height,
+            next_shard_id,
+            self.genesis,
+            &profile,
+        )?;
+        Ok(built)
+    }
+
+    /// Closes whatever is still open: the tail directory shard and its open
+    /// page shard, both unsealed.
+    pub fn finish(
+        &mut self,
+        terminal: &dyn Fn(u64) -> Option<BlockHash>,
+    ) -> Result<Vec<Built>, BuildError> {
+        self.sealer.finish();
+        let closed = self.sealer.drain_closed();
+        self.apply(closed, terminal)
+    }
+
+    fn apply(
+        &mut self,
+        closed: Vec<Closed>,
+        terminal: &dyn Fn(u64) -> Option<BlockHash>,
+    ) -> Result<Vec<Built>, BuildError> {
+        let hash = |height: u64| {
+            terminal(height).ok_or_else(|| {
+                BuildError::Invalid(format!("no block hash is known at {height}"))
+            })
+        };
+        let mut out = Vec::new();
+        for closure in closed {
+            let builder = self.builder.as_mut().ok_or_else(|| {
+                BuildError::Invalid("the sealer closed a shard no builder followed".into())
+            })?;
+            match closure {
+                Closed::Child(child) => {
+                    let built = builder.close_child(
+                        child.end_height,
+                        hash(child.end_height)?,
+                        child.reason.is_some(),
+                    )?;
+                    // The sealer sized this page shard from the packing rule;
+                    // the builder laid it out under the same rule. A
+                    // divergence would publish a table sized for something
+                    // other than what it holds.
+                    if built.index != child.index
+                        || built.start_height != child.start_height
+                        || built.page_rows != child.occupancy.page_rows
+                        || built.fragments != child.occupancy.fragments
+                        || built.runs != child.occupancy.runs
+                    {
+                        return Err(BuildError::Invalid(format!(
+                            "page shard {} of shard {} over {}-{} emitted {} rows, {} fragments \
+                             and {} runs, but was sealed for {}, {} and {}",
+                            child.index,
+                            builder.shard_id(),
+                            child.start_height,
+                            child.end_height,
+                            built.page_rows,
+                            built.fragments,
+                            built.runs,
+                            child.occupancy.page_rows,
+                            child.occupancy.fragments,
+                            child.occupancy.runs,
+                        )));
+                    }
+                    out.push(Built::Child(built));
+                }
+                Closed::Directory(sealed) => {
+                    let builder = self.builder.take().expect("checked above");
+                    if builder.shard_id() != sealed.shard_id {
+                        return Err(BuildError::Invalid(format!(
+                            "the builder followed shard {} but the sealer closed {}",
+                            builder.shard_id(),
+                            sealed.shard_id
+                        )));
+                    }
+                    let (built, leftover) = builder.finish(
+                        sealed.end_height,
+                        hash(sealed.end_height)?,
+                        sealed.reason.is_some(),
+                    )?;
+                    if built.children as usize != sealed.children.len()
+                        || built.start_height != sealed.start_height
+                    {
+                        return Err(BuildError::Invalid(format!(
+                            "shard {} was built with {} page shards from {}, sealed with {} from {}",
+                            sealed.shard_id,
+                            built.children,
+                            built.start_height,
+                            sealed.children.len(),
+                            sealed.start_height
+                        )));
+                    }
+                    let next_id = sealed.shard_id + 1;
+                    out.push(Built::Directory { built, sealed });
+                    if !leftover.is_empty() {
+                        let mut next = DirectoryBuilder::new(
+                            next_id,
+                            self.geometry,
+                            self.genesis,
+                            &self.profile,
+                        )?;
+                        for block in leftover {
+                            next.push_block(block)?;
+                        }
+                        self.builder = Some(next);
+                    }
+                }
+            }
+        }
+        Ok(out)
     }
 }
 
@@ -191,211 +954,6 @@ pub fn placement_order<'a>(
     let mut entries: Vec<_> = scripts.into_iter().collect();
     entries.sort_by(|a, b| (Reverse(a.1), a.0).cmp(&(Reverse(b.1), b.0)));
     entries
-}
-
-/// Builds one shard from the events of its sealed range.
-///
-/// `events` need not be sorted; they are ordered here, because the published
-/// bytes must not depend on the order the journal happened to yield them.
-///
-/// `terminal_block_hash` is the block at `end_height`, and is part of the
-/// filter's keying, so a filter cannot be replayed under another shard's
-/// identity.
-#[allow(clippy::too_many_arguments)]
-pub fn build_shard(
-    shard_id: u64,
-    start_height: u64,
-    end_height: u64,
-    genesis: BlockHash,
-    terminal_block_hash: BlockHash,
-    profile: &str,
-    geometry: &'static Geometry,
-    events: &[(ScriptBytes, TransparentEvent)],
-) -> Result<BuiltShard, BuildError> {
-    // A geometry this build cannot encode would produce tables no wallet could
-    // read, so it is refused before any bytes are written rather than after.
-    geometry
-        .validate_publishable()
-        .map_err(BuildError::Invalid)?;
-    // Group by script, in a sorted map so the walk order is the scripts' own
-    // order rather than a hash map's.
-    let mut by_script: BTreeMap<&[u8], Vec<TransparentEvent>> = BTreeMap::new();
-    for (script, event) in events {
-        if event.height() < start_height as u32 || event.height() > end_height as u32 {
-            return Err(BuildError::Invalid(format!(
-                "event at height {} is outside the shard's {start_height}-{end_height}",
-                event.height()
-            )));
-        }
-        by_script.entry(script.as_slice()).or_default().push(*event);
-    }
-
-    // The filter covers every element, including scripts the private tables
-    // cannot index. Excluding them here would tell a wallet holding one that
-    // its script had no activity, which is worse than telling it the script is
-    // outside coverage.
-    let filter_elements: Vec<ScriptBytes> = by_script
-        .keys()
-        .map(|script| ScriptBytes::new(script.to_vec()))
-        .collect();
-    let key = ShardKey::derive(
-        profile,
-        genesis,
-        shard_id,
-        start_height,
-        end_height,
-        terminal_block_hash,
-    );
-    // The profile named in the map and manifest fixes the filter's P and M; a
-    // name this build does not know is refused rather than encoded under
-    // another profile's parameters.
-    let range = transparent_filter::range_profile(profile)
-        .ok_or_else(|| BuildError::Invalid(format!("unknown range profile {profile:?}")))?;
-    let filter = build_range_filter_for(range, key, &filter_elements)?;
-
-    // Summarize histories with exactly the same incremental rule as sealing.
-    let mut excluded_scripts = 0u64;
-    let mut total_events = 0u64;
-    let mut demand = PackedDemand::default();
-    let mut histories = BTreeMap::new();
-    for (script, mut history) in by_script {
-        total_events += history.len() as u64;
-        if script.len() > MAX_SCRIPT_BYTES {
-            excluded_scripts += 1;
-            continue;
-        }
-        history.sort_by_key(TransparentEvent::sort_key);
-        let mut summary = HistoryLayout::default();
-        for event in &history {
-            summary.push(*event, INLINE_EVENTS);
-        }
-        demand.shift(&HistoryLayout::default(), &summary);
-        histories.insert(script, (history, summary));
-    }
-    let indexed: Vec<&[u8]> = histories.keys().copied().collect();
-    let (tag_salt_counter, salt) =
-        resolve_tag_salt(shard_id, &terminal_block_hash, &indexed, script_tag)
-            .map_err(BuildError::Invalid)?;
-    let mut rows: Vec<Vec<PageEntry>> = Vec::new();
-    let mut first_page: HashMap<&[u8], u32> = HashMap::new();
-    let mut short = Vec::new();
-    let mut free: BTreeMap<usize, BTreeSet<usize>> = BTreeMap::new();
-    let mixed = demand.use_mixed();
-    // Long runs are allocated in script order and remain contiguous. Only their
-    // last row is offered to single-fragment histories.
-    for (&script, (history, summary)) in &histories {
-        let older = &history[..history.len().saturating_sub(INLINE_EVENTS as usize)];
-        let fragments = packing::fragments(older);
-        if fragments.len() == 1 {
-            let entry = PageEntry::new(script_tag(&salt, script), 0, 1, older.to_vec())?;
-            short.push((script, entry));
-        } else if fragments.len() > 1 {
-            first_page.insert(
-                script,
-                u32::try_from(rows.len() + 1)
-                    .map_err(|_| BuildError::Invalid("page locator overflow".into()))?,
-            );
-            for (ordinal, events) in fragments.iter().enumerate() {
-                rows.push(vec![PageEntry::new(
-                    script_tag(&salt, script),
-                    ordinal as u32,
-                    summary.fragments,
-                    events.to_vec(),
-                )?]);
-            }
-            if mixed {
-                let row = rows.len() - 1;
-                free.entry(ROW_PAYLOAD - rows[row][0].encoded_len())
-                    .or_default()
-                    .insert(row);
-            }
-        }
-    }
-    short.sort_by(|a, b| (Reverse(a.1.encoded_len()), a.0).cmp(&(Reverse(b.1.encoded_len()), b.0)));
-    let mut last_size = None;
-    for (script, entry) in short {
-        let size = entry.encoded_len();
-        if !mixed && last_size != Some(size) {
-            free.clear();
-        }
-        last_size = Some(size);
-        let (space, row) = if let Some((&space, indices)) = free.range(size..).next() {
-            let row = *indices.first().expect("nonempty bin set");
-            let indices = free.get_mut(&space).expect("existing bin set");
-            indices.remove(&row);
-            if indices.is_empty() {
-                free.remove(&space);
-            }
-            (space, row)
-        } else {
-            rows.push(Vec::new());
-            (ROW_PAYLOAD, rows.len() - 1)
-        };
-        first_page.insert(
-            script,
-            u32::try_from(row + 1)
-                .map_err(|_| BuildError::Invalid("page locator overflow".into()))?,
-        );
-        rows[row].push(entry);
-        free.entry(space - size).or_default().insert(row);
-    }
-    if rows.len() as u64 != demand.rows() {
-        return Err(BuildError::Invalid(format!(
-            "emitted {} rows, predicted {}",
-            rows.len(),
-            demand.rows()
-        )));
-    }
-    let mut entries: Vec<_> = histories
-        .iter()
-        .map(|(&script, (_, summary))| DirectoryEntry {
-            script: script.to_vec(),
-            tag: script_tag(&salt, script),
-            event_count: summary.events,
-            inline: summary.inline.clone(),
-            first_page: first_page.get(script).copied().unwrap_or(0),
-        })
-        .collect();
-    entries.sort_by(|a, b| {
-        (Reverse(a.encoded_len()), &a.script).cmp(&(Reverse(b.encoded_len()), &b.script))
-    });
-    let fragments = demand.fragments();
-
-    // A shard takes as many page segments as its rows need. Failing instead
-    // would mean one oversized block could stop publication.
-    let page_segments = segments_for(rows.len() as u64, geometry.page_rows);
-    let page_rows = rows.len() as u64;
-    let segment_bytes = geometry.page_rows as usize * geometry.page_row_bytes;
-    let mut page_table = Vec::with_capacity(page_segments as usize * segment_bytes);
-    for row in &rows {
-        page_table.extend_from_slice(&encode_page_row(row)?);
-    }
-    // Unused page rows are zero and decode as empty. They are indistinguishable
-    // in a response from occupied ones, which is the point.
-    page_table.resize(page_segments as usize * segment_bytes, 0);
-    let page_table = page_table
-        .chunks(segment_bytes)
-        .map(<[u8]>::to_vec)
-        .collect();
-
-    let (directory, scripts, choice) = place_directory(shard_id, entries, geometry)?;
-
-    Ok(BuiltShard {
-        shard_id,
-        geometry,
-        start_height,
-        end_height,
-        filter,
-        directory,
-        pages: page_table,
-        scripts,
-        choice,
-        page_rows,
-        fragments,
-        events: total_events,
-        excluded_scripts,
-        tag_salt_counter,
-    })
 }
 
 /// What two-choice placement costs a script set.
@@ -645,6 +1203,7 @@ fn verify_encoded_rows(
     entries: &[DirectoryEntry],
     assignment: &[u32],
     geometry: &Geometry,
+    children: u32,
 ) -> Result<(), BuildError> {
     let per_segment = geometry.directory_rows as usize;
     let row_bytes = geometry.directory_row_bytes;
@@ -653,7 +1212,7 @@ fn verify_encoded_rows(
     let mut seen = std::collections::HashSet::with_capacity(entries.len());
     for table in tables {
         for raw in table.chunks_exact(row_bytes) {
-            let decoded = crate::records::decode_directory_row(raw)?;
+            let decoded = crate::records::decode_directory_row(raw, children)?;
             let tags: Vec<_> = decoded.into_iter().map(|entry| entry.tag).collect();
             for tag in &tags {
                 if !seen.insert(*tag) {
@@ -691,6 +1250,7 @@ fn place_directory(
     shard_id: u64,
     entries: Vec<DirectoryEntry>,
     geometry: &Geometry,
+    children: u32,
 ) -> Result<PlacedDirectory, BuildError> {
     let scripts_only: Vec<&[u8]> = entries
         .iter()
@@ -734,7 +1294,7 @@ fn place_directory(
         }
         tables.push(table);
     }
-    verify_encoded_rows(&tables, &entries, &assignment, geometry)?;
+    verify_encoded_rows(&tables, &entries, &assignment, geometry, children)?;
     let choice = choice_table(shard_id, &scripts_only, &assignment, rows).ok();
     if let Some(table) = &choice {
         // A wrong bit is not an error a wallet can see: it queries the other
@@ -755,43 +1315,22 @@ fn place_directory(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::layout::{DIRECTORY_ROWS, PAGE_ROWS, RECENT_8K};
-    use crate::page_row::{decode_page_row, PageEntry};
+    use crate::layout::{DECOUPLED_2K_8K, DIRECTORY_ROWS};
+    use crate::page_row::decode_page_row;
     use crate::records::decode_directory_row;
-
-    /// The one entry in `row` belonging to `tag`, which is what a wallet
-    /// does with a packed row: several scripts share it, and the rest are
-    /// discarded.
-    fn fragment_of(
-        row: &[u8],
-        tag: &[u8; crate::tag::SCRIPT_TAG_BYTES],
-        ordinal: u32,
-    ) -> PageEntry {
-        let mut found: Vec<PageEntry> = decode_page_row(row)
-            .expect("a located row decodes")
-            .into_iter()
-            .filter(|entry| &entry.tag == tag && entry.ordinal == ordinal)
-            .collect();
-        assert_eq!(found.len(), 1, "exactly one entry may claim a fragment");
-        found.pop().expect("one")
-    }
-
-    fn tag_for(script: &[u8]) -> [u8; crate::tag::SCRIPT_TAG_BYTES] {
-        crate::script_tag(&crate::tag_salt(0, &terminal(), 0), script)
-    }
-
-    fn page_at(entry: &crate::records::DirectoryEntry) -> u64 {
-        u64::from(entry.page_base().expect("a paged entry"))
-    }
-    use transparent_events::{ReceiveEvent, Txid};
+    use crate::seal::Limit;
+    use transparent_events::{ReceiveEvent, SpendEvent, Txid};
     use transparent_filter::{validate_filter, FilterLimits, RANGE_PROFILE};
 
     fn genesis() -> BlockHash {
         BlockHash::from_display_hex(transparent_filter::MAINNET_GENESIS_DISPLAY).unwrap()
     }
 
-    fn terminal() -> BlockHash {
-        BlockHash::from_internal_bytes([0x5a; 32])
+    /// The hash of the block at `height` on fork `fork`.
+    fn hash_at(fork: u8, height: u64) -> BlockHash {
+        let mut bytes = [fork; 32];
+        bytes[..8].copy_from_slice(&height.to_le_bytes());
+        BlockHash::from_internal_bytes(bytes)
     }
 
     fn script(tag: u32) -> ScriptBytes {
@@ -805,6 +1344,7 @@ mod tests {
     fn event(height: u32, nonce: u32) -> TransparentEvent {
         let mut txid = [0u8; 32];
         txid[..4].copy_from_slice(&nonce.to_le_bytes());
+        txid[4..8].copy_from_slice(&height.to_le_bytes());
         TransparentEvent::Receive(ReceiveEvent {
             metadata: None,
             height,
@@ -816,9 +1356,493 @@ mod tests {
         })
     }
 
-    /// `count` scripts, each with `per` events, all inside the shard's declared
-    /// 100-200 range. Heights cycle so a long history stays in range while
-    /// still spanning it, which is what makes the paging tests meaningful.
+    fn spend(height: u32, nonce: u32) -> TransparentEvent {
+        let TransparentEvent::Receive(receive) = event(height, nonce) else {
+            unreachable!()
+        };
+        TransparentEvent::Spend(SpendEvent {
+            metadata: None,
+            height,
+            spending_txid: receive.txid,
+            transaction_index: 1,
+            input_index: nonce,
+            spent_txid: Txid([7; 32]),
+            spent_output_index: nonce,
+        })
+    }
+
+    /// A seeded generator, so a failing case reproduces exactly without a
+    /// property-testing dependency the workspace does not have.
+    struct Rng(u64);
+
+    impl Rng {
+        fn next(&mut self, bound: u64) -> u64 {
+            self.0 = self.0.wrapping_add(0x9e37_79b9_7f4a_7c15);
+            let mut z = self.0;
+            z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+            (z ^ (z >> 31)) % bound
+        }
+    }
+
+    /// `count` blocks from `first`: a few busy scripts, many quiet ones, and
+    /// now and then a burst of new scripts, so page shards and directory
+    /// shards both close under a small policy.
+    fn chain(seed: u64, first: u64, count: u64) -> Vec<Block> {
+        let mut rng = Rng(seed);
+        let mut nonce = 0u32;
+        (first..first + count)
+            .map(|height| {
+                let mut events = Vec::new();
+                for _ in 0..rng.next(6) {
+                    let tag = match rng.next(10) {
+                        0..=4 => rng.next(4) as u32,
+                        5..=8 => 100 + rng.next(60) as u32,
+                        _ => 10_000 + rng.next(1_000_000) as u32,
+                    };
+                    nonce += 1;
+                    let at = height as u32;
+                    events.push((
+                        script(tag),
+                        if rng.next(3) == 0 {
+                            spend(at, nonce)
+                        } else {
+                            event(at, nonce)
+                        },
+                    ));
+                }
+                (height, events)
+            })
+            .collect()
+    }
+
+    /// A policy small enough that a few hundred blocks close many page shards
+    /// and several directory shards, by page rows, by child limit and by
+    /// directory bytes.
+    fn small_policy(max_children: u32) -> DecoupledPolicy {
+        DecoupledPolicy {
+            scripts: Limit::new(120, 400).unwrap(),
+            directory_bytes: Limit::new(12_000, 40_000).unwrap(),
+            page_rows: Limit::new(1, 2).unwrap(),
+            max_children,
+            ..DecoupledPolicy::for_geometry(&DECOUPLED_2K_8K)
+        }
+    }
+
+    fn stream(policy: DecoupledPolicy, first: u64) -> ShardStream {
+        ShardStream::with_policy(&DECOUPLED_2K_8K, policy, first, 0, genesis(), RANGE_PROFILE)
+            .unwrap()
+    }
+
+    /// Everything a run over `blocks` builds, ending with the tail.
+    struct Run {
+        children: Vec<BuiltChild>,
+        directories: Vec<(BuiltDirectory, SealedDirectory)>,
+    }
+
+    fn run(policy: DecoupledPolicy, blocks: &[Block], fork: impl Fn(u64) -> u8) -> Run {
+        let mut stream = stream(policy, blocks[0].0);
+        let terminal = |height: u64| Some(hash_at(fork(height), height));
+        let mut out = Vec::new();
+        for block in blocks {
+            out.extend(stream.push_block(block.clone(), &terminal).unwrap());
+        }
+        out.extend(stream.finish(&terminal).unwrap());
+        let mut run = Run {
+            children: Vec::new(),
+            directories: Vec::new(),
+        };
+        for built in out {
+            match built {
+                Built::Child(child) => run.children.push(child),
+                Built::Directory { built, sealed } => run.directories.push((built, sealed)),
+            }
+        }
+        run
+    }
+
+    /// The history a wallet recovers for `script` from one directory shard,
+    /// walking from the directory entry back along each run's link, with the
+    /// walk's checks. `None` when the script has no entry.
+    fn walk(
+        directory: &BuiltDirectory,
+        children: &[&BuiltChild],
+        script: &[u8],
+    ) -> Option<Vec<TransparentEvent>> {
+        let geometry = directory.geometry;
+        let salt = crate::tag_salt(
+            directory.shard_id,
+            &hash_at(0, directory.end_height),
+            directory.tag_salt_counter,
+        );
+        let wanted = script_tag(&salt, script);
+        let rows = geometry.directory_rows * u64::from(directory.directory_segments());
+        let mut found = None;
+        for row in candidate_rows(directory.shard_id, script, rows) {
+            for entry in decode_directory_row(directory.directory_row(row), directory.children).unwrap() {
+                if entry.tag == wanted {
+                    found = Some(entry);
+                }
+            }
+        }
+        let entry = found?;
+        let mut newer: Vec<TransparentEvent> = entry.inline.clone();
+        let mut next = entry.head();
+        let mut expected_older: Option<u8> = None;
+        let mut last_child = u8::MAX;
+        while let Some((child, row)) = next {
+            assert!(child < last_child, "page shard numbers strictly decrease");
+            last_child = child;
+            let page = children[child as usize];
+            let page_salt = crate::tag::page_tag_salt(
+                directory.shard_id,
+                page.index,
+                page.end_height,
+                &page.terminal_block_hash,
+                page.tag_salt_counter,
+            );
+            let tag = script_tag(&page_salt, script);
+            let mut run = Vec::new();
+            let mut count = None;
+            let mut link = RunLink::default();
+            let mut ordinal = 0;
+            loop {
+                let raw = page.page_row(geometry, u64::from(row) + u64::from(ordinal));
+                let fragment = decode_page_row(raw)
+                    .unwrap()
+                    .into_iter()
+                    .find(|e| e.tag == tag && e.ordinal == ordinal)
+                    .expect("the run's fragment is where the chain says");
+                if ordinal == 0 {
+                    count = Some(fragment.fragment_count);
+                    link = fragment.link;
+                }
+                run.extend(fragment.events);
+                ordinal += 1;
+                if ordinal == count.unwrap() {
+                    break;
+                }
+            }
+            if let Some(older) = expected_older {
+                assert_eq!(link.older_runs, older, "older_runs drops by one per hop");
+            }
+            assert_eq!(link.older_runs == 0, link.prev_row == 0);
+            expected_older = link.older_runs.checked_sub(1);
+            // Push-out placement: each paged event's successor-but-one lies in
+            // this run's page shard.
+            let mut following = run.clone();
+            following.extend(newer.iter().copied());
+            for (i, _) in run.iter().enumerate() {
+                let height = u64::from(following[i + 2].height());
+                assert!(
+                    (page.start_height..=page.end_height).contains(&height),
+                    "an event was pushed into a page shard that was not open"
+                );
+            }
+            run.extend(newer);
+            newer = run;
+            next = link.previous();
+        }
+        assert!(expected_older.is_none(), "the chain is not cut short");
+        Some(newer)
+    }
+
+    fn histories(blocks: &[Block]) -> BTreeMap<Vec<u8>, Vec<TransparentEvent>> {
+        let mut all: BTreeMap<Vec<u8>, Vec<TransparentEvent>> = BTreeMap::new();
+        for (_, events) in blocks {
+            for (script, event) in events {
+                all.entry(script.as_slice().to_vec()).or_default().push(*event);
+            }
+        }
+        for events in all.values_mut() {
+            events.sort_by_key(TransparentEvent::sort_key);
+        }
+        all
+    }
+
+    /// The design's worked example: e1@1010, e2@1020, e3@1100, e4@1400,
+    /// e5@1700, e6@1710 with page shards 1000-1299, 1300-1649, 1650-1999 gives
+    /// runs P0 [e1], P1 [e2], P2 [e3, e4] and e5, e6 inline.
+    #[test]
+    fn pushed_out_events_go_to_the_page_shard_open_when_they_are_pushed() {
+        let watched = script(1);
+        let heights = [1010u64, 1020, 1100, 1400, 1700, 1710];
+        let mut blocks: Vec<Block> = (1000..2000).map(|h| (h, Vec::new())).collect();
+        for (i, h) in heights.iter().enumerate() {
+            blocks[(*h - 1000) as usize]
+                .1
+                .push((watched.clone(), event(*h as u32, i as u32)));
+        }
+        // Fillers whose pushed-out events fill two rows and close a page
+        // shard at 1299 and at 1649.
+        for (h, base) in [(1299u64, 1_000u32), (1649, 2_000)] {
+            for k in 0..200u32 {
+                for n in 0..3 {
+                    blocks[(h - 1000) as usize]
+                        .1
+                        .push((script(base + k), event(h as u32, k * 10 + n)));
+                }
+            }
+        }
+        let policy = DecoupledPolicy {
+            page_rows: Limit::new(4, 1_000).unwrap(),
+            ..small_policy(32)
+        };
+        let policy = DecoupledPolicy {
+            scripts: Limit::new(10_000, 20_000).unwrap(),
+            directory_bytes: Limit::new(1_000_000, 2_000_000).unwrap(),
+            ..policy
+        };
+        let built = run(policy, &blocks, |_| 0);
+        assert_eq!(built.directories.len(), 1);
+        let (directory, _) = &built.directories[0];
+        assert_eq!(
+            built
+                .children
+                .iter()
+                .map(|c| (c.start_height, c.end_height))
+                .collect::<Vec<_>>(),
+            vec![(1000, 1299), (1300, 1649), (1650, 1999)]
+        );
+        let children: Vec<&BuiltChild> = built.children.iter().collect();
+        let history = walk(directory, &children, watched.as_slice()).unwrap();
+        assert_eq!(history.len(), 6);
+        assert_eq!(
+            history.iter().map(|e| u64::from(e.height())).collect::<Vec<_>>(),
+            heights
+        );
+    }
+
+    /// Every script's history comes back exactly by walking its chain, across
+    /// many page shards and directory shards, with every check on the way.
+    #[test]
+    fn walking_each_chain_recovers_every_history_exactly() {
+        for seed in 0..6u64 {
+            let blocks = chain(seed, 500, 400);
+            let max_children = [2u32, 3, 32][seed as usize % 3];
+            let built = run(small_policy(max_children), &blocks, |_| 0);
+            assert!(built.directories.len() > 1, "seed {seed}");
+            assert!(built.children.len() > built.directories.len(), "seed {seed}");
+            let mut recovered: BTreeMap<Vec<u8>, Vec<TransparentEvent>> = BTreeMap::new();
+            let mut child_at = 0;
+            for (directory, sealed) in &built.directories {
+                let children: Vec<&BuiltChild> = built.children
+                    [child_at..child_at + directory.children as usize]
+                    .iter()
+                    .collect();
+                child_at += directory.children as usize;
+                assert_eq!(children.len(), sealed.children.len());
+                assert!(children.len() as u32 <= max_children);
+                let span = &blocks[(directory.start_height - 500) as usize
+                    ..=(directory.end_height - 500) as usize];
+                for (script, events) in histories(span) {
+                    let walked = walk(directory, &children, &script).expect("an entry");
+                    assert_eq!(walked, events, "seed {seed}");
+                    recovered.entry(script).or_default().extend(walked);
+                }
+            }
+            assert_eq!(child_at, built.children.len());
+            assert_eq!(recovered, histories(&blocks), "seed {seed}");
+        }
+    }
+
+    /// Publishing block by block equals a fresh build: every page shard and
+    /// directory shard a prefix seals is byte-identical to the one the whole
+    /// chain seals, and the prefix's tail is what a fresh build of the prefix
+    /// produces.
+    #[test]
+    fn sealed_shards_are_byte_stable_under_tail_growth() {
+        for seed in 0..3u64 {
+            let blocks = chain(100 + seed, 0, 160);
+            let policy = small_policy(3);
+            let full = run(policy, &blocks, |_| 0);
+            for end in (1..blocks.len()).step_by(7) {
+                let prefix = run(policy, &blocks[..end], |_| 0);
+                for child in prefix.children.iter().filter(|c| c.sealed) {
+                    assert!(
+                        full.children.contains(child),
+                        "seed {seed} prefix {end}: page shard {} of {} changed",
+                        child.index,
+                        child.shard_id
+                    );
+                }
+                for (directory, sealed) in prefix.directories.iter().filter(|(d, _)| d.sealed) {
+                    let (same, same_sealed) = full
+                        .directories
+                        .iter()
+                        .find(|(d, _)| d.shard_id == directory.shard_id)
+                        .expect("the same shard");
+                    assert_eq!(same.directory, directory.directory, "seed {seed}");
+                    assert_eq!(same.filter, directory.filter);
+                    assert_eq!(same_sealed, sealed);
+                }
+                // Only the tail may be open, and only its last page shard. A
+                // prefix whose last block sealed a directory shard has no
+                // tail; one whose last block sealed a page shard has a tail
+                // whose page shards are all sealed.
+                let (tail, _) = prefix.directories.last().unwrap();
+                assert!(prefix.directories[..prefix.directories.len() - 1]
+                    .iter()
+                    .all(|(d, _)| d.sealed));
+                let open: Vec<_> = prefix.children.iter().filter(|c| !c.sealed).collect();
+                assert!(open.len() <= usize::from(!tail.sealed));
+                if let Some(open) = open.first() {
+                    assert_eq!(*open, prefix.children.last().unwrap());
+                }
+            }
+        }
+    }
+
+    /// A reorg at height h rebuilds only what holds a block at or above h:
+    /// every page shard and directory shard ending below h is reproduced
+    /// exactly, including reorgs exactly at a page-shard boundary and at a
+    /// directory-shard boundary.
+    #[test]
+    fn a_reorg_reproduces_everything_sealed_below_it() {
+        let blocks = chain(7, 0, 200);
+        let policy = small_policy(3);
+        let original = run(policy, &blocks, |_| 0);
+        let child_boundaries: Vec<u64> = original
+            .children
+            .iter()
+            .filter(|c| c.sealed && c.end_height + 1 < 200)
+            .map(|c| c.end_height + 1)
+            .collect();
+        let directory_boundaries: Vec<u64> = original
+            .directories
+            .iter()
+            .filter(|(d, _)| d.sealed)
+            .map(|(d, _)| d.end_height + 1)
+            .collect();
+        assert!(!child_boundaries.is_empty() && !directory_boundaries.is_empty());
+        let inside = original.children[1].start_height + 1;
+        for reorg in child_boundaries
+            .iter()
+            .chain(&directory_boundaries)
+            .copied()
+            .chain([inside])
+        {
+            // The fork replaces every block from `reorg` with different events.
+            let mut forked = blocks[..reorg as usize].to_vec();
+            forked.extend(chain(99, reorg, 200 - reorg));
+            let replayed = run(policy, &forked, |h| u8::from(h >= reorg));
+            for child in original.children.iter().filter(|c| c.end_height < reorg) {
+                assert!(
+                    replayed.children.contains(child),
+                    "reorg at {reorg}: page shard {} of {} changed",
+                    child.index,
+                    child.shard_id
+                );
+            }
+            for (directory, _) in original
+                .directories
+                .iter()
+                .filter(|(d, _)| d.end_height < reorg)
+            {
+                let same = replayed
+                    .directories
+                    .iter()
+                    .find(|(d, _)| d.shard_id == directory.shard_id)
+                    .map(|(d, _)| d)
+                    .expect("the same shard");
+                assert_eq!(same.directory, directory.directory, "reorg at {reorg}");
+                assert_eq!(same.end_height, directory.end_height);
+            }
+            // Something above the reorg did change.
+            assert!(replayed
+                .children
+                .iter()
+                .any(|c| c.end_height >= reorg && !original.children.contains(c)));
+        }
+    }
+
+    /// The order a block's events arrive in changes nothing.
+    #[test]
+    fn building_is_deterministic_regardless_of_input_order() {
+        let blocks = chain(3, 0, 120);
+        let shuffled: Vec<Block> = blocks
+            .iter()
+            .map(|(h, events)| (*h, events.iter().rev().cloned().collect()))
+            .collect();
+        let a = run(small_policy(4), &blocks, |_| 0);
+        let b = run(small_policy(4), &shuffled, |_| 0);
+        assert_eq!(a.children, b.children);
+        for ((x, _), (y, _)) in a.directories.iter().zip(&b.directories) {
+            assert_eq!(x.directory, y.directory);
+            assert_eq!(x.filter, y.filter);
+        }
+    }
+
+    /// Tables are the pinned size whatever they hold, a page shard nothing
+    /// was pushed into has no segment, and the filter matches every script.
+    #[test]
+    fn tables_are_the_pinned_size_and_empty_page_shards_have_none() {
+        let mut blocks: Vec<Block> = (0..5).map(|h| (h, Vec::new())).collect();
+        blocks[1].1.push((script(1), event(1, 1)));
+        blocks[2].1.push((script(1), event(2, 2)));
+        let quiet = run(small_policy(4), &blocks, |_| 0);
+        assert_eq!(quiet.children.len(), 1);
+        assert!(quiet.children[0].pages.is_empty(), "nothing was pushed out");
+        assert_eq!(quiet.children[0].segments, 0);
+        assert_eq!(quiet.children[0].page_rows, 0);
+        let (directory, _) = &quiet.directories[0];
+        assert_eq!(directory.directory_segments(), 1);
+        assert_eq!(
+            directory.directory[0].len(),
+            DECOUPLED_2K_8K.directory_rows as usize * crate::layout::DIRECTORY_ROW_BYTES
+        );
+        let busy = run(small_policy(4), &chain(5, 0, 80), |_| 0);
+        for child in busy.children.iter().filter(|c| c.page_rows > 0) {
+            assert_eq!(child.segments, 1);
+            assert_eq!(
+                child.pages.len(),
+                child.page_rows as usize * crate::layout::PAGE_ROW_BYTES
+            );
+            let segment = child.segment(&DECOUPLED_2K_8K, 0);
+            assert_eq!(
+                segment.len(),
+                DECOUPLED_2K_8K.page_rows as usize * crate::layout::PAGE_ROW_BYTES
+            );
+            let digest: [u8; 32] = Sha256::digest(&segment).into();
+            assert_eq!(child.segment_digests(&DECOUPLED_2K_8K), vec![digest]);
+        }
+        let (directory, _) = &busy.directories[0];
+        let key = ShardKey::derive(
+            RANGE_PROFILE,
+            genesis(),
+            directory.shard_id,
+            directory.start_height,
+            directory.end_height,
+            hash_at(0, directory.end_height),
+        );
+        let validated =
+            validate_filter(directory.filter.as_slice(), FilterLimits::default()).unwrap();
+        let span = chain(5, 0, 80);
+        let scripts: Vec<ScriptBytes> = histories(
+            &span[directory.start_height as usize..=directory.end_height as usize],
+        )
+        .into_keys()
+        .map(ScriptBytes::new)
+        .collect();
+        let matched = transparent_filter::match_range_scripts(&validated, key, &scripts).unwrap();
+        assert_eq!(matched.len(), scripts.len());
+    }
+
+    /// A script too long for a directory entry is filtered but never indexed,
+    /// so it has no entry and no runs, and is counted as excluded.
+    #[test]
+    fn an_unindexable_script_is_filtered_but_counted_as_excluded() {
+        let long = ScriptBytes::new(vec![0x6a; MAX_SCRIPT_BYTES + 1]);
+        let blocks: Vec<Block> = (0..4)
+            .map(|h| (h, vec![(long.clone(), event(h as u32, h as u32))]))
+            .collect();
+        let built = run(small_policy(4), &blocks, |_| 0);
+        let (directory, _) = &built.directories[0];
+        assert_eq!(directory.excluded_scripts, 1);
+        assert_eq!(directory.scripts, 0);
+        assert!(built.children.iter().all(|c| c.runs == 0));
+    }
+
     /// The builder's last check reads the encoded rows: an entry outside its
     /// assigned row, a tag held twice, or a missing entry is refused before
     /// publication, because a wallet would read any of them as absence.
@@ -829,9 +1853,10 @@ mod tests {
             tag: [byte; crate::tag::SCRIPT_TAG_BYTES],
             event_count: 1,
             inline: vec![event(100, u32::from(byte))],
-            first_page: 0,
+            head_child: 0,
+            head_row: 0,
         };
-        let geometry = RECENT_8K;
+        let geometry = DECOUPLED_2K_8K;
         let (a, b) = (entry(1), entry(2));
         let table = |rows: &[&[DirectoryEntry]]| -> Vec<Vec<u8>> {
             vec![rows
@@ -842,257 +1867,24 @@ mod tests {
         let entries = [a.clone(), b.clone()];
         let (one_a, one_b) = (std::slice::from_ref(&a), std::slice::from_ref(&b));
         let good = table(&[one_a, one_b]);
-        verify_encoded_rows(&good, &entries, &[0, 1], &geometry).unwrap();
-        assert!(verify_encoded_rows(&good, &entries, &[1, 0], &geometry).is_err());
+        verify_encoded_rows(&good, &entries, &[0, 1], &geometry, 1).unwrap();
+        assert!(verify_encoded_rows(&good, &entries, &[1, 0], &geometry, 1).is_err());
         let repeated = table(&[one_a, one_a]);
-        assert!(verify_encoded_rows(&repeated, &entries, &[0, 1], &geometry).is_err());
+        assert!(verify_encoded_rows(&repeated, &entries, &[0, 1], &geometry, 1).is_err());
         let missing = table(&[one_a, &[]]);
-        assert!(verify_encoded_rows(&missing, &entries, &[0, 1], &geometry).is_err());
+        assert!(verify_encoded_rows(&missing, &entries, &[0, 1], &geometry, 1).is_err());
     }
 
-    fn fixture(count: u32, per: u32) -> Vec<(ScriptBytes, TransparentEvent)> {
-        let mut events = Vec::new();
-        for tag in 0..count {
-            for i in 0..per {
-                events.push((script(tag), event(100 + i % 101, tag * 100_000 + i)));
-            }
-        }
-        events
-    }
-
-    fn build(events: &[(ScriptBytes, TransparentEvent)]) -> BuiltShard {
-        build_shard(
-            0,
-            100,
-            200,
-            genesis(),
-            terminal(),
-            RANGE_PROFILE,
-            &RECENT_8K,
-            events,
-        )
-        .expect("build")
-    }
-
+    /// A block must follow the last, and its events must be at its height.
     #[test]
-    fn tables_are_exactly_the_pinned_size_whatever_the_shard_holds() {
-        for (count, per) in [(1u32, 1u32), (200, 3), (50, 40)] {
-            let built = build(&fixture(count, per));
-            assert_eq!(built.directory_segments(), 1, "an ordinary shard");
-            assert_eq!(built.page_segments(), 1, "an ordinary shard");
-            for segment in &built.directory {
-                assert_eq!(
-                    segment.len(),
-                    DIRECTORY_ROWS * crate::layout::DIRECTORY_ROW_BYTES
-                );
-            }
-            for segment in &built.pages {
-                assert_eq!(segment.len(), PAGE_ROWS * crate::layout::PAGE_ROW_BYTES);
-            }
-        }
-    }
-
-    /// Short histories of the same length share rows, and every class from one
-    /// paged event to a full fragment does it at its own capacity. This is the
-    /// whole point of the format, so it is checked per class rather than
-    /// sampled.
-    #[test]
-    fn short_histories_of_a_length_share_rows() {
-        for p in 1..=79 {
-            let per_row = 4092 / (34 + p as usize * 51);
-            let scripts = per_row as u32 * 2 + 1;
-            let built = build(&fixture(scripts, p + INLINE_EVENTS));
-
-            // Three rows: two full and one holding the remainder.
-            assert_eq!(
-                built.page_rows,
-                (scripts as usize).div_ceil(per_row) as u64,
-                "class {p} did not pack {scripts} scripts at {per_row} per row"
-            );
-            assert_eq!(built.fragments, scripts as u64, "class {p} fragments");
-
-            // Every script is still retrievable, and only from the row its
-            // directory entry names.
-            let rows = DIRECTORY_ROWS as u64 * built.directory_segments() as u64;
-            for tag in 0..scripts {
-                let wanted = script(tag);
-                let entry = candidate_rows(0, wanted.as_slice(), rows)
-                    .iter()
-                    .find_map(|row| {
-                        decode_directory_row(built.directory_row(*row))
-                            .unwrap()
-                            .into_iter()
-                            .find(|e| e.tag == tag_for(wanted.as_slice()))
-                    })
-                    .expect("entry");
-                let fragment = fragment_of(
-                    built.page_row(page_at(&entry)),
-                    &tag_for(wanted.as_slice()),
-                    0,
-                );
-                assert_eq!(
-                    fragment.fragment_count, 1,
-                    "class {p} should be one fragment"
-                );
-                assert_eq!(fragment.events.len(), p as usize);
-            }
-        }
-    }
-
-    /// Two scripts sharing a row are both there, at the same locator, each
-    /// finding only its own events. A reader has to select within the row.
-    #[test]
-    fn two_scripts_can_name_the_same_row() {
-        let built = build(&fixture(2, 1 + INLINE_EVENTS));
-        assert_eq!(built.page_rows, 1, "two one-event histories share a row");
-
-        let rows = DIRECTORY_ROWS as u64 * built.directory_segments() as u64;
-        let mut located = Vec::new();
-        for tag in 0..2u32 {
-            let wanted = script(tag);
-            let entry = candidate_rows(0, wanted.as_slice(), rows)
-                .iter()
-                .find_map(|row| {
-                    decode_directory_row(built.directory_row(*row))
-                        .unwrap()
-                        .into_iter()
-                        .find(|e| e.tag == tag_for(wanted.as_slice()))
-                })
-                .expect("entry");
-            located.push(page_at(&entry));
-            let fragment = fragment_of(
-                built.page_row(page_at(&entry)),
-                &tag_for(wanted.as_slice()),
-                0,
-            );
-            assert_eq!(fragment.events.len(), 1);
-        }
-        assert_eq!(located[0], located[1], "both should name the same row");
-        assert_eq!(
-            decode_page_row(built.page_row(located[0])).unwrap().len(),
-            2,
-            "the shared row should hold both"
-        );
-    }
-
-    /// A history past one fragment takes a contiguous run to itself and shares
-    /// with nothing, including its short final fragment. Sharing that would
-    /// make a long history's placement depend on unrelated content.
-    #[test]
-    fn a_long_history_keeps_its_run_and_shares_only_its_tail() {
-        let per = crate::layout::EVENTS_PER_PAGE * 2 + 5 + INLINE_EVENTS;
-        // One long history and enough one-event ones to fill a row beside it.
-        let mut events = fixture(1, per);
-        events.extend(
-            fixture(48, 1 + INLINE_EVENTS)
-                .into_iter()
-                .map(|(s, e)| (ScriptBytes::new([b"short-", s.as_slice()].concat()), e)),
-        );
-        let built = build(&events);
-
-        let wanted = script(0);
-        let rows = DIRECTORY_ROWS as u64 * built.directory_segments() as u64;
-        let entry = candidate_rows(0, wanted.as_slice(), rows)
-            .iter()
-            .find_map(|row| {
-                decode_directory_row(built.directory_row(*row))
-                    .unwrap()
-                    .into_iter()
-                    .find(|e| e.tag == tag_for(wanted.as_slice()))
-            })
-            .expect("entry");
-        let base = page_at(&entry);
-        let first = fragment_of(built.page_row(base), &tag_for(wanted.as_slice()), 0);
-        assert_eq!(
-            first.fragment_count, 3,
-            "two full fragments and a short one"
-        );
-        for ordinal in 0..first.fragment_count {
-            let row = decode_page_row(built.page_row(base + u64::from(ordinal))).unwrap();
-            if ordinal + 1 == first.fragment_count {
-                assert!(row.len() > 1, "tail was not filled");
-            } else {
-                assert_eq!(row.len(), 1);
-            }
-            assert_eq!(row[0].tag, tag_for(wanted.as_slice()));
-        }
-    }
-
-    /// The availability property at the builder: content that cannot fit one
-    /// segment gets another, of the same pinned geometry, rather than failing.
-    /// A shard that failed to build would stop publication altogether.
-    #[test]
-    fn content_too_large_for_one_segment_takes_another() {
-        // Enough distinct histories to overrun the pinned page table, which is
-        // what one oversized block looks like to the builder.
-        let per = 79 + INLINE_EVENTS;
-        let scripts = PAGE_ROWS as u32 + 100;
-        let built = build(&fixture(scripts, per));
-
-        assert!(built.page_segments() >= 2, "the pages did not fit one");
-        // A full fragment is one entry per row even packed, so this shard
-        // needs a row per script exactly as the unpacked layout did. That is
-        // the boundary case: one event more and the history is long, one less
-        // and it starts sharing.
-        assert_eq!(built.page_rows, scripts as u64);
-        assert_eq!(built.fragments, scripts as u64);
-        for segment in &built.pages {
-            assert_eq!(segment.len(), PAGE_ROWS * crate::layout::PAGE_ROW_BYTES);
-        }
-        for segment in &built.directory {
-            assert_eq!(
-                segment.len(),
-                DIRECTORY_ROWS * crate::layout::DIRECTORY_ROW_BYTES
-            );
-        }
-
-        // Every script is still retrievable, and its extent still resolves —
-        // across the segment boundary for the scripts placed past it.
-        let rows = DIRECTORY_ROWS as u64 * built.directory_segments() as u64;
-        let mut crossed = false;
-        for tag in 0..scripts {
-            let wanted = script(tag);
-            let entry = candidate_rows(0, wanted.as_slice(), rows)
-                .iter()
-                .find_map(|row| {
-                    decode_directory_row(built.directory_row(*row))
-                        .unwrap()
-                        .into_iter()
-                        .find(|entry| entry.tag == tag_for(wanted.as_slice()))
-                })
-                .unwrap_or_else(|| panic!("script {tag} is in neither candidate row"));
-            assert!(entry.first_page >= 1);
-            if page_at(&entry) as usize >= PAGE_ROWS {
-                crossed = true;
-            }
-            let fragment = fragment_of(
-                built.page_row(page_at(&entry)),
-                &tag_for(wanted.as_slice()),
-                0,
-            );
-            assert_eq!(fragment.tag, tag_for(wanted.as_slice()));
-        }
-        assert!(crossed, "some extent should land past the first segment");
-    }
-
-    /// Every script must be findable at one of its two candidate rows, with its
-    /// exact bytes. This is the property the whole directory exists to provide.
-    #[test]
-    fn every_script_is_retrievable_from_one_of_its_candidate_rows() {
-        let built = build(&fixture(300, 2));
-        for tag in 0..300u32 {
-            let wanted = script(tag);
-            let rows = DIRECTORY_ROWS as u64 * built.directory_segments() as u64;
-            let candidates = candidate_rows(0, wanted.as_slice(), rows);
-            let found = candidates.iter().any(|row| {
-                decode_directory_row(built.directory_row(*row))
-                    .unwrap()
-                    .iter()
-                    .any(|entry| entry.tag == tag_for(wanted.as_slice()))
-            });
-            assert!(found, "script {tag} is in neither candidate row");
-        }
-        assert_eq!(built.scripts, 300);
+    fn a_block_out_of_order_or_out_of_range_is_refused() {
+        let mut builder =
+            DirectoryBuilder::new(0, &DECOUPLED_2K_8K, genesis(), RANGE_PROFILE).unwrap();
+        builder.push_block((10, vec![(script(0), event(10, 0))])).unwrap();
+        assert!(builder.push_block((12, Vec::new())).is_err());
+        assert!(builder
+            .push_block((11, vec![(script(0), event(500, 0))]))
+            .is_err());
     }
 
     /// Scripts for a placement test, distinct and of the supported width.
@@ -1185,137 +1977,6 @@ mod tests {
         assert_eq!(assignment.len(), refs.len(), "every script is placed once");
     }
 
-    /// What the sealer predicts a shard's placement costs must be what the
-    /// builder then produces.
-    ///
-    /// The census reports the sealer's figure and a geometry is chosen from it,
-    /// so a divergence would mean choosing against a number no published set
-    /// ever realises. Relocation makes this sharp: a script's row now depends on
-    /// every script placed before it, so the two must agree not merely on how
-    /// many segments but on the script set and the order it is placed in — the
-    /// sealer sorts its own map, the builder walks a `BTreeMap`, and nothing but
-    /// this test says those are the same sequence.
-    #[test]
-    fn the_sealer_predicts_the_placement_the_builder_produces() {
-        use crate::seal::{Limit, PageBasis, SealPolicy, Sealer};
-
-        let events = fixture(4_000, 3);
-        let policy = SealPolicy {
-            scripts: Limit::new(1_000_000, 2_000_000).expect("valid"),
-            page_rows: Limit::new(1_000_000, 2_000_000).expect("valid"),
-        };
-        let mut sealer = Sealer::with_basis(policy, 100, PageBasis::default());
-        sealer.measure_placement(true);
-        // The sealer takes blocks in height order; the builder takes the range
-        // whole. Same events either way, which is the point.
-        for height in 100..=200u64 {
-            let block: Vec<_> = events
-                .iter()
-                .filter(|(_, event)| u64::from(event.height()) == height)
-                .cloned()
-                .collect();
-            sealer.push_block(height, &block).expect("valid block");
-        }
-        let predicted = sealer
-            .finish()
-            .expect("a tail")
-            .placement
-            .expect("placement was asked for");
-
-        let built = build(&events);
-        assert_eq!(
-            predicted.segments,
-            built.directory_segments(),
-            "the sealer and the builder disagree about segments"
-        );
-    }
-
-    /// Scripts of every shape: inline-only, short paged and long histories,
-    /// interleaved in raw-byte order so that the builder's placement order
-    /// and a lexicographic one differ.
-    fn mixed_fixture(count: u32) -> Vec<(ScriptBytes, TransparentEvent)> {
-        let mut events = Vec::new();
-        for tag in 0..count {
-            let per = [1, 2, 3, 5, 12, 30, 41, 90][(tag % 8) as usize];
-            for i in 0..per {
-                events.push((script(tag), event(100 + i % 101, tag * 100_000 + i)));
-            }
-        }
-        events
-    }
-
-    /// The rows [`place_scripts`] assigns, fed [`placement_order`], must be the
-    /// rows the builder publishes, entry for entry.
-    ///
-    /// Row membership rather than a load summary, because placement is order
-    /// dependent and a census fed another order agrees on segment counts long
-    /// before it agrees on which rows are full.
-    #[test]
-    fn placement_order_reproduces_the_published_rows() {
-        let events = mixed_fixture(6_000);
-        let built = build(&events);
-
-        let mut counts: BTreeMap<Vec<u8>, u32> = BTreeMap::new();
-        for (script, _) in &events {
-            *counts.entry(script.as_slice().to_vec()).or_default() += 1;
-        }
-        let ordered = placement_order(
-            counts
-                .iter()
-                .map(|(s, n)| (s.as_slice(), 19 + (*n).min(2) as usize * 51)),
-        );
-        let order: Vec<_> = ordered.iter().map(|(s, _)| *s).collect();
-        let sizes: Vec<_> = ordered.iter().map(|(_, n)| *n).collect();
-        let (placement, assignment) =
-            place_scripts(0, &order, &sizes, RECENT_8K.directory_rows, 4092).expect("fits");
-        assert_eq!(placement.segments, built.directory_segments());
-
-        let rows = RECENT_8K.directory_rows * placement.segments as u64;
-        let mut predicted: Vec<Vec<&[u8]>> = vec![Vec::new(); rows as usize];
-        for (script, row) in order.iter().zip(&assignment) {
-            predicted[*row as usize].push(script);
-        }
-        for (row, expected) in predicted.iter_mut().enumerate() {
-            expected.sort_unstable();
-            let mut expected_tags: Vec<_> = expected.iter().map(|script| tag_for(script)).collect();
-            expected_tags.sort_unstable();
-            let mut published: Vec<_> = decode_directory_row(built.directory_row(row as u64))
-                .expect("decodes")
-                .into_iter()
-                .map(|entry| entry.tag)
-                .collect();
-            published.sort_unstable();
-            assert_eq!(expected_tags, published, "row {row} differs");
-        }
-
-        // The lexicographic order the census used before is a different
-        // placement on this content, which is why the order is shared.
-        let mut lexicographic = order.clone();
-        lexicographic.sort_unstable();
-        let (_, other) = place_scripts(
-            0,
-            &lexicographic,
-            &lexicographic
-                .iter()
-                .map(|s| 19 + counts[*s].min(2) as usize * 51)
-                .collect::<Vec<_>>(),
-            RECENT_8K.directory_rows,
-            4092,
-        )
-        .expect("fits");
-        let by_script = |order: &[&[u8]], rows: &[u32]| -> BTreeMap<Vec<u8>, u32> {
-            order
-                .iter()
-                .map(|s| s.to_vec())
-                .zip(rows.iter().copied())
-                .collect()
-        };
-        assert_ne!(
-            by_script(&order, &assignment),
-            by_script(&lexicographic, &other)
-        );
-    }
-
     /// One row, chosen by the published choice bit, holds every placed script:
     /// the single-lookup property, at the default geometry and at the
     /// half-height directory, where placement runs near 80% of capacity.
@@ -1362,212 +2023,6 @@ mod tests {
         assert!(verify_choice(5, &table, &refs, space, |i| u64::from(assignment[i]) ^ 1).is_some());
     }
 
-    /// The sealer's measured placement matches the builder's on content of
-    /// mixed shapes, not only on the single-shape fixture above.
-    #[test]
-    fn the_sealer_measures_the_builders_fullest_row_on_mixed_shapes() {
-        use crate::seal::{Limit, PageBasis, SealPolicy, Sealer};
-
-        let events = mixed_fixture(6_000);
-        let policy = SealPolicy {
-            scripts: Limit::new(1_000_000, 2_000_000).expect("valid"),
-            page_rows: Limit::new(1_000_000, 2_000_000).expect("valid"),
-        };
-        let mut sealer = Sealer::with_basis(policy, 100, PageBasis::default());
-        sealer.measure_placement(true);
-        for height in 100..=200u64 {
-            let block: Vec<_> = events
-                .iter()
-                .filter(|(_, event)| u64::from(event.height()) == height)
-                .cloned()
-                .collect();
-            sealer.push_block(height, &block).expect("valid block");
-        }
-        let predicted = sealer
-            .finish()
-            .expect("a tail")
-            .placement
-            .expect("placement was asked for");
-
-        let built = build(&events);
-        let rows = RECENT_8K.directory_rows * built.directory_segments() as u64;
-        let fullest = (0..rows)
-            .map(|row| {
-                decode_directory_row(built.directory_row(row))
-                    .expect("decodes")
-                    .len() as u64
-            })
-            .max()
-            .unwrap_or(0);
-        assert_eq!(predicted.segments, built.directory_segments());
-        assert_eq!(predicted.max_row_load, fullest);
-    }
-
-    /// A script's whole history must be reconstructible: the inline events plus
-    /// its pages, with nothing lost and nothing duplicated.
-    #[test]
-    fn inline_events_and_pages_together_hold_the_complete_history() {
-        let per = crate::layout::EVENTS_PER_PAGE + INLINE_EVENTS + 7;
-        let built = build(&fixture(3, per));
-
-        for tag in 0..3u32 {
-            let wanted = script(tag);
-            let rows = DIRECTORY_ROWS as u64 * built.directory_segments() as u64;
-            let entry = candidate_rows(0, wanted.as_slice(), rows)
-                .iter()
-                .find_map(|row| {
-                    decode_directory_row(built.directory_row(*row))
-                        .unwrap()
-                        .into_iter()
-                        .find(|entry| entry.tag == tag_for(wanted.as_slice()))
-                })
-                .expect("entry");
-
-            let mut recovered = entry.inline.clone();
-            let base = page_at(&entry);
-            let first = fragment_of(built.page_row(base), &tag_for(wanted.as_slice()), 0);
-            for ordinal in 0..first.fragment_count {
-                let fragment = fragment_of(
-                    built.page_row(base + u64::from(ordinal)),
-                    &tag_for(wanted.as_slice()),
-                    ordinal,
-                );
-                assert_eq!(fragment.fragment_count, first.fragment_count);
-                recovered.extend(fragment.events);
-            }
-
-            recovered.sort_by_key(|event| event.sort_key());
-            recovered.dedup();
-            assert_eq!(
-                recovered.len() as u32,
-                per,
-                "history for script {tag} did not reassemble"
-            );
-        }
-    }
-
-    /// The inline events must be the *newest*, so a script that was recently
-    /// active needs no page query. Getting this backwards would make the common
-    /// case the expensive one.
-    #[test]
-    fn the_inline_events_are_the_newest_ones() {
-        let built = build(&fixture(1, 50));
-        let wanted = script(0);
-        let rows = DIRECTORY_ROWS as u64 * built.directory_segments() as u64;
-        let entry = candidate_rows(0, wanted.as_slice(), rows)
-            .iter()
-            .find_map(|row| {
-                decode_directory_row(built.directory_row(*row))
-                    .unwrap()
-                    .into_iter()
-                    .find(|entry| entry.tag == tag_for(wanted.as_slice()))
-            })
-            .expect("entry");
-        // Compare on the events' own total order rather than on height alone,
-        // since a shard's heights repeat across transactions.
-        let earliest_inline = entry
-            .inline
-            .iter()
-            .map(|event| event.sort_key())
-            .min()
-            .unwrap();
-        let fragment = fragment_of(
-            built.page_row(page_at(&entry)),
-            &tag_for(wanted.as_slice()),
-            0,
-        );
-        let latest_paged = fragment
-            .events
-            .iter()
-            .map(|event| event.sort_key())
-            .max()
-            .unwrap();
-        assert!(
-            latest_paged < earliest_inline,
-            "paged events should all precede the inline ones"
-        );
-    }
-
-    /// The public filter must match every script the shard indexed, or a wallet
-    /// would be told it had no activity in a shard that holds its history.
-    #[test]
-    fn the_filter_matches_every_script_the_shard_holds() {
-        let built = build(&fixture(200, 2));
-        let validated = validate_filter(built.filter.as_slice(), FilterLimits::default()).unwrap();
-        let key = ShardKey::derive(RANGE_PROFILE, genesis(), 0, 100, 200, terminal());
-        let scripts: Vec<ScriptBytes> = (0..200).map(script).collect();
-        let matched = transparent_filter::match_range_scripts(&validated, key, &scripts).unwrap();
-        assert_eq!(matched.len(), 200);
-    }
-
-    /// A script too long to index privately still belongs in the public filter.
-    /// Omitting it would report "no activity" to a wallet that has activity;
-    /// including it lets that wallet see a match and learn from the manifest
-    /// that it is outside coverage.
-    #[test]
-    fn an_unindexable_script_is_filtered_but_counted_as_excluded() {
-        let long = ScriptBytes::new(vec![0xab; MAX_SCRIPT_BYTES + 5]);
-        let mut events = fixture(2, 1);
-        events.push((long.clone(), event(100, 9_999)));
-        let built = build(&events);
-
-        assert_eq!(built.excluded_scripts, 1);
-        assert_eq!(
-            built.scripts, 2,
-            "only indexable scripts reach the directory"
-        );
-
-        let validated = validate_filter(built.filter.as_slice(), FilterLimits::default()).unwrap();
-        let key = ShardKey::derive(RANGE_PROFILE, genesis(), 0, 100, 200, terminal());
-        let matched = transparent_filter::match_range_scripts(&validated, key, &[long]).unwrap();
-        assert_eq!(
-            matched,
-            vec![0],
-            "the long script must still be in the filter"
-        );
-    }
-
-    /// Two operators with the same journal must produce identical bytes, or the
-    /// published digests stop being comparable and the design loses its only
-    /// cross-operator check.
-    #[test]
-    fn building_is_deterministic_regardless_of_input_order() {
-        let events = fixture(120, 3);
-        let forward = build(&events);
-        let mut shuffled = events.clone();
-        shuffled.reverse();
-        let reversed = build(&shuffled);
-
-        assert_eq!(forward.directory, reversed.directory);
-        assert_eq!(forward.pages, reversed.pages);
-        assert_eq!(forward.filter, reversed.filter);
-        assert_eq!(forward.tag_salt_counter, 0);
-    }
-
-    /// The salt is a function of the revision. Rebuilding the same revision
-    /// reproduces the bytes; a different terminal block does not.
-    #[test]
-    fn the_tag_salt_is_reproduced_by_a_rebuild_and_moves_with_the_terminal_block() {
-        let events = fixture(4, 2);
-        let once = build(&events);
-        let again = build(&events);
-        assert_eq!(once.tag_salt_counter, 0);
-        assert_eq!(once.directory, again.directory);
-
-        let moved = build_shard(
-            0,
-            100,
-            200,
-            genesis(),
-            BlockHash::from_internal_bytes([0x5b; 32]),
-            RANGE_PROFILE,
-            &RECENT_8K,
-            &events,
-        )
-        .unwrap();
-        assert_ne!(moved.directory, once.directory);
-    }
-
     /// A shard's bucket salt includes its id, so the same script sits in
     /// unrelated rows in different shards. An observer who learned one row
     /// would otherwise learn the script's row everywhere.
@@ -1579,23 +2034,6 @@ mod tests {
         assert_ne!(a, b);
     }
 
-    #[test]
-    fn events_outside_the_declared_range_are_refused() {
-        let events = vec![(script(0), event(500, 0))];
-        assert!(matches!(
-            build_shard(
-                0,
-                100,
-                200,
-                genesis(),
-                terminal(),
-                RANGE_PROFILE,
-                &RECENT_8K,
-                &events
-            ),
-            Err(BuildError::Invalid(_))
-        ));
-    }
     #[test]
     fn mixed_size_directory_placement_preserves_every_byte_budget() {
         let rows = 256u64;

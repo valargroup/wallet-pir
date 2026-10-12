@@ -41,6 +41,14 @@
 //! its content needs. The seal thresholds are per segment, so this changes
 //! nothing for ordinary shards — the block that overran a capacity is above
 //! every target too, so the shard closes immediately after it.
+//!
+//! # Which sealer publishes
+//!
+//! Published sets are sealed by [`DisplacementSealer`]: a directory shard
+//! with its own page shards, each table sized independently. [`Sealer`] seals
+//! a shard whose directory and pages close together, which no published
+//! schema uses any more; it remains as the census's model of coupled layouts,
+//! scored at the current page entry header.
 
 use crate::build::Placement;
 use crate::layout::{Geometry, PackedDemand};
@@ -52,9 +60,8 @@ use transparent_filter::ScriptBytes;
 
 mod displacement;
 pub use displacement::{
-    ChildOccupancy, DecoupledPolicy, DirectoryOccupancy, DisplacementSealer, SealedChild,
-    SealedDirectory, WatchedChain, WatchedRun, DECOUPLED_PAGE_ENTRY_HEADER_BYTES,
-    MAX_PAGE_CHILDREN,
+    ChildOccupancy, Closed, DecoupledPolicy, DirectoryOccupancy, DisplacementSealer, SealedChild,
+    SealedDirectory, WatchedChain, WatchedRun, MAX_PAGE_CHILDREN,
 };
 
 /// How full a shard is allowed to get.
@@ -860,28 +867,25 @@ impl Sealer {
 mod tests {
     use super::*;
 
-    /// The policy a geometry implies must be exactly what the publisher used to
-    /// spell out by hand, or moving the rule here would silently re-shard the
-    /// chain under the geometry that is already published.
+    /// The census targets: a seventh of scripts and directory bytes in
+    /// reserve, a thirty-second of page rows.
     #[test]
-    fn the_default_geometry_implies_the_policy_the_publisher_used() {
-        let policy = SealPolicy::for_geometry(&crate::layout::RECENT_8K);
-        assert_eq!(policy.scripts.capacity, 475_136);
-        assert_eq!(policy.scripts.target, 407_260);
-        assert_eq!(policy.page_rows.capacity, 8_192);
-        assert_eq!(policy.page_rows.target, 7_936);
-    }
-
-    /// The seal policy the deployment plan names for `recent-4k-8k`
-    /// (with separate directory-byte limits under v10) is the one
-    /// the geometry derives.
-    #[test]
-    fn the_recent_4k_8k_policy_is_the_one_deployment_names() {
-        let policy = SealPolicy::for_geometry(&crate::layout::RECENT_4K_8K);
-        assert_eq!(policy.scripts.target, 203_630);
-        assert_eq!(policy.scripts.capacity, 237_568);
-        assert_eq!(policy.page_rows.target, 7_936);
-        assert_eq!(policy.page_rows.capacity, 8_192);
+    fn the_decoupled_tiers_imply_the_census_targets() {
+        let recent = DecoupledPolicy::for_geometry(&crate::layout::DECOUPLED_2K_8K);
+        assert_eq!(recent.scripts.capacity, 118_784);
+        assert_eq!(recent.scripts.target, 101_815);
+        assert_eq!(recent.directory_bytes.capacity, 2_048 * 4_092);
+        assert_eq!(recent.directory_bytes.target, 2_048 * 4_092 - 2_048 * 4_092 / 7);
+        assert_eq!(recent.page_rows.capacity, 8_192);
+        assert_eq!(recent.page_rows.target, 7_936);
+        assert_eq!(recent.max_children, 32);
+        assert_eq!(recent.page_entry_header, 40);
+        let archive = DecoupledPolicy::for_geometry(&crate::layout::DECOUPLED_32K_32K);
+        assert_eq!(archive.scripts.capacity, 1_900_544);
+        assert_eq!(archive.directory_bytes.capacity, 32_768 * 4_092);
+        assert_eq!(archive.page_rows.capacity, 32_768);
+        assert_eq!(archive.page_rows.target, 31_744);
+        assert_eq!(archive.max_children, 32);
     }
 
     /// Every registry entry must imply a policy that is actually sealable:
@@ -913,8 +917,8 @@ mod tests {
     /// scaled only the pages would fill its directory first and waste them.
     #[test]
     fn a_wider_geometry_seals_later_in_both_tables() {
-        let recent = SealPolicy::for_geometry(&crate::layout::RECENT_8K);
-        let archive = SealPolicy::for_geometry(&crate::layout::ARCHIVE_WIDE);
+        let recent = SealPolicy::for_geometry(&crate::layout::DECOUPLED_2K_8K);
+        let archive = SealPolicy::for_geometry(&crate::layout::DECOUPLED_32K_32K);
         assert!(archive.scripts.target > recent.scripts.target);
         assert!(archive.page_rows.target > recent.page_rows.target);
     }
@@ -1161,10 +1165,10 @@ mod tests {
         assert_eq!(next_id, sealed.len() as u64);
 
         let mut recent = Sealer::resume(
-            SealPolicy::for_geometry(&crate::layout::RECENT_8K),
+            SealPolicy::for_geometry(&crate::layout::DECOUPLED_2K_8K),
             106,
             PageBasis::default(),
-            crate::layout::RECENT_8K,
+            crate::layout::DECOUPLED_2K_8K,
             next_id,
         );
         for offset in 0..3u64 {

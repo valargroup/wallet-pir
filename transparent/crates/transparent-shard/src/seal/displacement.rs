@@ -27,20 +27,13 @@
 use super::{Limit, SealError, SealPolicy, SealReason};
 use crate::build::Placement;
 use crate::compact;
-use crate::layout::{Geometry, PackedDemand};
+pub use crate::layout::MAX_PAGE_CHILDREN;
+use crate::layout::{Geometry, PackedDemand, PAGE_ENTRY_HEADER_BYTES};
 use crate::packing::{HistoryLayout, ROW_PAYLOAD};
 use crate::records::{DIRECTORY_ENTRY_HEADER_BYTES, DIRECTORY_ROW_HEADER_BYTES, MAX_SCRIPT_BYTES};
 use std::collections::{HashMap, HashSet};
 use transparent_events::TransparentEvent;
 use transparent_filter::ScriptBytes;
-
-/// Page shards one directory shard may hold. Bounds chain length (round
-/// trips), manifest size, publisher replay and catch-up cost; not entry size.
-pub const MAX_PAGE_CHILDREN: u32 = 32;
-
-/// Page entry header in the decoupled layout: today's 34 bytes plus the chain
-/// fields `prev_child u8 | prev_row u32 | older_runs u8`.
-pub const DECOUPLED_PAGE_ENTRY_HEADER_BYTES: usize = 40;
 
 /// The limits a decoupled pair seals under.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -54,9 +47,18 @@ pub struct DecoupledPolicy {
 }
 
 impl DecoupledPolicy {
-    /// The policy a geometry implies: its directory dimensions size D, its page
-    /// rows size every page shard, with the same reserves as [`SealPolicy`].
-    pub fn for_geometry(geometry: &Geometry, max_children: u32, page_entry_header: usize) -> Self {
+    /// The policy a published geometry implies: its directory dimensions size
+    /// D, its page rows size every page shard, with the same reserves as
+    /// [`SealPolicy`] (a seventh of scripts and directory bytes, a
+    /// thirty-second of page rows), [`MAX_PAGE_CHILDREN`] page shards and the
+    /// schema's page entry header.
+    pub fn for_geometry(geometry: &Geometry) -> Self {
+        Self::scoring(geometry, MAX_PAGE_CHILDREN, PAGE_ENTRY_HEADER_BYTES)
+    }
+
+    /// [`Self::for_geometry`] with another child limit or entry header, for a
+    /// census scoring a shape that is not published.
+    pub fn scoring(geometry: &Geometry, max_children: u32, page_entry_header: usize) -> Self {
         let coupled = SealPolicy::for_geometry(geometry);
         let bytes = geometry.directory_rows
             * (geometry.directory_row_bytes - DIRECTORY_ROW_HEADER_BYTES) as u64;
@@ -128,6 +130,19 @@ pub struct WatchedChain {
     pub runs: Vec<WatchedRun>,
 }
 
+/// A boundary the sealer decided, in the order it decided them.
+///
+/// A builder that follows the sealer consumes these as they happen, so it can
+/// lay out each page shard as soon as it seals rather than holding a whole
+/// directory shard's history: see [`DisplacementSealer::drain_closed`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Closed {
+    /// A page shard sealed. Its directory shard may still be open.
+    Child(SealedChild),
+    /// A directory shard closed, after its last page shard's [`Closed::Child`].
+    Directory(SealedDirectory),
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SealedDirectory {
     pub shard_id: u64,
@@ -192,6 +207,8 @@ pub struct DisplacementSealer {
     fragments: u64,
     paged_events: u64,
     child_start: Option<u64>,
+    /// Boundaries not yet drained, oldest first.
+    closed: Vec<Closed>,
 }
 
 impl DisplacementSealer {
@@ -222,7 +239,19 @@ impl DisplacementSealer {
             fragments: 0,
             paged_events: 0,
             child_start: None,
+            closed: Vec::new(),
         }
+    }
+
+    /// Every boundary decided since the last call, in order: each sealed page
+    /// shard, then its directory shard when that closed too.
+    pub fn drain_closed(&mut self) -> Vec<Closed> {
+        std::mem::take(&mut self.closed)
+    }
+
+    /// The page shard index the next absorbed block joins.
+    pub fn open_child(&self) -> u32 {
+        self.children.len() as u32
     }
 
     /// Reports each directory shard's real two-choice placement.
@@ -308,15 +337,18 @@ impl DisplacementSealer {
     fn project_child(&mut self, updates: &[Update]) -> Vec<(Vec<u8>, HistoryLayout)> {
         let payload = self.payload();
         let mut runs = Vec::new();
-        for update in updates.iter().filter(|update| !update.pushed.is_empty()) {
+        // A script too long for a directory entry is filtered publicly but
+        // never indexed, so it has no runs either.
+        for update in updates
+            .iter()
+            .filter(|update| !update.pushed.is_empty() && update.script.len() <= MAX_SCRIPT_BYTES)
+        {
             let old = self.runs.get(&update.script).cloned().unwrap_or_default();
             let mut run = old.clone();
             for event in &update.pushed {
                 run.push_with_payload(*event, 0, payload);
             }
-            if update.script.len() <= MAX_SCRIPT_BYTES {
-                self.demand.shift(&old, &run);
-            }
+            self.demand.shift(&old, &run);
             runs.push((update.script.clone(), run));
         }
         runs
@@ -324,11 +356,9 @@ impl DisplacementSealer {
 
     fn unproject_child(&mut self, runs: &[(Vec<u8>, HistoryLayout)]) {
         for (script, run) in runs {
-            if script.len() <= MAX_SCRIPT_BYTES {
-                let empty = HistoryLayout::default();
-                let old = self.runs.get(script).unwrap_or(&empty);
-                self.demand.shift(run, old);
-            }
+            let empty = HistoryLayout::default();
+            let old = self.runs.get(script).unwrap_or(&empty);
+            self.demand.shift(run, old);
         }
     }
 
@@ -379,6 +409,7 @@ impl DisplacementSealer {
         }
         for mut update in updates {
             if !update.pushed.is_empty()
+                && update.script.len() <= MAX_SCRIPT_BYTES
                 && self
                     .runs
                     .get(&update.script)
@@ -429,7 +460,7 @@ impl DisplacementSealer {
             PackedDemand::with_entry_header(self.policy.page_entry_header),
         );
         let end_height = self.last_height.expect("an open page shard has an end");
-        self.children.push(SealedChild {
+        let child = SealedChild {
             index,
             start_height,
             end_height,
@@ -442,7 +473,9 @@ impl DisplacementSealer {
                 demand,
             },
             reason,
-        });
+        };
+        self.closed.push(Closed::Child(child.clone()));
+        self.children.push(child);
         self.runs.clear();
         self.fragments = 0;
         self.paged_events = 0;
@@ -522,6 +555,7 @@ impl DisplacementSealer {
         self.directory_bytes = 0;
         self.inline_events = 0;
         self.events = 0;
+        self.closed.push(Closed::Directory(shard.clone()));
         shard
     }
 
@@ -614,7 +648,7 @@ impl DisplacementSealer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::layout::RECENT_8K;
+    use crate::layout::DECOUPLED_2K_8K;
     use transparent_events::{ReceiveEvent, SpendEvent, Txid};
 
     fn script(tag: u32) -> ScriptBytes {
@@ -666,11 +700,7 @@ mod tests {
         DecoupledPolicy {
             page_rows: Limit::new(page_rows.0, page_rows.1).unwrap(),
             max_children,
-            ..DecoupledPolicy::for_geometry(
-                &RECENT_8K,
-                max_children,
-                DECOUPLED_PAGE_ENTRY_HEADER_BYTES,
-            )
+            ..DecoupledPolicy::for_geometry(&DECOUPLED_2K_8K)
         }
     }
 
@@ -682,7 +712,7 @@ mod tests {
         watched: &[u32],
     ) -> Vec<SealedDirectory> {
         let first = blocks[0].0;
-        let mut sealer = DisplacementSealer::new(policy, RECENT_8K, first, 0);
+        let mut sealer = DisplacementSealer::new(policy, DECOUPLED_2K_8K, first, 0);
         sealer.watch(
             watched
                 .iter()

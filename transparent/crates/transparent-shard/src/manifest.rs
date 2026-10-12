@@ -11,6 +11,17 @@
 //! establish that the indexer included every event — that stays a separate
 //! trust decision.
 //!
+//! # Directory shards and their page shards
+//!
+//! A shard is a *directory shard*: one directory table over its whole range,
+//! and up to [`crate::layout::MAX_PAGE_CHILDREN`] page shards, each its own
+//! table over a consecutive part of the range. The manifest lists the page
+//! shards as [`PageChild`] entries. The directory shard is the only lineage:
+//! revisions, staleness and routing are per directory shard, and a page
+//! shard is addressed as the table `pages-<j>` of a directory shard revision.
+//! A sealed page shard never changes, so it appears unchanged in every later
+//! revision of its directory shard, and its [`PageChild::digest`] is stable.
+//!
 //! # Revisions
 //!
 //! A shard is *open* while it is being built, which is not a published state.
@@ -27,10 +38,28 @@ use sha2::{Digest, Sha256};
 ///
 /// An opaque string, refused rather than guessed at: a shard whose entry or
 /// page encoding changed would decode to plausible nonsense instead of failing.
-pub const LEGACY_SCHEMA: &str = "transparent-shard-v10";
-pub const SCHEMA: &str = "transparent-shard-v11";
+pub const SCHEMA: &str = "transparent-shard-v12";
 pub fn supported_schema(schema: &str) -> bool {
-    schema == SCHEMA || schema == LEGACY_SCHEMA
+    schema == SCHEMA
+}
+
+/// The table name a query addresses for page shard `child`.
+pub fn pages_table(child: u32) -> String {
+    format!("pages-{child}")
+}
+
+/// The page shard a `pages-<j>` table name addresses, or `None` for any
+/// other name. Leading zeros and signs are refused, so one table has one name.
+pub fn parse_pages_table(name: &str) -> Option<u32> {
+    let digits = name.strip_prefix("pages-")?;
+    if digits.is_empty()
+        || !digits.bytes().all(|b| b.is_ascii_digit())
+        || digits.len() > 1 && digits.starts_with('0')
+    {
+        return None;
+    }
+    let child: u32 = digits.parse().ok()?;
+    (child < crate::layout::MAX_PAGE_CHILDREN).then_some(child)
 }
 
 /// Geometry and digest of one table.
@@ -47,10 +76,11 @@ pub struct TableGeometry {
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct ManifestOccupancy {
     pub scripts: u64,
-    /// Page rows the shard's tables hold, after packing.
+    /// Page rows across every page shard, after packing.
     pub page_rows: u64,
-    /// Fragments across every indexed history, which is what a wallet's page
-    /// queries count. Larger than `page_rows`, because short histories share.
+    /// Fragments across every run in every page shard, which is what a
+    /// wallet's page queries count. Larger than `page_rows`, because short
+    /// runs share rows.
     pub fragments: u64,
     pub events: u64,
     pub blocks: u64,
@@ -99,12 +129,98 @@ impl ManifestLayout {
 }
 
 /// Seal parameters, as schema rather than tuning.
+///
+/// The directory limits close the directory shard; the page-row limits close
+/// each page shard inside it; `max_page_children` closes the directory shard
+/// with its last page shard.
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct ManifestSeal {
     pub scripts_target: u64,
     pub scripts_capacity: u64,
+    pub directory_bytes_target: u64,
+    pub directory_bytes_capacity: u64,
     pub page_rows_target: u64,
     pub page_rows_capacity: u64,
+    pub max_page_children: u32,
+}
+
+/// What one page shard holds.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct PageChildOccupancy {
+    /// Page rows the page shard's table holds, after packing.
+    pub page_rows: u64,
+    /// Fragments across every run it holds.
+    pub fragments: u64,
+    /// Scripts with a run in it.
+    pub runs: u64,
+    /// Events pushed into it.
+    pub events: u64,
+}
+
+/// One page shard of a directory shard.
+///
+/// Its tags are salted with [`crate::tag::page_tag_salt`] over its own end
+/// height and terminal block, never the directory shard's, so a sealed page
+/// shard keeps its bytes while the directory shard around it grows.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct PageChild {
+    /// Position `j` within the directory shard; the table is `pages-<j>`.
+    pub index: u32,
+    pub start_height: u64,
+    pub end_height: u64,
+    /// The block at `end_height`, in display hex.
+    pub terminal_block_hash: String,
+    /// Counter mixed into this page shard's tag salt.
+    pub tag_salt_counter: u32,
+    /// False only for the page shard still open in a tail revision.
+    pub sealed: bool,
+    /// One entry per segment, in segment order. Empty when the page shard
+    /// holds no rows: nothing can point into it, so nothing is queried.
+    pub page_segments: Vec<TableGeometry>,
+    pub occupancy: PageChildOccupancy,
+}
+
+/// Domain for a page shard's identity.
+pub const PAGE_CHILD_DOMAIN: &[u8] = b"transparent-shard-page-child-v1\0";
+
+impl PageChild {
+    /// Rows a query of this page shard selects over.
+    ///
+    /// For a page shard in one segment, the rows it holds rounded up to whole
+    /// [`QUERY_ROW_QUANTUM`] blocks: page rows are written from row zero and
+    /// every later row is zero, so the selection coefficients a wallet omits
+    /// cannot change the answer. Sealed or open alike, since a sealed page
+    /// shard's rows are fixed. A multi-segment page shard's query, which every
+    /// segment answers, selects over each whole segment. Only digest-bound
+    /// fields decide it, so wallet and server derive the same count, and it
+    /// never depends on the row a query selects.
+    pub fn query_rows(&self) -> u64 {
+        let full = self.page_segments.first().map_or(0, |segment| segment.rows);
+        if self.page_segments.len() != 1 {
+            return full;
+        }
+        self.occupancy
+            .page_rows
+            .max(1)
+            .next_multiple_of(QUERY_ROW_QUANTUM)
+            .min(full)
+    }
+
+    /// This page shard's identity, chained to everything before it.
+    ///
+    /// `previous` is the identity of page shard `index - 1`, or for page shard
+    /// zero the identity of the directory shard's position: its shard id,
+    /// start, parent block and parent manifest. Chaining is what lets a wallet
+    /// treat a cached run as final: equal identities mean this page shard and
+    /// every older one in the directory shard are unchanged, so nothing a run
+    /// points back to can have moved.
+    pub fn digest(&self, previous: &[u8; 32]) -> [u8; 32] {
+        let mut hasher = Sha256::new();
+        hasher.update(PAGE_CHILD_DOMAIN);
+        hasher.update(previous);
+        hasher.update(serde_json::to_vec(self).expect("a page child serializes"));
+        hasher.finalize().into()
+    }
 }
 
 /// One shard's complete public description.
@@ -177,9 +293,11 @@ pub struct ShardManifest {
     /// a shard cannot gain, lose or reorder a segment without becoming a
     /// different shard.
     pub directory_segments: Vec<TableGeometry>,
-    /// One entry per pages segment, in segment order. The segments concatenate
-    /// into the shard's page space, which a directory extent indexes.
-    pub page_segments: Vec<TableGeometry>,
+    /// The page shards, in order: consecutive ranges tiling this shard's.
+    ///
+    /// Every page shard but the last is sealed; the last is sealed when this
+    /// shard is. A directory entry names one of these by index.
+    pub page_children: Vec<PageChild>,
     pub occupancy: ManifestOccupancy,
     /// The shard's directory choice table, base64 encoded, if it publishes one.
     ///
@@ -243,32 +361,95 @@ impl ShardManifest {
         Ok(Some(table))
     }
 
-    /// Rows a pages query selects over.
-    ///
-    /// For an unsealed current-schema tail in one segment, the page rows it
-    /// holds rounded up to whole [`QUERY_ROW_QUANTUM`] blocks: page rows are
-    /// appended from row zero and every later row is zero, so the selection
-    /// coefficients a wallet omits cannot change the answer. Every other shard
-    /// selects over a whole segment, so sealed shards of one geometry keep
-    /// uploads of one length, and a multi-segment shard's query, which every
-    /// segment answers, covers each segment's rows. Only digest-bound fields
-    /// decide it, so wallet and server derive the same count, and it never
-    /// depends on the row a query selects.
-    pub fn pages_query_rows(&self) -> u64 {
-        let full = self.page_segments.first().map_or(0, |segment| segment.rows);
-        if self.sealed || self.schema != SCHEMA || self.page_segments.len() != 1 {
-            return full;
+    /// The page shard `child`, if the shard declares it.
+    pub fn child(&self, child: u32) -> Option<&PageChild> {
+        self.page_children.get(child as usize)
+    }
+
+    /// The chained identity of every page shard, in order; see
+    /// [`PageChild::digest`].
+    pub fn child_digests(&self) -> Vec<[u8; 32]> {
+        let mut previous: [u8; 32] = {
+            let mut hasher = Sha256::new();
+            hasher.update(PAGE_CHILD_DOMAIN);
+            hasher.update(self.shard_id.to_le_bytes());
+            hasher.update(self.start_height.to_le_bytes());
+            hasher.update(self.parent_block_hash.as_bytes());
+            hasher.update(b"\0");
+            hasher.update(self.parent_manifest_digest.as_bytes());
+            hasher.finalize().into()
+        };
+        self.page_children
+            .iter()
+            .map(|child| {
+                previous = child.digest(&previous);
+                previous
+            })
+            .collect()
+    }
+
+    /// Checks the page shard list against the shard: contiguous ranges tiling
+    /// the shard's, indices in order, at most `max_page_children`, every one
+    /// sealed but an open last one of an unsealed shard, the last ending on
+    /// the shard's terminal block, rows consistent with segments, and every
+    /// segment shaped `page_rows` x `page_row_bytes`.
+    pub fn check_children(&self, page_rows: u64, page_row_bytes: u32) -> Result<(), String> {
+        let children = &self.page_children;
+        if children.is_empty() {
+            return Err("declares no page shards".into());
         }
-        self.occupancy
-            .page_rows
-            .max(1)
-            .next_multiple_of(QUERY_ROW_QUANTUM)
-            .min(full)
+        if children.len() as u64 > u64::from(self.seal.max_page_children)
+            || children.len() as u64 > u64::from(crate::layout::MAX_PAGE_CHILDREN)
+        {
+            return Err(format!("declares {} page shards", children.len()));
+        }
+        let mut next = self.start_height;
+        for (index, child) in children.iter().enumerate() {
+            let last = index + 1 == children.len();
+            if child.index != index as u32 {
+                return Err(format!("page shard {index} is numbered {}", child.index));
+            }
+            if child.start_height != next || child.end_height < child.start_height {
+                return Err(format!("page shard {index} does not continue the range"));
+            }
+            next = child.end_height + 1;
+            if !child.sealed && (!last || self.sealed) {
+                return Err(format!("page shard {index} is open"));
+            }
+            if child.tag_salt_counter > crate::tag::MAX_TAG_SALT_COUNTER {
+                return Err(format!("page shard {index} tag salt counter"));
+            }
+            for segment in &child.page_segments {
+                if segment.rows != page_rows || segment.row_bytes != page_row_bytes {
+                    return Err(format!("page shard {index} segment shape"));
+                }
+            }
+            let capacity = child.page_segments.len() as u64 * page_rows;
+            if child.occupancy.page_rows > capacity
+                || (child.occupancy.page_rows == 0) != child.page_segments.is_empty()
+                || child.page_segments.len() > 1
+                    && child.occupancy.page_rows <= capacity - page_rows
+            {
+                return Err(format!("page shard {index} rows disagree with its segments"));
+            }
+            if last && child.terminal_block_hash != self.terminal_block_hash {
+                return Err("the last page shard does not end on the shard's terminal".into());
+            }
+        }
+        if next != self.end_height + 1 {
+            return Err("page shards do not cover the shard's range".into());
+        }
+        let rows: u64 = children.iter().map(|c| c.occupancy.page_rows).sum();
+        let fragments: u64 = children.iter().map(|c| c.occupancy.fragments).sum();
+        if rows != self.occupancy.page_rows || fragments != self.occupancy.fragments {
+            return Err("page shard occupancy disagrees with the shard's".into());
+        }
+        Ok(())
     }
 }
 
-/// Pages queries of a growing tail select over whole blocks of this many rows:
-/// the native ring degree.
+/// Pages queries select over whole blocks of this many rows: the native ring
+/// degree.
 pub const QUERY_ROW_QUANTUM: u64 = 2048;
 
 /// The manifest field for a choice table.
@@ -370,7 +551,7 @@ mod tests {
         ShardManifest {
             schema: SCHEMA.to_string(),
             profile: "zcash-transparent-range-v1".to_string(),
-            geometry: "recent-8k".to_string(),
+            geometry: "decoupled-2k-8k".to_string(),
             network: "main".to_string(),
             genesis_hash: "00".repeat(32),
             shard_id: 3,
@@ -386,15 +567,18 @@ mod tests {
             seal: ManifestSeal {
                 scripts_target: 8_192,
                 scripts_capacity: 16_384,
+                directory_bytes_target: 7_000_000,
+                directory_bytes_capacity: 8_000_000,
                 page_rows_target: 2_048,
                 page_rows_capacity: 4_096,
+                max_page_children: 32,
             },
             layout: ManifestLayout {
                 max_script_bytes: 40,
                 inline_events: 2,
                 events_per_page: crate::EVENTS_PER_PAGE,
                 page_row_header_bytes: 4,
-                page_entry_header_bytes: 34,
+                page_entry_header_bytes: 40,
                 directory_choices: 2,
             },
             filter_hash: "44".repeat(32),
@@ -403,11 +587,10 @@ mod tests {
                 row_bytes: 4_096,
                 sha256: "55".repeat(32),
             }],
-            page_segments: vec![TableGeometry {
-                rows: 4_096,
-                row_bytes: 4_096,
-                sha256: "66".repeat(32),
-            }],
+            page_children: vec![
+                child(0, 3_428_143, 3_429_000, "77", 1_000, 1_500),
+                child(1, 3_429_001, 3_430_000, "22", 879, 1_704),
+            ],
             occupancy: ManifestOccupancy {
                 scripts: 8_193,
                 page_rows: 1_879,
@@ -418,6 +601,35 @@ mod tests {
                 excluded_scripts: 0,
             },
             directory_choice: None,
+        }
+    }
+
+    fn child(
+        index: u32,
+        start_height: u64,
+        end_height: u64,
+        terminal: &str,
+        page_rows: u64,
+        fragments: u64,
+    ) -> PageChild {
+        PageChild {
+            index,
+            start_height,
+            end_height,
+            terminal_block_hash: terminal.repeat(32),
+            tag_salt_counter: 0,
+            sealed: true,
+            page_segments: vec![TableGeometry {
+                rows: 4_096,
+                row_bytes: 4_096,
+                sha256: format!("{:02x}", 0x66 + index).repeat(32),
+            }],
+            occupancy: PageChildOccupancy {
+                page_rows,
+                fragments,
+                runs: 10,
+                events: 20,
+            },
         }
     }
 
@@ -434,34 +646,124 @@ mod tests {
         }
     }
 
-    /// Only an unsealed current-schema tail in one segment selects over fewer
-    /// rows than a segment holds, and then over whole blocks covering every
-    /// page row it holds.
+    /// A page shard in one segment selects over whole blocks covering every
+    /// row it holds, sealed or open; a multi-segment one over whole segments.
     #[test]
-    fn only_a_growing_single_segment_tail_selects_a_prefix() {
-        let mut tail = manifest();
-        tail.sealed = false;
-        for (page_rows, rows) in [
-            (0, 2_048),
-            (1, 2_048),
-            (1_879, 2_048),
-            (2_048, 2_048),
-            (2_049, 4_096),
-            (4_096, 4_096),
-        ] {
-            tail.occupancy.page_rows = page_rows;
-            assert_eq!(tail.pages_query_rows(), rows, "{page_rows}");
+    fn a_single_segment_page_shard_selects_a_prefix() {
+        let mut page = manifest().page_children[1].clone();
+        for sealed in [true, false] {
+            page.sealed = sealed;
+            for (page_rows, rows) in [
+                (0, 2_048),
+                (1, 2_048),
+                (1_879, 2_048),
+                (2_048, 2_048),
+                (2_049, 4_096),
+                (4_096, 4_096),
+            ] {
+                page.occupancy.page_rows = page_rows;
+                assert_eq!(page.query_rows(), rows, "{page_rows}");
+            }
         }
-        tail.occupancy.page_rows = 1_879;
-        assert_eq!(manifest().pages_query_rows(), 4_096);
-        let mut legacy = tail.clone();
-        legacy.schema = LEGACY_SCHEMA.to_string();
-        assert_eq!(legacy.pages_query_rows(), 4_096);
-        let mut segmented = tail.clone();
+        page.occupancy.page_rows = 1_879;
+        let mut segmented = page.clone();
         segmented
             .page_segments
             .push(segmented.page_segments[0].clone());
-        assert_eq!(segmented.pages_query_rows(), 4_096);
+        assert_eq!(segmented.query_rows(), 4_096);
+        segmented.page_segments.clear();
+        assert_eq!(segmented.query_rows(), 0);
+    }
+
+    #[test]
+    fn a_pages_table_has_one_name() {
+        assert_eq!(pages_table(0), "pages-0");
+        assert_eq!(pages_table(31), "pages-31");
+        assert_eq!(parse_pages_table("pages-0"), Some(0));
+        assert_eq!(parse_pages_table("pages-31"), Some(31));
+        for bad in ["pages", "pages-", "pages-01", "pages-+1", "pages-32", "pages--1", "directory"] {
+            assert_eq!(parse_pages_table(bad), None, "{bad}");
+        }
+    }
+
+    /// The page shard list must tile the directory shard, in order, with only
+    /// an unsealed shard's last page shard open.
+    #[test]
+    fn page_children_must_tile_the_shard() {
+        manifest().check_children(4_096, 4_096).unwrap();
+        type Mutation = Box<dyn Fn(&mut ShardManifest)>;
+        let mutations: Vec<Mutation> = vec![
+            Box::new(|m| m.page_children.clear()),
+            Box::new(|m| m.page_children[1].index = 2),
+            Box::new(|m| m.page_children[1].start_height += 1),
+            Box::new(|m| m.page_children[1].end_height -= 1),
+            Box::new(|m| m.page_children[0].sealed = false),
+            Box::new(|m| m.page_children[1].sealed = false),
+            Box::new(|m| m.page_children[1].terminal_block_hash = "99".repeat(32)),
+            Box::new(|m| m.page_children[0].page_segments.clear()),
+            Box::new(|m| m.page_children[0].occupancy.page_rows = 5_000),
+            Box::new(|m| m.page_children[0].page_segments[0].rows = 8_192),
+            Box::new(|m| m.occupancy.fragments += 1),
+            Box::new(|m| m.seal.max_page_children = 1),
+            Box::new(|m| m.page_children[0].tag_salt_counter = 99),
+        ];
+        for (index, mutate) in mutations.iter().enumerate() {
+            let mut changed = manifest();
+            mutate(&mut changed);
+            assert!(
+                changed.check_children(4_096, 4_096).is_err(),
+                "mutation {index} was accepted"
+            );
+        }
+        // The last page shard of a tail may be open, and an empty one has no
+        // segments.
+        let mut tail = manifest();
+        tail.sealed = false;
+        tail.page_children[1].sealed = false;
+        tail.check_children(4_096, 4_096).unwrap();
+        tail.page_children[1].page_segments.clear();
+        tail.occupancy.page_rows -= tail.page_children[1].occupancy.page_rows;
+        tail.page_children[1].occupancy.page_rows = 0;
+        tail.check_children(4_096, 4_096).unwrap();
+    }
+
+    /// A page shard's identity chains through every older one and the
+    /// directory shard's position, and ignores the directory shard's own
+    /// growth: a sealed page shard keeps its identity across revisions.
+    #[test]
+    fn page_shard_identities_chain_and_survive_tail_growth() {
+        let base = manifest();
+        let digests = base.child_digests();
+        assert_eq!(digests.len(), 2);
+        assert_ne!(digests[0], digests[1]);
+
+        let mut grown = base.clone();
+        grown.revision += 1;
+        grown.end_height += 5;
+        grown.terminal_block_hash = "88".repeat(32);
+        grown.directory_segments[0].sha256 = "99".repeat(32);
+        grown.page_children[1].end_height += 5;
+        grown.page_children[1].terminal_block_hash = "88".repeat(32);
+        let regrown = grown.child_digests();
+        assert_eq!(regrown[0], digests[0], "the sealed page shard is unchanged");
+        assert_ne!(regrown[1], digests[1]);
+
+        let mut moved = base.clone();
+        moved.page_children[0].page_segments[0].sha256 = "aa".repeat(32);
+        let moved = moved.child_digests();
+        assert_ne!(moved[0], digests[0]);
+        assert_ne!(moved[1], digests[1], "a change below moves every identity above");
+
+        for mutate in [
+            |m: &mut ShardManifest| m.shard_id += 1,
+            |m: &mut ShardManifest| m.start_height += 1,
+            |m: &mut ShardManifest| m.parent_block_hash = "aa".repeat(32),
+            |m: &mut ShardManifest| m.parent_manifest_digest = "aa".repeat(32),
+        ] {
+            let mut other = base.clone();
+            mutate(&mut other);
+            assert_ne!(other.child_digests()[0], digests[0]);
+        }
     }
 
     /// A first publication supersedes nothing.
@@ -563,7 +865,11 @@ mod tests {
             Box::new(|m| m.supersedes = "99".repeat(32)),
             Box::new(|m| m.filter_hash = "99".repeat(32)),
             Box::new(|m| m.directory_segments[0].sha256 = "99".repeat(32)),
-            Box::new(|m| m.page_segments[0].sha256 = "99".repeat(32)),
+            Box::new(|m| m.page_children[0].page_segments[0].sha256 = "99".repeat(32)),
+            Box::new(|m| m.page_children[1].tag_salt_counter += 1),
+            Box::new(|m| m.page_children[1].occupancy.runs += 1),
+            Box::new(|m| m.seal.max_page_children += 1),
+            Box::new(|m| m.seal.directory_bytes_target += 1),
             Box::new(|m| m.directory_segments[0].rows += 1),
             // A shard cannot gain a segment without becoming a different
             // shard: the segment list is what a wallet asks every segment of.
@@ -572,8 +878,11 @@ mod tests {
                 m.directory_segments.push(extra);
             }),
             Box::new(|m| {
-                let extra = m.page_segments[0].clone();
-                m.page_segments.push(extra);
+                let extra = m.page_children[0].page_segments[0].clone();
+                m.page_children[0].page_segments.push(extra);
+            }),
+            Box::new(|m| {
+                m.page_children.pop();
             }),
             Box::new(|m| m.seal.scripts_target += 1),
             Box::new(|m| m.layout.inline_events += 1),
