@@ -1,7 +1,7 @@
 # Receiver directory
 
 The receiver directory lets a restored wallet find Ironwood payments to keys it
-cannot rescan for, such as its dynamic IVK refund and incoming keys. It maps each
+cannot rescan for, such as its one-time IVK refund and incoming keys. It maps each
 canonical 43-byte Ironwood receiver to the payments recoverable with the all-zero
 outgoing viewing key (OVK). Coinbase recipients are excluded. Every Ironwood
 Action still counts toward note positions, including coinbase and unrecoverable
