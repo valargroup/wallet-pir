@@ -360,8 +360,9 @@ mod tests {
         assert_eq!(DECOUPLED_2K_8K.page_bytes_per_segment(), 33_554_432);
         assert_eq!(DECOUPLED_32K_32K.directory_bytes_per_segment(), 134_217_728);
         assert_eq!(DECOUPLED_32K_32K.page_bytes_per_segment(), 134_217_728);
-        // The child index has five bits in a directory entry.
-        assert!(MAX_PAGE_CHILDREN <= 32);
+        // The child index has five bits in a directory entry; records.rs
+        // checks that at compile time.
+        assert_eq!(MAX_PAGE_CHILDREN, 32);
     }
 
     /// A width the scheme *would* serve is still refused for publication,
@@ -421,7 +422,10 @@ mod tests {
             directory_rows: 4_096,
             ..Default::default()
         };
-        assert_eq!(g.directory_capacity(), 2 * Geometry::default().directory_capacity());
+        assert_eq!(
+            g.directory_capacity(),
+            2 * Geometry::default().directory_capacity()
+        );
         assert_eq!(g.directory_bytes_per_segment(), 16_777_216);
         g.validate()
             .expect("a multiple of the poly length is servable");

@@ -142,7 +142,6 @@ fn write_shard(
     .1
 }
 
-
 /// Publishes a two-geometry set: an earlier sealed shard, then an unsealed tail.
 ///
 /// `check_shape` refuses a sealed shard after an unsealed one, so the tail is

@@ -355,7 +355,11 @@ fn main() -> Result<(), BoxError> {
             // what is checked is that the tables are a function of the events
             // and those boundaries. That the sealer would choose the same
             // boundaries is the publisher's own check.
-            let child_ends: Vec<u64> = manifest.page_children.iter().map(|c| c.end_height).collect();
+            let child_ends: Vec<u64> = manifest
+                .page_children
+                .iter()
+                .map(|c| c.end_height)
+                .collect();
             let mut terminals = std::collections::BTreeMap::new();
             for child in &manifest.page_children {
                 terminals.insert(

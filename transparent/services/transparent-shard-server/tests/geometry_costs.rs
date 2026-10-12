@@ -18,7 +18,7 @@
 use transparent_native::{
     dithered_request_len, request_len, BLOCK_PUBLIC_BYTES, BLOCK_RESPONSE_BYTES, KEY_BYTES,
 };
-use transparent_shard::layout::{Geometry, PROFILES, DECOUPLED_2K_8K};
+use transparent_shard::layout::{Geometry, DECOUPLED_2K_8K, PROFILES};
 use transparent_shard::PAGE_ROW_BYTES;
 use transparent_shard_server::runtime::SharedParams;
 

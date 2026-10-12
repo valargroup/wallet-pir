@@ -1006,7 +1006,11 @@ async fn a_page_shards_prefix_query_is_answered_as_its_full_one() {
     assert_eq!(body.len(), 8 + transparent_native::request_len(query_rows));
     let (status, response) = post(&f.state, &path, body).await;
     assert_eq!(status, StatusCode::OK);
-    let published = shard.segment(TableRef::Pages(0), 0).unwrap().load().unwrap();
+    let published = shard
+        .segment(TableRef::Pages(0), 0)
+        .unwrap()
+        .load()
+        .unwrap();
     assert_eq!(
         profile.decode(&secret, &public, &response[16..]).unwrap(),
         raw_row(&published, GEOMETRY.page_row_bytes, 3)
@@ -1030,14 +1034,12 @@ async fn only_page_shards_take_a_prefix_and_only_their_own() {
     // selection does not exist, so only the page shard's other prefix is a
     // length to refuse here.
     assert_eq!(query_rows, Table::Directory.rows(&GEOMETRY) as usize);
-    for (shard_id, revision, table, rows) in [
-        (
-            tail,
-            tail_revision.as_str(),
-            TableRef::Pages(0),
-            query_rows + transparent_native::D,
-        ),
-    ] {
+    for (shard_id, revision, table, rows) in [(
+        tail,
+        tail_revision.as_str(),
+        TableRef::Pages(0),
+        query_rows + transparent_native::D,
+    )] {
         let (status, raw) = post(
             &f.state,
             &format!(

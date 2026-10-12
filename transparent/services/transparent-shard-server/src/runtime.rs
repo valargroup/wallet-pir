@@ -1233,7 +1233,7 @@ pub(crate) mod tests {
 
     use super::*;
     use transparent_shard::display::TXID_2K8;
-    use transparent_shard::layout::{DECOUPLED_32K_32K, DECOUPLED_2K_8K};
+    use transparent_shard::layout::{DECOUPLED_2K_8K, DECOUPLED_32K_32K};
 
     fn reservation(rows: u64, row_bytes: usize) -> u64 {
         reserved_bytes(rows, row_bytes as u32)
@@ -1523,7 +1523,10 @@ pub(crate) mod tests {
     #[test]
     fn only_the_database_term_follows_the_row_count() {
         let narrow = reservation(DECOUPLED_2K_8K.page_rows, DECOUPLED_2K_8K.page_row_bytes);
-        let wide = reservation(DECOUPLED_32K_32K.page_rows, DECOUPLED_32K_32K.page_row_bytes);
+        let wide = reservation(
+            DECOUPLED_32K_32K.page_rows,
+            DECOUPLED_32K_32K.page_row_bytes,
+        );
         let fixed = narrow - DECOUPLED_2K_8K.page_rows * DECOUPLED_2K_8K.page_row_bytes as u64;
         let ratio = DECOUPLED_32K_32K.page_rows / DECOUPLED_2K_8K.page_rows;
         assert_eq!(wide - fixed, (narrow - fixed) * ratio);

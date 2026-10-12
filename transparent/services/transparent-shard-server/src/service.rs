@@ -647,7 +647,11 @@ impl ServiceState {
         })?;
         // A page shard's runtime is keyed by its own identity, so a sealed
         // one is shared by every revision of its directory shard.
-        let key = (shard.runtime_identity(table).to_string(), table.kind(), segment);
+        let key = (
+            shard.runtime_identity(table).to_string(),
+            table.kind(),
+            segment,
+        );
         self.inner
             .cache
             .get(key, self.shared(shard, table.kind()), source)

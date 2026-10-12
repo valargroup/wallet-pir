@@ -325,7 +325,10 @@ fn write_shard(
         events,
     );
     let (built, children) = (&prepared.0, &prepared.1);
-    let page_children: Vec<_> = children.iter().map(|child| child.describe(geometry)).collect();
+    let page_children: Vec<_> = children
+        .iter()
+        .map(|child| child.describe(geometry))
+        .collect();
     let manifest = ShardManifest {
         schema: SCHEMA.to_string(),
         profile: transparent_filter::RANGE_PROFILE.to_string(),

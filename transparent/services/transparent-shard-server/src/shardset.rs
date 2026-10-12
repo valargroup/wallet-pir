@@ -612,7 +612,8 @@ impl LoadedShard {
                       zero_from_row: u64|
          -> Result<SegmentSource, LoadError> {
             let kind = table.kind();
-            if published.rows != kind.rows(geometry) || published.row_bytes != kind.row_bytes(geometry)
+            if published.rows != kind.rows(geometry)
+                || published.row_bytes != kind.row_bytes(geometry)
             {
                 return Err(LoadError::Invalid(format!(
                     "{} segment {index} of shard {} is {}x{} but geometry {} is {}x{}",
@@ -645,9 +646,7 @@ impl LoadedShard {
             .directory_segments
             .iter()
             .enumerate()
-            .map(|(index, published)| {
-                source(TableRef::Directory, index, published, published.rows)
-            })
+            .map(|(index, published)| source(TableRef::Directory, index, published, published.rows))
             .collect::<Result<Vec<_>, _>>()?;
         let identities = manifest.child_digests();
         let mut children = Vec::with_capacity(manifest.page_children.len());
@@ -709,7 +708,7 @@ fn verify_choice_routes(
                 raw,
                 manifest.page_children.len() as u32,
             )
-                .map_err(|error| invalid(format!("directory row {row}: {error}")))?;
+            .map_err(|error| invalid(format!("directory row {row}: {error}")))?;
             // Rows carry script tags, not raw scripts, so the route each
             // script took cannot be recomputed here. The builder checks every
             // route against the encoded rows before publication, while it
@@ -1218,7 +1217,10 @@ fn reuse_linked(old: &LoadedShard, dir: &Path) -> Option<LoadedShard> {
     let mut shard = old.clone();
     // Every table, display included: a source left pointing into the old
     // directory fails its next cold build once that directory is collected.
-    let pages = shard.children.iter_mut().flat_map(|child| child.segments.iter_mut());
+    let pages = shard
+        .children
+        .iter_mut()
+        .flat_map(|child| child.segments.iter_mut());
     for source in shard.directory.iter_mut().chain(pages) {
         let next = dir.join(source.path.file_name()?);
         let a = std::fs::metadata(&source.path).ok()?;

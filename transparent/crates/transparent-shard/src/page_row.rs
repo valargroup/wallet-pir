@@ -192,9 +192,7 @@ pub fn encode_page_row(entries: &[PageEntry]) -> Result<Vec<u8>, RecordError> {
         if entry.events.is_empty() || entry.events.len() > EVENTS_PER_PAGE as usize {
             return Err(RecordError::TooManyEvents(entry.events.len()));
         }
-        if !entry.link.is_well_formed()
-            || entry.ordinal != 0 && entry.link != RunLink::default()
-        {
+        if !entry.link.is_well_formed() || entry.ordinal != 0 && entry.link != RunLink::default() {
             return Err(RecordError::Malformed(
                 "a fragment carries a malformed run link".into(),
             ));
@@ -568,7 +566,9 @@ mod tests {
     }
 
     fn linked(tag: u8, events: u32, link: RunLink) -> PageEntry {
-        entry(tag, events).with_link(link).expect("a first fragment may link")
+        entry(tag, events)
+            .with_link(link)
+            .expect("a first fragment may link")
     }
 
     /// A first fragment's link round-trips in the header, at the documented

@@ -875,7 +875,10 @@ mod tests {
         assert_eq!(recent.scripts.capacity, 118_784);
         assert_eq!(recent.scripts.target, 101_815);
         assert_eq!(recent.directory_bytes.capacity, 2_048 * 4_092);
-        assert_eq!(recent.directory_bytes.target, 2_048 * 4_092 - 2_048 * 4_092 / 7);
+        assert_eq!(
+            recent.directory_bytes.target,
+            2_048 * 4_092 - 2_048 * 4_092 / 7
+        );
         assert_eq!(recent.page_rows.capacity, 8_192);
         assert_eq!(recent.page_rows.target, 7_936);
         assert_eq!(recent.max_children, 32);

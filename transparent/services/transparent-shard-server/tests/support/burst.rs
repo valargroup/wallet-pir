@@ -43,70 +43,71 @@ async fn publication_burst_under_exact_load() {
     let root = tempfile::tempdir().unwrap();
     let fixture = std::env::var("TRANSPARENT_BURST_FIXTURE").ok();
     let mut publications = Vec::new();
-    let (options, query_root, query_shard, final_height, assigned_count) =
-        if let Some(path) = &fixture {
-            let path = std::path::PathBuf::from(path).canonicalize().unwrap();
-            let base = path.parent().unwrap();
-            let value: serde_json::Value =
-                serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-            for item in value["publications"].as_array().unwrap() {
-                publications.push(Publication {
-                    directory: base.join(item["directory"].as_str().unwrap()),
-                    assignment: Some(base.join(item["assignment"].as_str().unwrap())),
-                    map_sha256: item["map_sha256"].as_str().unwrap().to_owned(),
-                });
-            }
-            assert_eq!(publications.len(), 3);
-            let assignment = transparent_shard_server::assignment::Assignment::load(
-                publications[0].assignment.as_ref().unwrap(),
-            )
-            .unwrap();
-            let worker_id = value["worker_id"].as_str().unwrap().to_owned();
-            let count = assignment.worker(&worker_id).unwrap().shards.len();
-            assert_eq!(
-                count, 14,
-                "full-residency fixture must assign fourteen shards"
-            );
-            let options = LoadOptions {
-                scope: transparent_shard_server::shardset::LoadScope::Assigned {
-                    assignment: Arc::new(assignment),
-                    worker_id,
-                },
-                prune_excess: true,
-                ..LoadOptions::whole(3)
-            };
-            (
-                options,
-                base.to_path_buf(),
-                value["query_shard"].as_u64().unwrap() as usize,
-                value["publications"][2]["height"].as_u64().unwrap(),
-                count,
-            )
-        } else {
-            let mut predecessor = String::new();
-            for revision in 0..3 {
-                let directory = root.path().join(revision.to_string());
-                std::fs::create_dir(&directory).unwrap();
-                let end = FIRST + 40 + u64::from(revision);
-                let (digest, count) =
-                    write_revision_geometry(&directory, end, revision, &predecessor, &DECOUPLED_2K_8K);
-                write_map_geometry(&directory, &digest, end, revision, count, &DECOUPLED_2K_8K);
-                predecessor = digest;
-                let map_sha256 = ShardSet::open(&directory, 3).unwrap().map_digest;
-                publications.push(Publication {
-                    directory,
-                    assignment: None,
-                    map_sha256,
-                });
-            }
-            (
-                LoadOptions::whole(3),
-                root.path().to_path_buf(),
-                0,
-                FIRST + 42,
-                1,
-            )
+    let (options, query_root, query_shard, final_height, assigned_count) = if let Some(path) =
+        &fixture
+    {
+        let path = std::path::PathBuf::from(path).canonicalize().unwrap();
+        let base = path.parent().unwrap();
+        let value: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        for item in value["publications"].as_array().unwrap() {
+            publications.push(Publication {
+                directory: base.join(item["directory"].as_str().unwrap()),
+                assignment: Some(base.join(item["assignment"].as_str().unwrap())),
+                map_sha256: item["map_sha256"].as_str().unwrap().to_owned(),
+            });
+        }
+        assert_eq!(publications.len(), 3);
+        let assignment = transparent_shard_server::assignment::Assignment::load(
+            publications[0].assignment.as_ref().unwrap(),
+        )
+        .unwrap();
+        let worker_id = value["worker_id"].as_str().unwrap().to_owned();
+        let count = assignment.worker(&worker_id).unwrap().shards.len();
+        assert_eq!(
+            count, 14,
+            "full-residency fixture must assign fourteen shards"
+        );
+        let options = LoadOptions {
+            scope: transparent_shard_server::shardset::LoadScope::Assigned {
+                assignment: Arc::new(assignment),
+                worker_id,
+            },
+            prune_excess: true,
+            ..LoadOptions::whole(3)
         };
+        (
+            options,
+            base.to_path_buf(),
+            value["query_shard"].as_u64().unwrap() as usize,
+            value["publications"][2]["height"].as_u64().unwrap(),
+            count,
+        )
+    } else {
+        let mut predecessor = String::new();
+        for revision in 0..3 {
+            let directory = root.path().join(revision.to_string());
+            std::fs::create_dir(&directory).unwrap();
+            let end = FIRST + 40 + u64::from(revision);
+            let (digest, count) =
+                write_revision_geometry(&directory, end, revision, &predecessor, &DECOUPLED_2K_8K);
+            write_map_geometry(&directory, &digest, end, revision, count, &DECOUPLED_2K_8K);
+            predecessor = digest;
+            let map_sha256 = ShardSet::open(&directory, 3).unwrap().map_digest;
+            publications.push(Publication {
+                directory,
+                assignment: None,
+                map_sha256,
+            });
+        }
+        (
+            LoadOptions::whole(3),
+            root.path().to_path_buf(),
+            0,
+            FIRST + 42,
+            1,
+        )
+    };
     let config = ServiceConfig {
         cache_bytes: if fixture.is_some() { 5 << 30 } else { 1 << 30 },
         build_slots: slots,

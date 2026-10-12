@@ -110,7 +110,13 @@ fn sealed(start: u64, end: u64, geometry: &'static transparent_shard::layout::Ge
 /// Five sealed `decoupled-2k-8k` shards and a tail at revision 0.
 fn before_layout() -> Vec<Laid> {
     let mut shards: Vec<Laid> = (0..5)
-        .map(|k| sealed(FIRST + k * SPAN, FIRST + (k + 1) * SPAN - 1, &DECOUPLED_2K_8K))
+        .map(|k| {
+            sealed(
+                FIRST + k * SPAN,
+                FIRST + (k + 1) * SPAN - 1,
+                &DECOUPLED_2K_8K,
+            )
+        })
         .collect();
     shards.push(Laid {
         start: TAIL,

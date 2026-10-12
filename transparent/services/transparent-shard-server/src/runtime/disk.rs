@@ -879,7 +879,8 @@ mod cache_integration_tests {
         let shared = Arc::new(SharedParams::build(&DECOUPLED_2K_8K, Table::Directory).unwrap());
         let rows = vec![
             7u8;
-            (Table::Directory.rows(&DECOUPLED_2K_8K) * Table::Directory.row_bytes(&DECOUPLED_2K_8K) as u64)
+            (Table::Directory.rows(&DECOUPLED_2K_8K)
+                * Table::Directory.row_bytes(&DECOUPLED_2K_8K) as u64)
                 as usize
         ];
         let source = SegmentSource {
@@ -957,7 +958,8 @@ mod cache_integration_tests {
         let shared = Arc::new(SharedParams::build(&DECOUPLED_2K_8K, Table::Directory).unwrap());
         let rows = vec![
             7u8;
-            (Table::Directory.rows(&DECOUPLED_2K_8K) * Table::Directory.row_bytes(&DECOUPLED_2K_8K) as u64)
+            (Table::Directory.rows(&DECOUPLED_2K_8K)
+                * Table::Directory.row_bytes(&DECOUPLED_2K_8K) as u64)
                 as usize
         ];
         let source = SegmentSource {

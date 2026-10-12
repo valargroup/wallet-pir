@@ -430,7 +430,9 @@ impl ShardManifest {
                 || child.page_segments.len() > 1
                     && child.occupancy.page_rows <= capacity - page_rows
             {
-                return Err(format!("page shard {index} rows disagree with its segments"));
+                return Err(format!(
+                    "page shard {index} rows disagree with its segments"
+                ));
             }
             if last && child.terminal_block_hash != self.terminal_block_hash {
                 return Err("the last page shard does not end on the shard's terminal".into());
@@ -681,7 +683,15 @@ mod tests {
         assert_eq!(pages_table(31), "pages-31");
         assert_eq!(parse_pages_table("pages-0"), Some(0));
         assert_eq!(parse_pages_table("pages-31"), Some(31));
-        for bad in ["pages", "pages-", "pages-01", "pages-+1", "pages-32", "pages--1", "directory"] {
+        for bad in [
+            "pages",
+            "pages-",
+            "pages-01",
+            "pages-+1",
+            "pages-32",
+            "pages--1",
+            "directory",
+        ] {
             assert_eq!(parse_pages_table(bad), None, "{bad}");
         }
     }
@@ -752,7 +762,10 @@ mod tests {
         moved.page_children[0].page_segments[0].sha256 = "aa".repeat(32);
         let moved = moved.child_digests();
         assert_ne!(moved[0], digests[0]);
-        assert_ne!(moved[1], digests[1], "a change below moves every identity above");
+        assert_ne!(
+            moved[1], digests[1],
+            "a change below moves every identity above"
+        );
 
         for mutate in [
             |m: &mut ShardManifest| m.shard_id += 1,

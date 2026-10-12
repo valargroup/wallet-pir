@@ -76,7 +76,9 @@ pub enum Refreshed {
     /// Blocks were committed past what was held.
     Extended,
     /// Blocks from `from` up were replaced or dropped.
-    RolledBack { from: u64 },
+    RolledBack {
+        from: u64,
+    },
 }
 
 /// Where one covered block's events live.

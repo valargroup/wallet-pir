@@ -578,9 +578,8 @@ async fn follow_once(
     match refreshed {
         Refreshed::RolledBack { from } => {
             *pending_invalidation = Some(pending_invalidation.map_or(from, |at| at.min(from)));
-            authority.0.status.write().unwrap()["reorg_depth"] = end
-                .map_or(0, |end| (end + 1).saturating_sub(from))
-                .into();
+            authority.0.status.write().unwrap()["reorg_depth"] =
+                end.map_or(0, |end| (end + 1).saturating_sub(from)).into();
             notify.send_modify(|n| *n += 1);
         }
         Refreshed::Extended => notify.send_modify(|n| *n += 1),

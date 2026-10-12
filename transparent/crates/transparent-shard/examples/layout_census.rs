@@ -141,7 +141,7 @@ fn main() {
     // One directory shard with one page shard: every event but a script's
     // newest two is pushed into it, which is the run the sample measures.
     let start = first.expect("blocks") as u64;
-    let blocks: Vec<(u64, Vec<(ScriptBytes, TransparentEvent)>)> = (start..=end as u64)
+    let by_height: Vec<(u64, Vec<(ScriptBytes, TransparentEvent)>)> = (start..=end as u64)
         .map(|height| {
             (
                 height,
@@ -158,7 +158,7 @@ fn main() {
         &DECOUPLED_2K_8K,
         BlockHash([0; 32]),
         transparent_filter::profile::RANGE_PROFILE_V2.name,
-        blocks,
+        by_height,
         &[end as u64],
         &|_| BlockHash(terminal),
         true,

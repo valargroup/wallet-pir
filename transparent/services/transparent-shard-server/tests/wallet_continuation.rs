@@ -367,7 +367,10 @@ async fn compact_outpoint_context_resets_across_a_sqlite_restart() {
     assert_eq!(pending[0].cursor.child, 0);
     assert_eq!(pending[0].cursor.older_runs, None);
     assert_eq!(pending[0].carried.len(), 2);
-    assert!(pending[0].carried.iter().all(|event| *event != last_receive));
+    assert!(pending[0]
+        .carried
+        .iter()
+        .all(|event| *event != last_receive));
     let (store, report) = run(
         store,
         base,
@@ -1112,7 +1115,9 @@ fn receives_of_7(heights: &[u64]) -> Vec<(ScriptBytes, TransparentEvent)> {
 fn chain_through(end: u64) -> StaticChain {
     let mut chain = StaticChain::default();
     for height in FIRST - 1..=end {
-        chain.hashes.insert(height, hash_at(height).to_display_hex());
+        chain
+            .hashes
+            .insert(height, hash_at(height).to_display_hex());
     }
     chain
 }
@@ -1151,7 +1156,13 @@ async fn a_history_spanning_three_page_shards_recovers_an_exact_ledger() {
     let heights: Vec<u64> = SEVEN[..6].iter().map(|h| FIRST + h).collect();
     let events = receives_of_7(&heights);
     let dir = tempfile::tempdir().unwrap();
-    let map = publish_laid(dir.path(), &events, &[tail_of_hundreds(FIRST + 299, 0)], vec![], hash_at);
+    let map = publish_laid(
+        dir.path(),
+        &events,
+        &[tail_of_hundreds(FIRST + 299, 0)],
+        vec![],
+        hash_at,
+    );
     assert_eq!(map.shards[0].page_segments, 3, "three page shards");
     let base = serve(dir.path()).await;
     let store_dir = tempfile::tempdir().unwrap();
@@ -1172,7 +1183,10 @@ async fn a_history_spanning_three_page_shards_recovers_an_exact_ledger() {
     // then each older run's first row.
     assert_eq!(report.charges.pages.queries, 3);
     compare(&report.ledger, &traverse(&[events], &wallet(&[7]), 0));
-    assert_eq!(report.ledger.confirmed_balance(), (0..6).map(|n| 1_000 + n).sum::<u64>());
+    assert_eq!(
+        report.ledger.confirmed_balance(),
+        (0..6).map(|n| 1_000 + n).sum::<u64>()
+    );
 }
 
 /// A tip catch-up against a grown tail stops at the first run it cached:
@@ -1236,7 +1250,10 @@ async fn a_tip_catch_up_stops_at_the_first_cached_run() {
     .await;
     let report = report.unwrap();
     complete(&report);
-    assert_eq!(report.charges.pages.queries, 2, "the walk stops at a cached run");
+    assert_eq!(
+        report.charges.pages.queries, 2,
+        "the walk stops at a cached run"
+    );
     let expected = traverse(&[receives_of_7(&after)], &wallet(&[7]), 0);
     compare(&report.ledger, &expected);
 

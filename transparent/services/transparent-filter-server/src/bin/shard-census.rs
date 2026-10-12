@@ -1537,8 +1537,7 @@ fn decoupled(
     if cli.max_page_children == 0 || cli.max_page_children > 32 {
         return Err("--max-page-children must be 1 to 32 (five bits in the entry)".into());
     }
-    let policy =
-        DecoupledPolicy::scoring(&geometry, cli.max_page_children, cli.page_entry_header);
+    let policy = DecoupledPolicy::scoring(&geometry, cli.max_page_children, cli.page_entry_header);
     println!(
         "\ndecoupled: directory {directory_rows} rows, page shards {page_rows} rows, at most {} \
 page shards, {}-byte page entry header; {policy:?}",

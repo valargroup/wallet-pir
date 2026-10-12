@@ -112,7 +112,10 @@ impl BuiltChild {
     /// concatenated. Panics outside the space, which is a programming error.
     pub fn page_row(&self, geometry: &Geometry, row: u64) -> &[u8] {
         static ZERO_ROW: [u8; crate::layout::PAGE_ROW_BYTES] = [0; crate::layout::PAGE_ROW_BYTES];
-        assert!(row < u64::from(self.segments) * geometry.page_rows, "row {row} is outside the table");
+        assert!(
+            row < u64::from(self.segments) * geometry.page_rows,
+            "row {row} is outside the table"
+        );
         let width = geometry.page_row_bytes;
         let at = row as usize * width;
         self.pages.get(at..at + width).unwrap_or(&ZERO_ROW[..width])
@@ -121,7 +124,10 @@ impl BuiltChild {
     /// Segment `segment` of the published table, zero padded to the
     /// geometry's full segment size.
     pub fn segment(&self, geometry: &Geometry, segment: u32) -> Vec<u8> {
-        assert!(segment < self.segments, "segment {segment} is outside the table");
+        assert!(
+            segment < self.segments,
+            "segment {segment} is outside the table"
+        );
         let size = geometry.page_rows as usize * geometry.page_row_bytes;
         let from = (segment as usize * size).min(self.pages.len());
         let to = (from + size).min(self.pages.len());
@@ -375,11 +381,7 @@ impl DirectoryBuilder {
 
     /// Absorbs one block: inline events advance, and each event pushed out
     /// joins its script's run in the open page shard.
-    fn absorb(
-        &mut self,
-        (_, events): Block,
-        runs: &mut BTreeMap<Vec<u8>, Vec<TransparentEvent>>,
-    ) {
+    fn absorb(&mut self, (_, events): Block, runs: &mut BTreeMap<Vec<u8>, Vec<TransparentEvent>>) {
         let mut by_script: BTreeMap<Vec<u8>, Vec<TransparentEvent>> = BTreeMap::new();
         for (script, event) in events {
             self.events += 1;
@@ -460,18 +462,22 @@ impl DirectoryBuilder {
             script_tag,
         )
         .map_err(BuildError::Invalid)?;
-        let laid = lay_out_runs(&runs, |script| script_tag(&salt, script), |script| {
-            self.scripts
-                .get(script)
-                .and_then(|state| {
-                    state.head.map(|(prev_child, prev_row)| RunLink {
-                        prev_child,
-                        prev_row,
-                        older_runs: state.runs,
+        let laid = lay_out_runs(
+            &runs,
+            |script| script_tag(&salt, script),
+            |script| {
+                self.scripts
+                    .get(script)
+                    .and_then(|state| {
+                        state.head.map(|(prev_child, prev_row)| RunLink {
+                            prev_child,
+                            prev_row,
+                            older_runs: state.runs,
+                        })
                     })
-                })
-                .unwrap_or_default()
-        })?;
+                    .unwrap_or_default()
+            },
+        )?;
         for (script, first_row) in &laid.first_rows {
             let state = self
                 .scripts
@@ -562,8 +568,9 @@ impl DirectoryBuilder {
             end_height,
             terminal,
         );
-        let range = transparent_filter::range_profile(&self.profile)
-            .ok_or_else(|| BuildError::Invalid(format!("unknown range profile {:?}", self.profile)))?;
+        let range = transparent_filter::range_profile(&self.profile).ok_or_else(|| {
+            BuildError::Invalid(format!("unknown range profile {:?}", self.profile))
+        })?;
         let filter = build_range_filter_for(range, key, &filter_elements)?;
 
         let indexed: Vec<&[u8]> = self.scripts.keys().map(Vec::as_slice).collect();
@@ -658,7 +665,8 @@ fn lay_out_runs<'a>(
         } else {
             first_rows.insert(script, locator(rows.len())?);
             for (ordinal, events) in fragments.iter().enumerate() {
-                let mut entry = PageEntry::new(tag_of(script), ordinal as u32, count, events.to_vec())?;
+                let mut entry =
+                    PageEntry::new(tag_of(script), ordinal as u32, count, events.to_vec())?;
                 if ordinal == 0 {
                     entry = entry.with_link(link)?;
                 }
@@ -711,6 +719,10 @@ fn lay_out_runs<'a>(
 }
 
 /// What a [`ShardStream`] built.
+///
+/// Moved once from the stream to the publisher per page shard or directory
+/// shard, so the directory variant's size is not worth a box.
+#[allow(clippy::large_enum_variant)]
 pub enum Built {
     /// A page shard closed. Its directory shard may still be open.
     Child(BuiltChild),
@@ -881,9 +893,8 @@ impl ShardStream {
         terminal: &dyn Fn(u64) -> Option<BlockHash>,
     ) -> Result<Vec<Built>, BuildError> {
         let hash = |height: u64| {
-            terminal(height).ok_or_else(|| {
-                BuildError::Invalid(format!("no block hash is known at {height}"))
-            })
+            terminal(height)
+                .ok_or_else(|| BuildError::Invalid(format!("no block hash is known at {height}")))
         };
         let mut out = Vec::new();
         for closure in closed {
@@ -1546,7 +1557,9 @@ mod tests {
         let rows = geometry.directory_rows * u64::from(directory.directory_segments());
         let mut found = None;
         for row in candidate_rows(directory.shard_id, script, rows) {
-            for entry in decode_directory_row(directory.directory_row(row), directory.children).unwrap() {
+            for entry in
+                decode_directory_row(directory.directory_row(row), directory.children).unwrap()
+            {
                 if entry.tag == wanted {
                     found = Some(entry);
                 }
@@ -1618,7 +1631,9 @@ mod tests {
         let mut all: BTreeMap<Vec<u8>, Vec<TransparentEvent>> = BTreeMap::new();
         for (_, events) in blocks {
             for (script, event) in events {
-                all.entry(script.as_slice().to_vec()).or_default().push(*event);
+                all.entry(script.as_slice().to_vec())
+                    .or_default()
+                    .push(*event);
             }
         }
         for events in all.values_mut() {
@@ -1675,7 +1690,10 @@ mod tests {
         let history = walk(directory, &children, watched.as_slice()).unwrap();
         assert_eq!(history.len(), 6);
         assert_eq!(
-            history.iter().map(|e| u64::from(e.height())).collect::<Vec<_>>(),
+            history
+                .iter()
+                .map(|e| u64::from(e.height()))
+                .collect::<Vec<_>>(),
             heights
         );
     }
@@ -1689,7 +1707,10 @@ mod tests {
             let max_children = [2u32, 3, 32][seed as usize % 3];
             let built = run(small_policy(max_children), &blocks, |_| 0);
             assert!(built.directories.len() > 1, "seed {seed}");
-            assert!(built.children.len() > built.directories.len(), "seed {seed}");
+            assert!(
+                built.children.len() > built.directories.len(),
+                "seed {seed}"
+            );
             let mut recovered: BTreeMap<Vec<u8>, Vec<TransparentEvent>> = BTreeMap::new();
             let mut child_at = 0;
             for (directory, sealed) in &built.directories {
@@ -1885,12 +1906,11 @@ mod tests {
         let validated =
             validate_filter(directory.filter.as_slice(), FilterLimits::default()).unwrap();
         let span = chain(5, 0, 80);
-        let scripts: Vec<ScriptBytes> = histories(
-            &span[directory.start_height as usize..=directory.end_height as usize],
-        )
-        .into_keys()
-        .map(ScriptBytes::new)
-        .collect();
+        let scripts: Vec<ScriptBytes> =
+            histories(&span[directory.start_height as usize..=directory.end_height as usize])
+                .into_keys()
+                .map(ScriptBytes::new)
+                .collect();
         let matched = transparent_filter::match_range_scripts(&validated, key, &scripts).unwrap();
         assert_eq!(matched.len(), scripts.len());
     }
@@ -1947,7 +1967,9 @@ mod tests {
     fn a_block_out_of_order_or_out_of_range_is_refused() {
         let mut builder =
             DirectoryBuilder::new(0, &DECOUPLED_2K_8K, genesis(), RANGE_PROFILE).unwrap();
-        builder.push_block((10, vec![(script(0), event(10, 0))])).unwrap();
+        builder
+            .push_block((10, vec![(script(0), event(10, 0))]))
+            .unwrap();
         assert!(builder.push_block((12, Vec::new())).is_err());
         assert!(builder
             .push_block((11, vec![(script(0), event(500, 0))]))

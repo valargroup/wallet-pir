@@ -232,7 +232,9 @@ pub fn publish_with(
             )
         }
         (None, false) => {
-            return Err("--archive-geometry needs --recent-from to say where the tiers divide".into())
+            return Err(
+                "--archive-geometry needs --recent-from to say where the tiers divide".into(),
+            )
         }
         (Some(height), false) => Some(height),
         (None, true) => None,
@@ -289,7 +291,14 @@ pub fn publish_with(
                         previous_dir.join("shards.json").display()
                     )
                 })?
-                .pipe_validate(store, recent, archive, cutoff, &cli.range_profile, policy_of)?
+                .pipe_validate(
+                    store,
+                    recent,
+                    archive,
+                    cutoff,
+                    &cli.range_profile,
+                    policy_of,
+                )?
                 .shards
                 .into_iter()
                 .map(|entry| (entry.shard_id, entry))
@@ -338,16 +347,16 @@ pub fn publish_with(
     // The published page shards of the open directory shard's latest
     // revision, so a sealed page shard rebuilt identically is linked rather
     // than rewritten.
-    let open_previous: Option<(PathBuf, ShardManifest)> = match previous.get(&(entries.len() as u64))
-    {
-        Some(entry) if !entry.sealed => {
-            let dir = previous_dir.join(&entry.manifest_digest);
-            let manifest: ShardManifest =
-                serde_json::from_slice(&std::fs::read(dir.join("manifest.json"))?)?;
-            Some((dir, manifest))
-        }
-        _ => None,
-    };
+    let open_previous: Option<(PathBuf, ShardManifest)> =
+        match previous.get(&(entries.len() as u64)) {
+            Some(entry) if !entry.sealed => {
+                let dir = previous_dir.join(&entry.manifest_digest);
+                let manifest: ShardManifest =
+                    serde_json::from_slice(&std::fs::read(dir.join("manifest.json"))?)?;
+                Some((dir, manifest))
+            }
+            _ => None,
+        };
 
     let geometry_at = |height: u64| -> &'static Geometry {
         if cutoff.is_some_and(|h| height < h) {
@@ -372,10 +381,10 @@ pub fn publish_with(
 
     let terminal = |height: u64| store.block_at(height).map(|block| block.block_hash);
     let publish_built = |built: Vec<Built>,
-                             children: &mut Vec<PageChild>,
-                             entries: &mut Vec<transparent_filter::ShardMapEntry>,
-                             parent_block_hash: &mut BlockHash,
-                             parent_manifest_digest: &mut String|
+                         children: &mut Vec<PageChild>,
+                         entries: &mut Vec<transparent_filter::ShardMapEntry>,
+                         parent_block_hash: &mut BlockHash,
+                         parent_manifest_digest: &mut String|
      -> Result<(), BoxError> {
         for item in built {
             match item {
@@ -573,7 +582,10 @@ fn seal_parameters(policy: &DecoupledPolicy) -> transparent_filter::SealParamete
 
 /// The file one segment of page shard `child` is published under.
 pub fn page_segment_file(child: u32, segment: usize) -> String {
-    format!("{}.{segment}.bin", transparent_shard::manifest::pages_table(child))
+    format!(
+        "{}.{segment}.bin",
+        transparent_shard::manifest::pages_table(child)
+    )
 }
 
 /// Writes a page shard's segments into the staging directory of its
@@ -766,10 +778,11 @@ fn publish_directory(
                 // Published files are immutable; a file already under this
                 // revision must be the one its manifest names.
                 if hex::encode(sha256_file(&target)?) != published.sha256 {
-                    return Err(
-                        format!("{} already exists with different content", target.display())
-                            .into(),
-                    );
+                    return Err(format!(
+                        "{} already exists with different content",
+                        target.display()
+                    )
+                    .into());
                 }
                 continue;
             }
@@ -1209,13 +1222,16 @@ mod tests {
                         .unwrap();
                 if let Some(old) = old_map.shards.get(tail.shard_id as usize) {
                     let old_manifest = read_manifest(before, old);
-                    for (child, was) in grown.page_children.iter().zip(&old_manifest.page_children) {
+                    for (child, was) in grown.page_children.iter().zip(&old_manifest.page_children)
+                    {
                         if child == was && was.sealed && !was.page_segments.is_empty() {
                             let name = page_segment_file(child.index, 0);
-                            let a = std::fs::metadata(before.join(&old.manifest_digest).join(&name))
-                                .unwrap();
-                            let b = std::fs::metadata(output.join(&tail.manifest_digest).join(&name))
-                                .unwrap();
+                            let a =
+                                std::fs::metadata(before.join(&old.manifest_digest).join(&name))
+                                    .unwrap();
+                            let b =
+                                std::fs::metadata(output.join(&tail.manifest_digest).join(&name))
+                                    .unwrap();
                             assert_eq!((a.dev(), a.ino()), (b.dev(), b.ino()));
                             linked += 1;
                         }
@@ -1228,7 +1244,8 @@ mod tests {
         assert!(linked > 0, "some sealed page shard was carried forward");
         let map = map.unwrap();
         let fresh_dir = root.path().join("fresh");
-        let fresh = publish_with(&single_tier(&fresh_dir, None, 69), &journal, zero, &small).unwrap();
+        let fresh =
+            publish_with(&single_tier(&fresh_dir, None, 69), &journal, zero, &small).unwrap();
         assert!(fresh.shards.len() > 2, "several directory shards");
         let incremental_dir = previous.unwrap();
         assert_eq!(map.shards.len(), fresh.shards.len());
@@ -1246,7 +1263,10 @@ mod tests {
             x.parent_manifest_digest = y.parent_manifest_digest.clone();
             assert_eq!(x, y, "shard {}", a.shard_id);
         }
-        assert!(children > fresh.shards.len(), "page shards inside directory shards");
+        assert!(
+            children > fresh.shards.len(),
+            "page shards inside directory shards"
+        );
     }
 
     /// A reorg at a page-shard boundary, at a directory-shard boundary and
@@ -1281,15 +1301,26 @@ mod tests {
         for fork in forks {
             let journal = build(&format!("fork{fork}"), Some(fork));
             let output = root.path().join(format!("out{fork}"));
-            let after =
-                publish_with(&single_tier(&output, Some(&base), 59), &journal, zero, &small)
-                    .unwrap();
+            let after = publish_with(
+                &single_tier(&output, Some(&base), 59),
+                &journal,
+                zero,
+                &small,
+            )
+            .unwrap();
             transparent_shard_server::shardset::ShardSet::open(&output, 3).unwrap();
-            for entry in before.shards.iter().filter(|e| e.sealed && e.end_height < fork) {
+            for entry in before
+                .shards
+                .iter()
+                .filter(|e| e.sealed && e.end_height < fork)
+            {
                 assert_eq!(&after.shards[entry.shard_id as usize], entry, "fork {fork}");
             }
             assert!(
-                after.shards.iter().any(|e| e.end_height >= fork && !before.shards.contains(e)),
+                after
+                    .shards
+                    .iter()
+                    .any(|e| e.end_height >= fork && !before.shards.contains(e)),
                 "fork {fork} changed something"
             );
         }

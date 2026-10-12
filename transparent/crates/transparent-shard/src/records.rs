@@ -202,10 +202,7 @@ pub fn encode_directory_row(entries: &[DirectoryEntry]) -> Result<Vec<u8>, Recor
 }
 
 /// Decodes one directory row of a shard that declares `children` page shards.
-pub fn decode_directory_row(
-    row: &[u8],
-    children: u32,
-) -> Result<Vec<DirectoryEntry>, RecordError> {
+pub fn decode_directory_row(row: &[u8], children: u32) -> Result<Vec<DirectoryEntry>, RecordError> {
     if row.len() != DIRECTORY_ROW_BYTES {
         return Err(RecordError::Length {
             got: row.len(),
