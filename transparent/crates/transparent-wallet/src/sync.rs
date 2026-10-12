@@ -2158,6 +2158,7 @@ fn retrieve_shard_into<S: WalletStore, T: ShardTransport>(
         &mut clients.directory,
         transport,
         charges,
+        None,
     )?;
 
     if let Some(reason) = budget_stopped(charges, limits) {
@@ -2248,6 +2249,7 @@ fn retrieve_shard_into<S: WalletStore, T: ShardTransport>(
                             row,
                             older_runs: None,
                         },
+                        fragments: Vec::new(),
                         carried: found.inline.clone(),
                         attempts: 0,
                         target_anchor: Some(target_anchor.clone()),
@@ -2366,8 +2368,8 @@ struct RowRequest {
 trait RowSource {
     /// Why the walk must stop before another round, if it must.
     fn stopped(&self) -> Option<IncompleteReason>;
-    /// One answer per request, in request order: the row from every segment
-    /// of the page shard's table.
+    /// Answers for a prefix of the requests, in order. A budget may stop
+    /// dispatch between requests; each answer contains every table segment.
     fn fetch<S: WalletStore>(
         &mut self,
         store: &mut S,
@@ -2406,16 +2408,122 @@ impl<T: ShardTransport> RowSource for PirRows<'_, T> {
             .set_identity()?
             .map(|identity| identity.digest())
             .unwrap_or_default();
-        // Each request: its table, segment count, query rows and row within.
-        let mut planned = Vec::with_capacity(requests.len());
+        if self.limits.max_private_bytes.is_none() && self.transport.concurrency() > 1 {
+            let remaining = self
+                .limits
+                .max_queries
+                .map(|limit| limit.saturating_sub(self.charges.queries()) as usize)
+                .unwrap_or(requests.len());
+            let requests = &requests[..requests.len().min(remaining)];
+            // Each request: its table, segment count, query rows and row within.
+            let mut planned = Vec::with_capacity(requests.len());
+            for request in requests {
+                let child = self
+                    .manifest
+                    .child(request.child)
+                    .ok_or_else(|| SyncError::Invalid("a walk left the page shards".into()))?;
+                let table = Table::Pages(request.child);
+                let segments = child.page_segments.len() as u32;
+                open_table(
+                    store,
+                    &set_digest,
+                    shard_id,
+                    revision,
+                    table,
+                    segments,
+                    self.client,
+                    self.transport,
+                    self.charges,
+                    None,
+                )?;
+                let (_, within) =
+                    transparent_shard::layout::split_row(request.row, geometry.page_rows);
+                planned.push((
+                    table,
+                    segments,
+                    child.query_rows() as usize,
+                    within as usize,
+                ));
+            }
+            let mut answers = Vec::with_capacity(planned.len());
+            if self.transport.concurrency() <= 1 || planned.len() <= 1 {
+                for (table, segments, query_rows, within) in planned {
+                    answers.push(self.client.fetch_row(
+                        self.transport,
+                        shard_id,
+                        revision,
+                        table,
+                        segments,
+                        query_rows,
+                        within,
+                        self.charges,
+                    )?);
+                }
+                return Ok(answers);
+            }
+            let mut queries = Vec::with_capacity(planned.len());
+            for (table, _, query_rows, within) in &planned {
+                queries.push(
+                    self.client
+                        .prepare_prefix(revision, *table, *query_rows, *within)?,
+                );
+            }
+            let batch: Vec<ShardRequest<'_>> = planned
+                .iter()
+                .zip(&queries)
+                .map(|((table, ..), query)| ShardRequest::Query {
+                    shard_id,
+                    revision,
+                    table: *table,
+                    body: &query.body,
+                })
+                .collect();
+            let replies = self.transport.batch(&batch);
+            drop(batch);
+            for (((table, segments, query_rows, within), query), reply) in
+                planned.into_iter().zip(queries).zip(replies)
+            {
+                match reply {
+                    Some(Ok((response, _))) => {
+                        self.charges.add_query(
+                            table,
+                            query.body.len() as u64,
+                            response.len() as u64,
+                        );
+                        answers.push(
+                            self.client
+                                .decode(revision, table, segments, query, &response)?,
+                        );
+                    }
+                    Some(Err(error)) => return Err(SyncError::Client(classify_transport(error))),
+                    None => answers.push(self.client.fetch_row(
+                        self.transport,
+                        shard_id,
+                        revision,
+                        table,
+                        segments,
+                        query_rows,
+                        within,
+                        self.charges,
+                    )?),
+                }
+            }
+            return Ok(answers);
+        }
+        let mut answers = Vec::with_capacity(requests.len());
+        // A finite byte allowance is checked after each atomic response. Opening
+        // all setups or dispatching a whole batch first would exceed that contract.
         for request in requests {
+            if self.stopped().is_some() {
+                break;
+            }
             let child = self
                 .manifest
                 .child(request.child)
                 .ok_or_else(|| SyncError::Invalid("a walk left the page shards".into()))?;
             let table = Table::Pages(request.child);
             let segments = child.page_segments.len() as u32;
-            open_table(
+            if !open_table(
                 store,
                 &set_digest,
                 shard_id,
@@ -2425,74 +2533,24 @@ impl<T: ShardTransport> RowSource for PirRows<'_, T> {
                 self.client,
                 self.transport,
                 self.charges,
-            )?;
+                Some(self.limits),
+            )? {
+                break;
+            }
+            if self.stopped().is_some() {
+                break;
+            }
             let (_, within) = transparent_shard::layout::split_row(request.row, geometry.page_rows);
-            planned.push((
+            answers.push(self.client.fetch_row(
+                self.transport,
+                shard_id,
+                revision,
                 table,
                 segments,
                 child.query_rows() as usize,
                 within as usize,
-            ));
-        }
-        let mut answers = Vec::with_capacity(planned.len());
-        if self.transport.concurrency() <= 1 || planned.len() <= 1 {
-            for (table, segments, query_rows, within) in planned {
-                answers.push(self.client.fetch_row(
-                    self.transport,
-                    shard_id,
-                    revision,
-                    table,
-                    segments,
-                    query_rows,
-                    within,
-                    self.charges,
-                )?);
-            }
-            return Ok(answers);
-        }
-        let mut queries = Vec::with_capacity(planned.len());
-        for (table, _, query_rows, within) in &planned {
-            queries.push(
-                self.client
-                    .prepare_prefix(revision, *table, *query_rows, *within)?,
-            );
-        }
-        let batch: Vec<ShardRequest<'_>> = planned
-            .iter()
-            .zip(&queries)
-            .map(|((table, ..), query)| ShardRequest::Query {
-                shard_id,
-                revision,
-                table: *table,
-                body: &query.body,
-            })
-            .collect();
-        let replies = self.transport.batch(&batch);
-        drop(batch);
-        for (((table, segments, query_rows, within), query), reply) in
-            planned.into_iter().zip(queries).zip(replies)
-        {
-            match reply {
-                Some(Ok((response, _))) => {
-                    self.charges
-                        .add_query(table, query.body.len() as u64, response.len() as u64);
-                    answers.push(
-                        self.client
-                            .decode(revision, table, segments, query, &response)?,
-                    );
-                }
-                Some(Err(error)) => return Err(SyncError::Client(classify_transport(error))),
-                None => answers.push(self.client.fetch_row(
-                    self.transport,
-                    shard_id,
-                    revision,
-                    table,
-                    segments,
-                    query_rows,
-                    within,
-                    self.charges,
-                )?),
-            }
+                self.charges,
+            )?);
         }
         Ok(answers)
     }
@@ -2516,11 +2574,11 @@ struct Walk {
 /// Walks the chains of runs `owed` describes, all scripts' rounds together,
 /// newest run first, committing each run once it is read and checked.
 ///
-/// The first round reads the newest run's first fragment, which gives its
-/// fragment count `K` and its link. Each later round reads the rest of that
-/// run and the next older run's first fragment together, so a chain of `n`
-/// runs costs `n + 1` rounds. A walk reaching a run in a sealed page shard
-/// the store holds history for stops there and takes that history.
+/// A round reads each run's first fragment or a prefix of its remaining
+/// fragments. Checked fragments are saved between passes, so a one-query
+/// budget can advance even a long run. A complete run is committed before
+/// checking the next request's budget. A walk reaching a cached sealed run
+/// stops there and takes that history.
 ///
 /// Refused, as protocol errors: a link to the same or a later page shard;
 /// an `older_runs` that does not drop by exactly one per hop, which is how a
@@ -2564,13 +2622,30 @@ fn walk_chains<S: WalletStore, R: RowSource>(
     };
     let mut walks: Vec<Walk> = owed
         .iter()
-        .map(|item| Walk {
-            item: item.clone(),
-            head: None,
-            walked: Vec::new(),
-            done: false,
+        .map(|item| {
+            let head = item
+                .fragments
+                .first()
+                .map(|raw| {
+                    let head = walker.fragment(
+                        &item.script,
+                        item.cursor.child,
+                        std::slice::from_ref(raw),
+                        0,
+                        None,
+                    )?;
+                    check_head(&head, &item.cursor)?;
+                    Ok::<_, SyncError>(head)
+                })
+                .transpose()?;
+            Ok(Walk {
+                item: item.clone(),
+                head,
+                walked: Vec::new(),
+                done: false,
+            })
         })
-        .collect();
+        .collect::<Result<_, SyncError>>()?;
     loop {
         // A walk at a run the store holds history for stops there.
         for walk in walks.iter_mut().filter(|w| !w.done && w.head.is_none()) {
@@ -2581,6 +2656,26 @@ fn walk_chains<S: WalletStore, R: RowSource>(
         }
         if walks.iter().all(|walk| walk.done) {
             return Ok(None);
+        }
+        if rows.stopped().is_some() {
+            for walk in walks.iter_mut().filter(|w| !w.done) {
+                if walk
+                    .head
+                    .as_ref()
+                    .is_some_and(|head| walk.item.fragments.len() == head.fragment_count as usize)
+                {
+                    let older = match walk.head.as_ref().unwrap().link.previous() {
+                        Some((child, _)) => walker
+                            .cached(store, &walk.item.script, child)?
+                            .map(|events| (child, events)),
+                        None => None,
+                    };
+                    walker.advance(store, walk, &[], older)?;
+                }
+            }
+            if walks.iter().all(|walk| walk.done) {
+                return Ok(None);
+            }
         }
         if let Some(reason) = rows.stopped() {
             return Ok(Some(Completion::Incomplete {
@@ -2600,7 +2695,7 @@ fn walk_chains<S: WalletStore, R: RowSource>(
                 match &walk.head {
                     None => requests.push(walker.locate(cursor.child, u64::from(cursor.row))?),
                     Some(head) => {
-                        for ordinal in 1..head.fragment_count {
+                        for ordinal in walk.item.fragments.len() as u32..head.fragment_count {
                             let row = u64::from(cursor.row) + u64::from(ordinal);
                             requests.push(walker.locate(cursor.child, row)?);
                         }
@@ -2618,14 +2713,21 @@ fn walk_chains<S: WalletStore, R: RowSource>(
             spans.push((start, requests.len(), older));
         }
         let answers = rows.fetch(store, &requests)?;
-        if answers.len() != requests.len() {
+        if answers.len() > requests.len()
+            || answers.is_empty() && !requests.is_empty() && rows.stopped().is_none()
+        {
             return Err(SyncError::Invalid("a round lost an answer".into()));
         }
         for (walk, (start, end, older)) in walks.iter_mut().zip(spans) {
-            if walk.done {
+            if walk.done || start >= answers.len() && start != end {
                 continue;
             }
-            walker.advance(store, walk, &answers[start..end], older)?;
+            let available = if start == end {
+                &[][..]
+            } else {
+                &answers[start..end.min(answers.len())]
+            };
+            walker.advance(store, walk, available, older)?;
         }
     }
 }
@@ -2776,62 +2878,105 @@ impl Walker<'_> {
     ) -> Result<(), SyncError> {
         let cursor = walk.item.cursor;
         let script = walk.item.script.clone();
-        let Some(head) = walk.head.take() else {
+        if walk.head.is_none() {
             let [answer] = answers else {
                 return Err(SyncError::Invalid("a round lost an answer".into()));
             };
             let head = self.fragment(&script, cursor.child, answer, 0, None)?;
             check_head(&head, &cursor)?;
+            walk.item
+                .fragments
+                .push(transparent_shard::page_row::encode_page_row(
+                    std::slice::from_ref(&head),
+                )?);
             walk.head = Some(head);
-            return Ok(());
-        };
-
+            return self.commit(
+                store,
+                &script,
+                Vec::new(),
+                Some(walk.item.clone()),
+                None,
+                Vec::new(),
+            );
+        }
+        let head = walk.head.as_ref().expect("head decoded above").clone();
         let count = head.fragment_count as usize;
-        let (rest, next) = answers.split_at((count - 1).min(answers.len()));
-        if rest.len() != count - 1 {
-            return Err(SyncError::Invalid("a round lost an answer".into()));
+        if walk.item.fragments.len() > count {
+            return Err(SyncError::Invalid("a run has too many fragments".into()));
+        }
+        let remaining = count - walk.item.fragments.len();
+        let (answers, next) = answers.split_at(remaining.min(answers.len()));
+        if next.len() > 1 {
+            return Err(SyncError::Invalid("a round has extra answers".into()));
         }
         let mut boundary = validate_page_boundary(None, &head.events)?;
         let mut run = head.events.clone();
-        for (index, answer) in rest.iter().enumerate() {
+        // Recheck saved boundaries before using them after a restart.
+        for (ordinal, raw) in walk.item.fragments.iter().enumerate().skip(1) {
             let fragment = self.fragment(
                 &script,
                 cursor.child,
-                answer,
-                index as u32 + 1,
+                std::slice::from_ref(raw),
+                ordinal as u32,
                 Some(head.fragment_count),
             )?;
             boundary = validate_page_boundary(Some(&boundary), &fragment.events)?;
             run.extend(fragment.events);
         }
+        for answer in answers {
+            let ordinal = walk.item.fragments.len() as u32;
+            let fragment = self.fragment(
+                &script,
+                cursor.child,
+                answer,
+                ordinal,
+                Some(head.fragment_count),
+            )?;
+            boundary = validate_page_boundary(Some(&boundary), &fragment.events)?;
+            run.extend(fragment.events.iter().copied());
+            walk.item
+                .fragments
+                .push(transparent_shard::page_row::encode_page_row(&[fragment])?);
+        }
+        if walk.item.fragments.len() < count {
+            return self.commit(
+                store,
+                &script,
+                Vec::new(),
+                Some(walk.item.clone()),
+                None,
+                Vec::new(),
+            );
+        }
         check_run(self.child(cursor.child)?, &run, &walk.item.carried)?;
         walk.walked.push((cursor.child, run.clone()));
-
         match head.link.previous() {
-            None => {
-                if !next.is_empty() {
-                    return Err(SyncError::Invalid("a round lost an answer".into()));
-                }
-                self.finish(store, walk, run, None)
-            }
+            None => self.finish(store, walk, run, None),
             Some(_) if older.is_some() => self.finish(store, walk, run, older),
             Some((child, row)) => {
-                let [answer] = next else {
-                    return Err(SyncError::Invalid("a round lost an answer".into()));
-                };
-                let next_cursor = RunCursor {
-                    child,
-                    row,
-                    older_runs: Some(head.link.older_runs - 1),
-                };
-                let next_head = self.fragment(&script, child, answer, 0, None)?;
-                check_head(&next_head, &next_cursor)?;
                 let mut following = run.clone();
                 following.extend(walk.item.carried.iter().copied());
                 following.truncate(2);
                 let mut progressed = walk.item.clone();
-                progressed.cursor = next_cursor;
+                progressed.cursor = RunCursor {
+                    child,
+                    row,
+                    older_runs: Some(head.link.older_runs - 1),
+                };
                 progressed.carried = following;
+                progressed.fragments.clear();
+                let next_head = if let [answer] = next {
+                    let head = self.fragment(&script, child, answer, 0, None)?;
+                    check_head(&head, &progressed.cursor)?;
+                    progressed
+                        .fragments
+                        .push(transparent_shard::page_row::encode_page_row(
+                            std::slice::from_ref(&head),
+                        )?);
+                    Some(head)
+                } else {
+                    None
+                };
                 progressed.attempts += 1;
                 self.commit(
                     store,
@@ -2842,7 +2987,7 @@ impl Walker<'_> {
                     Vec::new(),
                 )?;
                 walk.item = progressed;
-                walk.head = Some(next_head);
+                walk.head = next_head;
                 Ok(())
             }
         }
@@ -3055,7 +3200,8 @@ fn open_table<S: WalletStore>(
     client: &mut TableClient,
     transport: &mut impl ShardTransport,
     charges: &mut ByteCharges,
-) -> Result<(), SyncError> {
+    limits: Option<&WorkLimits>,
+) -> Result<bool, SyncError> {
     if segments == 0 {
         return Err(SyncError::Invalid(format!(
             "shard {shard_id} declares no {} segments",
@@ -3075,6 +3221,12 @@ fn open_table<S: WalletStore>(
         let (params, digest) = match store.setup(&key)? {
             Some(blob) => (blob.public_params_base64, blob.public_params_sha256),
             None => {
+                if limits
+                    .and_then(|limits| budget_stopped(charges, limits))
+                    .is_some()
+                {
+                    return Ok(false);
+                }
                 let (raw, cost) = transport
                     .setup(shard_id, revision, table, segment)
                     .map_err(|error| SyncError::from(classify_transport(error)))?;
@@ -3102,7 +3254,7 @@ fn open_table<S: WalletStore>(
             },
         )?;
     }
-    Ok(())
+    Ok(true)
 }
 
 fn check_target_hash(map: &ShardMap, target: &Anchor) -> Result<(), SyncError> {
@@ -3597,6 +3749,7 @@ mod tests {
                 row: 0,
                 older_runs: None,
             },
+            fragments: Vec::new(),
             carried: Vec::new(),
             attempts: 0,
             target_anchor: Some(target.clone()),
@@ -4439,6 +4592,7 @@ mod walk_tests {
                     row,
                     older_runs: None,
                 },
+                fragments: Vec::new(),
                 carried: found.inline.clone(),
                 attempts: 0,
                 target_anchor: Some(target_of(manifest)),
@@ -4726,7 +4880,7 @@ mod walk_tests {
         }
         let mut limited = Limited {
             inner: Direct::new(directory),
-            rounds: 3,
+            rounds: 2,
         };
         let stopped = walk_chains(
             &mut store,
@@ -4749,6 +4903,144 @@ mod walk_tests {
         walk(&mut store, &manifest, &resumed, &mut Direct::new(directory)).unwrap();
         assert!(store.pending().unwrap().is_empty());
         assert_eq!(stored(&store, &script), history(blocks, directory, &script));
+    }
+
+    /// Every pass may read only one row, including when a run spans many rows.
+    /// Saved progress must eventually recover the same history without rereading rows.
+    #[test]
+    fn one_query_passes_finish_a_history_without_repeating_rows() {
+        let (blocks, directories) = fixture();
+        let directory = &directories[0];
+        let manifest = manifest_of(directory);
+        let script = paged(directory).remove(0);
+        let mut store = MemoryStore::new();
+        directory_phase(
+            &mut store,
+            directory,
+            &manifest,
+            std::slice::from_ref(&script),
+        );
+        struct OneQuery<'a> {
+            inner: Direct<'a>,
+        }
+        impl RowSource for OneQuery<'_> {
+            fn stopped(&self) -> Option<IncompleteReason> {
+                (!self.inner.requests.is_empty()).then_some(IncompleteReason::QueryBudget)
+            }
+            fn fetch<S: WalletStore>(
+                &mut self,
+                store: &mut S,
+                requests: &[RowRequest],
+            ) -> Result<Vec<Vec<Vec<u8>>>, SyncError> {
+                let remaining = usize::from(self.inner.requests.is_empty());
+                self.inner
+                    .fetch(store, &requests[..requests.len().min(remaining)])
+            }
+        }
+        let mut queried = std::collections::BTreeSet::new();
+        for _ in 0..500 {
+            let owed = store.pending().unwrap();
+            if owed.is_empty() {
+                break;
+            }
+            let mut rows = OneQuery {
+                inner: Direct::new(directory),
+            };
+            walk_chains(
+                &mut store,
+                &entry_of(&manifest),
+                &manifest,
+                &owed,
+                &mut rows,
+                &target_of(&manifest),
+            )
+            .unwrap();
+            assert_eq!(rows.inner.requests.len(), 1);
+            for request in rows.inner.requests {
+                assert!(
+                    queried.insert((request.child, request.row)),
+                    "a pass repeated a saved fragment"
+                );
+            }
+        }
+        assert!(
+            store.pending().unwrap().is_empty(),
+            "one-query passes must finish"
+        );
+        assert_eq!(stored(&store, &script), history(blocks, directory, &script));
+    }
+
+    /// A short run with no remaining requests can finish after an earlier
+    /// script uses the last query of a truncated round.
+    #[test]
+    fn a_partial_round_finishes_a_later_run_without_requests() {
+        let blocks = vec![(
+            1_000,
+            (0..200)
+                .map(|nonce| (ScriptBytes::new(script(0)), receive(1_000, nonce)))
+                .chain((200..230).map(|nonce| (ScriptBytes::new(script(1)), receive(1_000, nonce))))
+                .collect(),
+        )];
+        let directories = build(&blocks);
+        let directory = &directories[0];
+        let manifest = manifest_of(directory);
+        let scripts = [script(0), script(1)];
+        for (script, multiple) in scripts.iter().zip([true, false]) {
+            let runs = runs_of(directory, script);
+            assert_eq!(runs.len(), 1);
+            let (child, row) = runs[0];
+            let entries = transparent_shard::decode_page_row(
+                directory.children[child as usize].page_row(&DECOUPLED_2K_8K, row.into()),
+            )
+            .unwrap();
+            assert!(entries
+                .iter()
+                .any(|entry| entry.ordinal == 0 && (entry.fragment_count > 1) == multiple));
+        }
+        let mut store = MemoryStore::new();
+        let owed = directory_phase(&mut store, directory, &manifest, &scripts);
+        struct ThreeQueries<'a> {
+            inner: Direct<'a>,
+        }
+        impl RowSource for ThreeQueries<'_> {
+            fn stopped(&self) -> Option<IncompleteReason> {
+                (self.inner.requests.len() >= 3).then_some(IncompleteReason::QueryBudget)
+            }
+            fn fetch<S: WalletStore>(
+                &mut self,
+                store: &mut S,
+                requests: &[RowRequest],
+            ) -> Result<Vec<Vec<Vec<u8>>>, SyncError> {
+                let remaining = 3usize.saturating_sub(self.inner.requests.len());
+                self.inner
+                    .fetch(store, &requests[..requests.len().min(remaining)])
+            }
+        }
+        let mut rows = ThreeQueries {
+            inner: Direct::new(directory),
+        };
+        walk_chains(
+            &mut store,
+            &entry_of(&manifest),
+            &manifest,
+            &owed,
+            &mut rows,
+            &target_of(&manifest),
+        )
+        .unwrap();
+        assert_eq!(rows.inner.requests.len(), 3);
+        assert_eq!(
+            stored(&store, &scripts[1]),
+            history(&blocks, directory, &scripts[1])
+        );
+        let pending = store.pending().unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].script, scripts[0]);
+        walk(&mut store, &manifest, &pending, &mut Direct::new(directory)).unwrap();
+        assert!(store.pending().unwrap().is_empty());
+        for script in &scripts {
+            assert_eq!(stored(&store, script), history(&blocks, directory, script));
+        }
     }
 
     fn head(_child: u8, link: RunLink) -> PageEntry {

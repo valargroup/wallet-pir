@@ -204,6 +204,9 @@ pub struct PendingPages {
     /// pushed out by the event two places after it, which these supply for
     /// its last two.
     pub carried: Vec<TransparentEvent>,
+    /// Checked fragments of the current run, each encoded as a page row holding
+    /// only this script. They are revalidated on resume and cleared at the next run.
+    pub fragments: Vec<Vec<u8>>,
     pub attempts: u32,
     pub target_anchor: Option<Anchor>,
 }

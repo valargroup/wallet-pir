@@ -124,6 +124,7 @@ pub fn pending(script_tag: u8, revision: &str) -> PendingPages {
             row: 4,
             older_runs: None,
         },
+        fragments: Vec::new(),
         carried: vec![
             receive(script_tag, 7, 1, 60).event,
             spend(script_tag, script_tag, 7, 9, 70).event,

@@ -237,8 +237,8 @@ may apply to any single-segment child, sealed or open.
   - `sync.rs`: child checks in `verify_manifest`, the chain walk and its checks,
     the run cache.
   - `transport.rs`: no signature change.
-- `crates/transparent-wallet-store`: schema 5 — `pending_work` gains the cursor
-  and carried events; add a run cache table. Keep existing table names
+- `crates/transparent-wallet-store`: schema 6 — `pending_work` gains the cursor
+  carried events and saved partial fragments; add a run cache table. Keep existing table names
   (wallet-libraries resets them by name).
 - Tests: update hand-built manifests in
   `services/transparent-shard-server/tests/common/mod.rs` and
@@ -246,7 +246,7 @@ may apply to any single-segment child, sealed or open.
 
 wallet-libraries (`zakura/pir-transparent`): repin all eight wallet-pir git
 dependencies to the wallet-pir draft head SHA; update
-`src/catalog/store_tables.rs` for store schema 5; update `testing/service.rs` and
+`src/catalog/store_tables.rs` for store schema 6; update `testing/service.rs` and
 the fixture for the new manifest and table names; add a decoupled case to
 `tests/private_recovery.rs` (a history spanning two page children plus tip
 catch-up).

@@ -218,9 +218,13 @@ second successor lies in the range of the page shard it was pushed into. Runs in
 sealed page shards are cached by page-shard identity and script, each with its own
 events and a link to the script's previous cached run, so a tip catch-up stops at
 the first cached run and rebuilds the older history from the cache. Covering a
-script over a whole sealed directory shard drops its cached runs there. Pending work holds a run cursor and the events the
-placement check carries; a run commits whole. SQLite schema 5 holds the cursor and
-the run cache, with no migration from earlier schemas.
+script over a whole sealed directory shard drops its cached runs there. Pending work holds a run cursor, checked fragments saved after each response,
+and the events the placement check carries; events and coverage commit only when
+the run is complete. Query and byte budgets stop page retrieval between atomic
+responses, including setup downloads. Finite byte budgets dispatch sequentially;
+with no byte ceiling, concurrent rounds are capped by the remaining query count.
+SQLite schema 6 holds the cursor, saved fragments and the run cache, with no
+migration from earlier schemas.
 
 A page row starts with a 4-byte entry count. Each entry has a 40-byte header:
 script tag, fragment ordinal, fragment count, event count, two height bounds and the

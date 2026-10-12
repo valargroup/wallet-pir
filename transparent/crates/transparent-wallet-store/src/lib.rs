@@ -24,9 +24,9 @@ use transparent_wallet::store::{
     StoredEvent, WalletStore,
 };
 
-/// Versioned persistence. Schema 5 holds schema-v12 chain walks and the run
-/// cache; any other version is refused rather than misread or migrated.
-pub const SCHEMA_VERSION: u32 = 5;
+/// Versioned persistence. Schema 6 holds schema-v12 chain walks, saved run
+/// fragments and the run cache; any other version is refused rather than misread or migrated.
+pub const SCHEMA_VERSION: u32 = 6;
 
 /// Default bound on pending page retrievals a commit may leave.
 pub const DEFAULT_PENDING_LIMIT: usize = 4_096;
@@ -92,6 +92,7 @@ CREATE TABLE IF NOT EXISTS pending_work (
     cursor_row INTEGER NOT NULL,
     cursor_older_runs INTEGER,
     carried BLOB NOT NULL,
+    fragments BLOB NOT NULL,
     target_anchor TEXT,
     attempts INTEGER NOT NULL
 );
@@ -178,7 +179,7 @@ impl SqliteStore {
         ).map_err(io)?;
         if has_meta {
             if let Some(found) = self.meta("schema_version")? {
-                // No migration: a store from before schema 5 holds walks and
+                // No migration: earlier stores lack saved fragments or hold
                 // coverage of a shard schema this build does not read.
                 if found != SCHEMA_VERSION.to_string() {
                     return Err(StoreError::Corrupt(format!(
@@ -743,7 +744,7 @@ impl WalletStore for SqliteStore {
             match pending.id {
                 Some(id) => {
                     tx.execute(
-                        "UPDATE pending_work SET cursor_child = ?2, cursor_row = ?3, cursor_older_runs = ?4, carried = ?5, attempts = ?6 WHERE id = ?1",
+                        "UPDATE pending_work SET cursor_child = ?2, cursor_row = ?3, cursor_older_runs = ?4, carried = ?5, attempts = ?6, fragments = ?7 WHERE id = ?1",
                         params![
                             id as i64,
                             i64::from(cursor.child),
@@ -751,14 +752,15 @@ impl WalletStore for SqliteStore {
                             cursor.older_runs.map(i64::from),
                             encode_events(&pending.carried),
                             pending.attempts as i64,
+                            pending.fragments.concat(),
                         ],
                     )
                     .map_err(io)?;
                 }
                 None => {
                     tx.execute(
-                        "INSERT INTO pending_work (shard_id, revision_digest, script, cursor_child, cursor_row, cursor_older_runs, carried, target_anchor, attempts) \
-                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                        "INSERT INTO pending_work (shard_id, revision_digest, script, cursor_child, cursor_row, cursor_older_runs, carried, target_anchor, attempts, fragments) \
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
                         params![
                             pending.shard_id as i64,
                             pending.revision_digest,
@@ -769,6 +771,7 @@ impl WalletStore for SqliteStore {
                             encode_events(&pending.carried),
                             pending.target_anchor.as_ref().map(|a| serde_json::to_string(a).unwrap()),
                             pending.attempts as i64,
+                            pending.fragments.concat(),
                         ],
                     )
                     .map_err(io)?;
@@ -941,7 +944,7 @@ impl WalletStore for SqliteStore {
         let mut statement = self
             .conn
             .prepare(
-                "SELECT id, shard_id, revision_digest, script, cursor_child, cursor_row, cursor_older_runs, carried, attempts, target_anchor \
+                "SELECT id, shard_id, revision_digest, script, cursor_child, cursor_row, cursor_older_runs, carried, attempts, target_anchor, fragments \
                  FROM pending_work ORDER BY id",
             )
             .map_err(io)?;
@@ -958,6 +961,7 @@ impl WalletStore for SqliteStore {
                     row.get::<_, Vec<u8>>(7)?,
                     row.get::<_, i64>(8)? as u32,
                     decode_anchor(row.get(9)?)?,
+                    row.get::<_, Vec<u8>>(10)?,
                 ))
             })
             .map_err(io)?;
@@ -974,7 +978,14 @@ impl WalletStore for SqliteStore {
                 carried,
                 attempts,
                 target_anchor,
+                fragments,
             ) = row.map_err(io)?;
+            let width = transparent_shard::PAGE_ROW_BYTES;
+            if fragments.len() % width != 0 {
+                return Err(StoreError::Corrupt(
+                    "saved run fragment has the wrong width".into(),
+                ));
+            }
             let corrupt = |_| StoreError::Corrupt("pending walk cursor out of range".into());
             pending.push(PendingPages {
                 id: Some(id),
@@ -987,6 +998,7 @@ impl WalletStore for SqliteStore {
                     older_runs: older_runs.map(u8::try_from).transpose().map_err(corrupt)?,
                 },
                 carried: decode_events(&carried, transparent_shard::INLINE_EVENTS as usize)?,
+                fragments: fragments.chunks_exact(width).map(<[u8]>::to_vec).collect(),
                 attempts,
                 target_anchor,
             });

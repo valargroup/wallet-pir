@@ -121,7 +121,7 @@ fn the_sqlite_store_meets_the_contract_on_disk_and_survives_reopening() {
     assert_eq!(store.last_commit().unwrap(), 2);
 }
 
-/// Schema 5 is a fresh schema: a store from an earlier one holds walks and
+/// Schema 6 is a fresh schema: a store from an earlier one holds walks and
 /// coverage of a shard schema this build does not read, and is refused
 /// rather than migrated.
 #[test]
@@ -167,13 +167,20 @@ fn a_walk_cursor_and_the_run_cache_survive_reopening() {
             ..pending(1, "r0")
         }
     );
-    assert_eq!(store.cached_run("child", &script(1)).unwrap(), Some(run));
+    assert_eq!(
+        store.cached_run("child", &script(1)).unwrap(),
+        Some(run.clone())
+    );
     restored.cursor = RunCursor {
         child: 2,
         row: 70_000,
         older_runs: Some(4),
     };
     restored.carried.reverse();
+    restored.fragments = vec![transparent_shard::page_row::encode_page_row(&[
+        transparent_shard::page_row::PageEntry::new([1; 14], 0, 2, run.events.clone()).unwrap(),
+    ])
+    .unwrap()];
     let mut c = commit(1, "r0", true, (0, 99), vec![], vec![]);
     c.pending_upsert.push(restored.clone());
     store.commit_shard(c).unwrap();
