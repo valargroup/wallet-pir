@@ -19,7 +19,7 @@ spec = importlib.util.spec_from_file_location(
 pairs = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(pairs)
 
-LAYOUTS = ["recent-4k-8k", "bulk-recent-4k-8k", "decoupled-4k-8k", "decoupled-8k-8k"]
+LAYOUTS = ["recent-4k-8k", "coupled-2k-8k", "bulk-recent-4k-8k", "decoupled-4k-8k", "decoupled-8k-8k"]
 CLASSES = ["catch-up-1d", "catch-up-7d", "catch-up-30d"]
 
 

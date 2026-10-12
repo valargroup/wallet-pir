@@ -6,7 +6,8 @@
 # BIN is a release-fast shard-census from this branch, SLICES the directory
 # fetch-slices.sh filled (recent/, archive/), OUT a new directory for one log
 # per (window, layout) plus its /usr/bin/time report. With no LAYOUT names,
-# all eleven run over both windows (or over $WINDOWS).
+# all layouts run over both windows (or over $WINDOWS). coupled-2k-8k was
+# added after the first pass and run on the recent window only.
 #
 # Coupled layouts pass their derived policy explicitly (capacity minus 1/7
 # scripts, minus 1/32 page rows, 58 minimal entries per 4,096-byte row), so
@@ -28,6 +29,7 @@ declare -A LAYOUTS=(
   [coupled-16k-64k]="--geometry archive-wide --directory-rows-per-segment 16384 --policy $(policy 16384 65536) --per-shard"
   [coupled-8k-64k]="--geometry archive-wide --directory-rows-per-segment 8192 --policy $(policy 8192 65536) --per-shard"
   [recent-4k-8k]="--geometry recent-4k-8k --policy $(policy 4096 8192) --per-shard"
+  [coupled-2k-8k]="--geometry recent-4k-8k --directory-rows-per-segment 2048 --policy $(policy 2048 8192) --per-shard"
   [bulk-archive-wide]="--geometry archive-wide --policy $(policy 32768 65536) --per-shard --bulk-long"
   [bulk-recent-4k-8k]="--geometry recent-4k-8k --policy $(policy 4096 8192) --per-shard --bulk-long"
   [decoupled-32k-64k]="--decoupled --directory-rows 32768 --page-rows 65536"
