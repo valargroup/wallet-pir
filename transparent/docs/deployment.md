@@ -507,8 +507,9 @@ accept anchors against their own chain view and rederive affected ledger state.
 The coordinator exposes private `/v1/status` and `/metrics` on port 8094.
 Freshness, node/journal/public heights, lag, ready replicas, withdrawal and reorg
 depth are observable. The controller emits a structured stale-publication alert
-when a pending observed block exceeds 30 seconds. Prometheus alert rules are in
-`transparent/ops/deploy/transparent-publication-alerts.yml`.
+when a pending observed block exceeds 30 seconds. No Prometheus runs: `pir-apm`
+scrapes the coordinator's `/metrics` and owns the publication alerts
+([observability and alerting](../../enhance/docs/observability-alerting.md)).
 The production deployment key is supplied by the GitHub Environment and stored
 only in the controller's root-readable runtime credential directory.
 
