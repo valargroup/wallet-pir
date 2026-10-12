@@ -18,6 +18,7 @@ import base64
 import hashlib
 import json
 from pathlib import Path
+import re
 import sys
 import time
 import urllib.error
@@ -97,7 +98,7 @@ class MapWatch:
 
     def __init__(self, url, out_dir, fetch, emit, now=time.time):
         self.url = url
-        self.base = url.rsplit('/v1/txid/shards', 1)[0]
+        self.base, self.api = re.fullmatch(r'(.*)(/v[0-9]+/txid)/shards', url).groups()
         self.out = Path(out_dir)
         self.fetch, self.emit, self.now = fetch, emit, now
         self.last = None
@@ -141,7 +142,7 @@ class MapWatch:
         digest = entry['manifest_digest']
         if (self.out / 'manifests' / (digest + '.json')).exists():
             return
-        url = '%s/v1/txid/shards/%d/revisions/%s/manifest' % (self.base, entry['shard_id'], digest)
+        url = '%s%s/shards/%d/revisions/%s/manifest' % (self.base, self.api, entry['shard_id'], digest)
         status, _, body = self.fetch(url)
         if status != 200:
             self.emit('manifest_error', shard_id=entry['shard_id'], digest=digest, status=status)

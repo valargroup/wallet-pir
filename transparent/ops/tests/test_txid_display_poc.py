@@ -320,9 +320,9 @@ class Fake(Executor):
             return (200, json.dumps({'chunks': []})) if routed and 'withdrawn' not in routed else (404, '')
         if url == 'https://pir.example/v1/shards':
             return 200, json.dumps({'shards': []})
-        if url == 'https://txid.example/v1/txid/map':
+        if url == 'https://txid.example/v2/txid/map':
             site = self.text('archive-03', P.CADDYFILE) or ''
-            served = 'txid.example {' in site and 'handle /v1/txid/archive/*' in site
+            served = 'txid.example {' in site and 'handle /v2/txid/archive/*' in site
             return (200, json.dumps({'chunks': []})) if served and self.certificate else (0, 'TLS handshake failed')
         return 0, 'connection refused'
 
@@ -1415,7 +1415,7 @@ class StopAndRetireTests(DeployedFleet):
     def test_stop_withdraws_then_stops_the_controller_and_rolls_back(self):
         poc = self.poc()
         poc.act('stop')
-        self.assertEqual(self.fake.text('router-01', '/etc/caddy/txid-display/routes.caddy'), P.WITHDRAWN)
+        self.assertEqual(self.fake.text('router-01', '/etc/caddy/txid-display/routes.caddy'), P.WITHDRAWN % P.ROUTER_API)
         self.assertEqual(self.fake.unit('coordinator', P.CONTROLLER_UNIT)['active'], 'inactive')
         router = [m for m in self.fake.mutations() if m[0] == 'router-01' and m[1] == 'systemctl']
         controller = [i for i, m in enumerate(self.fake.mutations()) if m[2] == ('stop', P.CONTROLLER_UNIT)]
@@ -1554,6 +1554,11 @@ class SiteTests(DeployedFleet):
         self.assertTrue(site.split('\n')[2] == 'txid.example {', site)
         self.assertIn('reverse_proxy 10.142.0.5:8095 {', site)
         self.assertIn('\thandle {\n\t\trespond 404\n\t}\n}\n', site)
+        # A site serves its release's own /v2 paths; nothing names /v1/txid.
+        self.assertIn('\thandle /v2/txid/archive/* {\n', site)
+        self.assertIn('\thandle /v2/txid/* {\n', site)
+        self.assertNotIn('/v1/txid', site + files['withdrawn.caddy'])
+        self.assertIn('https://txid.example/v2/txid/shards', transient['mapwatch'])
         self.assertIn('respond "transparent txid display withdrawn" 503', files['withdrawn.caddy'])
         self.assertIn('txid.example {', files['withdrawn.caddy'])
         for phase in ('firewall', 'router-hook'):
@@ -1620,7 +1625,7 @@ class SiteTests(DeployedFleet):
     def test_route_waits_for_the_public_map_and_fails_without_it(self):
         self.fake.certificate = False
         poc = self.poc()
-        with self.assertRaisesRegex(P.PocError, 'display map at https://txid.example/v1/txid/map did not happen'):
+        with self.assertRaisesRegex(P.PocError, 'display map at https://txid.example/v2/txid/map did not happen'):
             poc.deploy('route', poc.plan_sha256())
         self.assertGreaterEqual(self.clock.t, P.SITE_SECONDS)
         poc.rollback(poc.transaction.id)

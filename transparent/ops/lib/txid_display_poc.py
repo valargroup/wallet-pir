@@ -121,8 +121,12 @@ TF_VARIABLE = 'transparent_txid_display_port_enabled'
 TF_SOURCES = ('transparent.tf', 'variables.tf')
 FIREWALL = 'digitalocean_firewall.transparent_worker'
 FIREWALL_TAGS = ('transparent-pir-router', 'wallet-pir-coordinator')
+# The public txid prefix: the router lineage keeps wallets' /v1, while a site
+# serves its release's own /v2 paths.
+ROUTER_API = '/v1/txid'
+SITE_API = '/v2/txid'
 WITHDRAWN = ('# Written by `wallet-pir-deploy.py txid-display-stop`: display withdrawn.\n'
-             '\thandle /v1/txid/* {\n\t\theader Retry-After 1\n'
+             '\thandle %s/* {\n\t\theader Retry-After 1\n'
              '\t\trespond "transparent txid display withdrawn" 503\n\t}\n')
 # The schema guards' and stop triggers' floors; never request inputs.
 FREE_FLOOR = 0.20
@@ -602,14 +606,18 @@ class Poc:
         return GLOB.fullmatch(self.request['router']['import_glob'])[1]
 
     @property
+    def api(self):
+        return SITE_API if self.site else ROUTER_API
+
+    @property
     def routes_path(self):
         return CADDYFILE if self.site else self.routes_dir + '/routes.caddy'
 
     def site_file(self, body):
         """The whole Caddyfile of a site's worker host around one display snippet."""
         return ('# Rendered by `wallet-pir-deploy.py txid-display-deploy --phase route`: the %s txid display\n'
-                '# site. Anything outside /v1/txid/ is not served here.\n%s {\n%s\thandle {\n\t\trespond 404\n\t}\n}\n'
-                % (self.site['name'], self.site['hostname'], body))
+                '# site. Anything outside %s/ is not served here.\n%s {\n%s\thandle {\n\t\trespond 404\n\t}\n}\n'
+                % (self.site['name'], self.api, self.site['hostname'], body))
 
     @property
     def tfvars_path(self):
@@ -673,11 +681,12 @@ class Poc:
                               'control_binary': self.binary('txid-control')} for key in self.worker_keys},
         }, indent=2, sort_keys=True) + '\n'
         files['routes.caddy'] = units.render(self.template('txid-display-routes.caddy.in'), {
-            'ARCHIVE_UPSTREAM': self.upstream('archive'), 'RECENT_UPSTREAM': self.upstream(self.map_worker)})
-        files['withdrawn.caddy'] = WITHDRAWN
+            'ARCHIVE_UPSTREAM': self.upstream('archive'), 'RECENT_UPSTREAM': self.upstream(self.map_worker),
+            'TXID': self.api})
+        files['withdrawn.caddy'] = WITHDRAWN % self.api
         if self.site:
             files['routes.caddy'] = self.site_file(files['routes.caddy'])
-            files['withdrawn.caddy'] = self.site_file(WITHDRAWN)
+            files['withdrawn.caddy'] = self.site_file(files['withdrawn.caddy'])
         else:
             files['tfvars'] = ('# txid display proof of concept; removed by txid-display-retire.\n%s = true\n'
                                % TF_VARIABLE)
@@ -748,7 +757,7 @@ class Poc:
                 'observer', '--rpc-url', r['controller']['rpc_url'], '--cookie', r['controller']['rpc_cookie'],
                 '--interval-ms', '250', '--out', measure + '/observer.jsonl']),
             'mapwatch': self.systemd_run(self.n.MAPWATCH_UNIT, MEASURE_LIMITS, observe + [
-                'mapwatch', '--url', r['measure']['public_url'] + '/v1/txid/shards', '--interval-ms', '1000',
+                'mapwatch', '--url', r['measure']['public_url'] + self.api + '/shards', '--interval-ms', '1000',
                 '--out-dir', measure + '/mapwatch']),
         }
 
@@ -1512,13 +1521,13 @@ class Poc:
         site = self.render()['routes.caddy']
         self.caddy_validate(transaction, {'Caddyfile': site})
         self.write_route(transaction, site)
-        url = self.request['measure']['public_url'] + '/v1/txid/map'
+        url = self.request['measure']['public_url'] + self.api + '/map'
 
         def served():
             status, body = self.ex.http_get(self.host('coordinator'), url, 10)
             return status == 200 and isinstance(json.loads(body).get('chunks'), list)
         self.wait('the display map at %s' % url, served, SITE_SECONDS)
-        transaction.event('%s serves /v1/txid/' % self.site['hostname'])
+        transaction.event('%s serves %s/' % (self.site['hostname'], self.api))
 
     def route(self, transaction):
         if self.site:
