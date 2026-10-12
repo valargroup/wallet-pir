@@ -18,8 +18,19 @@ import sys
 import urllib.request
 from pathlib import Path
 
-SCHEMA = 'transparent-shard-v11'
-GROUPS = {(g, t) for g in ('recent-4k-8k', 'archive-wide') for t in ('directory', 'pages')}
+SCHEMA = 'transparent-shard-v12'
+GROUPS = {(g, t) for g in ('decoupled-2k-8k', 'decoupled-32k-32k') for t in ('directory', 'pages')}
+
+
+def kind(table):
+    """The table kind a fixture table name addresses: `directory`, or
+    `pages` for a page shard's `pages-<j>`."""
+    if table == 'directory':
+        return table
+    child = table.removeprefix('pages-')
+    if child != table and child.isdigit() and (child == '0' or not child.startswith('0')) and int(child) < 32:
+        return 'pages'
+    raise ValueError(f'{table} is not a history table')
 
 
 def read(path, limit):
@@ -44,7 +55,7 @@ def pins(fixture_raw, map_raw):
         samples = table['samples']
         if not any(s['nonempty'] for s in samples) or any(len(s['sha256']) != table['segments'] for s in samples):
             raise ValueError(f"shard {table['shard_id']} {table['table']} has no usable occupied sample")
-        groups.add((table['geometry'], table['table']))
+        groups.add((table['geometry'], kind(table['table'])))
         if anchor is None or entry['end_height'] > anchor['end_height']:
             anchor = entry
     if groups != GROUPS:

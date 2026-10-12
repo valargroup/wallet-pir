@@ -829,10 +829,9 @@ impl WalletStore for SqliteStore {
         // Pending work belongs to a revision; one whose coverage is gone is
         // gone with it.
         tx.execute("DELETE FROM pending_work", []).map_err(io)?;
-        // A cached history reaching above the cut rests on a page shard the
-        // chain may no longer hold.
-        tx.execute("DELETE FROM run_cache WHERE max_height > ?1", params![h])
-            .map_err(io)?;
+        // Cached runs survive: each is keyed by its page shard's chained
+        // identity, which commits to the chain it was published on, so a walk
+        // reaches one only through a manifest on the accepted chain.
         let anchor: Option<String> = tx
             .query_row(
                 "SELECT value FROM wallet_meta WHERE key = 'anchor'",

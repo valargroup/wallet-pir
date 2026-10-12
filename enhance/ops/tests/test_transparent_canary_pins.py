@@ -19,9 +19,9 @@ def entry(shard_id, geometry, end, sealed=True):
             'manifest_digest': f'{shard_id:064x}', 'terminal_block_hash': f'{end:064x}'}
 
 
-MAP = {'shards': [entry(0, 'archive-wide', 100), entry(1, 'archive-wide', 200),
-                  entry(2, 'recent-4k-8k', 300), entry(3, 'recent-4k-8k', 400),
-                  entry(4, 'recent-4k-8k', 450, sealed=False)]}
+MAP = {'shards': [entry(0, 'decoupled-32k-32k', 100), entry(1, 'decoupled-32k-32k', 200),
+                  entry(2, 'decoupled-2k-8k', 300), entry(3, 'decoupled-2k-8k', 400),
+                  entry(4, 'decoupled-2k-8k', 450, sealed=False)]}
 
 
 def table(shard_id, geometry, name, nonempty=True):
@@ -33,9 +33,9 @@ def table(shard_id, geometry, name, nonempty=True):
 
 def fixture(tables=None):
     tables = tables if tables is not None else [
-        table(0, 'archive-wide', 'directory'), table(1, 'archive-wide', 'pages'),
-        table(3, 'recent-4k-8k', 'directory'), table(2, 'recent-4k-8k', 'pages')]
-    return {'schema': 'transparent-shard-v11', 'tables': tables}
+        table(0, 'decoupled-32k-32k', 'directory'), table(1, 'decoupled-32k-32k', 'pages-0'),
+        table(3, 'decoupled-2k-8k', 'directory'), table(2, 'decoupled-2k-8k', 'pages-0')]
+    return {'schema': 'transparent-shard-v12', 'tables': tables}
 
 
 def encode(value):
@@ -53,12 +53,14 @@ class PinsTest(unittest.TestCase):
     def test_refuses_what_the_canary_cannot_check(self):
         cases = {
             'schema': {**fixture(), 'schema': 'transparent-shard-v10'},
-            'provisional': fixture([*fixture()['tables'], table(4, 'recent-4k-8k', 'pages')]),
-            'superseded': fixture([*fixture()['tables'], {**table(2, 'recent-4k-8k', 'directory'), 'revision': 'f' * 64}]),
-            'absent': fixture([*fixture()['tables'], table(9, 'recent-4k-8k', 'pages')]),
+            'provisional': fixture([*fixture()['tables'], table(4, 'decoupled-2k-8k', 'pages-0')]),
+            'superseded': fixture([*fixture()['tables'], {**table(2, 'decoupled-2k-8k', 'directory'), 'revision': 'f' * 64}]),
+            'absent': fixture([*fixture()['tables'], table(9, 'decoupled-2k-8k', 'pages-0')]),
             'group': fixture(fixture()['tables'][:3]),
-            'unoccupied': fixture([*fixture()['tables'], table(1, 'archive-wide', 'directory', nonempty=False)]),
-            'segments': fixture([*fixture()['tables'], {**table(1, 'archive-wide', 'directory'), 'segments': 2}]),
+            'unoccupied': fixture([*fixture()['tables'], table(1, 'decoupled-32k-32k', 'directory', nonempty=False)]),
+            'segments': fixture([*fixture()['tables'], {**table(1, 'decoupled-32k-32k', 'directory'), 'segments': 2}]),
+            'table': fixture([*fixture()['tables'], table(1, 'decoupled-32k-32k', 'pages')]),
+            'padded': fixture([*fixture()['tables'], table(1, 'decoupled-32k-32k', 'pages-01')]),
         }
         for name, value in cases.items():
             with self.subTest(name), self.assertRaises(ValueError):

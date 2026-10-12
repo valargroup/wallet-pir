@@ -13,8 +13,8 @@ pub type Prepared = (BuiltDirectory, Vec<BuiltChild>);
 type Cache = VecDeque<(String, Arc<Prepared>, usize)>;
 static CACHE: OnceLock<Mutex<Cache>> = OnceLock::new();
 
-/// Builds the directory shard `id` over `start..=end` with `children` page
-/// shards of equal span, the last ending at `end`.
+/// Builds the directory shard `id` over `start..=end` with page shards ending
+/// at [`child_ends`]`(start, end, children, child_span)`.
 #[allow(clippy::too_many_arguments)]
 pub fn prepared_shard(
     id: u64,
@@ -25,6 +25,7 @@ pub fn prepared_shard(
     profile: &str,
     geometry: &'static Geometry,
     children: u32,
+    child_span: u64,
     sealed: bool,
     events: &[(ScriptBytes, TransparentEvent)],
 ) -> Arc<Prepared> {
@@ -38,13 +39,23 @@ pub fn prepared_shard(
         profile,
         geometry,
         children,
+        child_span,
         sealed,
         events,
     )
 }
 
-/// The heights `children` equal page shards over `start..=end` end at.
-pub fn child_ends(start: u64, end: u64, children: u32) -> Vec<u64> {
+/// The heights page shards over `start..=end` end at: every `child_span`
+/// blocks from `start` when that is nonzero, so a growing tail keeps its
+/// earlier boundaries, otherwise `children` page shards of equal span.
+pub fn child_ends(start: u64, end: u64, children: u32, child_span: u64) -> Vec<u64> {
+    if child_span > 0 {
+        let mut ends: Vec<u64> = (start + child_span - 1..end)
+            .step_by(child_span as usize)
+            .collect();
+        ends.push(end);
+        return ends;
+    }
     let span = end - start + 1;
     let children = u64::from(children.max(1)).min(span);
     (1..=children)
@@ -65,11 +76,12 @@ fn prepared_in(
     profile: &str,
     geometry: &'static Geometry,
     children: u32,
+    child_span: u64,
     sealed: bool,
     events: &[(ScriptBytes, TransparentEvent)],
 ) -> Arc<Prepared> {
     use sha2::{Digest, Sha256};
-    let ends = child_ends(start, end, children);
+    let ends = child_ends(start, end, children, child_span);
     let terminals: Vec<[u8; 32]> = ends.iter().map(|h| hash(*h).0).collect();
     let key = hex::encode(Sha256::digest(
         serde_json::to_vec(&(
@@ -144,6 +156,7 @@ mod tests {
                 transparent_filter::RANGE_PROFILE,
                 &DECOUPLED_2K_8K,
                 1,
+                0,
                 true,
                 &[],
             )
@@ -161,9 +174,11 @@ mod tests {
 
     #[test]
     fn child_ends_tile_the_range() {
-        assert_eq!(child_ends(10, 19, 1), vec![19]);
-        assert_eq!(child_ends(10, 19, 2), vec![14, 19]);
-        assert_eq!(child_ends(10, 19, 3), vec![12, 15, 19]);
-        assert_eq!(child_ends(10, 11, 5), vec![10, 11]);
+        assert_eq!(child_ends(10, 19, 1, 0), vec![19]);
+        assert_eq!(child_ends(10, 19, 2, 0), vec![14, 19]);
+        assert_eq!(child_ends(10, 19, 3, 0), vec![12, 15, 19]);
+        assert_eq!(child_ends(10, 11, 5, 0), vec![10, 11]);
+        assert_eq!(child_ends(10, 19, 0, 4), vec![13, 17, 19]);
+        assert_eq!(child_ends(10, 17, 0, 4), vec![13, 17]);
     }
 }

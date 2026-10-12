@@ -18,7 +18,7 @@ use transparent_filter::{BlockHash, ScriptBytes, SealParameters, ShardMap, Shard
 #[path = "support/revision.rs"]
 mod revision;
 use transparent_shard::layout::{Geometry, DECOUPLED_2K_8K};
-use transparent_shard::manifest::SCHEMA;
+use transparent_shard::manifest::{ShardManifest, SCHEMA};
 use transparent_shard_server::assignment::{
     Assignment, GeneratedBy, SetIdentity, WorkerAssignment, WorkerRole, ASSIGNMENT_SCHEMA,
 };
@@ -366,9 +366,9 @@ async fn a_query_for_an_unassigned_shard_is_misdirected_and_public_bytes_are_ser
     assert_eq!(init["assigned_shards"], 2);
     assert_eq!(init["worker_id"], "archive-01");
     assert_eq!(init["assignment_sha256"], assignment.digest());
-    // Set-wide: the owner declares the other geometry's parameters
-    // too, since a wallet may fetch init from any worker and refuses a map
-    // naming a geometry the document leaves out.
+    // Set-wide: the owner declares every geometry the set names, since a
+    // wallet may fetch init from any worker and refuses a map naming a
+    // geometry the document leaves out. Both tiers here share one.
     let mut declared: Vec<&str> = init["geometries"]
         .as_array()
         .unwrap()
@@ -376,12 +376,7 @@ async fn a_query_for_an_unassigned_shard_is_misdirected_and_public_bytes_are_ser
         .map(|g| g["name"].as_str().unwrap())
         .collect();
     declared.sort_unstable();
-    assert_eq!(declared, ["decoupled-2k-8k", "decoupled-2k-8k"]);
-    assert_eq!(
-        init["geometries"].as_array().unwrap().len(),
-        2,
-        "every geometry the set names, not only the held one"
-    );
+    assert_eq!(declared, ["decoupled-2k-8k"]);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -509,7 +504,7 @@ fn retention_by_bytes_keeps_newest_first_and_reports_the_rest_prunable() {
     // One shard, republished three times as a growing tail.
     let dir = tempfile::tempdir().unwrap();
     let mut entries = Vec::new();
-    let mut digests = Vec::new();
+    let mut digests: Vec<String> = Vec::new();
     for revision in 0..4u32 {
         let end = FIRST + 10 + revision as u64 * 5;
         let supersedes = digests.last().cloned().unwrap_or_default();

@@ -121,18 +121,18 @@ impl<T: ShardTransport> ShardTransport for Counting<T> {
         self.route(
             match table {
                 Table::Directory => "setup_directory",
-                Table::Pages => "setup_pages",
+                Table::Pages(_) => "setup_pages",
             },
             format!(
                 "/v1/shards/{shard_id}/revisions/{revision}/setup/{}/{segment}",
-                table.as_str()
+                table.name()
             ),
         );
         let result = self.inner.setup(shard_id, revision, table, segment);
         self.record(
             match table {
                 Table::Directory => "setup_directory",
-                Table::Pages => "setup_pages",
+                Table::Pages(_) => "setup_pages",
             },
             0,
             sized(&result),
@@ -151,18 +151,18 @@ impl<T: ShardTransport> ShardTransport for Counting<T> {
         self.route(
             match table {
                 Table::Directory => "query_directory",
-                Table::Pages => "query_pages",
+                Table::Pages(_) => "query_pages",
             },
             format!(
                 "/v1/shards/{shard_id}/revisions/{revision}/query/{}",
-                table.as_str()
+                table.name()
             ),
         );
         let result = self.inner.query(shard_id, revision, table, body);
         self.record(
             match table {
                 Table::Directory => "query_directory",
-                Table::Pages => "query_pages",
+                Table::Pages(_) => "query_pages",
             },
             body.len() as u64,
             result.as_ref().map(|b| b.len() as u64),

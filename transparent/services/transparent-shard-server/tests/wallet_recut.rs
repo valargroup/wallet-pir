@@ -21,7 +21,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 use transparent_events::{ReceiveEvent, SpendEvent, TransparentEvent};
 use transparent_filter::{Recut, ScriptBytes, ShardMap, ShardMapEntry, SupersededShard};
-use transparent_shard::layout::{DECOUPLED_2K_8K};
+use transparent_shard::layout::{DECOUPLED_2K_8K, DECOUPLED_32K_32K};
 use transparent_wallet::client::Table;
 use transparent_wallet::http::{HttpOptions, HttpShardTransport};
 use transparent_wallet::transport::{BoxError, FilterSource, ShardTransport};
@@ -103,6 +103,7 @@ fn sealed(start: u64, end: u64, geometry: &'static transparent_shard::layout::Ge
         sealed: true,
         revision: 0,
         children: CHILDREN,
+        child_span: 0,
     }
 }
 
@@ -118,19 +119,21 @@ fn before_layout() -> Vec<Laid> {
         sealed: false,
         revision: 0,
         children: CHILDREN,
+        child_span: 0,
     });
     shards
 }
 
-/// Shards 1–3 merged into one `decoupled-2k-8k` shard; shard 4 renumbered 2 at
+/// Shards 1–3 merged into one `decoupled-32k-32k` shard; shard 4 renumbered 2 at
 /// revision 1; the tail renumbered 3, longer, at revision 1.
 fn after_layout() -> Vec<Laid> {
     vec![
         sealed(FIRST, FIRST + SPAN - 1, &DECOUPLED_2K_8K),
-        sealed(FIRST + SPAN, FIRST + 4 * SPAN - 1, &DECOUPLED_2K_8K),
+        sealed(FIRST + SPAN, FIRST + 4 * SPAN - 1, &DECOUPLED_32K_32K),
         Laid {
             revision: 1,
             children: CHILDREN,
+            child_span: 0,
             ..sealed(FIRST + 4 * SPAN, TAIL - 1, &DECOUPLED_2K_8K)
         },
         Laid {
@@ -140,6 +143,7 @@ fn after_layout() -> Vec<Laid> {
             sealed: false,
             revision: 1,
             children: CHILDREN,
+            child_span: 0,
         },
     ]
 }
@@ -850,6 +854,7 @@ async fn a_shallow_reorg_the_publisher_followed_first_waits_for_the_chain() {
         sealed: false,
         revision: 1,
         children: CHILDREN,
+        child_span: 0,
     };
     let branch_dir = tempfile::tempdir().unwrap();
     let republished = publish_laid(branch_dir.path(), &branch, &layout, vec![], forked);
@@ -963,6 +968,7 @@ async fn a_hostile_change_below_a_reorg_cannot_hold_the_rollback_back() {
         sealed: false,
         revision: 1,
         children: CHILDREN,
+        child_span: 0,
     };
     let hostile_dir = tempfile::tempdir().unwrap();
     let map = publish_laid(hostile_dir.path(), &branch, &layout, vec![], hostile);

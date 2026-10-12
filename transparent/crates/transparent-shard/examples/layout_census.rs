@@ -9,9 +9,9 @@ use std::{
 use transparent_events::{ReceiveEvent, SpendEvent, TransparentEvent, Txid};
 use transparent_filter::{BlockHash, ScriptBytes};
 use transparent_shard::{
-    build_shard, candidate_rows, decode_directory_row, decode_page_row,
+    build_directory_shard, candidate_rows, decode_directory_row, decode_page_row,
     packing::{HistoryLayout, PackedDemand},
-    script_tag, tag_salt, DECOUPLED_2K_8K,
+    page_tag_salt, script_tag, tag_salt, DECOUPLED_2K_8K,
 };
 
 #[derive(Deserialize)]
@@ -138,19 +138,35 @@ fn main() {
         })
         .collect();
     let started = Instant::now();
-    let built = build_shard(
+    // One directory shard with one page shard: every event but a script's
+    // newest two is pushed into it, which is the run the sample measures.
+    let start = first.expect("blocks") as u64;
+    let blocks: Vec<(u64, Vec<(ScriptBytes, TransparentEvent)>)> = (start..=end as u64)
+        .map(|height| {
+            (
+                height,
+                events
+                    .iter()
+                    .filter(|(_, event)| u64::from(event.height()) == height)
+                    .cloned()
+                    .collect(),
+            )
+        })
+        .collect();
+    let (built, children) = build_directory_shard(
         0,
-        first.expect("blocks") as u64,
-        end as u64,
-        BlockHash([0; 32]),
-        BlockHash(terminal),
-        transparent_filter::profile::RANGE_PROFILE_V2.name,
         &DECOUPLED_2K_8K,
-        &events,
+        BlockHash([0; 32]),
+        transparent_filter::profile::RANGE_PROFILE_V2.name,
+        blocks,
+        &[end as u64],
+        &|_| BlockHash(terminal),
+        true,
     )
     .expect("build");
+    let child = &children[0];
     let build_ms = started.elapsed().as_millis();
-    assert_eq!(built.page_rows, demand.rows());
+    assert_eq!(child.page_rows, demand.rows());
     let salt = tag_salt(0, &BlockHash(terminal), built.tag_salt_counter);
     let mut verified = 0;
     for (script, expected) in &histories {
@@ -165,25 +181,34 @@ fn main() {
             .as_ref()
             .expect("choice table")
             .choice(0, script);
-        let entry = decode_directory_row(built.directory_row(candidates[choice]))
+        let entry = decode_directory_row(built.directory_row(candidates[choice]), 1)
             .expect("directory")
             .into_iter()
             .find(|e| e.tag == tag)
             .expect("present");
-        let mut recovered = entry.inline;
-        if let Some(base) = entry.first_page.checked_sub(1) {
-            let first = decode_page_row(built.page_row(u64::from(base)))
+        let mut recovered = entry.inline.clone();
+        if let Some((_, base)) = entry.head() {
+            let page_salt = page_tag_salt(
+                0,
+                0,
+                child.end_height,
+                &child.terminal_block_hash,
+                child.tag_salt_counter,
+            );
+            let tag = script_tag(&page_salt, script);
+            let first = decode_page_row(child.page_row(&DECOUPLED_2K_8K, u64::from(base)))
                 .expect("first page")
                 .into_iter()
                 .find(|e| e.tag == tag)
                 .expect("fragment");
             let count = first.fragment_count;
             for ordinal in 0..count {
-                let page = decode_page_row(built.page_row(u64::from(base + ordinal)))
-                    .expect("page")
-                    .into_iter()
-                    .find(|e| e.tag == tag)
-                    .expect("fragment");
+                let page =
+                    decode_page_row(child.page_row(&DECOUPLED_2K_8K, u64::from(base + ordinal)))
+                        .expect("page")
+                        .into_iter()
+                        .find(|e| e.tag == tag)
+                        .expect("fragment");
                 assert_eq!((page.ordinal, page.fragment_count), (ordinal, count));
                 recovered.extend(page.events);
             }
@@ -197,11 +222,11 @@ fn main() {
         serde_json::json!({
             "schema": transparent_shard::SCHEMA, "classification": "bounded public-chain sample; actual builder and decoded histories; not full-chain capacity",
             "start_height": first, "end_height": end, "blocks": blocks, "scripts": histories.len(), "events": events.len(),
-            "v9_required_page_rows": baseline_rows, "v10_required_page_rows": built.page_rows,
-            "v9_directory_entry_bytes": histories.len()*192, "v10_directory_entry_bytes": directory_bytes,
-            "directory_segments": built.directory_segments(), "page_segments": built.page_segments(),
-            "fragments": built.fragments, "verified_histories": verified, "build_ms": build_ms,
-            "page_capacity_gain_percent": (baseline_rows as f64 / built.page_rows as f64 - 1.0)*100.0
+            "v9_required_page_rows": baseline_rows, "v12_required_page_rows": child.page_rows,
+            "v9_directory_entry_bytes": histories.len()*192, "v12_directory_entry_bytes": directory_bytes,
+            "directory_segments": built.directory_segments(), "page_segments": child.segments,
+            "fragments": child.fragments, "verified_histories": verified, "build_ms": build_ms,
+            "page_capacity_gain_percent": (baseline_rows as f64 / child.page_rows as f64 - 1.0)*100.0
         })
     );
 }

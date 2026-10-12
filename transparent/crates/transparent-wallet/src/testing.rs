@@ -729,7 +729,8 @@ fn the_run_cache_is_written_with_its_commit_and_never_rewritten<S: WalletStore>(
     );
     assert_eq!(
         store.cached_run("child-b", &script(1)).unwrap(),
-        None,
-        "a history reaching above the cut is gone"
+        Some(high.events),
+        "a run keyed by its page shard's identity survives a rollback: the \
+         identity only recurs on the chain it was published on"
     );
 }

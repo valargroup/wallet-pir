@@ -135,7 +135,7 @@ impl ShardTransport for HttpShards {
             .get(format!(
                 "{}/v1/shards/{shard_id}/revisions/{revision}/setup/{}/{segment}",
                 self.base,
-                table.as_str()
+                table.name()
             ))
             .send()?;
         let bytes = checked(response, shard_id, revision)?;
@@ -155,7 +155,7 @@ impl ShardTransport for HttpShards {
             .post(format!(
                 "{}/v1/shards/{shard_id}/revisions/{revision}/query/{}",
                 self.base,
-                table.as_str()
+                table.name()
             ))
             .body(body.to_vec())
             .send()?;

@@ -116,8 +116,9 @@ fn the_selection_outgrows_the_packing_key_as_tables_grow() {
 
 /// Pin the baseline geometry's per-query upload size.
 ///
-/// Both decoupled-2k-8k tables have 8,192 rows and upload 72,712 bytes per dithered
-/// query, or 77,832 per 49-bit one.
+/// The decoupled-2k-8k directory has 2,048 rows and uploads 38,920 bytes per
+/// dithered query, or 40,200 per 49-bit one; its page shards have 8,192 rows
+/// and upload 72,712, or 77,832.
 /// This is a wire-size check, not a complete wallet-sync measurement; see
 /// `transparent/evidence/README.md` for dataset-scoped comparisons.
 #[test]
@@ -129,9 +130,9 @@ fn the_pinned_geometry_costs_what_it_did() {
     // wrong number.
     let directory = table_cost(&DECOUPLED_2K_8K, Table::Directory);
     let pages = table_cost(&DECOUPLED_2K_8K, Table::Pages);
-    assert_eq!(directory.query, 72_712, "directory query");
+    assert_eq!(directory.query, 38_920, "directory query");
     assert_eq!(pages.query, 72_712, "page query");
-    assert_eq!(directory.legacy_query, 77_832, "49-bit directory query");
+    assert_eq!(directory.legacy_query, 40_200, "49-bit directory query");
     assert_eq!(pages.legacy_query, 77_832, "49-bit page query");
     assert_eq!(directory.setup, 14_848);
     assert_eq!(pages.setup, 14_848);

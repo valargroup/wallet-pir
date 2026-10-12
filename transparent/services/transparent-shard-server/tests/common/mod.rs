@@ -10,7 +10,7 @@ use transparent_filter::{
     filter_hash, BlockHash, Recut, ScriptBytes, SealParameters, ShardMap, ShardMapEntry,
 };
 mod prepared;
-pub use prepared::child_ends;
+
 use prepared::prepared_shard;
 use transparent_shard::layout::{Geometry, DECOUPLED_2K_8K};
 use transparent_shard::manifest::{
@@ -203,6 +203,7 @@ pub fn publish_with(
                 sealed: !is_tail,
                 revision: if is_tail { tail_revision } else { 0 },
                 children: CHILDREN,
+                child_span: 0,
             },
             shard_id,
             if is_tail { tail_supersedes } else { "" },
@@ -226,6 +227,9 @@ pub struct Laid {
     pub revision: u32,
     /// Page shards of equal span inside the directory shard.
     pub children: u32,
+    /// When nonzero, page shards of this many blocks from `start` instead,
+    /// so a growing tail keeps its earlier page-shard boundaries.
+    pub child_span: u64,
 }
 
 /// Writes a publication whose shards are laid out by hand, carrying the
@@ -241,6 +245,19 @@ pub fn publish_laid(
     recuts: Vec<Recut>,
     hash: impl Fn(u64) -> BlockHash,
 ) -> ShardMap {
+    publish_laid_superseding(dir, events, shards, recuts, hash, "")
+}
+
+/// [`publish_laid`], with the last shard naming `tail_supersedes` as the
+/// revision it supersedes.
+pub fn publish_laid_superseding(
+    dir: &Path,
+    events: &[(ScriptBytes, TransparentEvent)],
+    shards: &[Laid],
+    recuts: Vec<Recut>,
+    hash: impl Fn(u64) -> BlockHash,
+    tail_supersedes: &str,
+) -> ShardMap {
     let mut entries: Vec<ShardMapEntry> = Vec::new();
     let mut parent_digest = String::new();
     for (shard_id, laid) in shards.iter().enumerate() {
@@ -253,7 +270,11 @@ pub fn publish_laid(
             dir,
             *laid,
             shard_id as u64,
-            "",
+            if shard_id + 1 == shards.len() {
+                tail_supersedes
+            } else {
+                ""
+            },
             &parent_digest,
             &inside,
             &hash,
@@ -288,6 +309,7 @@ fn write_shard(
         sealed,
         revision,
         children,
+        child_span,
     } = laid;
     let prepared = prepared_shard(
         shard_id,
@@ -298,6 +320,7 @@ fn write_shard(
         transparent_filter::RANGE_PROFILE,
         geometry,
         children,
+        child_span,
         sealed,
         events,
     );

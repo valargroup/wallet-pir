@@ -348,11 +348,12 @@ impl WalletStore for MemoryStore {
                 true
             });
         }
-        // A cached history above the cut rests on a page shard the chain may
-        // no longer hold; its identity would not recur, but it is not kept.
-        self.state
-            .runs
-            .retain(|_, events| events.iter().all(|event| Self::height_of(event) <= height));
+        // Cached runs survive: each is keyed by its page shard's chained
+        // identity, which commits to that page shard's terminal block and to
+        // every earlier one, so a walk reaches it only through a manifest on
+        // the accepted chain. A tail replaced by a later revision keeps the
+        // runs its sealed page shards share, which is what lets the catch-up
+        // stop at them.
         // All pending retrievals are inexpensive to re-plan and may contain old-branch data.
         self.state.pending.clear();
         if let Some(anchor) = &mut self.state.anchor {

@@ -261,7 +261,7 @@ async fn retrieve_at(
     };
     let used = if dithered { &dithered_scheme } else { &scheme };
     assert_eq!(upload.len(), used.request_bytes);
-    let binding = query_binding(&revision, table.name());
+    let binding = query_binding(&revision, &table.name());
     let mut body = binding.to_vec();
     body.extend(upload);
 
@@ -343,7 +343,7 @@ fn padded_body(revision: &str, table: TableRef) -> Vec<u8> {
 
 /// A query body of `request` bytes after the binding.
 fn padded_body_of(revision: &str, table: TableRef, request: usize) -> Vec<u8> {
-    let mut body = query_binding(revision, table.name()).to_vec();
+    let mut body = query_binding(revision, &table.name()).to_vec();
     body.resize(8 + request, 0);
     body
 }
@@ -369,7 +369,7 @@ async fn only_the_two_query_lengths_are_accepted() {
         let (status, raw) = post(
             &f.state,
             &format!("/v1/shards/0/revisions/{revision}/query/directory"),
-            padded_body_of(&revision, Table::Directory, request),
+            padded_body_of(&revision, TableRef::Directory, request),
         )
         .await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{request} bytes");
@@ -1026,8 +1026,11 @@ async fn only_page_shards_take_a_prefix_and_only_their_own() {
     let tail = SHARDS - 1;
     let tail_revision = revision_of(&f, tail);
     let query_rows = f.set.get(tail).unwrap().manifest.page_children[0].query_rows() as usize;
+    // The directory selects every row; at the 2,048-row minimum a shorter
+    // selection does not exist, so only the page shard's other prefix is a
+    // length to refuse here.
+    assert_eq!(query_rows, Table::Directory.rows(&GEOMETRY) as usize);
     for (shard_id, revision, table, rows) in [
-        (tail, tail_revision.as_str(), TableRef::Directory, query_rows),
         (
             tail,
             tail_revision.as_str(),

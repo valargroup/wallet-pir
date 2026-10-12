@@ -23,9 +23,9 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use transparent_events::{ReceiveEvent, SpendEvent, TransparentEvent, Txid};
-use transparent_filter::{BlockHash, ScriptBytes, SealParameters, ShardMap, ShardMapEntry};
+use transparent_filter::{BlockHash, ScriptBytes, SealParameters, ShardMap};
 use transparent_shard::build::BuiltDirectory;
-use transparent_shard::layout::{Geometry, DECOUPLED_2K_8K};
+use transparent_shard::layout::{Geometry, DECOUPLED_2K_8K, DECOUPLED_32K_32K};
 use transparent_shard::manifest::ShardManifest;
 use transparent_shard_server::service::{router, ServiceConfig, ServiceState};
 use transparent_shard_server::shardset::{ShardSet, DEFAULT_RETAIN_REVISIONS};
@@ -238,6 +238,7 @@ fn publish_profiled(
             profile,
             geometry,
             CHILDREN,
+            0,
             sealed,
             events,
         );
@@ -620,8 +621,8 @@ async fn scripts_sharing_a_row_still_cost_a_fetch_each() {
     let per_shard = vec![events];
     let map = publish(dir.path(), &per_shard);
     assert_eq!(
-        map.shards[0].page_segments, 1,
-        "three short histories share one row in one segment"
+        map.shards[0].page_rows, 1,
+        "three short histories share one row in one page shard"
     );
     let base = serve(dir.path()).await;
 
@@ -724,8 +725,9 @@ async fn a_wallet_sends_dithered_queries_only_where_they_are_advertised() {
     let wallet = vec![script(1), script(2), script(3)];
     let expected = traverse(&per_shard, &wallet, 0);
 
+    // The directory has 2,048 rows, and every page shard here holds under
+    // 2,048 rows, so its queries select that 2,048-row prefix: one length.
     let rows = DECOUPLED_2K_8K.directory_rows as usize;
-    assert_eq!(DECOUPLED_2K_8K.page_rows as usize, rows);
     let dithered = run_sync(dir.path(), base.clone(), wallet.clone(), FIRST, map.clone()).await;
     let legacy = run_sync_with_init(dir.path(), base, wallet, FIRST, map, |init| {
         for entry in init["geometries"].as_array_mut().unwrap() {
@@ -1334,7 +1336,7 @@ async fn a_wallet_syncs_across_a_geometry_boundary_exactly() {
         &per_shard,
         |shard_id| {
             if shard_id < SHARDS / 2 {
-                &DECOUPLED_2K_8K
+                &DECOUPLED_32K_32K
             } else {
                 &DECOUPLED_2K_8K
             }
@@ -1342,7 +1344,7 @@ async fn a_wallet_syncs_across_a_geometry_boundary_exactly() {
         0,
         "",
     );
-    assert_eq!(map.shards[0].geometry, DECOUPLED_2K_8K.name);
+    assert_eq!(map.shards[0].geometry, DECOUPLED_32K_32K.name);
     assert_eq!(
         map.shards[(SHARDS - 1) as usize].geometry,
         DECOUPLED_2K_8K.name,
@@ -1375,7 +1377,7 @@ async fn init_declares_one_parameter_set_per_geometry() {
         &per_shard,
         |shard_id| {
             if shard_id < SHARDS / 2 {
-                &DECOUPLED_2K_8K
+                &DECOUPLED_32K_32K
             } else {
                 &DECOUPLED_2K_8K
             }
@@ -1402,7 +1404,7 @@ async fn init_declares_one_parameter_set_per_geometry() {
         .iter()
         .map(|entry| entry.name.as_str())
         .collect();
-    assert_eq!(names, vec![DECOUPLED_2K_8K.name, DECOUPLED_2K_8K.name]);
+    assert_eq!(names, vec![DECOUPLED_2K_8K.name, DECOUPLED_32K_32K.name]);
 
     // The dimensions travel with the scheme so the client can check the pair.
     // A service that published one geometry's name over another's row counts
@@ -2461,7 +2463,7 @@ async fn concurrent_requests_change_nothing_but_when_they_are_sent() {
         |id: u64, built: &BuiltDirectory| (id + 1 < SHARDS).then(|| tabled(id, built)).flatten();
     let two_tiers = |shard_id: u64| {
         if shard_id < SHARDS / 2 {
-            &DECOUPLED_2K_8K
+            &DECOUPLED_32K_32K
         } else {
             &DECOUPLED_2K_8K
         }

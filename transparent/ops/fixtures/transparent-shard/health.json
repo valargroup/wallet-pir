@@ -5,11 +5,10 @@
   "cache_budget_bytes": 4294967296,
   "cache_resident_bytes": 0,
   "geometries": [
-    "recent-4k",
-    "recent-8k"
+    "decoupled-2k-8k"
   ],
   "incarnation": "00000000000000000000000000000000",
-  "map_sha256": "98c0274967d7f27c7db93638c5a9e2bf4b34722233dfab845419eb390a7ab8f9",
+  "map_sha256": "8760e4b772459770d39133f8d2af8b1f82febdaceda43113ff42741a6415680c",
   "phase": "serving",
   "prewarm_operations_total": 0,
   "prunable_revisions": 0,

@@ -34,10 +34,13 @@ async fn executable_checks_frozen_checkpoints_and_reports_publication_drift() {
             shard.shard_id, shard.manifest_digest
         );
         allowed.insert(format!("GET {prefix}/manifest"));
-        for (table, segments) in [
-            ("directory", shard.directory_segments),
-            ("pages", shard.page_segments),
-        ] {
+        // The directory's segments, and each page shard as `pages-<j>` (the
+        // map counts page shards where it once counted page segments); this
+        // fixture's page shards hold one segment each.
+        let tables = std::iter::once(("directory".to_string(), shard.directory_segments)).chain(
+            (0..shard.page_segments).map(|child| (transparent_shard::manifest::pages_table(child), 1)),
+        );
+        for (table, segments) in tables {
             allowed.insert(format!("POST {prefix}/query/{table}"));
             for segment in 0..segments {
                 allowed.insert(format!("GET {prefix}/setup/{table}/{segment}"));

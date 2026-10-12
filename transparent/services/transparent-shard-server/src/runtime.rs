@@ -1511,7 +1511,7 @@ pub(crate) mod tests {
     #[test]
     fn the_reservation_is_the_native_upper_bound() {
         assert_eq!(
-            reservation(DECOUPLED_2K_8K.directory_rows, DECOUPLED_2K_8K.directory_row_bytes),
+            reservation(DECOUPLED_2K_8K.page_rows, DECOUPLED_2K_8K.page_row_bytes),
             (32 << 20) + 14_848 + 16 + (32 + 2 * 2_048 * 8 + 8) + (64 << 20)
         );
     }
@@ -1582,7 +1582,7 @@ pub(crate) mod tests {
             (1, 1),
             (native::D * profile.row_bytes, 1),
             (native::D * profile.row_bytes + 1, 2),
-            (bytes, 2),
+            (bytes, profile.rows / native::D),
         ] {
             let mut rows = vec![0u8; bytes];
             for (i, byte) in rows[..filled].iter_mut().enumerate() {
@@ -1608,7 +1608,7 @@ pub(crate) mod tests {
     #[test]
     fn the_batched_hint_runtime_is_the_reference_runtime() {
         for (geometry, table, filled) in [
-            (&DECOUPLED_2K_8K, Table::Directory, 8_192),
+            (&DECOUPLED_2K_8K, Table::Directory, 2_048),
             (&DECOUPLED_2K_8K, Table::Pages, 5_000),
             (&TXID_2K8, Table::TxDirectory, 2_048),
             (&TXID_2K8, Table::TxDirectory, 700),
@@ -1662,11 +1662,10 @@ pub(crate) mod tests {
         }
     }
 
-    /// Only the recent history geometries and the display geometries take the
+    /// Only the recent history geometry and the display geometries take the
     /// batched hint, and their deployed masks are within its capacity, so it
-    /// never silently falls back there. Both history archive geometries, and
-    /// any history geometry added later, keep the reference product over every
-    /// block.
+    /// never silently falls back there. The archive geometry, and any history
+    /// geometry added later, keep the reference product over every block.
     #[test]
     fn the_batched_hint_is_dispatched_for_recent_geometries_only() {
         use transparent_shard::display::DISPLAY_PROFILES;
@@ -1674,12 +1673,11 @@ pub(crate) mod tests {
         for geometry in PROFILES {
             assert_eq!(
                 uses_batched_hint(geometry),
-                geometry.name.starts_with("recent-"),
+                geometry.name == DECOUPLED_2K_8K.name,
                 "{}",
                 geometry.name
             );
         }
-        assert!(!uses_batched_hint(&DECOUPLED_32K_32K));
         assert!(!uses_batched_hint(&DECOUPLED_32K_32K));
         assert!(uses_batched_hint(&DECOUPLED_2K_8K));
         assert!(DISPLAY_PROFILES.iter().all(uses_batched_hint));

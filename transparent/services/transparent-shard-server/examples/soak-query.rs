@@ -37,7 +37,7 @@ fn main() -> Result<(), BoxError> {
         let table = if queries.is_multiple_of(2) {
             Table::Directory
         } else {
-            Table::Pages
+            Table::Pages(0)
         };
         match query::once(&args.url, &args.publications, args.shard, table) {
             Ok(value) => {

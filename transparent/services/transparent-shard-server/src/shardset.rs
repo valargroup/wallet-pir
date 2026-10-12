@@ -462,6 +462,15 @@ impl LoadedShard {
         }
     }
 
+    /// Everything this revision's runtimes are keyed by: its digest and the
+    /// identity of each of its page shards. What a disk-cache collection
+    /// must keep for the revision to stay warm.
+    pub fn runtime_identities(&self) -> Vec<String> {
+        std::iter::once(self.digest.clone())
+            .chain(self.children.iter().map(|child| child.identity.clone()))
+            .collect()
+    }
+
     /// Rows a query of `table` selects over, given the table's full rows.
     pub fn query_rows(&self, table: TableRef, full: usize) -> usize {
         match table {
