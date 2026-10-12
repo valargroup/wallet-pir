@@ -282,6 +282,17 @@ With a `roster` block (`{"path": ".../roster.json", "unit":
 draining transparent worker from the roster on every cycle, so elastic members
 and replaced owners are sampled under their own names. A static list sampled
 archive-03 as `transparent-pir-recent-03` after the 2026-09-29 owner move.
+An explicit target may also name its machine (`host_id`, default its first
+source), its DigitalOcean size slug (`size`) and up to eight more systemd
+`units` to report beside `unit`; the `roster` block accepts `size` for every
+derived target and `role_units` (roster `role` to unit), and a derived target's
+`host_id` is its worker id. Each snapshot entry then adds `host_id`, `size`,
+`swap_total_bytes`, `swap_free_bytes` and `units`, a map from unit name to
+`memory_current_bytes`, `memory_peak_bytes`, `memory_max_bytes` (null when
+unlimited) and `oom_kills`. A value the host does not report, or a unit systemd
+has not loaded, is left out. The existing fields are unchanged.
+[`pir-quality-hosts.example.json`](../ops/deploy/pir-quality-hosts.example.json)
+samples the coordinator, the router, the v12 roster and the one-query txid site.
 Caddy 2.6 metrics must be enabled in the generated router configuration. Only
 the deployed top-level `subroute` handler boundary is counted; nested handler
 totals must not be added. This includes responses and refusals at that route. Caddy size
