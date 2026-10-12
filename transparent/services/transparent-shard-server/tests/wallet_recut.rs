@@ -102,6 +102,7 @@ fn sealed(start: u64, end: u64, geometry: &'static transparent_shard::layout::Ge
         geometry,
         sealed: true,
         revision: 0,
+        children: CHILDREN,
     }
 }
 
@@ -116,6 +117,7 @@ fn before_layout() -> Vec<Laid> {
         geometry: &DECOUPLED_2K_8K,
         sealed: false,
         revision: 0,
+        children: CHILDREN,
     });
     shards
 }
@@ -128,6 +130,7 @@ fn after_layout() -> Vec<Laid> {
         sealed(FIRST + SPAN, FIRST + 4 * SPAN - 1, &DECOUPLED_2K_8K),
         Laid {
             revision: 1,
+            children: CHILDREN,
             ..sealed(FIRST + 4 * SPAN, TAIL - 1, &DECOUPLED_2K_8K)
         },
         Laid {
@@ -136,6 +139,7 @@ fn after_layout() -> Vec<Laid> {
             geometry: &DECOUPLED_2K_8K,
             sealed: false,
             revision: 1,
+            children: CHILDREN,
         },
     ]
 }
@@ -845,6 +849,7 @@ async fn a_shallow_reorg_the_publisher_followed_first_waits_for_the_chain() {
         geometry: &DECOUPLED_2K_8K,
         sealed: false,
         revision: 1,
+        children: CHILDREN,
     };
     let branch_dir = tempfile::tempdir().unwrap();
     let republished = publish_laid(branch_dir.path(), &branch, &layout, vec![], forked);
@@ -957,6 +962,7 @@ async fn a_hostile_change_below_a_reorg_cannot_hold_the_rollback_back() {
         geometry: &DECOUPLED_2K_8K,
         sealed: false,
         revision: 1,
+        children: CHILDREN,
     };
     let hostile_dir = tempfile::tempdir().unwrap();
     let map = publish_laid(hostile_dir.path(), &branch, &layout, vec![], hostile);

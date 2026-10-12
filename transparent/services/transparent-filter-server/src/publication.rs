@@ -1149,7 +1149,7 @@ mod tests {
         use transparent_shard::seal::Limit;
         DecoupledPolicy {
             scripts: Limit::new(60, 400).unwrap(),
-            directory_bytes: Limit::new(5_000, 40_000).unwrap(),
+            directory_bytes: Limit::new(2_500, 40_000).unwrap(),
             page_rows: Limit::new(2, 4).unwrap(),
             max_children: 3,
             ..DecoupledPolicy::for_geometry(geometry)
@@ -1173,8 +1173,8 @@ mod tests {
     }
 
     /// Publishing block by block, each candidate continuing the last, is a
-    /// fresh build: every sealed directory shard is the same revision, and
-    /// the tail is the fresh tail but for its revision numbering. Sealed page
+    /// fresh build: every directory shard and page shard has the same
+    /// content, differing only in revision numbering. Sealed page
     /// shards of the open directory shard are carried by link, not rewritten.
     #[test]
     fn block_by_block_publication_equals_a_fresh_build() {
@@ -1189,7 +1189,7 @@ mod tests {
         let mut previous: Option<PathBuf> = None;
         let mut map = None;
         let mut linked = 0;
-        for through in (5..70).step_by(9).chain([69]) {
+        for through in (5..70).step_by(3).chain([69]) {
             let output = root.path().join(format!("c{through}"));
             let published = publish_with(
                 &single_tier(&output, previous.as_deref(), through),
@@ -1237,13 +1237,14 @@ mod tests {
             let mut x = read_manifest(&incremental_dir, a);
             let y = read_manifest(&fresh_dir, b);
             children += y.page_children.len();
-            if a.sealed {
-                assert_eq!(a, b, "sealed shard {}", a.shard_id);
-            } else {
-                x.revision = 0;
-                x.supersedes = String::new();
-                assert_eq!(x, y, "tail {}", a.shard_id);
-            }
+            // A shard published block by block was a tail first, so it
+            // carries revision numbering a fresh build does not; its content,
+            // every table digest included, is the same.
+            assert_eq!(a.sealed, b.sealed);
+            x.revision = 0;
+            x.supersedes = String::new();
+            x.parent_manifest_digest = y.parent_manifest_digest.clone();
+            assert_eq!(x, y, "shard {}", a.shard_id);
         }
         assert!(children > fresh.shards.len(), "page shards inside directory shards");
     }

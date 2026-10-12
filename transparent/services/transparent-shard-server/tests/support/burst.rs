@@ -205,7 +205,7 @@ async fn publication_burst_under_exact_load() {
                     let table = if count % 2 == 0 {
                         transparent_wallet::client::Table::Directory
                     } else {
-                        transparent_wallet::client::Table::Pages
+                        transparent_wallet::client::Table::Pages(0)
                     };
                     let started = clock.elapsed().as_secs_f64();
                     let result =
@@ -428,7 +428,7 @@ fn external_query_clients() {
             let elapsed = || std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs_f64() - config["epoch"].as_f64().unwrap();
             let mut count = 0;
             while !directory.join("stop").exists() && Instant::now() < deadline {
-                let table = if count % 2 == 0 { transparent_wallet::client::Table::Directory } else { transparent_wallet::client::Table::Pages };
+                let table = if count % 2 == 0 { transparent_wallet::client::Table::Directory } else { transparent_wallet::client::Table::Pages(0) };
                 let started = elapsed();
                 let result = super::burst_query::once_nonempty(config["url"].as_str().unwrap(), std::path::Path::new(config["root"].as_str().unwrap()), config["shard"].as_u64().unwrap() as usize, table);
                 let mut record = serde_json::json!({"client":client,"started_seconds":started,"finished_seconds":elapsed()});

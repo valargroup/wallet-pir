@@ -362,10 +362,12 @@ async fn compact_outpoint_context_resets_across_a_sqlite_restart() {
     let store = fresh_store(store_dir.path());
     let pending = store.pending().unwrap();
     assert_eq!(pending.len(), 1);
-    assert_eq!(pending[0].next_ordinal, 1);
-    let boundary = pending[0].boundary.as_ref().unwrap();
-    assert_eq!(boundary.event_bytes, 4_029);
-    assert_eq!(boundary.last_event, last_receive);
+    // The cursor names the run still owed, with the events the placement
+    // check carries: the run's whole history, here the newest two inline.
+    assert_eq!(pending[0].cursor.child, 0);
+    assert_eq!(pending[0].cursor.older_runs, None);
+    assert_eq!(pending[0].carried.len(), 2);
+    assert!(pending[0].carried.iter().all(|event| *event != last_receive));
     let (store, report) = run(
         store,
         base,
@@ -503,6 +505,13 @@ impl<S: WalletStore> WalletStore for CrashAt<S> {
     }
     fn pending_limit(&self) -> usize {
         self.inner.pending_limit()
+    }
+    fn cached_run(
+        &self,
+        child_digest: &str,
+        script: &[u8],
+    ) -> Result<Option<Vec<TransparentEvent>>, StoreError> {
+        self.inner.cached_run(child_digest, script)
     }
     fn setup(&self, key: &SetupKey) -> Result<Option<SetupBlob>, StoreError> {
         self.inner.setup(key)
