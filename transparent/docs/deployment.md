@@ -3287,6 +3287,35 @@ Retiring the `txid-2k` lineage, once no supported wallet build uses it, is a
 separate decision: its `retire` closes the shared port variable, which this
 site does not need.
 
+## Independent canaries under /v2
+
+`pir-monitor` runs one canary per service once a minute
+([observability](../../enhance/docs/observability-alerting.md)); only v12 history
+and the one-query txid display are monitored, v1 is not.
+
+- **History (`transparent`).** `quality-canary`, an example of
+  `transparent-shard-server`. Its wallet transport already asks for
+  `/v2/shards`, so `--url https://transparent-pir.valargroup.dev` reaches v12 with
+  no extra flag. It refuses with `oracle_invalid` until it has a v12 fixture.
+- **Txid display (`txid`).** `txid-quality-canary`, an example of
+  `transparent-txid-client`
+  (`cargo build --release -p transparent-txid-client --example txid-quality-canary`).
+  `--url` defaults to `https://transparent-pir.valargroup.dev`; the client appends
+  `/v2/txid/`. `--fixture FILE` holds `{"txid": "<display hex>", "height": N,
+  "entry_sha256": "<hex>"}`: copy one archive-tier sample from a
+  `txid-inventory fixture` document, built on the coordinator from the site's
+  publication and heights index, never from a server answer. Each run is one
+  cold private lookup that must return exactly that entry; it prints
+  `{"passed", "category", "duration_seconds"}` and exits 1 otherwise. A different
+  or missing entry is `answer_mismatch`; an unreadable fixture or a schema this
+  build does not know is `oracle_invalid`; anything else (`placement_unknown`,
+  `recent_below_floor`, `unavailable`, `protocol_failure`) counts as a failed
+  request. It prints neither the txid nor any query material.
+
+Add it to `PIR_MONITOR_SERVICE_PROBES_CONFIG` as
+`{"service": "txid", "command": ["/opt/pir-quality/.../txid-quality-canary",
+"--fixture", "/etc/pir-quality/txid-fixture.json"], "timeout_seconds": 45}`.
+
 ## Txid display one-query cutover (prepared 2026-10-11)
 
 Superseded by the [one-query site](#txid-display-one-query-site-2026-10-12):

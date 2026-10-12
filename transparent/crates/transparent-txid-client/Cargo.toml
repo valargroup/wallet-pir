@@ -26,3 +26,6 @@ transparent-shard = { path = "../transparent-shard" }
 
 [dev-dependencies]
 flate2 = "1"
+# Only for the `txid-quality-canary` example's blocking HTTPS transport.
+clap = { version = "4", features = ["derive"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }

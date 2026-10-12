@@ -342,7 +342,10 @@ argument arrays, timeouts are 1–45 seconds, and output is bounded and sanitize
 Build the Transparent native `quality-canary` separately from native Enhance
 features. Pin the fixture checksum and independently verify its canonical
 anchor. Never construct expected answers from the encrypted server response.
-The existing Enhance canary remains unchanged.
+The existing Enhance canary remains unchanged. A probe's `service` is one of
+`status`, `transparent`, `receiver` or `txid`; the `txid` probe runs
+`txid-quality-canary`, one private `/v2/txid` lookup checked against a pinned
+entry hash ([Transparent deployment](../../transparent/docs/deployment.md#independent-canaries-under-v2)).
 
 The Transparent canary refuses with `oracle_invalid` whenever the service's shard
 schema differs from its fixture's, so a schema cutover fails it on every sample
