@@ -578,7 +578,10 @@ class Fleet:
                 if not re.fullmatch('[0-9a-f]{64}', d):
                     raise ValueError('unexpected artifact path')
                 old, new = str(Path(before['directory']) / d), remote_dir + '/' + d
-                commands.append(f'if [ ! -e {shlex.quote(new)} ] && [ -d {shlex.quote(old)} ]; then cp -al {shlex.quote(old)} {shlex.quote(new)}; fi')
+                # Two workers on one host stage into the same publication
+                # directory, so the other may create it first; rsync below
+                # completes whatever a concurrent link left unfinished.
+                commands.append(f'if [ ! -e {shlex.quote(new)} ] && [ -d {shlex.quote(old)} ]; then cp -al {shlex.quote(old)} {shlex.quote(new)} 2>/dev/null || [ -d {shlex.quote(new)} ]; fi')
             async with self.stage_timing(worker, req, 'hardlink'):
                 await self.ssh(worker['ssh_host'], 'sh -s', ('\n'.join(commands)+'\n').encode())
             with tempfile.NamedTemporaryFile(mode='w') as listing:
