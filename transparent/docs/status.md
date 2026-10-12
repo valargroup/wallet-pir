@@ -28,6 +28,11 @@ still use v11; the switch and v11's retirement are not done.
   first cached run.
 - **Certificates:** all four v12 tables meet 128 bits at both query widths, lowest
   163 ([evidence](../evidence/v12-native-certificates-2026-10-12/README.md)).
+- **8-bit profile trial** on all 241 staging tables (measurement only, nothing served
+  changed): upload per table query −11% to −46%, response −9%, worker memory 30.8 GiB
+  to 37.1 GiB (two-digit key) or 39.5 GiB (one-digit key), archive cold build +13–16%,
+  recent rebuild about twice as long; every table certifies at least 125 bits at
+  28-bit queries ([evidence](../evidence/p8-trial-2026-10-12/README.md)).
 - **Offline end to end** on the hub's recent journal slice: 716 of 716 covered sample
   wallets recovered exactly over HTTP, bills within about 7% of the census
   ([evidence](../evidence/v12-offline-e2e-2026-10-12/README.md)).

@@ -1,0 +1,19 @@
+{
+  "run_id": "p8-trial-2026-10-12",
+  "utc": "2026-10-12T19:55Z/2026-10-12T20:52Z",
+  "kind": "measurement",
+  "source": {"base_commit": "af491534", "tool": "transparent/services/transparent-shard-server/examples/p8_trial.rs", "ipir_sp": "v0.1.0-rc.7", "profile": "release-fast", "rustflags": "-C target-cpu=native", "rustc": "1.97.1"},
+  "checker": {"path": "reinspiring/tools/security/certify_native.py@v0.1.0-rc.7", "sha256": "eb4e57992a0d697cc362282ce2348620145b64485dbe80c1b3a049e54dd64918"},
+  "data": {"schema": "transparent-shard-v12", "network": "main", "publication_map_sha256": "d1e449175fe1ddc5b8314c41cf9a75169dcfee2988dcbd036ab713df68f5dd57", "heights": [0, 3515568], "tip": "00000000001a05a581a958634dc648d7c8eccccf43dc65251785847b0626375e", "tables": {"decoupled-32k-32k/directory": 12, "decoupled-32k-32k/pages": 174, "decoupled-2k-8k/directory": 25, "decoupled-2k-8k/pages": 30}, "table_hashes_verified": 241},
+  "host": {"provider": "digitalocean", "size": "m-8vcpu-64gb-intel", "region": "ams3", "cpu": "Intel Xeon Gold 6548N, 8 vCPU, AVX-512 VNNI+VBMI", "ram_gib": 62, "os": "Ubuntu 24.04.5, kernel 6.8.0-142", "lifetime": "temporary, deleted after the run"},
+  "variants": {
+    "baseline": "TableRuntime: p=2^16, gadget 19x2, two-mask, 29-bit masks, 44-bit dithered query, 22-bit response",
+    "p8-19x2": "NativeServer u8: p=2^8, gadget 19x2, two-mask, 22-bit masks, 28-bit dithered query, 10-bit response",
+    "p8-27x1": "NativeServer u8: p=2^8, gadget 27x1, two-mask, 22-bit masks, 28-bit dithered query, 10-bit response",
+    "certify-19x2": "build_u8_analyzed report for p8-19x2, checked by certify_native.py",
+    "certify-27x1": "build_u8_analyzed report for p8-27x1, checked by certify_native.py"
+  },
+  "coverage": {"timed_tables": {"archive": 23, "recent": 55}, "certified_tables": 241, "queries_per_timed_run": 20, "answers_decoded_exactly": 4680, "failed_runs": 0, "interrupted_runs": 1},
+  "acceptance": "every table >= 50 certified failure bits with both keys (Roman's floor for this profile)",
+  "result": "pass: min 182 bits two-digit, 125 bits one-digit"
+}
