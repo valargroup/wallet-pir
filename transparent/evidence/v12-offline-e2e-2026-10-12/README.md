@@ -12,8 +12,8 @@ no production host touched.**
 | Source | `v12/decoupled-pages` at `b255c1ed` (the commit that adds this directory adds only it, the sample-recovery example and docs) |
 | Journal | the recent slice of the v3 journal, heights 3,262,749–3,473,686 (210,938 blocks, 4,185,700 events), anchor `0000000000755137…0be1d`, on the hub at `ai-dev/evidence/decoupled-pages-journal/recent`; provenance in [the step-1 census](../decoupled-pages-prototype-2026-10-11/README.md). Linked into a scratch directory, never written. |
 | Parent block | 3,262,748 = `0000000000b5d4b7…99b4176a`, as recorded by [continuous-publication-2026-09-08](../continuous-publication-2026-09-08/) |
-| Workload | the frozen [2026-09-08 sample](../workload-sample-2026-09-08/README.md), restricted by [slice-sample.py](slice-sample.py) to the 716 wallets whose whole range lies in the slice ([sample-recent-slice.json](sample-recent-slice.json)); restore-old and unused start at genesis and are out, and so are 14 small-active and 110 reused-tail wallets that begin before the slice |
-| Digests | the sample's digests are over an older event codec; `sample-redigest` re-derived them from the slice and refused unless every wallet's event count was unchanged: all 716 counts equal ([sample-recent-slice-redigested.json](sample-recent-slice-redigested.json)) |
+| Workload | the frozen [2026-09-08 sample](../workload-sample-2026-09-08/README.md), restricted by [slice-sample.py](slice-sample.py) to the 716 wallets whose whole range lies in the slice (not kept: `python3 slice-sample.py ../workload-sample-2026-09-08/sample.json 3262749 sample-recent-slice.json`, run from this directory, regenerates it byte for byte, sha256 `71bc628bdee60a1f4fb0ed035cd6c53b658becd772c1cc0b1a5a287864c3e399`); restore-old and unused start at genesis and are out, and so are 14 small-active and 110 reused-tail wallets that begin before the slice |
+| Digests | the sample's digests are over an older event codec; `sample-redigest` re-derived them from the slice and refused unless every wallet's event count was unchanged: all 716 counts equal ([sample-recent-slice-redigested.json.gz](sample-recent-slice-redigested.json.gz)) |
 | Command | [run.sh](run.sh) `SLICE WORK`, `release-fast`, rustc 1.97.1, on roman-dev-2 |
 
 ## Results
@@ -27,7 +27,7 @@ anchor and map, and rebuilt 6 of the 8 directory shards from the journal at
 their published page-shard boundaries: filter, directory and every page shard
 byte-identical ([verify.json](verify.json)).
 
-**Recovery** ([wallets.ndjson](wallets.ndjson), [results.json](results.json)).
+**Recovery** ([wallets.ndjson.gz](wallets.ndjson.gz), [results.json](results.json)).
 `sample_recovery` (an example of `transparent-loadtest`) synced each wallet
 once from its `required_from` into a fresh store, eight at a time, against
 the local `transparent-shard-server`, using the wallet crate's HTTP adapters
@@ -90,3 +90,12 @@ The census bills above assume v1 filters, so the comparison is made at v1.
 - The v12 regression and canary fixtures are not exported here:
   `regression-export` requires a journal from genesis, which only the
   coordinator holds; they are exported there.
+
+## Stored form
+
+[run.sh](run.sh) writes its outputs uncompressed. Before this directory was
+merged, `sample-recent-slice-redigested.json`, `server-metrics.txt` and both
+`wallets.ndjson` files were gzipped (`gzip -n -9`) with their bytes unchanged,
+and `sample-recent-slice.json` was dropped because `slice-sample.py`
+regenerates it exactly (command and sha256 under Provenance). Gunzip a file
+before passing it to `summarize.py` or to a recovery run.

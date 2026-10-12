@@ -21,8 +21,9 @@ past the journal's end. Its empty outputs were not kept.
 
 [raw/extra-2k/](raw/extra-2k/) holds the extra decoupled 2k/8k runs from the
 prototype gate: the recent window and catch-up anchors. They were copied
-unchanged from the hub's `decoupled-pages-census/extra-2k/`, except that text
-files over 100 kB were gzipped.
+unchanged from the hub's `decoupled-pages-census/extra-2k/`, except that the
+large text outputs (over 100 kB, and the per-anchor census and pairs files)
+were gzipped with their bytes unchanged.
 
 ## Results
 
