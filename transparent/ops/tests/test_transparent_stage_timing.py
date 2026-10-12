@@ -31,6 +31,21 @@ class StageTimingTests(unittest.IsolatedAsyncioTestCase):
                           'loading_seconds': 1.25, 'warming_seconds': 2.5})
         self.assertNotIn('private', output.getvalue())
 
+    async def test_two_workers_on_one_host_use_their_own_control_sockets(self):
+        fleet = object.__new__(M.Fleet)
+        fleet.c = {'control_socket': '/run/transparent-pir/control.sock'}
+        fleet.read_only = False
+        fleet.ssh = AsyncMock(return_value=json.dumps({'ok': True, 'result': {}}).encode())
+        archive = {'id': 'v12-archive', 'ssh_host': 'host', 'control_socket': '/run/transparent-pir/v12-archive.sock'}
+        recent = {'id': 'v12-recent', 'ssh_host': 'host'}
+        with redirect_stderr(io.StringIO()):
+            await fleet.control(archive, {'operation': 'status'})
+            await fleet.control(recent, {'operation': 'status'})
+        commands = [' '.join(str(a) for a in call.args) for call in fleet.ssh.await_args_list]
+        self.assertIn('/run/transparent-pir/v12-archive.sock', commands[0])
+        self.assertIn('/run/transparent-pir/control.sock', commands[1])
+        self.assertNotIn('/run/transparent-pir/control.sock', commands[0])
+
     async def test_concurrent_stages_keep_worker_and_revision_identity(self):
         fleet = object.__new__(M.Fleet)
         entered = asyncio.Event()

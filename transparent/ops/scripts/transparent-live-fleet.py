@@ -189,6 +189,8 @@ class Fleet:
                 for field in ['id', 'ssh_host', 'upstream']:
                     if not re.fullmatch(r'[A-Za-z0-9_.:-]+', worker[field]):
                         raise ValueError(f'invalid roster {field}')
+                if 'control_socket' in worker and not re.fullmatch(r'/[A-Za-z0-9_./-]+', worker['control_socket']):
+                    raise ValueError('invalid roster control_socket')
         except (OSError, ValueError, KeyError, TypeError) as error:
             if strict:
                 raise
@@ -317,8 +319,13 @@ class Fleet:
         return self.direct_ssh_args + ['-oControlMaster=no', '-oProxyCommand=false',
                                       '-oControlPath=' + str(self.control_path(worker))]
 
+    def control_socket(self, worker):
+        # Two workers on one host each need their own socket, so a roster entry
+        # may name one; otherwise the fleet-wide path applies.
+        return worker.get('control_socket') or self.c.get('control_socket', '/run/transparent-pir/control.sock')
+
     def status_forward_path(self, worker):
-        identity = [str(self.control_path(worker)), self.c.get('control_socket', '/run/transparent-pir/control.sock')]
+        identity = [str(self.control_path(worker)), self.control_socket(worker)]
         return self.control_dir / ('s-' + hashlib.sha256(json.dumps(identity).encode()).hexdigest()[:32])
 
     async def forwarded_status(self, worker, value):
@@ -373,7 +380,7 @@ class Fleet:
                     '-oServerAliveCountMax=3', '-N', destination]
             if self.c.get('status_socket_forwarding', False):
                 forward = self.status_forward_path(worker)
-                remote = self.c.get('control_socket', '/run/transparent-pir/control.sock')
+                remote = self.control_socket(worker)
                 if not remote.startswith('/') or any(c in remote for c in ':\n\r'):
                     raise ValueError('control socket must be an absolute Unix path without colons or newlines')
                 if forward.exists():
@@ -430,7 +437,7 @@ class Fleet:
         if self.read_only and value.get('operation') != 'status':
             raise RuntimeError('read-only fleet only permits control status')
         command = shlex.join([self.c.get('control_binary', '/usr/local/bin/shard-control'),
-                              self.c.get('control_socket', '/run/transparent-pir/control.sock')])
+                              self.control_socket(worker)])
         # A rejected command is JSON on stdout with exit status 1. Preserve
         # that diagnostic; transport failures and crashes must still fail SSH.
         command += ' || [ "$?" -eq 1 ]'
