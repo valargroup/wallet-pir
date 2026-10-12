@@ -759,10 +759,11 @@ async fn ready(State(state): State<DisplayState>) -> Response {
 }
 
 async fn metrics(State(state): State<DisplayState>) -> Response {
+    let snapshot = state.snapshot();
     (
         StatusCode::OK,
         [("content-type", "text/plain; version=0.0.4")],
-        state.metrics().render(&state.snapshot()),
+        state.metrics().render(&snapshot) + &state.metrics().render_display(&snapshot),
     )
         .into_response()
 }

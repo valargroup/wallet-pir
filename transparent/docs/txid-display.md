@@ -278,6 +278,24 @@ The v1 publication has run in production beside history since 2026-10-06
 The code on `main` no longer builds or reads v1. Serving v2 needs a fresh
 journal and lineage; the gates are in [remaining work](remaining-work.md).
 
+### Controller status and metrics
+
+`txid-display-controller run --status-listen` serves private JSON status on `/`,
+`/v1/status` and `/v1/health`, and Prometheus text on `/metrics`. Workers keep
+serving the last activation when the controller stalls or halts, so these are
+what show it. Gauges: `txid_display_node_height`, `_published_height`,
+`_lag_blocks`, `_oldest_unpublished_seconds`, `_stalled`, `_halted`,
+`_consecutive_failures`, `_seal_queue`, `_last_success_timestamp_seconds` and
+`_last_seal_timestamp_seconds` (0 until the first since the process started).
+Counters: `txid_display_cycles_total` and `_cycle_failures_total`. Histograms:
+`txid_display_cycle_seconds` per successful cycle, `_freshness_seconds` per
+newly published block from first observed to active, and
+`_cycle_stage_seconds{stage}` with `build`, `verify`, `digest`, `write`,
+`prebuild` (only with `--ship-runtimes`), `ship`, `prepare` and `activate`.
+Display workers add `transparent_display_prepare_seconds` per successful
+prepare and `transparent_display_self_check_seconds` per prepare that loaded
+shipped runtimes to their own `/metrics`.
+
 ### Shipped recent runtimes
 
 Every block the recent replica prepares each table of the new recent revision:

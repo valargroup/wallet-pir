@@ -80,6 +80,18 @@ fn worker(root: &Path) -> DisplayLive {
     .unwrap()
 }
 
+async fn metrics(live: &DisplayLive) -> String {
+    use tower::ServiceExt;
+    let request = axum::http::Request::get("/metrics")
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let response = live.router().oneshot(request).await.unwrap();
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    String::from_utf8(body.to_vec()).unwrap()
+}
+
 async fn prepare(live: &DisplayLive, directory: &Path, map_sha256: &str) -> Reply {
     let publication = DisplayPublication {
         directory: directory.to_path_buf(),
@@ -122,6 +134,14 @@ async fn a_recent_replica_serves_shipped_runtimes_and_falls_back_per_file() {
     assert_eq!(reply["shipped"], targets.len() as u64, "{reply:?}");
     assert_eq!(reply["shipped_fallbacks"], 0, "{reply:?}");
     assert!(reply["self_check_ms"].as_f64().unwrap() > 0.0);
+    // Before any activation the worker's own `/metrics` counts the prepare
+    // and its self-check.
+    let text = metrics(&live).await;
+    for family in ["prepare", "self_check"] {
+        let count =
+            format!("transparent_display_{family}_seconds_count{{role=\"recent-replica\"}} 1\n");
+        assert!(text.contains(&count), "{family}:\n{text}");
+    }
 
     // Each file is the runtime a local build of its segment makes, named by
     // the identity the worker looks it up by.

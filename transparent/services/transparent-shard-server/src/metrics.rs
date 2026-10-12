@@ -30,6 +30,17 @@ use std::time::Duration;
 /// measured host; the top bucket is for a host that is worse than measured.
 const BUILD_BUCKETS: [f64; 9] = [0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0];
 
+/// Publication preparation buckets, in seconds. A recent candidate loads in
+/// about a second and warms in seconds to tens of seconds; the top buckets
+/// are for a whole-set reload.
+const PREPARE_BUCKETS: [f64; 12] = [
+    0.1, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0, 128.0, 300.0,
+];
+
+/// A history worker's publication preparation phases, in the order of
+/// [`Metrics::prepare_seconds`].
+pub const PREPARE_PHASES: [&str; 3] = ["loading", "warming", "total"];
+
 const REQUEST_BUCKETS: [f64; 16] = [
     0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 60.0, 120.0, 600.0,
 ];
@@ -167,6 +178,14 @@ pub struct Metrics {
     pub build_micros: AtomicU64,
     /// Cold-build latency, by bucket.
     pub build_seconds: Histogram,
+    /// A history worker's successful publication preparations, by phase
+    /// ([`PREPARE_PHASES`]).
+    pub prepare_seconds: [Histogram; 3],
+    /// A display worker's successful publication preparations, whole.
+    pub display_prepare_seconds: Histogram,
+    /// The shipped-runtime self-check of one display preparation that loaded
+    /// shipped runtimes, summed over its tables.
+    pub display_self_check_seconds: Histogram,
     /// Requests that waited on a build another request had already started,
     /// rather than starting a second one.
     ///
@@ -239,6 +258,9 @@ impl Default for Metrics {
             build_failures: AtomicU64::new(0),
             build_micros: AtomicU64::new(0),
             build_seconds: Histogram::new(&BUILD_BUCKETS),
+            prepare_seconds: std::array::from_fn(|_| Histogram::new(&PREPARE_BUCKETS)),
+            display_prepare_seconds: Histogram::new(&PREPARE_BUCKETS),
+            display_self_check_seconds: Histogram::new(&PREPARE_BUCKETS),
             build_coalesced: AtomicU64::new(0),
             evictions: AtomicU64::new(0),
             resident_bytes: AtomicU64::new(0),
@@ -292,6 +314,17 @@ pub struct Snapshot {
     pub cgroup_memory_bytes: Option<(u64, Option<u64>)>,
 }
 
+impl Snapshot {
+    /// The identity labels as `name="value"` pairs, comma separated.
+    fn label_pairs(&self) -> String {
+        self.labels
+            .iter()
+            .map(|(name, value)| format!("{name}=\"{}\"", value.replace('"', "\\\"")))
+            .collect::<Vec<_>>()
+            .join(",")
+    }
+}
+
 impl Metrics {
     pub fn incr(counter: &AtomicU64) {
         counter.fetch_add(1, Ordering::Relaxed);
@@ -315,12 +348,7 @@ impl Metrics {
 
     /// Renders the Prometheus text exposition format.
     pub fn render(&self, snapshot: &Snapshot) -> String {
-        let labels = snapshot
-            .labels
-            .iter()
-            .map(|(name, value)| format!("{name}=\"{}\"", value.replace('"', "\\\"")))
-            .collect::<Vec<_>>()
-            .join(",");
+        let labels = snapshot.label_pairs();
         let braces = if labels.is_empty() {
             String::new()
         } else {
@@ -685,6 +713,48 @@ impl Metrics {
             &labels,
             &mut out,
         );
+        for (histogram, phase) in self.prepare_seconds.iter().zip(PREPARE_PHASES) {
+            let scoped = if labels.is_empty() {
+                format!("phase=\"{phase}\"")
+            } else {
+                format!("{labels},phase=\"{phase}\"")
+            };
+            let mut rendered = String::new();
+            histogram.render(
+                "transparent_shard_prepare_seconds",
+                "Successful publication preparation: loading the candidate, warming its runtimes, and both.",
+                &scoped,
+                &mut rendered,
+            );
+            if phase == PREPARE_PHASES[0] {
+                out.push_str(&rendered);
+            } else {
+                for line in rendered.lines().filter(|line| !line.starts_with('#')) {
+                    out.push_str(line);
+                    out.push('\n');
+                }
+            }
+        }
+        out
+    }
+
+    /// The display worker's own families, which its `/metrics` renders after
+    /// [`Self::render`].
+    pub fn render_display(&self, snapshot: &Snapshot) -> String {
+        let labels = snapshot.label_pairs();
+        let mut out = String::new();
+        self.display_prepare_seconds.render(
+            "transparent_display_prepare_seconds",
+            "Successful display publication preparation, from the command to a warm candidate.",
+            &labels,
+            &mut out,
+        );
+        self.display_self_check_seconds.render(
+            "transparent_display_self_check_seconds",
+            "Shipped-runtime self-check time of one display preparation that loaded shipped runtimes.",
+            &labels,
+            &mut out,
+        );
         out
     }
 }
@@ -770,5 +840,58 @@ mod tests {
         let bare = metrics.render(&Snapshot::default());
         assert!(bare.contains("transparent_shard_shards 0\n"));
         assert!(bare.contains("transparent_shard_build_seconds_bucket{le=\"+Inf\"} 2"));
+    }
+
+    #[test]
+    fn preparation_phases_and_display_families_count_each_observation() {
+        let metrics = Metrics::default();
+        let snapshot = Snapshot {
+            labels: vec![("role".into(), "recent-replica".into())],
+            ..Snapshot::default()
+        };
+        let [loading, warming, total] = &metrics.prepare_seconds;
+        loading.observe(Duration::from_millis(800));
+        warming.observe(Duration::from_secs(12));
+        total.observe(Duration::from_secs(13));
+        total.observe(Duration::from_secs(400));
+        metrics
+            .display_prepare_seconds
+            .observe(Duration::from_secs(3));
+        metrics
+            .display_self_check_seconds
+            .observe(Duration::from_millis(40));
+
+        let text = metrics.render(&snapshot);
+        assert_eq!(
+            text.matches("# TYPE transparent_shard_prepare_seconds histogram")
+                .count(),
+            1
+        );
+        let series = |phase: &str, tail: &str| {
+            format!("transparent_shard_prepare_seconds{tail}{{role=\"recent-replica\",phase=\"{phase}\"")
+        };
+        assert!(text.contains(&format!("{},le=\"1\"}} 1\n", series("loading", "_bucket"))));
+        assert!(text.contains(&format!("{},le=\"8\"}} 0\n", series("warming", "_bucket"))));
+        assert!(text.contains(&format!("{},le=\"16\"}} 1\n", series("warming", "_bucket"))));
+        assert!(text.contains(&format!("{},le=\"300\"}} 1\n", series("total", "_bucket"))));
+        assert!(text.contains(&format!("{},le=\"+Inf\"}} 2\n", series("total", "_bucket"))));
+        assert!(text.contains(&format!("{}}} 2\n", series("total", "_count"))));
+        assert!(text.contains(&format!("{}}} 413\n", series("total", "_sum"))));
+        // History scrapes leave the display families out.
+        assert!(!text.contains("transparent_display_"));
+
+        let display = metrics.render_display(&snapshot);
+        assert!(display.contains("# TYPE transparent_display_prepare_seconds histogram\n"));
+        assert!(display.contains(
+            "transparent_display_prepare_seconds_bucket{role=\"recent-replica\",le=\"4\"} 1\n"
+        ));
+        assert!(display
+            .contains("transparent_display_prepare_seconds_count{role=\"recent-replica\"} 1\n"));
+        assert!(display.contains(
+            "transparent_display_self_check_seconds_bucket{role=\"recent-replica\",le=\"0.1\"} 1\n"
+        ));
+        assert!(display.contains(
+            "transparent_display_self_check_seconds_sum{role=\"recent-replica\"} 0.04\n"
+        ));
     }
 }

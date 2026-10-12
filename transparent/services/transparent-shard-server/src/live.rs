@@ -244,9 +244,10 @@ impl LiveService {
                     }
                     return Ok(serde_json::json!({"prepared":publication.map_sha256}));
                 }
+                let prepare_started = std::time::Instant::now();
                 *self.0.preparing.write().unwrap() = Some(Preparing {
                     digest: publication.map_sha256.clone(),
-                    started: std::time::Instant::now(),
+                    started: prepare_started,
                     phase: "loading",
                 });
                 let _preparing = PreparingGuard(&self.0.preparing);
@@ -308,6 +309,10 @@ impl LiveService {
                         "candidate did not become completely warm within the shared budget".into(),
                     );
                 }
+                let [loading, warming, total] = &next.metrics().prepare_seconds;
+                loading.observe(std::time::Duration::from_secs_f64(loading_seconds));
+                warming.observe(std::time::Duration::from_secs_f64(warming_seconds));
+                total.observe(prepare_started.elapsed());
                 *self.0.candidate.lock().await = Some(Candidate {
                     prepared_at: std::time::Instant::now(),
                     state: next,

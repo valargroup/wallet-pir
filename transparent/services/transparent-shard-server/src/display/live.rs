@@ -468,6 +468,12 @@ impl DisplayLive {
         }
         let built = next.built();
         let result = prepared(&next, built);
+        let metrics = &self.0.runtime.metrics;
+        metrics.display_prepare_seconds.observe(started.elapsed());
+        let (shipped, fallbacks, check) = next.shipped();
+        if built > 0 && shipped + fallbacks > 0 {
+            metrics.display_self_check_seconds.observe(check);
+        }
         tracing::info!(map = %publication.map_sha256, built, seconds = started.elapsed().as_secs_f64(), "display publication prepared");
         *self.0.candidate.lock().await = Some(Candidate {
             prepared_at: std::time::Instant::now(),
@@ -911,16 +917,22 @@ impl DisplayLive {
                     "warm": false,
                 }),
             ),
-            "/metrics" => (
-                StatusCode::OK,
-                [("content-type", "text/plain; version=0.0.4")],
-                self.0.runtime.metrics.render(&Snapshot {
-                    labels: vec![("role".into(), role.into())],
-                    cache_budget_bytes: self.0.runtime.cache.budget(),
-                    ..Snapshot::default()
-                }),
-            )
-                .into_response(),
+            "/metrics" => {
+                let (metrics, snapshot) = (
+                    &self.0.runtime.metrics,
+                    Snapshot {
+                        labels: vec![("role".into(), role.into())],
+                        cache_budget_bytes: self.0.runtime.cache.budget(),
+                        ..Snapshot::default()
+                    },
+                );
+                (
+                    StatusCode::OK,
+                    [("content-type", "text/plain; version=0.0.4")],
+                    metrics.render(&snapshot) + &metrics.render_display(&snapshot),
+                )
+                    .into_response()
+            }
             _ => (
                 StatusCode::SERVICE_UNAVAILABLE,
                 [("content-type", "application/json"), ("retry-after", "1")],

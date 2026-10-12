@@ -1166,6 +1166,15 @@ async fn live_prepare_activate_and_invalidate() {
     })
     .await
     .unwrap();
+    // One successful preparation, observed once per phase.
+    assert_eq!(
+        metrics
+            .prepare_seconds
+            .iter()
+            .map(|h| h.count())
+            .collect::<Vec<_>>(),
+        [1, 1, 1]
+    );
     let before = live
         .router()
         .oneshot(Request::get("/v2/shards").body(Body::empty()).unwrap())
