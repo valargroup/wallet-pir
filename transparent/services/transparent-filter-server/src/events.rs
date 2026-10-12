@@ -810,6 +810,58 @@ mod tests {
         assert_eq!(reopened.events_stored(), 3);
     }
 
+    /// A reader following another process's writer sees exactly what the
+    /// writer committed: appends as an extension, a rollback and a different
+    /// branch as a rollback from the fork, and nothing uncommitted. The
+    /// endpoint check tells a reader that copied a suffix whether it moved.
+    #[test]
+    fn a_reader_follows_a_live_writer_through_appends_and_rollbacks() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut writer = store(dir.path());
+        for height in START..START + 3 {
+            writer
+                .append_block(height, hash(height), &[receive(height as u32, 1)])
+                .unwrap();
+        }
+        writer.commit().unwrap();
+        let mut reader = EventStore::open_existing(dir.path()).unwrap();
+        assert_eq!(reader.covered_through(), Some(START + 2));
+        assert_eq!(reader.refresh().unwrap(), Refreshed::Unchanged);
+        let endpoint = reader.block_at(START + 2).unwrap();
+        assert!(reader.still_committed(START + 2, endpoint).unwrap());
+
+        // An append the writer has not committed is invisible.
+        writer
+            .append_block(START + 3, hash(START + 3), &[receive(103, 2)])
+            .unwrap();
+        assert_eq!(reader.refresh().unwrap(), Refreshed::Unchanged);
+        writer.commit().unwrap();
+        assert_eq!(reader.refresh().unwrap(), Refreshed::Extended);
+        assert_eq!(reader.covered_through(), Some(START + 3));
+        assert_eq!(reader.events_at(START + 3).unwrap(), Some(vec![receive(103, 2)]));
+
+        // The writer rolls back two blocks and commits a longer branch.
+        writer.rollback_to(Some(START + 1)).unwrap();
+        for height in START + 2..START + 5 {
+            writer
+                .append_block(height, hash(height + 1_000), &[spend(height as u32, 7)])
+                .unwrap();
+        }
+        writer.commit().unwrap();
+        assert!(!reader.still_committed(START + 2, endpoint).unwrap());
+        assert_eq!(
+            reader.refresh().unwrap(),
+            Refreshed::RolledBack { from: START + 2 }
+        );
+        assert_eq!(reader.covered_through(), Some(START + 4));
+        assert_eq!(reader.block_at(START + 2).unwrap().block_hash, hash(START + 1_002));
+        assert_eq!(reader.events_at(START + 4).unwrap(), Some(vec![spend(104, 7)]));
+        assert_eq!(reader.refresh().unwrap(), Refreshed::Unchanged);
+
+        // A writer's own store never refreshes from disk.
+        assert!(writer.refresh().is_err());
+    }
+
     #[test]
     fn rolling_back_everything_empties_the_store() {
         let dir = tempfile::tempdir().unwrap();
