@@ -838,7 +838,10 @@ mod tests {
         writer.commit().unwrap();
         assert_eq!(reader.refresh().unwrap(), Refreshed::Extended);
         assert_eq!(reader.covered_through(), Some(START + 3));
-        assert_eq!(reader.events_at(START + 3).unwrap(), Some(vec![receive(103, 2)]));
+        assert_eq!(
+            reader.events_at(START + 3).unwrap(),
+            Some(vec![receive(103, 2)])
+        );
 
         // The writer rolls back two blocks and commits a longer branch.
         writer.rollback_to(Some(START + 1)).unwrap();
@@ -854,8 +857,14 @@ mod tests {
             Refreshed::RolledBack { from: START + 2 }
         );
         assert_eq!(reader.covered_through(), Some(START + 4));
-        assert_eq!(reader.block_at(START + 2).unwrap().block_hash, hash(START + 1_002));
-        assert_eq!(reader.events_at(START + 4).unwrap(), Some(vec![spend(104, 7)]));
+        assert_eq!(
+            reader.block_at(START + 2).unwrap().block_hash,
+            hash(START + 1_002)
+        );
+        assert_eq!(
+            reader.events_at(START + 4).unwrap(),
+            Some(vec![spend(104, 7)])
+        );
         assert_eq!(reader.refresh().unwrap(), Refreshed::Unchanged);
 
         // A writer's own store never refreshes from disk.

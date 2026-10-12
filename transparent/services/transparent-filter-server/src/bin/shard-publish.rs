@@ -65,7 +65,9 @@ async fn main() -> Result<(), BoxError> {
         let rpc = ZakuraClient::from_cookie_file(&cli.zakura_rpc_url, &cli.zakura_cookie)?;
         BlockHash::from_display_hex(&rpc.block_hash(store.start_height() - 1).await?)?
     };
-    let endpoint = cli.through.and_then(|through| store.block_at(through).map(|b| (through, b)));
+    let endpoint = cli
+        .through
+        .and_then(|through| store.block_at(through).map(|b| (through, b)));
     publish(&cli, &store, parent)?;
     if follow_journal {
         let (through, entry) = endpoint.ok_or("--through is not committed in the journal")?;
