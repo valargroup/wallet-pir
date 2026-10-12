@@ -3226,8 +3226,10 @@ The lifecycle gate remains open until those executions and reinspection pass.
 Vizor `main` ships the `txid-2k` client, which refuses the one-query map, so
 the cutover below would leave those builds without private display. Instead
 the `txid-2k8` lineage runs beside the live one, on its own host and public
-hostname, `https://transparent-pir-txid.valargroup.dev`. Newer wallet builds
-use that origin; the `/v1/txid/` paths are the same.
+hostname, `https://transparent-pir-txid.valargroup.dev`. Its release serves
+`/v2/txid/`, and the public router forwards `/v2/txid/` on
+`transparent-pir.valargroup.dev` to its worker port, so newer wallet builds use
+the shared origin's `/v2` while `/v1/txid/` stays on the `txid-2k` lineage.
 
 - **Host.** `transparent-pir-txid-k8-01` (`m-8vcpu-64gb-intel`), from
   `transparent-txid-display-site.tf` with `transparent_txid_display_site_enabled`.
@@ -3238,13 +3240,15 @@ use that origin; the `/v1/txid/` paths are the same.
   `terraform` or router host, and runs the combined layout. Its coordinator
   paths and unit names carry the name: `/opt/transparent-txid-display-k8`,
   `transparent-txid-display-k8-controller.service` and so on, with controller
-  status port 8098. Its phases are `stage`, `workers`, `route` (the host's whole
+  status port 8098. The site's Caddy handles, probes and map watcher use
+  `/v2/txid/`; a router request keeps `/v1/txid/`. Its phases are `stage`, `workers`, `route` (the host's whole
   Caddyfile) and `controller`; `stop` and `retire` write the withdrawn site.
   The worker host's own paths are the usual ones, so it must hold no other
   display worker.
 - **Journal.** A live controller appends to its journal, so the site needs its
-  own: `/srv/txid-display-genesis/journal-v3`, a reflink copy of `journal-v2x`
-  taken while the `txid-2k` controller is stopped for the copy. Its root is
+  own: `/srv/txid-display-genesis/journal-v3`, a copy of `journal-v2x` taken
+  while the `txid-2k` controller is stopped for the copy. The volume is ext4, so
+  the copy is a full second journal (66 GB), not a reflink. Its root is
   `/srv/txid-display-genesis/v3/root`.
 - **Order.** `terraform apply` for the host and record; add the host to the
   deploy inventory and to the coordinator's publisher `known_hosts`; copy the

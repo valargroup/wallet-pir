@@ -6,6 +6,41 @@ M4–M6 are open.** This records observed progress, not a new live fleet health
 check. [Remaining work](remaining-work.md) is the authoritative outstanding
 checklist; [deployment](deployment.md) owns operating targets.
 
+## Txid display one-query site live beside txid-2k, 2026-10-12
+
+The `txid-2k8` lineage serves on its own host, `transparent-pir-txid-k8-01`,
+next to the live `txid-2k` lineage, which is unchanged
+([deployment](deployment.md#txid-display-one-query-site-2026-10-12)).
+
+- **Serving.** Release `085db9ff` answers `/v2/txid/` on
+  `https://transparent-pir-txid.valargroup.dev` and on worker port 8095. At
+  23:39 UTC the worker served map `eab7fb1f…` warm (189 sealed archives plus
+  recent, through height 3515611). The site's controller,
+  `transparent-txid-display-k8-controller`, follows its own journal copy,
+  `journal-v3`. `/v2/txid/init` published native schema
+  `transparent-shard-v11` and the txdirectory setup seed 15378491149841498399.
+- **Native schema frozen.** Main's history schema is v12, and the display's
+  setup seeds and native profile had been derived from it, so a release built
+  from main would have served the v12-derived seed. The display now pins them
+  to `transparent-shard-v11` (`NATIVE_SCHEMA`), which the shipped one-query
+  client expects.
+- **Fleet socket path.** The first `workers` attempt failed: with the site's
+  longer state directory, the fleet's SSH control socket path passed the
+  108-byte Unix limit. The attempt was rolled back cleanly. Sockets are now
+  named by worker address (`085db9ff`).
+- **5 QPS load latch.** At 21:44 UTC history's 5 QPS load latched on
+  "transparent-coordinator: disk headroom below 20%". Root (`/dev/vda1`) was at
+  19% free; the journal copy and the bootstrap had written to the separate
+  genesis volume. Five September build checkouts (about 6 GB) were moved, not
+  deleted, to `/srv/txid-display-genesis/parked-root-builds-20261012`, leaving
+  root at 22% free. With Roman's approval, `latched.json` was moved to
+  `latched.json.cleared-20261012T2318Z` and `transparent-5qps-continuous`
+  restarted at 23:18:21 UTC. By 23:20 the load was running with 0 errors, and
+  preflight passed. Root is close to the floor and still needs a lasting fix.
+- **Open.** Wallet clients still need repointing to `/v2/txid`
+  (wallet-libraries and Vizor). Production router `/v2/txid` routing is owned
+  by the v12 session. The genesis volume holds two 66 GB journals.
+
 ## Schema v12 in staging next to v11, 2026-10-12
 
 Branch `v12/decoupled-pages` (PR #150, not merged) carries schema
