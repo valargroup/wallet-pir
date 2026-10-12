@@ -409,10 +409,22 @@ impl ShardManifest {
             if child.index != index as u32 {
                 return Err(format!("page shard {index} is numbered {}", child.index));
             }
-            if child.start_height != next || child.end_height < child.start_height {
+            if child.start_height != next
+                || child.end_height < child.start_height
+                || child.end_height > self.end_height
+            {
                 return Err(format!("page shard {index} does not continue the range"));
             }
-            next = child.end_height + 1;
+            if last {
+                if child.end_height != self.end_height {
+                    return Err("page shards do not cover the shard's range".into());
+                }
+            } else {
+                next = child
+                    .end_height
+                    .checked_add(1)
+                    .ok_or_else(|| format!("page shard {index} range has no successor"))?;
+            }
             if !child.sealed && (!last || self.sealed) {
                 return Err(format!("page shard {index} is open"));
             }
@@ -424,7 +436,9 @@ impl ShardManifest {
                     return Err(format!("page shard {index} segment shape"));
                 }
             }
-            let capacity = child.page_segments.len() as u64 * page_rows;
+            let capacity = (child.page_segments.len() as u64)
+                .checked_mul(page_rows)
+                .ok_or_else(|| format!("page shard {index} capacity overflows"))?;
             if child.occupancy.page_rows > capacity
                 || (child.occupancy.page_rows == 0) != child.page_segments.is_empty()
                 || child.page_segments.len() > 1
@@ -438,11 +452,14 @@ impl ShardManifest {
                 return Err("the last page shard does not end on the shard's terminal".into());
             }
         }
-        if next != self.end_height + 1 {
-            return Err("page shards do not cover the shard's range".into());
-        }
-        let rows: u64 = children.iter().map(|c| c.occupancy.page_rows).sum();
-        let fragments: u64 = children.iter().map(|c| c.occupancy.fragments).sum();
+        let rows = children
+            .iter()
+            .try_fold(0u64, |sum, c| sum.checked_add(c.occupancy.page_rows))
+            .ok_or("page shard row total overflows")?;
+        let fragments = children
+            .iter()
+            .try_fold(0u64, |sum, c| sum.checked_add(c.occupancy.fragments))
+            .ok_or("page shard fragment total overflows")?;
         if rows != self.occupancy.page_rows || fragments != self.occupancy.fragments {
             return Err("page shard occupancy disagrees with the shard's".into());
         }
@@ -735,6 +752,31 @@ mod tests {
         tail.occupancy.page_rows -= tail.page_children[1].occupancy.page_rows;
         tail.page_children[1].occupancy.page_rows = 0;
         tail.check_children(4_096, 4_096).unwrap();
+    }
+
+    #[test]
+    fn page_children_reject_endpoints_outside_the_shard() {
+        let mut changed = manifest();
+        changed.page_children[0].end_height = u64::MAX;
+        changed.page_children[1].start_height = 0;
+        assert!(changed.check_children(4_096, 4_096).is_err());
+    }
+
+    #[test]
+    fn page_children_can_end_at_the_largest_height() {
+        let mut changed = manifest();
+        changed.end_height = u64::MAX;
+        changed.page_children[1].end_height = u64::MAX;
+        changed.check_children(4_096, 4_096).unwrap();
+    }
+
+    #[test]
+    fn page_children_reject_overflowing_fragment_totals() {
+        let mut changed = manifest();
+        changed.page_children[0].occupancy.fragments = u64::MAX;
+        changed.page_children[1].occupancy.fragments = 1;
+        changed.occupancy.fragments = 0;
+        assert!(changed.check_children(4_096, 4_096).is_err());
     }
 
     /// A page shard's identity chains through every older one and the
