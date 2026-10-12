@@ -81,7 +81,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let response = serialize_rlwe_response_bodies(&packed, params.q_prime_1);
         let elapsed = start.elapsed().as_secs_f64() * 1000.0;
         response_bytes = 28 + response.len();
-        let decoded = client.decode_response_simplepir(secret, &public, &response);
+        let decoded = client.decode_response_simplepir(&secret, &public, &response);
         assert_eq!(
             &decoded[..layout.row_bytes()],
             &rows[target * layout.row_bytes()..(target + 1) * layout.row_bytes()]

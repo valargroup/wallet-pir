@@ -1156,7 +1156,7 @@ mod tests {
                 .unwrap();
                 #[cfg(not(feature = "native-reinspiring"))]
                 let decoded =
-                    wallet.decode_response_simplepir(seed, &public, &response[HEADER_BYTES..]);
+                    wallet.decode_response_simplepir(&seed, &public, &response[HEADER_BYTES..]);
                 let start = if row == 4096 {
                     9_000_000
                 } else {

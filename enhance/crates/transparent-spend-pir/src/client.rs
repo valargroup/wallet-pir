@@ -28,7 +28,7 @@ pub enum ClientError {
 
 struct PreparedQuery {
     body: Vec<u8>,
-    seed: ipir_sp::IPIRSeed,
+    seed: ipir_sp::ClientSeed,
 }
 
 struct TableClient {
@@ -140,7 +140,7 @@ impl TableClient {
         }
         let decoded =
             self.client
-                .decode_response_simplepir(query.seed, &self.published_c1, &response[16..]);
+                .decode_response_simplepir(&query.seed, &self.published_c1, &response[16..]);
         decoded
             .get(..ROW_BYTES)
             .map(<[u8]>::to_vec)

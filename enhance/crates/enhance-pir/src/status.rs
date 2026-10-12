@@ -4,7 +4,7 @@
 //! `native-reinspiring` feature selects a separate native two-mask protocol
 //! with its own identifiers, setup domains and query magic.
 #[cfg(not(feature = "native-reinspiring"))]
-use ipir_sp::{IPIRClient, IPIRSeed, PublicQuerySetup, SimplePirProfile};
+use ipir_sp::{ClientSeed, IPIRClient, PublicQuerySetup, SimplePirProfile};
 use rand::{rngs::OsRng, Rng};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -334,7 +334,7 @@ pub fn decode_row(
 pub struct Query {
     pub body: Vec<u8>,
     #[cfg(not(feature = "native-reinspiring"))]
-    seed: IPIRSeed,
+    seed: ClientSeed,
     #[cfg(feature = "native-reinspiring")]
     secret: reinspiring::native::NativeSecret,
     txid: Hash,
@@ -671,7 +671,7 @@ impl Client {
             return Err(Error::Malformed);
         }
         let row = self.client.decode_response_simplepir(
-            query.seed,
+            &query.seed,
             &self.public,
             &response[HEADER_BYTES..],
         );

@@ -10,7 +10,7 @@ use ipir_sp::modulus_switch::{published_c1_len, recover_published_c1, response_b
 use ipir_sp::serialize::serialize_packing_keys;
 use ipir_sp::YpirSchemeParams;
 #[cfg(not(feature = "native-reinspiring"))]
-use ipir_sp::{IPIRClient, IPIRSeed};
+use ipir_sp::{ClientSeed, IPIRClient};
 use rand::{rngs::OsRng, Rng};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -48,7 +48,7 @@ pub struct QueryTiming {
 pub struct PreparedQuery {
     binding: QueryBinding,
     #[cfg(not(feature = "native-reinspiring"))]
-    seed: IPIRSeed,
+    seed: ClientSeed,
     #[cfg(feature = "native-reinspiring")]
     secret: reinspiring::native::NativeSecret,
     body: Vec<u8>,
@@ -299,7 +299,7 @@ impl QuerySession {
         .map_err(ClientError::Pir)?;
         #[cfg(not(feature = "native-reinspiring"))]
         let decoded = self.client.decode_response_simplepir(
-            query.seed,
+            &query.seed,
             &self.public,
             &response[HEADER_BYTES..],
         );
