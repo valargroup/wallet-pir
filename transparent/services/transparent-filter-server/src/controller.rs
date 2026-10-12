@@ -1415,6 +1415,7 @@ print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('re
             withdrawn: AtomicBool::new(false),
             epoch: AtomicU64::new(0),
             publication_gate: std::sync::Mutex::new(()),
+            last_init: std::sync::Mutex::new(None),
             status: RwLock::new(serde_json::json!({})),
             observed: RwLock::new(BTreeMap::new()),
             http: reqwest::Client::new(),
