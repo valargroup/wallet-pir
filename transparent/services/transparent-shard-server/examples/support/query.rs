@@ -62,24 +62,6 @@ fn once_at(
         .iter()
         .find(|g| g.name == entry.geometry)
         .ok_or("geometry absent")?;
-    let (rows, width, scheme, dithered, segments, name) = match table {
-        Table::Directory => (
-            g.directory_rows,
-            g.directory_row_bytes,
-            &g.directory_scheme,
-            g.directory_scheme_dq44.as_ref(),
-            entry.directory_segments,
-            "directory",
-        ),
-        Table::Pages => (
-            g.page_rows,
-            g.page_row_bytes,
-            &g.pages_scheme,
-            g.pages_scheme_dq44.as_ref(),
-            entry.page_segments,
-            "pages",
-        ),
-    };
     let directory = find_revision(publications, &entry.manifest_digest)?;
     let manifest_bytes = std::fs::read(directory.join("manifest.json"))?;
     let manifest: transparent_shard::manifest::ShardManifest =
@@ -87,11 +69,31 @@ fn once_at(
     if manifest.digest() != entry.manifest_digest {
         return Err("local manifest digest mismatch".into());
     }
-    let sources = if name == "directory" {
-        &manifest.directory_segments
-    } else {
-        &manifest.page_segments
+    let name = table.name();
+    let (rows, width, scheme, dithered, sources) = match table {
+        Table::Directory => (
+            g.directory_rows,
+            g.directory_row_bytes,
+            &g.directory_scheme,
+            g.directory_scheme_dq44.as_ref(),
+            &manifest.directory_segments,
+        ),
+        Table::Pages(child) => (
+            g.page_rows,
+            g.page_row_bytes,
+            &g.pages_scheme,
+            g.pages_scheme_dq44.as_ref(),
+            &manifest
+                .page_children
+                .get(child as usize)
+                .ok_or("page shard absent")?
+                .page_segments,
+        ),
     };
+    let segments = sources.len() as u32;
+    if segments == 0 {
+        return Err("table holds no rows".into());
+    }
     let row_number = match row {
         Some(row) => row,
         None => {
@@ -136,15 +138,16 @@ fn once_at(
         let setup: Setup = serde_json::from_slice(&bytes)?;
         client.open_segment(
             &entry.manifest_digest,
+            table,
             segment,
             &setup.public_params,
             &setup.public_params_sha256,
         )?;
     }
-    let query = client.prepare(&entry.manifest_digest, usize::try_from(row_number)?)?;
+    let query = client.prepare(&entry.manifest_digest, table, usize::try_from(row_number)?)?;
     let started = Instant::now();
     let response = transport.query(entry.shard_id, &entry.manifest_digest, table, &query.body)?;
-    let decoded = client.decode(&entry.manifest_digest, segments, query, &response)?;
+    let decoded = client.decode(&entry.manifest_digest, table, segments, query, &response)?;
     if decoded != expected {
         return Err("private query differs from published plaintext".into());
     }

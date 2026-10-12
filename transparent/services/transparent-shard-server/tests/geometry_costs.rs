@@ -18,7 +18,7 @@
 use transparent_native::{
     dithered_request_len, request_len, BLOCK_PUBLIC_BYTES, BLOCK_RESPONSE_BYTES, KEY_BYTES,
 };
-use transparent_shard::layout::{Geometry, PROFILES, RECENT_8K};
+use transparent_shard::layout::{Geometry, DECOUPLED_2K_8K, PROFILES};
 use transparent_shard::PAGE_ROW_BYTES;
 use transparent_shard_server::runtime::SharedParams;
 
@@ -116,8 +116,9 @@ fn the_selection_outgrows_the_packing_key_as_tables_grow() {
 
 /// Pin the baseline geometry's per-query upload size.
 ///
-/// Both recent-8k tables have 8,192 rows and upload 72,712 bytes per dithered
-/// query, or 77,832 per 49-bit one.
+/// The decoupled-2k-8k directory has 2,048 rows and uploads 38,920 bytes per
+/// dithered query, or 40,200 per 49-bit one; its page shards have 8,192 rows
+/// and upload 72,712, or 77,832.
 /// This is a wire-size check, not a complete wallet-sync measurement; see
 /// `transparent/evidence/README.md` for dataset-scoped comparisons.
 #[test]
@@ -127,11 +128,11 @@ fn the_pinned_geometry_costs_what_it_did() {
     // for exactly that reason — right up until a geometry separated them, at
     // which point this test would have gone on passing while reporting the
     // wrong number.
-    let directory = table_cost(&RECENT_8K, Table::Directory);
-    let pages = table_cost(&RECENT_8K, Table::Pages);
-    assert_eq!(directory.query, 72_712, "directory query");
+    let directory = table_cost(&DECOUPLED_2K_8K, Table::Directory);
+    let pages = table_cost(&DECOUPLED_2K_8K, Table::Pages);
+    assert_eq!(directory.query, 38_920, "directory query");
     assert_eq!(pages.query, 72_712, "page query");
-    assert_eq!(directory.legacy_query, 77_832, "49-bit directory query");
+    assert_eq!(directory.legacy_query, 40_200, "49-bit directory query");
     assert_eq!(pages.legacy_query, 77_832, "49-bit page query");
     assert_eq!(directory.setup, 14_848);
     assert_eq!(pages.setup, 14_848);
@@ -143,16 +144,16 @@ fn the_pinned_geometry_costs_what_it_did() {
 /// Every registry geometry must be costable, and the archive tier must cost
 /// what the deployment plan says it does.
 ///
-/// The case for `archive-wide` is that a narrower directory keeps
+/// The case for `decoupled-32k-32k` is that a narrower directory keeps
 /// directory-only restoration at 207,880 upload bytes (228,360 at 49 bits)
 /// rather than the 388,104 (429,064) a 65,536-row directory would cost, while
 /// the page table still absorbs dense old history.
 #[test]
 fn the_archive_candidates_cost_what_the_plan_claims() {
-    let wide = table_cost(&transparent_shard::ARCHIVE_WIDE, Table::Directory);
-    assert_eq!(wide.query, 207_880, "archive-wide directory query");
-    assert_eq!(wide.legacy_query, 228_360, "archive-wide 49-bit query");
-    let square = table_cost(&transparent_shard::ARCHIVE_32K, Table::Directory);
+    let wide = table_cost(&transparent_shard::DECOUPLED_32K_32K, Table::Directory);
+    assert_eq!(wide.query, 207_880, "decoupled-32k-32k directory query");
+    assert_eq!(wide.legacy_query, 228_360, "decoupled-32k-32k 49-bit query");
+    let square = table_cost(&transparent_shard::DECOUPLED_32K_32K, Table::Directory);
     assert_eq!(square.query, 207_880, "archive-32k directory query");
     assert_eq!(square.legacy_query, 228_360, "archive-32k 49-bit query");
     // What a 65,536-row directory would have cost, and the reason neither

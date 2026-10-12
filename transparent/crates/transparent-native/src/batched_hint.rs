@@ -80,7 +80,7 @@
 //!    `q = 2^54`, the two's-complement `u64` of `S` masked by `q - 1` is
 //!    `S mod q` in `[0, q)`, the reference's canonical output.
 //!
-//! The capacity `2B < P` holds for recent-8k (`B < 2^83`) and every registry
+//! The capacity `2B < P` holds for decoupled-2k-8k (`B < 2^83`) and every registry
 //! geometry (at most 32 blocks, `B < 2^86`); it fails from 512 blocks of
 //! extreme masks.
 
@@ -738,7 +738,7 @@ mod tests {
     /// Fixed vectors computed independently in Python, by exact big-integer
     /// products (Kronecker substitution, cross-checked by schoolbook), with no
     /// NTT and no CRT: monomials with negacyclic wrap, full-width masks with
-    /// every boundary coefficient, and recent-8k's four blocks at the
+    /// every boundary coefficient, and decoupled-2k-8k's four blocks at the
     /// centered extremes. The batched path and the forced reference fallback
     /// must both reproduce them.
     #[test]

@@ -1,0 +1,21 @@
+[Unit]
+Description=Transparent PIR v12 shard worker (archive)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+RuntimeDirectory=transparent-pir
+RuntimeDirectoryPreserve=yes
+ExecStart=/opt/transparent-pir/v12/bin/transparent-shard-server --listen 0.0.0.0:8093 --shard-dir /srv/transparent-pir/v12/publications/1261e06fb7aee008b41bebc3fe53c7007f1ff5d84bb4a7cd56065e7f43fa611f --cache-bytes 47244640256 --query-slots 2 --assignment /srv/transparent-pir/v12/publications/1261e06fb7aee008b41bebc3fe53c7007f1ff5d84bb4a7cd56065e7f43fa611f/assignment.json --worker-id transparent-pir-v12-archive --prune-excess --runtime-cache-dir /srv/transparent-pir/v12/runtime-cache-archive --runtime-cache-max-bytes 94489280512 --control-socket /run/transparent-pir/v12-archive.sock --active-record /opt/transparent-publisher/v12/archive-active.json --build-slots 1
+Restart=on-failure
+RestartSec=10
+LimitNOFILE=1048576
+Environment=RUST_LOG=info
+MemoryHigh=46G
+MemoryMax=48G
+MemorySwapMax=0
+
+[Install]
+WantedBy=multi-user.target

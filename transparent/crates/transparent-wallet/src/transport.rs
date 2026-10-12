@@ -267,7 +267,7 @@ impl ByteCharges {
     fn table_mut(&mut self, table: Table) -> &mut TableCharges {
         match table {
             Table::Directory => &mut self.directory,
-            Table::Pages => &mut self.pages,
+            Table::Pages(_) => &mut self.pages,
         }
     }
 
@@ -533,7 +533,7 @@ impl ShardRequest<'_> {
                 ..
             } => "setup_directory",
             ShardRequest::Setup {
-                table: Table::Pages,
+                table: Table::Pages(_),
                 ..
             } => "setup_pages",
             ShardRequest::Query {
@@ -541,7 +541,7 @@ impl ShardRequest<'_> {
                 ..
             } => "query_directory",
             ShardRequest::Query {
-                table: Table::Pages,
+                table: Table::Pages(_),
                 ..
             } => "query_pages",
         }
@@ -560,7 +560,7 @@ impl ShardRequest<'_> {
                 segment,
             } => format!(
                 "/v1/shards/{shard_id}/revisions/{revision}/setup/{}/{segment}",
-                table.as_str()
+                table.name()
             ),
             ShardRequest::Query {
                 shard_id,
@@ -569,7 +569,7 @@ impl ShardRequest<'_> {
                 ..
             } => format!(
                 "/v1/shards/{shard_id}/revisions/{revision}/query/{}",
-                table.as_str()
+                table.name()
             ),
         }
     }

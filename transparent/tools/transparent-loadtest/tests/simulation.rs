@@ -16,7 +16,7 @@ use axum::response::IntoResponse;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use transparent_filter::ShardMap;
-use transparent_shard::layout::RECENT_4K;
+use transparent_shard::layout::DECOUPLED_2K_8K;
 use transparent_shard_server::service::{router, ServiceConfig, ServiceState};
 use transparent_shard_server::shardset::{ShardSet, DEFAULT_RETAIN_REVISIONS};
 
@@ -206,7 +206,7 @@ fn fixture(dir: &Path, tags: &[u32]) -> ShardMap {
     let map = common::publish_with(
         &dir.join("shards"),
         &common::chain(),
-        |_| &RECENT_4K,
+        |_| &DECOUPLED_2K_8K,
         0,
         "",
         common::hash_at,

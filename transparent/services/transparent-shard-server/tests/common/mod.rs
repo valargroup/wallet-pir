@@ -10,8 +10,9 @@ use transparent_filter::{
     filter_hash, BlockHash, Recut, ScriptBytes, SealParameters, ShardMap, ShardMapEntry,
 };
 mod prepared;
+
 use prepared::prepared_shard;
-use transparent_shard::layout::{Geometry, RECENT_8K};
+use transparent_shard::layout::{Geometry, DECOUPLED_2K_8K};
 use transparent_shard::manifest::{
     ManifestLayout, ManifestOccupancy, ManifestSeal, ShardManifest, TableGeometry, SCHEMA,
 };
@@ -24,6 +25,9 @@ pub const GENESIS: &str = transparent_filter::MAINNET_GENESIS_DISPLAY;
 pub const FIRST: u64 = 3_428_143;
 pub const SPAN: u64 = 200;
 pub const SHARDS: u64 = 4;
+/// Page shards each directory shard of the harness holds unless a layout
+/// says otherwise: two, so every walk crosses a page-shard boundary.
+pub const CHILDREN: u32 = 2;
 
 pub fn genesis() -> BlockHash {
     BlockHash::from_display_hex(GENESIS).unwrap()
@@ -164,7 +168,7 @@ pub fn chain() -> Vec<Vec<(ScriptBytes, TransparentEvent)>> {
 
 /// Writes a publishable shard set to `dir`, as the publisher would.
 pub fn publish(dir: &Path, per_shard: &[Vec<(ScriptBytes, TransparentEvent)>]) -> ShardMap {
-    publish_with(dir, per_shard, |_| &RECENT_8K, 0, "", hash_at)
+    publish_with(dir, per_shard, |_| &DECOUPLED_2K_8K, 0, "", hash_at)
 }
 
 /// Writes a publishable shard set whose shards may name different geometries
@@ -198,6 +202,8 @@ pub fn publish_with(
                 geometry: geometry_for(shard_id),
                 sealed: !is_tail,
                 revision: if is_tail { tail_revision } else { 0 },
+                children: CHILDREN,
+                child_span: 0,
             },
             shard_id,
             if is_tail { tail_supersedes } else { "" },
@@ -219,6 +225,11 @@ pub struct Laid {
     pub geometry: &'static Geometry,
     pub sealed: bool,
     pub revision: u32,
+    /// Page shards of equal span inside the directory shard.
+    pub children: u32,
+    /// When nonzero, page shards of this many blocks from `start` instead,
+    /// so a growing tail keeps its earlier page-shard boundaries.
+    pub child_span: u64,
 }
 
 /// Writes a publication whose shards are laid out by hand, carrying the
@@ -234,6 +245,19 @@ pub fn publish_laid(
     recuts: Vec<Recut>,
     hash: impl Fn(u64) -> BlockHash,
 ) -> ShardMap {
+    publish_laid_superseding(dir, events, shards, recuts, hash, "")
+}
+
+/// [`publish_laid`], with the last shard naming `tail_supersedes` as the
+/// revision it supersedes.
+pub fn publish_laid_superseding(
+    dir: &Path,
+    events: &[(ScriptBytes, TransparentEvent)],
+    shards: &[Laid],
+    recuts: Vec<Recut>,
+    hash: impl Fn(u64) -> BlockHash,
+    tail_supersedes: &str,
+) -> ShardMap {
     let mut entries: Vec<ShardMapEntry> = Vec::new();
     let mut parent_digest = String::new();
     for (shard_id, laid) in shards.iter().enumerate() {
@@ -246,7 +270,11 @@ pub fn publish_laid(
             dir,
             *laid,
             shard_id as u64,
-            "",
+            if shard_id + 1 == shards.len() {
+                tail_supersedes
+            } else {
+                ""
+            },
             &parent_digest,
             &inside,
             &hash,
@@ -280,17 +308,27 @@ fn write_shard(
         geometry,
         sealed,
         revision,
+        children,
+        child_span,
     } = laid;
-    let built = prepared_shard(
+    let prepared = prepared_shard(
         shard_id,
         start,
         end,
         genesis(),
-        hash(end),
+        hash,
         transparent_filter::RANGE_PROFILE,
         geometry,
+        children,
+        child_span,
+        sealed,
         events,
     );
+    let (built, children) = (&prepared.0, &prepared.1);
+    let page_children: Vec<_> = children
+        .iter()
+        .map(|child| child.describe(geometry))
+        .collect();
     let manifest = ShardManifest {
         schema: SCHEMA.to_string(),
         profile: transparent_filter::RANGE_PROFILE.to_string(),
@@ -310,17 +348,13 @@ fn write_shard(
         seal: ManifestSeal {
             scripts_target: 8_192,
             scripts_capacity: 16_384,
+            directory_bytes_target: 7_000_000,
+            directory_bytes_capacity: 8_380_416,
             page_rows_target: 2_048,
             page_rows_capacity: 4_096,
+            max_page_children: transparent_shard::MAX_PAGE_CHILDREN,
         },
-        layout: ManifestLayout {
-            max_script_bytes: transparent_shard::MAX_SCRIPT_BYTES as u32,
-            inline_events: transparent_shard::INLINE_EVENTS,
-            events_per_page: transparent_shard::EVENTS_PER_PAGE,
-            page_row_header_bytes: transparent_shard::PAGE_ROW_HEADER_BYTES as u32,
-            page_entry_header_bytes: transparent_shard::PAGE_ENTRY_HEADER_BYTES as u32,
-            directory_choices: transparent_shard::build::DIRECTORY_CHOICES as u32,
-        },
+        layout: ManifestLayout::current(),
         filter_hash: filter_hash(built.filter.as_slice()).to_display_hex(),
         directory_segments: built
             .directory
@@ -331,26 +365,21 @@ fn write_shard(
                 sha256: hex::encode(<sha2::Sha256 as sha2::Digest>::digest(segment)),
             })
             .collect(),
-        page_segments: built
-            .pages
-            .iter()
-            .map(|segment| TableGeometry {
-                rows: geometry.page_rows,
-                row_bytes: geometry.page_row_bytes as u32,
-                sha256: hex::encode(<sha2::Sha256 as sha2::Digest>::digest(segment)),
-            })
-            .collect(),
         occupancy: ManifestOccupancy {
             scripts: built.scripts,
-            page_rows: built.page_rows,
-            fragments: built.fragments,
+            page_rows: page_children.iter().map(|c| c.occupancy.page_rows).sum(),
+            fragments: page_children.iter().map(|c| c.occupancy.fragments).sum(),
             events: built.events,
             blocks: end - start + 1,
             txids: 0,
             excluded_scripts: built.excluded_scripts,
         },
+        page_children,
         directory_choice: None,
     };
+    manifest
+        .check_children(geometry.page_rows, geometry.page_row_bytes as u32)
+        .expect("the harness lays out well-formed page shards");
 
     let digest = manifest.digest();
     let shard_dir = dir.join(&digest);
@@ -360,8 +389,17 @@ fn write_shard(
     for (index, segment) in built.directory.iter().enumerate() {
         std::fs::write(shard_dir.join(format!("directory.{index}.bin")), segment).unwrap();
     }
-    for (index, segment) in built.pages.iter().enumerate() {
-        std::fs::write(shard_dir.join(format!("pages.{index}.bin")), segment).unwrap();
+    for child in children.iter() {
+        for segment in 0..child.segments {
+            std::fs::write(
+                shard_dir.join(format!(
+                    "{}.{segment}.bin",
+                    transparent_shard::manifest::pages_table(child.index)
+                )),
+                child.segment(geometry, segment),
+            )
+            .unwrap();
+        }
     }
 
     ShardMapEntry {
@@ -373,10 +411,10 @@ fn write_shard(
         terminal_block_hash: manifest.terminal_block_hash.clone(),
         filter_hash: manifest.filter_hash.clone(),
         scripts: built.scripts,
-        page_rows: built.page_rows,
+        page_rows: manifest.occupancy.page_rows,
         txids: 0,
         directory_segments: built.directory_segments(),
-        page_segments: built.page_segments(),
+        page_segments: manifest.page_children.len() as u32,
         manifest_digest: digest,
         revision: manifest.revision,
         sealed: manifest.sealed,

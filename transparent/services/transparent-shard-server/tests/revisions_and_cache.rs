@@ -22,20 +22,27 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tower::ServiceExt;
 use transparent_events::{ReceiveEvent, TransparentEvent, Txid};
-use transparent_filter::{filter_hash, BlockHash, ScriptBytes, SealParameters, ShardMap};
-use transparent_shard::build::build_shard;
-use transparent_shard::layout::{Geometry, RECENT_4K};
-use transparent_shard::manifest::{
-    ManifestLayout, ManifestOccupancy, ManifestSeal, ShardManifest, TableGeometry, SCHEMA,
-};
+use transparent_filter::{BlockHash, ScriptBytes, SealParameters, ShardMap};
+#[path = "support/revision.rs"]
+mod revision;
+use transparent_shard::layout::{Geometry, DECOUPLED_2K_8K};
+use transparent_shard::manifest::ShardManifest;
 use transparent_shard_server::metrics::Metrics;
 use transparent_shard_server::runtime::{reserved_bytes, CacheError, RuntimeCache, SharedParams};
 use transparent_shard_server::service::{router, ServiceConfig, ServiceState};
-use transparent_shard_server::shardset::{ShardSet, Table, DEFAULT_RETAIN_REVISIONS};
+use transparent_shard_server::shardset::{ShardSet, Table, TableRef, DEFAULT_RETAIN_REVISIONS};
+
+/// The table of a kind in these single-page-shard fixtures.
+fn tref(table: Table) -> TableRef {
+    match table {
+        Table::Pages => TableRef::Pages(0),
+        _ => TableRef::Directory,
+    }
+}
 
 /// The smallest registry geometry, so a runtime is cheap enough to build
 /// several times in a test.
-const GEOMETRY: Geometry = RECENT_4K;
+const GEOMETRY: Geometry = DECOUPLED_2K_8K;
 
 const GENESIS: &str = transparent_filter::MAINNET_GENESIS_DISPLAY;
 const FIRST: u64 = 3_428_143;
@@ -93,93 +100,27 @@ fn write_revision_geometry(
     geometry: &'static Geometry,
 ) -> (String, u64) {
     let events = events_through(end);
-    let built = build_shard(
-        0,
-        FIRST,
-        end,
-        genesis(),
-        hash_at(end),
-        transparent_filter::RANGE_PROFILE,
-        geometry,
+    let (_, entry) = revision::write(
+        dir,
+        &revision::Revision {
+            shard_id: 0,
+            start: FIRST,
+            end,
+            geometry,
+            // The tail: a revision that supersedes another is by
+            // construction not final, and a sealed shard would have nothing
+            // to supersede.
+            sealed: false,
+            revision,
+            supersedes,
+            parent_digest: "",
+            children: 1,
+            genesis: genesis(),
+            hash: &hash_at,
+        },
         &events,
-    )
-    .expect("build");
-
-    let manifest = ShardManifest {
-        schema: SCHEMA.to_string(),
-        profile: transparent_filter::RANGE_PROFILE.to_string(),
-        geometry: geometry.name.to_string(),
-        network: transparent_filter::NETWORK.to_string(),
-        genesis_hash: GENESIS.to_string(),
-        shard_id: 0,
-        start_height: FIRST,
-        end_height: end,
-        parent_block_hash: hash_at(FIRST - 1).to_display_hex(),
-        terminal_block_hash: hash_at(end).to_display_hex(),
-        tag_salt_counter: built.tag_salt_counter,
-        parent_manifest_digest: String::new(),
-        // The tail: a revision that supersedes another is by construction not
-        // final, and a sealed shard would have nothing to supersede.
-        sealed: false,
-        revision,
-        supersedes: supersedes.to_string(),
-        seal: ManifestSeal {
-            scripts_target: 8_192,
-            scripts_capacity: 16_384,
-            page_rows_target: 2_048,
-            page_rows_capacity: 4_096,
-        },
-        layout: ManifestLayout {
-            max_script_bytes: transparent_shard::MAX_SCRIPT_BYTES as u32,
-            inline_events: transparent_shard::INLINE_EVENTS,
-            events_per_page: transparent_shard::EVENTS_PER_PAGE,
-            page_row_header_bytes: transparent_shard::PAGE_ROW_HEADER_BYTES as u32,
-            page_entry_header_bytes: transparent_shard::PAGE_ENTRY_HEADER_BYTES as u32,
-            directory_choices: transparent_shard::build::DIRECTORY_CHOICES as u32,
-        },
-        filter_hash: filter_hash(built.filter.as_slice()).to_display_hex(),
-        directory_segments: built
-            .directory
-            .iter()
-            .map(|segment| TableGeometry {
-                rows: geometry.directory_rows,
-                row_bytes: geometry.directory_row_bytes as u32,
-                sha256: hex::encode(<sha2::Sha256 as sha2::Digest>::digest(segment)),
-            })
-            .collect(),
-        page_segments: built
-            .pages
-            .iter()
-            .map(|segment| TableGeometry {
-                rows: geometry.page_rows,
-                row_bytes: geometry.page_row_bytes as u32,
-                sha256: hex::encode(<sha2::Sha256 as sha2::Digest>::digest(segment)),
-            })
-            .collect(),
-        occupancy: ManifestOccupancy {
-            scripts: built.scripts,
-            page_rows: built.page_rows,
-            fragments: built.fragments,
-            events: built.events,
-            blocks: end - FIRST + 1,
-            txids: 0,
-            excluded_scripts: built.excluded_scripts,
-        },
-        directory_choice: None,
-    };
-
-    let digest = manifest.digest();
-    let shard_dir = dir.join(&digest);
-    std::fs::create_dir_all(&shard_dir).unwrap();
-    std::fs::write(shard_dir.join("manifest.json"), manifest.canonical_bytes()).unwrap();
-    std::fs::write(shard_dir.join("filter.bin"), built.filter.as_slice()).unwrap();
-    for (index, segment) in built.directory.iter().enumerate() {
-        std::fs::write(shard_dir.join(format!("directory.{index}.bin")), segment).unwrap();
-    }
-    for (index, segment) in built.pages.iter().enumerate() {
-        std::fs::write(shard_dir.join(format!("pages.{index}.bin")), segment).unwrap();
-    }
-    (digest, built.scripts)
+    );
+    (entry.manifest_digest, entry.scripts)
 }
 
 /// Writes a map naming `digest` as the current revision of shard zero.
@@ -225,7 +166,11 @@ fn write_map_geometry(
             page_rows: 0,
             txids: 0,
             directory_segments: 1,
-            page_segments: 1,
+            page_segments: {
+                let raw = std::fs::read(dir.join(digest).join("manifest.json")).unwrap();
+                let manifest: ShardManifest = serde_json::from_slice(&raw).unwrap();
+                manifest.page_children.len() as u32
+            },
             manifest_digest: digest.to_string(),
             revision,
             sealed: false,
@@ -494,7 +439,7 @@ async fn a_second_runtime_evicts_the_first_rather_than_exceeding_the_budget() {
         },
     );
 
-    for table in ["directory", "pages"] {
+    for table in ["directory", "pages-0"] {
         let (status, _) = get(
             &state,
             &format!("/v1/shards/0/revisions/{new}/setup/{table}/0"),
@@ -621,7 +566,7 @@ async fn a_runtime_in_use_is_not_evicted_to_make_room() {
         .get(
             (new.clone(), Table::Directory, 0),
             shared(Table::Directory),
-            shard.segment(Table::Directory, 0).unwrap().clone(),
+            shard.segment(tref(Table::Directory), 0).unwrap().clone(),
         )
         .await
         .expect("the first runtime fits an empty cache");
@@ -630,7 +575,7 @@ async fn a_runtime_in_use_is_not_evicted_to_make_room() {
         .get(
             (new.clone(), Table::Pages, 0),
             shared(Table::Pages),
-            shard.segment(Table::Pages, 0).unwrap().clone(),
+            shard.segment(tref(Table::Pages), 0).unwrap().clone(),
         )
         .await;
     assert!(
@@ -656,7 +601,7 @@ async fn a_runtime_in_use_is_not_evicted_to_make_room() {
         .get(
             (new.clone(), Table::Pages, 0),
             shared(Table::Pages),
-            shard.segment(Table::Pages, 0).unwrap().clone(),
+            shard.segment(tref(Table::Pages), 0).unwrap().clone(),
         )
         .await
         .expect("an unpinned runtime may be evicted");
@@ -693,7 +638,7 @@ async fn a_built_runtime_returns_its_unused_reservation_to_the_budget() {
                 .get(
                     (new.clone(), table, 0),
                     shared(table),
-                    shard.segment(table, 0).unwrap().clone(),
+                    shard.segment(tref(table), 0).unwrap().clone(),
                 )
                 .await
                 .expect("both fit at their built size"),

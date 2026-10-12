@@ -359,8 +359,8 @@ fn sweep(dataset: &Path, out: &Path, absent_count: usize) -> Result<()> {
     write_json(out.join("baseline-wallets.json"), &baseline)?;
     let mut candidates = Vec::new();
     for (tier, ks) in [
-        ("recent-8k", vec![1, 2, 4, 8, 16]),
-        ("archive-wide", vec![1, 4, 8, 16, 32, 50, 80, 160]),
+        ("decoupled-2k-8k", vec![1, 2, 4, 8, 16]),
+        ("decoupled-32k-32k", vec![1, 4, 8, 16, 32, 50, 80, 160]),
     ] {
         let children: Vec<_> = map
             .shards
@@ -686,7 +686,7 @@ mod seed_tests {
         .unwrap();
         let child = ShardMapEntry {
             shard_id: 0,
-            geometry: "recent-8k".into(),
+            geometry: "decoupled-2k-8k".into(),
             start_height: 0,
             end_height: 1,
             parent_block_hash: "00".repeat(32),
@@ -708,7 +708,7 @@ mod seed_tests {
             range_envelope_version: 1,
             start_height: 0,
             seal: [(
-                "recent-8k".into(),
+                "decoupled-2k-8k".into(),
                 SealParameters {
                     max_scripts: 10,
                     max_page_rows: 10,

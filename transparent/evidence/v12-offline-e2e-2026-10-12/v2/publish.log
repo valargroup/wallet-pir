@@ -1,0 +1,10 @@
+journal 3262749-3473686, all decoupled-2k-8k sealing at DecoupledPolicy { scripts: Limit { target: 101815, capacity: 118784 }, directory_bytes: Limit { target: 7183214, capacity: 8380416 }, page_rows: Limit { target: 7936, capacity: 8192 }, max_children: 32, page_entry_header: 40 }
+shard   0 3262749-3293447 (30699 blocks) scripts 56519 page shards 2 pages 8351 events 602946 sealed
+shard   1 3293448-3327141 (33694 blocks) scripts 57685 page shards 2 pages 8497 events 622746 sealed
+shard   2 3327142-3343619 (16478 blocks) scripts 58955 page shards 1 pages 6640 events 497071 sealed
+shard   3 3343620-3359296 (15677 blocks) scripts 58245 page shards 1 pages 7343 events 534972 sealed
+shard   4 3359297-3389930 (30634 blocks) scripts 59620 page shards 1 pages 6444 events 490974 sealed
+shard   5 3389931-3424324 (34394 blocks) scripts 58778 page shards 1 pages 6904 events 513095 sealed
+shard   6 3424325-3460188 (35864 blocks) scripts 59987 page shards 2 pages 8095 events 577640 sealed
+shard   7 3460189-3473686 (13498 blocks) scripts 47698 page shards 1 pages 4635 events 346256 TAIL r0
+published 8 shards covering 3262749-3473686; filters ~1.14 MB

@@ -1,7 +1,7 @@
 //! Compact page entries sharing one fixed-width PIR row.
 //!
-//! Each entry has a 34-byte header and a variable byte stream of complete
-//! events. A fragment is the longest canonical prefix that fits 4,058 event
+//! Each entry has a 40-byte header and a variable byte stream of complete
+//! events. A fragment is the longest canonical prefix that fits 4,052 event
 //! bytes; receive/spend mix determines its count, bounded by 86. A local
 //! outpoint reference never crosses an entry boundary.
 //!
@@ -9,8 +9,14 @@
 //! best-fit packing, including spare space in long histories' final rows.
 //! The builder uses equal-byte-size groups instead if they require fewer rows.
 //!
-//! A directory entry names a 1-based `first_page`. Its first page reports `K`,
-//! and the wallet fetches all K fragments and checks each greedy boundary.
+//! A script's history in a directory shard is a chain of runs, at most one per
+//! page shard. The directory entry names the newest run's first row. Every
+//! run's first fragment (ordinal 0) reports the run's fragment count `K` and
+//! links back to the previous run: `prev_child`, the earlier page shard
+//! holding it, `prev_row`, the 1-based row of its first fragment there (zero
+//! ends the chain), and `older_runs`, how many runs are older than this one.
+//! On every later fragment all three are zero. A run's fragments occupy
+//! consecutive rows, and the wallet checks each greedy boundary.
 //! A reader selects only its own tag within the row. Even two of a wallet's
 //! scripts sharing a row cost separate fetches: response reuse would make the
 //! request transcript depend on which scripts share a row.
@@ -25,8 +31,8 @@
 //! matching my tag" a well-defined operation rather than a choice.
 
 use crate::layout::{
-    EVENTS_PER_PAGE, MAX_ENTRIES_PER_ROW, PAGE_ENTRY_HEADER_BYTES, PAGE_ROW_BYTES,
-    PAGE_ROW_HEADER_BYTES,
+    EVENTS_PER_PAGE, MAX_ENTRIES_PER_ROW, MAX_PAGE_CHILDREN, PAGE_ENTRY_HEADER_BYTES,
+    PAGE_ROW_BYTES, PAGE_ROW_HEADER_BYTES,
 };
 use crate::records::RecordError;
 use crate::tag::SCRIPT_TAG_BYTES;
@@ -40,12 +46,50 @@ const PE_FRAGMENT_COUNT: usize = PE_ORDINAL + 4;
 const PE_EVENT_COUNT: usize = PE_FRAGMENT_COUNT + 4;
 const PE_MIN_HEIGHT: usize = PE_EVENT_COUNT + 4;
 const PE_MAX_HEIGHT: usize = PE_MIN_HEIGHT + 4;
-const PE_END: usize = PE_MAX_HEIGHT + 4;
+const PE_PREV_CHILD: usize = PE_MAX_HEIGHT + 4;
+const PE_PREV_ROW: usize = PE_PREV_CHILD + 1;
+const PE_OLDER_RUNS: usize = PE_PREV_ROW + 4;
+const PE_END: usize = PE_OLDER_RUNS + 1;
 
 /// The header must be exactly the width the layout reserves for it: the entry
 /// size formula and every capacity derived from it depend on this being true, so
 /// a field added without widening the header should fail the build.
 const _: () = assert!(PE_END == PAGE_ENTRY_HEADER_BYTES);
+
+/// A run's link to the run before it, carried on its first fragment.
+///
+/// Pointers only go backwards, to page shards that sealed before this run
+/// started receiving events, so a run's contents and its link are fixed when
+/// its page shard seals. All zero on a later fragment and on a script's oldest
+/// run in the directory shard.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RunLink {
+    /// The page shard holding the previous run.
+    pub prev_child: u8,
+    /// 1-based row of the previous run's first fragment; zero ends the chain.
+    pub prev_row: u32,
+    /// Runs older than this one in the directory shard.
+    pub older_runs: u8,
+}
+
+impl RunLink {
+    /// The previous run's page shard and 0-based row, if there is one.
+    pub fn previous(&self) -> Option<(u8, u32)> {
+        self.prev_row
+            .checked_sub(1)
+            .map(|row| (self.prev_child, row))
+    }
+
+    /// Whether this is a link a first fragment may carry: either the end of
+    /// the chain, all zero, or a pointer with at least one older run.
+    pub fn is_well_formed(&self) -> bool {
+        if self.prev_row == 0 {
+            self.prev_child == 0 && self.older_runs == 0
+        } else {
+            self.older_runs != 0 && u32::from(self.prev_child) < MAX_PAGE_CHILDREN
+        }
+    }
+}
 
 /// One fragment of one script's history, as it sits inside a shared row.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -60,6 +104,8 @@ pub struct PageEntry {
     /// first fragment newer than its checkpoint without a plaintext index.
     pub min_height: u32,
     pub max_height: u32,
+    /// The previous run, on ordinal 0 only.
+    pub link: RunLink,
 }
 
 impl PageEntry {
@@ -92,7 +138,21 @@ impl PageEntry {
             events,
             min_height,
             max_height,
+            link: RunLink::default(),
         })
+    }
+
+    /// The same fragment carrying `link`, which only a run's first fragment
+    /// may hold.
+    pub fn with_link(mut self, link: RunLink) -> Result<Self, RecordError> {
+        if !link.is_well_formed() || self.ordinal != 0 && link != RunLink::default() {
+            return Err(RecordError::Malformed(format!(
+                "fragment {} cannot carry link {link:?}",
+                self.ordinal
+            )));
+        }
+        self.link = link;
+        Ok(self)
     }
 
     /// Bytes this entry occupies inside a row.
@@ -132,6 +192,11 @@ pub fn encode_page_row(entries: &[PageEntry]) -> Result<Vec<u8>, RecordError> {
         if entry.events.is_empty() || entry.events.len() > EVENTS_PER_PAGE as usize {
             return Err(RecordError::TooManyEvents(entry.events.len()));
         }
+        if !entry.link.is_well_formed() || entry.ordinal != 0 && entry.link != RunLink::default() {
+            return Err(RecordError::Malformed(
+                "a fragment carries a malformed run link".into(),
+            ));
+        }
         used += entry.encoded_len();
     }
     if used > PAGE_ROW_BYTES {
@@ -160,7 +225,10 @@ pub fn encode_page_row(entries: &[PageEntry]) -> Result<Vec<u8>, RecordError> {
         head[PE_EVENT_COUNT..PE_MIN_HEIGHT]
             .copy_from_slice(&(entry.events.len() as u32).to_le_bytes());
         head[PE_MIN_HEIGHT..PE_MAX_HEIGHT].copy_from_slice(&entry.min_height.to_le_bytes());
-        head[PE_MAX_HEIGHT..PE_END].copy_from_slice(&entry.max_height.to_le_bytes());
+        head[PE_MAX_HEIGHT..PE_PREV_CHILD].copy_from_slice(&entry.max_height.to_le_bytes());
+        head[PE_PREV_CHILD] = entry.link.prev_child;
+        head[PE_PREV_ROW..PE_OLDER_RUNS].copy_from_slice(&entry.link.prev_row.to_le_bytes());
+        head[PE_OLDER_RUNS] = entry.link.older_runs;
         at += PAGE_ENTRY_HEADER_BYTES;
         let mut encoded = Vec::with_capacity(compact::encoded_len(&entry.events));
         compact::encode(&entry.events, &mut encoded)?;
@@ -175,21 +243,6 @@ pub fn encode_page_row(entries: &[PageEntry]) -> Result<Vec<u8>, RecordError> {
 /// An unused row and a full one are the same size and are indistinguishable in
 /// a response; only the decoded content differs. That is the point.
 pub fn decode_page_row(row: &[u8]) -> Result<Vec<PageEntry>, RecordError> {
-    decode_page_row_with_schema(row, crate::SCHEMA)
-}
-
-pub fn decode_page_row_with_schema(
-    row: &[u8],
-    schema: &str,
-) -> Result<Vec<PageEntry>, RecordError> {
-    if !crate::manifest::supported_schema(schema) {
-        return Err(RecordError::Malformed("unsupported schema".into()));
-    }
-    let decode = if schema == crate::manifest::LEGACY_SCHEMA {
-        crate::compact_v10::decode
-    } else {
-        compact::decode
-    };
     if row.len() != PAGE_ROW_BYTES {
         return Err(RecordError::Length {
             got: row.len(),
@@ -224,6 +277,11 @@ pub fn decode_page_row_with_schema(
         let event_count = u32_at(row, at + PE_EVENT_COUNT)? as usize;
         let min_height = u32_at(row, at + PE_MIN_HEIGHT)?;
         let max_height = u32_at(row, at + PE_MAX_HEIGHT)?;
+        let link = RunLink {
+            prev_child: take(row, at + PE_PREV_CHILD, 1)?[0],
+            prev_row: u32_at(row, at + PE_PREV_ROW)?,
+            older_runs: take(row, at + PE_OLDER_RUNS, 1)?[0],
+        };
 
         if event_count == 0 || event_count > EVENTS_PER_PAGE as usize {
             return Err(RecordError::Malformed(format!(
@@ -236,8 +294,17 @@ pub fn decode_page_row_with_schema(
             )));
         }
 
+        // Only a run's first fragment links anywhere, and a link either ends
+        // the chain with all three fields zero or names an older run. Whether
+        // it points backwards, and at the right shard, is the walk's check.
+        if ordinal != 0 && link != RunLink::default() || !link.is_well_formed() {
+            return Err(RecordError::Malformed(format!(
+                "fragment {ordinal} carries run link {link:?}"
+            )));
+        }
+
         let body = at + PAGE_ENTRY_HEADER_BYTES;
-        let (events, event_bytes) = decode(
+        let (events, event_bytes) = compact::decode(
             row.get(body..)
                 .ok_or_else(|| RecordError::Malformed("entry runs past row".into()))?,
             event_count,
@@ -278,6 +345,7 @@ pub fn decode_page_row_with_schema(
             events,
             min_height,
             max_height,
+            link,
         });
     }
 
@@ -345,7 +413,7 @@ mod tests {
     #[test]
     fn every_class_fills_a_row_to_its_capacity() {
         for p in 1..=79 {
-            let per = 4092 / (34 + p as usize * 51);
+            let per = 4092 / (40 + p as usize * 51);
             assert!(per >= 1, "class {p} must fit at least one entry");
             let full: Vec<PageEntry> = (0..per).map(|i| entry(i as u8 + 1, p)).collect();
             let row = encode_page_row(&full).expect("a full class row encodes");
@@ -366,9 +434,9 @@ mod tests {
     #[test]
     fn a_full_fragment_uses_the_bytes_the_layout_promises() {
         let one = entry(1, 79);
-        assert_eq!(one.encoded_len(), 4_063);
+        assert_eq!(one.encoded_len(), 4_069);
         let row = encode_page_row(std::slice::from_ref(&one)).unwrap();
-        assert_eq!(row[4_067..].iter().filter(|b| **b != 0).count(), 0);
+        assert_eq!(row[4_073..].iter().filter(|b| **b != 0).count(), 0);
         assert_eq!(decode_page_row(&row).unwrap(), vec![one]);
     }
 
@@ -497,6 +565,60 @@ mod tests {
         }
     }
 
+    fn linked(tag: u8, events: u32, link: RunLink) -> PageEntry {
+        entry(tag, events)
+            .with_link(link)
+            .expect("a first fragment may link")
+    }
+
+    /// A first fragment's link round-trips in the header, at the documented
+    /// offsets, and costs nothing in event payload.
+    #[test]
+    fn a_run_link_round_trips_in_the_header() {
+        let link = RunLink {
+            prev_child: 3,
+            prev_row: 0x0102_0304,
+            older_runs: 7,
+        };
+        let row = encode_page_row(&[linked(1, 2, link), entry(2, 1)]).unwrap();
+        let at = PAGE_ROW_HEADER_BYTES;
+        assert_eq!(row[at + 34], 3);
+        assert_eq!(&row[at + 35..at + 39], &[4, 3, 2, 1]);
+        assert_eq!(row[at + 39], 7);
+        let decoded = decode_page_row(&row).unwrap();
+        assert_eq!(decoded[0].link, link);
+        assert_eq!(decoded[0].link.previous(), Some((3, 0x0102_0303)));
+        assert_eq!(decoded[1].link, RunLink::default());
+        assert_eq!(decoded[1].link.previous(), None);
+    }
+
+    /// Only a run's first fragment links, a link that ends the chain is all
+    /// zero, and one that does not names at least one older run.
+    #[test]
+    fn malformed_links_are_refused_at_both_ends() {
+        let at = PAGE_ROW_HEADER_BYTES;
+        let ends = |prev_child, prev_row, older_runs| RunLink {
+            prev_child,
+            prev_row,
+            older_runs,
+        };
+        for bad in [ends(1, 0, 0), ends(0, 0, 1), ends(0, 5, 0), ends(32, 5, 1)] {
+            assert!(entry(1, 1).with_link(bad).is_err(), "{bad:?}");
+            let mut row = encode_page_row(&[entry(1, 1)]).unwrap();
+            row[at + 34] = bad.prev_child;
+            row[at + 35..at + 39].copy_from_slice(&bad.prev_row.to_le_bytes());
+            row[at + 39] = bad.older_runs;
+            assert!(decode_page_row(&row).is_err(), "{bad:?}");
+        }
+        // A later fragment carries no link, even a well-formed one.
+        let later = PageEntry::new(tag_of(1), 1, 2, vec![event(5, 0)]).unwrap();
+        assert!(later.clone().with_link(ends(0, 4, 1)).is_err());
+        let mut row = encode_page_row(&[later]).unwrap();
+        row[at + 35..at + 39].copy_from_slice(&4u32.to_le_bytes());
+        row[at + 39] = 1;
+        assert!(decode_page_row(&row).is_err());
+    }
+
     /// Frozen encodings. A change to the event width, the script limit or any
     /// offset shifts these, and shifting them without republishing is what
     /// would make two builds disagree about a row while both call it valid.
@@ -512,22 +634,22 @@ mod tests {
             (
                 "one class-1 entry",
                 vec![entry(1, 1)],
-                "1219c8002f86ffc6cc870837bfdbcf9cd3d71107bcba4cdcbc9e2b1a05162b2d",
+                "53a70f6e1b27be31dd7e9dbad6a02746e03c0545c5b7259bf14d8d6089f0d442",
             ),
             (
                 "a full class-1 row",
-                (0..48).map(|i| entry(i as u8 + 1, 1)).collect(),
-                "9f59e6ff938299362ab6230c42c297738b2d6ab1d0fee784e00df970caa7564a",
+                (0..44).map(|i| entry(i as u8 + 1, 1)).collect(),
+                "b1ee60014d9157ce32d06c2f21594e2d6ce7a32573ced10213a05688320e01ee",
             ),
             (
                 "a full class-2 row",
-                (0..30).map(|i| entry(i as u8 + 1, 2)).collect(),
-                "01cf3e1818578abe2701a4b9db50b1c337e9002e037e65af22bacb886e2e305d",
+                (0..28).map(|i| entry(i as u8 + 1, 2)).collect(),
+                "0d6d329de890365e0176d4202b72721488e379fa99fef7e49a7b38efc8317c88",
             ),
             (
                 "a full fragment",
                 vec![entry(1, 79)],
-                "aae7a43e41f9be5b1131469f91dab24523879046fa838ada2feb8c4122156a10",
+                "a8410c05db4b7f3495fce4b616d6e5f17c23a081abbf94b99a854e85e4d8b5cc",
             ),
         ] {
             let row = encode_page_row(&entries).expect("encodes");

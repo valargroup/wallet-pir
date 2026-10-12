@@ -331,14 +331,17 @@ impl DiskCache {
         let mut excess = 0u64;
         let mut largest = 0u64;
         let mut total = 0u64;
+        let mut seen = std::collections::HashSet::new();
         for shard in set.current() {
-            for table in super::Table::HISTORY {
-                if shard.segments(table) == 0 {
+            for table in shard.tables() {
+                if shard.segments(table) == 0
+                    || !seen.insert((shard.runtime_identity(table).to_string(), table.kind()))
+                {
                     continue;
                 }
                 let shared = params
-                    .entry((shard.geometry.name, table))
-                    .or_insert_with(|| SharedParams::build(shard.geometry, table));
+                    .entry((shard.geometry.name, table.kind()))
+                    .or_insert_with(|| SharedParams::build(shard.geometry, table.kind()));
                 let shared = shared.as_ref().map_err(|e| invalid(e))?;
                 let bytes = Self::planned_entry_bytes(shared);
                 let valid = Self::entry_bytes_range(shared);
@@ -346,7 +349,11 @@ impl DiskCache {
                 for segment in 0..shard.segments(table) {
                     total = total.saturating_add(bytes);
                     let source = shard.segment(table, segment).expect("published segment");
-                    let key = (shard.digest.clone(), table, segment);
+                    let key = (
+                        shard.runtime_identity(table).to_string(),
+                        table.kind(),
+                        segment,
+                    );
                     let present = self
                         .path(&key, shared, &source.sha256)
                         .metadata()
@@ -611,7 +618,9 @@ impl<W: Write> CheckedWriter<W> {
     }
 }
 
-/// Collect all retained revision directory names from an active/rollback set.
+/// Collect every runtime identity an active/rollback set retains: each
+/// revision directory's name, and the identity of every page shard its
+/// manifest lists, which is what page shard runtimes are keyed by.
 pub fn retained_digests(set: &Path) -> io::Result<std::collections::HashSet<String>> {
     let mut keep = std::collections::HashSet::new();
     for entry in fs::read_dir(set)? {
@@ -621,6 +630,15 @@ pub fn retained_digests(set: &Path) -> io::Result<std::collections::HashSet<Stri
             && name.len() == 64
             && name.bytes().all(|b| b.is_ascii_hexdigit())
         {
+            // A manifest that does not parse keeps only its directory: its
+            // page shards' runtimes are then rebuilt rather than kept.
+            if let Ok(raw) = fs::read(entry.path().join("manifest.json")) {
+                if let Ok(manifest) =
+                    serde_json::from_slice::<transparent_shard::manifest::ShardManifest>(&raw)
+                {
+                    keep.extend(manifest.child_digests().iter().map(hex::encode));
+                }
+            }
             keep.insert(name);
         }
     }
@@ -631,7 +649,7 @@ pub fn retained_digests(set: &Path) -> io::Result<std::collections::HashSet<Stri
 mod tests {
     use super::*;
     use crate::shardset::Table;
-    use transparent_shard::layout::{ARCHIVE_WIDE, RECENT_4K, RECENT_8K};
+    use transparent_shard::layout::{DECOUPLED_2K_8K, DECOUPLED_32K_32K};
 
     #[test]
     fn busy_collection_defers_then_prunes_only_unretained_files() {
@@ -732,7 +750,7 @@ mod tests {
 
     #[test]
     fn restored_runtimes_answer_identically_at_deployed_geometries() {
-        for geometry in [&RECENT_8K, &ARCHIVE_WIDE] {
+        for geometry in [&DECOUPLED_2K_8K, &DECOUPLED_32K_32K] {
             for table in [Table::Directory, Table::Pages, Table::TxDirectory] {
                 let dir = tempfile::tempdir().unwrap();
                 let shared = SharedParams::build(geometry, table).unwrap();
@@ -817,8 +835,8 @@ mod tests {
     #[test]
     fn a_restored_entry_must_publish_the_masks_it_stored() {
         let dir = tempfile::tempdir().unwrap();
-        let shared = SharedParams::build(&RECENT_4K, Table::Directory).unwrap();
-        let rows = vec![3u8; (RECENT_4K.directory_rows * 4_096) as usize];
+        let shared = SharedParams::build(&DECOUPLED_2K_8K, Table::Directory).unwrap();
+        let rows = vec![3u8; (DECOUPLED_2K_8K.directory_rows * 4_096) as usize];
         let key = ("ef".repeat(32), Table::Directory, 0);
         let disk = DiskCache::new(dir.path().into(), shared.reserved_bytes() * 2).unwrap();
         let cold = TableRuntime::build(&shared, &rows).unwrap();
@@ -843,7 +861,7 @@ mod cache_integration_tests {
     use crate::runtime::RuntimeCache;
     use crate::shardset::{SegmentSource, Table};
     use std::sync::Arc;
-    use transparent_shard::layout::RECENT_4K;
+    use transparent_shard::layout::DECOUPLED_2K_8K;
 
     async fn wait_for_saves(metrics: &Arc<Metrics>) {
         tokio::time::timeout(std::time::Duration::from_secs(30), async {
@@ -858,18 +876,19 @@ mod cache_integration_tests {
     #[tokio::test]
     async fn blocked_snapshot_does_not_delay_serving_or_release_owned_memory() {
         let dir = tempfile::tempdir().unwrap();
-        let shared = Arc::new(SharedParams::build(&RECENT_4K, Table::Directory).unwrap());
+        let shared = Arc::new(SharedParams::build(&DECOUPLED_2K_8K, Table::Directory).unwrap());
         let rows = vec![
             7u8;
-            (Table::Directory.rows(&RECENT_4K) * Table::Directory.row_bytes(&RECENT_4K) as u64)
+            (Table::Directory.rows(&DECOUPLED_2K_8K)
+                * Table::Directory.row_bytes(&DECOUPLED_2K_8K) as u64)
                 as usize
         ];
         let source = SegmentSource {
             path: dir.path().join("table.bin"),
-            rows: Table::Directory.rows(&RECENT_4K),
-            row_bytes: Table::Directory.row_bytes(&RECENT_4K),
+            rows: Table::Directory.rows(&DECOUPLED_2K_8K),
+            row_bytes: Table::Directory.row_bytes(&DECOUPLED_2K_8K),
             sha256: hex::encode(Sha256::digest(&rows)),
-            zero_from_row: Table::Directory.rows(&RECENT_4K),
+            zero_from_row: Table::Directory.rows(&DECOUPLED_2K_8K),
         };
         fs::write(&source.path, &rows).unwrap();
         drop(rows);
@@ -936,18 +955,19 @@ mod cache_integration_tests {
     #[tokio::test]
     async fn restart_coalesces_restore_and_corruption_falls_back_without_losing_budget() {
         let dir = tempfile::tempdir().unwrap();
-        let shared = Arc::new(SharedParams::build(&RECENT_4K, Table::Directory).unwrap());
+        let shared = Arc::new(SharedParams::build(&DECOUPLED_2K_8K, Table::Directory).unwrap());
         let rows = vec![
             7u8;
-            (Table::Directory.rows(&RECENT_4K) * Table::Directory.row_bytes(&RECENT_4K) as u64)
+            (Table::Directory.rows(&DECOUPLED_2K_8K)
+                * Table::Directory.row_bytes(&DECOUPLED_2K_8K) as u64)
                 as usize
         ];
         let source = SegmentSource {
             path: dir.path().join("table.bin"),
-            rows: Table::Directory.rows(&RECENT_4K),
-            row_bytes: Table::Directory.row_bytes(&RECENT_4K),
+            rows: Table::Directory.rows(&DECOUPLED_2K_8K),
+            row_bytes: Table::Directory.row_bytes(&DECOUPLED_2K_8K),
             sha256: hex::encode(Sha256::digest(&rows)),
-            zero_from_row: Table::Directory.rows(&RECENT_4K),
+            zero_from_row: Table::Directory.rows(&DECOUPLED_2K_8K),
         };
         fs::write(&source.path, &rows).unwrap();
         drop(rows);

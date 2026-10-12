@@ -1188,12 +1188,12 @@ fn setup_seed_golden_matches_server() {
         (
             "txid-2k8",
             DisplayTable::Directory(0),
-            0xd56b_6038_d7ca_811f_u64,
+            0x04fa_b978_5ce5_c875_u64,
         ),
         (
             "txid-2k8",
             DisplayTable::Directory(3),
-            0xd56b_6038_d7ca_811f,
+            0x04fa_b978_5ce5_c875,
         ),
     ];
     for (name, table, seed) in golden {
@@ -1219,7 +1219,7 @@ fn setup_seed_golden_matches_server() {
         .unwrap();
     assert_eq!(
         geometry["txdirectory"]["setup_seed"],
-        0xd56b_6038_d7ca_811f_u64
+        0x04fa_b978_5ce5_c875_u64
     );
     assert_eq!(geometry["txdirectory"]["row_bytes"], 8_192);
     assert!(geometry.get("txpages").is_none(), "{geometry}");

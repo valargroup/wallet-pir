@@ -4,7 +4,7 @@ mod common;
 use common::*;
 use sha2::{Digest, Sha256};
 use transparent_regression::{reference, Case, Checkpoint, EventRecord, Fixture, SCHEMA};
-use transparent_shard::layout::RECENT_8K;
+use transparent_shard::layout::DECOUPLED_2K_8K;
 use transparent_wallet::Anchor;
 #[tokio::test(flavor = "multi_thread")]
 async fn executable_checks_frozen_checkpoints_and_reports_publication_drift() {
@@ -34,10 +34,14 @@ async fn executable_checks_frozen_checkpoints_and_reports_publication_drift() {
             shard.shard_id, shard.manifest_digest
         );
         allowed.insert(format!("GET {prefix}/manifest"));
-        for (table, segments) in [
-            ("directory", shard.directory_segments),
-            ("pages", shard.page_segments),
-        ] {
+        // The directory's segments, and each page shard as `pages-<j>` (the
+        // map counts page shards where it once counted page segments); this
+        // fixture's page shards hold one segment each.
+        let tables = std::iter::once(("directory".to_string(), shard.directory_segments)).chain(
+            (0..shard.page_segments)
+                .map(|child| (transparent_shard::manifest::pages_table(child), 1)),
+        );
+        for (table, segments) in tables {
             allowed.insert(format!("POST {prefix}/query/{table}"));
             for segment in 0..segments {
                 allowed.insert(format!("GET {prefix}/setup/{table}/{segment}"));
@@ -164,7 +168,7 @@ async fn executable_checks_frozen_checkpoints_and_reports_publication_drift() {
     // continuously publishing origin does between any two fetches; the fixture
     // still pins its sealed entries and the run must still pass.
     let moved = tempfile::tempdir().unwrap();
-    let republished = publish_with(moved.path(), &all, |_| &RECENT_8K, 1, "", hash_at);
+    let republished = publish_with(moved.path(), &all, |_| &DECOUPLED_2K_8K, 1, "", hash_at);
     assert!(
         !republished.shards.last().unwrap().sealed,
         "the synthetic set must end in an unsealed tail"

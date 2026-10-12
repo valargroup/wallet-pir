@@ -58,7 +58,7 @@ use transparent_filter_server::events::EventStore;
 use transparent_filter_server::state::StateReader;
 use transparent_filter_server::zakura::ZakuraClient;
 use transparent_shard::layout::{by_name as geometry_by_name, Geometry};
-use transparent_shard::seal::{PageBasis, SealPolicy, Sealer};
+use transparent_shard::seal::{DecoupledPolicy, DisplacementSealer};
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
@@ -78,7 +78,7 @@ struct Cli {
     months: u32,
     /// Archive geometry the publication will use; its seal thresholds decide
     /// where the archive's last shard ends.
-    #[arg(long, default_value = "archive-wide")]
+    #[arg(long, default_value = "decoupled-32k-32k")]
     archive_geometry: String,
     /// The node's `[state] cache_dir`; reads header times from its RocksDB.
     #[arg(long)]
@@ -255,23 +255,22 @@ fn derive(
     })
 }
 
-/// Moves `calendar` back to the first height of the archive shard open there.
+/// Moves `calendar` back to the first height of the archive directory shard
+/// open there.
 ///
 /// Offers `start..calendar` to an archive sealer, as the publisher would, and
-/// returns the boundary with the number of archive shards before it.
+/// returns the boundary with the number of archive directory shards before
+/// it. The boundary is a directory shard's start, never a page shard's: the
+/// publisher closes the open directory shard with its open page shard at the
+/// tier change, so anything later would cut an archive shard short.
 fn seal_back(
     events: &mut impl FnMut(u64) -> Result<Vec<(ScriptBytes, TransparentEvent)>, BoxError>,
     archive: &Geometry,
     start: u64,
     calendar: u64,
 ) -> Result<(u64, u64), BoxError> {
-    let mut sealer = Sealer::resume(
-        SealPolicy::for_geometry(archive),
-        start,
-        PageBasis::default(),
-        *archive,
-        0,
-    );
+    let mut sealer =
+        DisplacementSealer::new(DecoupledPolicy::for_geometry(archive), *archive, start, 0);
     for height in start..calendar {
         sealer.push_block(height, &events(height)?)?;
     }
@@ -525,7 +524,7 @@ mod tests {
     fn an_archive_shard_still_open_from_the_start_is_refused() {
         // Empty blocks reach no threshold, so the first archive shard is still
         // open at the calendar height and moving back would empty the tier.
-        let archive = geometry_by_name("archive-wide").unwrap();
+        let archive = geometry_by_name("decoupled-32k-32k").unwrap();
         let error = seal_back(&mut |_| Ok(Vec::new()), archive, 0, 100).unwrap_err();
         assert!(
             error.to_string().contains("archive tier would be empty"),

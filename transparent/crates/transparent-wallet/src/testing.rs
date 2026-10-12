@@ -14,8 +14,8 @@
 use crate::client::Table;
 use crate::ledger::LedgerError;
 use crate::store::{
-    Anchor, CoverageKind, PendingPages, ScriptEntry, ScriptOrigin, SetIdentity, SetupBlob,
-    SetupKey, ShardCommit, StoreError, StoredEvent, WalletStore,
+    Anchor, CachedRun, CoverageKind, PendingPages, RunCursor, ScriptEntry, ScriptOrigin,
+    SetIdentity, SetupBlob, SetupKey, ShardCommit, StoreError, StoredEvent, WalletStore,
 };
 use std::collections::BTreeMap;
 use transparent_events::{ReceiveEvent, SpendEvent, TransparentEvent, Txid};
@@ -72,7 +72,7 @@ pub fn identity() -> SetIdentity {
         range_envelope_version: 1,
         start_height: 0,
         seal: BTreeMap::from([(
-            "recent-8k".to_string(),
+            "decoupled-2k-8k".to_string(),
             SealParameters {
                 max_scripts: 1,
                 max_page_rows: 1,
@@ -109,23 +109,42 @@ pub fn commit(
         covered_scripts: covered,
         pending_upsert: Vec::new(),
         pending_complete: Vec::new(),
+        cached_runs: Vec::new(),
     }
 }
 
 pub fn pending(script_tag: u8, revision: &str) -> PendingPages {
     PendingPages {
-        validated_events: 0,
-        boundary: None,
-        target_anchor: None,
         id: None,
         shard_id: 1,
         revision_digest: revision.into(),
         script: script(script_tag),
-        first_page: 4,
-        page_count: 3,
-        inline: Vec::new(),
-        next_ordinal: 0,
+        cursor: RunCursor {
+            child: 3,
+            row: 4,
+            older_runs: None,
+        },
+        carried: vec![
+            receive(script_tag, 7, 1, 60).event,
+            spend(script_tag, script_tag, 7, 9, 70).event,
+        ],
         attempts: 0,
+        target_anchor: None,
+    }
+}
+
+/// A cached run of shard 0 with no run below it.
+pub fn cached_run(child: &str, script_tag: u8, heights: &[u32]) -> CachedRun {
+    CachedRun {
+        child_digest: child.into(),
+        script: script(script_tag),
+        shard_id: 0,
+        older: None,
+        events: heights
+            .iter()
+            .enumerate()
+            .map(|(index, height)| receive(script_tag, index as u32, 1, *height).event)
+            .collect(),
     }
 }
 
@@ -145,6 +164,8 @@ pub fn suite<S: WalletStore>(make: impl Fn() -> S) {
     promotion_settles_a_provisional_revision_in_place(&make);
     a_range_replaces_the_ranges_it_contains_whatever_their_shard(&make);
     a_range_inside_one_already_held_changes_nothing(&make);
+    a_walk_cursor_and_its_carried_events_round_trip(&make);
+    the_run_cache_is_written_with_its_commit_and_never_rewritten(&make);
 }
 
 fn an_empty_store_reports_nothing<S: WalletStore>(make: &impl Fn() -> S) {
@@ -320,6 +341,14 @@ fn setup_is_keyed_by_set_revision_table_and_segment<S: WalletStore>(make: &impl 
     };
     store.put_setup(&key, &blob).unwrap();
     assert_eq!(store.setup(&key).unwrap(), Some(blob.clone()));
+    // Every page shard's table publishes its own setup.
+    let page = |child| SetupKey {
+        table: Table::Pages(child),
+        ..key.clone()
+    };
+    store.put_setup(&page(1), &blob).unwrap();
+    assert_eq!(store.setup(&page(1)).unwrap(), Some(blob.clone()));
+    assert_eq!(store.setup(&page(2)).unwrap(), None);
     for other in [
         SetupKey {
             set_digest: "set-b".into(),
@@ -330,7 +359,7 @@ fn setup_is_keyed_by_set_revision_table_and_segment<S: WalletStore>(make: &impl 
             ..key.clone()
         },
         SetupKey {
-            table: Table::Pages,
+            table: Table::Pages(0),
             ..key.clone()
         },
         SetupKey {
@@ -373,13 +402,17 @@ fn a_commit_past_the_pending_bound_is_refused_whole<S: WalletStore>(make: &impl 
     assert!(held[0].id.is_some());
     // Advancing it keeps its id; finishing it removes it.
     let mut progressed = held[0].clone();
-    progressed.next_ordinal = 2;
+    progressed.cursor = RunCursor {
+        child: 1,
+        row: 9,
+        older_runs: Some(1),
+    };
     let mut advance = commit(1, "r1", false, (0, 99), vec![], vec![]);
-    advance.pending_upsert.push(progressed);
+    advance.pending_upsert.push(progressed.clone());
     store.commit_shard(advance).unwrap();
     let held = store.pending().unwrap();
     assert_eq!(held.len(), 1);
-    assert_eq!(held[0].next_ordinal, 2);
+    assert_eq!(held[0].cursor, progressed.cursor);
     let mut finish = commit(1, "r1", false, (0, 99), vec![], vec![script(1)]);
     finish.pending_complete.push(held[0].id.unwrap());
     store.commit_shard(finish).unwrap();
@@ -421,7 +454,7 @@ fn required_from_is_never_raised_and_the_set_is_bound_once<S: WalletStore>(make:
     // The same lineage with a new geometry continues; another chain does not.
     let mut widened = identity();
     widened.seal.insert(
-        "archive-wide".into(),
+        "decoupled-32k-32k".into(),
         SealParameters {
             max_scripts: 2,
             max_page_rows: 2,
@@ -603,4 +636,147 @@ fn a_retried_spend_cannot_change_its_script<S: WalletStore>(make: &impl Fn() -> 
         .is_err());
     assert_eq!(store.events().unwrap(), before);
     assert_eq!(store.last_commit().unwrap(), id);
+}
+
+/// A walk's cursor, with the older-run count it expects or without one, and
+/// the events it carries come back exactly, through an advance too.
+fn a_walk_cursor_and_its_carried_events_round_trip<S: WalletStore>(make: &impl Fn() -> S) {
+    let mut store = make();
+    store.bind_set(&identity()).unwrap();
+    let item = pending(4, "r1");
+    let mut first = commit(1, "r1", false, (0, 99), vec![], vec![]);
+    first.pending_upsert.push(item.clone());
+    store.commit_shard(first).unwrap();
+    let held = store.pending().unwrap();
+    assert_eq!(held.len(), 1);
+    let id = held[0].id.expect("an assigned id");
+    assert_eq!(
+        PendingPages {
+            id: Some(id),
+            ..item.clone()
+        },
+        held[0]
+    );
+    let mut advanced = held[0].clone();
+    advanced.cursor = RunCursor {
+        child: 0,
+        row: 0,
+        older_runs: Some(0),
+    };
+    advanced.carried = vec![receive(4, 1, 2, 30).event, receive(4, 2, 2, 40).event];
+    advanced.attempts = 2;
+    let mut step = commit(1, "r1", false, (0, 99), vec![], vec![]);
+    step.pending_upsert.push(advanced.clone());
+    store.commit_shard(step).unwrap();
+    assert_eq!(store.pending().unwrap(), vec![advanced]);
+}
+
+/// A cached run is written with the commit that carries it, read back by page
+/// shard identity and script, never changed by a differing repeat — which
+/// refuses the whole commit — and kept through a rollback. A commit covering a
+/// script over its whole sealed shard drops that script's runs in the shard.
+fn the_run_cache_is_written_with_its_commit_and_never_rewritten<S: WalletStore>(
+    make: &impl Fn() -> S,
+) {
+    let mut store = make();
+    store.bind_set(&identity()).unwrap();
+    assert_eq!(store.cached_run("child-a", &script(1)).unwrap(), None);
+    let low = cached_run("child-a", 1, &[10, 20, 30]);
+    let high = CachedRun {
+        older: Some("child-a".into()),
+        ..cached_run("child-b", 1, &[150])
+    };
+    let other = cached_run("child-a", 2, &[40]);
+    let elsewhere = CachedRun {
+        shard_id: 1,
+        ..cached_run("child-x", 1, &[250])
+    };
+    // A walk still under way: the shard is open and nothing is covered.
+    let mut first = commit(0, "r0", false, (0, 199), vec![], vec![]);
+    first.cached_runs = vec![low.clone(), high.clone(), other.clone(), elsewhere.clone()];
+    store.commit_shard(first.clone()).unwrap();
+    assert_eq!(
+        store.cached_run("child-a", &script(1)).unwrap(),
+        Some(low.clone())
+    );
+    assert_eq!(store.cached_run("child-a", &script(3)).unwrap(), None);
+    assert_eq!(store.cached_run("child-c", &script(1)).unwrap(), None);
+    // The identical commit again changes nothing.
+    store.commit_shard(first).unwrap();
+    assert_eq!(
+        store.cached_run("child-b", &script(1)).unwrap(),
+        Some(high.clone())
+    );
+
+    // A different run, or a different run below it, under the same key is
+    // refused, and nothing else the commit carried is written.
+    for differing_run in [
+        cached_run("child-a", 1, &[10, 20]),
+        CachedRun {
+            older: Some("child-z".into()),
+            ..low.clone()
+        },
+    ] {
+        let mut differing = commit(
+            0,
+            "r0",
+            false,
+            (0, 199),
+            vec![receive(5, 0, 1, 50)],
+            vec![script(5)],
+        );
+        differing.cached_runs = vec![differing_run];
+        assert!(store.commit_shard(differing).is_err());
+    }
+    assert_eq!(
+        store.cached_run("child-a", &script(1)).unwrap(),
+        Some(low.clone())
+    );
+    assert!(store.events().unwrap().is_empty());
+    assert!(store.coverage(&script(5)).unwrap().is_empty());
+
+    store
+        .rollback_above(
+            &Anchor {
+                height: 100,
+                hash: "h100".into(),
+            },
+            "reorg",
+        )
+        .unwrap();
+    assert_eq!(
+        store.cached_run("child-b", &script(1)).unwrap(),
+        Some(high),
+        "a run keyed by its page shard's identity survives a rollback: the \
+         identity only recurs on the chain it was published on"
+    );
+
+    // Coverage clipped to an anchor inside the sealed shard leaves the runs:
+    // the next sync carries on through the shard.
+    let mut clipped = commit(0, "r1", true, (0, 150), vec![], vec![script(1)]);
+    clipped.source_anchor = Some(Anchor {
+        height: 199,
+        hash: format!("{:064x}", 199),
+    });
+    store.commit_shard(clipped).unwrap();
+    assert_eq!(
+        store.cached_run("child-a", &script(1)).unwrap(),
+        Some(low.clone())
+    );
+
+    // Covering script 1 over the whole sealed shard 0 drops its runs there,
+    // and only those.
+    store
+        .commit_shard(commit(0, "r1", true, (0, 199), vec![], vec![script(1)]))
+        .unwrap();
+    assert_eq!(store.cached_run("child-a", &script(1)).unwrap(), None);
+    assert_eq!(store.cached_run("child-b", &script(1)).unwrap(), None);
+    assert_eq!(
+        store.cached_run("child-a", &script(2)).unwrap(),
+        Some(other)
+    );
+    assert_eq!(
+        store.cached_run("child-x", &script(1)).unwrap(),
+        Some(elsewhere)
+    );
 }

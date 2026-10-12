@@ -23,7 +23,7 @@
 use clap::Parser;
 use ipir_sp::server::IPIRServer;
 use std::time::{Duration, Instant};
-use transparent_shard::layout::{by_name as geometry_by_name, RECENT_8K};
+use transparent_shard::layout::{by_name as geometry_by_name, DECOUPLED_2K_8K};
 use transparent_shard_server::runtime::{reserved_bytes, transport_params};
 use transparent_shard_server::shardset::Table;
 
@@ -45,12 +45,12 @@ struct Cli {
 
     /// Which registry geometry to scan. Ignored by `--geometry-sweep`, which
     /// sweeps row counts directly.
-    #[arg(long, default_value = "recent-8k")]
+    #[arg(long, default_value = "decoupled-2k-8k")]
     geometry: String,
 
     /// Which of the geometry's tables to scan.
     ///
-    /// It matters once a geometry's tables differ. `archive-wide` pairs a
+    /// It matters once a geometry's tables differ. `decoupled-32k-32k` pairs a
     /// 32,768-row directory with a 65,536-row page table, so scanning only the
     /// directory would measure something it shares with `archive-32k` and miss
     /// the half that distinguishes it.
@@ -74,7 +74,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         for rows in [
             2_048u64, 4_096, 8_192, 16_384, 32_768, 65_536, 131_072, 262_144,
         ] {
-            let row_bytes = Table::Directory.row_bytes(&RECENT_8K);
+            let row_bytes = Table::Directory.row_bytes(&DECOUPLED_2K_8K);
             let sc = transport_params(rows, row_bytes)?;
             let db = (sc.db_rows * sc.db_cols * 2) as f64 / 1048576.0;
             let pack =

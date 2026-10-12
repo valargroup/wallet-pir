@@ -3,7 +3,7 @@
 //! Replays the retained public mainnet day (`transparent/evidence/baselines/
 //! mainnet-study/mainnet-day.jsonl.gz`, decompressed) into a v3 journal as
 //! consecutive copies, then measures what the continuous controller does per
-//! block: copy a journal snapshot, publish the grown `recent-8k` tail beside
+//! block: copy a journal snapshot, publish the grown `decoupled-2k-8k` tail beside
 //! the previous publication, and reopen the candidate's public filters. It
 //! then times the native cold runtime for each table segment of the final
 //! tail, which is what every recent replica builds before it is warm.
@@ -228,8 +228,8 @@ fn options(output: &Path, previous: Option<&Path>, choice: DirectoryChoice) -> P
         data_dir: PathBuf::new(),
         output: output.to_owned(),
         previous: previous.map(Path::to_owned),
-        recent_geometry: "recent-8k".into(),
-        archive_geometry: Some("archive-wide".into()),
+        recent_geometry: "decoupled-2k-8k".into(),
+        archive_geometry: Some("decoupled-32k-32k".into()),
         recent_from: Some(START + 1),
         zakura_rpc_url: String::new(),
         zakura_cookie: PathBuf::new(),
@@ -299,7 +299,7 @@ fn main() {
         let output = runs.join(format!("candidate-{height}"));
         std::fs::create_dir(&output).unwrap();
         let started = Instant::now();
-        let snapshot = Snapshot::capture(&store, &previous_map).unwrap();
+        let snapshot = Snapshot::capture(&store, &previous_map, &journal_dir).unwrap();
         let capture = started.elapsed().as_secs_f64();
         let publish_started = Instant::now();
         let map = publication::publish(
@@ -341,12 +341,12 @@ fn main() {
     let mut runtime = Vec::new();
     if cli.runtime {
         use transparent_shard_server::runtime::{SharedParams, TableRuntime};
-        use transparent_shard_server::shardset::{ShardSet, Table};
+        use transparent_shard_server::shardset::ShardSet;
         let set = ShardSet::open(&previous, 3).unwrap();
         let tail = previous_map.shards.last().unwrap();
         let shard = set.revision(&tail.manifest_digest).unwrap();
-        for table in [Table::Directory, Table::Pages] {
-            let shared = SharedParams::build(shard.geometry, table).unwrap();
+        for table in shard.tables().collect::<Vec<_>>() {
+            let shared = SharedParams::build(shard.geometry, table.kind()).unwrap();
             for segment in 0..shard.segments(table) {
                 let bytes = shard.segment(table, segment).unwrap().load().unwrap();
                 for repeat in 0..cli.runtime_repeats {
@@ -355,7 +355,7 @@ fn main() {
                         .install(|| TableRuntime::build(&shared, &bytes))
                         .unwrap();
                     let record = serde_json::json!({
-                        "table": table.as_str(),
+                        "table": table.name(),
                         "segment": segment,
                         "repeat": repeat,
                         "build_threads": transparent_shard_server::runtime::build_pool()

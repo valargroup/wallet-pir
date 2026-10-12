@@ -3,9 +3,9 @@
 
 use crate::ledger::LedgerError;
 use crate::store::{
-    merge_coverage, receive_key, spend_key, Anchor, CoverageKind, CoverageRange, PendingPages,
-    ScriptEntry, SetIdentity, SetupBlob, SetupKey, ShardCommit, StoreError, StoredEvent,
-    WalletStore,
+    merge_coverage, receive_key, spend_key, Anchor, CachedRun, CoverageKind, CoverageRange,
+    PendingPages, ScriptEntry, SetIdentity, SetupBlob, SetupKey, ShardCommit, StoreError,
+    StoredEvent, WalletStore,
 };
 use std::collections::BTreeMap;
 use transparent_events::{TransparentEvent, Txid};
@@ -31,6 +31,8 @@ struct State {
     pending: BTreeMap<u64, PendingPages>,
     next_pending: u64,
     setups: BTreeMap<SetupKey, SetupBlob>,
+    /// Run histories by page shard identity and script.
+    runs: BTreeMap<(String, Vec<u8>), CachedRun>,
     filters: BTreeMap<String, (String, bool, Vec<u8>)>,
     commits: u64,
 }
@@ -215,6 +217,19 @@ impl WalletStore for MemoryStore {
         if pending_after > limit {
             return Err(StoreError::PendingLimit { limit });
         }
+        for run in &commit.cached_runs {
+            if self
+                .state
+                .runs
+                .get(&(run.child_digest.clone(), run.script.clone()))
+                .is_some_and(|held| held != run)
+            {
+                return Err(StoreError::Corrupt(format!(
+                    "page shard {} holds two histories for one script",
+                    run.child_digest
+                )));
+            }
+        }
 
         for (key, event) in new_receives {
             self.state.receives.insert(key, event);
@@ -268,6 +283,17 @@ impl WalletStore for MemoryStore {
         }
         for id in &commit.pending_complete {
             self.state.pending.remove(id);
+        }
+        let finishes_shard = commit.finishes_shard();
+        for run in commit.cached_runs {
+            self.state
+                .runs
+                .insert((run.child_digest.clone(), run.script.clone()), run);
+        }
+        if finishes_shard {
+            self.state.runs.retain(|(_, script), run| {
+                run.shard_id != commit.shard_id || !commit.covered_scripts.contains(script)
+            });
         }
         for mut pending in commit.pending_upsert {
             let id = match pending.id {
@@ -328,6 +354,12 @@ impl WalletStore for MemoryStore {
                 true
             });
         }
+        // Cached runs survive: each is keyed by its page shard's chained
+        // identity, which commits to that page shard's terminal block and to
+        // every earlier one, so a walk reaches it only through a manifest on
+        // the accepted chain. A tail replaced by a later revision keeps the
+        // runs its sealed page shards share, which is what lets the catch-up
+        // stop at them.
         // All pending retrievals are inexpensive to re-plan and may contain old-branch data.
         self.state.pending.clear();
         if let Some(anchor) = &mut self.state.anchor {
@@ -368,6 +400,18 @@ impl WalletStore for MemoryStore {
 
     fn pending(&self) -> Result<Vec<PendingPages>, StoreError> {
         Ok(self.state.pending.values().cloned().collect())
+    }
+
+    fn cached_run(
+        &self,
+        child_digest: &str,
+        script: &[u8],
+    ) -> Result<Option<CachedRun>, StoreError> {
+        Ok(self
+            .state
+            .runs
+            .get(&(child_digest.to_string(), script.to_vec()))
+            .cloned())
     }
 
     fn pending_limit(&self) -> usize {

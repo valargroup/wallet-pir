@@ -2,7 +2,7 @@
 use super::*;
 use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant};
-use transparent_shard::layout::RECENT_8K;
+use transparent_shard::layout::DECOUPLED_2K_8K;
 use transparent_shard_server::live::{Command, LiveService, Publication};
 use transparent_shard_server::service::ReadinessMode;
 use transparent_shard_server::shardset::LoadOptions;
@@ -23,7 +23,7 @@ async fn drain_persistence(metrics: &Arc<transparent_shard_server::metrics::Metr
 /// Run each configuration in its own process so allocator retention does not
 /// contaminate the comparison. Timings are measurements, not normal CI asserts.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-#[ignore = "manual recent-8k burst benchmark; use make transparent-burst"]
+#[ignore = "manual decoupled-2k-8k burst benchmark; use make transparent-burst"]
 async fn publication_burst_under_exact_load() {
     let _ = tracing_subscriber::fmt()
         .with_ansi(false)
@@ -43,70 +43,71 @@ async fn publication_burst_under_exact_load() {
     let root = tempfile::tempdir().unwrap();
     let fixture = std::env::var("TRANSPARENT_BURST_FIXTURE").ok();
     let mut publications = Vec::new();
-    let (options, query_root, query_shard, final_height, assigned_count) =
-        if let Some(path) = &fixture {
-            let path = std::path::PathBuf::from(path).canonicalize().unwrap();
-            let base = path.parent().unwrap();
-            let value: serde_json::Value =
-                serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-            for item in value["publications"].as_array().unwrap() {
-                publications.push(Publication {
-                    directory: base.join(item["directory"].as_str().unwrap()),
-                    assignment: Some(base.join(item["assignment"].as_str().unwrap())),
-                    map_sha256: item["map_sha256"].as_str().unwrap().to_owned(),
-                });
-            }
-            assert_eq!(publications.len(), 3);
-            let assignment = transparent_shard_server::assignment::Assignment::load(
-                publications[0].assignment.as_ref().unwrap(),
-            )
-            .unwrap();
-            let worker_id = value["worker_id"].as_str().unwrap().to_owned();
-            let count = assignment.worker(&worker_id).unwrap().shards.len();
-            assert_eq!(
-                count, 14,
-                "full-residency fixture must assign fourteen shards"
-            );
-            let options = LoadOptions {
-                scope: transparent_shard_server::shardset::LoadScope::Assigned {
-                    assignment: Arc::new(assignment),
-                    worker_id,
-                },
-                prune_excess: true,
-                ..LoadOptions::whole(3)
-            };
-            (
-                options,
-                base.to_path_buf(),
-                value["query_shard"].as_u64().unwrap() as usize,
-                value["publications"][2]["height"].as_u64().unwrap(),
-                count,
-            )
-        } else {
-            let mut predecessor = String::new();
-            for revision in 0..3 {
-                let directory = root.path().join(revision.to_string());
-                std::fs::create_dir(&directory).unwrap();
-                let end = FIRST + 40 + u64::from(revision);
-                let (digest, count) =
-                    write_revision_geometry(&directory, end, revision, &predecessor, &RECENT_8K);
-                write_map_geometry(&directory, &digest, end, revision, count, &RECENT_8K);
-                predecessor = digest;
-                let map_sha256 = ShardSet::open(&directory, 3).unwrap().map_digest;
-                publications.push(Publication {
-                    directory,
-                    assignment: None,
-                    map_sha256,
-                });
-            }
-            (
-                LoadOptions::whole(3),
-                root.path().to_path_buf(),
-                0,
-                FIRST + 42,
-                1,
-            )
+    let (options, query_root, query_shard, final_height, assigned_count) = if let Some(path) =
+        &fixture
+    {
+        let path = std::path::PathBuf::from(path).canonicalize().unwrap();
+        let base = path.parent().unwrap();
+        let value: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        for item in value["publications"].as_array().unwrap() {
+            publications.push(Publication {
+                directory: base.join(item["directory"].as_str().unwrap()),
+                assignment: Some(base.join(item["assignment"].as_str().unwrap())),
+                map_sha256: item["map_sha256"].as_str().unwrap().to_owned(),
+            });
+        }
+        assert_eq!(publications.len(), 3);
+        let assignment = transparent_shard_server::assignment::Assignment::load(
+            publications[0].assignment.as_ref().unwrap(),
+        )
+        .unwrap();
+        let worker_id = value["worker_id"].as_str().unwrap().to_owned();
+        let count = assignment.worker(&worker_id).unwrap().shards.len();
+        assert_eq!(
+            count, 14,
+            "full-residency fixture must assign fourteen shards"
+        );
+        let options = LoadOptions {
+            scope: transparent_shard_server::shardset::LoadScope::Assigned {
+                assignment: Arc::new(assignment),
+                worker_id,
+            },
+            prune_excess: true,
+            ..LoadOptions::whole(3)
         };
+        (
+            options,
+            base.to_path_buf(),
+            value["query_shard"].as_u64().unwrap() as usize,
+            value["publications"][2]["height"].as_u64().unwrap(),
+            count,
+        )
+    } else {
+        let mut predecessor = String::new();
+        for revision in 0..3 {
+            let directory = root.path().join(revision.to_string());
+            std::fs::create_dir(&directory).unwrap();
+            let end = FIRST + 40 + u64::from(revision);
+            let (digest, count) =
+                write_revision_geometry(&directory, end, revision, &predecessor, &DECOUPLED_2K_8K);
+            write_map_geometry(&directory, &digest, end, revision, count, &DECOUPLED_2K_8K);
+            predecessor = digest;
+            let map_sha256 = ShardSet::open(&directory, 3).unwrap().map_digest;
+            publications.push(Publication {
+                directory,
+                assignment: None,
+                map_sha256,
+            });
+        }
+        (
+            LoadOptions::whole(3),
+            root.path().to_path_buf(),
+            0,
+            FIRST + 42,
+            1,
+        )
+    };
     let config = ServiceConfig {
         cache_bytes: if fixture.is_some() { 5 << 30 } else { 1 << 30 },
         build_slots: slots,
@@ -205,7 +206,7 @@ async fn publication_burst_under_exact_load() {
                     let table = if count % 2 == 0 {
                         transparent_wallet::client::Table::Directory
                     } else {
-                        transparent_wallet::client::Table::Pages
+                        transparent_wallet::client::Table::Pages(0)
                     };
                     let started = clock.elapsed().as_secs_f64();
                     let result =
@@ -348,7 +349,7 @@ async fn publication_burst_under_exact_load() {
             .all(|a| a["worker_visibility_seconds"].as_f64().unwrap() <= 30.0);
     let value = serde_json::json!({"schema":"transparent-worker-burst-v6","build_slots":slots,
         "client_shutdown_complete":client_shutdown_complete,
-        "geometry":"recent-8k","query_clients":2,"cache_bytes":config.cache_bytes,
+        "geometry":"decoupled-2k-8k","query_clients":2,"cache_bytes":config.cache_bytes,
         "scope":"isolated worker stage; not fleet acceptance", "external_clients":external.is_some(),
         "kernel_policy":transparent_shard_server::runtime::KERNEL_POLICY,
         "cold_persistence_complete":cold_persistence_complete,"cold_persistence_drain_seconds":cold_persistence_drain_seconds,
@@ -428,7 +429,7 @@ fn external_query_clients() {
             let elapsed = || std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs_f64() - config["epoch"].as_f64().unwrap();
             let mut count = 0;
             while !directory.join("stop").exists() && Instant::now() < deadline {
-                let table = if count % 2 == 0 { transparent_wallet::client::Table::Directory } else { transparent_wallet::client::Table::Pages };
+                let table = if count % 2 == 0 { transparent_wallet::client::Table::Directory } else { transparent_wallet::client::Table::Pages(0) };
                 let started = elapsed();
                 let result = super::burst_query::once_nonempty(config["url"].as_str().unwrap(), std::path::Path::new(config["root"].as_str().unwrap()), config["shard"].as_u64().unwrap() as usize, table);
                 let mut record = serde_json::json!({"client":client,"started_seconds":started,"finished_seconds":elapsed()});

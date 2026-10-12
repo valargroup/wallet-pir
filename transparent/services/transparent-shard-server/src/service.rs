@@ -39,7 +39,7 @@
 use crate::admission::{Admission, AdmissionConfig, AdmissionError};
 use crate::metrics::{Metrics, Snapshot};
 use crate::runtime::{warm_bytes, CacheError, RuntimeCache, RuntimeHandle, SharedParams};
-use crate::shardset::{LoadedShard, ShardSet, Table};
+use crate::shardset::{LoadedShard, ShardSet, Table, TableRef};
 use axum::extract::{Path as AxumPath, Request, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
@@ -272,15 +272,13 @@ impl ServiceState {
         if params.is_empty() {
             return Err("the shard set names no geometry to serve".into());
         }
+        let current: std::collections::HashSet<&str> =
+            set.current().map(|shard| shard.digest.as_str()).collect();
         let target = set
-            .current()
-            .map(|s| {
-                Table::HISTORY
-                    .iter()
-                    .map(|t| s.segments(*t) as usize)
-                    .sum::<usize>()
-            })
-            .sum();
+            .warm_targets()
+            .iter()
+            .filter(|(digest, _, _)| current.contains(digest.as_str()))
+            .count();
         let cache = previous.map(|s| s.inner.cache.clone()).unwrap_or_else(|| {
             Arc::new(
                 RuntimeCache::new(config.cache_bytes, config.build_slots, metrics.clone())
@@ -294,9 +292,9 @@ impl ServiceState {
         // is refused here rather than discovered under load.
         let mut assigned = Vec::new();
         for shard in set.current() {
-            for table in Table::HISTORY {
+            for table in shard.tables() {
                 for _ in 0..shard.segments(table) {
-                    assigned.push(params[&(shard.geometry.name, table)].as_ref());
+                    assigned.push(params[&(shard.geometry.name, table.kind())].as_ref());
                 }
             }
         }
@@ -379,14 +377,15 @@ impl ServiceState {
                         let Some(shard) = inner.set.revision(&digest) else {
                             continue;
                         };
-                        let shared = state.shared(shard, table);
+                        let shared = state.shared(shard, table.kind());
                         let Some(source) = shard.segment(table, segment).cloned() else {
                             continue;
                         };
+                        let key = (shard.runtime_identity(table).to_string(), table.kind(), segment);
                         match crate::prewarm::retry(
                             &inner.warm.cancelled,
                             std::time::Duration::from_secs(30),
-                            || inner.cache.get((digest.clone(), table, segment), shared.clone(), source.clone()),
+                            || inner.cache.get(key.clone(), shared.clone(), source.clone()),
                         ).await
                         {
                             Ok(handle) => {
@@ -400,7 +399,7 @@ impl ServiceState {
                                 Metrics::incr(&inner.metrics.warm_runtimes);
                             }
                             Err(error) => {
-                                tracing::warn!(shard = %digest, table = table.as_str(), segment, %error, "prewarm failed");
+                                tracing::warn!(shard = %digest, table = %table.name(), segment, %error, "prewarm failed");
                                 Metrics::incr(&inner.metrics.prewarm_failed);
                             }
                         }
@@ -636,20 +635,26 @@ impl ServiceState {
     async fn runtime(
         &self,
         shard: &LoadedShard,
-        table: Table,
+        table: TableRef,
         segment: u32,
     ) -> Result<RuntimeHandle, RequestError> {
         let source = shard.segment(table, segment).cloned().ok_or_else(|| {
             RequestError::Bad(format!(
                 "shard {} has no {} segment {segment}",
                 shard.manifest.shard_id,
-                table.as_str()
+                table.name()
             ))
         })?;
-        let key = (shard.digest.clone(), table, segment);
+        // A page shard's runtime is keyed by its own identity, so a sealed
+        // one is shared by every revision of its directory shard.
+        let key = (
+            shard.runtime_identity(table).to_string(),
+            table.kind(),
+            segment,
+        );
         self.inner
             .cache
-            .get(key, self.shared(shard, table), source)
+            .get(key, self.shared(shard, table.kind()), source)
             .await
             .map_err(|error| match error {
                 CacheError::Overloaded => RequestError::Overloaded,
@@ -1092,7 +1097,7 @@ async fn setup(
     AxumPath((shard_id, digest, table, segment)): AxumPath<(u64, String, String, u32)>,
 ) -> Response {
     let map_digest = state.inner.set.map_digest.clone();
-    let Some(table) = Table::parse(&table) else {
+    let Some(table) = TableRef::parse(&table) else {
         return RequestError::Bad("unknown table".into()).into_response(&map_digest);
     };
     // Counted as a waiter while the runtime is acquired or built, so a burst
@@ -1125,7 +1130,7 @@ async fn setup(
         shard_id,
         manifest_digest: digest,
         geometry,
-        table: table.as_str().to_string(),
+        table: table.name(),
         segment,
         segments,
         public_params: BASE64_STANDARD.encode(&runtime.public_params),
@@ -1157,7 +1162,7 @@ async fn query_inner(
 ) -> Response {
     let map_digest = state.inner.set.map_digest.clone();
     let metrics = state.inner.metrics.clone();
-    let Some(table) = Table::parse(&table) else {
+    let Some(table) = TableRef::parse(&table) else {
         Metrics::incr(&metrics.query_errors);
         let refused = RequestError::Bad("unknown table".into()).into_response(&map_digest);
         return state.refuse_unread(request, refused).await;
@@ -1179,13 +1184,10 @@ async fn query_inner(
                 )
                 .await;
         }
-        let shared = state.shared(shard, table);
-        // A growing tail's pages queries may select over only the rows its
-        // manifest says can hold data; every other table selects every row.
-        let query_rows = match table {
-            Table::Pages => shard.manifest.pages_query_rows() as usize,
-            _ => shared.profile.rows,
-        };
+        let shared = state.shared(shard, table.kind());
+        // A page shard's queries may select over only the rows its manifest
+        // entry says can hold data; the directory selects every row.
+        let query_rows = shard.query_rows(table, shared.profile.rows);
         (shard.segments(table), shared, query_rows)
     };
 
@@ -1232,7 +1234,7 @@ async fn query_inner(
         };
         let refused = RequestError::Bad(format!(
             "a {} query for geometry {} must be exactly {} or {} bytes{prefix}, not {declared}",
-            table.as_str(),
+            table.name(),
             shared.geometry.name,
             shared.query_bytes(),
             shared.dithered_query_bytes(),
@@ -1287,7 +1289,7 @@ async fn query_inner(
     // The prefix names the revision and table, and the same bytes come back in
     // the response, so a query answered by the wrong runtime fails a check at
     // both ends rather than decoding into rows from a range nobody asked for.
-    let binding = query_binding(&digest, table.as_str());
+    let binding = query_binding(&digest, &table.name());
 
     // Admission before work: bounded evaluation is what keeps a burst from
     // pinning every runtime in the cache against eviction at once. The wait is
@@ -1302,7 +1304,7 @@ async fn query_inner(
         }
     };
 
-    tracing::debug!(revision = %digest, table = table.as_str(), seconds = query_stage.elapsed().as_secs_f64(), stage = "query_admission", "query stage");
+    tracing::debug!(revision = %digest, table = %table.name(), seconds = query_stage.elapsed().as_secs_f64(), stage = "query_admission", "query stage");
     let query_stage = std::time::Instant::now();
 
     // Every segment answers the same query, and the results come back in
@@ -1339,7 +1341,7 @@ async fn query_inner(
         }
     }
 
-    tracing::debug!(revision = %digest, table = table.as_str(), seconds = query_stage.elapsed().as_secs_f64(), stage = "query_runtime", "query stage");
+    tracing::debug!(revision = %digest, table = %table.name(), seconds = query_stage.elapsed().as_secs_f64(), stage = "query_runtime", "query stage");
 
     // Evaluated off the async runtime, holding the slot and every handle for
     // exactly as long as the work runs. The admission moves into the closure:
@@ -1359,7 +1361,7 @@ async fn query_inner(
     {
         Some(memory) => memory,
         None => {
-            tracing::debug!(revision = %digest, table = table.as_str(), seconds = memory_started.elapsed().as_secs_f64(), admitted = false, stage = "query_memory_admission", "query stage");
+            tracing::debug!(revision = %digest, table = %table.name(), seconds = memory_started.elapsed().as_secs_f64(), admitted = false, stage = "query_memory_admission", "query stage");
             if admitted.remaining().is_zero() {
                 Metrics::incr(&metrics.deadline_exceeded);
                 Metrics::incr(&metrics.query_errors);
@@ -1370,13 +1372,13 @@ async fn query_inner(
             return RequestError::Overloaded.into_response(&map_digest);
         }
     };
-    tracing::debug!(revision = %digest, table = table.as_str(), seconds = memory_started.elapsed().as_secs_f64(), admitted = true, stage = "query_memory_admission", "query stage");
+    tracing::debug!(revision = %digest, table = %table.name(), seconds = memory_started.elapsed().as_secs_f64(), admitted = true, stage = "query_memory_admission", "query stage");
     let evaluation_metrics = metrics.clone();
     let query_stage = std::time::Instant::now();
     let query_revision = digest.clone();
     let evaluated = tokio::task::spawn_blocking(move || {
         let _memory = memory;
-        tracing::debug!(revision = %query_revision, table = table.as_str(), seconds = query_stage.elapsed().as_secs_f64(), stage = "query_dispatch", "query stage");
+        tracing::debug!(revision = %query_revision, table = %table.name(), seconds = query_stage.elapsed().as_secs_f64(), stage = "query_dispatch", "query stage");
         let query_stage = std::time::Instant::now();
         let _timer = evaluation_metrics.evaluation_seconds.timer();
         // The key and selection are parsed once: every segment shares the
@@ -1389,7 +1391,7 @@ async fn query_inner(
                 Err(error) => return Err(error),
             }
         }
-        tracing::debug!(revision = %query_revision, table = table.as_str(), seconds = query_stage.elapsed().as_secs_f64(), stage = "query_evaluate", "query stage");
+        tracing::debug!(revision = %query_revision, table = %table.name(), seconds = query_stage.elapsed().as_secs_f64(), stage = "query_evaluate", "query stage");
         admitted.complete();
         Ok(answer)
     })

@@ -20,7 +20,7 @@ const GENESIS: &str = transparent_filter::MAINNET_GENESIS_DISPLAY;
 fn entry(shard_id: u64, digest: &str, filter: &[u8]) -> ShardMapEntry {
     ShardMapEntry {
         shard_id,
-        geometry: "recent-8k".to_string(),
+        geometry: "decoupled-2k-8k".to_string(),
         start_height: 100 + shard_id * 10,
         end_height: 109 + shard_id * 10,
         // The map requires a chain: each shard's parent is the block before its
@@ -63,7 +63,7 @@ fn publish(dir: &Path, corrupt: bool) {
         range_envelope_version: transparent_filter::RANGE_ENVELOPE_VERSION,
         start_height: 100,
         seal: std::collections::BTreeMap::from([(
-            "recent-8k".to_string(),
+            "decoupled-2k-8k".to_string(),
             SealParameters {
                 max_scripts: 8,
                 max_page_rows: 8,

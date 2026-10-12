@@ -12,6 +12,9 @@ use transparent_filter::BlockHash;
 /// being a prefix of another SHA-256 use.
 pub const TAG_SALT_DOMAIN: &[u8] = b"transparent-shard-tag-salt-v1\0";
 
+/// Domain for a page shard's salt.
+pub const PAGE_TAG_SALT_DOMAIN: &[u8] = b"transparent-shard-page-tag-salt-v1\0";
+
 /// Domain for the script tag itself.
 pub const SCRIPT_TAG_DOMAIN: &[u8] = b"transparent-shard-script-tag-v2\0";
 
@@ -39,6 +42,30 @@ pub fn tag_salt(shard_id: u64, terminal: &BlockHash, counter: u32) -> [u8; 32] {
     hasher.finalize().into()
 }
 
+/// The salt for one page shard of a directory shard.
+///
+/// Keyed on the page shard's own end height and terminal block rather than
+/// the directory shard's: while the directory shard is open its terminal moves
+/// every block, and salting children with it would re-tag page shards that
+/// have already sealed and must never change. The wallet recomputes this from
+/// the manifest's child entry.
+pub fn page_tag_salt(
+    shard_id: u64,
+    child: u32,
+    end_height: u64,
+    terminal: &BlockHash,
+    counter: u32,
+) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(PAGE_TAG_SALT_DOMAIN);
+    hasher.update(shard_id.to_le_bytes());
+    hasher.update(child.to_le_bytes());
+    hasher.update(end_height.to_le_bytes());
+    hasher.update(terminal.internal_bytes());
+    hasher.update(counter.to_le_bytes());
+    hasher.finalize().into()
+}
+
 /// The 14-byte tag of one raw script under `salt`.
 pub fn script_tag(salt: &[u8; 32], script: &[u8]) -> [u8; SCRIPT_TAG_BYTES] {
     let mut hasher = Sha256::new();
@@ -60,10 +87,41 @@ pub fn resolve_tag_salt(
     shard_id: u64,
     terminal: &BlockHash,
     scripts: &[&[u8]],
+    tag_of: impl FnMut(&[u8; 32], &[u8]) -> [u8; SCRIPT_TAG_BYTES],
+) -> Result<(u32, [u8; 32]), String> {
+    resolve_salt(
+        shard_id,
+        |counter| tag_salt(shard_id, terminal, counter),
+        scripts,
+        tag_of,
+    )
+}
+
+/// [`resolve_tag_salt`] for one page shard, under [`page_tag_salt`].
+pub fn resolve_page_tag_salt(
+    shard_id: u64,
+    child: u32,
+    end_height: u64,
+    terminal: &BlockHash,
+    scripts: &[&[u8]],
+    tag_of: impl FnMut(&[u8; 32], &[u8]) -> [u8; SCRIPT_TAG_BYTES],
+) -> Result<(u32, [u8; 32]), String> {
+    resolve_salt(
+        shard_id,
+        |counter| page_tag_salt(shard_id, child, end_height, terminal, counter),
+        scripts,
+        tag_of,
+    )
+}
+
+fn resolve_salt(
+    shard_id: u64,
+    salt_at: impl Fn(u32) -> [u8; 32],
+    scripts: &[&[u8]],
     mut tag_of: impl FnMut(&[u8; 32], &[u8]) -> [u8; SCRIPT_TAG_BYTES],
 ) -> Result<(u32, [u8; 32]), String> {
     for counter in 0..=MAX_TAG_SALT_COUNTER {
-        let salt = tag_salt(shard_id, terminal, counter);
+        let salt = salt_at(counter);
         let mut seen = std::collections::HashSet::with_capacity(scripts.len());
         let mut collision = false;
         for script in scripts {
@@ -96,6 +154,22 @@ mod tests {
         assert_ne!(tag_salt(3, &terminal(1), 1), base);
         assert_ne!(tag_salt(4, &terminal(1), 0), base);
         assert_eq!(tag_salt(3, &terminal(1), 0), base);
+    }
+
+    /// A page shard's salt depends on its own identity, not its directory
+    /// shard's terminal, and is distinct from the directory's salt.
+    #[test]
+    fn a_page_shard_salt_moves_with_the_page_shard_alone() {
+        let base = page_tag_salt(3, 1, 500, &terminal(1), 0);
+        assert_ne!(page_tag_salt(3, 2, 500, &terminal(1), 0), base);
+        assert_ne!(page_tag_salt(3, 1, 501, &terminal(1), 0), base);
+        assert_ne!(page_tag_salt(3, 1, 500, &terminal(2), 0), base);
+        assert_ne!(page_tag_salt(3, 1, 500, &terminal(1), 1), base);
+        assert_ne!(page_tag_salt(4, 1, 500, &terminal(1), 0), base);
+        assert_ne!(tag_salt(3, &terminal(1), 0), base);
+        let (counter, salt) =
+            resolve_page_tag_salt(3, 1, 500, &terminal(1), &[b"a", b"b"], script_tag).unwrap();
+        assert_eq!((counter, salt), (0, base));
     }
 
     #[test]

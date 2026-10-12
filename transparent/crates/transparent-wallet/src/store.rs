@@ -49,7 +49,6 @@ use transparent_filter::{SealParameters, ShardMap};
 /// republication and is deliberately not part of this.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SetIdentity {
-    #[serde(default = "legacy_schema")]
     pub shard_schema: String,
     pub network: String,
     pub genesis_hash: String,
@@ -57,10 +56,6 @@ pub struct SetIdentity {
     pub range_envelope_version: u16,
     pub start_height: u64,
     pub seal: BTreeMap<String, SealParameters>,
-}
-
-fn legacy_schema() -> String {
-    transparent_shard::manifest::LEGACY_SCHEMA.to_string()
 }
 
 impl SetIdentity {
@@ -170,11 +165,30 @@ pub struct PageBoundary {
     pub last_event: TransparentEvent,
 }
 
-/// Page retrieval a wallet still owes for one script in one shard revision.
+/// Where a chain walk resumes: the run it reads next.
 ///
-/// The directory has been read and the pages located; some of them have not
-/// been fetched. Kept durably so an exhausted budget or an outage leaves
-/// resumable work, not a synchronized balance.
+/// A script's history in a directory shard is a chain of runs, newest first,
+/// each in an earlier page shard than the one before. The directory entry
+/// names the newest; every run's first fragment names the next older one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RunCursor {
+    /// The page shard `j` holding the run; its table is `pages-<j>`.
+    pub child: u8,
+    /// Zero-based row of the run's first fragment in that table.
+    pub row: u32,
+    /// How many runs the run's first fragment must report as older than it:
+    /// one fewer than the newer run reported. `None` for the newest run,
+    /// which the directory entry names without a count.
+    pub older_runs: Option<u8>,
+}
+
+/// Page retrieval a wallet still owes for one script in one directory shard
+/// revision: the rest of its chain of runs.
+///
+/// Every run newer than the cursor has been read, checked and committed. Kept
+/// durably so an exhausted budget or an outage leaves resumable work, not a
+/// synchronized balance. Keyed by the directory shard revision alone, whose
+/// digest commits to every page shard.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PendingPages {
     /// Assigned by the store; `None` until first committed.
@@ -182,20 +196,42 @@ pub struct PendingPages {
     pub shard_id: u64,
     pub revision_digest: String,
     pub script: Vec<u8>,
-    /// Zero-based PIR row of the first page fragment.
-    pub first_page: u32,
-    /// Fragment count learned from the first page. `0` means it is not known yet.
-    pub page_count: u32,
-    /// Events already known from the directory entry.
-    pub inline: Vec<TransparentEvent>,
-    /// The next page ordinal to fetch; pages below it are committed.
-    pub next_ordinal: u32,
+    /// The run the walk reads next.
+    pub cursor: RunCursor,
+    /// The two oldest events already read, oldest first: the newer runs' or,
+    /// before any run was read, the directory entry's inline events. The run
+    /// at the cursor must be older than both, and each of its events was
+    /// pushed out by the event two places after it, which these supply for
+    /// its last two.
+    pub carried: Vec<TransparentEvent>,
     pub attempts: u32,
-    /// Number of validated records, including records above the accepted target.
-    pub validated_events: u32,
-    /// Required once at least one page was committed; references reset per page.
-    pub boundary: Option<PageBoundary>,
     pub target_anchor: Option<Anchor>,
+}
+
+/// One script's run in a sealed page shard, as a wallet verified it, and the
+/// name of the cached run below it.
+///
+/// Keyed by the page shard's chained identity
+/// ([`ShardManifest::child_digests`](transparent_shard::ShardManifest::child_digests)),
+/// which covers that page shard and every older one in its directory shard, so
+/// nothing the run or the runs below it depend on can change under the key.
+/// Following `older` back to the start of the directory shard gives the
+/// script's history there, and a walk that reaches a cached run stops at it.
+///
+/// A store drops a directory shard's cached runs for a script once it covers
+/// that script over the shard sealed: no later walk of the shard is expected.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CachedRun {
+    /// The page shard's chained identity, in hex.
+    pub child_digest: String,
+    pub script: Vec<u8>,
+    /// The directory shard the run belongs to.
+    pub shard_id: u64,
+    /// The run's own events, oldest first.
+    pub events: Vec<TransparentEvent>,
+    /// The chained identity of the page shard holding the script's previous
+    /// run, or `None` when this is its oldest run in the directory shard.
+    pub older: Option<String>,
 }
 
 /// What one shard's retrieval commits, all at once.
@@ -216,6 +252,22 @@ pub struct ShardCommit {
     pub pending_upsert: Vec<PendingPages>,
     /// Pending ids this commit finishes.
     pub pending_complete: Vec<u64>,
+    /// Verified runs to keep for later walks.
+    pub cached_runs: Vec<CachedRun>,
+}
+
+impl ShardCommit {
+    /// Whether this commit covers its `covered_scripts` over the whole of a
+    /// sealed shard, so no later walk of the shard is expected for them and
+    /// the store drops their cached runs in it. Coverage clipped to a wallet
+    /// anchor inside the shard does not: the next sync carries on through it.
+    pub fn finishes_shard(&self) -> bool {
+        self.sealed
+            && self
+                .source_anchor
+                .as_ref()
+                .is_none_or(|source| source.height == self.end_height)
+    }
 }
 
 /// Published setup for one table segment, kept for reuse.
@@ -307,6 +359,13 @@ pub trait WalletStore {
     ) -> Result<(), StoreError>;
 
     fn pending(&self) -> Result<Vec<PendingPages>, StoreError>;
+    /// The run cached for `script` in the page shard with chained identity
+    /// `child_digest`, if any. See [`CachedRun`].
+    fn cached_run(
+        &self,
+        child_digest: &str,
+        script: &[u8],
+    ) -> Result<Option<CachedRun>, StoreError>;
     /// The most pending page retrievals a commit may leave behind.
     fn pending_limit(&self) -> usize;
 
@@ -380,6 +439,13 @@ impl<T: WalletStore + ?Sized> WalletStore for Box<T> {
     }
     fn pending_limit(&self) -> usize {
         (**self).pending_limit()
+    }
+    fn cached_run(
+        &self,
+        child_digest: &str,
+        script: &[u8],
+    ) -> Result<Option<CachedRun>, StoreError> {
+        (**self).cached_run(child_digest, script)
     }
     fn setup(&self, key: &SetupKey) -> Result<Option<SetupBlob>, StoreError> {
         (**self).setup(key)

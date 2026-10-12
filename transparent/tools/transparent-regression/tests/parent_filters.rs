@@ -81,8 +81,10 @@ async fn recover_at(
         let options = HttpOptions::default();
         let mut filters = HttpFilterSource::new(&origin, &options).unwrap();
         if enabled {
-            filters = filters
-                .with_parent_experiment(format!("{origin}/candidate.json"), "recent-8k".into());
+            filters = filters.with_parent_experiment(
+                format!("{origin}/candidate.json"),
+                "decoupled-2k-8k".into(),
+            );
         }
         let mut transport = HttpShardTransport::new(pir, &options).unwrap();
         let geometry = transport.geometry().unwrap();

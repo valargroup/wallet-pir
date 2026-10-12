@@ -1,0 +1,185 @@
+{
+ "wallets": 716,
+ "exact": 716,
+ "errors": 0,
+ "classes": {
+  "catch-up-1d": {
+   "wallets": 120,
+   "exact": 120,
+   "completion": {
+    "Incomplete": 47,
+    "Complete": 73
+   },
+   "bill_mb_p50_p95_p99": [
+    0.34,
+    0.41,
+    0.54
+   ],
+   "directory_queries_p50_max": [
+    2.0,
+    2
+   ],
+   "page_queries_p50_p99_max": [
+    1.0,
+    4.0,
+    5
+   ],
+   "seconds_p50_p99": [
+    0.42,
+    11.09
+   ]
+  },
+  "catch-up-30d": {
+   "wallets": 120,
+   "exact": 120,
+   "completion": {
+    "Complete": 84,
+    "Incomplete": 36
+   },
+   "bill_mb_p50_p95_p99": [
+    0.44,
+    0.74,
+    1.16
+   ],
+   "directory_queries_p50_max": [
+    2.0,
+    3
+   ],
+   "page_queries_p50_p99_max": [
+    0.0,
+    8.860000000000014,
+    18
+   ],
+   "seconds_p50_p99": [
+    0.21,
+    12.67
+   ]
+  },
+  "catch-up-7d": {
+   "wallets": 120,
+   "exact": 120,
+   "completion": {
+    "Incomplete": 40,
+    "Complete": 80
+   },
+   "bill_mb_p50_p95_p99": [
+    0.25,
+    0.41,
+    0.41
+   ],
+   "directory_queries_p50_max": [
+    2.0,
+    2
+   ],
+   "page_queries_p50_p99_max": [
+    0.0,
+    2.0,
+    6
+   ],
+   "seconds_p50_p99": [
+    0.35,
+    0.77
+   ]
+  },
+  "multi-script": {
+   "wallets": 120,
+   "exact": 120,
+   "completion": {
+    "Incomplete": 120
+   },
+   "bill_mb_p50_p95_p99": [
+    4.75,
+    6.46,
+    10.47
+   ],
+   "directory_queries_p50_max": [
+    49.0,
+    66
+   ],
+   "page_queries_p50_p99_max": [
+    13.0,
+    78.97000000000008,
+    980
+   ],
+   "seconds_p50_p99": [
+    7.86,
+    19.41
+   ]
+  },
+  "restore-6m": {
+   "wallets": 120,
+   "exact": 120,
+   "completion": {
+    "Complete": 120
+   },
+   "bill_mb_p50_p95_p99": [
+    1.66,
+    2.26,
+    2.43
+   ],
+   "directory_queries_p50_max": [
+    5.0,
+    12
+   ],
+   "page_queries_p50_p99_max": [
+    1.0,
+    6.810000000000002,
+    9
+   ],
+   "seconds_p50_p99": [
+    1.02,
+    2.71
+   ]
+  },
+  "reused-tail": {
+   "wallets": 10,
+   "exact": 10,
+   "completion": {
+    "Complete": 10
+   },
+   "bill_mb_p50_p95_p99": [
+    6.35,
+    54.29,
+    75.51
+   ],
+   "directory_queries_p50_max": [
+    4.0,
+    7
+   ],
+   "page_queries_p50_p99_max": [
+    63.5,
+    972.7000000000002,
+    1042
+   ],
+   "seconds_p50_p99": [
+    11.65,
+    50.43
+   ]
+  },
+  "small-active": {
+   "wallets": 106,
+   "exact": 106,
+   "completion": {
+    "Complete": 106
+   },
+   "bill_mb_p50_p95_p99": [
+    0.83,
+    1.29,
+    1.38
+   ],
+   "directory_queries_p50_max": [
+    1.0,
+    3
+   ],
+   "page_queries_p50_p99_max": [
+    0.0,
+    1.0,
+    1
+   ],
+   "seconds_p50_p99": [
+    0.19,
+    25.77
+   ]
+  }
+ }
+}

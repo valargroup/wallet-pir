@@ -14,14 +14,11 @@ use std::path::Path;
 use std::sync::Arc;
 use tower::ServiceExt;
 use transparent_events::{ReceiveEvent, TransparentEvent, Txid};
-use transparent_filter::{
-    filter_hash, BlockHash, ScriptBytes, SealParameters, ShardMap, ShardMapEntry,
-};
-use transparent_shard::build::build_shard;
-use transparent_shard::layout::{Geometry, RECENT_4K, RECENT_8K};
-use transparent_shard::manifest::{
-    ManifestLayout, ManifestOccupancy, ManifestSeal, ShardManifest, TableGeometry, SCHEMA,
-};
+use transparent_filter::{BlockHash, ScriptBytes, SealParameters, ShardMap, ShardMapEntry};
+#[path = "support/revision.rs"]
+mod revision;
+use transparent_shard::layout::{Geometry, DECOUPLED_2K_8K};
+use transparent_shard::manifest::{ShardManifest, SCHEMA};
 use transparent_shard_server::assignment::{
     Assignment, GeneratedBy, SetIdentity, WorkerAssignment, WorkerRole, ASSIGNMENT_SCHEMA,
 };
@@ -84,107 +81,24 @@ fn write_shard(
 ) -> ShardMapEntry {
     let start = FIRST + shard_id * SPAN;
     let end = start + SPAN - 1;
-    let built = build_shard(
-        shard_id,
-        start,
-        end,
-        genesis(),
-        hash_at(end),
-        transparent_filter::RANGE_PROFILE,
-        geometry,
+    revision::write(
+        dir,
+        &revision::Revision {
+            shard_id,
+            start,
+            end,
+            geometry,
+            sealed,
+            revision: 0,
+            supersedes: "",
+            parent_digest: parent_manifest_digest,
+            children: 1,
+            genesis: genesis(),
+            hash: &hash_at,
+        },
         &events(start, end),
     )
-    .expect("build");
-    let table_geometry = |segments: &[Vec<u8>], rows: u64, row_bytes: u32| {
-        segments
-            .iter()
-            .map(|segment| TableGeometry {
-                rows,
-                row_bytes,
-                sha256: hex::encode(<sha2::Sha256 as sha2::Digest>::digest(segment)),
-            })
-            .collect::<Vec<_>>()
-    };
-    let manifest = ShardManifest {
-        schema: SCHEMA.to_string(),
-        profile: transparent_filter::RANGE_PROFILE.to_string(),
-        geometry: geometry.name.to_string(),
-        network: transparent_filter::NETWORK.to_string(),
-        genesis_hash: GENESIS.to_string(),
-        shard_id,
-        start_height: start,
-        end_height: end,
-        parent_block_hash: hash_at(start - 1).to_display_hex(),
-        terminal_block_hash: hash_at(end).to_display_hex(),
-        tag_salt_counter: built.tag_salt_counter,
-        parent_manifest_digest: parent_manifest_digest.to_string(),
-        sealed,
-        revision: 0,
-        supersedes: String::new(),
-        seal: ManifestSeal {
-            scripts_target: 8_192,
-            scripts_capacity: 16_384,
-            page_rows_target: 2_048,
-            page_rows_capacity: 4_096,
-        },
-        layout: ManifestLayout {
-            max_script_bytes: transparent_shard::MAX_SCRIPT_BYTES as u32,
-            inline_events: transparent_shard::INLINE_EVENTS,
-            events_per_page: transparent_shard::EVENTS_PER_PAGE,
-            page_row_header_bytes: transparent_shard::PAGE_ROW_HEADER_BYTES as u32,
-            page_entry_header_bytes: transparent_shard::PAGE_ENTRY_HEADER_BYTES as u32,
-            directory_choices: transparent_shard::build::DIRECTORY_CHOICES as u32,
-        },
-        filter_hash: filter_hash(built.filter.as_slice()).to_display_hex(),
-        directory_segments: table_geometry(
-            &built.directory,
-            geometry.directory_rows,
-            geometry.directory_row_bytes as u32,
-        ),
-        page_segments: table_geometry(
-            &built.pages,
-            geometry.page_rows,
-            geometry.page_row_bytes as u32,
-        ),
-        occupancy: ManifestOccupancy {
-            scripts: built.scripts,
-            page_rows: built.page_rows,
-            fragments: built.fragments,
-            events: built.events,
-            blocks: SPAN,
-            txids: 0,
-            excluded_scripts: built.excluded_scripts,
-        },
-        directory_choice: None,
-    };
-    let digest = manifest.digest();
-    let shard_dir = dir.join(&digest);
-    std::fs::create_dir_all(&shard_dir).unwrap();
-    std::fs::write(shard_dir.join("manifest.json"), manifest.canonical_bytes()).unwrap();
-    std::fs::write(shard_dir.join("filter.bin"), built.filter.as_slice()).unwrap();
-    for (index, segment) in built.directory.iter().enumerate() {
-        std::fs::write(shard_dir.join(format!("directory.{index}.bin")), segment).unwrap();
-    }
-    for (index, segment) in built.pages.iter().enumerate() {
-        std::fs::write(shard_dir.join(format!("pages.{index}.bin")), segment).unwrap();
-    }
-    ShardMapEntry {
-        shard_id,
-        geometry: geometry.name.to_string(),
-        start_height: start,
-        end_height: end,
-        parent_block_hash: manifest.parent_block_hash.clone(),
-        terminal_block_hash: manifest.terminal_block_hash.clone(),
-        filter_hash: manifest.filter_hash.clone(),
-        scripts: built.scripts,
-        page_rows: built.page_rows,
-        txids: 0,
-        directory_segments: built.directory_segments(),
-        page_segments: built.page_segments(),
-        manifest_digest: digest,
-        revision: manifest.revision,
-        sealed,
-    }
+    .1
 }
 
 /// Four archive shards then two recent, the last unsealed.
@@ -192,11 +106,9 @@ fn publish(dir: &Path) -> ShardMap {
     let mut entries = Vec::new();
     let mut parent = String::new();
     for shard_id in 0..ARCHIVE + RECENT {
-        let geometry: &'static Geometry = if shard_id < ARCHIVE {
-            &RECENT_4K
-        } else {
-            &RECENT_8K
-        };
+        // One geometry for both tiers: the smallest, so runtimes are cheap
+        // to build here. The plan splits tiers by shard id, not geometry.
+        let geometry: &'static Geometry = &DECOUPLED_2K_8K;
         let sealed = shard_id + 1 < ARCHIVE + RECENT;
         let entry = write_shard(dir, shard_id, geometry, sealed, &parent);
         parent = entry.manifest_digest.clone();
@@ -454,9 +366,9 @@ async fn a_query_for_an_unassigned_shard_is_misdirected_and_public_bytes_are_ser
     assert_eq!(init["assigned_shards"], 2);
     assert_eq!(init["worker_id"], "archive-01");
     assert_eq!(init["assignment_sha256"], assignment.digest());
-    // Set-wide: the owner declares the other geometry's parameters
-    // too, since a wallet may fetch init from any worker and refuses a map
-    // naming a geometry the document leaves out.
+    // Set-wide: the owner declares every geometry the set names, since a
+    // wallet may fetch init from any worker and refuses a map naming a
+    // geometry the document leaves out. Both tiers here share one.
     let mut declared: Vec<&str> = init["geometries"]
         .as_array()
         .unwrap()
@@ -464,12 +376,7 @@ async fn a_query_for_an_unassigned_shard_is_misdirected_and_public_bytes_are_ser
         .map(|g| g["name"].as_str().unwrap())
         .collect();
     declared.sort_unstable();
-    assert_eq!(declared, ["recent-4k", "recent-8k"]);
-    assert_eq!(
-        init["geometries"].as_array().unwrap().len(),
-        2,
-        "every geometry the set names, not only the held one"
-    );
+    assert_eq!(declared, ["decoupled-2k-8k"]);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -597,47 +504,29 @@ fn retention_by_bytes_keeps_newest_first_and_reports_the_rest_prunable() {
     // One shard, republished three times as a growing tail.
     let dir = tempfile::tempdir().unwrap();
     let mut entries = Vec::new();
-    let mut digests = Vec::new();
+    let mut digests: Vec<String> = Vec::new();
     for revision in 0..4u32 {
         let end = FIRST + 10 + revision as u64 * 5;
-        let built = build_shard(
-            0,
-            FIRST,
-            end,
-            genesis(),
-            hash_at(end),
-            transparent_filter::RANGE_PROFILE,
-            &RECENT_4K,
+        let supersedes = digests.last().cloned().unwrap_or_default();
+        let (_, entry) = revision::write(
+            dir.path(),
+            &revision::Revision {
+                shard_id: 0,
+                start: FIRST,
+                end,
+                geometry: &DECOUPLED_2K_8K,
+                sealed: false,
+                revision,
+                supersedes: &supersedes,
+                parent_digest: "",
+                children: 1,
+                genesis: genesis(),
+                hash: &hash_at,
+            },
             &events(FIRST, end),
-        )
-        .unwrap();
-        let mut manifest = manifest_for(&built, end, revision);
-        manifest.supersedes = digests.last().cloned().unwrap_or_default();
-        let digest = manifest.digest();
-        let shard_dir = dir.path().join(&digest);
-        std::fs::create_dir_all(&shard_dir).unwrap();
-        std::fs::write(shard_dir.join("manifest.json"), manifest.canonical_bytes()).unwrap();
-        std::fs::write(shard_dir.join("filter.bin"), built.filter.as_slice()).unwrap();
-        std::fs::write(shard_dir.join("directory.0.bin"), &built.directory[0]).unwrap();
-        std::fs::write(shard_dir.join("pages.0.bin"), &built.pages[0]).unwrap();
-        digests.push(digest.clone());
-        entries = vec![ShardMapEntry {
-            shard_id: 0,
-            geometry: RECENT_4K.name.to_string(),
-            start_height: FIRST,
-            end_height: end,
-            parent_block_hash: manifest.parent_block_hash.clone(),
-            terminal_block_hash: manifest.terminal_block_hash.clone(),
-            filter_hash: manifest.filter_hash.clone(),
-            scripts: built.scripts,
-            page_rows: built.page_rows,
-            txids: 0,
-            directory_segments: 1,
-            page_segments: 1,
-            manifest_digest: digest,
-            revision,
-            sealed: false,
-        }];
+        );
+        digests.push(entry.manifest_digest.clone());
+        entries = vec![entry];
     }
     let map = ShardMap {
         genesis_hash: GENESIS.to_string(),
@@ -646,7 +535,7 @@ fn retention_by_bytes_keeps_newest_first_and_reports_the_rest_prunable() {
         range_envelope_version: transparent_filter::RANGE_ENVELOPE_VERSION,
         start_height: FIRST,
         seal: BTreeMap::from([(
-            RECENT_4K.name.to_string(),
+            DECOUPLED_2K_8K.name.to_string(),
             SealParameters {
                 max_scripts: 8_192,
                 max_page_rows: 2_048,
@@ -664,7 +553,11 @@ fn retention_by_bytes_keeps_newest_first_and_reports_the_rest_prunable() {
 
     // Three superseded revisions on disk. A byte bound that fits one keeps the
     // newest and reports the two older ones prunable.
-    let one_revision = 2 * (4096 * 4096) + 1024;
+    // The two newest superseded revisions have page shards with rows, the
+    // oldest two do not.
+    let one_revision = DECOUPLED_2K_8K.directory_bytes_per_segment()
+        + DECOUPLED_2K_8K.page_bytes_per_segment()
+        + 1024;
     let set = ShardSet::open_with(
         dir.path(),
         &LoadOptions {
@@ -695,65 +588,6 @@ fn retention_by_bytes_keeps_newest_first_and_reports_the_rest_prunable() {
     .err()
     .expect("refused");
     assert!(error.to_string().contains("prune the set"), "{error}");
-}
-
-fn manifest_for(
-    built: &transparent_shard::build::BuiltShard,
-    end: u64,
-    revision: u32,
-) -> ShardManifest {
-    ShardManifest {
-        schema: SCHEMA.to_string(),
-        profile: transparent_filter::RANGE_PROFILE.to_string(),
-        geometry: RECENT_4K.name.to_string(),
-        network: transparent_filter::NETWORK.to_string(),
-        genesis_hash: GENESIS.to_string(),
-        shard_id: 0,
-        start_height: FIRST,
-        end_height: end,
-        parent_block_hash: hash_at(FIRST - 1).to_display_hex(),
-        terminal_block_hash: hash_at(end).to_display_hex(),
-        tag_salt_counter: built.tag_salt_counter,
-        parent_manifest_digest: String::new(),
-        sealed: false,
-        revision,
-        supersedes: String::new(),
-        seal: ManifestSeal {
-            scripts_target: 8_192,
-            scripts_capacity: 16_384,
-            page_rows_target: 2_048,
-            page_rows_capacity: 4_096,
-        },
-        layout: ManifestLayout {
-            max_script_bytes: transparent_shard::MAX_SCRIPT_BYTES as u32,
-            inline_events: transparent_shard::INLINE_EVENTS,
-            events_per_page: transparent_shard::EVENTS_PER_PAGE,
-            page_row_header_bytes: transparent_shard::PAGE_ROW_HEADER_BYTES as u32,
-            page_entry_header_bytes: transparent_shard::PAGE_ENTRY_HEADER_BYTES as u32,
-            directory_choices: transparent_shard::build::DIRECTORY_CHOICES as u32,
-        },
-        filter_hash: filter_hash(built.filter.as_slice()).to_display_hex(),
-        directory_segments: vec![TableGeometry {
-            rows: RECENT_4K.directory_rows,
-            row_bytes: RECENT_4K.directory_row_bytes as u32,
-            sha256: hex::encode(<sha2::Sha256 as sha2::Digest>::digest(&built.directory[0])),
-        }],
-        page_segments: vec![TableGeometry {
-            rows: RECENT_4K.page_rows,
-            row_bytes: RECENT_4K.page_row_bytes as u32,
-            sha256: hex::encode(<sha2::Sha256 as sha2::Digest>::digest(&built.pages[0])),
-        }],
-        occupancy: ManifestOccupancy {
-            scripts: built.scripts,
-            page_rows: built.page_rows,
-            fragments: built.fragments,
-            events: built.events,
-            blocks: end - FIRST + 1,
-            txids: 0,
-            excluded_scripts: built.excluded_scripts,
-        },
-        directory_choice: None,
-    }
 }
 
 #[test]

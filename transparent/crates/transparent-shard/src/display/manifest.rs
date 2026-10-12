@@ -653,7 +653,7 @@ mod tests {
         m.buckets[0].records += 1;
         assert!(m.validate().is_err());
         let mut m = manifest();
-        m.geometry = "archive-wide".into();
+        m.geometry = "decoupled-32k-32k".into();
         assert!(m.validate().is_err());
         let mut m = manifest();
         m.buckets[1].directory_segments[0].rows = 4096;
@@ -727,7 +727,7 @@ mod tests {
             Box::new(|m| m.shards[0].directory_segments[1] = 0),
             Box::new(|m| m.shards[0].placement_seeds.push(0)),
             Box::new(|m| m.shards[2].placement_seeds[0] = MAX_PLACEMENT_SEEDS),
-            Box::new(|m| m.shards[0].geometry = "recent-4k".into()),
+            Box::new(|m| m.shards[0].geometry = "decoupled-2k-8k".into()),
             Box::new(|m| m.shards.clear()),
         ];
         for mutate in broken {

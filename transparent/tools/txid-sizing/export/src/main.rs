@@ -138,10 +138,10 @@ fn main() -> Result<(), AnyError> {
         inventory.push(pin);
     }
     let built =
-        transparent_shard::txid::build(0, &transparent_shard::RECENT_4K, &canonical_records)?;
+        transparent_shard::txid::build(0, &transparent_shard::DECOUPLED_2K_8K, &canonical_records)?;
     transparent_shard::txid::verify(
         0,
-        &transparent_shard::RECENT_4K,
+        &transparent_shard::DECOUPLED_2K_8K,
         &built.directory,
         &built.pages,
         built.records,
@@ -171,10 +171,10 @@ fn main() -> Result<(), AnyError> {
     let output = json!({"schema":"txid-sizing-canonical-extract-v1","qualification":"UNQUALIFIED",
         "selection":"all valid block-main-*.txt at the pinned upstream revision; availability-selected convenience sample",
         "parent_selection":"outputs in selected blocks only; no network or demo parent fallback",
-        "implemented_packing": {"shard_id":0,"geometry":"recent-4k","threshold":128,
+        "implemented_packing": {"shard_id":0,"geometry":"decoupled-2k-8k","threshold":128,
             "payload_bytes":built.payload_bytes,"directory_segments":built.directory.len(),"page_segments":built.pages.len(),
             "occupied_directory_rows":directory_occupied.0,"occupied_page_rows":pages_occupied.0,
-            "occupied_bytes":directory_occupied.1+pages_occupied.1,"manifest":built.manifest(&transparent_shard::RECENT_4K)},
+            "occupied_bytes":directory_occupied.1+pages_occupied.1,"manifest":built.manifest(&transparent_shard::DECOUPLED_2K_8K)},
         "blocks":inventory,"records":records,"excluded":excluded,"shielded_only_transactions":ineligible});
     let dest = Path::new(&args[2]);
     fs::write(dest, serde_json::to_vec(&output)?)?;

@@ -69,6 +69,18 @@ struct Meta {
     start_height: u64,
 }
 
+/// What [`EventStore::refresh`] found.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Refreshed {
+    Unchanged,
+    /// Blocks were committed past what was held.
+    Extended,
+    /// Blocks from `from` up were replaced or dropped.
+    RolledBack {
+        from: u64,
+    },
+}
+
 /// Where one covered block's events live.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BlockEntry {
@@ -473,11 +485,21 @@ impl EventStore {
     /// Copies a committed suffix while the caller holds the journal lock.
     /// An anonymous file bounds RAM even when a deep fork replaces archive
     /// history; dropping the builder releases its temporary disk automatically.
-    pub(crate) fn snapshot_suffix(&self, first: u64) -> Result<(File, u64), EventStoreError> {
+    ///
+    /// `temp_dir` holds the anonymous file: the journal's own directory for
+    /// its writer, a state directory for a reader following a journal another
+    /// process writes, which must never write beside it. A reader checks
+    /// [`Self::still_committed`] afterwards, because the writer may have
+    /// rewritten the suffix while it was copied.
+    pub(crate) fn snapshot_suffix(
+        &self,
+        first: u64,
+        temp_dir: &Path,
+    ) -> Result<(File, u64), EventStoreError> {
         let offset = self.block_at(first).map_or(self.events_len, |b| b.offset);
         let mut source = File::open(self.dir.join("events.bin"))?;
         source.seek(SeekFrom::Start(offset))?;
-        let mut snapshot = tempfile::tempfile_in(&self.dir)?;
+        let mut snapshot = tempfile::tempfile_in(temp_dir)?;
         let length = self.events_len - offset;
         let copied = std::io::copy(&mut source.take(length), &mut snapshot)?;
         if copied != length {
@@ -486,6 +508,111 @@ impl EventStore {
             ));
         }
         Ok((snapshot, offset))
+    }
+
+    /// The committed lengths of `events.bin` and `blocks.bin`.
+    fn read_checkpoint(&self) -> Result<(u64, u64), EventStoreError> {
+        let checkpoint = self.dir.join("checkpoint.bin");
+        if !checkpoint.exists() {
+            return Ok((0, 0));
+        }
+        let bytes = std::fs::read(&checkpoint)?;
+        if bytes.len() != 16 {
+            return Err(EventStoreError::Invariant(
+                "checkpoint is not 16 bytes".into(),
+            ));
+        }
+        Ok((read_u64(&bytes[0..8]), read_u64(&bytes[8..16])))
+    }
+
+    /// The `blocks.bin` records at indices `range`.
+    fn read_records(
+        file: &File,
+        range: std::ops::Range<usize>,
+    ) -> Result<Vec<BlockEntry>, EventStoreError> {
+        use std::os::unix::fs::FileExt;
+        let mut raw = vec![0u8; range.len() * BLOCK_RECORD_BYTES];
+        file.read_exact_at(&mut raw, (range.start * BLOCK_RECORD_BYTES) as u64)?;
+        Ok(raw
+            .chunks_exact(BLOCK_RECORD_BYTES)
+            .map(|record| BlockEntry {
+                block_hash: BlockHash::from_internal_bytes(
+                    record[..32].try_into().expect("32 bytes"),
+                ),
+                offset: read_u64(&record[32..40]),
+                event_count: read_u64(&record[40..48]),
+            })
+            .collect())
+    }
+
+    /// Re-reads the committed extent of a journal another process writes.
+    ///
+    /// For a store opened with [`Self::open_existing`]: a reader follows the
+    /// writer's checkpoints without taking its lock or writing anything. Only
+    /// records whose block changed are re-read: the last held record still
+    /// on disk means every one below it is unchanged too, because each block
+    /// hash commits to its parent. A checkpoint that moves while the records
+    /// are read is read again.
+    pub fn refresh(&mut self) -> Result<Refreshed, EventStoreError> {
+        if self._writer_lock.is_some() {
+            return Err(EventStoreError::Invariant(
+                "the journal's writer does not refresh from disk".into(),
+            ));
+        }
+        loop {
+            let checkpoint = self.read_checkpoint()?;
+            let (events_len, blocks_len) = checkpoint;
+            if blocks_len % BLOCK_RECORD_BYTES as u64 != 0 {
+                return Err(EventStoreError::Invariant(
+                    "blocks.bin checkpoint is not a whole number of records".into(),
+                ));
+            }
+            let count = (blocks_len / BLOCK_RECORD_BYTES as u64) as usize;
+            let file = File::open(self.dir.join("blocks.bin"))?;
+            if file.metadata()?.len() < blocks_len {
+                return Err(EventStoreError::Invariant(
+                    "blocks.bin is shorter than its checkpoint".into(),
+                ));
+            }
+            let mut common = self.blocks.len().min(count);
+            while common > 0
+                && Self::read_records(&file, common - 1..common)?[0] != self.blocks[common - 1]
+            {
+                common -= 1;
+            }
+            let tail = Self::read_records(&file, common..count)?;
+            if self.read_checkpoint()? != checkpoint {
+                continue;
+            }
+            let held = self.blocks.len();
+            self.blocks.truncate(common);
+            self.blocks.extend(tail);
+            self.events_len = events_len;
+            return Ok(if common < held {
+                Refreshed::RolledBack {
+                    from: self.meta.start_height + common as u64,
+                }
+            } else if count > held {
+                Refreshed::Extended
+            } else {
+                Refreshed::Unchanged
+            });
+        }
+    }
+
+    /// Whether the journal on disk still commits `entry` at `height`, which a
+    /// reader checks after copying a suffix up to `height`: an unchanged
+    /// endpoint means every block below it is unchanged.
+    pub fn still_committed(&self, height: u64, entry: BlockEntry) -> Result<bool, EventStoreError> {
+        let Some(index) = height.checked_sub(self.meta.start_height) else {
+            return Ok(false);
+        };
+        let (_, blocks_len) = self.read_checkpoint()?;
+        if (index + 1) * BLOCK_RECORD_BYTES as u64 > blocks_len {
+            return Ok(false);
+        }
+        let file = File::open(self.dir.join("blocks.bin"))?;
+        Ok(Self::read_records(&file, index as usize..index as usize + 1)?[0] == entry)
     }
 
     /// Drops coverage above `height`, or all coverage when `None`.
@@ -681,6 +808,67 @@ mod tests {
         let reopened = EventStore::open(dir.path(), GENESIS, START).unwrap();
         assert_eq!(reopened.covered_through(), Some(START + 2));
         assert_eq!(reopened.events_stored(), 3);
+    }
+
+    /// A reader following another process's writer sees exactly what the
+    /// writer committed: appends as an extension, a rollback and a different
+    /// branch as a rollback from the fork, and nothing uncommitted. The
+    /// endpoint check tells a reader that copied a suffix whether it moved.
+    #[test]
+    fn a_reader_follows_a_live_writer_through_appends_and_rollbacks() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut writer = store(dir.path());
+        for height in START..START + 3 {
+            writer
+                .append_block(height, hash(height), &[receive(height as u32, 1)])
+                .unwrap();
+        }
+        writer.commit().unwrap();
+        let mut reader = EventStore::open_existing(dir.path()).unwrap();
+        assert_eq!(reader.covered_through(), Some(START + 2));
+        assert_eq!(reader.refresh().unwrap(), Refreshed::Unchanged);
+        let endpoint = reader.block_at(START + 2).unwrap();
+        assert!(reader.still_committed(START + 2, endpoint).unwrap());
+
+        // An append the writer has not committed is invisible.
+        writer
+            .append_block(START + 3, hash(START + 3), &[receive(103, 2)])
+            .unwrap();
+        assert_eq!(reader.refresh().unwrap(), Refreshed::Unchanged);
+        writer.commit().unwrap();
+        assert_eq!(reader.refresh().unwrap(), Refreshed::Extended);
+        assert_eq!(reader.covered_through(), Some(START + 3));
+        assert_eq!(
+            reader.events_at(START + 3).unwrap(),
+            Some(vec![receive(103, 2)])
+        );
+
+        // The writer rolls back two blocks and commits a longer branch.
+        writer.rollback_to(Some(START + 1)).unwrap();
+        for height in START + 2..START + 5 {
+            writer
+                .append_block(height, hash(height + 1_000), &[spend(height as u32, 7)])
+                .unwrap();
+        }
+        writer.commit().unwrap();
+        assert!(!reader.still_committed(START + 2, endpoint).unwrap());
+        assert_eq!(
+            reader.refresh().unwrap(),
+            Refreshed::RolledBack { from: START + 2 }
+        );
+        assert_eq!(reader.covered_through(), Some(START + 4));
+        assert_eq!(
+            reader.block_at(START + 2).unwrap().block_hash,
+            hash(START + 1_002)
+        );
+        assert_eq!(
+            reader.events_at(START + 4).unwrap(),
+            Some(vec![spend(104, 7)])
+        );
+        assert_eq!(reader.refresh().unwrap(), Refreshed::Unchanged);
+
+        // A writer's own store never refreshes from disk.
+        assert!(writer.refresh().is_err());
     }
 
     #[test]

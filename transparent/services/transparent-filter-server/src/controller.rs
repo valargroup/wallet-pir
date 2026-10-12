@@ -1,7 +1,7 @@
 //! Continuous, chain-checked publication. Ingest owns the journal; builders use
 //! copied suffix snapshots and activation is delegated to the private fleet tool.
 use crate::{
-    events::{BlockEntry, EventStore, EventStoreError},
+    events::{BlockEntry, EventStore, EventStoreError, Refreshed},
     ingest::build_fetched_block_events,
     prevout::OutputCache,
     publication::{self, BoxError, Journal, PublishOptions},
@@ -53,6 +53,26 @@ pub struct Config {
     /// profile, which is what every configuration before this field publishes.
     #[serde(default = "default_range_profile")]
     pub range_profile: String,
+    /// Follow a journal another process writes instead of ingesting into it.
+    ///
+    /// The journal at `data_dir` is then opened read-only: its writer keeps
+    /// the lock, this controller re-reads its checkpoints, and a rollback the
+    /// writer commits invalidates publication exactly as one seen by ingest
+    /// would. Nothing is written beside the journal.
+    #[serde(default)]
+    pub follow_journal: bool,
+    /// Where journal snapshots are spooled. Absent means the publication
+    /// root; never the journal's directory when following.
+    #[serde(default)]
+    pub snapshot_dir: Option<PathBuf>,
+}
+
+impl Config {
+    fn snapshot_dir(&self) -> &Path {
+        self.snapshot_dir
+            .as_deref()
+            .unwrap_or(&self.publication_root)
+    }
 }
 
 fn default_range_profile() -> String {
@@ -82,6 +102,12 @@ struct Inner {
     withdrawn: AtomicBool,
     epoch: AtomicU64,
     publication_gate: std::sync::Mutex<()>,
+    /// The last `/v1/shards/init` answer assembled from the workers, with the
+    /// map it describes. Activation switches the workers to the next map a
+    /// moment before the public pointer moves; in that window no worker
+    /// answers for the active map, and this answer, built for that same map,
+    /// is served instead of a 503.
+    last_init: std::sync::Mutex<Option<(String, serde_json::Value)>>,
     status: RwLock<serde_json::Value>,
     http: reqwest::Client,
     observed: RwLock<BTreeMap<u64, std::time::Instant>>,
@@ -146,7 +172,13 @@ pub struct Snapshot {
     display_dir: PathBuf,
 }
 impl Snapshot {
-    pub fn capture(store: &EventStore, previous: &ShardMap) -> Result<Self, BoxError> {
+    /// Copies the journal suffix `previous` does not cover as sealed into an
+    /// anonymous file under `temp_dir`.
+    pub fn capture(
+        store: &EventStore,
+        previous: &ShardMap,
+        temp_dir: &Path,
+    ) -> Result<Self, BoxError> {
         let end = store.covered_through().ok_or("empty journal")?;
         let mut first = store.start_height();
         let mut blocks = BTreeMap::new();
@@ -167,12 +199,17 @@ impl Snapshot {
             first = entry.end_height + 1;
         }
         blocks.insert(end, store.block_at(end).ok_or("snapshot endpoint missing")?);
-        let (events, events_offset) = store.snapshot_suffix(first)?;
+        let (events, events_offset) = store.snapshot_suffix(first, temp_dir)?;
         for height in first..=end {
             blocks.insert(
                 height,
                 store.block_at(height).ok_or("snapshot block missing")?,
             );
+        }
+        // A followed journal's writer may have rolled back and rewritten the
+        // suffix while it was copied. An unchanged endpoint means it did not.
+        if !store.still_committed(end, blocks[&end])? {
+            return Err("the journal changed while its suffix was copied".into());
         }
         Ok(Self {
             journal_version: store.version(),
@@ -324,12 +361,16 @@ pub async fn run(config: Config) -> Result<(), BoxError> {
     if existing.start_height() != 0 || existing.genesis_hash() != rpc.genesis_hash().await? {
         return Err("journal identity does not match genesis RPC history".into());
     }
-    let store = EventStore::open(
-        &config.data_dir,
-        existing.genesis_hash(),
-        existing.start_height(),
-    )?;
-    drop(existing);
+    std::fs::create_dir_all(config.snapshot_dir())?;
+    // A followed journal stays its writer's: read-only, unlocked, untruncated.
+    let store = if config.follow_journal {
+        existing
+    } else {
+        let genesis = existing.genesis_hash().to_string();
+        let start = existing.start_height();
+        drop(existing);
+        EventStore::open(&config.data_dir, &genesis, start)?
+    };
     let store = Arc::new(tokio::sync::Mutex::new(store));
     let active_path = config.publication_root.join("active.json");
     let public = if active_path.exists() {
@@ -356,6 +397,7 @@ pub async fn run(config: Config) -> Result<(), BoxError> {
         withdrawn: AtomicBool::new(true),
         epoch: AtomicU64::new(0),
         publication_gate: std::sync::Mutex::new(()),
+        last_init: std::sync::Mutex::new(None),
         status: RwLock::new(serde_json::json!({"phase":"starting"})),
         observed: RwLock::new(BTreeMap::new()),
         http: reqwest::Client::builder()
@@ -378,7 +420,30 @@ pub async fn run(config: Config) -> Result<(), BoxError> {
     let ingest_rpc = rpc.clone();
     tokio::spawn(async move {
         let mut cache = OutputCache::new(crate::prevout::DEFAULT_CACHE_OUTPUTS);
+        let mut pending_invalidation = None;
         loop {
+            if ingest_config.follow_journal {
+                if let Err(error) = follow_once(
+                    &ingest_config,
+                    &ingest_rpc,
+                    &ingest_store,
+                    &ingest_authority,
+                    &mut pending_invalidation,
+                    &notify,
+                )
+                .await
+                {
+                    if error.downcast_ref::<EventStoreError>().is_some() {
+                        tracing::error!(%error,"journal read failed; restart from its checkpoint");
+                        std::process::exit(1);
+                    }
+                    tracing::error!(%error,"journal follow failed; retrying without advancing coverage");
+                    ingest_authority.0.status.write().unwrap()["ingest_error"] =
+                        error.to_string().into();
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                continue;
+            }
             if let Err(error) = ingest_once(
                 &ingest_config,
                 &ingest_rpc,
@@ -477,6 +542,63 @@ async fn invalidate(config: &Config, authority: &Authority, from: u64) -> Result
         &config.publication_root.join("withdrawn.json"),
         &serde_json::to_vec(&serde_json::json!({"from_height":from,"acknowledged":true}))?,
     )?;
+    Ok(())
+}
+
+/// One pass of following a journal another process writes: observe the
+/// node's tip for freshness, re-read the journal's checkpoint, and treat a
+/// rollback its writer committed exactly as ingest treats one it performs.
+///
+/// A rollback whose invalidation fails is retried on the next pass, from the
+/// lowest height seen, until the fleet acknowledges it.
+async fn follow_once(
+    config: &Config,
+    rpc: &ZakuraClient,
+    store: &Arc<tokio::sync::Mutex<EventStore>>,
+    authority: &Authority,
+    pending_invalidation: &mut Option<u64>,
+    notify: &tokio::sync::watch::Sender<u64>,
+) -> Result<(), BoxError> {
+    let tip = rpc.tip_height().await?;
+    let tip_hash = rpc.block_hash(tip).await?;
+    {
+        let public = authority.0.active.read().unwrap();
+        if tip > public.publication.height
+            || (tip == public.publication.height && tip_hash != public.publication.hash)
+        {
+            authority
+                .0
+                .observed
+                .write()
+                .unwrap()
+                .entry(tip)
+                .or_insert_with(std::time::Instant::now);
+        }
+    }
+    authority.0.status.write().unwrap()["node_height"] = tip.into();
+    authority.0.status.write().unwrap()["node_hash"] = tip_hash.into();
+    let (refreshed, end) = {
+        let mut journal = store.lock().await;
+        let end = journal.covered_through();
+        (journal.refresh()?, end)
+    };
+    match refreshed {
+        Refreshed::RolledBack { from } => {
+            *pending_invalidation = Some(pending_invalidation.map_or(from, |at| at.min(from)));
+            authority.0.status.write().unwrap()["reorg_depth"] =
+                end.map_or(0, |end| (end + 1).saturating_sub(from)).into();
+            notify.send_modify(|n| *n += 1);
+        }
+        Refreshed::Extended => notify.send_modify(|n| *n += 1),
+        Refreshed::Unchanged => {}
+    }
+    if let Some(from) = *pending_invalidation {
+        invalidate(config, authority, from).await?;
+        *pending_invalidation = None;
+    }
+    if let Some(height) = store.lock().await.covered_through() {
+        authority.0.status.write().unwrap()["journal_height"] = height.into();
+    }
     Ok(())
 }
 
@@ -626,7 +748,7 @@ async fn publish_once(
         .fetch_add(1, Ordering::Relaxed);
     let snapshot = {
         let journal = store.lock().await;
-        Snapshot::capture(&journal, old.filters.map())?
+        Snapshot::capture(&journal, old.filters.map(), config.snapshot_dir())?
     };
     let height = snapshot.end;
     let hash = snapshot
@@ -797,6 +919,26 @@ async fn publish_once(
     Ok(())
 }
 
+/// A public request the authority cannot answer consistently right now. The
+/// `retry-after` makes wallets retry it shortly instead of failing the sync.
+fn unavailable() -> Response {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        [("retry-after", "1"), ("cache-control", "no-store")],
+    )
+        .into_response()
+}
+
+/// The last assembled `/v1/shards/init` answer, if it describes `map`.
+fn init_for_map(
+    last: &Option<(String, serde_json::Value)>,
+    map: &str,
+) -> Option<serde_json::Value> {
+    last.as_ref()
+        .filter(|(last_map, _)| last_map == map)
+        .map(|(_, value)| value.clone())
+}
+
 async fn public_request(State(authority): State<Authority>, request: Request) -> Response {
     let path = request.uri().path();
     let epoch = authority.0.epoch.load(Ordering::Acquire);
@@ -927,7 +1069,7 @@ async fn public_request(State(authority): State<Authority>, request: Request) ->
                         for geometry in entries {
                             if let Some(name) = geometry["name"].as_str() {
                                 if geometries.get(name).is_some_and(|old| old != geometry) {
-                                    return StatusCode::SERVICE_UNAVAILABLE.into_response();
+                                    return unavailable();
                                 }
                                 geometries.insert(name.to_string(), geometry.clone());
                             }
@@ -940,16 +1082,24 @@ async fn public_request(State(authority): State<Authority>, request: Request) ->
                 }
             }
         }
-        if expected.iter().all(|name| geometries.contains_key(name))
-            && !authority.0.withdrawn.load(Ordering::Acquire)
-            && authority.0.epoch.load(Ordering::Acquire) == epoch
+        if authority.0.withdrawn.load(Ordering::Acquire)
+            || authority.0.epoch.load(Ordering::Acquire) != epoch
         {
-            if let Some(mut value) = init {
-                value["geometries"] = serde_json::Value::Array(geometries.into_values().collect());
-                return ([("cache-control", "no-cache")], axum::Json(value)).into_response();
-            }
+            return unavailable();
         }
-        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+        let map = active.publication.map_sha256.as_str();
+        let value = match init {
+            Some(mut value) if expected.iter().all(|name| geometries.contains_key(name)) => {
+                value["geometries"] = serde_json::Value::Array(geometries.into_values().collect());
+                *authority.0.last_init.lock().unwrap() = Some((map.to_owned(), value.clone()));
+                value
+            }
+            _ => match init_for_map(&authority.0.last_init.lock().unwrap(), map) {
+                Some(value) => value,
+                None => return unavailable(),
+            },
+        };
+        return ([("cache-control", "no-cache")], axum::Json(value)).into_response();
     } else {
         let parts: Vec<_> = path.trim_start_matches('/').split('/').collect();
         match parts.as_slice() {
@@ -987,7 +1137,7 @@ async fn public_request(State(authority): State<Authority>, request: Request) ->
     if authority.0.withdrawn.load(Ordering::Acquire)
         || authority.0.epoch.load(Ordering::Acquire) != epoch
     {
-        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+        return unavailable();
     }
     match body {
         Some((content_type, body)) => (
@@ -1036,6 +1186,33 @@ fn collect_candidates(config: &Config, authority: &Authority) -> Result<(), BoxE
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn init_is_served_from_the_last_answer_only_for_the_same_map() {
+        let last = Some((
+            "old-map".to_owned(),
+            serde_json::json!({"map_sha256":"old-map"}),
+        ));
+        // Mid-activation the public pointer still names the old map, so the
+        // answer built for it stands in for the workers that moved on.
+        assert_eq!(
+            super::init_for_map(&last, "old-map"),
+            Some(serde_json::json!({"map_sha256":"old-map"}))
+        );
+        // Once the pointer moves, an answer for another map is never served.
+        assert_eq!(super::init_for_map(&last, "new-map"), None);
+        assert_eq!(super::init_for_map(&None, "old-map"), None);
+    }
+
+    #[test]
+    fn unavailable_asks_wallets_to_retry() {
+        let response = super::unavailable();
+        assert_eq!(
+            response.status(),
+            axum::http::StatusCode::SERVICE_UNAVAILABLE
+        );
+        assert_eq!(response.headers()["retry-after"], "1");
+    }
 
     #[test]
     fn ready_replicas_follow_a_fresh_membership_record_only() {
@@ -1179,8 +1356,8 @@ mod tests {
             data_dir: journal_dir.clone(),
             output: initial.clone(),
             previous: None,
-            recent_geometry: "recent-4k".into(),
-            archive_geometry: Some("recent-8k".into()),
+            recent_geometry: "decoupled-2k-8k".into(),
+            archive_geometry: Some("decoupled-32k-32k".into()),
             recent_from: Some(2),
             zakura_rpc_url: String::new(),
             zakura_cookie: cookie.clone(),
@@ -1213,8 +1390,8 @@ print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('re
             publication_root: publications,
             initial_publication: initial.clone(),
             recent_from: 2,
-            recent_geometry: "recent-4k".into(),
-            archive_geometry: "recent-8k".into(),
+            recent_geometry: "decoupled-2k-8k".into(),
+            archive_geometry: "decoupled-32k-32k".into(),
             rpc_url: format!("http://{address}"),
             rpc_cookie: cookie,
             fleet_command: hook,
@@ -1224,6 +1401,8 @@ print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('re
             shadow: false,
             directory_choice: publication::DirectoryChoice::Off,
             range_profile: transparent_filter::RANGE_PROFILE.to_string(),
+            follow_journal: false,
+            snapshot_dir: None,
         };
         let authority = Authority(Arc::new(Inner {
             cycle_duration: Default::default(),
@@ -1236,6 +1415,7 @@ print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('re
             withdrawn: AtomicBool::new(false),
             epoch: AtomicU64::new(0),
             publication_gate: std::sync::Mutex::new(()),
+            last_init: std::sync::Mutex::new(None),
             status: RwLock::new(serde_json::json!({})),
             observed: RwLock::new(BTreeMap::new()),
             http: reqwest::Client::new(),

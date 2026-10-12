@@ -87,25 +87,24 @@ fn probe(args: &Args) -> Result<&'static str, BoxError> {
     }
     let minute = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() / 60;
     let wanted = match minute % 4 {
-        0 => ("recent-4k-8k", "directory"),
-        1 => ("recent-4k-8k", "pages"),
-        2 => ("archive-wide", "directory"),
-        _ => ("archive-wide", "pages"),
+        0 => ("decoupled-2k-8k", "directory"),
+        1 => ("decoupled-2k-8k", "pages"),
+        2 => ("decoupled-32k-32k", "directory"),
+        _ => ("decoupled-32k-32k", "pages"),
     };
     let tables: Vec<_> = fixture
         .tables
         .iter()
-        .filter(|t| t.geometry == wanted.0 && t.table == wanted.1)
+        // A page shard's table is `pages-<j>`; the rotation picks by kind.
+        .filter(|t| {
+            t.geometry == wanted.0 && Table::parse(&t.table).map(Table::kind) == Some(wanted.1)
+        })
         .collect();
     if tables.is_empty() {
         return Ok("oracle_invalid");
     }
     let f = tables[(minute / 4) as usize % tables.len()];
-    let table = if f.table == "directory" {
-        Table::Directory
-    } else {
-        Table::Pages
-    };
+    let table = Table::parse(&f.table).ok_or("unknown table")?;
     let g = geometry
         .geometries
         .iter()
@@ -118,7 +117,7 @@ fn probe(args: &Args) -> Result<&'static str, BoxError> {
             &g.directory_scheme,
             g.directory_scheme_dq44.as_ref(),
         ),
-        Table::Pages => (
+        Table::Pages(_) => (
             g.page_rows,
             g.page_row_bytes,
             &g.pages_scheme,
@@ -155,14 +154,15 @@ fn probe(args: &Args) -> Result<&'static str, BoxError> {
         let setup: Setup = serde_json::from_slice(&bytes)?;
         client.open_segment(
             &f.revision,
+            table,
             segment,
             &setup.public_params,
             &setup.public_params_sha256,
         )?;
     }
-    let query = client.prepare(&f.revision, sample.row)?;
+    let query = client.prepare(&f.revision, table, sample.row)?;
     let response = transport.query(f.shard_id, &f.revision, table, &query.body)?;
-    let decoded = client.decode(&f.revision, f.segments, query, &response)?;
+    let decoded = client.decode(&f.revision, table, f.segments, query, &response)?;
     if !canonical(args)? {
         return Ok("oracle_invalid");
     }

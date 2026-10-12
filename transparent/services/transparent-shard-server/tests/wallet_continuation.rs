@@ -11,7 +11,7 @@ use common::*;
 use std::path::Path;
 use transparent_events::{ReceiveEvent, TransparentEvent};
 use transparent_filter::{ScriptBytes, ShardMap};
-use transparent_shard::layout::{RECENT_4K, RECENT_8K};
+use transparent_shard::layout::{DECOUPLED_2K_8K, DECOUPLED_32K_32K};
 use transparent_wallet::client::Table;
 use transparent_wallet::http::{HttpOptions, HttpShardTransport};
 use transparent_wallet::store::{
@@ -362,10 +362,15 @@ async fn compact_outpoint_context_resets_across_a_sqlite_restart() {
     let store = fresh_store(store_dir.path());
     let pending = store.pending().unwrap();
     assert_eq!(pending.len(), 1);
-    assert_eq!(pending[0].next_ordinal, 1);
-    let boundary = pending[0].boundary.as_ref().unwrap();
-    assert_eq!(boundary.event_bytes, 4_029);
-    assert_eq!(boundary.last_event, last_receive);
+    // The cursor names the run still owed, with the events the placement
+    // check carries: the run's whole history, here the newest two inline.
+    assert_eq!(pending[0].cursor.child, 0);
+    assert_eq!(pending[0].cursor.older_runs, None);
+    assert_eq!(pending[0].carried.len(), 2);
+    assert!(pending[0]
+        .carried
+        .iter()
+        .all(|event| *event != last_receive));
     let (store, report) = run(
         store,
         base,
@@ -380,7 +385,9 @@ async fn compact_outpoint_context_resets_across_a_sqlite_restart() {
     let report = report.unwrap();
     complete(&report);
     assert_eq!(report.charges.directory.queries, 0);
-    assert_eq!(report.charges.pages.queries, 1);
+    // A run commits whole, so the interrupted run is read again from its
+    // first row: both fragments, with the greedy split checked across them.
+    assert_eq!(report.charges.pages.queries, 2);
     assert!(store.pending().unwrap().is_empty());
     compare(&report.ledger, &traverse(&all, &wallet(&[1]), 0));
     assert_eq!(report.ledger.confirmed_balance(), 80 * 123);
@@ -503,6 +510,13 @@ impl<S: WalletStore> WalletStore for CrashAt<S> {
     }
     fn pending_limit(&self) -> usize {
         self.inner.pending_limit()
+    }
+    fn cached_run(
+        &self,
+        child_digest: &str,
+        script: &[u8],
+    ) -> Result<Option<transparent_wallet::store::CachedRun>, StoreError> {
+        self.inner.cached_run(child_digest, script)
     }
     fn setup(&self, key: &SetupKey) -> Result<Option<SetupBlob>, StoreError> {
         self.inner.setup(key)
@@ -738,7 +752,7 @@ async fn a_superseded_provisional_tail_is_truncated_and_replayed_not_appended() 
     let map_b = publish_with(
         dir_b.path(),
         &after,
-        |_| &RECENT_8K,
+        |_| &DECOUPLED_2K_8K,
         1,
         &map_a.shards[3].manifest_digest,
         hash_at,
@@ -818,9 +832,9 @@ async fn a_reorg_below_the_tier_boundary_rewinds_to_the_accepted_ancestor() {
     let all = chain();
     let two_tier = |shard: u64| -> &'static transparent_shard::layout::Geometry {
         if shard < 2 {
-            &RECENT_4K
+            &DECOUPLED_32K_32K
         } else {
-            &RECENT_8K
+            &DECOUPLED_2K_8K
         }
     };
     let dir_a = tempfile::tempdir().unwrap();
@@ -1073,4 +1087,191 @@ async fn an_unrelenting_overload_persists_pending_and_never_reports_a_balance_as
     compare(&report.ledger, &traverse(&all, &wallet(&[1, 2, 3]), 0));
     assert!(store.pending().unwrap().is_empty());
     assert!(store.anchor().unwrap().is_some());
+}
+
+/// Receives of script 7 at `heights`, one per block.
+fn receives_of_7(heights: &[u64]) -> Vec<(ScriptBytes, TransparentEvent)> {
+    heights
+        .iter()
+        .enumerate()
+        .map(|(n, height)| {
+            (
+                script(7),
+                TransparentEvent::Receive(ReceiveEvent {
+                    metadata: None,
+                    height: *height as u32,
+                    transaction_index: 0,
+                    txid: txid(70_000 + n as u64),
+                    output_index: 0,
+                    value: 1_000 + n as u64,
+                    coinbase: false,
+                }),
+            )
+        })
+        .collect()
+}
+
+/// Every block hash through `end`, as a wallet following the chain knows them.
+fn chain_through(end: u64) -> StaticChain {
+    let mut chain = StaticChain::default();
+    for height in FIRST - 1..=end {
+        chain
+            .hashes
+            .insert(height, hash_at(height).to_display_hex());
+    }
+    chain
+}
+
+/// One directory shard, the tail, over `FIRST..=end` with page shards of
+/// 100 blocks, so a longer revision keeps the earlier boundaries.
+fn tail_of_hundreds(end: u64, revision: u32) -> Laid {
+    Laid {
+        start: FIRST,
+        end,
+        geometry: &DECOUPLED_2K_8K,
+        sealed: false,
+        revision,
+        children: 0,
+        child_span: 100,
+    }
+}
+
+/// Script 7's events, by the page shard they are pushed into:
+///
+/// | Block | Arrives | Pushed out | Into |
+/// |---|---|---|---|
+/// | +3 | e3 | e1 | pages-0 |
+/// | +101 | e4 | e2 | pages-1 |
+/// | +102 | e5 | e3 | pages-1 |
+/// | +201 | e6 | e4 | pages-2 |
+/// | +301 | e7 | e5 | pages-3 |
+///
+/// so its history in the shard is a chain of one run per page shard.
+const SEVEN: [u64; 7] = [1, 2, 3, 101, 102, 201, 301];
+
+/// A history whose pushed-out events sit in three page shards comes back
+/// exactly, in one round trip per run after the directory query.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_history_spanning_three_page_shards_recovers_an_exact_ledger() {
+    let heights: Vec<u64> = SEVEN[..6].iter().map(|h| FIRST + h).collect();
+    let events = receives_of_7(&heights);
+    let dir = tempfile::tempdir().unwrap();
+    let map = publish_laid(
+        dir.path(),
+        &events,
+        &[tail_of_hundreds(FIRST + 299, 0)],
+        vec![],
+        hash_at,
+    );
+    assert_eq!(map.shards[0].page_segments, 3, "three page shards");
+    let base = serve(dir.path()).await;
+    let store_dir = tempfile::tempdir().unwrap();
+    let (_, report) = run(
+        fresh_store(store_dir.path()),
+        base,
+        dir.path(),
+        map.clone(),
+        StaticScripts(vec![entry(7, FIRST)]),
+        StaticChain::from_map(&map),
+        WorkLimits::UNLIMITED,
+        |t| t,
+    )
+    .await;
+    let report = report.unwrap();
+    complete(&report);
+    // Runs in pages-2, pages-1 and pages-0, each one fragment: the head,
+    // then each older run's first row.
+    assert_eq!(report.charges.pages.queries, 3);
+    compare(&report.ledger, &traverse(&[events], &wallet(&[7]), 0));
+    assert_eq!(
+        report.ledger.confirmed_balance(),
+        (0..6).map(|n| 1_000 + n).sum::<u64>()
+    );
+}
+
+/// A tip catch-up against a grown tail stops at the first run it cached:
+/// runs in page shards that had sealed are not queried again, while a fresh
+/// wallet walks the whole chain. Both reach the same exact ledger.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_tip_catch_up_stops_at_the_first_cached_run() {
+    let before: Vec<u64> = SEVEN[..6].iter().map(|h| FIRST + h).collect();
+    let after: Vec<u64> = SEVEN.iter().map(|h| FIRST + h).collect();
+    let dir_a = tempfile::tempdir().unwrap();
+    let map_a = publish_laid(
+        dir_a.path(),
+        &receives_of_7(&before),
+        &[tail_of_hundreds(FIRST + 299, 0)],
+        vec![],
+        hash_at,
+    );
+    let dir_b = tempfile::tempdir().unwrap();
+    let map_b = publish_laid_superseding(
+        dir_b.path(),
+        &receives_of_7(&after),
+        &[tail_of_hundreds(FIRST + 399, 1)],
+        vec![],
+        hash_at,
+        &map_a.shards[0].manifest_digest,
+    );
+    assert_eq!(map_b.shards[0].page_segments, 4);
+
+    // The first sync walks pages-2, pages-1 and pages-0 and caches the runs
+    // in the two page shards that were sealed.
+    let store_dir = tempfile::tempdir().unwrap();
+    let (store, report) = run(
+        fresh_store(store_dir.path()),
+        serve(dir_a.path()).await,
+        dir_a.path(),
+        map_a.clone(),
+        StaticScripts(vec![entry(7, FIRST)]),
+        chain_through(FIRST + 299),
+        WorkLimits::UNLIMITED,
+        |t| t,
+    )
+    .await;
+    let report = report.unwrap();
+    complete(&report);
+    assert_eq!(report.charges.pages.queries, 3);
+
+    // The tail grew: pages-3 holds the newest run, pages-2 has sealed. The
+    // catch-up reads pages-3's head and pages-2's run, and stops at the run
+    // it cached in pages-1.
+    let base_b = serve(dir_b.path()).await;
+    let (_, report) = run(
+        store,
+        base_b.clone(),
+        dir_b.path(),
+        map_b.clone(),
+        StaticScripts(vec![entry(7, FIRST)]),
+        chain_through(FIRST + 399),
+        WorkLimits::UNLIMITED,
+        |t| t,
+    )
+    .await;
+    let report = report.unwrap();
+    complete(&report);
+    assert_eq!(
+        report.charges.pages.queries, 2,
+        "the walk stops at a cached run"
+    );
+    let expected = traverse(&[receives_of_7(&after)], &wallet(&[7]), 0);
+    compare(&report.ledger, &expected);
+
+    // A fresh wallet pays for every run.
+    let fresh_dir = tempfile::tempdir().unwrap();
+    let (_, report) = run(
+        fresh_store(fresh_dir.path()),
+        base_b,
+        dir_b.path(),
+        map_b.clone(),
+        StaticScripts(vec![entry(7, FIRST)]),
+        chain_through(FIRST + 399),
+        WorkLimits::UNLIMITED,
+        |t| t,
+    )
+    .await;
+    let report = report.unwrap();
+    complete(&report);
+    assert_eq!(report.charges.pages.queries, 4);
+    compare(&report.ledger, &expected);
 }

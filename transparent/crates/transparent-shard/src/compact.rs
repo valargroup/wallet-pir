@@ -162,7 +162,6 @@ pub(crate) mod tests {
         assert_eq!(bytes[51], 0);
         assert_eq!(bytes[52], 45);
         assert_eq!(decode(&bytes, 2).unwrap(), (vec![receive, spend], 98));
-        assert!(crate::compact_v10::decode(&bytes, 2).is_err());
         for end in 0..bytes.len() {
             assert!(decode(&bytes[..end], 2).is_err());
         }

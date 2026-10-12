@@ -1,0 +1,20 @@
+Mon Oct 12 16:03:47 UTC 2026
+MainPID=1294034
+ExecMainStartTimestamp=Sat 2026-10-10 03:30:27 UTC
+ActiveState=active
+
+MainPID=4015123
+ExecMainStartTimestamp=Sat 2026-10-03 17:55:09 UTC
+ActiveState=active
+
+MainPID=3049963
+ExecMainStartTimestamp=Wed 2026-10-07 15:45:30 UTC
+ActiveState=active
+
+dd8af49006e274b526f6b3646520a42713a0ac7b89f70163122367f18ed4ae4d  /etc/systemd/system/transparent-publish-controller.service
+fe2372ecfb059102a6fe5810c6376fc1793651acfc13a6c3f01b75c62a4a5b48  /opt/transparent-publisher/v11/controller.json
+c520df918164c465d76ea6fda9ebc4cfbceeee6218c309c2486ee98dad3d4bf0  /opt/transparent-publisher/v11/fleet.json
+f8fb8b61943cae0e2c691e13ebf8bc75ddc5470d0d59932612d4be76bc63125c  /opt/transparent-publisher/v11/roster.json
+/dev/sdb        250G  126G  125G  51% /srv/transparent-activity
+transparent-pir covered_through 3515375
+transparent-pir-v12 covered_through 3515375

@@ -17,17 +17,16 @@
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use std::path::{Path, PathBuf};
 use transparent_events::{ReceiveEvent, SpendEvent, TransparentEvent, Txid, EVENT_BYTES};
-use transparent_wallet::client::Table;
 use transparent_wallet::ledger::LedgerError;
 use transparent_wallet::store::{
-    merge_coverage, Anchor, CoverageKind, CoverageRange, PageBoundary, PendingPages, ScriptEntry,
-    ScriptOrigin, SetIdentity, SetupBlob, SetupKey, ShardCommit, StoreError, StoredEvent,
-    WalletStore,
+    merge_coverage, Anchor, CachedRun, CoverageKind, CoverageRange, PendingPages, RunCursor,
+    ScriptEntry, ScriptOrigin, SetIdentity, SetupBlob, SetupKey, ShardCommit, StoreError,
+    StoredEvent, WalletStore,
 };
 
-/// Versioned persistence: known older versions migrate transactionally;
-/// unknown versions are refused rather than misread.
-pub const SCHEMA_VERSION: u32 = 4;
+/// Versioned persistence. Schema 5 holds schema-v12 chain walks and the run
+/// cache; any other version is refused rather than misread or migrated.
+pub const SCHEMA_VERSION: u32 = 5;
 
 /// Default bound on pending page retrievals a commit may leave.
 pub const DEFAULT_PENDING_LIMIT: usize = 4_096;
@@ -89,16 +88,22 @@ CREATE TABLE IF NOT EXISTS pending_work (
     shard_id INTEGER NOT NULL,
     revision_digest TEXT NOT NULL,
     script BLOB NOT NULL,
-    first_page INTEGER NOT NULL,
-    page_count INTEGER NOT NULL,
-    total_events INTEGER NOT NULL,
-    inline BLOB NOT NULL,
-    next_ordinal INTEGER NOT NULL,
-    validated_events INTEGER NOT NULL DEFAULT 0,
-    page_boundary BLOB,
+    cursor_child INTEGER NOT NULL,
+    cursor_row INTEGER NOT NULL,
+    cursor_older_runs INTEGER,
+    carried BLOB NOT NULL,
     target_anchor TEXT,
     attempts INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS run_cache (
+    child_digest TEXT NOT NULL,
+    script BLOB NOT NULL,
+    shard_id INTEGER NOT NULL,
+    events BLOB NOT NULL,
+    older TEXT,
+    PRIMARY KEY (child_digest, script)
+);
+CREATE INDEX IF NOT EXISTS run_cache_by_shard ON run_cache(shard_id, script);
 CREATE TABLE IF NOT EXISTS setup_cache (
     set_digest TEXT NOT NULL,
     revision_digest TEXT NOT NULL,
@@ -125,36 +130,6 @@ pub struct SqliteStore {
     conn: Connection,
     path: Option<PathBuf>,
     pending_limit: usize,
-}
-
-fn encode_boundary(boundary: Option<&PageBoundary>) -> Option<Vec<u8>> {
-    boundary.map(|b| {
-        let mut bytes = b.event_bytes.to_le_bytes().to_vec();
-        bytes.extend_from_slice(&b.last_event.to_bytes());
-        bytes
-    })
-}
-
-fn decode_boundary(bytes: Option<&[u8]>) -> Result<Option<PageBoundary>, StoreError> {
-    bytes
-        .map(|bytes| {
-            if bytes.len() < 4 + EVENT_BYTES
-                || bytes.len() > 4 + transparent_events::MAX_EVENT_BYTES
-            {
-                return Err(StoreError::Corrupt("invalid page boundary length".into()));
-            }
-            let event_bytes = u32::from_le_bytes(bytes[..4].try_into().expect("4 bytes"));
-            if event_bytes == 0 || event_bytes > 4_058 {
-                return Err(StoreError::Corrupt(
-                    "invalid page boundary byte count".into(),
-                ));
-            }
-            Ok(PageBoundary {
-                event_bytes,
-                last_event: decode_event(&bytes[4..])?,
-            })
-        })
-        .transpose()
 }
 
 fn io(error: rusqlite::Error) -> StoreError {
@@ -203,7 +178,9 @@ impl SqliteStore {
         ).map_err(io)?;
         if has_meta {
             if let Some(found) = self.meta("schema_version")? {
-                if !matches!(found.as_str(), "1" | "2" | "3" | "4") {
+                // No migration: a store from before schema 5 holds walks and
+                // coverage of a shard schema this build does not read.
+                if found != SCHEMA_VERSION.to_string() {
                     return Err(StoreError::Corrupt(format!(
                         "store schema {found}, this build reads {SCHEMA_VERSION}"
                     )));
@@ -217,38 +194,8 @@ impl SqliteStore {
             )
             .map_err(io)?;
         self.conn.execute_batch(SCHEMA).map_err(io)?;
-        match self.meta("schema_version")? {
-            None => self.set_meta("schema_version", &SCHEMA_VERSION.to_string())?,
-            Some(found) if found == SCHEMA_VERSION.to_string() || found == "2" || found == "3" => {}
-            Some(found) if found == "1" => {
-                let tx = self.conn.transaction().map_err(io)?;
-                tx.execute_batch("ALTER TABLE coverage ADD COLUMN source_anchor TEXT;
-                    ALTER TABLE pending_work ADD COLUMN validated_events INTEGER NOT NULL DEFAULT 0;
-                    ALTER TABLE pending_work ADD COLUMN target_anchor TEXT;
-                    DELETE FROM coverage; DELETE FROM pending_work;
-                    DELETE FROM wallet_meta WHERE key IN ('anchor', 'settled_through', 'covered_through');
-                    UPDATE wallet_meta SET value = '2' WHERE key = 'schema_version';").map_err(io)?;
-                tx.commit().map_err(io)?;
-            }
-            Some(found) => {
-                return Err(StoreError::Corrupt(format!(
-                    "store schema {found}, this build reads {SCHEMA_VERSION}"
-                )))
-            }
-        }
-        if self.meta("schema_version")?.as_deref() == Some("2") {
-            let tx = self.conn.transaction().map_err(io)?;
-            tx.execute_batch(
-                "ALTER TABLE pending_work ADD COLUMN page_boundary BLOB;
-                UPDATE wallet_meta SET value = '3' WHERE key = 'schema_version';",
-            )
-            .map_err(io)?;
-            tx.commit().map_err(io)?;
-        }
-        if self.meta("schema_version")?.as_deref() == Some("3") {
-            let tx = self.conn.transaction().map_err(io)?;
-            tx.execute_batch("CREATE INDEX IF NOT EXISTS spends_by_transaction ON spends(spending_txid); UPDATE wallet_meta SET value = '4' WHERE key = 'schema_version';").map_err(io)?;
-            tx.commit().map_err(io)?;
+        if self.meta("schema_version")?.is_none() {
+            self.set_meta("schema_version", &SCHEMA_VERSION.to_string())?;
         }
         Ok(())
     }
@@ -281,6 +228,33 @@ impl SqliteStore {
         )
         .map_err(io)?;
         Ok(conn.last_insert_rowid() as u64)
+    }
+
+    fn cached_run_in(
+        conn: &Connection,
+        child_digest: &str,
+        script: &[u8],
+    ) -> Result<Option<CachedRun>, StoreError> {
+        let held: Option<(i64, Vec<u8>, Option<String>)> = conn
+            .query_row(
+                "SELECT shard_id, events, older FROM run_cache WHERE child_digest = ?1 AND script = ?2",
+                params![child_digest, script],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()
+            .map_err(io)?;
+        held.map(|(shard_id, events, older)| {
+            Ok(CachedRun {
+                child_digest: child_digest.to_string(),
+                script: script.to_vec(),
+                shard_id: u64::try_from(shard_id).map_err(|_| {
+                    StoreError::Corrupt("a cached run's shard id is negative".into())
+                })?,
+                events: decode_events(&events, usize::MAX)?,
+                older,
+            })
+        })
+        .transpose()
     }
 
     fn coverage_of(conn: &Connection, script: &[u8]) -> Result<Vec<CoverageRange>, StoreError> {
@@ -355,7 +329,8 @@ fn kind_str(kind: CoverageKind) -> &'static str {
     }
 }
 
-fn encode_inline(events: &[TransparentEvent]) -> Vec<u8> {
+/// Events, each framed by its length, after a version tag.
+fn encode_events(events: &[TransparentEvent]) -> Vec<u8> {
     let mut out = b"EV3\0".to_vec();
     for event in events {
         let raw = event.to_bytes();
@@ -365,31 +340,27 @@ fn encode_inline(events: &[TransparentEvent]) -> Vec<u8> {
     out
 }
 
-fn decode_inline(bytes: &[u8]) -> Result<Vec<TransparentEvent>, StoreError> {
-    if let Some(mut remaining) = bytes.strip_prefix(b"EV3\0") {
-        let mut events = Vec::new();
-        while !remaining.is_empty() {
-            let header = remaining
-                .get(..2)
-                .ok_or_else(|| StoreError::Corrupt("truncated inline framing".into()))?;
-            let length = usize::from(u16::from_le_bytes(header.try_into().unwrap()));
-            let raw = remaining
-                .get(2..2 + length)
-                .ok_or_else(|| StoreError::Corrupt("truncated inline event".into()))?;
-            events.push(decode_event(raw)?);
-            if events.len() > transparent_shard::INLINE_EVENTS as usize {
-                return Err(StoreError::Corrupt("too many inline events".into()));
-            }
-            remaining = &remaining[2 + length..];
+/// Decodes [`encode_events`], refusing more than `limit` events.
+fn decode_events(bytes: &[u8], limit: usize) -> Result<Vec<TransparentEvent>, StoreError> {
+    let mut remaining = bytes
+        .strip_prefix(b"EV3\0")
+        .ok_or_else(|| StoreError::Corrupt("unknown event framing".into()))?;
+    let mut events = Vec::new();
+    while !remaining.is_empty() {
+        let header = remaining
+            .get(..2)
+            .ok_or_else(|| StoreError::Corrupt("truncated event framing".into()))?;
+        let length = usize::from(u16::from_le_bytes(header.try_into().unwrap()));
+        let raw = remaining
+            .get(2..2 + length)
+            .ok_or_else(|| StoreError::Corrupt("truncated event".into()))?;
+        events.push(decode_event(raw)?);
+        if events.len() > limit {
+            return Err(StoreError::Corrupt("too many events".into()));
         }
-        return Ok(events);
+        remaining = &remaining[2 + length..];
     }
-    if !bytes.len().is_multiple_of(EVENT_BYTES) {
-        return Err(StoreError::Corrupt(
-            "inline events are not whole records".into(),
-        ));
-    }
-    bytes.chunks_exact(EVENT_BYTES).map(decode_event).collect()
+    Ok(events)
 }
 
 fn decode_event(bytes: &[u8]) -> Result<TransparentEvent, StoreError> {
@@ -662,6 +633,15 @@ impl WalletStore for SqliteStore {
                 limit: self.pending_limit,
             });
         }
+        for run in &commit.cached_runs {
+            let held = Self::cached_run_in(&tx, &run.child_digest, &run.script)?;
+            if held.is_some_and(|held| held != *run) {
+                return Err(StoreError::Corrupt(format!(
+                    "page shard {} holds two histories for one script",
+                    run.child_digest
+                )));
+            }
+        }
 
         for stored in &commit.events {
             match &stored.event {
@@ -759,42 +739,63 @@ impl WalletStore for SqliteStore {
             .map_err(io)?;
         }
         for pending in &commit.pending_upsert {
+            let cursor = pending.cursor;
             match pending.id {
                 Some(id) => {
                     tx.execute(
-                        "UPDATE pending_work SET next_ordinal = ?2, attempts = ?3, validated_events = ?4, page_count = ?5, page_boundary = ?6 WHERE id = ?1",
+                        "UPDATE pending_work SET cursor_child = ?2, cursor_row = ?3, cursor_older_runs = ?4, carried = ?5, attempts = ?6 WHERE id = ?1",
                         params![
                             id as i64,
-                            pending.next_ordinal as i64,
+                            i64::from(cursor.child),
+                            i64::from(cursor.row),
+                            cursor.older_runs.map(i64::from),
+                            encode_events(&pending.carried),
                             pending.attempts as i64,
-                            pending.validated_events as i64,
-                            pending.page_count as i64,
-                            encode_boundary(pending.boundary.as_ref())
                         ],
                     )
                     .map_err(io)?;
                 }
                 None => {
                     tx.execute(
-                        "INSERT INTO pending_work (shard_id, revision_digest, script, first_page, page_count, total_events, inline, next_ordinal, attempts, validated_events, target_anchor, page_boundary) \
-                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                        "INSERT INTO pending_work (shard_id, revision_digest, script, cursor_child, cursor_row, cursor_older_runs, carried, target_anchor, attempts) \
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
                         params![
                             pending.shard_id as i64,
                             pending.revision_digest,
                             pending.script,
-                            pending.first_page as i64,
-                            pending.page_count as i64,
-                            0i64,
-                            encode_inline(&pending.inline),
-                            pending.next_ordinal as i64,
-                            pending.attempts as i64,
-                            pending.validated_events as i64,
+                            i64::from(cursor.child),
+                            i64::from(cursor.row),
+                            cursor.older_runs.map(i64::from),
+                            encode_events(&pending.carried),
                             pending.target_anchor.as_ref().map(|a| serde_json::to_string(a).unwrap()),
-                            encode_boundary(pending.boundary.as_ref()),
+                            pending.attempts as i64,
                         ],
                     )
                     .map_err(io)?;
                 }
+            }
+        }
+        for run in &commit.cached_runs {
+            tx.execute(
+                "INSERT OR IGNORE INTO run_cache (child_digest, script, shard_id, events, older) \
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    run.child_digest,
+                    run.script,
+                    run.shard_id as i64,
+                    encode_events(&run.events),
+                    run.older,
+                ],
+            )
+            .map_err(io)?;
+        }
+        if commit.finishes_shard() {
+            for script in &commit.covered_scripts {
+                tx.execute(
+                    "DELETE FROM run_cache WHERE shard_id = ?1 AND script = ?2",
+                    params![commit.shard_id as i64, script],
+                )
+                .map_err(io)?;
             }
         }
         let id = Self::record_commit(
@@ -855,6 +856,9 @@ impl WalletStore for SqliteStore {
         // Pending work belongs to a revision; one whose coverage is gone is
         // gone with it.
         tx.execute("DELETE FROM pending_work", []).map_err(io)?;
+        // Cached runs survive: each is keyed by its page shard's chained
+        // identity, which commits to the chain it was published on, so a walk
+        // reaches one only through a manifest on the accepted chain.
         let anchor: Option<String> = tx
             .query_row(
                 "SELECT value FROM wallet_meta WHERE key = 'anchor'",
@@ -937,7 +941,7 @@ impl WalletStore for SqliteStore {
         let mut statement = self
             .conn
             .prepare(
-                "SELECT id, shard_id, revision_digest, script, first_page, page_count, inline, next_ordinal, attempts, validated_events, target_anchor, page_boundary \
+                "SELECT id, shard_id, revision_digest, script, cursor_child, cursor_row, cursor_older_runs, carried, attempts, target_anchor \
                  FROM pending_work ORDER BY id",
             )
             .map_err(io)?;
@@ -948,14 +952,12 @@ impl WalletStore for SqliteStore {
                     row.get::<_, i64>(1)? as u64,
                     row.get::<_, String>(2)?,
                     row.get::<_, Vec<u8>>(3)?,
-                    row.get::<_, i64>(4)? as u32,
-                    row.get::<_, i64>(5)? as u32,
-                    row.get::<_, Vec<u8>>(6)?,
-                    row.get::<_, i64>(7)? as u32,
+                    row.get::<_, i64>(4)?,
+                    row.get::<_, i64>(5)?,
+                    row.get::<_, Option<i64>>(6)?,
+                    row.get::<_, Vec<u8>>(7)?,
                     row.get::<_, i64>(8)? as u32,
-                    row.get::<_, i64>(9)? as u32,
-                    decode_anchor(row.get(10)?)?,
-                    row.get::<_, Option<Vec<u8>>>(11)?,
+                    decode_anchor(row.get(9)?)?,
                 ))
             })
             .map_err(io)?;
@@ -966,31 +968,38 @@ impl WalletStore for SqliteStore {
                 shard_id,
                 revision_digest,
                 script,
-                first_page,
-                page_count,
-                inline,
-                next_ordinal,
+                child,
+                cursor_row,
+                older_runs,
+                carried,
                 attempts,
-                validated_events,
                 target_anchor,
-                boundary,
             ) = row.map_err(io)?;
+            let corrupt = |_| StoreError::Corrupt("pending walk cursor out of range".into());
             pending.push(PendingPages {
-                boundary: decode_boundary(boundary.as_deref())?,
-                validated_events,
-                target_anchor,
                 id: Some(id),
                 shard_id,
                 revision_digest,
                 script,
-                first_page,
-                page_count,
-                inline: decode_inline(&inline)?,
-                next_ordinal,
+                cursor: RunCursor {
+                    child: u8::try_from(child).map_err(corrupt)?,
+                    row: u32::try_from(cursor_row).map_err(corrupt)?,
+                    older_runs: older_runs.map(u8::try_from).transpose().map_err(corrupt)?,
+                },
+                carried: decode_events(&carried, transparent_shard::INLINE_EVENTS as usize)?,
                 attempts,
+                target_anchor,
             });
         }
         Ok(pending)
+    }
+
+    fn cached_run(
+        &self,
+        child_digest: &str,
+        script: &[u8],
+    ) -> Result<Option<CachedRun>, StoreError> {
+        Self::cached_run_in(&self.conn, child_digest, script)
     }
 
     fn pending_limit(&self) -> usize {
@@ -1005,7 +1014,7 @@ impl WalletStore for SqliteStore {
                 params![
                     key.set_digest,
                     key.revision_digest,
-                    table_str(key.table),
+                    key.table.name(),
                     key.segment as i64
                 ],
                 |row| {
@@ -1027,7 +1036,7 @@ impl WalletStore for SqliteStore {
                 params![
                     key.set_digest,
                     key.revision_digest,
-                    table_str(key.table),
+                    key.table.name(),
                     key.segment as i64,
                     blob.public_params_base64,
                     blob.public_params_sha256
@@ -1075,13 +1084,6 @@ impl WalletStore for SqliteStore {
             })
             .map(|id| id as u64)
             .map_err(io)
-    }
-}
-
-fn table_str(table: Table) -> &'static str {
-    match table {
-        Table::Directory => "directory",
-        Table::Pages => "pages",
     }
 }
 

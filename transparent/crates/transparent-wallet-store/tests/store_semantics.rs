@@ -64,7 +64,7 @@ fn metadata_survives_reopen_and_cross_script_contradictions_are_atomic() {
     assert_eq!(store.last_commit().unwrap(), before);
     assert!(store.coverage(&script(2)).unwrap().is_empty());
     let mut incompatible = identity();
-    incompatible.shard_schema = transparent_shard::manifest::LEGACY_SCHEMA.into();
+    incompatible.shard_schema = "transparent-shard-v11".into();
     assert!(store.bind_set(&incompatible).is_err());
 }
 
@@ -121,84 +121,59 @@ fn the_sqlite_store_meets_the_contract_on_disk_and_survives_reopening() {
     assert_eq!(store.last_commit().unwrap(), 2);
 }
 
+/// Schema 5 is a fresh schema: a store from an earlier one holds walks and
+/// coverage of a shard schema this build does not read, and is refused
+/// rather than migrated.
 #[test]
-fn migration_preserves_events_but_invalidates_unbound_legacy_progress() {
+fn a_store_from_an_earlier_schema_is_refused() {
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("legacy.sqlite");
+    let path = dir.path().join("v4.sqlite");
     let mut store = SqliteStore::open(&path).unwrap();
     store.bind_set(&identity()).unwrap();
-    store
-        .add_scripts(&[transparent_wallet::ScriptEntry {
-            script: script(1),
-            origin: transparent_wallet::ScriptOrigin::Derived,
-            required_from: 0,
-        }])
-        .unwrap();
-    store
-        .commit_shard(commit(
-            0,
-            "r0",
-            true,
-            (0, 99),
-            vec![receive(1, 0, 123, 10)],
-            vec![script(1)],
-        ))
-        .unwrap();
-    store
-        .commit_anchor(
-            &Anchor {
-                height: 99,
-                hash: "legacy".into(),
-            },
-            99,
-            99,
-        )
-        .unwrap();
     drop(store);
     let db = rusqlite::Connection::open(&path).unwrap();
-    db.execute_batch(
-        "ALTER TABLE coverage DROP COLUMN source_anchor;
-        ALTER TABLE pending_work DROP COLUMN target_anchor;
-        ALTER TABLE pending_work DROP COLUMN validated_events;
-         ALTER TABLE pending_work DROP COLUMN page_boundary;
-        UPDATE wallet_meta SET value = '1' WHERE key = 'schema_version';",
-    )
-    .unwrap();
+    db.execute_batch("UPDATE wallet_meta SET value = '4' WHERE key = 'schema_version';")
+        .unwrap();
     drop(db);
-    let store = SqliteStore::open(&path).unwrap();
-    assert_eq!(store.events().unwrap().len(), 1);
-    assert_eq!(store.scripts().unwrap().len(), 1);
-    assert_eq!(store.ledger().unwrap().confirmed_balance(), 123);
-    assert!(store.anchor().unwrap().is_none());
-    assert!(store.coverage(&script(1)).unwrap().is_empty());
-    assert!(store.pending().unwrap().is_empty());
-    drop(store);
-    SqliteStore::open(&path).unwrap();
+    assert!(SqliteStore::open(&path).is_err());
 }
 
+/// A walk's cursor and carried events, and the run cache, are on disk once
+/// their commit returns.
 #[test]
-fn fragment_boundary_survives_update_and_reopen() {
-    use transparent_wallet::store::PageBoundary;
+fn a_walk_cursor_and_the_run_cache_survive_reopening() {
+    use transparent_wallet::store::RunCursor;
+    use transparent_wallet::testing::{cached_run, pending};
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("boundary.sqlite");
+    let path = dir.path().join("walk.sqlite");
     let mut store = SqliteStore::open(&path).unwrap();
     store.bind_set(&identity()).unwrap();
-    let mut pending = transparent_wallet::testing::pending(1, "r0");
-    let boundary = PageBoundary {
-        event_bytes: 4029,
-        last_event: receive(1, 0, 12, 10).event,
-    };
-    pending.next_ordinal = 1;
-    pending.boundary = Some(boundary.clone());
     let mut c = commit(1, "r0", true, (0, 99), vec![], vec![]);
-    c.pending_upsert.push(pending);
+    c.pending_upsert.push(pending(1, "r0"));
+    let run = transparent_wallet::store::CachedRun {
+        shard_id: 1,
+        older: Some("older-child".into()),
+        ..cached_run("child", 1, &[10, 20])
+    };
+    c.cached_runs.push(run.clone());
     store.commit_shard(c).unwrap();
     drop(store);
     let mut store = SqliteStore::open(&path).unwrap();
     let mut restored = store.pending().unwrap().remove(0);
-    assert_eq!(restored.boundary, Some(boundary.clone()));
-    restored.next_ordinal = 2;
-    restored.boundary.as_mut().unwrap().event_bytes = 4042;
+    assert_eq!(
+        restored,
+        transparent_wallet::PendingPages {
+            id: restored.id,
+            ..pending(1, "r0")
+        }
+    );
+    assert_eq!(store.cached_run("child", &script(1)).unwrap(), Some(run));
+    restored.cursor = RunCursor {
+        child: 2,
+        row: 70_000,
+        older_runs: Some(4),
+    };
+    restored.carried.reverse();
     let mut c = commit(1, "r0", true, (0, 99), vec![], vec![]);
     c.pending_upsert.push(restored.clone());
     store.commit_shard(c).unwrap();
@@ -207,35 +182,4 @@ fn fragment_boundary_survives_update_and_reopen() {
         SqliteStore::open(&path).unwrap().pending().unwrap(),
         vec![restored]
     );
-}
-
-#[test]
-fn v2_migration_preserves_events_and_adds_empty_boundary_state() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("v2.sqlite");
-    let mut store = SqliteStore::open(&path).unwrap();
-    store.bind_set(&identity()).unwrap();
-    store
-        .commit_shard(commit(
-            0,
-            "r0",
-            true,
-            (0, 99),
-            vec![receive(1, 0, 123, 10)],
-            vec![script(1)],
-        ))
-        .unwrap();
-    drop(store);
-    let db = rusqlite::Connection::open(&path).unwrap();
-    db.execute_batch(
-        "ALTER TABLE pending_work DROP COLUMN page_boundary;
-        UPDATE wallet_meta SET value = '2' WHERE key = 'schema_version';",
-    )
-    .unwrap();
-    drop(db);
-    let store = SqliteStore::open(&path).unwrap();
-    assert_eq!(store.events().unwrap().len(), 1);
-    assert_eq!(store.coverage(&script(1)).unwrap().len(), 1);
-    drop(store);
-    SqliteStore::open(&path).unwrap();
 }

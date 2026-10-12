@@ -4,8 +4,9 @@
 //!
 //! 1. fetch the published shard map and binary-search it for the birthday;
 //! 2. download **every** filter from that shard forward and match locally;
-//! 3. for each matched script and shard, privately retrieve both candidate
-//!    directory rows, then the pages the decoded extent locates;
+//! 3. for each matched script and directory shard, privately retrieve its
+//!    directory row, then walk the chain of runs its entry points to, newest
+//!    first, through the shard's page shards (see `walk_chains`);
 //! 4. replay the events into a UTXO set.
 //!
 //! Step 2 downloads every filter in range, not only the ones that will match.
@@ -48,16 +49,20 @@ use crate::client::{classify_transport, ClientError, Table, TableClient};
 use crate::ledger::{Ledger, LedgerError};
 use crate::memory_store::MemoryStore;
 use crate::store::{
-    uncovered, Anchor, CoverageKind, CoverageRange, PendingPages, ScriptEntry, ScriptOrigin,
-    SetIdentity, SetupBlob, SetupKey, ShardCommit, StoreError, StoredEvent, WalletStore,
+    uncovered, Anchor, CachedRun, CoverageKind, CoverageRange, PendingPages, RunCursor,
+    ScriptEntry, ScriptOrigin, SetIdentity, SetupBlob, SetupKey, ShardCommit, StoreError,
+    StoredEvent, WalletStore,
 };
+use crate::transport::ShardRequest;
 use crate::transport::{ByteCharges, FilterSource, ShardTransport, StaleRevision};
 use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
 use std::time::Duration;
+use transparent_events::TransparentEvent;
 use transparent_filter::{BlockHash, FilterLimits, ScriptBytes, ShardKey, ShardMap};
 use transparent_shard::build::candidate_rows;
-use transparent_shard::manifest::ShardManifest;
+use transparent_shard::manifest::{PageChild, ShardManifest};
+use transparent_shard::page_row::PageEntry;
 use transparent_shard::records::DirectoryEntry;
 
 #[path = "sync_ahead.rs"]
@@ -245,7 +250,6 @@ pub struct ServiceGeometry {
 
 /// The prepared clients for one geometry: one per table.
 struct GeometryClients {
-    schema: String,
     directory: TableClient,
     pages: TableClient,
 }
@@ -297,7 +301,6 @@ impl Clients {
                 )));
             }
             let clients = GeometryClients {
-                schema: self.schema.clone(),
                 directory: TableClient::new_with_schema(
                     &self.schema,
                     Table::Directory,
@@ -309,7 +312,7 @@ impl Clients {
                 )?,
                 pages: TableClient::new_with_schema(
                     &self.schema,
-                    Table::Pages,
+                    Table::Pages(0),
                     name,
                     geometry.page_rows,
                     geometry.page_row_bytes as u32,
@@ -906,13 +909,11 @@ pub fn sync_into<S: WalletStore>(
                 &mut charges,
                 limits,
                 |store, prepared, transport, charges, manifest| {
-                    let salt = tag_salt_of(manifest)?;
                     finish_pages(
                         store,
                         &entry,
+                        manifest,
                         &items,
-                        &salt,
-                        manifest.pages_query_rows() as usize,
                         prepared,
                         transport,
                         charges,
@@ -1554,6 +1555,7 @@ fn read_shard_into<S: WalletStore>(
                 covered_scripts: scripts.to_vec(),
                 pending_upsert: Vec::new(),
                 pending_complete: Vec::new(),
+                cached_runs: Vec::new(),
             },
         )?;
         return Ok(ShardRead::Done {
@@ -1590,11 +1592,11 @@ fn read_shard_into<S: WalletStore>(
             retrieve_shard_into(
                 store,
                 entry,
+                manifest,
                 &matched_scripts,
                 &unmatched,
                 choice.as_ref(),
                 &salt,
-                manifest.pages_query_rows() as usize,
                 prepared,
                 transport,
                 charges,
@@ -1873,8 +1875,9 @@ fn verify_manifest(
     if manifest.parent_manifest_digest != previous_digest {
         return Err(mismatch("parent_manifest_digest"));
     }
+    // The map's `page_segments` counts the directory shard's page shards.
     if manifest.directory_segments.len() as u32 != entry.directory_segments
-        || manifest.page_segments.len() as u32 != entry.page_segments
+        || manifest.page_children.len() as u32 != entry.page_segments
     {
         return Err(mismatch("segment_count"));
     }
@@ -1887,11 +1890,15 @@ fn verify_manifest(
             return Err(mismatch("directory_segment_shape"));
         }
     }
-    for segment in &manifest.page_segments {
-        if segment.rows != geometry.page_rows || segment.row_bytes != geometry.page_row_bytes as u32
-        {
-            return Err(mismatch("page_segment_shape"));
-        }
+    // Every page shard: contiguous, in order, sealed but for an open last one
+    // of a tail, ending on the shard's terminal, segments of the registry's
+    // shape. A walk relies on each of these.
+    manifest
+        .check_children(geometry.page_rows, geometry.page_row_bytes as u32)
+        .map_err(|_| mismatch("page_children"))?;
+    for child in &manifest.page_children {
+        BlockHash::from_display_hex(&child.terminal_block_hash)
+            .map_err(|_| mismatch("page_children"))?;
     }
     if let Some(seal) = map.seal.get(&manifest.geometry) {
         if manifest.seal.scripts_target != seal.max_scripts
@@ -2081,19 +2088,19 @@ fn tag_salt_of(manifest: &ShardManifest) -> Result<[u8; 32], SyncError> {
     ))
 }
 
-/// The directory phase for one shard: both candidate rows for every matched
-/// script, inline events committed, page work recorded; then the pages.
+/// The directory phase for one shard: the candidate rows for every matched
+/// script, inline events committed, chain walks recorded; then the walks.
 #[allow(clippy::too_many_arguments)]
-fn retrieve_shard_into<S: WalletStore>(
+fn retrieve_shard_into<S: WalletStore, T: ShardTransport>(
     store: &mut S,
     entry: &transparent_filter::ShardMapEntry,
+    manifest: &ShardManifest,
     matched: &[Vec<u8>],
     unmatched: &[Vec<u8>],
     choice: Option<&transparent_shard::ChoiceTable>,
     salt: &[u8; 32],
-    pages_query_rows: usize,
     clients: &mut GeometryClients,
-    transport: &mut impl ShardTransport,
+    transport: &mut T,
     charges: &mut ByteCharges,
     limits: &WorkLimits,
     target_anchor: &Anchor,
@@ -2103,10 +2110,11 @@ fn retrieve_shard_into<S: WalletStore>(
     let geometry = transparent_shard::layout::by_name(&entry.geometry)
         .ok_or_else(|| SyncError::UnknownGeometry(entry.geometry.clone()))?;
     let revision = entry.manifest_digest.as_str();
-    // An overload can occur after the directory commit but before pages finish.
-    // with_refusals calls this function again on retry. Resume those durable
-    // entries first: rediscovering their directories would enqueue duplicate
-    // work and leave the original entries pending after the retry succeeds.
+    let children = manifest.page_children.len() as u32;
+    // An overload can occur after the directory commit but before the walks
+    // finish. with_refusals calls this function again on retry. Resume those
+    // durable walks first: rediscovering their directories would enqueue
+    // duplicate work and leave the original walks pending after the retry.
     let pending: Vec<_> = store
         .pending()?
         .into_iter()
@@ -2116,9 +2124,8 @@ fn retrieve_shard_into<S: WalletStore>(
         if let Some(stopped) = finish_pages(
             store,
             entry,
+            manifest,
             &pending,
-            salt,
-            pages_query_rows,
             clients,
             transport,
             charges,
@@ -2141,11 +2148,6 @@ fn retrieve_shard_into<S: WalletStore>(
         .set_identity()?
         .map(|identity| identity.digest())
         .unwrap_or_default();
-    let GeometryClients {
-        directory,
-        pages,
-        schema,
-    } = clients;
     open_table(
         store,
         &set_digest,
@@ -2153,7 +2155,7 @@ fn retrieve_shard_into<S: WalletStore>(
         revision,
         Table::Directory,
         entry.directory_segments,
-        directory,
+        &mut clients.directory,
         transport,
         charges,
     )?;
@@ -2187,29 +2189,28 @@ fn retrieve_shard_into<S: WalletStore>(
         };
         for &row in queried {
             let (_, within) = transparent_shard::layout::split_row(row, geometry.directory_rows);
-            let answers = directory.fetch_row(
+            let directory_rows = clients.directory.rows();
+            let answers = clients.directory.fetch_row(
                 transport,
                 shard_id,
                 revision,
+                Table::Directory,
                 entry.directory_segments,
-                directory.rows(),
+                directory_rows,
                 within as usize,
                 charges,
             )?;
             for raw in answers {
-                for candidate in
-                    transparent_shard::records::decode_directory_row_with_schema(&raw, schema)?
-                {
+                for candidate in transparent_shard::records::decode_directory_row(&raw, children)? {
                     // The row is selected by a hash of the raw script. The tag
                     // derived from this manifest's salt is what settles a hit.
                     // A tag from any other salt does not match.
                     if candidate.tag == wanted {
                         match &found {
-                            // The two candidate hashes can name the same row
-                            // (one script in 8,192 at recent-8k). The row is
-                            // still fetched twice, so the query count does not
-                            // depend on the script, and the second sighting is
-                            // the same entry, not a second one.
+                            // The two candidate hashes can name the same row.
+                            // The row is still fetched twice, so the query
+                            // count does not depend on the script, and the
+                            // second sighting is the same entry, not a second.
                             Some((seen_row, _)) if *seen_row == row => {}
                             Some(_) => {
                                 return Err(SyncError::Invalid(format!(
@@ -2222,8 +2223,7 @@ fn retrieve_shard_into<S: WalletStore>(
                 }
             }
         }
-        let found = found.map(|(_, entry)| entry);
-        match found {
+        match found.map(|(_, entry)| entry) {
             // A filter match with no directory entry is either a false positive
             // or a script outside the private tables' coverage. Both are
             // wasted work rather than errors; coverage still advances.
@@ -2237,32 +2237,31 @@ fn retrieve_shard_into<S: WalletStore>(
                         revision_digest: revision.to_string(),
                     });
                 }
-                if let Some(base) = found.page_base() {
-                    pending_upsert.push(PendingPages {
-                        validated_events: found.inline.len() as u32,
-                        boundary: None,
-                        target_anchor: Some(target_anchor.clone()),
+                match found.head() {
+                    Some((child, row)) => pending_upsert.push(PendingPages {
                         id: None,
                         shard_id,
                         revision_digest: revision.to_string(),
                         script: script.clone(),
-                        first_page: base,
-                        page_count: 0,
-                        inline: found.inline.clone(),
-                        next_ordinal: 0,
+                        cursor: RunCursor {
+                            child,
+                            row,
+                            older_runs: None,
+                        },
+                        carried: found.inline.clone(),
                         attempts: 0,
-                    });
-                } else {
-                    covered.push(script.clone());
+                        target_anchor: Some(target_anchor.clone()),
+                    }),
+                    None => covered.push(script.clone()),
                 }
             }
         }
     }
 
     // The directory phase is one commit: inline events, coverage for every
-    // script that needs no pages, and the page work owed for the rest. Page
-    // retrieval that follows resumes from the store even if nothing else of
-    // this call survives.
+    // script that needs no pages, and the walk owed for the rest. The walks
+    // that follow resume from the store even if nothing else of this call
+    // survives.
     let pending_ids_before: std::collections::BTreeSet<u64> =
         store.pending()?.iter().filter_map(|p| p.id).collect();
     commit_bounded(
@@ -2280,6 +2279,7 @@ fn retrieve_shard_into<S: WalletStore>(
             covered_scripts: covered,
             pending_upsert,
             pending_complete: Vec::new(),
+            cached_runs: Vec::new(),
         },
     )?;
     let owed: Vec<PendingPages> = store
@@ -2294,13 +2294,11 @@ fn retrieve_shard_into<S: WalletStore>(
     if owed.is_empty() {
         return Ok(None);
     }
-    let _ = pages;
     finish_pages(
         store,
         entry,
+        manifest,
         &owed,
-        salt,
-        pages_query_rows,
         clients,
         transport,
         charges,
@@ -2310,21 +2308,18 @@ fn retrieve_shard_into<S: WalletStore>(
     )
 }
 
-/// Fetches the pages still owed for one shard revision, committing each
-/// page's events with the pending item's progress, and closing each item
-/// with its script's coverage when its total is accounted for.
+/// Walks the chains still owed for one directory shard revision, privately.
 ///
-/// Every pages query selects among the revision's first `query_rows`, from
-/// its verified manifest's [`ShardManifest::pages_query_rows`].
+/// Every query of `pages-<j>` selects among that page shard's first
+/// [`PageChild::query_rows`]. See [`walk_chains`] for the walk itself.
 #[allow(clippy::too_many_arguments)]
-fn finish_pages<S: WalletStore>(
+fn finish_pages<S: WalletStore, T: ShardTransport>(
     store: &mut S,
     entry: &transparent_filter::ShardMapEntry,
+    manifest: &ShardManifest,
     owed: &[PendingPages],
-    salt: &[u8; 32],
-    query_rows: usize,
     clients: &mut GeometryClients,
-    transport: &mut impl ShardTransport,
+    transport: &mut T,
     charges: &mut ByteCharges,
     limits: &WorkLimits,
     target_anchor: &Anchor,
@@ -2348,193 +2343,678 @@ fn finish_pages<S: WalletStore>(
             }
         }
     }
-    let shard_id = entry.shard_id;
-    let geometry = transparent_shard::layout::by_name(&entry.geometry)
-        .ok_or_else(|| SyncError::UnknownGeometry(entry.geometry.clone()))?;
-    let revision = entry.manifest_digest.as_str();
-    let set_digest = store
-        .set_identity()?
-        .map(|identity| identity.digest())
-        .unwrap_or_default();
-    let pages = &mut clients.pages;
-    open_table(
-        store,
-        &set_digest,
-        shard_id,
-        revision,
-        Table::Pages,
-        entry.page_segments,
-        pages,
+    let mut rows = PirRows {
+        entry,
+        manifest,
+        client: &mut clients.pages,
         transport,
         charges,
-    )?;
-    for item in owed {
-        let wanted = transparent_shard::script_tag(salt, &item.script);
-        let mut recovered = item.validated_events;
-        let mut boundary = item.boundary.clone();
-        if item.next_ordinal != 0 && boundary.is_none() {
-            return Err(SyncError::Invalid(
-                "missing resumed fragment boundary".into(),
-            ));
-        }
-        let mut ordinal = item.next_ordinal;
-        let mut page_count = item.page_count;
-        loop {
-            if page_count != 0 && ordinal >= page_count {
-                break;
-            }
-            if page_count == 0 && ordinal != 0 {
-                return Err(SyncError::Invalid(format!(
-                    "shard {shard_id} page extent is unknown past its first fragment"
-                )));
-            }
-            if let Some(reason) = budget_stopped(charges, limits) {
-                return Ok(Some(Completion::Incomplete {
-                    reason,
-                    pending: store.pending()?.len(),
-                }));
-            }
-            // The extent indexes the shard's page space, which is its segments
-            // concatenated. It must still land inside that space: a directory
-            // entry is a claim like any other.
-            let row = item.first_page.checked_add(ordinal).ok_or_else(|| {
-                SyncError::Invalid(format!("shard {shard_id} page extent overflows"))
-            })?;
-            let space = geometry.page_rows * u64::from(entry.page_segments);
-            let (_, within) = transparent_shard::layout::split_row(row as u64, geometry.page_rows);
-            if u64::from(row) >= space || within as usize >= query_rows {
-                // Still one query of the revision's usual length, as an entry
-                // that located a foreign page sends, so whether a directory
-                // entry pointed outside the selectable rows does not show.
-                pages.fetch_row(
-                    transport,
-                    shard_id,
-                    revision,
-                    entry.page_segments,
-                    query_rows,
-                    0,
-                    charges,
-                )?;
-                return Err(SyncError::Invalid(format!(
-                    "shard {shard_id} page {row} is outside its {space}-row table"
-                )));
-            }
-            let answers = pages.fetch_row(
-                transport,
+        limits,
+    };
+    walk_chains(store, entry, manifest, owed, &mut rows, target_anchor)
+}
+
+/// One page row a walk asks for: page shard `child`, and a row over its
+/// logical row space, which is its segments concatenated.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct RowRequest {
+    child: u32,
+    row: u64,
+}
+
+/// Where a walk's page rows come from: privately, or in tests, directly.
+trait RowSource {
+    /// Why the walk must stop before another round, if it must.
+    fn stopped(&self) -> Option<IncompleteReason>;
+    /// One answer per request, in request order: the row from every segment
+    /// of the page shard's table.
+    fn fetch<S: WalletStore>(
+        &mut self,
+        store: &mut S,
+        requests: &[RowRequest],
+    ) -> Result<Vec<Vec<Vec<u8>>>, SyncError>;
+}
+
+/// Page rows by private query against one directory shard revision.
+struct PirRows<'a, T: ShardTransport> {
+    entry: &'a transparent_filter::ShardMapEntry,
+    manifest: &'a ShardManifest,
+    client: &'a mut TableClient,
+    transport: &'a mut T,
+    charges: &'a mut ByteCharges,
+    limits: &'a WorkLimits,
+}
+
+impl<T: ShardTransport> RowSource for PirRows<'_, T> {
+    fn stopped(&self) -> Option<IncompleteReason> {
+        budget_stopped(self.charges, self.limits)
+    }
+
+    /// Sends a round's queries together when the transport overlaps
+    /// requests, one at a time otherwise. Which queries are sent is the
+    /// walk's alone; a batch changes only when.
+    fn fetch<S: WalletStore>(
+        &mut self,
+        store: &mut S,
+        requests: &[RowRequest],
+    ) -> Result<Vec<Vec<Vec<u8>>>, SyncError> {
+        let shard_id = self.entry.shard_id;
+        let revision = self.entry.manifest_digest.as_str();
+        let geometry = transparent_shard::layout::by_name(&self.entry.geometry)
+            .ok_or_else(|| SyncError::UnknownGeometry(self.entry.geometry.clone()))?;
+        let set_digest = store
+            .set_identity()?
+            .map(|identity| identity.digest())
+            .unwrap_or_default();
+        // Each request: its table, segment count, query rows and row within.
+        let mut planned = Vec::with_capacity(requests.len());
+        for request in requests {
+            let child = self
+                .manifest
+                .child(request.child)
+                .ok_or_else(|| SyncError::Invalid("a walk left the page shards".into()))?;
+            let table = Table::Pages(request.child);
+            let segments = child.page_segments.len() as u32;
+            open_table(
+                store,
+                &set_digest,
                 shard_id,
                 revision,
-                entry.page_segments,
-                query_rows,
-                within as usize,
-                charges,
+                table,
+                segments,
+                self.client,
+                self.transport,
+                self.charges,
             )?;
-            // A directory entry could point anywhere, and every segment
-            // answered; an entry's own header is what says whose history it
-            // holds, and exactly one may claim this fragment.
-            //
-            // A packed row also carries other scripts' histories. Those are
-            // discarded, and deliberately not used: two of a wallet's own
-            // scripts sharing a row still cost two fetches. Satisfying the
-            // second from the first response would make the request
-            // transcript depend on which scripts share a row, which is a
-            // fact about other people's history and not this wallet's.
-            let mut fragment = None;
-            for raw in answers {
-                for candidate in
-                    transparent_shard::page_row::decode_page_row_with_schema(&raw, &clients.schema)?
-                {
-                    if candidate.tag != wanted || candidate.ordinal != ordinal {
-                        continue;
+            let (_, within) = transparent_shard::layout::split_row(request.row, geometry.page_rows);
+            planned.push((
+                table,
+                segments,
+                child.query_rows() as usize,
+                within as usize,
+            ));
+        }
+        let mut answers = Vec::with_capacity(planned.len());
+        if self.transport.concurrency() <= 1 || planned.len() <= 1 {
+            for (table, segments, query_rows, within) in planned {
+                answers.push(self.client.fetch_row(
+                    self.transport,
+                    shard_id,
+                    revision,
+                    table,
+                    segments,
+                    query_rows,
+                    within,
+                    self.charges,
+                )?);
+            }
+            return Ok(answers);
+        }
+        let mut queries = Vec::with_capacity(planned.len());
+        for (table, _, query_rows, within) in &planned {
+            queries.push(
+                self.client
+                    .prepare_prefix(revision, *table, *query_rows, *within)?,
+            );
+        }
+        let batch: Vec<ShardRequest<'_>> = planned
+            .iter()
+            .zip(&queries)
+            .map(|((table, ..), query)| ShardRequest::Query {
+                shard_id,
+                revision,
+                table: *table,
+                body: &query.body,
+            })
+            .collect();
+        let replies = self.transport.batch(&batch);
+        drop(batch);
+        for (((table, segments, query_rows, within), query), reply) in
+            planned.into_iter().zip(queries).zip(replies)
+        {
+            match reply {
+                Some(Ok((response, _))) => {
+                    self.charges
+                        .add_query(table, query.body.len() as u64, response.len() as u64);
+                    answers.push(
+                        self.client
+                            .decode(revision, table, segments, query, &response)?,
+                    );
+                }
+                Some(Err(error)) => return Err(SyncError::Client(classify_transport(error))),
+                None => answers.push(self.client.fetch_row(
+                    self.transport,
+                    shard_id,
+                    revision,
+                    table,
+                    segments,
+                    query_rows,
+                    within,
+                    self.charges,
+                )?),
+            }
+        }
+        Ok(answers)
+    }
+}
+
+/// The history cached below a run, and the page shard of the cached run it
+/// starts from.
+type CachedBelow = (u8, Vec<TransparentEvent>);
+
+/// One script's chain walk in progress.
+struct Walk {
+    item: PendingPages,
+    /// The first fragment of the run at the cursor, once read.
+    head: Option<PageEntry>,
+    /// Runs read and committed in this call, newest first, with their page
+    /// shard: what the run cache is filled from once the walk ends.
+    walked: Vec<(u8, Vec<TransparentEvent>)>,
+    done: bool,
+}
+
+/// Walks the chains of runs `owed` describes, all scripts' rounds together,
+/// newest run first, committing each run once it is read and checked.
+///
+/// The first round reads the newest run's first fragment, which gives its
+/// fragment count `K` and its link. Each later round reads the rest of that
+/// run and the next older run's first fragment together, so a chain of `n`
+/// runs costs `n + 1` rounds. A walk reaching a run in a sealed page shard
+/// the store holds history for stops there and takes that history.
+///
+/// Refused, as protocol errors: a link to the same or a later page shard;
+/// an `older_runs` that does not drop by exactly one per hop, which is how a
+/// chain cut short or extended shows; fragments out of ordinal, count or
+/// greedy boundary; events not strictly increasing from the oldest run into
+/// the inline events; and an event in a page shard other than the one open
+/// when it was pushed out — the event two places after it must lie in that
+/// page shard's range.
+fn walk_chains<S: WalletStore, R: RowSource>(
+    store: &mut S,
+    entry: &transparent_filter::ShardMapEntry,
+    manifest: &ShardManifest,
+    owed: &[PendingPages],
+    rows: &mut R,
+    target_anchor: &Anchor,
+) -> Result<Option<Completion>, SyncError> {
+    let geometry = transparent_shard::layout::by_name(&entry.geometry)
+        .ok_or_else(|| SyncError::UnknownGeometry(entry.geometry.clone()))?;
+    let identities: Vec<String> = manifest.child_digests().iter().map(hex::encode).collect();
+    let salts = manifest
+        .page_children
+        .iter()
+        .map(|child| {
+            let terminal = BlockHash::from_display_hex(&child.terminal_block_hash)?;
+            Ok(transparent_shard::page_tag_salt(
+                manifest.shard_id,
+                child.index,
+                child.end_height,
+                &terminal,
+                child.tag_salt_counter,
+            ))
+        })
+        .collect::<Result<Vec<[u8; 32]>, SyncError>>()?;
+    let walker = Walker {
+        entry,
+        manifest,
+        geometry,
+        identities: &identities,
+        salts: &salts,
+        target_anchor,
+    };
+    let mut walks: Vec<Walk> = owed
+        .iter()
+        .map(|item| Walk {
+            item: item.clone(),
+            head: None,
+            walked: Vec::new(),
+            done: false,
+        })
+        .collect();
+    loop {
+        // A walk at a run the store holds history for stops there.
+        for walk in walks.iter_mut().filter(|w| !w.done && w.head.is_none()) {
+            let child = walk.item.cursor.child;
+            if let Some(older) = walker.cached(store, &walk.item.script, child)? {
+                walker.finish(store, walk, Vec::new(), Some((child, older)))?;
+            }
+        }
+        if walks.iter().all(|walk| walk.done) {
+            return Ok(None);
+        }
+        if let Some(reason) = rows.stopped() {
+            return Ok(Some(Completion::Incomplete {
+                reason,
+                pending: store.pending()?.len(),
+            }));
+        }
+
+        // This round's rows, every walk's together.
+        let mut requests: Vec<RowRequest> = Vec::new();
+        let mut spans: Vec<(usize, usize, Option<CachedBelow>)> = Vec::new();
+        for walk in &walks {
+            let start = requests.len();
+            let mut older = None;
+            if !walk.done {
+                let cursor = walk.item.cursor;
+                match &walk.head {
+                    None => requests.push(walker.locate(cursor.child, u64::from(cursor.row))?),
+                    Some(head) => {
+                        for ordinal in 1..head.fragment_count {
+                            let row = u64::from(cursor.row) + u64::from(ordinal);
+                            requests.push(walker.locate(cursor.child, row)?);
+                        }
+                        if let Some((child, row)) = head.link.previous() {
+                            older = walker
+                                .cached(store, &walk.item.script, child)?
+                                .map(|events| (child, events));
+                            if older.is_none() {
+                                requests.push(walker.locate(child, u64::from(row))?);
+                            }
+                        }
                     }
-                    if page_count != 0 && candidate.fragment_count != page_count {
-                        continue;
-                    }
-                    if fragment.is_some() {
-                        return Err(SyncError::Invalid(format!(
-                            "shard {shard_id} holds page {row} twice"
-                        )));
-                    }
-                    fragment = Some(candidate);
                 }
             }
-            let fragment = fragment.ok_or_else(|| {
-                SyncError::Invalid(format!(
-                    "shard {shard_id} page {row} does not belong to the entry that located it"
-                ))
-            })?;
-            if page_count == 0 {
-                if fragment.fragment_count == 0 || ordinal != 0 {
+            spans.push((start, requests.len(), older));
+        }
+        let answers = rows.fetch(store, &requests)?;
+        if answers.len() != requests.len() {
+            return Err(SyncError::Invalid("a round lost an answer".into()));
+        }
+        for (walk, (start, end, older)) in walks.iter_mut().zip(spans) {
+            if walk.done {
+                continue;
+            }
+            walker.advance(store, walk, &answers[start..end], older)?;
+        }
+    }
+}
+
+/// What a walk checks against, for one directory shard revision.
+struct Walker<'a> {
+    entry: &'a transparent_filter::ShardMapEntry,
+    manifest: &'a ShardManifest,
+    geometry: &'static transparent_shard::layout::Geometry,
+    /// Each page shard's chained identity, in hex: the run cache's key.
+    identities: &'a [String],
+    /// Each page shard's tag salt.
+    salts: &'a [[u8; 32]],
+    target_anchor: &'a Anchor,
+}
+
+impl Walker<'_> {
+    fn child(&self, child: u8) -> Result<&PageChild, SyncError> {
+        self.manifest.child(u32::from(child)).ok_or_else(|| {
+            SyncError::Invalid(format!(
+                "shard {} names page shard {child}, which it does not declare",
+                self.entry.shard_id
+            ))
+        })
+    }
+
+    /// The request for `row` of page shard `child`, if the row is one a
+    /// query of that table can select. A pointer is a claim like any other.
+    fn locate(&self, child: u8, row: u64) -> Result<RowRequest, SyncError> {
+        let shard_id = self.entry.shard_id;
+        let page = self.child(child)?;
+        if page.page_segments.is_empty() {
+            return Err(SyncError::Invalid(format!(
+                "shard {shard_id} points into page shard {child}, which holds no rows"
+            )));
+        }
+        let space = self.geometry.page_rows * page.page_segments.len() as u64;
+        let (_, within) = transparent_shard::layout::split_row(row, self.geometry.page_rows);
+        if row >= space || within >= page.query_rows() {
+            return Err(SyncError::Invalid(format!(
+                "shard {shard_id} page {row} is outside page shard {child}'s table"
+            )));
+        }
+        Ok(RowRequest {
+            child: u32::from(child),
+            row,
+        })
+    }
+
+    /// The history cached for `script` from its run in page shard `child`
+    /// back to the start of the directory shard, when that page shard is
+    /// sealed. Each cached run holds only its own events and names the cached
+    /// run below it, so the history is put back together by following those
+    /// names; a missing run anywhere along the way is a miss.
+    fn cached<S: WalletStore>(
+        &self,
+        store: &S,
+        script: &[u8],
+        child: u8,
+    ) -> Result<Option<Vec<TransparentEvent>>, SyncError> {
+        if !self.child(child)?.sealed {
+            return Ok(None);
+        }
+        let corrupt = |why: &str| SyncError::Store(StoreError::Corrupt(why.into()));
+        let mut index = usize::from(child);
+        let mut runs = Vec::new();
+        loop {
+            let Some(run) = store.cached_run(&self.identities[index], script)? else {
+                return Ok(None);
+            };
+            if run.events.is_empty() {
+                return Err(corrupt("a cached run holds no events"));
+            }
+            runs.push(run.events);
+            let Some(older) = run.older else { break };
+            // The identity of a page shard covers every older one, so the run
+            // below must be in an earlier page shard of this directory shard.
+            index = self.identities[..index]
+                .iter()
+                .position(|identity| *identity == older)
+                .ok_or_else(|| {
+                    corrupt("a cached run names a run outside the page shards below it")
+                })?;
+        }
+        let mut history: Vec<TransparentEvent> = Vec::new();
+        for run in runs.into_iter().rev() {
+            if let (Some(last), Some(first)) = (history.last(), run.first()) {
+                if last.sort_key() >= first.sort_key() {
+                    return Err(corrupt("cached runs are not in order"));
+                }
+            }
+            history.extend(run);
+        }
+        Ok(Some(history))
+    }
+
+    /// The one fragment of `script`'s run in page shard `child` with this
+    /// ordinal, among every segment's row. Exactly one may claim it.
+    fn fragment(
+        &self,
+        script: &[u8],
+        child: u8,
+        answers: &[Vec<u8>],
+        ordinal: u32,
+        count: Option<u32>,
+    ) -> Result<PageEntry, SyncError> {
+        let shard_id = self.entry.shard_id;
+        let wanted = transparent_shard::script_tag(&self.salts[usize::from(child)], script);
+        // A packed row also carries other scripts' histories. Those are
+        // discarded, and deliberately not used: two of a wallet's own scripts
+        // sharing a row still cost two fetches, so the request transcript does
+        // not depend on which scripts share a row.
+        let mut found = None;
+        for raw in answers {
+            for candidate in transparent_shard::page_row::decode_page_row(raw)? {
+                if candidate.tag != wanted || candidate.ordinal != ordinal {
+                    continue;
+                }
+                if count.is_some_and(|count| candidate.fragment_count != count) {
                     return Err(SyncError::Invalid(format!(
-                        "shard {shard_id} page {row} has no fragment count"
+                        "shard {shard_id} page shard {child}: fragment {ordinal} disagrees with \
+                         its run's fragment count"
                     )));
                 }
-                page_count = fragment.fragment_count;
+                if found.is_some() {
+                    return Err(SyncError::Invalid(format!(
+                        "shard {shard_id} page shard {child} holds fragment {ordinal} twice"
+                    )));
+                }
+                found = Some(candidate);
             }
-            let last = ordinal + 1 == page_count;
-            let next_boundary = validate_page_boundary(boundary.as_ref(), &fragment.events)?;
-            let last_event = *fragment.events.last().expect("nonempty fragment");
-            if last
-                && item
-                    .inline
-                    .first()
-                    .is_some_and(|inline| last_event.sort_key() > inline.sort_key())
-            {
-                return Err(SyncError::Invalid(
-                    "paged history follows inline history".into(),
-                ));
-            }
-            boundary = Some(next_boundary);
-            recovered = recovered
-                .checked_add(fragment.events.len() as u32)
-                .ok_or_else(|| SyncError::Invalid("page event count overflow".into()))?;
-            let events: Vec<StoredEvent> = fragment
-                .events
-                .iter()
-                .map(|event| StoredEvent {
-                    script: item.script.clone(),
-                    event: *event,
-                    shard_id,
-                    revision_digest: revision.to_string(),
-                })
-                .collect();
-            let mut progressed = item.clone();
-            progressed.page_count = page_count;
-            progressed.next_ordinal = ordinal + 1;
-            progressed.validated_events = recovered;
-            progressed.boundary = boundary.clone();
-            progressed.attempts += 1;
-            commit_bounded(
-                store,
-                target_anchor,
-                ShardCommit {
-                    source_anchor: None,
-                    shard_id,
-                    revision_digest: revision.to_string(),
-                    sealed: entry.sealed,
-                    start_height: entry.start_height,
-                    end_height: entry.end_height,
-                    terminal_block_hash: entry.terminal_block_hash.clone(),
-                    events,
-                    covered_scripts: if last {
-                        vec![item.script.clone()]
-                    } else {
-                        Vec::new()
-                    },
-                    pending_upsert: if last { Vec::new() } else { vec![progressed] },
-                    pending_complete: if last {
-                        item.id.into_iter().collect()
-                    } else {
-                        Vec::new()
-                    },
-                },
+        }
+        found.ok_or_else(|| {
+            SyncError::Invalid(format!(
+                "shard {shard_id} page shard {child}: the row a link located does not hold \
+                 fragment {ordinal} of the run"
+            ))
+        })
+    }
+
+    /// Takes one walk through one round's answers.
+    fn advance<S: WalletStore>(
+        &self,
+        store: &mut S,
+        walk: &mut Walk,
+        answers: &[Vec<Vec<u8>>],
+        older: Option<CachedBelow>,
+    ) -> Result<(), SyncError> {
+        let cursor = walk.item.cursor;
+        let script = walk.item.script.clone();
+        let Some(head) = walk.head.take() else {
+            let [answer] = answers else {
+                return Err(SyncError::Invalid("a round lost an answer".into()));
+            };
+            let head = self.fragment(&script, cursor.child, answer, 0, None)?;
+            check_head(&head, &cursor)?;
+            walk.head = Some(head);
+            return Ok(());
+        };
+
+        let count = head.fragment_count as usize;
+        let (rest, next) = answers.split_at((count - 1).min(answers.len()));
+        if rest.len() != count - 1 {
+            return Err(SyncError::Invalid("a round lost an answer".into()));
+        }
+        let mut boundary = validate_page_boundary(None, &head.events)?;
+        let mut run = head.events.clone();
+        for (index, answer) in rest.iter().enumerate() {
+            let fragment = self.fragment(
+                &script,
+                cursor.child,
+                answer,
+                index as u32 + 1,
+                Some(head.fragment_count),
             )?;
-            ordinal += 1;
-            if last {
-                break;
+            boundary = validate_page_boundary(Some(&boundary), &fragment.events)?;
+            run.extend(fragment.events);
+        }
+        check_run(self.child(cursor.child)?, &run, &walk.item.carried)?;
+        walk.walked.push((cursor.child, run.clone()));
+
+        match head.link.previous() {
+            None => {
+                if !next.is_empty() {
+                    return Err(SyncError::Invalid("a round lost an answer".into()));
+                }
+                self.finish(store, walk, run, None)
+            }
+            Some(_) if older.is_some() => self.finish(store, walk, run, older),
+            Some((child, row)) => {
+                let [answer] = next else {
+                    return Err(SyncError::Invalid("a round lost an answer".into()));
+                };
+                let next_cursor = RunCursor {
+                    child,
+                    row,
+                    older_runs: Some(head.link.older_runs - 1),
+                };
+                let next_head = self.fragment(&script, child, answer, 0, None)?;
+                check_head(&next_head, &next_cursor)?;
+                let mut following = run.clone();
+                following.extend(walk.item.carried.iter().copied());
+                following.truncate(2);
+                let mut progressed = walk.item.clone();
+                progressed.cursor = next_cursor;
+                progressed.carried = following;
+                progressed.attempts += 1;
+                self.commit(
+                    store,
+                    &script,
+                    run,
+                    Some(progressed.clone()),
+                    None,
+                    Vec::new(),
+                )?;
+                walk.item = progressed;
+                walk.head = Some(next_head);
+                Ok(())
             }
         }
     }
-    Ok(None)
+
+    /// Ends a walk: `run` is the last run read, `older` the page shard and
+    /// history cached below it, if the walk stopped at a cached run. Fills the
+    /// run cache for every run this call read in a sealed page shard: each
+    /// with its own events and the name of the cached run below it.
+    fn finish<S: WalletStore>(
+        &self,
+        store: &mut S,
+        walk: &mut Walk,
+        run: Vec<TransparentEvent>,
+        older: Option<CachedBelow>,
+    ) -> Result<(), SyncError> {
+        let (mut below, older) = match older {
+            Some((child, events)) => (Some(self.identities[usize::from(child)].clone()), events),
+            None => (None, Vec::new()),
+        };
+        let newer = run.first().or(walk.item.carried.first());
+        if let (Some(last), Some(first)) = (older.last(), newer) {
+            if last.sort_key() >= first.sort_key() {
+                return Err(SyncError::Invalid(
+                    "cached history is not older than the run that links to it".into(),
+                ));
+            }
+        }
+        let mut cached_runs = Vec::new();
+        for (child, events) in walk.walked.iter().rev() {
+            // Only the newest run can be in the open page shard, so every run
+            // below a cached one is cached too.
+            if !self.child(*child)?.sealed {
+                break;
+            }
+            let identity = self.identities[usize::from(*child)].clone();
+            cached_runs.push(CachedRun {
+                child_digest: identity.clone(),
+                script: walk.item.script.clone(),
+                shard_id: self.entry.shard_id,
+                events: events.clone(),
+                older: below.replace(identity),
+            });
+        }
+        let mut events = older;
+        events.extend(run);
+        let script = walk.item.script.clone();
+        self.commit(store, &script, events, None, walk.item.id, cached_runs)?;
+        walk.done = true;
+        Ok(())
+    }
+
+    /// Commits a step of one walk: the events it read, and either the walk's
+    /// next state or its end, with the script's coverage.
+    fn commit<S: WalletStore>(
+        &self,
+        store: &mut S,
+        script: &[u8],
+        events: Vec<TransparentEvent>,
+        progressed: Option<PendingPages>,
+        finished: Option<u64>,
+        cached_runs: Vec<CachedRun>,
+    ) -> Result<(), SyncError> {
+        let entry = self.entry;
+        let done = progressed.is_none();
+        commit_bounded(
+            store,
+            self.target_anchor,
+            ShardCommit {
+                source_anchor: None,
+                shard_id: entry.shard_id,
+                revision_digest: entry.manifest_digest.clone(),
+                sealed: entry.sealed,
+                start_height: entry.start_height,
+                end_height: entry.end_height,
+                terminal_block_hash: entry.terminal_block_hash.clone(),
+                events: events
+                    .into_iter()
+                    .map(|event| StoredEvent {
+                        script: script.to_vec(),
+                        event,
+                        shard_id: entry.shard_id,
+                        revision_digest: entry.manifest_digest.clone(),
+                    })
+                    .collect(),
+                covered_scripts: if done {
+                    vec![script.to_vec()]
+                } else {
+                    Vec::new()
+                },
+                pending_upsert: progressed.into_iter().collect(),
+                pending_complete: finished.into_iter().collect(),
+                cached_runs,
+            },
+        )?;
+        Ok(())
+    }
+}
+
+/// Checks a run's first fragment against the cursor that located it.
+///
+/// Its `older_runs` must be the one fewer the newer run promised — which is
+/// what makes a chain cut short, or one that carries on past where it should
+/// end, a refusal rather than a shorter or longer history. It may not claim
+/// more older runs than there are earlier page shards, and its link must
+/// point to an earlier page shard: never this one, never a later one.
+fn check_head(head: &PageEntry, cursor: &RunCursor) -> Result<(), SyncError> {
+    let link = head.link;
+    match cursor.older_runs {
+        Some(expected) if link.older_runs != expected => {
+            return Err(SyncError::Invalid(format!(
+                "a run in page shard {} reports {} older runs where its chain promised {expected}",
+                cursor.child, link.older_runs
+            )))
+        }
+        _ if link.older_runs > cursor.child => {
+            return Err(SyncError::Invalid(format!(
+                "a run in page shard {} reports {} older runs",
+                cursor.child, link.older_runs
+            )))
+        }
+        _ => {}
+    }
+    if let Some((child, _)) = link.previous() {
+        if child >= cursor.child {
+            return Err(SyncError::Invalid(format!(
+                "a run in page shard {} links to page shard {child}, which is not earlier",
+                cursor.child
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Checks a run against the two events after it and its page shard.
+///
+/// Events strictly increase from the run into `carried`. Each of the run's
+/// events was pushed out when the event two places after it arrived, into the
+/// page shard open then, so that event's height lies in this page shard's
+/// range. A run placed in any other page shard fails here.
+fn check_run(
+    child: &PageChild,
+    run: &[TransparentEvent],
+    carried: &[TransparentEvent],
+) -> Result<(), SyncError> {
+    if run.is_empty() || carried.len() != transparent_shard::INLINE_EVENTS as usize {
+        return Err(SyncError::Invalid(format!(
+            "a run in page shard {} cannot be checked",
+            child.index
+        )));
+    }
+    let following: Vec<&TransparentEvent> = run.iter().chain(carried).collect();
+    if following
+        .windows(2)
+        .any(|pair| pair[0].sort_key() >= pair[1].sort_key())
+    {
+        return Err(SyncError::Invalid(format!(
+            "a run in page shard {} is not older than the history after it",
+            child.index
+        )));
+    }
+    for (index, _) in run.iter().enumerate() {
+        let height = event_height(following[index + 2]);
+        if height < child.start_height || height > child.end_height {
+            return Err(SyncError::Invalid(format!(
+                "an event in page shard {} was pushed out at height {height}, when that page \
+                 shard was not open",
+                child.index
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn validate_page_boundary(
@@ -2579,11 +3059,11 @@ fn open_table<S: WalletStore>(
     if segments == 0 {
         return Err(SyncError::Invalid(format!(
             "shard {shard_id} declares no {} segments",
-            table.as_str()
+            table.name()
         )));
     }
     for segment in 0..segments {
-        if client.is_open(revision, segment) {
+        if client.is_open(revision, table, segment) {
             continue;
         }
         let key = SetupKey {
@@ -2612,7 +3092,7 @@ fn open_table<S: WalletStore>(
                 (params, digest)
             }
         };
-        client.open_segment(revision, segment, &params, &digest)?;
+        client.open_segment(revision, table, segment, &params, &digest)?;
         // Kept only after the client verified it against its digest.
         store.put_setup(
             &key,
@@ -2651,7 +3131,7 @@ fn commit_bounded<S: WalletStore>(
         .events
         .iter()
         .map(|e| &e.event)
-        .chain(commit.pending_upsert.iter().flat_map(|p| p.inline.iter()))
+        .chain(commit.pending_upsert.iter().flat_map(|p| p.carried.iter()))
     {
         let height = event_height(event);
         if height < commit.start_height || height > source.height {
@@ -2665,12 +3145,11 @@ fn commit_bounded<S: WalletStore>(
         commit.end_height = target.height;
         commit.terminal_block_hash = target.hash.clone();
     }
+    // Events above the target are not kept. A walk's carried events are not
+    // history but what it checks the next run against, so they stay whole.
     commit
         .events
         .retain(|e| event_height(&e.event) <= target.height);
-    for pending in &mut commit.pending_upsert {
-        pending.inline.retain(|e| event_height(e) <= target.height);
-    }
     Ok(store.commit_shard(commit)?)
 }
 
@@ -2770,7 +3249,7 @@ mod tests {
     fn entry(shard_id: u64, start: u64, end: u64, sealed: bool) -> ShardMapEntry {
         ShardMapEntry {
             shard_id,
-            geometry: "recent-8k".into(),
+            geometry: "decoupled-2k-8k".into(),
             start_height: start,
             end_height: end,
             parent_block_hash: format!("{:064x}", shard_id),
@@ -2790,7 +3269,7 @@ mod tests {
     fn map(shards: Vec<ShardMapEntry>) -> ShardMap {
         let mut seal = std::collections::BTreeMap::new();
         seal.insert(
-            "recent-8k".to_string(),
+            "decoupled-2k-8k".to_string(),
             SealParameters {
                 max_scripts: 98_304,
                 max_page_rows: 7_936,
@@ -3113,18 +3592,18 @@ mod tests {
             shard_id: 2,
             revision_digest: "11".repeat(32),
             script: vec![1],
-            first_page: 0,
-            page_count: 0,
-            inline: Vec::new(),
-            next_ordinal: 0,
+            cursor: RunCursor {
+                child: 0,
+                row: 0,
+                older_runs: None,
+            },
+            carried: Vec::new(),
             attempts: 0,
-            validated_events: 0,
-            boundary: None,
             target_anchor: Some(target.clone()),
         };
         let declaration = |shard_id: u64, sealed: bool| transparent_filter::SupersededShard {
             shard_id,
-            geometry: "recent-8k".into(),
+            geometry: "decoupled-2k-8k".into(),
             start_height: 250,
             end_height: 299,
             terminal_block_hash: "bb".repeat(32),
@@ -3233,12 +3712,16 @@ mod tests {
     fn reseal_is_refused_but_a_new_geometry_is_not() {
         let before = map(vec![entry(0, 100, 199, true)]);
         let mut resealed = before.clone();
-        resealed.seal.get_mut("recent-8k").unwrap().max_page_rows = 1;
+        resealed
+            .seal
+            .get_mut("decoupled-2k-8k")
+            .unwrap()
+            .max_page_rows = 1;
         assert!(check_continuation(&before, &resealed, 199).is_err());
 
         let mut widened = before.clone();
         widened.seal.insert(
-            "archive-wide".to_string(),
+            "decoupled-32k-32k".to_string(),
             SealParameters {
                 max_scripts: 393_216,
                 max_page_rows: 63_488,
@@ -3273,8 +3756,11 @@ mod tests {
             seal: ManifestSeal {
                 scripts_target: seal.max_scripts,
                 scripts_capacity: seal.max_scripts * 2,
+                directory_bytes_target: 1,
+                directory_bytes_capacity: 2,
                 page_rows_target: seal.max_page_rows,
                 page_rows_capacity: geometry.page_rows,
+                max_page_children: transparent_shard::MAX_PAGE_CHILDREN,
             },
             layout: ManifestLayout {
                 max_script_bytes: transparent_shard::MAX_SCRIPT_BYTES as u32,
@@ -3292,17 +3778,44 @@ mod tests {
                     sha256: format!("{:064x}", 1000 + i),
                 })
                 .collect(),
-            page_segments: (0..entry.page_segments)
-                .map(|i| TableGeometry {
-                    rows: geometry.page_rows,
-                    row_bytes: geometry.page_row_bytes as u32,
-                    sha256: format!("{:064x}", 2000 + i),
+            // One page shard per map-declared page shard: all but the last a
+            // single block, the last the rest of the range.
+            page_children: (0..u64::from(entry.page_segments))
+                .map(|i| {
+                    let last = i + 1 == u64::from(entry.page_segments);
+                    PageChild {
+                        index: i as u32,
+                        start_height: entry.start_height + i,
+                        end_height: if last {
+                            entry.end_height
+                        } else {
+                            entry.start_height + i
+                        },
+                        terminal_block_hash: if last {
+                            entry.terminal_block_hash.clone()
+                        } else {
+                            format!("{:064x}", 3000 + i)
+                        },
+                        tag_salt_counter: 0,
+                        sealed: entry.sealed || !last,
+                        page_segments: vec![TableGeometry {
+                            rows: geometry.page_rows,
+                            row_bytes: geometry.page_row_bytes as u32,
+                            sha256: format!("{:064x}", 2000 + i),
+                        }],
+                        occupancy: transparent_shard::manifest::PageChildOccupancy {
+                            page_rows: 1,
+                            fragments: 1,
+                            runs: 1,
+                            events: 1,
+                        },
+                    }
                 })
                 .collect(),
             occupancy: ManifestOccupancy {
                 scripts: 1,
-                page_rows: 1,
-                fragments: 1,
+                page_rows: u64::from(entry.page_segments),
+                fragments: u64::from(entry.page_segments),
                 events: 1,
                 blocks: 100,
                 txids: 1,
@@ -3412,7 +3925,10 @@ mod tests {
         // A map entry that disagrees with a genuine manifest names the field.
         type Mutation = Box<dyn Fn(&mut ShardMapEntry)>;
         let cases: Vec<(&str, Mutation)> = vec![
-            ("geometry", Box::new(|e| e.geometry = "recent-4k".into())),
+            (
+                "geometry",
+                Box::new(|e| e.geometry = "decoupled-32k-32k".into()),
+            ),
             ("range", Box::new(|e| e.end_height = 250)),
             (
                 "parent_block_hash",
@@ -3531,5 +4047,798 @@ mod tests {
         assert_eq!(next.event_bytes, 79); // References reset at the new fragment.
         assert!(validate_page_boundary(Some(&next), &[receive]).is_err());
         assert!(validate_page_boundary(None, &[]).is_err());
+    }
+}
+
+/// The chain walk over real built tables, read directly: every check a walk
+/// makes, and the run cache stopping it.
+#[cfg(test)]
+mod walk_tests {
+    use super::*;
+    use transparent_events::{ReceiveEvent, SpendEvent, Txid};
+    use transparent_filter::ShardMapEntry;
+    use transparent_shard::build::{Block, Built, BuiltChild, BuiltDirectory, ShardStream};
+    use transparent_shard::layout::DECOUPLED_2K_8K;
+    use transparent_shard::manifest::{
+        ManifestLayout, ManifestOccupancy, ManifestSeal, PageChildOccupancy, TableGeometry,
+    };
+    use transparent_shard::page_row::RunLink;
+    use transparent_shard::seal::{DecoupledPolicy, Limit};
+
+    fn hash_at(height: u64) -> BlockHash {
+        let mut bytes = [3u8; 32];
+        bytes[..8].copy_from_slice(&height.to_le_bytes());
+        BlockHash::from_internal_bytes(bytes)
+    }
+
+    fn script(tag: u32) -> Vec<u8> {
+        let mut bytes = vec![0x76, 0xa9, 0x14];
+        bytes.extend_from_slice(&tag.to_le_bytes());
+        bytes.extend_from_slice(&[0u8; 16]);
+        bytes.extend_from_slice(&[0x88, 0xac]);
+        bytes
+    }
+
+    fn receive(height: u32, nonce: u32) -> TransparentEvent {
+        let mut txid = [0u8; 32];
+        txid[..4].copy_from_slice(&nonce.to_le_bytes());
+        txid[4..8].copy_from_slice(&height.to_le_bytes());
+        TransparentEvent::Receive(ReceiveEvent {
+            metadata: None,
+            height,
+            txid: Txid(txid),
+            transaction_index: 0,
+            output_index: nonce,
+            value: 1_000,
+            coinbase: false,
+        })
+    }
+
+    fn spend(height: u32, nonce: u32) -> TransparentEvent {
+        let mut txid = [0u8; 32];
+        txid[..4].copy_from_slice(&nonce.to_le_bytes());
+        txid[4..8].copy_from_slice(&height.to_le_bytes());
+        TransparentEvent::Spend(SpendEvent {
+            metadata: None,
+            height,
+            spending_txid: Txid(txid),
+            transaction_index: 1,
+            input_index: nonce,
+            spent_txid: Txid([7; 32]),
+            spent_output_index: nonce,
+        })
+    }
+
+    /// `count` blocks from `first`: four busy scripts, which build long
+    /// chains, and many quiet ones whose pushed-out events close page shards.
+    fn chain(first: u64, count: u64) -> Vec<Block> {
+        let mut state = 0x2545_f491_4f6c_dd1du64;
+        let mut next = move |bound: u64| {
+            state = state.wrapping_add(0x9e37_79b9_7f4a_7c15);
+            let mut z = state;
+            z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+            (z ^ (z >> 31)) % bound
+        };
+        let mut nonce = 0u32;
+        (first..first + count)
+            .map(|height| {
+                let mut events = Vec::new();
+                for _ in 0..1 + next(5) {
+                    let tag = if next(2) == 0 {
+                        next(4) as u32
+                    } else {
+                        100 + next(60) as u32
+                    };
+                    nonce += 1;
+                    let at = height as u32;
+                    let event = if next(3) == 0 {
+                        spend(at, nonce)
+                    } else {
+                        receive(at, nonce)
+                    };
+                    events.push((ScriptBytes::new(script(tag)), event));
+                }
+                (height, events)
+            })
+            .collect()
+    }
+
+    /// The chain every walk test reads: busy and quiet scripts, then two
+    /// blocks in which only the busiest script is active, so the open page
+    /// shard of the tail holds a run of a script with older runs.
+    fn blocks() -> Vec<Block> {
+        let mut blocks = chain(1_000, 80);
+        let last = blocks.last().unwrap().0;
+        for (offset, nonce) in [(1u64, 900_001u32), (2, 900_002)] {
+            let height = last + offset;
+            blocks.push((
+                height,
+                vec![(ScriptBytes::new(script(0)), receive(height as u32, nonce))],
+            ));
+        }
+        blocks
+    }
+
+    struct Directory {
+        built: BuiltDirectory,
+        children: Vec<BuiltChild>,
+    }
+
+    /// [`blocks`] and what they build, once per test binary: building is
+    /// the slow part of every walk test.
+    fn fixture() -> &'static (Vec<Block>, Vec<Directory>) {
+        static FIXTURE: std::sync::OnceLock<(Vec<Block>, Vec<Directory>)> =
+            std::sync::OnceLock::new();
+        FIXTURE.get_or_init(|| {
+            let blocks = blocks();
+            let directories = build(&blocks);
+            (blocks, directories)
+        })
+    }
+
+    /// Directory shards over `blocks` under a policy that closes a page shard
+    /// at two rows and a directory shard at 32 page shards. The last is a
+    /// tail whose last page shard is open.
+    fn build(blocks: &[Block]) -> Vec<Directory> {
+        let policy = DecoupledPolicy {
+            scripts: Limit::new(10_000, 20_000).unwrap(),
+            directory_bytes: Limit::new(1_000_000, 2_000_000).unwrap(),
+            page_rows: Limit::new(2, 4).unwrap(),
+            max_children: 32,
+            ..DecoupledPolicy::for_geometry(&DECOUPLED_2K_8K)
+        };
+        let genesis =
+            BlockHash::from_display_hex(transparent_filter::MAINNET_GENESIS_DISPLAY).unwrap();
+        let mut stream = ShardStream::with_policy(
+            &DECOUPLED_2K_8K,
+            policy,
+            blocks[0].0,
+            0,
+            genesis,
+            transparent_filter::RANGE_PROFILE,
+        )
+        .unwrap();
+        let terminal = |height: u64| Some(hash_at(height));
+        let mut out = Vec::new();
+        for block in blocks {
+            out.extend(stream.push_block(block.clone(), &terminal).unwrap());
+        }
+        out.extend(stream.finish(&terminal).unwrap());
+        let mut directories = Vec::new();
+        let mut children = Vec::new();
+        for built in out {
+            match built {
+                Built::Child(child) => children.push(child),
+                Built::Directory { built, .. } => directories.push(Directory {
+                    built,
+                    children: std::mem::take(&mut children),
+                }),
+            }
+        }
+        directories
+    }
+
+    fn manifest_of(directory: &Directory) -> ShardManifest {
+        let built = &directory.built;
+        let geometry = built.geometry;
+        let page_children: Vec<PageChild> = directory
+            .children
+            .iter()
+            .map(|child| PageChild {
+                index: child.index,
+                start_height: child.start_height,
+                end_height: child.end_height,
+                terminal_block_hash: child.terminal_block_hash.to_display_hex(),
+                tag_salt_counter: child.tag_salt_counter,
+                sealed: child.sealed,
+                page_segments: child
+                    .segment_digests(geometry)
+                    .iter()
+                    .map(|digest| TableGeometry {
+                        rows: geometry.page_rows,
+                        row_bytes: geometry.page_row_bytes as u32,
+                        sha256: hex::encode(digest),
+                    })
+                    .collect(),
+                occupancy: PageChildOccupancy {
+                    page_rows: child.page_rows,
+                    fragments: child.fragments,
+                    runs: child.runs,
+                    events: child.events,
+                },
+            })
+            .collect();
+        ShardManifest {
+            schema: transparent_shard::SCHEMA.to_string(),
+            profile: transparent_filter::RANGE_PROFILE.to_string(),
+            geometry: geometry.name.to_string(),
+            network: "main".into(),
+            genesis_hash: transparent_filter::MAINNET_GENESIS_DISPLAY.into(),
+            shard_id: built.shard_id,
+            start_height: built.start_height,
+            end_height: built.end_height,
+            parent_block_hash: hash_at(built.start_height - 1).to_display_hex(),
+            terminal_block_hash: hash_at(built.end_height).to_display_hex(),
+            tag_salt_counter: built.tag_salt_counter,
+            parent_manifest_digest: String::new(),
+            sealed: built.sealed,
+            revision: 0,
+            supersedes: String::new(),
+            seal: ManifestSeal {
+                scripts_target: 10_000,
+                scripts_capacity: 20_000,
+                directory_bytes_target: 1_000_000,
+                directory_bytes_capacity: 2_000_000,
+                page_rows_target: 2,
+                page_rows_capacity: 4,
+                max_page_children: 32,
+            },
+            layout: ManifestLayout::current(),
+            filter_hash: "00".repeat(32),
+            directory_segments: vec![TableGeometry {
+                rows: geometry.directory_rows,
+                row_bytes: geometry.directory_row_bytes as u32,
+                sha256: "00".repeat(32),
+            }],
+            occupancy: ManifestOccupancy {
+                scripts: built.scripts,
+                page_rows: page_children.iter().map(|c| c.occupancy.page_rows).sum(),
+                fragments: page_children.iter().map(|c| c.occupancy.fragments).sum(),
+                events: built.events,
+                blocks: built.end_height - built.start_height + 1,
+                txids: built.txids,
+                excluded_scripts: built.excluded_scripts,
+            },
+            page_children,
+            directory_choice: None,
+        }
+    }
+
+    fn entry_of(manifest: &ShardManifest) -> ShardMapEntry {
+        ShardMapEntry {
+            shard_id: manifest.shard_id,
+            geometry: manifest.geometry.clone(),
+            start_height: manifest.start_height,
+            end_height: manifest.end_height,
+            parent_block_hash: manifest.parent_block_hash.clone(),
+            terminal_block_hash: manifest.terminal_block_hash.clone(),
+            filter_hash: manifest.filter_hash.clone(),
+            scripts: manifest.occupancy.scripts,
+            page_rows: manifest.occupancy.page_rows,
+            txids: 0,
+            directory_segments: 1,
+            page_segments: manifest.page_children.len() as u32,
+            manifest_digest: manifest.digest(),
+            revision: 0,
+            sealed: manifest.sealed,
+        }
+    }
+
+    fn target_of(manifest: &ShardManifest) -> Anchor {
+        Anchor {
+            height: manifest.end_height,
+            hash: manifest.terminal_block_hash.clone(),
+        }
+    }
+
+    /// The directory entry for `script`, read straight from the table.
+    fn directory_entry(directory: &Directory, script: &[u8]) -> Option<DirectoryEntry> {
+        let built = &directory.built;
+        let salt = transparent_shard::tag_salt(
+            built.shard_id,
+            &hash_at(built.end_height),
+            built.tag_salt_counter,
+        );
+        let wanted = transparent_shard::script_tag(&salt, script);
+        let rows = built.geometry.directory_rows;
+        candidate_rows(built.shard_id, script, rows)
+            .into_iter()
+            .flat_map(|row| {
+                transparent_shard::records::decode_directory_row(
+                    built.directory_row(row),
+                    built.children,
+                )
+                .unwrap()
+            })
+            .find(|entry| entry.tag == wanted)
+    }
+
+    /// Every event `script` has in `directory`'s range, oldest first.
+    fn history(blocks: &[Block], directory: &Directory, script: &[u8]) -> Vec<TransparentEvent> {
+        let range = directory.built.start_height..=directory.built.end_height;
+        let mut events: Vec<TransparentEvent> = blocks
+            .iter()
+            .filter(|(height, _)| range.contains(height))
+            .flat_map(|(_, events)| events.iter())
+            .filter(|(owner, _)| owner.as_slice() == script)
+            .map(|(_, event)| *event)
+            .collect();
+        events.sort_by_key(TransparentEvent::sort_key);
+        events
+    }
+
+    /// Page rows read straight from the built tables, recording every
+    /// request and round.
+    struct Direct<'a> {
+        children: &'a [BuiltChild],
+        requests: Vec<RowRequest>,
+        rounds: usize,
+    }
+
+    impl<'a> Direct<'a> {
+        fn new(directory: &'a Directory) -> Self {
+            Self {
+                children: &directory.children,
+                requests: Vec::new(),
+                rounds: 0,
+            }
+        }
+    }
+
+    impl RowSource for Direct<'_> {
+        fn stopped(&self) -> Option<IncompleteReason> {
+            None
+        }
+
+        fn fetch<S: WalletStore>(
+            &mut self,
+            _: &mut S,
+            requests: &[RowRequest],
+        ) -> Result<Vec<Vec<Vec<u8>>>, SyncError> {
+            self.rounds += 1;
+            self.requests.extend_from_slice(requests);
+            Ok(requests
+                .iter()
+                .map(|request| {
+                    vec![self.children[request.child as usize]
+                        .page_row(&DECOUPLED_2K_8K, request.row)
+                        .to_vec()]
+                })
+                .collect())
+        }
+    }
+
+    /// The directory phase, without the directory query: the entry's inline
+    /// events committed and its walk recorded, as `retrieve_shard_into`
+    /// leaves them. Returns the walks owed.
+    fn directory_phase(
+        store: &mut MemoryStore,
+        directory: &Directory,
+        manifest: &ShardManifest,
+        scripts: &[Vec<u8>],
+    ) -> Vec<PendingPages> {
+        let entry = entry_of(manifest);
+        let mut commit = ShardCommit {
+            shard_id: entry.shard_id,
+            revision_digest: entry.manifest_digest.clone(),
+            sealed: entry.sealed,
+            start_height: entry.start_height,
+            end_height: entry.end_height,
+            terminal_block_hash: entry.terminal_block_hash.clone(),
+            ..Default::default()
+        };
+        for script in scripts {
+            let found = directory_entry(directory, script).expect("an entry");
+            let (child, row) = found.head().expect("a paged script");
+            commit
+                .events
+                .extend(found.inline.iter().map(|event| StoredEvent {
+                    script: script.clone(),
+                    event: *event,
+                    shard_id: entry.shard_id,
+                    revision_digest: entry.manifest_digest.clone(),
+                }));
+            commit.pending_upsert.push(PendingPages {
+                id: None,
+                shard_id: entry.shard_id,
+                revision_digest: entry.manifest_digest.clone(),
+                script: script.clone(),
+                cursor: RunCursor {
+                    child,
+                    row,
+                    older_runs: None,
+                },
+                carried: found.inline.clone(),
+                attempts: 0,
+                target_anchor: Some(target_of(manifest)),
+            });
+        }
+        let before: Vec<u64> = store
+            .pending()
+            .unwrap()
+            .iter()
+            .filter_map(|p| p.id)
+            .collect();
+        commit_bounded(store, &target_of(manifest), commit).unwrap();
+        store
+            .pending()
+            .unwrap()
+            .into_iter()
+            .filter(|p| p.id.is_some_and(|id| !before.contains(&id)))
+            .collect()
+    }
+
+    fn walk(
+        store: &mut MemoryStore,
+        manifest: &ShardManifest,
+        owed: &[PendingPages],
+        rows: &mut Direct<'_>,
+    ) -> Result<Option<Completion>, SyncError> {
+        walk_chains(
+            store,
+            &entry_of(manifest),
+            manifest,
+            owed,
+            rows,
+            &target_of(manifest),
+        )
+    }
+
+    fn stored(store: &MemoryStore, script: &[u8]) -> Vec<TransparentEvent> {
+        store
+            .events()
+            .unwrap()
+            .into_iter()
+            .filter(|stored| stored.script == script)
+            .map(|stored| stored.event)
+            .collect()
+    }
+
+    /// The runs a script's chain has, newest first, read straight from the
+    /// tables: page shard and first row.
+    fn runs_of(directory: &Directory, script: &[u8]) -> Vec<(u8, u32)> {
+        let manifest = manifest_of(directory);
+        let mut runs = Vec::new();
+        let mut next = directory_entry(directory, script).and_then(|e| e.head());
+        while let Some((child, row)) = next {
+            runs.push((child, row));
+            let page = &manifest.page_children[child as usize];
+            let salt = transparent_shard::page_tag_salt(
+                manifest.shard_id,
+                page.index,
+                page.end_height,
+                &BlockHash::from_display_hex(&page.terminal_block_hash).unwrap(),
+                page.tag_salt_counter,
+            );
+            let tag = transparent_shard::script_tag(&salt, script);
+            next = transparent_shard::decode_page_row(
+                directory.children[child as usize].page_row(&DECOUPLED_2K_8K, u64::from(row)),
+            )
+            .unwrap()
+            .into_iter()
+            .find(|e| e.tag == tag && e.ordinal == 0)
+            .unwrap()
+            .link
+            .previous();
+        }
+        runs
+    }
+
+    /// Paged scripts of `directory`, busiest chains first.
+    fn paged(directory: &Directory) -> Vec<Vec<u8>> {
+        let mut paged: Vec<(usize, Vec<u8>)> = (0..4)
+            .chain(100..160)
+            .map(script)
+            .map(|script| (runs_of(directory, &script).len(), script))
+            .filter(|(runs, _)| *runs > 0)
+            .collect();
+        paged.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+        paged.into_iter().map(|(_, script)| script).collect()
+    }
+
+    /// Every paged script's history comes back exactly, all walks sharing
+    /// rounds, in one round per run plus one; and the run cache is filled
+    /// for every run in a sealed page shard with that run's own events and
+    /// the run below it, which together rebuild the history back to the
+    /// directory shard's start.
+    #[test]
+    fn walking_every_chain_recovers_each_history_in_one_round_per_run() {
+        let (blocks, directories) = fixture();
+        let directory = &directories[0];
+        let manifest = manifest_of(directory);
+        manifest
+            .check_children(DECOUPLED_2K_8K.page_rows, 4_096)
+            .unwrap();
+        let scripts = paged(directory);
+        let longest = runs_of(directory, &scripts[0]).len();
+        assert!(longest >= 3, "a chain long enough to walk: {longest}");
+
+        let mut store = MemoryStore::new();
+        let owed = directory_phase(&mut store, directory, &manifest, &scripts);
+        let mut rows = Direct::new(directory);
+        assert_eq!(walk(&mut store, &manifest, &owed, &mut rows).unwrap(), None);
+        assert_eq!(rows.rounds, longest + 1);
+        assert!(store.pending().unwrap().is_empty());
+        let identities: Vec<String> = manifest.child_digests().iter().map(hex::encode).collect();
+        for script in &scripts {
+            let expected = history(blocks, directory, script);
+            assert_eq!(stored(&store, script), expected);
+            assert_eq!(store.coverage(script).unwrap().len(), 1);
+            // Oldest run first: each cached run holds its own events and
+            // names the run below it, and together they rebuild the history.
+            let runs = runs_of(directory, script);
+            let mut rebuilt = Vec::new();
+            for (index, (child, _)) in runs.iter().enumerate().rev() {
+                let cached = store
+                    .cached_run(&identities[usize::from(*child)], script)
+                    .unwrap();
+                if manifest.page_children[usize::from(*child)].sealed {
+                    let cached = cached.expect("a sealed run is cached");
+                    assert_eq!(cached.shard_id, manifest.shard_id);
+                    assert_eq!(
+                        cached.older,
+                        runs.get(index + 1)
+                            .map(|(older, _)| identities[usize::from(*older)].clone())
+                    );
+                    rebuilt.extend(cached.events);
+                    assert_eq!(rebuilt[..], expected[..rebuilt.len()]);
+                } else {
+                    assert_eq!(cached, None);
+                }
+            }
+        }
+    }
+
+    /// Tip catch-up: a walk whose newest run is in the open page shard reads
+    /// that run and stops at the cached run it links to; one whose newest run
+    /// is in a sealed page shard reads nothing at all.
+    #[test]
+    fn a_cached_run_stops_the_walk() {
+        let (blocks, directories) = fixture();
+        let tail = directories.last().unwrap();
+        let manifest = manifest_of(tail);
+        assert!(!manifest.sealed);
+        let open = manifest.page_children.len() as u8 - 1;
+        assert!(!manifest.page_children[open as usize].sealed);
+        let scripts = paged(tail);
+        let at_tip: Vec<Vec<u8>> = scripts
+            .iter()
+            .filter(|s| {
+                let runs = runs_of(tail, s);
+                runs.len() >= 2 && runs[0].0 == open
+            })
+            .cloned()
+            .collect();
+        let sealed_head: Vec<Vec<u8>> = scripts
+            .iter()
+            .filter(|s| runs_of(tail, s)[0].0 != open)
+            .cloned()
+            .collect();
+        assert!(!at_tip.is_empty() && !sealed_head.is_empty());
+
+        let mut store = MemoryStore::new();
+        let owed = directory_phase(&mut store, tail, &manifest, &scripts);
+        let mut first = Direct::new(tail);
+        walk(&mut store, &manifest, &owed, &mut first).unwrap();
+
+        // The same revision walked again from its directory entries.
+        let owed = directory_phase(&mut store, tail, &manifest, &scripts);
+        let mut again = Direct::new(tail);
+        assert_eq!(
+            walk(&mut store, &manifest, &owed, &mut again).unwrap(),
+            None
+        );
+        assert!(again
+            .requests
+            .iter()
+            .all(|request| request.child == u32::from(open)));
+        // Every script whose newest run is in the open page shard reads that
+        // run again, and nothing older.
+        let head_fragments: usize = scripts
+            .iter()
+            .filter(|script| runs_of(tail, script)[0].0 == open)
+            .map(|script| {
+                let (child, row) = runs_of(tail, script)[0];
+                let salt = transparent_shard::page_tag_salt(
+                    manifest.shard_id,
+                    u32::from(child),
+                    manifest.page_children[usize::from(child)].end_height,
+                    &hash_at(manifest.page_children[usize::from(child)].end_height),
+                    manifest.page_children[usize::from(child)].tag_salt_counter,
+                );
+                let tag = transparent_shard::script_tag(&salt, script);
+                transparent_shard::decode_page_row(
+                    tail.children[usize::from(child)].page_row(&DECOUPLED_2K_8K, u64::from(row)),
+                )
+                .unwrap()
+                .into_iter()
+                .find(|e| e.tag == tag)
+                .unwrap()
+                .fragment_count as usize
+            })
+            .sum();
+        assert_eq!(again.requests.len(), head_fragments);
+        assert_eq!(again.rounds, 2, "the head run, then its rest");
+        for script in &scripts {
+            assert_eq!(stored(&store, script), history(blocks, tail, script));
+        }
+
+        // A head in a sealed page shard that is cached costs no page query.
+        let mut fresh = MemoryStore::new();
+        let owed = directory_phase(&mut fresh, tail, &manifest, &sealed_head);
+        walk(&mut fresh, &manifest, &owed, &mut Direct::new(tail)).unwrap();
+        let owed = directory_phase(&mut fresh, tail, &manifest, &sealed_head);
+        let mut cached = Direct::new(tail);
+        walk(&mut fresh, &manifest, &owed, &mut cached).unwrap();
+        assert_eq!((cached.rounds, cached.requests.len()), (0, 0));
+        assert!(fresh.pending().unwrap().is_empty());
+    }
+
+    /// A walk over a manifest that places a page shard's range elsewhere
+    /// finds the events of its runs pushed out while it was not open, and
+    /// refuses them.
+    #[test]
+    fn a_run_in_the_wrong_page_shard_is_refused() {
+        let (_, directories) = fixture();
+        let directory = &directories[0];
+        let mut manifest = manifest_of(directory);
+        let script = paged(directory).remove(0);
+        let runs = runs_of(directory, &script);
+        let (child, _) = runs[runs.len() - 1];
+        // The oldest run's page shard, claimed to open only after its last
+        // block: nothing could have been pushed into it. Its end, which its
+        // tag salt is keyed on, stays.
+        let page = &mut manifest.page_children[usize::from(child)];
+        page.start_height = page.end_height + 1;
+        let mut store = MemoryStore::new();
+        let owed = directory_phase(
+            &mut store,
+            directory,
+            &manifest,
+            std::slice::from_ref(&script),
+        );
+        let error = walk(&mut store, &manifest, &owed, &mut Direct::new(directory)).unwrap_err();
+        assert!(error.to_string().contains("was not open"), "{error}");
+        assert_eq!(store.pending().unwrap().len(), 1, "the walk stays owed");
+    }
+
+    /// A walk resumes from its durable cursor after any round, and the
+    /// history it ends with is the same.
+    #[test]
+    fn a_walk_resumes_from_its_cursor() {
+        let (blocks, directories) = fixture();
+        let directory = &directories[0];
+        let manifest = manifest_of(directory);
+        let script = paged(directory).remove(0);
+        let mut store = MemoryStore::new();
+        let owed = directory_phase(
+            &mut store,
+            directory,
+            &manifest,
+            std::slice::from_ref(&script),
+        );
+        struct Limited<'a> {
+            inner: Direct<'a>,
+            rounds: usize,
+        }
+        impl RowSource for Limited<'_> {
+            fn stopped(&self) -> Option<IncompleteReason> {
+                (self.inner.rounds >= self.rounds).then_some(IncompleteReason::QueryBudget)
+            }
+            fn fetch<S: WalletStore>(
+                &mut self,
+                store: &mut S,
+                requests: &[RowRequest],
+            ) -> Result<Vec<Vec<Vec<u8>>>, SyncError> {
+                self.inner.fetch(store, requests)
+            }
+        }
+        let mut limited = Limited {
+            inner: Direct::new(directory),
+            rounds: 3,
+        };
+        let stopped = walk_chains(
+            &mut store,
+            &entry_of(&manifest),
+            &manifest,
+            &owed,
+            &mut limited,
+            &target_of(&manifest),
+        )
+        .unwrap();
+        assert!(matches!(
+            stopped,
+            Some(Completion::Incomplete {
+                reason: IncompleteReason::QueryBudget,
+                pending: 1
+            })
+        ));
+        let resumed = store.pending().unwrap();
+        assert!(resumed[0].cursor.older_runs.is_some());
+        walk(&mut store, &manifest, &resumed, &mut Direct::new(directory)).unwrap();
+        assert!(store.pending().unwrap().is_empty());
+        assert_eq!(stored(&store, &script), history(blocks, directory, &script));
+    }
+
+    fn head(_child: u8, link: RunLink) -> PageEntry {
+        PageEntry::new([1; 14], 0, 1, vec![receive(10, 1)])
+            .unwrap()
+            .with_link(link)
+            .unwrap()
+    }
+
+    fn cursor(child: u8, older_runs: Option<u8>) -> RunCursor {
+        RunCursor {
+            child,
+            row: 0,
+            older_runs,
+        }
+    }
+
+    fn link(prev_child: u8, prev_row: u32, older_runs: u8) -> RunLink {
+        RunLink {
+            prev_child,
+            prev_row,
+            older_runs,
+        }
+    }
+
+    /// A chain that ends where its count says more runs remain is cut short.
+    #[test]
+    fn a_truncated_chain_is_refused() {
+        let end = head(3, RunLink::default());
+        assert!(check_head(&end, &cursor(3, Some(0))).is_ok());
+        assert!(check_head(&end, &cursor(3, Some(1))).is_err());
+        assert!(check_head(&end, &cursor(3, Some(2))).is_err());
+    }
+
+    /// `older_runs` drops by exactly one per hop, and never claims more runs
+    /// than there are earlier page shards.
+    #[test]
+    fn an_older_runs_mismatch_is_refused() {
+        let linked = head(5, link(2, 9, 2));
+        assert!(check_head(&linked, &cursor(5, Some(2))).is_ok());
+        assert!(check_head(&linked, &cursor(5, None)).is_ok());
+        assert!(check_head(&linked, &cursor(5, Some(1))).is_err());
+        assert!(check_head(&linked, &cursor(5, Some(3))).is_err());
+        // A chain that carries on where it should have ended.
+        assert!(check_head(&linked, &cursor(5, Some(0))).is_err());
+        // Two older runs need two earlier page shards.
+        assert!(check_head(&head(1, link(0, 9, 2)), &cursor(1, None)).is_err());
+    }
+
+    /// A link points only to an earlier page shard.
+    #[test]
+    fn a_forward_or_self_pointer_is_refused() {
+        assert!(check_head(&head(4, link(3, 1, 1)), &cursor(4, None)).is_ok());
+        assert!(check_head(&head(4, link(4, 1, 1)), &cursor(4, None)).is_err());
+        assert!(check_head(&head(4, link(5, 1, 1)), &cursor(4, None)).is_err());
+    }
+
+    fn page_child(start: u64, end: u64) -> PageChild {
+        PageChild {
+            index: 1,
+            start_height: start,
+            end_height: end,
+            terminal_block_hash: "00".repeat(32),
+            tag_salt_counter: 0,
+            sealed: true,
+            page_segments: Vec::new(),
+            occupancy: PageChildOccupancy {
+                page_rows: 0,
+                fragments: 0,
+                runs: 0,
+                events: 0,
+            },
+        }
+    }
+
+    /// The design's worked example: P1 = 1300-1649 holds e2@1020, pushed by
+    /// e4@1400; P2 = 1650-1999 holds e3@1100 and e4@1400, pushed by e5@1700
+    /// and e6@1710. Anywhere else, or out of order, is refused.
+    #[test]
+    fn push_out_placement_and_order_are_checked() {
+        let e = |height: u32| receive(height, height);
+        let carried = [e(1700), e(1710)];
+        assert!(check_run(&page_child(1650, 1999), &[e(1100), e(1400)], &carried).is_ok());
+        assert!(check_run(&page_child(1300, 1649), &[e(1020)], &[e(1100), e(1400)]).is_ok());
+        // e2 placed in P0 = 1000-1299 would have been pushed by e4@1400.
+        assert!(check_run(&page_child(1000, 1299), &[e(1020)], &[e(1100), e(1400)]).is_err());
+        assert!(check_run(&page_child(1705, 1999), &[e(1100), e(1400)], &carried).is_err());
+        // Out of order, or not older than what follows.
+        assert!(check_run(&page_child(1650, 1999), &[e(1400), e(1100)], &carried).is_err());
+        assert!(check_run(&page_child(1650, 1999), &[e(1100), e(1705)], &carried).is_err());
+        assert!(check_run(&page_child(1650, 1999), &[e(1100)], &carried[..1]).is_err());
     }
 }

@@ -558,10 +558,10 @@ mod tests {
     fn map(archive: u64, recent: u64) -> ShardMap {
         let mut shards = Vec::new();
         for id in 0..archive {
-            shards.push(entry(id, "archive-wide"));
+            shards.push(entry(id, "decoupled-32k-32k"));
         }
         for id in archive..archive + recent {
-            shards.push(entry(id, "recent-8k"));
+            shards.push(entry(id, "decoupled-2k-8k"));
         }
         ShardMap {
             genesis_hash: "33".repeat(32),
@@ -570,7 +570,7 @@ mod tests {
             range_envelope_version: 1,
             start_height: 0,
             seal: BTreeMap::from([(
-                "recent-8k".to_string(),
+                "decoupled-2k-8k".to_string(),
                 SealParameters {
                     max_scripts: 1,
                     max_page_rows: 1,

@@ -3,7 +3,7 @@
 //! ```text
 //! TRANSPARENT_BUILD_THREADS=2 cargo run --profile release-fast \
 //!   -p transparent-shard-server --example hint_bench -- \
-//!   [--runtime-only] --geometry recent-8k --repeats 3 \
+//!   [--runtime-only] --geometry decoupled-2k-8k --repeats 3 \
 //!   directory=directory.0.bin pages=pages.0.bin
 //! ```
 //!
@@ -36,7 +36,7 @@ fn peak_rss_bytes() -> Option<u64> {
 }
 
 fn main() -> Result<(), String> {
-    let mut geometry = "recent-8k".to_string();
+    let mut geometry = "decoupled-2k-8k".to_string();
     let mut repeats = 3usize;
     let mut runtime_only = false;
     let mut tables = Vec::new();

@@ -390,7 +390,7 @@ impl LiveService {
                         .as_ref()
                         .into_iter()
                         .flat_map(|c| c.state.set().revisions())
-                        .map(|s| s.digest.clone())
+                        .flat_map(|s| s.runtime_identities())
                         .collect();
                     let mut retired = service.0.retired.write().unwrap();
                     // A long request may hold one old snapshot without preventing
@@ -423,7 +423,7 @@ impl LiveService {
                         std::iter::once(&*active)
                             .chain(retired.iter())
                             .flat_map(|a| a.state.set().revisions())
-                            .map(|s| s.digest.clone()),
+                            .flat_map(|s| s.runtime_identities()),
                     );
                     let state = active.state.clone();
                     // Status and request dispatch must never wait on disk writes,

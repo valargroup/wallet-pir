@@ -13,6 +13,12 @@
 //! storage rather than for the query count of the longest history, which is
 //! what [`PAGE_ROW_BYTES`] explains.
 //!
+//! A geometry names two independent dimensions: the directory shard's rows
+//! and the rows of each of its page shards. A directory shard holds up to
+//! [`MAX_PAGE_CHILDREN`] page shards, each its own table of `page_rows` rows,
+//! so the directory is sized for the scripts a range holds and the pages for
+//! the history those scripts push out of it.
+//!
 //! # Segments
 //!
 //! Row *counts* are pinned per segment, not per shard. A shard normally has one
@@ -28,13 +34,16 @@ pub use crate::packing::PackedDemand;
 
 pub const DIRECTORY_ROW_BYTES: usize = 4_096;
 pub const PAGE_ROW_BYTES: usize = 4_096;
-pub const DIRECTORY_ROWS: usize = 8_192;
+pub const DIRECTORY_ROWS: usize = 2_048;
 pub const PAGE_ROWS: usize = 8_192;
 pub const INLINE_EVENTS: u32 = 2;
 pub const PAGE_ROW_HEADER_BYTES: usize = 4;
-pub const PAGE_ENTRY_HEADER_BYTES: usize = 34;
+/// Tag 14, ordinal 4, fragment count 4, event count 4, height bounds 8, and
+/// the chain fields `prev_child u8 | prev_row u32 | older_runs u8`.
+pub const PAGE_ENTRY_HEADER_BYTES: usize = 40;
 /// Decoder bound, not the event count of a full fragment. Forty-three local
-/// receive/spend pairs use 4,042 bytes; an 87th event cannot fit.
+/// receive/spend pairs use 4,042 of a fragment's 4,052 bytes; an 87th event
+/// cannot fit.
 pub const EVENTS_PER_PAGE: u32 = 86;
 pub const MAX_ENTRIES_PER_ROW: usize =
     (PAGE_ROW_BYTES - PAGE_ROW_HEADER_BYTES) / (PAGE_ENTRY_HEADER_BYTES + RECEIVE_BYTES);
@@ -80,74 +89,46 @@ pub struct Geometry {
     pub inline_events: u32,
 }
 
-/// The default recent geometry, and what an unconfigured build publishes.
-pub const RECENT_8K: Geometry = Geometry {
-    name: "recent-8k",
-    directory_rows: 8_192,
+/// The recent tier: a small directory over its own 8,192-row page shards.
+///
+/// The directory is the table a tip catch-up queries every time, so it is the
+/// native minimum of 2,048 rows; the page shards are sized for storage and
+/// seal on page rows inside the directory shard.
+pub const DECOUPLED_2K_8K: Geometry = Geometry {
+    name: "decoupled-2k-8k",
+    directory_rows: 2_048,
     directory_row_bytes: INSTANCE_BYTES,
     page_rows: 8_192,
     page_row_bytes: INSTANCE_BYTES,
     inline_events: 2,
 };
 
-/// A narrower recent candidate: 50,176 fewer upload bytes per matched shard.
-///
-/// Not a default. Halving the scanned database does not halve latency, and more
-/// boundaries add filter downloads, setup and private queries that can erase
-/// the saving. Promote it only on measured total client bytes.
-pub const RECENT_4K: Geometry = Geometry {
-    name: "recent-4k",
-    directory_rows: 4_096,
-    page_rows: 4_096,
-    ..RECENT_8K
-};
-
-/// A recent candidate with half the directory rows and all of the page rows.
-///
-/// It lowers directory-query upload without shrinking page-row capacity.
-/// Variable entry bytes and actual placement must be replayed before treating
-/// any script count as a one-segment capacity. `recent-4k` retains its meaning.
-pub const RECENT_4K_8K: Geometry = Geometry {
-    name: "recent-4k-8k",
-    directory_rows: 4_096,
-    page_rows: 8_192,
-    ..RECENT_8K
-};
-
-/// The square archive candidate, and the fallback if the wider one does not
-/// validate.
-pub const ARCHIVE_32K: Geometry = Geometry {
-    name: "archive-32k",
+/// The archive tier: 32,768-row directory shards whose page shards are also
+/// 32,768 rows, at most [`MAX_PAGE_CHILDREN`] of them per directory shard.
+pub const DECOUPLED_32K_32K: Geometry = Geometry {
+    name: "decoupled-32k-32k",
     directory_rows: 32_768,
     page_rows: 32_768,
-    ..RECENT_8K
+    ..DECOUPLED_2K_8K
 };
 
-/// The preferred archive candidate: a narrower directory than its pages.
+/// Page shards one directory shard may hold.
 ///
-/// The narrower directory lowers selection upload while the page table
-/// absorbs dense old history. Capacity is qualified with byte demand and
-/// actual placement, rather than a fixed script-slot count.
-pub const ARCHIVE_WIDE: Geometry = Geometry {
-    name: "archive-wide",
-    directory_rows: 32_768,
-    page_rows: 65_536,
-    ..RECENT_8K
-};
+/// Bounds a history's chain length (one round trip per run), the manifest's
+/// child list, the publisher's replay of the open directory shard and the
+/// catch-up walk. It does not affect entry size: the five bits of a
+/// directory entry's `flags_child` name the child, so 32 is also the most the
+/// encoding can address.
+pub const MAX_PAGE_CHILDREN: u32 = 32;
 
 /// Every geometry a published shard may name.
 ///
 /// A closed set rather than server-chosen parameters. Each entry is a shape the
 /// scheme serves, whose parameters a client validates once and reuses for every
 /// shard of that geometry; an arbitrary shape would cost a parameter set per
-/// shard and give a wallet nothing to check the server's choice against.
-pub const PROFILES: &[Geometry] = &[
-    RECENT_8K,
-    RECENT_4K,
-    RECENT_4K_8K,
-    ARCHIVE_32K,
-    ARCHIVE_WIDE,
-];
+/// shard and give a wallet nothing to check the server's choice against. One
+/// entry names both dimensions, so native seeds stay keyed by geometry and table.
+pub const PROFILES: &[Geometry] = &[DECOUPLED_2K_8K, DECOUPLED_32K_32K];
 
 /// The registry entry named `name`, or `None` if there is no such geometry.
 ///
@@ -160,7 +141,7 @@ pub fn by_name(name: &str) -> Option<&'static Geometry> {
 
 impl Default for Geometry {
     fn default() -> Self {
-        RECENT_8K
+        DECOUPLED_2K_8K
     }
 }
 
@@ -364,23 +345,24 @@ mod tests {
         }
     }
 
-    /// The archive candidates are the ones the deployment plan turns on, so
-    /// their capacities are pinned rather than left to be recomputed by hand.
-    /// Script-count bounds are independent of the separate byte and placement
-    /// constraints; the page row counts define allocated page capacity.
+    /// The two tiers' capacities are pinned rather than left to be recomputed
+    /// by hand. Script-count bounds are independent of the separate byte and
+    /// placement constraints; page rows are what one page shard holds.
     #[test]
-    fn the_archive_candidates_hold_what_they_claim() {
-        assert_eq!(ARCHIVE_32K.directory_capacity(), 1_900_544);
-        assert_eq!(ARCHIVE_WIDE.directory_capacity(), 1_900_544);
-        assert_eq!(ARCHIVE_WIDE.page_rows, 2 * ARCHIVE_WIDE.directory_rows);
-        assert_eq!(RECENT_4K.directory_capacity(), 237_568);
-        assert_eq!(RECENT_4K_8K.directory_capacity(), 237_568);
-        assert_eq!(RECENT_4K_8K.page_rows, RECENT_8K.page_rows);
-        // A narrower directory buys a smaller query; a wider page table buys
-        // rows for old history. The two move independently, which is the point
-        // of having a pair rather than one number.
-        assert_eq!(ARCHIVE_WIDE.directory_bytes_per_segment(), 134_217_728);
-        assert_eq!(ARCHIVE_WIDE.page_bytes_per_segment(), 268_435_456);
+    fn the_decoupled_tiers_hold_what_they_claim() {
+        assert_eq!(DECOUPLED_32K_32K.directory_capacity(), 1_900_544);
+        assert_eq!(DECOUPLED_32K_32K.page_rows, 32_768);
+        assert_eq!(DECOUPLED_2K_8K.directory_capacity(), 118_784);
+        assert_eq!(DECOUPLED_2K_8K.page_rows, 8_192);
+        // The directory and its page shards are sized independently, which is
+        // the point of having a pair rather than one number.
+        assert_eq!(DECOUPLED_2K_8K.directory_bytes_per_segment(), 8_388_608);
+        assert_eq!(DECOUPLED_2K_8K.page_bytes_per_segment(), 33_554_432);
+        assert_eq!(DECOUPLED_32K_32K.directory_bytes_per_segment(), 134_217_728);
+        assert_eq!(DECOUPLED_32K_32K.page_bytes_per_segment(), 134_217_728);
+        // The child index has five bits in a directory entry; records.rs
+        // checks that at compile time.
+        assert_eq!(MAX_PAGE_CHILDREN, 32);
     }
 
     /// A width the scheme *would* serve is still refused for publication,
@@ -402,13 +384,12 @@ mod tests {
     #[test]
     fn the_default_geometry_is_the_one_that_ships() {
         let g = Geometry::default();
+        assert_eq!(g, DECOUPLED_2K_8K);
         assert_eq!(g.directory_entry_bytes(), 177);
         assert_eq!(g.directory_slots(), 58);
-        assert_eq!(g.directory_capacity(), 475_136);
+        assert_eq!(g.directory_capacity(), 118_784);
         assert_eq!(g.directory_row_slack(), 32);
-        // Both tables are 8,192 rows: they have to close a shard at about the
-        // same occupancy, or the one that does not is padding.
-        assert_eq!(g.directory_bytes_per_segment(), 33_554_432);
+        assert_eq!(g.directory_bytes_per_segment(), 8_388_608);
         assert_eq!(g.page_bytes_per_segment(), 33_554_432);
         g.validate().expect("what ships must be servable");
     }
@@ -419,10 +400,10 @@ mod tests {
     #[test]
     fn minimum_history_size_defines_the_script_count_bound() {
         for (inline, slots, capacity) in [
-            (0u32, 215u64, 1_761_280u64),
-            (1, 58, 475_136),
-            (2, 58, 475_136),
-            (3, 58, 475_136),
+            (0u32, 215u64, 440_320u64),
+            (1, 58, 118_784),
+            (2, 58, 118_784),
+            (3, 58, 118_784),
         ] {
             let g = Geometry {
                 inline_events: inline,
@@ -441,7 +422,10 @@ mod tests {
             directory_rows: 4_096,
             ..Default::default()
         };
-        assert_eq!(g.directory_capacity(), 237_568);
+        assert_eq!(
+            g.directory_capacity(),
+            2 * Geometry::default().directory_capacity()
+        );
         assert_eq!(g.directory_bytes_per_segment(), 16_777_216);
         g.validate()
             .expect("a multiple of the poly length is servable");

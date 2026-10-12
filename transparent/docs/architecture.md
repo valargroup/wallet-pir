@@ -118,14 +118,22 @@ the number of scripts a wallet tests, not against block downloads as in BIP 158.
 
 ## Identity and geometry
 
-The source schema is `transparent-shard-v10`. Both tables retain 4,096-byte rows,
-which is one native PIR instance. Entries and events have variable widths within
-those rows. Earlier shard bytes are refused, not reinterpreted. Schema v10 changes
-neither the logical event model nor the version-2 journal's 87-byte record.
+The source schema is `transparent-shard-v12` ([design](decoupled-pages-design.md)). Both
+tables retain 4,096-byte rows, which is one native PIR instance. Entries and events have
+variable widths within those rows. Earlier shard bytes are refused, not reinterpreted.
 
-A shard declares a named geometry from the compiled registry: `recent-8k` (8,192 directory
-and page rows), `recent-4k`, `recent-4k-8k`, `archive-32k` and `archive-wide` (32,768
-directory rows against 65,536 page rows). The registry varies row counts only. Row width
+A shard is a *directory shard*: one directory table over its range and up to 32 *page
+shards*, each its own table over a consecutive part of the range, served as the table
+`pages-<j>` of the directory shard's revision. The manifest lists them as `page_children`:
+range, terminal block, tag-salt counter, sealed flag, segment digests and occupancy. The
+directory shard is the only lineage: revisions, staleness, 409s and worker assignment are per
+directory shard, and the map's `page_segments` counts its page shards. A page shard's
+identity chains through every earlier one and the directory shard's position, so a sealed
+page shard keeps its identity, its runtime and a wallet's cached runs across revisions.
+
+A shard declares a named geometry from the compiled registry: `decoupled-2k-8k` (2,048
+directory rows, page shards of 8,192 rows) for the recent tier and `decoupled-32k-32k`
+(32,768 and 32,768) for the archive. The registry varies row counts only. Row width
 and the inline allowance are compiled into the record codec, so moving either is a schema
 bump and a republication rather than a new registry entry, and the build refuses to
 publish a shape it can score but not encode.
@@ -162,9 +170,13 @@ depends on event kinds and local receive/spend adjacency as well as history leng
 That additional dependence was accepted for this layout.
 
 A directory row starts with a 4-byte occupied-entry count, then packed entries.
-Each entry contains a 14-byte script tag, a 4-byte first-page locator, a 1-byte
-inline count and the newest one or two compact events. A paged entry must carry
-two inline events. There is no stored total or fragment count. Entry sizes range
+Each entry contains a 14-byte script tag, a `flags_child` byte, a 4-byte `head_row`
+and the newest one or two compact events. `flags_child` bits 0-4 name the page shard
+holding the script's newest run, bit 7 marks exactly one inline event, and bits 5-6
+are zero. `head_row` is the 1-based row of that run's first fragment; zero means the
+script has no pages in the directory shard, and then the page bits are zero. A paged
+entry must carry two inline events, and the page shard it names must be one the
+manifest declares. There is no stored total or fragment count. Entry sizes range
 from 70 to 177 bytes; a linked receive/spend pair takes 113 bytes including its
 header. At most 58 minimum-size entries fit a row. Unused inline slots and their
 sentinel are gone; only the row's unused suffix is zero padding.
@@ -185,22 +197,38 @@ and page fragment. An ordinary full outpoint in that situation is noncanonical.
 The all-zero receive remains invalid. No form stores a script or block hash;
 the wallet resolves height against its accepted chain.
 
-The first-page locator is 1-based: `0` means inline-only, and `r >= 1` identifies
-PIR row `r - 1` as the start of a contiguous run. Its first page reports fragment
-count `K`. The wallet checks ordinals `0..K-1`, one shared `K`, canonical event
-order, page-to-inline order, and greedy fragment boundaries. Before accepting
-the next fragment, it verifies that its first event could not fit the preceding
-fragment, including any local-reference saving that would have applied there.
-The preceding event and encoded byte count are committed with pending work, so
-this check also applies after restart. SQLite schema 3 adds that boundary state;
-existing event and coverage rows survive the migration.
+A script keeps its two newest events in the directory shard inline. When a third
+arrives, the oldest inline event is pushed out into the script's *run* in the page
+shard open at that block, never the one where the event happened, which may have
+sealed. A script has at most one run per page shard, runs are in time order, and the
+entry names only the newest. A run's fragments occupy consecutive rows from its first;
+the first reports fragment count `K` and links back to the previous run:
+`prev_child`, `prev_row` (1-based, zero ends the chain) and `older_runs`, the number
+of runs older than it. Pointers only go backwards, to page shards that sealed before
+the run started receiving events, so a run and its link are fixed when its page shard
+seals.
 
-A page row starts with a 4-byte entry count. Each entry retains the 34-byte header:
-script tag, fragment ordinal, fragment count, event count and two height bounds.
-The event payload has a 4,058-byte budget. Greedy fragmentation takes the longest
-prefix that fits it: up to 79 receives, 51 ordinary spends or 86 events arranged
-as 43 local receive/spend pairs. The manifest's `events_per_page = 86` is a decoder
-bound, not a fixed fragment length. At most 48 minimum-size page entries fit a row.
+The wallet makes one directory query, then one round trip per run: the rest of the
+current run together with the previous run's first row. It checks ordinals `0..K-1`,
+one shared `K`, canonical event order and greedy fragment boundaries within a run;
+across the chain it checks that page shard numbers strictly decrease, that
+`older_runs` drops by one per hop and is zero exactly where the chain ends, that
+events strictly increase into the inline events, and that every paged event's
+second successor lies in the range of the page shard it was pushed into. Runs in
+sealed page shards are cached by page-shard identity and script, each with its own
+events and a link to the script's previous cached run, so a tip catch-up stops at
+the first cached run and rebuilds the older history from the cache. Covering a
+script over a whole sealed directory shard drops its cached runs there. Pending work holds a run cursor and the events the
+placement check carries; a run commits whole. SQLite schema 5 holds the cursor and
+the run cache, with no migration from earlier schemas.
+
+A page row starts with a 4-byte entry count. Each entry has a 40-byte header:
+script tag, fragment ordinal, fragment count, event count, two height bounds and the
+run link, all zero on later fragments. The event payload has a 4,052-byte budget.
+Greedy fragmentation takes the longest prefix that fits it: up to 79 receives, 51
+ordinary spends or 86 events arranged as 43 local receive/spend pairs. The manifest's
+`events_per_page = 86` is a decoder bound, not a fixed fragment length. At most 44
+minimum-size page entries fit a row.
 
 Long histories take contiguous runs in raw-script order. Their final rows offer
 spare space to single-fragment histories. Short entries are ordered by decreasing
@@ -214,10 +242,17 @@ query.
 
 ### Sealing and capacity
 
-The sealer projects each whole block against distinct scripts, actual directory
-entry bytes and packed page rows. Directory bytes have a capacity of
+The sealer projects each whole block into the open directory shard and its open page
+shard. A page shard that would overflow closes and the block is projected into the
+next; a directory shard that would overflow in either projection closes with its page
+shard. After the block, a directory shard at its script or byte target closes with its
+page shard, and otherwise a page shard at its page-row target closes alone, taking its
+directory shard with it when it was the 32nd. Directory bytes have a capacity of
 `directory_rows * 4092` and a target reserving one seventh, independently of the
-absolute script-count bound. The page target reserves one thirty-second. The
+absolute script-count bound. The page target reserves one thirty-second. Tier
+boundaries close both. The publisher resumes the sealer at the open directory shard's
+start, so a fresh build equals block-by-block publication, and links sealed page
+shards the previous revision already published. The
 byte reserve helps placement but does not prove that every shard fits one
 segment. An indivisible oversized block still receives extra segments.
 
@@ -237,6 +272,10 @@ recomputes the salt from those three verified inputs and never accepts one suppl
 separately, so a publisher cannot choose a predictable salt, and every transaction in a
 revision is mined at or before its terminal block, so no indexed script can have been
 selected against a known salt.
+
+Page shards salt their tags separately, over the directory shard's id, the page shard's
+index, end height and terminal block and its own counter, so a sealed page shard's tags
+do not move while the directory shard around it grows.
 
 The counter starts at 0 and increases only when the builder finds two indexed scripts whose
 tags collide, at which point it recomputes every tag and checks again, up to eight times. It
@@ -317,16 +356,15 @@ answers with the binding, an 8-byte mask epoch and a 5,632-byte body. The server
 query once, scans each segment modulo 2^54 and packs against that segment's preprocessing.
 The runtime disk cache stays keyed by the 49-bit scheme, so existing caches still apply.
 
-A pages query to an unsealed, current-schema, single-segment tail may select only its first
-`ShardManifest::pages_query_rows`: the page rows it holds rounded up to 2,048-row blocks,
-every later row being zero, so the answer is unchanged. While the tail holds at most 2,048
-page rows that is 40,200 bytes at 49 bits and 38,920 at 44. The count comes from
-digest-bound manifest fields alone, so every pages query to that revision has one length
-per width. Sealed shards, multi-segment shards and the directory select every row, and
-servers keep accepting the full selection for the tail from older wallets: four exact
-lengths for a tail's pages, two for everything else. Segment verification, at startup, on
-cache restore and before a runtime build, refuses a tail whose rows past that count hold
-data.
+A query to a single-segment page shard, sealed or open, may select only its first
+`PageChild::query_rows`: the page rows it holds rounded up to 2,048-row blocks, every
+later row being zero, so the answer is unchanged. While a page shard holds at most
+2,048 rows that is 40,200 bytes at 49 bits and 38,920 at 44. The count comes from
+digest-bound manifest fields alone, so every query to that page shard has one length per
+width. Multi-segment page shards and the directory select every row, and servers also
+accept the full selection: four exact lengths for a page shard, two for the directory.
+Segment verification, at startup, on cache restore and before a runtime build, refuses a
+page shard whose rows past that count hold data.
 
 Correctness certificates for this mode are snapshot-specific, and a snapshot served at both
 widths needs a certificate for each. The shard server's `native_certificate` example exports

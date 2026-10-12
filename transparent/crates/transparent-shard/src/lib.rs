@@ -1,8 +1,8 @@
 //! Building the immutable shards a wallet privately retrieves history from.
 //!
-//! A shard is a chain range with four published objects: a public activity
-//! filter, a private script directory, private event pages, and an optional
-//! private transaction-detail table. Its boundaries are decided by what it
+//! A shard is a chain range with a public activity filter, a private script
+//! directory, and up to [`MAX_PAGE_CHILDREN`] private page shards holding the
+//! history its scripts pushed out of the directory. Its boundaries are decided by what it
 //! contains rather than by a fixed block width — see [`seal`] for why — and
 //! every shard names a table geometry from a small closed registry, which is
 //! what lets one set of PIR parameters serve every shard that names the same
@@ -20,7 +20,6 @@
 pub mod build;
 pub mod choice;
 pub mod compact;
-pub mod compact_v10;
 pub mod display;
 pub mod layout;
 pub mod manifest;
@@ -34,27 +33,29 @@ pub mod txid_v1;
 pub mod txid_v2x;
 
 pub use build::{
-    build_shard, candidate_rows, choice_table, place_scripts, placement_order, verify_choice,
-    BuildError, BuiltShard, Placement,
+    build_directory_shard, candidate_rows, choice_table, place_scripts, placement_order,
+    verify_choice, Block, BuildError, Built, BuiltChild, BuiltDirectory, DirectoryBuilder,
+    Placement, ShardStream,
 };
 pub use choice::{ChoiceError, ChoiceTable};
 pub use layout::{
-    by_name as geometry_by_name, Geometry, PackedDemand, ARCHIVE_32K, ARCHIVE_WIDE, DIRECTORY_ROWS,
-    DIRECTORY_ROW_BYTES, EVENTS_PER_PAGE, INLINE_EVENTS, MAX_ENTRIES_PER_ROW,
-    PAGE_ENTRY_HEADER_BYTES, PAGE_ROWS, PAGE_ROW_BYTES, PAGE_ROW_HEADER_BYTES, PROFILES, RECENT_4K,
-    RECENT_4K_8K, RECENT_8K,
+    by_name as geometry_by_name, Geometry, PackedDemand, DECOUPLED_2K_8K, DECOUPLED_32K_32K,
+    DIRECTORY_ROWS, DIRECTORY_ROW_BYTES, EVENTS_PER_PAGE, INLINE_EVENTS, MAX_ENTRIES_PER_ROW,
+    MAX_PAGE_CHILDREN, PAGE_ENTRY_HEADER_BYTES, PAGE_ROWS, PAGE_ROW_BYTES, PAGE_ROW_HEADER_BYTES,
+    PROFILES,
 };
 pub use manifest::{
-    query_binding, ManifestLayout, ManifestOccupancy, ManifestSeal, ShardManifest, TableGeometry,
-    SCHEMA,
+    pages_table, parse_pages_table, query_binding, ManifestLayout, ManifestOccupancy, ManifestSeal,
+    PageChild, PageChildOccupancy, ShardManifest, TableGeometry, SCHEMA,
 };
-pub use page_row::{decode_page_row, encode_page_row, PageEntry};
+pub use page_row::{decode_page_row, encode_page_row, PageEntry, RunLink};
 pub use records::{
     decode_directory_row, encode_directory_row, DirectoryEntry, RecordError,
     DIRECTORY_ENTRY_HEADER_BYTES, DIRECTORY_ROW_HEADER_BYTES, DIRECTORY_SLOTS,
     MAX_DIRECTORY_ENTRY_BYTES, MAX_SCRIPT_BYTES,
 };
 pub use seal::{
-    ChoiceMeasure, Limit, Occupancy, SealError, SealPolicy, SealReason, SealedShard, Sealer,
+    ChoiceMeasure, Closed, DecoupledPolicy, DisplacementSealer, Limit, Occupancy, SealError,
+    SealPolicy, SealReason, SealedChild, SealedDirectory, SealedShard, Sealer,
 };
-pub use tag::{resolve_tag_salt, script_tag, tag_salt, SCRIPT_TAG_BYTES};
+pub use tag::{page_tag_salt, resolve_tag_salt, script_tag, tag_salt, SCRIPT_TAG_BYTES};

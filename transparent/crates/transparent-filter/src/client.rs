@@ -791,7 +791,7 @@ mod tests {
             let filter = build_range_filter(key, &elements).unwrap();
             entries.push(ShardMapEntry {
                 shard_id,
-                geometry: "recent-8k".to_string(),
+                geometry: "decoupled-2k-8k".to_string(),
                 start_height,
                 end_height,
                 parent_block_hash: parent.to_display_hex(),
@@ -823,7 +823,7 @@ mod tests {
             range_envelope_version: RANGE_ENVELOPE_VERSION,
             start_height: FIRST_HEIGHT,
             seal: std::collections::BTreeMap::from([(
-                "recent-8k".to_string(),
+                "decoupled-2k-8k".to_string(),
                 SealParameters {
                     max_scripts: 16,
                     max_page_rows: 16,

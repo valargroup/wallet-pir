@@ -120,12 +120,10 @@ fn main() -> Result<(), BoxError> {
     }
     let mut clients = BTreeMap::new();
     for f in &fixture.tables {
-        let table = match f.table.as_str() {
-            "directory" => Table::Directory,
-            "pages" => Table::Pages,
-            _ => return Err("unknown table".into()),
-        };
-        let key = (f.geometry.clone(), table);
+        let table = Table::parse(&f.table).ok_or("unknown table")?;
+        // One client per geometry and kind: every page shard shares the
+        // pages parameters.
+        let key = (f.geometry.clone(), table.kind());
         if !clients.contains_key(&key) {
             let g = geometry
                 .geometries
@@ -139,7 +137,7 @@ fn main() -> Result<(), BoxError> {
                     &g.directory_scheme,
                     g.directory_scheme_dq44.as_ref(),
                 ),
-                Table::Pages => (
+                Table::Pages(_) => (
                     g.page_rows,
                     g.page_row_bytes,
                     &g.pages_scheme,
@@ -179,6 +177,7 @@ fn main() -> Result<(), BoxError> {
             let setup: Setup = serde_json::from_slice(&bytes)?;
             client.open_segment(
                 &f.revision,
+                table,
                 segment,
                 &setup.public_params,
                 &setup.public_params_sha256,
@@ -188,19 +187,15 @@ fn main() -> Result<(), BoxError> {
     let clients: BTreeMap<_, _> = clients.into_iter().map(|(k, v)| (k, Arc::new(v))).collect();
     let mut groups: Vec<Vec<Arc<Target>>> = (0..4).map(|_| Vec::new()).collect();
     for f in fixture.tables {
-        let table = if f.table == "directory" {
-            Table::Directory
-        } else {
-            Table::Pages
-        };
+        let table = Table::parse(&f.table).ok_or("unknown table")?;
         let index = match (f.geometry.as_str(), table) {
-            ("recent-4k-8k", Table::Directory) => 0,
-            ("recent-4k-8k", Table::Pages) => 1,
-            ("archive-wide", Table::Directory) => 2,
-            ("archive-wide", Table::Pages) => 3,
+            ("decoupled-2k-8k", Table::Directory) => 0,
+            ("decoupled-2k-8k", Table::Pages(_)) => 1,
+            ("decoupled-32k-32k", Table::Directory) => 2,
+            ("decoupled-32k-32k", Table::Pages(_)) => 3,
             _ => return Err("unsupported load geometry".into()),
         };
-        let client = clients[&(f.geometry.clone(), table)].clone();
+        let client = clients[&(f.geometry.clone(), table.kind())].clone();
         groups[index].push(Arc::new(Target {
             fixture: f,
             client,
@@ -234,7 +229,7 @@ fn main() -> Result<(), BoxError> {
                 let Ok((sequence, due, target, sample_index, logical_id, attempt)) = rx.lock().unwrap().recv() else { break; };
                 let f = &target.fixture; let sample = &f.samples[sample_index];
                 let prep = Instant::now();
-                let query = match target.client.prepare(&f.revision, sample.row) {
+                let query = match target.client.prepare(&f.revision, target.table, sample.row) {
                     Ok(q) => q,
                     Err(e) => { let _ = started_tx.send(Instant::now()); emit(serde_json::json!({"event":"error","unix":now(),"sequence":sequence,"kind":"prepare","error":e.to_string()})); continue; }
                 };
@@ -258,7 +253,7 @@ fn main() -> Result<(), BoxError> {
                 let retryable = response.as_ref().err().is_some_and(retryable_transport);
                 let result = response.and_then(|bytes| {
                     let size = bytes.len();
-                    let decoded = target.client.decode(&f.revision, f.segments, query, &bytes)?;
+                    let decoded = target.client.decode(&f.revision, target.table, f.segments, query, &bytes)?;
                     let hashes: Vec<_> = decoded.iter().map(|b| hex::encode(Sha256::digest(b))).collect();
                     if hashes != sample.sha256 { return Err("decoded row differs from independent plaintext oracle".into()); }
                     Ok(size)

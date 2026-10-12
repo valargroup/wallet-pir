@@ -206,6 +206,42 @@ impl Table {
     }
 }
 
+/// A table one history query addresses: a directory shard's directory, or
+/// its page shard `j`, served as the table `pages-<j>` of the directory
+/// shard's revision.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum TableRef {
+    Directory,
+    Pages(u32),
+}
+
+impl TableRef {
+    /// The table a request path names, or `None`. One table has one name.
+    pub fn parse(name: &str) -> Option<Self> {
+        if name == Table::Directory.as_str() {
+            return Some(Self::Directory);
+        }
+        transparent_shard::manifest::parse_pages_table(name).map(Self::Pages)
+    }
+
+    /// The name on the wire and in the query binding.
+    pub fn name(self) -> String {
+        match self {
+            Self::Directory => Table::Directory.as_str().to_string(),
+            Self::Pages(child) => transparent_shard::manifest::pages_table(child),
+        }
+    }
+
+    /// The kind, which decides the native parameters and setup seed: every
+    /// page shard of a geometry shares one parameter set.
+    pub fn kind(self) -> Table {
+        match self {
+            Self::Directory => Table::Directory,
+            Self::Pages(_) => Table::Pages,
+        }
+    }
+}
+
 /// The published seed a table's public query setup is derived from; see
 /// [`transparent_shard::display::setup_seed_named`], which clients share.
 pub fn setup_seed(geometry: &Geometry, table: Table) -> u64 {
@@ -226,11 +262,11 @@ pub struct SegmentSource {
     /// SHA-256 of the file, in hex, as the manifest publishes it.
     pub sha256: String,
     /// The first row a query may omit, from which every byte must be zero:
-    /// a growing tail's [`pages_query_rows`], or `rows` when queries select
-    /// every row. Checked wherever the digest is, so no runtime is built or
+    /// a page shard's [`query_rows`], or `rows` when queries select every
+    /// row. Checked wherever the digest is, so no runtime is built or
     /// restored from a segment whose omitted rows hold data.
     ///
-    /// [`pages_query_rows`]: transparent_shard::manifest::ShardManifest::pages_query_rows
+    /// [`query_rows`]: transparent_shard::manifest::PageChild::query_rows
     pub zero_from_row: u64,
 }
 
@@ -363,25 +399,86 @@ pub struct LoadedShard {
     pub filter: Vec<u8>,
     /// One entry per segment, in segment order.
     pub directory: Vec<SegmentSource>,
-    pub pages: Vec<SegmentSource>,
+    /// The page shards, in order.
+    pub children: Vec<LoadedChild>,
+}
+
+/// One page shard's tables.
+#[derive(Clone, Debug)]
+pub struct LoadedChild {
+    /// The page shard's chained identity ([`ShardManifest::child_digests`]),
+    /// in hex. Runtimes are keyed by it, so a sealed page shard's runtime is
+    /// shared by every revision of its directory shard.
+    pub identity: String,
+    /// Rows a query of this page shard selects over.
+    pub query_rows: u64,
+    /// One entry per segment; empty when nothing was pushed into it.
+    pub segments: Vec<SegmentSource>,
 }
 
 impl LoadedShard {
     /// One segment of a table, or `None` if this shard has no such segment.
-    pub fn segment(&self, table: Table, segment: u32) -> Option<&SegmentSource> {
+    pub fn segment(&self, table: TableRef, segment: u32) -> Option<&SegmentSource> {
         self.sources(table).get(segment as usize)
     }
 
-    /// How many segments this shard's table has. Ordinarily one.
-    pub fn segments(&self, table: Table) -> u32 {
+    /// How many segments this shard's table has. Ordinarily one for the
+    /// directory, and zero for a page shard nothing was pushed into.
+    pub fn segments(&self, table: TableRef) -> u32 {
         self.sources(table).len() as u32
     }
 
-    fn sources(&self, table: Table) -> &[SegmentSource] {
+    fn sources(&self, table: TableRef) -> &[SegmentSource] {
         match table {
-            Table::Directory => &self.directory,
-            Table::Pages => &self.pages,
-            Table::TxDirectory => &[],
+            TableRef::Directory => &self.directory,
+            TableRef::Pages(child) => self
+                .children
+                .get(child as usize)
+                .map_or(&[], |child| child.segments.as_slice()),
+        }
+    }
+
+    /// Every table this revision holds rows in: the directory, then each page
+    /// shard with at least one segment.
+    pub fn tables(&self) -> impl Iterator<Item = TableRef> + '_ {
+        std::iter::once(TableRef::Directory).chain(
+            self.children
+                .iter()
+                .enumerate()
+                .filter(|(_, child)| !child.segments.is_empty())
+                .map(|(index, _)| TableRef::Pages(index as u32)),
+        )
+    }
+
+    /// What a table's runtimes are keyed by: the revision digest for the
+    /// directory, the page shard's identity for a page shard.
+    pub fn runtime_identity(&self, table: TableRef) -> &str {
+        match table {
+            TableRef::Directory => &self.digest,
+            TableRef::Pages(child) => self
+                .children
+                .get(child as usize)
+                .map_or(self.digest.as_str(), |child| child.identity.as_str()),
+        }
+    }
+
+    /// Everything this revision's runtimes are keyed by: its digest and the
+    /// identity of each of its page shards. What a disk-cache collection
+    /// must keep for the revision to stay warm.
+    pub fn runtime_identities(&self) -> Vec<String> {
+        std::iter::once(self.digest.clone())
+            .chain(self.children.iter().map(|child| child.identity.clone()))
+            .collect()
+    }
+
+    /// Rows a query of `table` selects over, given the table's full rows.
+    pub fn query_rows(&self, table: TableRef, full: usize) -> usize {
+        match table {
+            TableRef::Directory => full,
+            TableRef::Pages(child) => self
+                .children
+                .get(child as usize)
+                .map_or(full, |child| child.query_rows as usize),
         }
     }
 
@@ -425,6 +522,15 @@ impl LoadedShard {
             return Err(LoadError::Invalid(
                 "manifest layout disagrees with shard schema".into(),
             ));
+        }
+        // The page shard list is checked by every worker for every
+        // manifest, held or not: it is what a wallet walks.
+        if let Some(geometry) = geometry_by_name(&manifest.geometry) {
+            manifest
+                .check_children(geometry.page_rows, geometry.page_row_bytes as u32)
+                .map_err(|error| {
+                    LoadError::Invalid(format!("shard {}: {error}", manifest.shard_id))
+                })?;
         }
         if manifest.tag_salt_counter > transparent_shard::tag::MAX_TAG_SALT_COUNTER {
             return Err(LoadError::Invalid(format!(
@@ -477,7 +583,12 @@ impl LoadedShard {
         let directory = meta.manifest.directory_segments.len() as u64
             * geometry.directory_rows
             * geometry.directory_row_bytes as u64;
-        let pages = meta.manifest.page_segments.len() as u64
+        let pages = meta
+            .manifest
+            .page_children
+            .iter()
+            .map(|child| child.page_segments.len() as u64)
+            .sum::<u64>()
             * geometry.page_rows
             * geometry.page_row_bytes as u64;
         directory + pages
@@ -495,53 +606,66 @@ impl LoadedShard {
         // Every segment must match the named geometry, not just the first: a
         // segment with its own widths would silently need its own parameters,
         // and sharing one set per geometry is the whole point of naming it.
-        let mut tables: Vec<Vec<SegmentSource>> = Vec::new();
-        let declared = [
-            (Table::Directory, &manifest.directory_segments),
-            (Table::Pages, &manifest.page_segments),
-        ];
-        for (table, segments) in declared {
-            if segments.is_empty() {
+        let source = |table: TableRef,
+                      index: usize,
+                      published: &transparent_shard::manifest::TableGeometry,
+                      zero_from_row: u64|
+         -> Result<SegmentSource, LoadError> {
+            let kind = table.kind();
+            if published.rows != kind.rows(geometry)
+                || published.row_bytes != kind.row_bytes(geometry)
+            {
                 return Err(LoadError::Invalid(format!(
-                    "shard {} declares no {} segments",
+                    "{} segment {index} of shard {} is {}x{} but geometry {} is {}x{}",
+                    table.name(),
                     manifest.shard_id,
-                    table.as_str()
+                    published.rows,
+                    published.row_bytes,
+                    geometry.name,
+                    kind.rows(geometry),
+                    kind.row_bytes(geometry),
                 )));
             }
-            let mut sources = Vec::with_capacity(segments.len());
-            for (index, published) in segments.iter().enumerate() {
-                if published.rows != table.rows(geometry)
-                    || published.row_bytes != table.row_bytes(geometry)
-                {
-                    return Err(LoadError::Invalid(format!(
-                        "{} segment {index} of shard {} is {}x{} but geometry {} is {}x{}",
-                        table.as_str(),
-                        manifest.shard_id,
-                        published.rows,
-                        published.row_bytes,
-                        geometry.name,
-                        table.rows(geometry),
-                        table.row_bytes(geometry),
-                    )));
-                }
-                let source = SegmentSource {
-                    path: dir.join(format!("{}.{index}.bin", table.as_str())),
-                    rows: published.rows,
-                    row_bytes: published.row_bytes,
-                    sha256: published.sha256.clone(),
-                    zero_from_row: match table {
-                        Table::Pages => manifest.pages_query_rows(),
-                        _ => published.rows,
-                    },
-                };
-                source.verify()?;
-                sources.push(source);
-            }
-            tables.push(sources);
+            let source = SegmentSource {
+                path: dir.join(format!("{}.{index}.bin", table.name())),
+                rows: published.rows,
+                row_bytes: published.row_bytes,
+                sha256: published.sha256.clone(),
+                zero_from_row,
+            };
+            source.verify()?;
+            Ok(source)
+        };
+        if manifest.directory_segments.is_empty() {
+            return Err(LoadError::Invalid(format!(
+                "shard {} declares no directory segments",
+                manifest.shard_id
+            )));
         }
-        let mut tables = tables.into_iter();
-        let directory = tables.next().expect("directory segments");
-        let pages = tables.next().expect("page segments");
+        let directory = manifest
+            .directory_segments
+            .iter()
+            .enumerate()
+            .map(|(index, published)| source(TableRef::Directory, index, published, published.rows))
+            .collect::<Result<Vec<_>, _>>()?;
+        let identities = manifest.child_digests();
+        let mut children = Vec::with_capacity(manifest.page_children.len());
+        for (child, identity) in manifest.page_children.iter().zip(&identities) {
+            let query_rows = child.query_rows();
+            let segments = child
+                .page_segments
+                .iter()
+                .enumerate()
+                .map(|(index, published)| {
+                    source(TableRef::Pages(child.index), index, published, query_rows)
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            children.push(LoadedChild {
+                identity: hex::encode(identity),
+                query_rows,
+                segments,
+            });
+        }
         verify_choice_routes(&manifest, geometry, &directory)?;
 
         Ok(Self {
@@ -551,7 +675,7 @@ impl LoadedShard {
             geometry,
             filter,
             directory,
-            pages,
+            children,
         })
     }
 }
@@ -580,8 +704,11 @@ fn verify_choice_routes(
         let bytes = source.load()?;
         for (within, raw) in bytes.chunks(geometry.directory_row_bytes).enumerate() {
             let row = segment as u64 * geometry.directory_rows + within as u64;
-            let decoded = transparent_shard::records::decode_directory_row(raw)
-                .map_err(|error| invalid(format!("directory row {row}: {error}")))?;
+            let decoded = transparent_shard::records::decode_directory_row(
+                raw,
+                manifest.page_children.len() as u32,
+            )
+            .map_err(|error| invalid(format!("directory row {row}: {error}")))?;
             // Rows carry script tags, not raw scripts, so the route each
             // script took cannot be recomputed here. The builder checks every
             // route against the encoded rows before publication, while it
@@ -764,7 +891,9 @@ impl ShardSet {
                 // unqueried, and the wallet would advance coverage over history
                 // it never read.
                 || manifest.directory_segments.len() as u32 != entry.directory_segments
-                || manifest.page_segments.len() as u32 != entry.page_segments
+                // The map counts a directory shard's page shards where v11
+                // counted page segments.
+                || manifest.page_children.len() as u32 != entry.page_segments
             {
                 return Err(LoadError::Invalid(format!(
                     "shard {} disagrees with its map entry",
@@ -1013,7 +1142,7 @@ impl ShardSet {
     /// them: current revisions of assigned shards, newest shard first for a
     /// recent replica so the tail wallets hit hardest is ready first, then
     /// retained superseded revisions.
-    pub fn warm_targets(&self) -> Vec<(String, Table, u32)> {
+    pub fn warm_targets(&self) -> Vec<(String, TableRef, u32)> {
         let mut current: Vec<&LoadedShard> =
             self.current.values().map(|&i| &self.revisions[i]).collect();
         match self.scope.as_ref().map(|scope| scope.role) {
@@ -1035,8 +1164,14 @@ impl ShardSet {
                 .then(b.manifest.shard_id.cmp(&a.manifest.shard_id))
         });
         let mut targets = Vec::new();
+        // A sealed page shard is shared by every revision of its directory
+        // shard; its runtimes are warmed once.
+        let mut seen = std::collections::HashSet::new();
         for shard in current.into_iter().chain(superseded) {
-            for table in Table::HISTORY {
+            for table in shard.tables() {
+                if !seen.insert((shard.runtime_identity(table).to_string(), table.kind())) {
+                    continue;
+                }
                 for segment in 0..shard.segments(table) {
                     targets.push((shard.digest.clone(), table, segment));
                 }
@@ -1082,7 +1217,11 @@ fn reuse_linked(old: &LoadedShard, dir: &Path) -> Option<LoadedShard> {
     let mut shard = old.clone();
     // Every table, display included: a source left pointing into the old
     // directory fails its next cold build once that directory is collected.
-    for source in shard.directory.iter_mut().chain(shard.pages.iter_mut()) {
+    let pages = shard
+        .children
+        .iter_mut()
+        .flat_map(|child| child.segments.iter_mut());
+    for source in shard.directory.iter_mut().chain(pages) {
         let next = dir.join(source.path.file_name()?);
         let a = std::fs::metadata(&source.path).ok()?;
         let b = std::fs::metadata(&next).ok()?;

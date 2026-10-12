@@ -220,7 +220,7 @@ impl<T: ShardTransport> ShardTransport for Counting<T> {
         self.record(
             match table {
                 Table::Directory => "setup_directory",
-                Table::Pages => "setup_pages",
+                Table::Pages(_) => "setup_pages",
             },
             0,
             sized(&result),
@@ -240,7 +240,7 @@ impl<T: ShardTransport> ShardTransport for Counting<T> {
         self.record(
             match table {
                 Table::Directory => "query_directory",
-                Table::Pages => "query_pages",
+                Table::Pages(_) => "query_pages",
             },
             body.len() as u64,
             result.as_ref().map(|b| b.len() as u64),

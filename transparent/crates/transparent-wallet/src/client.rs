@@ -61,18 +61,41 @@ pub enum ClientError {
 }
 
 /// Which table a query addresses.
+///
+/// A directory shard has one directory table and up to
+/// [`MAX_PAGE_CHILDREN`](transparent_shard::MAX_PAGE_CHILDREN) page tables,
+/// one per page shard, named `pages-<j>` on the wire. Native parameters are
+/// per table *kind*: every `pages-<j>` of a geometry shares one scheme.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Table {
     Directory,
-    Pages,
+    /// The pages table of page shard `j`.
+    Pages(u32),
 }
 
 impl Table {
-    pub fn as_str(self) -> &'static str {
+    /// The table kind native parameters are derived for.
+    pub fn kind(self) -> &'static str {
         match self {
             Table::Directory => "directory",
-            Table::Pages => "pages",
+            Table::Pages(_) => "pages",
         }
+    }
+
+    /// The table's name on the wire: `directory` or `pages-<j>`.
+    pub fn name(self) -> String {
+        match self {
+            Table::Directory => "directory".to_string(),
+            Table::Pages(child) => transparent_shard::manifest::pages_table(child),
+        }
+    }
+
+    /// The table a wire name addresses, or `None` for any other name.
+    pub fn parse(name: &str) -> Option<Self> {
+        if name == "directory" {
+            return Some(Table::Directory);
+        }
+        transparent_shard::manifest::parse_pages_table(name).map(Table::Pages)
     }
 }
 
@@ -89,21 +112,26 @@ struct SegmentSetup {
     epoch: [u8; 8],
 }
 
-/// A client for one table geometry, across every shard.
+/// A client for one table kind of one geometry, across every shard.
+///
+/// One pages client serves every `pages-<j>` table: the scheme is per kind,
+/// while each table's published setup, binding and stash are per table name.
 pub struct TableClient {
     schema: String,
-    table: Table,
+    /// The kind this client was derived for; see [`Table::kind`].
+    kind: &'static str,
     profile: TableProfile,
     /// Whether queries go at 44 dithered bits, which the service advertised
     /// and this client reproduced, rather than 49.
     dithered: bool,
     /// Per segment, because the published masks come from each segment's own
-    /// database. Keyed by manifest digest and segment index, so a superseded
-    /// revision's setup is never reused for the revision that replaced it.
-    segments: HashMap<(String, u32), SegmentSetup>,
-    /// Queries a batch already sent, per revision, in the order the walk will
-    /// ask for their rows. See [`TableClient::stash`].
-    stashed: HashMap<String, VecDeque<Stashed>>,
+    /// database. Keyed by manifest digest, table name and segment index, so a
+    /// superseded revision's setup is never reused for the revision that
+    /// replaced it, and one page shard's never for another's.
+    segments: HashMap<(String, String, u32), SegmentSetup>,
+    /// Queries a batch already sent, per revision and table, in the order the
+    /// walk will ask for their rows. See [`TableClient::stash`].
+    stashed: HashMap<(String, String), VecDeque<Stashed>>,
 }
 
 /// A query sent ahead of the walk, with its outcome.
@@ -114,13 +142,15 @@ struct Stashed {
 }
 
 impl TableClient {
-    /// Builds a client for one table of `geometry`, re-deriving the native
-    /// parameters — bit widths, query masks and packing setup — rather than
-    /// adopting what the service published.
+    /// Builds a client for one table kind of `geometry`, re-deriving the
+    /// native parameters — bit widths, query masks and packing setup — rather
+    /// than adopting what the service published.
     ///
-    /// `served` is the 49-bit scheme, which must reproduce. `served_dithered`
-    /// is the 44-bit dithered scheme, if the service advertised one: queries
-    /// use it only when it reproduces too, and otherwise fall back to 49 bits.
+    /// `table` names the kind; any `Table::Pages(_)` builds the client every
+    /// page table of the geometry shares. `served` is the 49-bit scheme,
+    /// which must reproduce. `served_dithered` is the 44-bit dithered scheme,
+    /// if the service advertised one: queries use it only when it reproduces
+    /// too, and otherwise fall back to 49 bits.
     pub fn new(
         table: Table,
         geometry: &str,
@@ -152,12 +182,12 @@ impl TableClient {
         if !transparent_shard::manifest::supported_schema(schema) {
             return Err(ClientError::Session("unsupported schema".into()));
         }
-        let profile = TableProfile::new(schema, geometry, table.as_str(), rows, row_bytes)
-            .map_err(ClientError::Pir)?;
+        let kind = table.kind();
+        let profile =
+            TableProfile::new(schema, geometry, kind, rows, row_bytes).map_err(ClientError::Pir)?;
         if served != &profile.scheme {
             return Err(ClientError::Session(format!(
-                "{} scheme does not match the pinned geometry",
-                table.as_str()
+                "{kind} scheme does not match the pinned geometry"
             )));
         }
         // Compared whole, like the 49-bit scheme. One that does not reproduce
@@ -165,7 +195,7 @@ impl TableClient {
         let dithered = served_dithered == Some(&profile.dithered_scheme);
         Ok(Self {
             schema: schema.to_string(),
-            table,
+            kind,
             profile,
             dithered,
             segments: HashMap::new(),
@@ -187,15 +217,28 @@ impl TableClient {
         }
     }
 
+    fn check_kind(&self, table: Table) -> Result<(), ClientError> {
+        if table.kind() != self.kind {
+            return Err(ClientError::Session(format!(
+                "a {} client cannot address table {}",
+                self.kind,
+                table.name()
+            )));
+        }
+        Ok(())
+    }
+
     /// Records one segment's published setup after checking it against its
     /// digest.
     pub fn open_segment(
         &mut self,
         revision: &str,
+        table: Table,
         segment: u32,
         public_params_base64: &str,
         public_params_sha256: &str,
     ) -> Result<(), ClientError> {
+        self.check_kind(table)?;
         let public_params = BASE64_STANDARD
             .decode(public_params_base64.as_bytes())
             .map_err(|error| ClientError::Session(error.to_string()))?;
@@ -213,7 +256,7 @@ impl TableClient {
         let mut epoch = [0u8; 8];
         epoch.copy_from_slice(&digest[..8]);
         self.segments.insert(
-            (revision.to_string(), segment),
+            (revision.to_string(), table.name(), segment),
             SegmentSetup {
                 public: public_params,
                 epoch,
@@ -222,11 +265,12 @@ impl TableClient {
         Ok(())
     }
 
-    pub fn is_open(&self, revision: &str, segment: u32) -> bool {
-        self.segments.contains_key(&(revision.to_string(), segment))
+    pub fn is_open(&self, revision: &str, table: Table, segment: u32) -> bool {
+        self.segments
+            .contains_key(&(revision.to_string(), table.name(), segment))
     }
 
-    /// Prepares one query against a named revision.
+    /// Prepares one query against a named revision and table.
     ///
     /// The body opens with the revision-and-table binding, which the service
     /// re-derives and checks and the response repeats. It is a fixed-width
@@ -234,22 +278,29 @@ impl TableClient {
     /// published map — so it discloses nothing while making a query answered by
     /// the wrong runtime fail rather than decode. A fresh secret is sampled for
     /// every query and never leaves the returned value.
-    pub fn prepare(&self, revision: &str, row: usize) -> Result<PreparedQuery, ClientError> {
-        self.prepare_prefix(revision, self.profile.rows, row)
+    pub fn prepare(
+        &self,
+        revision: &str,
+        table: Table,
+        row: usize,
+    ) -> Result<PreparedQuery, ClientError> {
+        self.prepare_prefix(revision, table, self.profile.rows, row)
     }
 
     /// Prepares one query that selects among only the first `query_rows`,
     /// which the revision's verified manifest fixes for every query to the
-    /// table (see [`ShardManifest::pages_query_rows`]). Never derived from
-    /// `row`: the upload's length is all the service learns from it.
+    /// table (see [`PageChild::query_rows`]). Never derived from `row`: the
+    /// upload's length is all the service learns from it.
     ///
-    /// [`ShardManifest::pages_query_rows`]: transparent_shard::manifest::ShardManifest::pages_query_rows
+    /// [`PageChild::query_rows`]: transparent_shard::manifest::PageChild::query_rows
     pub fn prepare_prefix(
         &self,
         revision: &str,
+        table: Table,
         query_rows: usize,
         row: usize,
     ) -> Result<PreparedQuery, ClientError> {
+        self.check_kind(table)?;
         if row >= query_rows || query_rows > self.profile.rows {
             return Err(ClientError::Session("row outside table".into()));
         }
@@ -262,7 +313,7 @@ impl TableClient {
         let mut body = transparent_shard::manifest::query_binding_for_schema(
             &self.schema,
             revision,
-            self.table.as_str(),
+            &table.name(),
         )
         .to_vec();
         body.extend(upload);
@@ -272,23 +323,23 @@ impl TableClient {
     /// Decodes one answer: one row per segment, in segment order.
     ///
     /// Every segment answered the same query, so the response carries as many
-    /// bodies as the shard has segments and the caller decides which row it was
-    /// looking for — by the exact script bytes, never by position.
+    /// bodies as the table has segments and the caller decides which row it
+    /// was looking for — by the exact script tag, never by position.
     pub fn decode(
         &self,
         revision: &str,
+        table: Table,
         segments: u32,
         query: PreparedQuery,
         response: &[u8],
     ) -> Result<Vec<Vec<u8>>, ClientError> {
-        let binding = transparent_shard::manifest::query_binding_for_schema(
-            &self.schema,
-            revision,
-            self.table.as_str(),
-        );
+        self.check_kind(table)?;
+        let name = table.name();
+        let binding =
+            transparent_shard::manifest::query_binding_for_schema(&self.schema, revision, &name);
         let each = 16 + self.profile.scheme.response_bytes;
         // A fixed length per segment, and a fixed segment count from the
-        // published map: a response of any other size is not this shard's.
+        // verified manifest: a response of any other size is not this table's.
         if response.len() != each * segments as usize {
             return Err(ClientError::Response("response length mismatch".into()));
         }
@@ -298,10 +349,10 @@ impl TableClient {
             let part = &response[segment as usize * each..(segment as usize + 1) * each];
             let setup = self
                 .segments
-                .get(&(revision.to_string(), segment))
+                .get(&(revision.to_string(), name.clone(), segment))
                 .ok_or_else(|| {
                     ClientError::Session(format!(
-                        "revision {revision} segment {segment} is not open"
+                        "revision {revision} table {name} segment {segment} is not open"
                     ))
                 })?;
             // The prefix binds the response to the revision and table the query
@@ -328,23 +379,25 @@ impl TableClient {
     }
 
     /// Keeps a query that was sent ahead of the walk, with its outcome, for
-    /// the walk's next [`fetch_row`](Self::fetch_row) of that revision.
+    /// the walk's next [`fetch_row`](Self::fetch_row) of that revision and
+    /// table.
     ///
     /// Stashed queries are handed out once, in order, and only for the row
     /// they were prepared for: the first request that does not match drops
-    /// the revision's stash and goes to the network. A stashed refusal or
-    /// failure is returned as if the query had just been sent, and drops the
-    /// rest of the revision's stash, so whatever the walk does next — a
-    /// retry, a refresh — is a fresh request.
+    /// the stash and goes to the network. A stashed refusal or failure is
+    /// returned as if the query had just been sent, and drops the rest of the
+    /// stash, so whatever the walk does next — a retry, a refresh — is a
+    /// fresh request.
     pub(crate) fn stash(
         &mut self,
         revision: &str,
+        table: Table,
         row: usize,
         query: PreparedQuery,
         reply: Result<Vec<u8>, BoxError>,
     ) {
         self.stashed
-            .entry(revision.to_string())
+            .entry((revision.to_string(), table.name()))
             .or_default()
             .push_back(Stashed { row, query, reply });
     }
@@ -354,7 +407,7 @@ impl TableClient {
         self.stashed.clear();
     }
 
-    /// Fetches one row from every segment of a shard, charging what it cost.
+    /// Fetches one row from every segment of a table, charging what it cost.
     ///
     /// The query selects among the first `query_rows`; see
     /// [`prepare_prefix`](Self::prepare_prefix). Uses a query a batch already
@@ -365,15 +418,17 @@ impl TableClient {
         transport: &mut impl ShardTransport,
         shard_id: u64,
         revision: &str,
+        table: Table,
         segments: u32,
         query_rows: usize,
         row: usize,
         charges: &mut ByteCharges,
     ) -> Result<Vec<Vec<u8>>, ClientError> {
-        if let Some(queue) = self.stashed.get_mut(revision) {
+        let key = (revision.to_string(), table.name());
+        if let Some(queue) = self.stashed.get_mut(&key) {
             let next = queue.pop_front();
             if queue.is_empty() {
-                self.stashed.remove(revision);
+                self.stashed.remove(&key);
             }
             match next {
                 Some(stashed)
@@ -387,31 +442,31 @@ impl TableClient {
                     let response = match stashed.reply {
                         Ok(response) => response,
                         Err(error) => {
-                            self.stashed.remove(revision);
+                            self.stashed.remove(&key);
                             return Err(classify_transport(error));
                         }
                     };
                     charges.add_query(
-                        self.table,
+                        table,
                         stashed.query.body.len() as u64,
                         response.len() as u64,
                     );
-                    return self.decode(revision, segments, stashed.query, &response);
+                    return self.decode(revision, table, segments, stashed.query, &response);
                 }
                 // Out of step with the walk: nothing further is trusted to
-                // line up, so the rest of this revision goes to the network.
+                // line up, so the rest of this table goes to the network.
                 _ => {
-                    self.stashed.remove(revision);
+                    self.stashed.remove(&key);
                 }
             }
         }
-        let query = self.prepare_prefix(revision, query_rows, row)?;
+        let query = self.prepare_prefix(revision, table, query_rows, row)?;
         let uploaded = query.body.len() as u64;
         let response = transport
-            .query(shard_id, revision, self.table, &query.body)
+            .query(shard_id, revision, table, &query.body)
             .map_err(classify_transport)?;
-        charges.add_query(self.table, uploaded, response.len() as u64);
-        self.decode(revision, segments, query, &response)
+        charges.add_query(table, uploaded, response.len() as u64);
+        self.decode(revision, table, segments, query, &response)
     }
 }
 
@@ -438,7 +493,7 @@ mod tests {
         TableProfile::new(
             transparent_shard::SCHEMA,
             "recent-4k",
-            table.as_str(),
+            table.kind(),
             4_096,
             4_096,
         )
@@ -451,7 +506,11 @@ mod tests {
     }
 
     fn body_len(client: &TableClient) -> usize {
-        client.prepare("revision", 17).unwrap().body.len()
+        client
+            .prepare("revision", Table::Directory, 17)
+            .unwrap()
+            .body
+            .len()
     }
 
     /// A service advertising the dithered scheme gets 44-bit queries.
@@ -481,7 +540,7 @@ mod tests {
         assert_eq!((unknown.query_bits(), body_len(&unknown)), (49, legacy));
 
         // Another table's dithered scheme is not this one's.
-        let other = self::profile(Table::Pages);
+        let other = self::profile(Table::Pages(0));
         let crossed = client(Table::Directory, Some(&other.dithered_scheme));
         assert_eq!(crossed.query_bits(), 49);
     }
