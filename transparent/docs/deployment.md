@@ -3229,7 +3229,7 @@ the `txid-2k8` lineage runs beside the live one, on its own host and public
 hostname, `https://transparent-pir-txid.valargroup.dev`. Newer wallet builds
 use that origin; the `/v1/txid/` paths are the same.
 
-- **Host.** `transparent-pir-txid-k8-01` (`m-8vcpu-64gb`), from
+- **Host.** `transparent-pir-txid-k8-01` (`m-8vcpu-64gb-intel`), from
   `transparent-txid-display-site.tf` with `transparent_txid_display_site_enabled`.
   Its own firewall opens 80 and 443 publicly and 8095 to the coordinator, and
   Terraform owns its unproxied Cloudflare record. Caddy on the host serves the

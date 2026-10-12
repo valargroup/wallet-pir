@@ -10,8 +10,8 @@
 # not depend on the router lineage's `transparent_txid_display_port_enabled`.
 #
 # Sizing (status.md, 2026-10-11): 191 runtimes of 80.04 MiB at the 3.51M-height
-# journal end, 15.2 GiB, plus about 2.4 GiB a year; the same size and unit
-# limits as display-01.
+# journal end, 15.2 GiB, plus about 2.4 GiB a year; display-01's memory and
+# unit limits.
 
 variable "transparent_txid_display_site_enabled" {
   description = "Whether the one-query txid display site host and its DNS record exist."
@@ -22,7 +22,8 @@ variable "transparent_txid_display_site_enabled" {
 variable "transparent_txid_display_site_size" {
   description = "One-query txid display site host size."
   type        = string
-  default     = "m-8vcpu-64gb"
+  # The AMD m-8vcpu-64gb was not offered in ams3 on 2026-10-12.
+  default = "m-8vcpu-64gb-intel"
 }
 
 locals {
