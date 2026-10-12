@@ -108,12 +108,17 @@ class Fleet:
         Path(config['control_dir']).mkdir(mode=0o700, parents=True, exist_ok=True)
 
     def ssh_options(self, channel):
-        """Pinned, non-interactive SSH with a persistent master per channel."""
+        """Pinned, non-interactive SSH with a persistent master per channel and worker.
+
+        The socket is named by the worker's address rather than ssh's 40-hex `%C`: under a
+        site's longer state directory, `%C` plus ssh's temporary suffix outgrows the 108-byte
+        Unix socket path. Every worker is reached as one user on port 22.
+        """
         return ['-oBatchMode=yes', '-oConnectTimeout=5', '-oStrictHostKeyChecking=yes', '-oIdentitiesOnly=yes',
                 '-oServerAliveInterval=5', '-oServerAliveCountMax=3',
                 '-o', 'UserKnownHostsFile=' + self.c['known_hosts'], '-i', self.c['ssh_key'],
                 '-oControlMaster=auto', '-oControlPersist=300',
-                '-o', 'ControlPath=%s/%s-%%C' % (self.c['control_dir'], channel)]
+                '-o', 'ControlPath=%s/%s-%%h' % (self.c['control_dir'], channel)]
 
     def destination(self, worker):
         return '%s@%s' % (worker['user'], worker['ssh_host'])

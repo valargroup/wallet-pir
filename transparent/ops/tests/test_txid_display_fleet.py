@@ -274,7 +274,7 @@ class AdapterTests(Harness, unittest.TestCase):
                     self.assertEqual(options, fleet.ssh_options('ship'))
                     for option in ('-oBatchMode=yes', '-oStrictHostKeyChecking=yes', '-oControlMaster=auto',
                                    'UserKnownHostsFile=/opt/transparent-publisher/credentials/known_hosts',
-                                   'ControlPath=%s/ship-%%C' % (self.root / 'state/ssh')):
+                                   'ControlPath=%s/ship-%%h' % (self.root / 'state/ssh')):
                         self.assertIn(option, options)
                     self.assertEqual(options[options.index('-i') + 1],
                                      '/opt/transparent-publisher/credentials/deploy-ssh')
@@ -318,7 +318,7 @@ class AdapterTests(Harness, unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(reply['reply']['role'], 'recent-replica')
         argv, = self.calls('ssh')
-        self.assertIn('ControlPath=%s/control-%%C' % (self.root / 'state/ssh'), argv)
+        self.assertIn('ControlPath=%s/control-%%h' % (self.root / 'state/ssh'), argv)
         self.assertEqual(argv[-1], '%s /run/transparent-txid-display/control.sock || [ "$?" -eq 1 ]'
                          % self.config['workers']['recent']['control_binary'])
         sent, = [json.loads(line) for line in self.control_log.read_text().splitlines()]
