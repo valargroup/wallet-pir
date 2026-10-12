@@ -3221,7 +3221,45 @@ fails. All original rollback phase budgets remain 60/140/300/100/140 seconds
 through the guarded deployment wrapper and retain their actual raw evidence.
 The lifecycle gate remains open until those executions and reinspection pass.
 
+## Txid display one-query site (2026-10-12)
+
+Vizor `main` ships the `txid-2k` client, which refuses the one-query map, so
+the cutover below would leave those builds without private display. Instead
+the `txid-2k8` lineage runs beside the live one, on its own host and public
+hostname, `https://transparent-pir-txid.valargroup.dev`. Newer wallet builds
+use that origin; the `/v1/txid/` paths are the same.
+
+- **Host.** `transparent-pir-txid-k8-01` (`m-8vcpu-64gb`), from
+  `transparent-txid-display-site.tf` with `transparent_txid_display_site_enabled`.
+  Its own firewall opens 80 and 443 publicly and 8095 to the coordinator, and
+  Terraform owns its unproxied Cloudflare record. Caddy on the host serves the
+  site; the router and its Caddyfile are untouched.
+- **Request.** A site request (`site.name`, `site.hostname`) has no `router`,
+  `terraform` or router host, and runs the combined layout. Its coordinator
+  paths and unit names carry the name: `/opt/transparent-txid-display-k8`,
+  `transparent-txid-display-k8-controller.service` and so on, with controller
+  status port 8098. Its phases are `stage`, `workers`, `route` (the host's whole
+  Caddyfile) and `controller`; `stop` and `retire` write the withdrawn site.
+  The worker host's own paths are the usual ones, so it must hold no other
+  display worker.
+- **Journal.** A live controller appends to its journal, so the site needs its
+  own: `/srv/txid-display-genesis/journal-v3`, a reflink copy of `journal-v2x`
+  taken while the `txid-2k` controller is stopped for the copy. Its root is
+  `/srv/txid-display-genesis/v3/root`.
+- **Order.** `terraform apply` for the host and record; add the host to the
+  deploy inventory and to the coordinator's publisher `known_hosts`; copy the
+  journal; then `plan`, `preflight`, `stage`, `bootstrap`, `workers`, `route`,
+  `controller`, `verify`. Nothing in this order stops or changes the `txid-2k`
+  lineage except the controller pause for the copy.
+
+Retiring the `txid-2k` lineage, once no supported wallet build uses it, is a
+separate decision: its `retire` closes the shared port variable, which this
+site does not need.
+
 ## Txid display one-query cutover (prepared 2026-10-11)
+
+Superseded by the [one-query site](#txid-display-one-query-site-2026-10-12):
+Vizor `main` already ships the `txid-2k` client.
 
 Prepared, not run: Roman approves and runs it. Nothing below is deployed until
 [status](status.md) records it. The layout and its gates are in

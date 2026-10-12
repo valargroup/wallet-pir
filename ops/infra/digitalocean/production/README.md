@@ -89,6 +89,11 @@ transparent worker firewall for the txid display proof of concept. Only
 root is refreshed, or the next plan closes the port. `txid-display-retire`
 removes it and plans the closing change.
 
+`transparent_txid_display_site_enabled` (default false) creates the one-query
+txid display site: its host, firewall and DNS record
+(`transparent-txid-display-site.tf`). Set it in an `*.auto.tfvars` file in the
+coordinator's root, like the display archive count.
+
 ## Capacity
 
 Each ordered shard group owns three shards and has two active-active replicas.

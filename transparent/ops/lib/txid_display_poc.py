@@ -36,6 +36,7 @@ import shlex
 import sys
 import tempfile
 import time
+import types
 
 from wallet_pir_ops import durable, schema_fence
 from wallet_pir_ops.deploy import units
@@ -133,6 +134,8 @@ STOP_TARGET_SECONDS = 60
 SELF_CHECK_SECONDS = 60
 # A cold bootstrap candidate holds every archive; per-cycle ships take seconds.
 SHIP_SECONDS = 1800
+# A new site's first route also waits for Caddy's ACME certificate.
+SITE_SECONDS = 300
 # Under txid-control's own 600 s wait for a control reply.
 PREPARE_CALL_SECONDS = 540
 MEASURE_LIMITS = {'MemoryMax': '256M', 'CPUQuota': '25%', 'CPUWeight': '20', 'IOWeight': '20', 'Nice': '10'}
@@ -142,6 +145,12 @@ RESERVED_PORTS = (8080, 8081, 8083, 8090, 8092, 8093, 8094, 8192, 8232)
 WORKER_PORT = 8095
 HISTORY_ROOTS = ('/srv/transparent-pir', '/srv/transparent-activity', '/opt/transparent-publisher',
                  '/run/transparent-pir', '/opt/enhance-pir')
+# A site request runs one more display lineage beside the router's: its own
+# public hostname, served by Caddy on its combined worker's host, and its own
+# coordinator paths and unit names, so neither lineage touches the other's.
+SITE_PHASES = ('stage', 'workers', 'route', 'controller')
+SITE_NAME = re.compile('[a-z0-9]{1,12}')
+HOSTNAME = re.compile(r'(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}')
 
 HEX40 = re.compile('[0-9a-f]{40}')
 HEX64 = re.compile('[0-9a-f]{64}')
@@ -158,6 +167,30 @@ TRANSACTION = re.compile(r'txid-display-[a-z-]+-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{6}')
 
 class PocError(ValueError):
     pass
+
+
+def names(site=None):
+    """Coordinator paths and unit names: the router lineage's, or one site's beside them.
+
+    Worker-host paths stay the module's: a site's worker runs on a host of its own.
+    """
+    suffix = '' if site is None else '-' + site['name']
+    opt = OPT + suffix
+    state = opt + '/state'
+
+    def unit(role):
+        return 'transparent-txid-display%s-%s.service' % (suffix, role)
+    found = types.SimpleNamespace(
+        OPT=opt, RELEASES=opt + '/releases', TRANSACTIONS=opt + '/transactions', STATE=state,
+        REQUESTS=state + '/requests', TERRAFORM_PLANS=opt + '/terraform', VALIDATE=opt + '/validate',
+        WORKERS_JSON=opt + '/workers.json', FLEET_JSON=opt + '/fleet.json', CONTROLLER_UNIT=unit('controller'),
+        INGEST_UNIT=unit('ingest'), SMOKE_UNIT=unit('ingest-smoke'), BOOTSTRAP_UNIT=unit('bootstrap'),
+        OBSERVER_UNIT=unit('observer'), MAPWATCH_UNIT=unit('mapwatch'), PLAN_START_UNIT=unit('plan-start'),
+        VERIFY_UNIT=unit('verify'))
+    found.TRANSIENT = (found.INGEST_UNIT, found.SMOKE_UNIT, found.BOOTSTRAP_UNIT, found.OBSERVER_UNIT,
+                       found.MAPWATCH_UNIT)
+    found.JOURNAL_WRITERS = (found.INGEST_UNIT, found.SMOKE_UNIT, found.BOOTSTRAP_UNIT)
+    return found
 
 
 def require(ok, message):
@@ -214,15 +247,19 @@ def layout(request):
 
 def validate(request, inventory):
     """The reviewed request, or PocError. Closed key sets throughout."""
+    site = isinstance(request, dict) and 'site' in request
     exact(request, ('schema', 'source_sha', 'release', 'hosts', 'ports', 'units', 'journal', 'publication',
-                    'controller', 'router', 'terraform', 'history', 'measure', 'baseline'), 'request')
+                    'controller', *(('site',) if site else ('router', 'terraform')), 'history', 'measure',
+                    'baseline'), 'request')
     recent = [isinstance(request[field], dict) and 'recent' in request[field]
               for field in ('hosts', 'units', 'baseline')]
     require(all(recent) or not any(recent),
             'hosts.recent, units.recent and baseline.recent must be all present (split layout) '
             'or all absent (combined layout)')
     workers, _ = layout(request) if isinstance(request['hosts'], dict) else (WORKERS, ROLES)
-    host_keys = tuple(key for key in HOST_KEYS if key in workers or key not in WORKERS)
+    host_keys = tuple(key for key in HOST_KEYS if (key in workers or key not in WORKERS)
+                      and not (site and key == 'router'))
+    require(not site or 'recent' not in workers, 'a site request runs the combined layout')
     require(request['schema'] == SCHEMA, 'request schema must be %s' % SCHEMA)
     require(isinstance(request['source_sha'], str) and HEX40.fullmatch(request['source_sha']),
             'source_sha must be a full lowercase commit')
@@ -324,14 +361,21 @@ def validate(request, inventory):
             'controller.rpc_url must be the loopback node RPC')
     plain_path(controller['rpc_cookie'], 'controller.rpc_cookie')
 
-    router = exact(request['router'], ('import_glob', 'live_fleet_sha256'), 'router')
-    require(isinstance(router['import_glob'], str) and GLOB.fullmatch(router['import_glob'])
-            and '..' not in router['import_glob'], 'router.import_glob must be /etc/caddy/<dir>/*.caddy')
-    require(isinstance(router['live_fleet_sha256'], str) and HEX64.fullmatch(router['live_fleet_sha256']),
-            'router.live_fleet_sha256 must be the reviewed deployed history adapter digest')
-    terraform = exact(request['terraform'], ('wrapper', 'root'), 'terraform')
-    plain_path(terraform['wrapper'], 'terraform.wrapper', history=True)
-    plain_path(terraform['root'], 'terraform.root', history=True)
+    if site:
+        exact(request['site'], ('name', 'hostname'), 'site')
+        require(isinstance(request['site']['name'], str) and SITE_NAME.fullmatch(request['site']['name']),
+                'site.name must be 1 to 12 lowercase letters or digits')
+        require(isinstance(request['site']['hostname'], str) and HOSTNAME.fullmatch(request['site']['hostname']),
+                'site.hostname must be a lowercase DNS name')
+    else:
+        router = exact(request['router'], ('import_glob', 'live_fleet_sha256'), 'router')
+        require(isinstance(router['import_glob'], str) and GLOB.fullmatch(router['import_glob'])
+                and '..' not in router['import_glob'], 'router.import_glob must be /etc/caddy/<dir>/*.caddy')
+        require(isinstance(router['live_fleet_sha256'], str) and HEX64.fullmatch(router['live_fleet_sha256']),
+                'router.live_fleet_sha256 must be the reviewed deployed history adapter digest')
+        terraform = exact(request['terraform'], ('wrapper', 'root'), 'terraform')
+        plain_path(terraform['wrapper'], 'terraform.wrapper', history=True)
+        plain_path(terraform['root'], 'terraform.root', history=True)
     # Schema cutovers move history's adapter, fleet and state, so the request names them.
     history = exact(request['history'], ('load_status', 'adapter', 'fleet', 'membership'), 'history')
     for key, value in history.items():
@@ -342,6 +386,8 @@ def validate(request, inventory):
     plain_path(measure['output'], 'measure.output')
     require(isinstance(measure['public_url'], str) and PUBLIC_URL.fullmatch(measure['public_url']),
             'measure.public_url must be https://<host>')
+    require(not site or measure['public_url'] == 'https://' + request['site']['hostname'],
+            'measure.public_url must be the site\'s own https://<site.hostname>')
     data = [journal['data_dir'], journal['data_dir'] + '.smoke', publication['root'], measure['output']]
     require(not any(inside(a, b) for i, a in enumerate(data) for j, b in enumerate(data) if i != j),
             'journal, publication and measure directories must not nest')
@@ -488,7 +534,7 @@ class Transaction:
         if previous is None:
             return
         name = self.poc.host(host)
-        directory = '%s/%s/files' % (TRANSACTIONS, self.id)
+        directory = '%s/%s/files' % (self.poc.n.TRANSACTIONS, self.id)
         self.poc.ex.mkdir(name, directory, 0o700)
         self.poc.ex.write(name, '%s/%d-%s' % (directory, len(self.data['changes']), posixpath.basename(path)),
                           previous.encode(), 0o600)
@@ -505,6 +551,11 @@ class Poc:
         # Only the workers and hosts this request's layout names; see layout().
         self.worker_keys, self.roles = layout(self.request)
         self.host_keys = tuple(key for key in HOST_KEYS if key in self.request['hosts'])
+        # A site request serves its own hostname from Caddy on its worker host.
+        self.site = self.request.get('site')
+        self.n = names(self.site)
+        self.phases = SITE_PHASES if self.site else PHASES
+        self.route_host = 'archive' if self.site else 'router'
         self.former_recent = FORMER_RECENT in self.request['hosts']
         self.host_release = {key: names for key, names in HOST_RELEASE.items() if key in self.host_keys}
         # The worker that serves the map and every non-archive /v1/txid/ path.
@@ -529,7 +580,7 @@ class Poc:
 
     @property
     def release_dir(self):
-        return '%s/%s' % (RELEASES, self.request['source_sha'])
+        return '%s/%s' % (self.n.RELEASES, self.request['source_sha'])
 
     def binary(self, name):
         return '%s/%s' % (self.release_dir, name)
@@ -552,7 +603,13 @@ class Poc:
 
     @property
     def routes_path(self):
-        return self.routes_dir + '/routes.caddy'
+        return CADDYFILE if self.site else self.routes_dir + '/routes.caddy'
+
+    def site_file(self, body):
+        """The whole Caddyfile of a site's worker host around one display snippet."""
+        return ('# Rendered by `wallet-pir-deploy.py txid-display-deploy --phase route`: the %s txid display\n'
+                '# site. Anything outside /v1/txid/ is not served here.\n%s {\n%s\thandle {\n\t\trespond 404\n\t}\n}\n'
+                % (self.site['name'], self.site['hostname'], body))
 
     @property
     def tfvars_path(self):
@@ -595,13 +652,14 @@ class Poc:
         files['unit:controller'] = units.render(self.template('transparent-txid-display-controller.service.in'), {
             'RELEASE': self.release_dir, 'ROOT': r['publication']['root'], 'JOURNAL': r['journal']['data_dir'],
             'MODE': controller['mode'], 'STATUS_PORT': str(r['ports']['controller_status']),
+            'WORKERS_JSON': self.n.WORKERS_JSON, 'STATE': self.n.STATE,
             'RPC_URL': controller['rpc_url'], 'RPC_COOKIE': controller['rpc_cookie'], 'EXTRA_ARGS': extra,
             'MEMORY_MAX': limits['memory_max'], 'CPU_QUOTA': limits['cpu_quota'],
             'CPU_WEIGHT': str(limits['cpu_weight']), 'NICE': str(limits['nice'])})
         for name in ['unit:' + key for key in self.worker_keys] + ['unit:controller']:
             starts = [value for _, key, value in units.entries(files[name]) if key == 'ExecStart']
             require(len(starts) == 1, '%s must have exactly one ExecStart' % name)
-        transport = {'command': self.binary('txid-display-fleet.py'), 'config': FLEET_JSON}
+        transport = {'command': self.binary('txid-display-fleet.py'), 'config': self.n.FLEET_JSON}
         # Archive owners first: the controller stages and prepares them before
         # the recent replica, which serves the map. A combined worker does both.
         files['workers.json'] = json.dumps({'workers': [
@@ -609,7 +667,7 @@ class Poc:
             indent=2) + '\n'
         files['fleet.json'] = json.dumps({
             'schema': FLEET_SCHEMA, 'ssh_key': DEPLOY_KEY, 'known_hosts': KNOWN_HOSTS,
-            'control_dir': STATE + '/ssh',
+            'control_dir': self.n.STATE + '/ssh',
             'workers': {key: {'ssh_host': r['hosts'][key]['vpc_ip'], 'user': 'root', 'publications': PUBLICATIONS,
                               'staged': STAGED, 'control_socket': CONTROL_SOCKET,
                               'control_binary': self.binary('txid-control')} for key in self.worker_keys},
@@ -617,19 +675,24 @@ class Poc:
         files['routes.caddy'] = units.render(self.template('txid-display-routes.caddy.in'), {
             'ARCHIVE_UPSTREAM': self.upstream('archive'), 'RECENT_UPSTREAM': self.upstream(self.map_worker)})
         files['withdrawn.caddy'] = WITHDRAWN
-        files['tfvars'] = '# txid display proof of concept; removed by txid-display-retire.\n%s = true\n' % TF_VARIABLE
+        if self.site:
+            files['routes.caddy'] = self.site_file(files['routes.caddy'])
+            files['withdrawn.caddy'] = self.site_file(WITHDRAWN)
+        else:
+            files['tfvars'] = ('# txid display proof of concept; removed by txid-display-retire.\n%s = true\n'
+                               % TF_VARIABLE)
         return files
 
     def targets(self):
         """`name -> (host key, path, mode)` of every rendered file."""
         return {
             **{'unit:' + key: (key, '%s/%s' % (SYSTEM, WORKER_UNIT), 0o644) for key in self.worker_keys},
-            'unit:controller': ('coordinator', '%s/%s' % (SYSTEM, CONTROLLER_UNIT), 0o644),
-            'workers.json': ('coordinator', WORKERS_JSON, 0o600),
-            'fleet.json': ('coordinator', FLEET_JSON, 0o600),
-            'routes.caddy': ('router', self.routes_path, 0o644),
-            'withdrawn.caddy': ('router', self.routes_path, 0o644),
-            'tfvars': ('coordinator', self.tfvars_path, 0o600),
+            'unit:controller': ('coordinator', '%s/%s' % (SYSTEM, self.n.CONTROLLER_UNIT), 0o644),
+            'workers.json': ('coordinator', self.n.WORKERS_JSON, 0o600),
+            'fleet.json': ('coordinator', self.n.FLEET_JSON, 0o600),
+            'routes.caddy': (self.route_host, self.routes_path, 0o644),
+            'withdrawn.caddy': (self.route_host, self.routes_path, 0o644),
+            **({} if self.site else {'tfvars': ('coordinator', self.tfvars_path, 0o600)}),
         }
 
     def unit_limits(self, key):
@@ -664,27 +727,27 @@ class Poc:
         measure = r['measure']['output'] + '/{run}'
         observe = ['/usr/bin/python3', self.binary('txid-display-observe.py')]
         return {
-            'ingest': self.systemd_run(INGEST_UNIT, self.unit_limits('ingest'),
+            'ingest': self.systemd_run(self.n.INGEST_UNIT, self.unit_limits('ingest'),
                                        ingest + ['--data-dir', journal['data_dir']]),
             # Ten blocks into a separate directory, so the real journal starts clean.
-            'ingest-smoke': self.systemd_run(SMOKE_UNIT, self.unit_limits('ingest'), ingest + [
+            'ingest-smoke': self.systemd_run(self.n.SMOKE_UNIT, self.unit_limits('ingest'), ingest + [
                 '--stop-height', str(journal['start_height'] + 9), '--data-dir', journal['data_dir'] + '.smoke'],
                 wait=True),
-            'plan-start': self.systemd_run('transparent-txid-display-plan-start.service',
+            'plan-start': self.systemd_run(self.n.PLAN_START_UNIT,
                                            self.unit_limits('bootstrap'), [
                 controller, 'plan-start', '--journal', journal['data_dir'],
                 '--archives', str(r['controller']['archives']),
                 '--replay-seals', str(r['controller']['replay_seals']), *seal], wait=True),
-            'bootstrap': self.systemd_run(BOOTSTRAP_UNIT, self.unit_limits('bootstrap'), [
+            'bootstrap': self.systemd_run(self.n.BOOTSTRAP_UNIT, self.unit_limits('bootstrap'), [
                 controller, 'bootstrap', '--root', root, '--journal', journal['data_dir'],
                 '--start', '{start}', '--through', '{through}', *seal]),
-            'verify': self.systemd_run('transparent-txid-display-verify.service', self.unit_limits('controller'),
+            'verify': self.systemd_run(self.n.VERIFY_UNIT, self.unit_limits('controller'),
                                        [controller, 'verify', '--root', root, '--journal', journal['data_dir']],
                                        wait=True),
-            'observer': self.systemd_run(OBSERVER_UNIT, MEASURE_LIMITS, observe + [
+            'observer': self.systemd_run(self.n.OBSERVER_UNIT, MEASURE_LIMITS, observe + [
                 'observer', '--rpc-url', r['controller']['rpc_url'], '--cookie', r['controller']['rpc_cookie'],
                 '--interval-ms', '250', '--out', measure + '/observer.jsonl']),
-            'mapwatch': self.systemd_run(MAPWATCH_UNIT, MEASURE_LIMITS, observe + [
+            'mapwatch': self.systemd_run(self.n.MAPWATCH_UNIT, MEASURE_LIMITS, observe + [
                 'mapwatch', '--url', r['measure']['public_url'] + '/v1/txid/shards', '--interval-ms', '1000',
                 '--out-dir', measure + '/mapwatch']),
         }
@@ -711,26 +774,30 @@ class Poc:
                 'source_sha': self.request['source_sha'], 'release_dir': self.release_dir,
                 'hosts': {key: self.host(key) for key in self.host_keys},
                 'retires': {FORMER_RECENT: self.host(FORMER_RECENT)} if self.former_recent else {},
-                'phases': list(PHASES),
+                'phases': list(self.phases),
                 'files': {name: {'host': targets[name][0], 'path': targets[name][1],
                                  'mode': '%04o' % targets[name][2], 'sha256': sha256(text)}
                           for name, text in sorted(files.items())},
                 'release': {key: list(names) for key, names in self.host_release.items()},
                 'templates': {name: file_sha256(self.root / path) for name, path in sorted(RELEASE_FILES.items())},
-                'router_hook': {
+                'transient': self.transient(),
+            }
+            if self.site:
+                self._plan['site'] = {**self.site, 'host': self.host(self.route_host), 'units': sorted(
+                    {self.n.CONTROLLER_UNIT, *self.n.TRANSIENT}), 'opt': self.n.OPT}
+            else:
+                self._plan['router_hook'] = {
                     'host': 'coordinator', 'script': self.live_fleet,
                     'previous_sha256': self.request['router']['live_fleet_sha256'],
                     'new_sha256': file_sha256(self.root / 'transparent/ops/scripts/transparent-live-fleet.py'),
                     'fleet_config': self.history_fleet, 'route_imports': [self.request['router']['import_glob']],
-                    'restart': list(HISTORY_DAEMONS), 'router_dir': self.routes_dir},
-                'terraform': {
+                    'restart': list(HISTORY_DAEMONS), 'router_dir': self.routes_dir}
+                self._plan['terraform'] = {
                     'root': self.request['terraform']['root'], 'wrapper': self.request['terraform']['wrapper'],
                     'tfvars': self.tfvars_path,
                     'sources': {name: file_sha256(self.root / 'ops/infra/digitalocean/production' / name)
                                 for name in TF_SOURCES},
-                    'expected': self.expected_firewall(True)},
-                'transient': self.transient(),
-            }
+                    'expected': self.expected_firewall(True)}
         return self._plan
 
     def plan_sha256(self):
@@ -904,8 +971,8 @@ class Poc:
         if action == 'workers':
             return {key: 0 if self.running(key, WORKER_UNIT) else memory_bytes(r[key]['memory_max'])
                     for key in self.worker_keys}
-        starts = {'controller': (CONTROLLER_UNIT, 'controller'), 'ingest-start': (INGEST_UNIT, 'ingest'),
-                  'ingest-smoke': (SMOKE_UNIT, 'ingest'), 'bootstrap': (BOOTSTRAP_UNIT, 'bootstrap'),
+        starts = {'controller': (self.n.CONTROLLER_UNIT, 'controller'), 'ingest-start': (self.n.INGEST_UNIT, 'ingest'),
+                  'ingest-smoke': (self.n.SMOKE_UNIT, 'ingest'), 'bootstrap': (self.n.BOOTSTRAP_UNIT, 'bootstrap'),
                   'verify': (None, 'controller')}
         if action in starts:
             unit, limits = starts[action]
@@ -946,17 +1013,17 @@ class Poc:
         """Memory, disk, port and input checks of one forward action."""
         r = self.request
         problems = self.memory_problems(self.reservations(action))
-        paths = {'stage': [(key, OPT) for key in self.host_release],
+        paths = {'stage': [(key, self.n.OPT) for key in self.host_release],
                  'workers': [(key, WORKER_DATA) for key in self.worker_keys],
-                 'route': [('router', '/etc/caddy')], 'router-hook': [('router', '/etc/caddy')],
+                 'route': [(self.route_host, '/etc/caddy')], 'router-hook': [('router', '/etc/caddy')],
                  'measure-start': [('coordinator', r['measure']['output'])]}
-        default = [('coordinator', p) for p in (r['journal']['data_dir'], r['publication']['root'], OPT)]
+        default = [('coordinator', p) for p in (r['journal']['data_dir'], r['publication']['root'], self.n.OPT)]
         problems += self.disk_problems(paths.get(action, default))
         if action == 'workers':
             for key in self.worker_keys:
                 problems += self.port_problems(key, r['ports']['worker'], WORKER_UNIT)
         if action == 'controller':
-            problems += self.port_problems('coordinator', r['ports']['controller_status'], CONTROLLER_UNIT)
+            problems += self.port_problems('coordinator', r['ports']['controller_status'], self.n.CONTROLLER_UNIT)
         if action in ('ingest-start', 'ingest-smoke'):
             state = posixpath.join(r['journal']['node_cache_dir'], NODE_STATE)
             if not self.exists('coordinator', state, '-d'):
@@ -1008,7 +1075,7 @@ class Poc:
                 '%s: immutable release %s holds other bytes' % (key, self.release_dir))
         if all(digest is None for digest in present.values()):
             self.guard()
-            partial = '%s/.partial-%s' % (RELEASES, transaction.id)
+            partial = '%s/.partial-%s' % (self.n.RELEASES, transaction.id)
             transaction.event('staging release on %s' % key)
             self.ex.mkdir(host, partial, 0o755)
             for name in names:
@@ -1055,7 +1122,7 @@ class Poc:
         Anything but exactly one in-place worker firewall update is refused.
         """
         require(self.lock is None, 'the Terraform wrapper takes the production lock itself')
-        plan_file = '%s/%s.tfplan' % (TERRAFORM_PLANS, transaction.id)
+        plan_file = '%s/%s.tfplan' % (self.n.TERRAFORM_PLANS, transaction.id)
         record = transaction.data['terraform'] = {'plan_file': plan_file, 'plan_sha256': None, 'summary': None,
                                                   'enabled': enabled}
         transaction.save()
@@ -1143,7 +1210,7 @@ class Poc:
                         'coordinator Terraform root %s differs from this checkout' % path)
             transaction.change('coordinator', self.tfvars_path, self.render()['tfvars'], 0o600)
             self.guard()
-            self.ex.mkdir(coordinator, TERRAFORM_PLANS, 0o700)
+            self.ex.mkdir(coordinator, self.n.TERRAFORM_PLANS, 0o700)
             transaction.finish('planning')
         try:
             self.terraform_plan(transaction, True)
@@ -1185,15 +1252,15 @@ class Poc:
         return '\n'.join(result)
 
     def caddy_validate(self, transaction, files):
-        """`caddy validate` a scratch composition on the router, then remove the scratch files."""
-        router = self.host('router')
-        scratch = '%s/%s' % (VALIDATE, transaction.id)
+        """`caddy validate` a scratch composition on the route host, then remove the scratch files."""
+        router = self.host(self.route_host)
+        scratch = '%s/%s' % (self.n.VALIDATE, transaction.id)
         self.guard()
         self.ex.mkdir(router, scratch, 0o700)
         try:
             for name, text in files.items():
                 self.ex.write(router, '%s/%s' % (scratch, name), text.encode(), 0o600)
-            code, output = self.run('router', ['caddy', 'validate', '--config', scratch + '/Caddyfile',
+            code, output = self.run(self.route_host, ['caddy', 'validate', '--config', scratch + '/Caddyfile',
                                                '--adapter', 'caddyfile'], 120, check=False)
         finally:
             for name in files:
@@ -1247,12 +1314,12 @@ class Poc:
         transaction.data['fleet_calls'] = transaction.data.get('fleet_calls', 0) + 1
         transaction.save()
         name = '%s-%d' % (transaction.id, transaction.data['fleet_calls'])
-        request_path, reply_path = '%s/%s.json' % (REQUESTS, name), '%s/%s.reply.json' % (REQUESTS, name)
-        self.ex.mkdir(coordinator, REQUESTS, 0o700)
+        request_path, reply_path = '%s/%s.json' % (self.n.REQUESTS, name), '%s/%s.reply.json' % (self.n.REQUESTS, name)
+        self.ex.mkdir(coordinator, self.n.REQUESTS, 0o700)
         self.ex.write(coordinator, request_path, json.dumps(request).encode(), 0o600)
         try:
             code, output = self.ex.run(coordinator, ['/usr/bin/python3', self.binary('txid-display-fleet.py'),
-                                                     FLEET_JSON, request_path, reply_path], timeout + 30)
+                                                     self.n.FLEET_JSON, request_path, reply_path], timeout + 30)
             raw = self.ex.read(coordinator, reply_path)
         finally:
             self.ex.remove(coordinator, request_path)
@@ -1283,13 +1350,13 @@ class Poc:
                 '--replace-active names the map a fresh lineage replaces, not the new one')
         # Once running, the controller owns every worker's map and `expected`;
         # a restart or prepare here would race it or regress the served map.
-        require(not self.running('coordinator', CONTROLLER_UNIT),
+        require(not self.running('coordinator', self.n.CONTROLLER_UNIT),
                 'the controller drives the workers; stop it first (txid-display-stop)')
         source = self.candidate(map_sha256)
         files = self.render()
         self.guard()
-        self.ex.mkdir(self.host('coordinator'), STATE + '/ssh', 0o700)
-        transaction.change('coordinator', FLEET_JSON, files['fleet.json'], 0o600)
+        self.ex.mkdir(self.host('coordinator'), self.n.STATE + '/ssh', 0o700)
+        transaction.change('coordinator', self.n.FLEET_JSON, files['fleet.json'], 0o600)
         for key in self.worker_keys:
             self.worker(transaction, key, files['unit:' + key], source, map_sha256, replace_active)
         if self.former_recent:
@@ -1312,7 +1379,7 @@ class Poc:
         self.run(key, ['systemctl', 'disable', WORKER_UNIT], 120, check=False)
         transaction.remove(key, path)
         self.ex.systemctl(self.host(key), 'daemon-reload')
-        transaction.event('%s: removed the recent-replica unit; %s and %s stay' % (key, WORKER_DATA, OPT))
+        transaction.event('%s: removed the recent-replica unit; %s and %s stay' % (key, WORKER_DATA, self.n.OPT))
 
     def worker(self, transaction, key, unit_text, source, map_sha256, replace_active=None):
         """Install and start one worker; only a worker with no active map takes `map_sha256`.
@@ -1421,15 +1488,15 @@ class Poc:
 
     def reload_caddy(self):
         self.guard()
-        code, output = self.run('router', ['caddy', 'validate', '--config', CADDYFILE, '--adapter', 'caddyfile'],
-                                120, check=False)
+        code, output = self.run(self.route_host, ['caddy', 'validate', '--config', CADDYFILE, '--adapter',
+                                                  'caddyfile'], 120, check=False)
         require(code == 0, 'caddy rejected the live router: %s' % output[-1500:])
-        self.ex.systemctl(self.host('router'), 'reload', 'caddy')
+        self.ex.systemctl(self.host(self.route_host), 'reload', 'caddy')
 
     def write_route(self, transaction, snippet):
         """Replace the display snippet and reload; never leave an unaccepted one in the glob."""
-        transaction.undo('post', 'router', 'reload-caddy')
-        if not transaction.change('router', self.routes_path, snippet, 0o644):
+        transaction.undo('post', self.route_host, 'reload-caddy')
+        if not transaction.change(self.route_host, self.routes_path, snippet, 0o644):
             return
         try:
             self.reload_caddy()
@@ -1437,13 +1504,31 @@ class Poc:
             self.restore(transaction)
             raise
 
+    def site_route(self, transaction):
+        """Replace the site host's whole Caddyfile, then wait for the public map over TLS.
+
+        The first route on a new host waits for Caddy's certificate as well.
+        """
+        site = self.render()['routes.caddy']
+        self.caddy_validate(transaction, {'Caddyfile': site})
+        self.write_route(transaction, site)
+        url = self.request['measure']['public_url'] + '/v1/txid/map'
+
+        def served():
+            status, body = self.ex.http_get(self.host('coordinator'), url, 10)
+            return status == 200 and isinstance(json.loads(body).get('chunks'), list)
+        self.wait('the display map at %s' % url, served, SITE_SECONDS)
+        transaction.event('%s serves /v1/txid/' % self.site['hostname'])
+
     def route(self, transaction):
+        if self.site:
+            return self.site_route(transaction)
         router = self.host('router')
         live = self.ex.read(router, CADDYFILE) or ''
         require(self.import_line in live.split('\n'), 'the live router lacks %r; deploy router-hook first'
                 % self.import_line.strip())
         snippet = self.render()['routes.caddy']
-        scratch = '%s/%s' % (VALIDATE, transaction.id)
+        scratch = '%s/%s' % (self.n.VALIDATE, transaction.id)
         composed = '\n'.join('\timport %s/routes.caddy' % scratch if line == self.import_line else line
                              for line in live.split('\n'))
         self.caddy_validate(transaction, {'Caddyfile': composed, 'routes.caddy': snippet})
@@ -1461,7 +1546,7 @@ class Poc:
     # -------------------------------------------------------- controller
 
     def controller(self, transaction):
-        for unit in JOURNAL_WRITERS:
+        for unit in self.n.JOURNAL_WRITERS:
             require(self.unit_state('coordinator', unit)['sub'] not in ('running', 'start'),
                     '%s still runs; the controller must be the only journal writer' % unit)
         for key in self.worker_keys:
@@ -1469,24 +1554,24 @@ class Poc:
         files = self.render()
         coordinator = self.host('coordinator')
         self.guard()
-        self.ex.mkdir(coordinator, STATE + '/ssh', 0o700)
-        transaction.change('coordinator', FLEET_JSON, files['fleet.json'], 0o600)
-        transaction.change('coordinator', WORKERS_JSON, files['workers.json'], 0o600)
-        if self.running('coordinator', CONTROLLER_UNIT):
-            transaction.undo('post', 'coordinator', 'start-unit', unit=CONTROLLER_UNIT)
-        transaction.undo('pre', 'coordinator', 'stop-unit', unit=CONTROLLER_UNIT)
+        self.ex.mkdir(coordinator, self.n.STATE + '/ssh', 0o700)
+        transaction.change('coordinator', self.n.FLEET_JSON, files['fleet.json'], 0o600)
+        transaction.change('coordinator', self.n.WORKERS_JSON, files['workers.json'], 0o600)
+        if self.running('coordinator', self.n.CONTROLLER_UNIT):
+            transaction.undo('post', 'coordinator', 'start-unit', unit=self.n.CONTROLLER_UNIT)
+        transaction.undo('pre', 'coordinator', 'stop-unit', unit=self.n.CONTROLLER_UNIT)
         transaction.undo('post', 'coordinator', 'systemctl', args=['daemon-reload'])
-        transaction.change('coordinator', '%s/%s' % (SYSTEM, CONTROLLER_UNIT), files['unit:controller'], 0o644)
+        transaction.change('coordinator', '%s/%s' % (SYSTEM, self.n.CONTROLLER_UNIT), files['unit:controller'], 0o644)
         self.guard()
         self.ex.systemctl(coordinator, 'daemon-reload')
-        self.ex.systemctl(coordinator, 'enable', CONTROLLER_UNIT)
-        self.ex.systemctl(coordinator, 'restart', CONTROLLER_UNIT)
+        self.ex.systemctl(coordinator, 'enable', self.n.CONTROLLER_UNIT)
+        self.ex.systemctl(coordinator, 'restart', self.n.CONTROLLER_UNIT)
         port = self.request['ports']['controller_status']
         self.wait('the controller status listener', lambda: '127.0.0.1:%d' % port in self.listening('coordinator', port),
                   120)
         # A crash loop shows as restarts within the first seconds.
         self.sleep(10)
-        state = self.unit_state('coordinator', CONTROLLER_UNIT)
+        state = self.unit_state('coordinator', self.n.CONTROLLER_UNIT)
         require(state['active'] == 'active' and state['restarts'] == 0, 'the controller is not stable: %s' % state)
         transaction.event('controller running')
 
@@ -1505,13 +1590,13 @@ class Poc:
 
     def ingest_start(self, transaction, smoke):
         r = self.request
-        require(not self.running('coordinator', CONTROLLER_UNIT), 'the controller owns the journal; stop it first')
-        require(not self.running('coordinator', INGEST_UNIT) or not smoke, 'the backfill is running')
+        require(not self.running('coordinator', self.n.CONTROLLER_UNIT), 'the controller owns the journal; stop it first')
+        require(not self.running('coordinator', self.n.INGEST_UNIT) or not smoke, 'the backfill is running')
         self.guard()
         self.ex.mkdir(self.host('coordinator'), posixpath.dirname(r['journal']['data_dir']), 0o755)
         transient = self.plan()['transient']
         if not smoke:
-            self.start_transient(transaction, transient['ingest'], INGEST_UNIT)
+            self.start_transient(transaction, transient['ingest'], self.n.INGEST_UNIT)
             return
         self.guard()
         code, output = self.run('coordinator', transient['ingest-smoke'], 1800, check=False)
@@ -1520,7 +1605,7 @@ class Poc:
 
     def ingest_status(self):
         result = {}
-        for unit in (INGEST_UNIT, SMOKE_UNIT):
+        for unit in (self.n.INGEST_UNIT, self.n.SMOKE_UNIT):
             _, log = self.run('coordinator', ['journalctl', '-u', unit, '-n', '20', '--no-pager', '-o', 'cat'],
                               30, check=False)
             result[unit] = {**self.unit_state('coordinator', unit), 'log': log.splitlines()[-20:]}
@@ -1540,9 +1625,9 @@ class Poc:
 
     def bootstrap(self, transaction, start, through):
         r = self.request
-        require(self.unit_state('coordinator', INGEST_UNIT)['sub'] not in ('running', 'start'),
+        require(self.unit_state('coordinator', self.n.INGEST_UNIT)['sub'] not in ('running', 'start'),
                 'the backfill still runs; bootstrap reads the finished journal')
-        require(not self.running('coordinator', CONTROLLER_UNIT), 'the controller runs; bootstrap starts it once')
+        require(not self.running('coordinator', self.n.CONTROLLER_UNIT), 'the controller runs; bootstrap starts it once')
         require((start is None) == (through is None), 'give both --start-height and --through-height, or neither')
         self.guard()
         self.ex.mkdir(self.host('coordinator'), r['publication']['root'], 0o755)
@@ -1560,7 +1645,7 @@ class Poc:
         argv = [part.replace('{start}', str(start)).replace('{through}', str(through))
                 for part in transient['bootstrap']]
         transaction.data['bootstrap'] = {'start': start, 'through': through}
-        self.start_transient(transaction, argv, BOOTSTRAP_UNIT)
+        self.start_transient(transaction, argv, self.n.BOOTSTRAP_UNIT)
 
     def verify(self, transaction):
         self.guard()
@@ -1575,7 +1660,7 @@ class Poc:
         self.ex.mkdir(self.host('coordinator'), directory + '/mapwatch', 0o755)
         transaction.data['measure'] = {'run': run, 'directory': directory}
         transient = self.plan()['transient']
-        for name, unit in (('observer', OBSERVER_UNIT), ('mapwatch', MAPWATCH_UNIT)):
+        for name, unit in (('observer', self.n.OBSERVER_UNIT), ('mapwatch', self.n.MAPWATCH_UNIT)):
             self.start_transient(transaction, [part.replace('{run}', run) for part in transient[name]], unit)
 
     # --------------------------------------------- stop, rollback, retire
@@ -1588,10 +1673,10 @@ class Poc:
         """
         started = self.clock()
         failure = None
-        if self.exists('router', self.routes_dir, '-d'):
-            transaction.undo('post', 'router', 'reload-caddy')
+        if self.site or self.exists('router', self.routes_dir, '-d'):
+            transaction.undo('post', self.route_host, 'reload-caddy')
             try:
-                if transaction.change('router', self.routes_path, WITHDRAWN, 0o644):
+                if transaction.change(self.route_host, self.routes_path, self.render()['withdrawn.caddy'], 0o644):
                     self.reload_caddy()
             except Exception as error:
                 failure = error
@@ -1599,7 +1684,7 @@ class Poc:
                 if entry and entry['path'] == self.routes_path:
                     self.revert(entry)
                     transaction.event('withdrawal refused; previous snippet restored')
-        self.stop_units(transaction, 'coordinator', [CONTROLLER_UNIT])
+        self.stop_units(transaction, 'coordinator', [self.n.CONTROLLER_UNIT])
         seconds = round(self.clock() - started, 3)
         transaction.data['stop_seconds'] = seconds
         transaction.save()
@@ -1701,15 +1786,19 @@ class Poc:
             self.out('note: the worker firewall stays as Terraform left it; deploy --phase firewall reopens it')
 
     def retire(self, expected, terraform_plan_sha256):
-        """Remove every unit, the route and the hook, then close the firewall. Data stays."""
+        """Remove every unit, the route and the hook, then close the firewall. Data stays.
+
+        A site withdraws its Caddyfile instead; its host and firewall are Terraform's.
+        """
         self.check_plan(expected)
+        require(not (self.site and terraform_plan_sha256), 'a site retire plans no Terraform change')
         if terraform_plan_sha256:
             self.apply_planned('retire', terraform_plan_sha256)
             self.print_data()
             return
         with self.locked('retire') as transaction:
-            persistent = (('coordinator', CONTROLLER_UNIT), *((key, WORKER_UNIT) for key in self.worker_keys))
-            self.stop_units(transaction, 'coordinator', [CONTROLLER_UNIT, *TRANSIENT])
+            persistent = (('coordinator', self.n.CONTROLLER_UNIT), *((key, WORKER_UNIT) for key in self.worker_keys))
+            self.stop_units(transaction, 'coordinator', [self.n.CONTROLLER_UNIT, *self.n.TRANSIENT])
             for key in self.worker_keys:
                 self.stop_units(transaction, key, [WORKER_UNIT])
             for key, unit in persistent:
@@ -1722,6 +1811,14 @@ class Poc:
                 self.run(key, ['systemctl', 'disable', unit], 120, check=False)
                 transaction.remove(key, path)
                 self.ex.systemctl(self.host(key), 'daemon-reload')
+            if self.site:
+                # The host keeps a Caddyfile, so Caddy keeps running: the withdrawn site.
+                transaction.undo('post', self.route_host, 'reload-caddy')
+                if transaction.change(self.route_host, self.routes_path, self.render()['withdrawn.caddy'], 0o644):
+                    self.reload_caddy()
+                transaction.finish('committed')
+                self.print_data()
+                return
             if self.ex.read(self.host('router'), self.routes_path) is not None:
                 transaction.undo('post', 'router', 'reload-caddy')
                 transaction.remove('router', self.routes_path)
@@ -1759,7 +1856,7 @@ class Poc:
         self.out('retained data; deleting it needs separate approval:')
         paths = [('coordinator', r['journal']['data_dir']), ('coordinator', r['journal']['data_dir'] + '.smoke'),
                  ('coordinator', r['publication']['root']), ('coordinator', r['measure']['output'])]
-        paths += [(key, OPT) for key in self.host_keys] + [(key, WORKER_DATA) for key in self.worker_keys]
+        paths += [(key, self.n.OPT) for key in self.host_keys] + [(key, WORKER_DATA) for key in self.worker_keys]
         for key, path in paths:
             self.out('  %s:%s' % (self.host(key), path))
 
@@ -1773,10 +1870,10 @@ class Poc:
                 continue
             digest = self.ex.sha256(self.host(key), path)
             deployed[name] = ('absent' if digest is None else 'planned' if digest == sha256(files[name])
-                              else 'withdrawn' if digest == sha256(WITHDRAWN) else 'differs')
+                              else 'withdrawn' if digest == sha256(files['withdrawn.caddy']) else 'differs')
         result = {'request_sha256': self.request_sha256, 'plan_sha256': self.plan_sha256(), 'files': deployed,
                   'units': {}, 'workers': {}}
-        for key, unit in [('coordinator', u) for u in (CONTROLLER_UNIT, *TRANSIENT)] + [(k, WORKER_UNIT) for k in self.worker_keys]:
+        for key, unit in [('coordinator', u) for u in (self.n.CONTROLLER_UNIT, *self.n.TRANSIENT)] + [(k, WORKER_UNIT) for k in self.worker_keys]:
             state = self.unit_state(key, unit)
             result['units']['%s@%s' % (unit, key)] = {k: state[k] for k in ('load', 'active', 'sub', 'result',
                                                                             'restarts')}
@@ -1787,9 +1884,10 @@ class Poc:
             except ValueError:
                 ready = None
             result['workers'][key] = {'http': status, 'ready': ready}
-        fleet = self.read_json('coordinator', self.history_fleet) or {}
-        result['router_hook'] = {'route_imports': fleet.get('route_imports'),
-                                 'adapter_sha256': self.ex.sha256(self.host('coordinator'), self.live_fleet)}
+        if not self.site:
+            fleet = self.read_json('coordinator', self.history_fleet) or {}
+            result['router_hook'] = {'route_imports': fleet.get('route_imports'),
+                                     'adapter_sha256': self.ex.sha256(self.host('coordinator'), self.live_fleet)}
         recent = []
         for path in sorted(self.journal_dir.glob('txid-display-*.json'), key=lambda p: p.stat().st_mtime)[-10:]:
             data = json.loads(path.read_text())
@@ -1803,6 +1901,8 @@ class Poc:
     def deploy(self, phase, expected, archive=None, map_sha256=None, terraform_plan_sha256=None,
                replace_active=None):
         require(phase in PHASES, 'unknown phase %r' % (phase,))
+        require(phase in self.phases, 'a site request has no %s phase: its route is its own Caddy site, and '
+                'its host and firewall are Terraform\'s' % phase)
         require(replace_active is None or phase == 'workers', '--replace-active belongs to the workers phase')
         if phase == 'firewall':
             return self.firewall(expected, terraform_plan_sha256)
@@ -1838,7 +1938,7 @@ class Poc:
             if action == 'ingest-start':
                 self.ingest_start(transaction, smoke)
             elif action == 'ingest-stop':
-                self.stop_units(transaction, 'coordinator', [INGEST_UNIT, SMOKE_UNIT])
+                self.stop_units(transaction, 'coordinator', [self.n.INGEST_UNIT, self.n.SMOKE_UNIT])
             elif action == 'bootstrap':
                 self.bootstrap(transaction, start, through)
             elif action == 'verify':
@@ -1846,7 +1946,7 @@ class Poc:
             elif action == 'measure-start':
                 self.measure_start(transaction)
             elif action == 'measure-stop':
-                self.stop_units(transaction, 'coordinator', [OBSERVER_UNIT, MAPWATCH_UNIT])
+                self.stop_units(transaction, 'coordinator', [self.n.OBSERVER_UNIT, self.n.MAPWATCH_UNIT])
             else:
                 self.stop(transaction)
 

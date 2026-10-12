@@ -250,6 +250,11 @@ geometry.
   prefixes, `/v1/txid/archive/*` and `/v1/txid/*`, and both may name the same
   worker.
 
+  A site request runs a second lineage beside the router's: one combined
+  worker on a host of its own that also serves its own public hostname, with
+  its own coordinator unit names, paths and journal
+  ([deployment](deployment.md#txid-display-one-query-site-2026-10-12)).
+
   The deploy request picks the layout. A request without a `recent` host runs
   one combined worker on the archive host. Its optional
   `hosts.former_recent` names the host of a split deployment's recent replica,

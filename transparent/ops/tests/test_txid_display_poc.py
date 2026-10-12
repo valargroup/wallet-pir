@@ -114,6 +114,24 @@ def combined_request():
     return value
 
 
+SITE = {'name': 'k8', 'hostname': 'txid.example'}
+SITE_NAMES = P.names(SITE)
+
+
+def site_request():
+    """A second lineage beside the router's: its own hostname, coordinator names and journal."""
+    value = combined_request()
+    for field in ('router', 'terraform'):
+        del value[field]
+    del value['hosts']['router']
+    value['site'] = dict(SITE)
+    value['ports']['controller_status'] = 8098
+    value['journal']['data_dir'] = '/srv/zakura/txid-display-poc/journal-k8'
+    value['publication']['root'] = '/srv/zakura/txid-display-poc/root-k8'
+    value['measure'] = {'output': '/srv/zakura/txid-display-poc/measure-k8', 'public_url': 'https://txid.example'}
+    return value
+
+
 class Lock:
     def __init__(self, fake):
         self.fake = fake
@@ -148,6 +166,8 @@ class Fake(Executor):
         self.reconciler_renders = True
         # The role each worker reports; the combined layout overrides it.
         self.roles = dict(P.ROLES)
+        # Whether a site's Caddy holds its certificate yet.
+        self.certificate = True
 
     # ------------------------------------------------------------ helpers
 
@@ -262,8 +282,9 @@ class Fake(Executor):
                     self.active.pop(worker, None)
                 else:
                     self.active[worker] = json.loads(record)['map_sha256']
-            if unit == P.CONTROLLER_UNIT:
-                self.listen.setdefault(host, []).append('127.0.0.1:8099')
+            if unit in (P.CONTROLLER_UNIT, SITE_NAMES.CONTROLLER_UNIT):
+                port = 8099 if unit == P.CONTROLLER_UNIT else 8098
+                self.listen.setdefault(host, []).append('127.0.0.1:%d' % port)
             if unit == 'transparent-replica-reconciler.service' and self.reconciler_renders:
                 self.render_history()
         elif verb == 'reload':
@@ -299,6 +320,10 @@ class Fake(Executor):
             return (200, json.dumps({'chunks': []})) if routed and 'withdrawn' not in routed else (404, '')
         if url == 'https://pir.example/v1/shards':
             return 200, json.dumps({'shards': []})
+        if url == 'https://txid.example/v1/txid/map':
+            site = self.text('archive-03', P.CADDYFILE) or ''
+            served = 'txid.example {' in site and 'handle /v1/txid/archive/*' in site
+            return (200, json.dumps({'chunks': []})) if served and self.certificate else (0, 'TLS handshake failed')
         return 0, 'connection refused'
 
     def adapter(self, host, request):
@@ -418,7 +443,7 @@ class Fake(Executor):
         if argv[-1] == '--help':
             return 0, 'Usage: ...'
         if command == '/usr/bin/python3' and argv[1].endswith('txid-display-fleet.py'):
-            assert argv[2] == P.FLEET_JSON
+            assert argv[2] in (P.FLEET_JSON, SITE_NAMES.FLEET_JSON)
             if len(argv) == 4:
                 return 0, 'usage'
             reply = self.adapter(host, json.loads(self.files[(host, argv[3])]))
@@ -1447,6 +1472,169 @@ class StopAndRetireTests(DeployedFleet):
         for key, unit in (('archive', P.WORKER_UNIT), ('coordinator', P.CONTROLLER_UNIT)):
             self.assertEqual(self.fake.unit(HOSTS[key], unit)['active'], 'active')
             self.assertTrue(self.fake.unit(HOSTS[key], unit)['enabled'])
+
+
+class SiteTests(DeployedFleet):
+    """A second lineage on its own hostname and host, beside the router's lineage."""
+
+    def setUp(self):
+        super().setUp()
+        self.request = site_request()
+        self.fake.roles = dict(P.COMBINED_ROLES)
+        self.fake.put('coordinator', '/srv/zakura/txid-display-poc/root-k8/candidate-100-%s-1/txid-shards.json'
+                      % ('d' * 64), b'map')
+        # The router lineage's controller runs and must never be touched.
+        self.fake.put('coordinator', '/etc/systemd/system/' + P.CONTROLLER_UNIT, 'router lineage controller')
+        self.fake.unit('coordinator', P.CONTROLLER_UNIT).update(load='loaded', active='active', sub='running',
+                                                                enabled=True)
+        self.fake.listen['coordinator'] = ['127.0.0.1:8099']
+        self.fake.put('archive-03', P.CADDYFILE, ':80 {\n\troot * /usr/share/caddy\n\tfile_server\n}\n')
+
+    def untouched(self):
+        self.assertEqual(self.fake.mutations('router-01'), [])
+        self.assertEqual(self.fake.commands('router-01'), [])
+        self.assertEqual(self.fake.unit('coordinator', P.CONTROLLER_UNIT)['active'], 'active')
+        self.assertEqual(self.fake.text('coordinator', '/etc/systemd/system/' + P.CONTROLLER_UNIT),
+                         'router lineage controller')
+        legacy = [m for m in self.fake.mutations('coordinator') if isinstance(m[2], str)
+                  and (m[2] == P.OPT or m[2].startswith(P.OPT + '/'))]
+        self.assertEqual(legacy, [])
+        for path in (P.FLEET_JSON, P.WORKERS_JSON):
+            self.assertIsNone(self.fake.text('coordinator', path))
+
+    def test_a_site_request_validates_and_refuses_router_keys_and_the_split_layout(self):
+        P.validate(self.request, inventory())
+
+        def changed(edit):
+            value = site_request()
+            edit(value)
+            return value
+        refused = [
+            (lambda v: v.update(router=request()['router']), 'must have exactly'),
+            (lambda v: v.update(terraform=request()['terraform']), 'must have exactly'),
+            (lambda v: v['hosts'].update(router={'inventory': 'router-01'}), 'hosts must have exactly'),
+            (lambda v: [v[f].update(recent=request()[f]['recent']) for f in ('hosts', 'units', 'baseline')],
+             'combined layout'),
+            (lambda v: v['site'].update(name='K8'), 'site.name'),
+            (lambda v: v['site'].update(name=''), 'site.name'),
+            (lambda v: v['site'].update(hostname='https://txid.example'), 'site.hostname'),
+            (lambda v: v['site'].update(extra=1), 'site must have exactly'),
+            (lambda v: v['measure'].update(public_url='https://pir.example'), 'site.s own'),
+        ]
+        for edit, pattern in refused:
+            with self.subTest(pattern=pattern), self.assertRaisesRegex(P.PocError, pattern):
+                P.validate(changed(edit), inventory())
+
+    def test_plan_names_its_own_coordinator_paths_units_and_site(self):
+        poc = self.poc()
+        files, plan = poc.render(), poc.plan()
+        self.assertEqual(plan['phases'], list(P.SITE_PHASES))
+        self.assertNotIn('router_hook', plan)
+        self.assertNotIn('terraform', plan)
+        self.assertNotIn('tfvars', files)
+        self.assertEqual(plan['site']['host'], 'archive-03')
+        self.assertEqual(plan['files']['routes.caddy']['host'], 'archive')
+        self.assertEqual(plan['files']['routes.caddy']['path'], P.CADDYFILE)
+        self.assertEqual(plan['files']['unit:controller']['path'],
+                         '/etc/systemd/system/transparent-txid-display-k8-controller.service')
+        self.assertEqual(plan['files']['fleet.json']['path'], '/opt/transparent-txid-display-k8/fleet.json')
+        self.assertEqual(plan['release_dir'], '/opt/transparent-txid-display-k8/releases/' + SHA)
+        controller = files['unit:controller']
+        self.assertIn('--workers /opt/transparent-txid-display-k8/workers.json ', controller)
+        self.assertIn('--status-listen 127.0.0.1:8098 ', controller)
+        self.assertIn('ReadWritePaths=/srv/zakura/txid-display-poc/root-k8 /srv/zakura/txid-display-poc/journal-k8 '
+                      '/opt/transparent-txid-display-k8/state\n', controller)
+        self.assertNotIn('/opt/transparent-txid-display/', controller)
+        self.assertEqual(json.loads(files['fleet.json'])['control_dir'], '/opt/transparent-txid-display-k8/state/ssh')
+        transient = plan['transient']
+        self.assertEqual({argv[1] for argv in transient.values()},
+                         {'--unit=' + unit for unit in (*SITE_NAMES.TRANSIENT, SITE_NAMES.PLAN_START_UNIT,
+                                                        SITE_NAMES.VERIFY_UNIT)})
+        site = files['routes.caddy']
+        self.assertTrue(site.split('\n')[2] == 'txid.example {', site)
+        self.assertIn('reverse_proxy 10.142.0.5:8095 {', site)
+        self.assertIn('\thandle {\n\t\trespond 404\n\t}\n}\n', site)
+        self.assertIn('respond "transparent txid display withdrawn" 503', files['withdrawn.caddy'])
+        self.assertIn('txid.example {', files['withdrawn.caddy'])
+        for phase in ('firewall', 'router-hook'):
+            with self.subTest(phase=phase), self.assertRaisesRegex(P.PocError, 'site request has no'):
+                poc.deploy(phase, poc.plan_sha256())
+
+    def test_workers_route_controller_stop_and_retire_leave_the_router_lineage_alone(self):
+        self.fake.certificate = False
+        poc = self.poc()
+        candidate = '/srv/zakura/txid-display-poc/root-k8/candidate-100-%s-1' % ('d' * 64)
+        adapter = self.fake.adapter
+
+        def shipping(host, request):
+            if request['operation'] == 'ship':
+                request = dict(request, source=CANDIDATE)
+            return adapter(host, request)
+        self.fake.adapter = shipping
+        poc.deploy('workers', poc.plan_sha256(), map_sha256=self.map)
+        self.assertEqual(self.fake.active, {'archive': self.map})
+        self.assertEqual(self.fake.text('coordinator', SITE_NAMES.FLEET_JSON), poc.render()['fleet.json'])
+        self.assertEqual(poc.candidate(self.map), candidate)
+
+        # The certificate arrives while the route waits for the public map.
+        sleep = self.clock.sleep
+
+        def issuing(seconds):
+            sleep(seconds)
+            if self.clock.t > 30:
+                self.fake.certificate = True
+        self.clock.sleep = issuing
+        route = self.poc()
+        route.deploy('route', route.plan_sha256())
+        self.assertEqual(self.fake.text('archive-03', P.CADDYFILE), route.render()['routes.caddy'])
+        self.assertIn(('archive-03', 'systemctl', ('reload', 'caddy')), self.fake.mutations('archive-03'))
+        configs = [argv[3] for argv in self.fake.commands('archive-03') if argv[0] == 'caddy']
+        self.assertEqual(configs, ['%s/%s/Caddyfile' % (SITE_NAMES.VALIDATE, route.transaction.id), P.CADDYFILE])
+
+        controller = self.poc()
+        controller.deploy('controller', controller.plan_sha256())
+        self.assertEqual(self.fake.unit('coordinator', SITE_NAMES.CONTROLLER_UNIT)['active'], 'active')
+        self.assertEqual(self.fake.text('coordinator', SITE_NAMES.WORKERS_JSON), controller.render()['workers.json'])
+        self.untouched()
+
+        stop = self.poc()
+        stop.act('stop')
+        self.assertEqual(self.fake.text('archive-03', P.CADDYFILE), stop.render()['withdrawn.caddy'])
+        self.assertEqual(self.fake.unit('coordinator', SITE_NAMES.CONTROLLER_UNIT)['active'], 'inactive')
+        self.untouched()
+        stop.rollback(stop.transaction.id)
+        self.assertEqual(self.fake.text('archive-03', P.CADDYFILE), stop.render()['routes.caddy'])
+        self.assertEqual(self.fake.unit('coordinator', SITE_NAMES.CONTROLLER_UNIT)['active'], 'active')
+
+        retire = self.poc()
+        retire.retire(retire.plan_sha256(), None)
+        self.assertEqual(self.journal(retire.transaction.id)['status'], 'committed')
+        self.assertEqual(self.fake.text('archive-03', P.CADDYFILE), retire.render()['withdrawn.caddy'])
+        self.assertIsNone(self.fake.text('coordinator', '/etc/systemd/system/' + SITE_NAMES.CONTROLLER_UNIT))
+        self.assertIsNone(self.fake.text('archive-03', '/etc/systemd/system/' + P.WORKER_UNIT))
+        self.assertFalse([argv for argv in self.fake.commands() if argv[0] == WRAPPER])
+        self.untouched()
+        with self.assertRaisesRegex(P.PocError, 'plans no Terraform change'):
+            retire.retire(retire.plan_sha256(), 'f' * 64)
+
+    def test_route_waits_for_the_public_map_and_fails_without_it(self):
+        self.fake.certificate = False
+        poc = self.poc()
+        with self.assertRaisesRegex(P.PocError, 'display map at https://txid.example/v1/txid/map did not happen'):
+            poc.deploy('route', poc.plan_sha256())
+        self.assertGreaterEqual(self.clock.t, P.SITE_SECONDS)
+        poc.rollback(poc.transaction.id)
+        self.assertIn(':80 {', self.fake.text('archive-03', P.CADDYFILE))
+
+    def test_the_controller_port_of_the_router_lineage_is_refused(self):
+        self.request['ports']['controller_status'] = 8099
+        self.fake.put('archive-03', '/etc/systemd/system/' + P.WORKER_UNIT, 'unit')
+        self.fake.unit('archive-03', P.WORKER_UNIT).update(load='loaded', active='active', sub='running')
+        poc = self.poc()
+        with self.assertRaisesRegex(P.PocError, 'preflight refused'):
+            poc.deploy('controller', poc.plan_sha256())
+        self.assertTrue(any('port 8099 is already in use' in line for line in self.output), self.output)
+        self.untouched()
 
 
 class CommandLineTests(Base):
