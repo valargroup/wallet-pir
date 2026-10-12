@@ -3221,6 +3221,32 @@ fails. All original rollback phase budgets remain 60/140/300/100/140 seconds
 through the guarded deployment wrapper and retain their actual raw evidence.
 The lifecycle gate remains open until those executions and reinspection pass.
 
+## Wallet API v2 on the public origin
+
+`https://transparent-pir.valargroup.dev` serves both wallet API versions
+([architecture](architecture.md#api-versions)). Its router,
+`transparent-pir-router-01`, is rendered by the v11 fleet's adapter, which keeps
+`/v1/` exactly as before and imports the v2 routes:
+
+- **v11 fleet:** `route_imports` lists `/etc/caddy/txid-display/*.caddy` and
+  `/etc/caddy/api-v2/*.caddy`. The second holds
+  [api-v2-routes.caddy](../ops/deploy/api-v2-routes.caddy):
+  - `/v2/txid/*` goes to the one-query display site at `10.142.0.18:8095`;
+  - every other `/v2/*` path goes to the v12 worker's internal listener at
+    `10.142.0.9:8080`, with the upstream's own host header.
+- **v12 fleet:** `fleet.json` sets `"api_version": "v2"`, so its adapter renders
+  `/v2/` routes on `transparent-pir-v12.valargroup.dev` and on that internal
+  listener. The staging hostname serves history only.
+- **Firewall:** the v12 worker's firewall admits the router's tag on 8080
+  (`transparent-v12.tf`); the display site's worker rule already admits it on 8095.
+- **Changing a route file:** validate the router configuration with the import
+  before opting a fleet into a new glob. The adapter validates each render and a
+  failure blocks that publication's route step. A change to an imported file alone
+  needs `systemctl reload caddy` on the router; the adapter reloads only when its
+  own render changes.
+- **Rollback:** restore the v11 fleet's `route_imports`; the next publication
+  renders the router without `/v2/`.
+
 ## Txid display one-query site (2026-10-12)
 
 Vizor `main` ships the `txid-2k` client, which refuses the one-query map, so

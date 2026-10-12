@@ -6,6 +6,30 @@ M4–M6 are open.** This records observed progress, not a new live fleet health
 check. [Remaining work](remaining-work.md) is the authoritative outstanding
 checklist; [deployment](deployment.md) owns operating targets.
 
+## Wallet API v2 with the 8-bit history profile, 2026-10-12
+
+`https://transparent-pir.valargroup.dev` serves two wallet API versions side by
+side ([evidence](../evidence/api-v2-p8-2026-10-12/README.md)):
+- `/v1/` is unchanged production: schema v11 history and the txid-2k display.
+- `/v2/` is the v12 fleet with its history tables at the 8-bit, one-digit-key
+  profile, plus the one-query txid display.
+
+No shipped wallet uses `/v2/` yet; zakura-core/wallet-libraries#165 and
+chainapsis/vizor-wallet#977 carry the client and are not merged.
+
+- **Serving:** all four v12 tables use `reinspiring-two-mask-p8-g27x1-m22-dq28-r10-v1`
+  (wallet-pir `f7debf84`, deployed 22:07 UTC). The `/v2/` paths come from `ff27d649`,
+  deployed 23:18 UTC, and the public router has routed `/v2/` since 23:31 UTC.
+  `/v1/` init and txid answered 200 before and after.
+- **Memory:** archive 36.9 GB RSS for 186 tables, recent 4.9 GB for 49. The recent
+  worker's budget rose to 8 GiB of cache and a 10G limit.
+- **Regression:** 11 of 11 on the v12 host and again through the public `/v2/` route.
+- **Bytes against the same fixture at 16 bits:** uploads 40–46% smaller, table setup
+  about 51% larger (30.4 KB), responses 9% smaller. A wallet's PIR bytes fall 24–34%.
+  Public membership filters, about 36 MB for a full-history wallet, are unchanged.
+- **Open:** the `/v2/` load run, certificates under the served seeds at the 50-bit
+  floor, `/v2/` monitoring, and the move of wallets from `/v1/` to `/v2/`.
+
 ## Txid display one-query site live beside txid-2k, 2026-10-12
 
 The `txid-2k8` lineage serves on its own host, `transparent-pir-txid-k8-01`,

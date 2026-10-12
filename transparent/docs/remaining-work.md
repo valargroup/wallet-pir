@@ -129,12 +129,26 @@ no compatibility path: a wallet built before it refuses the new schemes, and a w
 built from it refuses a 16-bit history service. Txid display tables keep the 16-bit
 profile. The [trial](../evidence/p8-trial-2026-10-12/README.md) sized it.
 
-- [ ] Serve it on v12 staging, with recent worker budgets raised for its +76% memory, and
-  pass the recovery regression and a load test there.
+- [x] Serve it on v12 staging with the recent worker's budgets raised, and pass the
+  recovery regression (11/11 on the v12 host and through `/v2`;
+  [evidence](../evidence/api-v2-p8-2026-10-12/README.md)).
+- [ ] Pass a 20-wallet sustained load run on `/v2`.
 - [ ] Certify every served segment under the served seeds with `native_certificate`
   (always the dithered report for these tables), at the 50-bit floor.
-- [ ] Repin wallet-libraries and Vizor's v12 branch on it.
-- [ ] Decide production separately: v11 production and its wallets stay on 16 bits.
+- [ ] Merge the client repins: zakura-core/wallet-libraries#165 and Vizor's v12 branch
+  (chainapsis/vizor-wallet#977).
+- [ ] Decide when wallets move from `/v1/` to `/v2/`, and when `/v1/` retires; v11 production and its
+  wallets stay on 16 bits until then.
+
+## Wallet API versions on one origin
+
+`https://transparent-pir.valargroup.dev` serves `/v1/` (schema v11, txid-2k) and `/v2/`
+(schema v12 at the 8-bit profile, the one-query txid display) side by side
+([architecture](architecture.md#api-versions), [deployment](deployment.md#wallet-api-v2-on-the-public-origin)).
+
+- [ ] Monitor `/v2/`: canary fixture, APM roster and alerts, as `/v1/` has.
+- [ ] Retire `/v1/` once no supported wallet uses it: remove its fleet, and move the
+  public router and its route files to the v2 fleet's adapter.
 
 ## Dithered 44-bit queries (deployed 2026-10-09)
 

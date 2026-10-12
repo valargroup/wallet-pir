@@ -1,0 +1,7 @@
+archive MemoryCurrent=38020481024 ActiveEnterTimestamp=Mon 2026-10-12 22:07:16 UTC
+recent MemoryCurrent=5131542528 ActiveEnterTimestamp=Mon 2026-10-12 22:07:15 UTC
+Mem:              62          41          20           0           1          21
+30G	/srv/transparent-pir/v12/runtime-cache-archive
+35G	/srv/transparent-pir/v12/runtime-cache-archive-p8
+3.3G	/srv/transparent-pir/v12/runtime-cache-recent
+5.3G	/srv/transparent-pir/v12/runtime-cache-recent-p8

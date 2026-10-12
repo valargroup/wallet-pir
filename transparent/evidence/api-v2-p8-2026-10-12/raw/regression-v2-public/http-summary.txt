@@ -1,0 +1,13 @@
+case                          reqs setup_n  setup_KB query_n upload_KB  resp_KB all_down_KB  p50_s  max_s
+active-p2sh.                   112       4     121.5       7     147.0     36.0    36372.9   0.30   0.31
+coinbase.                      271      26     789.4     138    4905.0    708.8    37795.2   0.16   0.61
+multi-script-self-transfer.    492      93    2823.8     244    9267.1   1253.2    42861.0   0.15   0.75
+offline-receive-spend.         110       2      60.7       4     514.1     20.5    37020.9   0.75   0.78
+old-receive-recent-spend.      118       4     121.5       7     469.6     36.0    37019.5   0.31   1.65
+recent-birthday.               104      12     364.4      12     295.0     61.6     4669.6   0.30   0.31
+reused-pages.                  110      18     546.5      42    1297.7    215.7     2089.2   0.30   0.31
+small-active.                  114       4     121.5       8     168.0     41.1    36386.8   0.30   0.31
+unused-p2pkh.                   94       0       0.0       0       0.0      0.0    36116.8   0.00   0.00
+unused-p2sh.                    91       0       0.0       0       0.0      0.0    36075.1   0.00   0.00
+zero-balance.                  112       4     121.5       7     577.1     36.0    36921.5   0.60   0.77
+['filters', 'init', 'manifest', 'map', 'query_directory', 'query_pages', 'setup_directory', 'setup_pages']
