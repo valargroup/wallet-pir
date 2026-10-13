@@ -200,7 +200,18 @@ fn main() {
     let hint = native::hint(&profile.masks, profile.rows, profile.cols, |c| &columns[c]).unwrap();
     let analyzed: Vec<_> = hint
         .par_iter()
-        .map(|block| NativePreprocessed::build_two_mask_analyzed(&profile.setup, block).unwrap())
+        .map(|block| {
+            // The analysis screens the published mask widths it may select.
+            // The 8-bit profile publishes 22-bit masks, below the 16-bit
+            // default of 27..=32, so it screens 16..=32 as ipir-sp does.
+            let screens = if eight_bit {
+                16..=32
+            } else {
+                reinspiring::native::DEFAULT_TWO_MASK_SCREENS
+            };
+            NativePreprocessed::build_two_mask_analyzed_with_screens(&profile.setup, block, screens)
+                .unwrap()
+        })
         .collect();
     let pre: Vec<_> = analyzed.iter().map(|(p, _)| p).collect();
     let public = native_profile.publish(&pre).unwrap();

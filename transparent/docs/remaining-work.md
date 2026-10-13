@@ -148,8 +148,10 @@ schema `transparent-txid-display-p8-v1`: 21,000-byte queries, 10,256-byte replie
 No released wallet reads `/v2/txid`, so it replaces the 16-bit `/v2/txid` service with no
 compatibility path; `/v1/txid` (txid-2k) is unchanged.
 
-- [ ] Certify every served display table under the served seeds, at the 50-bit floor, and
-  measure runtime memory, recent rebuild time and query time on the site's host.
+- [x] Certify every served display table under the served seeds, at the 50-bit floor, and
+  measure runtime memory, recent rebuild time and query time on the site's host: 190 of 190
+  tables at 247 bits or more, rebuild p95 1.27 s, 144.17 MiB per runtime as planned
+  ([evidence](../evidence/txid-display-p8-2026-10-13/README.md)).
 - [x] Deploy to the one-query site with the worker's cache raised to 32 GiB, disk cache to
   40 GiB and `MemoryMax` to 48G, and verify lookups through `/v2/txid`
   (2026-10-13, [status](status.md#txid-display-v2txid-on-the-8-bit-profile-2026-10-13)).
