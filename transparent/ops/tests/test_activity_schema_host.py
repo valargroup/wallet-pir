@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -416,6 +417,16 @@ class HostFilesTests(unittest.TestCase):
         root_patch = patch.object(M, 'ROOT', self.dir/'publisher')
         root_patch.start()
         self.addCleanup(root_patch.stop)
+        # Rollback snapshots and publication protection check host disk headroom;
+        # keep results independent of the machine running the tests.
+        disk_patch = patch('shutil.disk_usage', return_value=SimpleNamespace(
+            total=1 << 42, used=1 << 41, free=1 << 41))
+        disk_patch.start()
+        self.addCleanup(disk_patch.stop)
+        statvfs_patch = patch('os.statvfs', return_value=SimpleNamespace(
+            f_bavail=1 << 29, f_frsize=4096, f_blocks=1 << 30))
+        statvfs_patch.start()
+        self.addCleanup(statvfs_patch.stop)
         self.unit = self.dir/'authority.service'
         self.unit.write_text('v10 unit')
         self.binary = self.dir/'binary'

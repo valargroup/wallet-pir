@@ -315,6 +315,9 @@ source_stage = importlib.util.module_from_spec(STAGE_SPEC)
 STAGE_SPEC.loader.exec_module(source_stage)
 
 
+AMPLE_DISK = SimpleNamespace(f_bavail=1 << 29, f_frsize=4096, f_blocks=1 << 30)
+
+
 class SourceStageTests(unittest.TestCase):
     def failed_promotion(self, after_archive=False):
         from types import SimpleNamespace
@@ -454,6 +457,11 @@ class SourceStageTests(unittest.TestCase):
         memory = patch.object(source_host, 'MEMINFO', self.meminfo)
         memory.start()
         self.addCleanup(memory.stop)
+        # The staging floor reads the host disk; give tests a half-free disk so
+        # results do not depend on the CI runner. Floor tests override this.
+        disk = patch.object(source_host.os, 'statvfs', return_value=AMPLE_DISK)
+        disk.start()
+        self.addCleanup(disk.stop)
         self.lock = Lock()
         self.request = {'mode': 'stage', 'source_sha': 'a'*40, 'sha256': '', 'machine_id': 'b'*32}
         self.files = {'ops/scripts/wallet-pir-deploy.py': b'wrapper',
@@ -642,6 +650,8 @@ class SourceStageTests(unittest.TestCase):
             "LOCK_PATH = Path('/run/lock/wallet-pir-production.lock')", 'LOCK_PATH = Path('+repr(str(lock_path))+')')
         helper = helper.replace("MEMINFO = Path('/proc/meminfo')", 'MEMINFO = Path('+repr(str(self.meminfo))+')')
         assertion = '''
+os.statvfs = lambda path: SimpleNamespace(**%r)
+''' % vars(AMPLE_DISK) + '''
 _save = atomic_json
 def atomic_json(path, value):
     competing = os.open(LOCK_PATH, os.O_RDWR)

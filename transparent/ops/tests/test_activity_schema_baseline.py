@@ -9,6 +9,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -33,6 +34,14 @@ class BaselineTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
+        # Snapshot and publication floors check host disk headroom; keep results
+        # independent of the machine running the tests.
+        for disk in (patch('shutil.disk_usage', return_value=SimpleNamespace(
+                         total=1 << 42, used=1 << 41, free=1 << 41)),
+                     patch('os.statvfs', return_value=SimpleNamespace(
+                         f_bavail=1 << 29, f_frsize=4096, f_blocks=1 << 30))):
+            disk.start()
+            self.addCleanup(disk.stop)
         self.root = Path(self.tmp.name)
         self.live = self.root/'live'
         self.live.mkdir()
