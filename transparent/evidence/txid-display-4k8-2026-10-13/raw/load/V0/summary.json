@@ -1,0 +1,86 @@
+{
+ "events": {
+  "ready": 1,
+  "query": 301,
+  "lookup": 301
+ },
+ "lookups": 301,
+ "exact": 301,
+ "not_exact": 0,
+ "errors": 0,
+ "error_kinds": {},
+ "missed_slots": {},
+ "span_seconds": 60.0,
+ "achieved_rate": 5.02,
+ "stale_retries": 0,
+ "total_seconds": {
+  "absent": {
+   "n": 15,
+   "p50": 0.314,
+   "p95": 0.431,
+   "p99": 0.431,
+   "max": 0.431
+  },
+  "all": {
+   "n": 301,
+   "p50": 0.244,
+   "p95": 1.015,
+   "p99": 1.594,
+   "max": 1.844
+  },
+  "archive-cold": {
+   "n": 13,
+   "p50": 1.561,
+   "p95": 1.844,
+   "p99": 1.844,
+   "max": 1.844
+  },
+  "archive-warm": {
+   "n": 48,
+   "p50": 0.647,
+   "p95": 0.987,
+   "p99": 1.183,
+   "max": 1.183
+  },
+  "cold": {
+   "n": 13,
+   "p50": 1.561,
+   "p95": 1.844,
+   "p99": 1.844,
+   "max": 1.844
+  },
+  "recent-warm": {
+   "n": 240,
+   "p50": 0.217,
+   "p95": 0.64,
+   "p99": 0.786,
+   "max": 1.339
+  },
+  "warm": {
+   "n": 288,
+   "p50": 0.227,
+   "p95": 0.76,
+   "p99": 1.015,
+   "max": 1.339
+  }
+ },
+ "http_seconds_warm": {
+  "n": 288,
+  "p50": 0.157,
+  "p95": 0.309,
+  "p99": 0.463,
+  "max": 0.618
+ },
+ "schedule_lag_p99": 0.012,
+ "bytes_warm_found_median": {
+  "up": 28451,
+  "down": 10423
+ },
+ "worker": {
+  "cpu_cores_mean": 0.17,
+  "cpu_cores_max_15s": 0.25,
+  "mem_gb_max": 17.01,
+  "load1_max": 0.0,
+  "samples": 5
+ }
+}

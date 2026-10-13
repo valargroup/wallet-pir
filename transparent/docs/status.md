@@ -25,8 +25,12 @@ The one-query site serves 4,096-row `txid-4k8` tables since about 02:45 UTC
   limit, against 30.0 GB on `txid-2k8`.
 - **Downtime.** About six minutes. The bootstrap ran beside the live lineage
   from a hardlinked snapshot of the journal, in 36 minutes.
-- **Open.** No wallet reads `/v2/txid` until zakura-core/wallet-libraries#172
-  merges and Vizor's v12 branch repins on it.
+- **Load.** 20 lookups/s for ten minutes through the public origin, 03:31–03:41
+  UTC: 11,999 of 11,999 answers exact, no errors. Warm lookups p50 0.21 s and
+  p99 0.77 s, fresh clients p50 1.56 s; the worker used 0.56 cores on average.
+- **Wallets.** transparent 0.1.0-rc.3 is on crates.io; wallet-libraries main
+  pins it (zakura-core/wallet-libraries#174, #175), and Vizor's v12 branch
+  (chainapsis/vizor-wallet#977) pins that main.
 
 ## Txid display `/v2/txid` on the 8-bit profile, 2026-10-13
 

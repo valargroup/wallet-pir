@@ -176,9 +176,12 @@ deploy directly.
 - [x] Cut over: a fresh `txid-4k8` root replaced the `txid-2k8` lineage on
   `/v2/txid` (down about six minutes); the `txid-2k8` root stays for rollback.
   Release `transparent-v0.1.0-rc.3`.
-- [ ] Merge the wallet-libraries repin (zakura-core/wallet-libraries#172), then
-  repin Vizor's v12 branch (chainapsis/vizor-wallet#977) on it. Until then no
-  wallet build reads `/v2/txid`: rc.2 and earlier clients refuse `txid-4k8`.
+- [x] Live load at 20 lookups/s for ten minutes: 11,999 of 11,999 answers exact,
+  warm lookups p99 0.77 s.
+- [x] Repin wallets: wallet-libraries main pins transparent 0.1.0-rc.3 from
+  crates.io (zakura-core/wallet-libraries#174, #175), and Vizor's v12 branch
+  (chainapsis/vizor-wallet#977) pins that main. rc.2 and earlier clients refuse
+  `txid-4k8`.
 - [ ] Delete the `txid-2k8` root (`/srv/txid-display-genesis/v3/root`) once the
   new lineage has run a while.
 

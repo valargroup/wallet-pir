@@ -22,6 +22,7 @@ for first was folded into it. `/v1/txid` was not touched.
 | Server time per query | Recorded | 3.30–3.42 ms p50, 3.61 ms p95 one at a time; 7.1–7.4 ms p50 two at a time | Recorded |
 | Live lookups | Exact entry | 5 of 5 cold lookups through `https://transparent-pir.valargroup.dev/v2/txid`: three archives, two recent; about 1.7 s each | Pass |
 | Downtime | — | `/v2/txid` down about six minutes (02:39–02:45 UTC) | — |
+| Live load, 20 lookups/s for 10 minutes | Every answer exact | 11,999 of 11,999 lookups exact, no errors, no missed slots; warm lookups p50 0.21 s, p99 0.77 s; fresh clients p50 1.56 s, p99 1.71 s; worker 0.56 cores on average | Pass |
 
 ## Placement census
 
@@ -143,6 +144,48 @@ origin: archives 3, 8 and 58 and two from the recent shard. All five returned
 exactly the fixture's entry in 1.69–1.75 s. pir-monitor runs no txid probe, so
 no deployed canary needed a rebuild.
 
+## Live load
+
+[`raw/load/`](raw/load/): `txid-rate` on roman-dev-2 sent lookups to
+`https://transparent-pir.valargroup.dev/v2/txid` on a fixed schedule, whatever
+the service did, and checked every answer against the fixture's entry digest.
+The fixture is 4,000 txids drawn at the chain's own class mix plus 200 absent
+controls, built with `txid-inventory fixture --natural 2000 --absent 200 --seed
+20261013` on the coordinator from the controller's candidate at 3,515,903, never
+from a server answer. The mix was 80% recent and 20% archive; every 25th lookup
+used a fresh client and every 20th asked an absent control. A watcher would have
+stopped a window on any inexact answer or 20 errors
+([`load_plan.sh`](load_plan.sh), [`load_run.sh`](load_run.sh), which it calls as
+`run.sh`). [`load_sample.sh`](load_sample.sh) sampled the worker on k8-01 every
+15 s; [`summarize_load.py`](summarize_load.py) wrote each `summary.json`.
+
+| Window (UTC) | Rate | Lookups | Exact | Errors | Warm p50 / p95 / p99 / max | Fresh client p50 / p99 / max | Worker CPU mean / max 15 s |
+|---|---:|---:|---:|---:|---|---|---|
+| V0, 03:30:00–03:31:02 | 5/s | 301 | 301 | 0 | 0.23 / 0.76 / 1.02 / 1.34 s | 1.56 / 1.84 / 1.84 s | 0.17 / 0.25 cores |
+| A, 03:31:05–03:41:06 | 20/s | 11,999 | 11,999 | 0 | 0.21 / 0.57 / 0.77 / 1.43 s | 1.56 / 1.71 / 1.88 s | 0.56 / 0.99 cores |
+
+In window A, warm archive lookups were p50 0.21 s and p99 0.81 s, recent p50
+0.21 s and p99 0.75 s, and absent controls p50 0.21 s and p99 0.79 s. The HTTP
+round trip of a warm query was p50 0.16 s and p99 0.32 s from roman-dev-2, so
+most of a warm lookup is the network and the client's own work. A warm lookup
+sends 28,451 B and receives 10,423 B. A fresh client also fetches the map,
+manifest and setup: 134,155 B down and 29,107 B up. The dispatcher's lag stayed
+under 10 ms at p99, and the worker's memory stayed at 17.0–17.2 GB. The map moved
+seven times during A as blocks arrived.
+
+Caveats:
+- The run's cold lookups all landed on archives, because the fresh-client
+  interval (25) is a multiple of five, and the tool sends every fifth lookup (sequence 0, 5, 10, …) to an archive. Fresh-client
+  figures are archive figures.
+- During V0, a second copy of the load, left from a launch that was stopped,
+  ran for about 50 s, so V0 saw roughly 10 lookups/s. It was killed before A
+  started; A ran alone.
+- The first attempt failed every lookup before any request reached a table: the
+  tool's example client derived the served setup seed under the history schema.
+  The shipped `transparent-txid-client` does not have this bug. The fix is
+  `cf6273ee` on `main`, and the run used that source (binary digest in
+  [raw/load/txid-rate.sha256](raw/load/txid-rate.sha256)).
+
 ## Provenance
 
 | Item | Value |
@@ -155,7 +198,7 @@ no deployed canary needed a rebuild.
 
 ## Not covered
 
-Load tests of the whole worker, and certificates of later recent revisions.
-Wallets: wallet-libraries needs the rc.3 pin (zakura-core/wallet-libraries#172)
-before any wallet can read `/v2/txid` again; Vizor's v12 branch needs a repin
-after it.
+Load above 20 lookups/s, and certificates of later recent revisions. Wallets
+read the new tables from transparent 0.1.0-rc.3: wallet-libraries main pins it
+(zakura-core/wallet-libraries#174, #175), and Vizor's v12 branch
+(chainapsis/vizor-wallet#977) pins that main.
