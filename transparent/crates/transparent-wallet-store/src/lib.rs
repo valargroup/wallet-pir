@@ -1073,6 +1073,22 @@ impl WalletStore for SqliteStore {
             .map_err(io)
     }
 
+    fn drop_setup(&mut self, key: &SetupKey) -> Result<(), StoreError> {
+        self.conn
+            .execute(
+                "DELETE FROM setup_cache WHERE set_digest = ?1 AND revision_digest = ?2 \
+                 AND tbl = ?3 AND segment = ?4",
+                params![
+                    key.set_digest,
+                    key.revision_digest,
+                    key.table.name(),
+                    key.segment as i64
+                ],
+            )
+            .map(|_| ())
+            .map_err(io)
+    }
+
     fn filter(
         &self,
         revision_digest: &str,

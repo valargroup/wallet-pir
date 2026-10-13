@@ -380,6 +380,9 @@ pub trait WalletStore {
 
     fn setup(&self, key: &SetupKey) -> Result<Option<SetupBlob>, StoreError>;
     fn put_setup(&mut self, key: &SetupKey, blob: &SetupBlob) -> Result<(), StoreError>;
+    /// Forgets a setup a reply showed to be stale, so the next sync fetches
+    /// the published one again. Forgetting one not held is not an error.
+    fn drop_setup(&mut self, key: &SetupKey) -> Result<(), StoreError>;
     fn filter(
         &self,
         revision_digest: &str,
@@ -468,6 +471,9 @@ impl<T: WalletStore + ?Sized> WalletStore for Box<T> {
     }
     fn put_setup(&mut self, key: &SetupKey, blob: &SetupBlob) -> Result<(), StoreError> {
         (**self).put_setup(key, blob)
+    }
+    fn drop_setup(&mut self, key: &SetupKey) -> Result<(), StoreError> {
+        (**self).drop_setup(key)
     }
     fn filter(
         &self,

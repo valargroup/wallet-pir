@@ -527,6 +527,9 @@ impl<S: WalletStore> WalletStore for CrashAt<S> {
     fn put_setup(&mut self, key: &SetupKey, blob: &SetupBlob) -> Result<(), StoreError> {
         self.inner.put_setup(key, blob)
     }
+    fn drop_setup(&mut self, key: &SetupKey) -> Result<(), StoreError> {
+        self.inner.drop_setup(key)
+    }
     fn filter(&self, digest: &str, hash: &str) -> Result<Option<Vec<u8>>, StoreError> {
         self.inner.filter(digest, hash)
     }
