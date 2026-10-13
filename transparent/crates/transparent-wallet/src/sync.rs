@@ -3127,7 +3127,7 @@ impl Walker<'_> {
         let Err(error) = link else {
             return Ok(());
         };
-        let link_query = self.owed_link_query(store, script, cursor)?;
+        let link_query = self.owed_link_query(store, script, head, cursor)?;
         Err(Failure {
             error,
             child: cursor.child,
@@ -3138,20 +3138,28 @@ impl Walker<'_> {
     /// Whether the honest walk would query a head after the run at `cursor`.
     ///
     /// It would not when the chain already promised this run was the oldest,
-    /// nor when this script's previous run is the cached run in the page
-    /// shard just below: a tip catch-up stops there and sends nothing for it.
-    /// Either way a bad link must not add a query the honest walk omits.
+    /// nor when this script's previous run is cached: a catch-up stops there
+    /// and sends nothing for it. When the link still names an earlier,
+    /// declared page shard (only its row or its older-run count is bad), that
+    /// is the page shard the honest walk would look up in the cache. Otherwise
+    /// the previous run is taken to be in the page shard just below. Either
+    /// way a bad link must not add a query the honest walk omits.
     fn owed_link_query<S: WalletStore>(
         &self,
         store: &S,
         script: &[u8],
+        head: &PageEntry,
         cursor: &RunCursor,
     ) -> Result<u32, SyncError> {
         if cursor.older_runs == Some(0) {
             return Ok(0);
         }
-        let Some(previous) = cursor.child.checked_sub(1) else {
-            return Ok(1);
+        let previous = match head.link.previous() {
+            Some((child, _)) if child < cursor.child && self.child(child).is_ok() => child,
+            _ => match cursor.child.checked_sub(1) {
+                Some(below) => below,
+                None => return Ok(1),
+            },
         };
         Ok(u32::from(self.cached(store, script, previous)?.is_none()))
     }
@@ -5796,6 +5804,20 @@ mod walk_tests {
     /// it: the honest catch-up sends none.
     #[test]
     fn a_bad_link_owes_no_head_when_the_next_run_is_cached() {
+        bad_link_at_tip_matches_the_honest_catch_up(|gap| gap == 1);
+    }
+
+    /// The same when the previous run is cached in a page shard further
+    /// down, because the script had no run in the page shards between.
+    #[test]
+    fn a_bad_link_owes_no_head_when_an_older_cached_run_is_next() {
+        bad_link_at_tip_matches_the_honest_catch_up(|gap| gap > 1);
+    }
+
+    /// Corrupts the link row of a tip script's open run, whose previous run
+    /// is `gap` page shards below and cached by an earlier sync, and checks
+    /// the catch-up sends exactly the honest transcript's queries.
+    fn bad_link_at_tip_matches_the_honest_catch_up(gap: impl Fn(u8) -> bool) {
         let (_, directories) = fixture();
         let tail = directories.last().unwrap();
         let manifest = manifest_of(tail);
@@ -5807,10 +5829,10 @@ mod walk_tests {
             .iter()
             .find(|script| {
                 let runs = runs_of(tail, script);
-                runs.len() >= 2 && runs[0].0 == open && runs[1].0 + 1 == runs[0].0
+                runs.len() >= 2 && runs[0].0 == open && gap(runs[0].0 - runs[1].0)
             })
             .cloned()
-            .expect("a tip script whose previous run is in the page shard below");
+            .expect("a tip script whose previous run is that many page shards below");
         let ((child, row), head, bytes) = rewritten_head(tail, &victim, |entry| {
             let link = entry.link;
             entry
