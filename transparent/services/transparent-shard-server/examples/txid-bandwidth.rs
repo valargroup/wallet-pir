@@ -73,19 +73,26 @@ enum Command {
     },
 }
 
-/// Body bytes of one 44-bit dithered query and of its answer, for a table of
+/// The native profile display tables are served with.
+fn native() -> transparent_native::Profile {
+    transparent_native::profile_for("txdirectory")
+}
+
+/// Body bytes of one 28-bit dithered query and of its answer, for a table of
 /// `geometry`'s rows answered by `segments` segments.
 fn query_bytes(geometry: &Geometry, segments: u64) -> (u64, u64) {
-    let cols = geometry.directory_row_bytes / 2;
+    let native = native();
+    let cols = geometry.directory_row_bytes / native.entry_bytes();
     (
-        8 + transparent_native::dithered_request_len(geometry.directory_rows as usize) as u64,
-        segments * (16 + transparent_native::response_len(cols) as u64),
+        8 + native.request_len_bits(geometry.directory_rows as usize, native.dithered_bits) as u64,
+        segments * (16 + native.response_len(cols) as u64),
     )
 }
 
 /// One segment's setup document: base64 masks plus JSON fields.
 fn setup_bytes(geometry: &Geometry, json: u64) -> u64 {
-    let public = transparent_native::public_len(geometry.directory_row_bytes / 2) as u64;
+    let native = native();
+    let public = native.public_len(geometry.directory_row_bytes / native.entry_bytes()) as u64;
     4 * public.div_ceil(3) + json
 }
 
@@ -421,17 +428,15 @@ async fn main() -> Result<(), Error> {
 mod tests {
     use super::*;
 
-    /// The figures the design was argued from, reproduced from the native
-    /// lengths: 38,920 B per dithered query at 2,048 rows (40,200 B at the 49
-    /// bits every server also accepts), an 11,280 B answer of two 4,096-byte
-    /// blocks, and the warm transcript, one directory query for every lookup.
+    /// The figures the design was argued from, reproduced from the 8-bit
+    /// native lengths: 21,000 B per dithered query at 2,048 rows, a 10,256 B
+    /// answer of four 2,048-byte blocks, and the warm transcript, one
+    /// directory query for every lookup.
     #[test]
     fn warm_transcripts_match_the_native_lengths() {
         use transparent_shard::display::TXID_2K8;
-        assert_eq!(query_bytes(&TXID_2K8, 1), (38_920, 11_280));
-        assert_eq!(query_bytes(&TXID_2K8, 2).1, 22_560);
-        let legacy = 8 + transparent_native::request_len(2_048) as u64;
-        assert_eq!(legacy, 40_200);
+        assert_eq!(query_bytes(&TXID_2K8, 1), (21_000, 10_256));
+        assert_eq!(query_bytes(&TXID_2K8, 2).1, 20_512);
         let rows = formula(1, 0, 0, 0, 0);
         let total = |geometry: &str, state: &str| {
             rows.iter()
@@ -440,10 +445,10 @@ mod tests {
                 .as_u64()
                 .unwrap()
         };
-        assert_eq!(total("txid-2k8", "warm"), 50_200);
-        assert_eq!(setup_bytes(&TXID_2K8, 0), 39_596);
+        assert_eq!(total("txid-2k8", "warm"), 31_256);
+        assert_eq!(setup_bytes(&TXID_2K8, 0), 60_076);
         // Cold adds one setup per directory segment, plus map and manifest.
-        assert_eq!(total("txid-2k8", "cold"), 50_200 + 39_596);
+        assert_eq!(total("txid-2k8", "cold"), 31_256 + 60_076);
         assert!(rows.iter().all(|r| r["queries"] == 1));
     }
 }

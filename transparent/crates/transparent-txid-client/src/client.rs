@@ -40,12 +40,8 @@ pub const MIN_RECENT_FLOOR: u64 = 10_000;
 struct InitTable {
     rows: u64,
     row_bytes: u32,
-    /// The 49-bit query, which every service accepts.
+    /// The table's one scheme, the 8-bit profile's 28-bit dithered query.
     scheme: NativeScheme,
-    /// The 44-bit dithered query over the same setup. Absent from a service
-    /// that predates it; used only when it reproduces, as `scheme` must.
-    #[serde(default)]
-    scheme_dq44: Option<NativeScheme>,
     setup_seed: u64,
 }
 
@@ -121,8 +117,6 @@ struct Located {
 struct Target {
     table: DisplayTable,
     profile: Arc<TableProfile>,
-    /// Whether queries go at 44 dithered bits rather than 49.
-    dithered: bool,
     setups: Vec<Arc<Setup>>,
 }
 
@@ -713,17 +707,13 @@ impl TxidDisplayClient {
     }
 
     /// The locally derived profile of `kind` at `geometry`, checked against
-    /// what init publishes, and whether init's dithered scheme reproduces too.
-    ///
-    /// The 49-bit scheme must reproduce. Queries go at 44 dithered bits when
-    /// init also publishes the dithered scheme and it reproduces; otherwise at
-    /// the 49 bits every service accepts.
+    /// what init publishes, which must reproduce it.
     fn profile(
         &self,
         init: &Init,
         geometry: &'static Geometry,
         kind: DisplayKind,
-    ) -> Result<(Arc<TableProfile>, bool), TxidError> {
+    ) -> Result<Arc<TableProfile>, TxidError> {
         let cached = self
             .profiles
             .lock()
@@ -733,8 +723,8 @@ impl TxidDisplayClient {
         let profile = match cached {
             Some(profile) => profile,
             None => {
-                // The native profile is the history kind's at display's frozen
-                // native schema. Only the binding is display-specific.
+                // The native profile is derived under display's own native
+                // schema. Only the binding is display-specific.
                 let profile = Arc::new(
                     TableProfile::new(
                         display::NATIVE_SCHEMA,
@@ -766,8 +756,7 @@ impl TxidDisplayClient {
         {
             return Err(TxidError::Protocol(ProtocolKind::Profile));
         }
-        let dithered = served.scheme_dq44.is_some() && served.scheme_dq44 == profile.dithered_scheme;
-        Ok((profile, dithered))
+        Ok(profile)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -843,7 +832,7 @@ impl TxidDisplayClient {
         table: DisplayTable,
         segments: u32,
     ) -> Result<Target, TxidError> {
-        let (profile, dithered) = self.profile(&located.init, located.geometry, table.kind())?;
+        let profile = self.profile(&located.init, located.geometry, table.kind())?;
         let mut setups = Vec::with_capacity(segments as usize);
         for segment in 0..segments {
             setups.push(self.setup(
@@ -859,7 +848,6 @@ impl TxidDisplayClient {
         Ok(Target {
             table,
             profile,
-            dithered,
             setups,
         })
     }
@@ -884,12 +872,10 @@ impl TxidDisplayClient {
             entry.manifest_digest,
             target.table.label()
         );
-        let (secret, upload) = if target.dithered {
-            target.profile.prepare_dithered(row as usize)
-        } else {
-            target.profile.prepare(row as usize)
-        }
-        .map_err(protocol(ProtocolKind::Profile))?;
+        let (secret, upload) = target
+            .profile
+            .prepare(row as usize)
+            .map_err(protocol(ProtocolKind::Profile))?;
         let mut body = binding.to_vec();
         body.extend(upload);
         let reply = send(

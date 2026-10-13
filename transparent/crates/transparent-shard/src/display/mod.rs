@@ -51,12 +51,15 @@ pub const BUCKET_DOMAIN: &[u8] = b"transparent-txid-display/bucket/v2";
 /// Upper bound on buckets per shard; a decoder bound, not a target.
 pub const MAX_BUCKETS: u32 = 64;
 /// The native profile and setup seeds of every display table are derived
-/// under this name, frozen at the history schema display was first published
-/// with. History schema changes move history's native parameters, never
-/// display's: wallets pinned to an older history client keep reading display
-/// tables served by a newer build, and `/v2/txid/init` publishes this name as
-/// its `native_schema`.
-pub const NATIVE_SCHEMA: &str = "transparent-shard-v11";
+/// under this name, display's own and independent of the history schema, so
+/// history schema changes never move display's native parameters.
+/// `/v2/txid/init` publishes it as its `native_schema`.
+///
+/// It names the 8-bit profile display tables are served with. The 16-bit
+/// one-query tables were derived under `transparent-shard-v11`; a client
+/// pinned to that name sees this one as unsupported rather than failing to
+/// re-derive the 8-bit scheme.
+pub const NATIVE_SCHEMA: &str = "transparent-txid-display-p8-v1";
 
 /// The bucket of the entry tagged `tag` among `n_buckets`.
 pub fn bucket(tag: &Tag, n_buckets: u32) -> u32 {
@@ -235,7 +238,7 @@ mod tests {
     fn setup_seeds_are_golden() {
         assert_eq!(
             setup_seed(&TXID_2K8, DisplayKind::TxDirectory),
-            0xd56b_6038_d7ca_811f
+            0x0571_b2f6_02b0_0dbd
         );
         assert_eq!(DisplayTable::Directory(5).kind(), DisplayKind::TxDirectory);
     }

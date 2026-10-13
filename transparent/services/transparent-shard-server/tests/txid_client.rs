@@ -220,44 +220,25 @@ fn found_exact_transcript() {
     }
 }
 
-/// A client sends 49-bit queries, which every server accepts, unless init
-/// advertises a dithered scheme it reproduces: whether init carries none, as
-/// a server predating dithering does not, or one that differs from the local
-/// derivation. Either way the lookup finds the published entry.
+/// A server still on the 16-bit display profile publishes the native schema
+/// that profile was derived under. A client finds it unsupported from init
+/// alone, rather than failing to re-derive that server's scheme.
 #[test]
-fn queries_fall_back_to_49_bits_without_a_reproducible_dithered_scheme() {
+fn a_16_bit_display_server_is_unsupported() {
     let _serial = serial();
     let env = env();
-    let record = &env.world.a0_records[CLASSES];
-    let edits: [fn(&mut serde_json::Value); 2] = [
-        |table| {
-            let removed = table.as_object_mut().unwrap().remove("scheme_dq44");
-            assert!(removed.is_some(), "the server advertises a dithered scheme");
-        },
-        |table| table["scheme_dq44"]["query_mask_seed"] = serde_json::json!("00"),
-    ];
-    for edit in edits {
-        let mut http = env.http();
-        http.tamper = Some(on(Route::Init, move |reply| {
-            let mut json: serde_json::Value = serde_json::from_slice(&reply.body).unwrap();
-            for geometry in json["geometries"].as_array_mut().unwrap() {
-                edit(&mut geometry["txdirectory"]);
-            }
-            reply.body = serde_json::to_vec(&json).unwrap();
-        }));
-        found(
-            env.client()
-                .lookup(&mut http, record.txid.0, 150, &never)
-                .unwrap(),
-            record,
-        );
-        let log = http.take_log();
-        let posts: Vec<&Sent> = log.iter().filter(|s| s.route == Route::Query).collect();
-        assert_eq!(posts.len(), 1);
-        assert!(posts
-            .iter()
-            .all(|post| post.status == 200 && post.body.len() as u64 == LEGACY_QUERY_BYTES));
-    }
+    let txid = env.world.a0_records[CLASSES].txid.0;
+    let mut http = env.http();
+    http.tamper = Some(on(Route::Init, |reply| {
+        let mut init: serde_json::Value = serde_json::from_slice(&reply.body).unwrap();
+        init["native_schema"] = "transparent-shard-v11".into();
+        reply.body = serde_json::to_vec(&init).unwrap();
+    }));
+    assert_eq!(
+        env.client().lookup(&mut http, txid, 150, &never).unwrap(),
+        TxidLookup::Unsupported
+    );
+    assert_eq!(routes(&http.take_log()), [Route::Init]);
 }
 
 /// Every case the format distinguishes comes back as exactly the entry the
@@ -1188,17 +1169,17 @@ fn setup_seed_golden_matches_server() {
         (
             "txid-2k8",
             DisplayTable::Directory(0),
-            0xd56b_6038_d7ca_811f_u64,
+            0x0571_b2f6_02b0_0dbd_u64,
         ),
         (
             "txid-2k8",
             DisplayTable::Directory(3),
-            0xd56b_6038_d7ca_811f,
+            0x0571_b2f6_02b0_0dbd,
         ),
     ];
     for (name, table, seed) in golden {
         let geometry = display::display_by_name(name).unwrap();
-        // The server's display parameters, under display's frozen native schema.
+        // The server's display parameters, under display's own native schema.
         assert_eq!(
             SharedParams::build_display(geometry, kind(table))
                 .unwrap()
@@ -1225,7 +1206,7 @@ fn setup_seed_golden_matches_server() {
         .unwrap();
     assert_eq!(
         geometry["txdirectory"]["setup_seed"],
-        0xd56b_6038_d7ca_811f_u64
+        0x0571_b2f6_02b0_0dbd_u64
     );
     assert_eq!(geometry["txdirectory"]["row_bytes"], 8_192);
     assert!(geometry.get("txpages").is_none(), "{geometry}");

@@ -81,7 +81,7 @@ mod tests {
         if dithered {
             // The history tables have no second width; a 16-bit table's
             // dithered scheme stands in for one a service might advertise.
-            let wide = table("txdirectory").dithered_scheme;
+            let wide = table("sixteen-bit").dithered_scheme;
             entry["directory_scheme_dq44"] = serde_json::json!(wide);
             entry["pages_scheme_dq44"] = serde_json::json!(wide);
         }

@@ -82,8 +82,15 @@ fn table_profile(flags: &HashMap<String, String>) -> TableProfile {
         .expect("registry or display geometry");
     let table = transparent_shard_server::shardset::Table::parse(&flags["table"])
         .expect("directory, pages or txdirectory");
+    // Display tables are derived under display's own native schema, history
+    // tables under the history schema, as the server builds them.
+    let schema = if table == transparent_shard_server::shardset::Table::TxDirectory {
+        transparent_shard::display::NATIVE_SCHEMA
+    } else {
+        transparent_shard::manifest::SCHEMA
+    };
     TableProfile::new(
-        transparent_shard::manifest::SCHEMA,
+        schema,
         geometry.name,
         table.as_str(),
         table.rows(geometry),

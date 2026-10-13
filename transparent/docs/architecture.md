@@ -326,14 +326,15 @@ the table's key count equals the entry count.
 
 ## PIR scheme
 
-Both history tables use the native ReinspiRING two-mask **8-bit** profile from ipir-sp
+Both history tables and the txid display table use the native ReinspiRING two-mask **8-bit** profile from ipir-sp
 `v0.1.0-rc.7`: d = 2,048, q = 2^54, p = 2^8, a one-digit Gaussian `K_g` packing key with a
 27-bit digit, two public masks rounded to 22 bits, 28-bit dithered queries and 10-bit
 responses (profile `reinspiring-two-mask-p8-g27x1-m22-dq28-r10-v1`). Each coefficient
-carries one plaintext byte, so one 4,096-byte row is two 2,048-coefficient blocks. The
-txid display tables keep the 16-bit m29 profile that Enhance and Status deploy (p = 2^16, a
-two-digit key with 19-bit digits, 29-bit masks, 44-bit dithered or 49-bit nearest queries,
-22-bit responses), which the second half of this section describes.
+carries one plaintext byte, so one 4,096-byte row is two 2,048-coefficient blocks and a
+display row of 8,192 bytes four. The 16-bit m29 profile that Enhance and Status deploy
+(p = 2^16, a two-digit key with 19-bit digits, 29-bit masks, 44-bit dithered or 49-bit
+nearest queries, 22-bit responses) serves no table built from `main`; `/v1/` releases
+still serve it.
 The helpers are the root `shared/pir-native` crate, which Enhance and Status use too; it
 defines both profiles (`P8`, `P16`) and its golden test pins the 16-bit bytes. It has no
 Cargo features, so depending on it cannot switch the q48 Enhance binaries, which only
@@ -364,13 +365,12 @@ column-major bytes before interleaving, leaving out trailing all-zero row blocks
 data, so its runtime plans at its reservation; only a nearly empty table's matrix is written
 at four-byte words, and the disk cache accepts either.
 
-A display table's query is the binding, the 27,648-byte key and a selection at one of two
-widths: 44 bits dithered (`scheme_dq44`, profile `reinspiring-two-mask-m29-dq44-v1`) or 49
-bits rounded to nearest (`scheme`). The setup, masks and responses are the same for both, so
-one runtime answers either; the server picks the width from the exact length, and a client
-sends 44 bits when init carries the dithered scheme and it reproduces locally. Each display
-segment publishes 14,848 bytes of masks per 4,096-byte block and answers 5,632 bytes per
-block.
+A display table (`txid-2k8`, 2,048 rows) takes the same 21,000-byte query and publishes
+one scheme, `scheme`, with no `scheme_dq44`. Each display segment publishes 45,056 bytes of
+masks (four blocks) and answers with the binding, the epoch and a 10,240-byte body. Its
+seeds are derived under display's own native schema, `transparent-txid-display-p8-v1`,
+which `/v2/txid/init` publishes as `native_schema`; a client pinned to the 16-bit display's
+`transparent-shard-v11` finds the service unsupported.
 
 A query to a single-segment page shard, sealed or open, may select only its first
 `PageChild::query_rows`: the page rows it holds rounded up to 2,048-row blocks, every
@@ -386,7 +386,8 @@ Correctness certificates for this mode are snapshot-specific. The shard server's
 8-bit table it is always the dithered 28-bit report. The
 [8-bit trial](../evidence/p8-trial-2026-10-12/README.md) certified every v12 staging table
 at 125 bits or more with the one-digit key, under trial seeds; the served seeds need their
-own certificates. For the display tables see the
+own certificates. `native_certificate` derives display tables under display's native
+schema. The 16-bit display tables' screens are the
 [correctness screen](../evidence/native-certificate-2026-09-28/README.md) and the
 [dithered query screen](../evidence/dithered-query-2026-10-09/README.md).
 
@@ -473,9 +474,8 @@ the runtime holds (`TableRuntime::held_bytes`): the same terms with the compiled
 its real width, four-byte words so far, or 27/28-bit packed on CPUs with AVX-512 VBMI. The
 charge only falls, the release happens before any waiter receives the runtime, and eviction
 returns exactly the lowered charge, so builds in flight together cannot be admitted past
-the budget on sizes they have not reached. `txid-2k8`, whose rows are two blocks,
-reserves 144.09 MiB and is charged 80.09 MiB built; `shard-residency` measured
-80.0–85.8 MiB. Warm-mode fit checks (history and display) plan with the four-byte size plus
+the budget on sizes they have not reached. `txid-2k8`, whose rows are four 8-bit blocks
+with one-digit matrices, reserves and is charged 144.17 MiB. Warm-mode fit checks (history and display) plan with the four-byte size plus
 one bound's excess per runtime the prewarm can have in flight, which never exceeds the sum
 of bounds they used to demand. The disk cache works the same way: a write reserves the
 largest valid entry under its directory lock, a written entry counts at its file length,

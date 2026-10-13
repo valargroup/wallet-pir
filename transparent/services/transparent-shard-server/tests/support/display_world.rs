@@ -29,14 +29,12 @@ use transparent_txid_client::{
 };
 
 /// Every directory query uploads this many bytes: the 8-byte binding, the
-/// `K_g` key and the 2,048-row native selection at 44 dithered bits.
-pub const QUERY_BYTES: u64 = 38_920;
-/// The same query at the 49 bits a client sends when init advertises no
-/// dithered scheme it reproduces, and that every server still accepts.
-pub const LEGACY_QUERY_BYTES: u64 = 40_200;
-/// A one-segment directory reply: the binding, the epoch and one response
-/// of two 4,096-byte blocks.
-pub const REPLY_BYTES: u64 = 11_280;
+/// one-digit `K_g` key and the 2,048-row native selection at 28 dithered
+/// bits.
+pub const QUERY_BYTES: u64 = 21_000;
+/// A one-segment directory reply: the binding, the epoch and one 8-bit
+/// response of four 2,048-byte blocks.
+pub const REPLY_BYTES: u64 = 10_256;
 
 pub fn params(buckets: u32) -> DisplaySealParams {
     DisplaySealParams {

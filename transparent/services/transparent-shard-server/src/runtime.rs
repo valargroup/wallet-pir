@@ -156,9 +156,7 @@ pub fn reserved_bytes(table: Table, rows: u64, row_bytes: u32) -> u64 {
 /// what warm-fit and disk preflight checks plan with. It is a planning figure,
 /// not a bound: a runtime whose matrix needs eight-byte words is charged its
 /// full reservation, and a plan made with this figure then comes up short and
-/// says so through overloads rather than through memory. `shard-residency`
-/// measured `txid-2k8` at 80.0-85.8 MiB per runtime against the 80.09 MiB
-/// given here.
+/// says so through overloads rather than through memory.
 pub fn held_bytes(table: Table, rows: u64, row_bytes: u32) -> u64 {
     let profile = native::profile_for(table.as_str());
     let blocks = (row_bytes as usize / profile.instance_bytes()) as u64;
@@ -218,7 +216,7 @@ impl SharedParams {
         Self::build_in(transparent_shard::manifest::SCHEMA, geometry, table)
     }
 
-    /// A display table's parameters, under the frozen display native schema.
+    /// A display table's parameters, under display's own native schema.
     pub fn build_display(geometry: &'static Geometry, table: Table) -> Result<Self, String> {
         Self::build_in(transparent_shard::display::NATIVE_SCHEMA, geometry, table)
     }
@@ -1462,35 +1460,20 @@ pub(crate) mod tests {
         ));
     }
 
-    /// `shard-residency` on a development host (2026-10-11), steady
-    /// per-runtime increments after the allocator warmed up, in MiB: the
-    /// lowest and highest of runtimes 7-12 of 12.
-    /// `transparent/evidence/txid-display-2k8-gates-2026-10-11/residency`.
-    const MEASURED_TXID_2K8_MIB: (f64, f64) = (80.04, 85.75);
-
     fn mib(bytes: u64) -> f64 {
         bytes as f64 / f64::from(1 << 20)
     }
 
-    /// The planned built size is the four-byte-word size the residency
-    /// measurement found, and the reservation is the eight-byte bound: 144.09
-    /// against 80.09 MiB at `txid-2k8`, whose two 4,096-byte blocks per row
-    /// each carry a compiled matrix. The planned size is the measured steady
-    /// increment to 0.05 MiB; the range's top carries allocator overhead the
-    /// formula leaves out.
+    /// A `txid-2k8` display runtime is 8-bit: its 8,192-byte rows are four
+    /// 2,048-byte blocks, each with a one-digit compiled matrix at eight-byte
+    /// words, so the planned built size is the reservation, 144.17 MiB.
     #[test]
-    fn the_planned_built_size_is_the_measured_display_runtime() {
+    fn the_planned_built_size_of_a_display_runtime_is_its_reservation() {
         let shared = SharedParams::build_display(&TXID_2K8, Table::TxDirectory).unwrap();
+        assert_eq!(shared.profile.blocks(), 4);
         let (reserved, held) = (shared.reserved_bytes(), shared.held_bytes());
-        assert_eq!((reserved, held), (151_090_272, 83_981_408));
-        assert_eq!(
-            reserved - held,
-            2 * (32 << 20),
-            "half of two compiled matrices"
-        );
-        let measured = MEASURED_TXID_2K8_MIB;
-        assert!((mib(held) - measured.0).abs() < 0.1);
-        assert!(measured.1 - mib(held) < 6.0);
+        assert_eq!((reserved, held), (151_171_248, 151_171_248));
+        assert!((mib(held) - 144.17).abs() < 0.01);
     }
 
     /// A built runtime, history or display, holds no more than the planned
@@ -1543,7 +1526,8 @@ pub(crate) mod tests {
     #[test]
     fn a_reservation_is_released_only_after_its_build_and_only_downward() {
         let shared = SharedParams::build_display(&TXID_2K8, Table::TxDirectory).unwrap();
-        let (bound, held) = (shared.reserved_bytes(), shared.held_bytes());
+        // A runtime built below its bound, as an empty table's is.
+        let (bound, held) = (shared.reserved_bytes(), shared.reserved_bytes() / 2);
         let metrics = Arc::new(Metrics::default());
         let cache = RuntimeCache::new(bound + held, 2, metrics.clone());
         let key = |segment| ("revision".to_string(), Table::TxDirectory, segment);
@@ -1594,13 +1578,16 @@ pub(crate) mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn a_build_in_flight_keeps_its_bound_until_the_runtime_exists() {
         use std::io::Write;
-        // A display table: its two-digit matrix is built narrower than its
-        // bound, which the 8-bit history tables' one-digit matrix is not.
+        // An empty 8-bit table: its one-digit matrix fits four-byte words, so
+        // it is built narrower than its bound, which a table with data is not.
         let geometry = &TXID_2K8;
         let table = Table::TxDirectory;
         let dir = tempfile::tempdir().unwrap();
         let shared = Arc::new(SharedParams::build(geometry, table).unwrap());
-        let rows = vec![7u8; shared.profile.rows * shared.profile.row_bytes];
+        let rows = vec![0u8; shared.profile.rows * shared.profile.row_bytes];
+        let built = TableRuntime::build(&shared, &rows).unwrap().held_bytes();
+        let bound = shared.reserved_bytes();
+        assert!(built < bound, "an empty table is built below its bound");
         let source = SegmentSource {
             path: dir.path().join("table.bin"),
             rows: table.rows(geometry),
@@ -1624,9 +1611,8 @@ pub(crate) mod tests {
                 file.write_all(&rows).unwrap();
             })
         };
-        let (bound, planned) = (shared.reserved_bytes(), shared.held_bytes());
         let metrics = Arc::new(Metrics::default());
-        let cache = Arc::new(RuntimeCache::new(bound + planned, 2, metrics.clone()));
+        let cache = Arc::new(RuntimeCache::new(bound + built, 2, metrics.clone()));
         let key = move |segment| ("ab".repeat(32), table, segment);
         let first = {
             let (cache, shared, source) = (cache.clone(), shared.clone(), source.clone());
@@ -1647,7 +1633,7 @@ pub(crate) mod tests {
         writer.join().unwrap();
         let first = first.await.unwrap().unwrap();
         let held = first.get().held_bytes();
-        assert!(held <= planned);
+        assert_eq!(held, built);
         assert_eq!(cache.resident_bytes(), held);
         assert_eq!(Metrics::get(&metrics.resident_bytes), held);
         std::fs::remove_file(&source.path).unwrap();
@@ -1688,8 +1674,7 @@ pub(crate) mod tests {
                 }
             }
         }
-        // Only the display tables' two-digit matrices have an excess over
-        // their built size; the 8-bit history tables hold their bound.
+        // Every table is 8-bit and holds its bound, so there is no excess.
         let all = warm_bytes(&every, 4);
         assert!(all <= every.iter().map(SharedParams::reserved_bytes).sum::<u64>());
         assert_eq!(
@@ -1703,28 +1688,25 @@ pub(crate) mod tests {
     /// recent shard and one retired recent revision.
     pub(crate) const GENESIS_RUNTIMES: usize = 191;
 
-    /// The txid display genesis plan: 191 `txid-2k8` runtimes hold 15.2 GiB
-    /// at their built size with four in flight at their bound, against
-    /// 26.9 GiB charged at the bound: well inside the display worker's 40G
-    /// `MemoryMax`.
+    /// The txid display genesis plan: 191 8-bit `txid-2k8` runtimes hold
+    /// 26.9 GiB, their built size being their bound, which fits a 32 GiB
+    /// cache and the display worker's 48G `MemoryMax`.
     #[test]
     fn genesis_display_runtimes_fit_at_their_built_size() {
         let shared = SharedParams::build_display(&TXID_2K8, Table::TxDirectory).unwrap();
         let gib = |bytes: u64| bytes as f64 / f64::from(1 << 30);
         let runtimes = std::iter::repeat_n(&shared, GENESIS_RUNTIMES);
         let needed = warm_bytes(runtimes, 4);
-        assert!((gib(needed) - 15.19).abs() < 0.1, "{}", gib(needed));
-        let reserved = GENESIS_RUNTIMES as u64 * shared.reserved_bytes();
-        assert!((gib(reserved) - 26.88).abs() < 0.1, "{}", gib(reserved));
-        assert!(needed < 36 << 30, "0.9 of a 40G MemoryMax");
+        assert!((gib(needed) - 26.89).abs() < 0.1, "{}", gib(needed));
+        assert_eq!(needed, GENESIS_RUNTIMES as u64 * shared.reserved_bytes());
+        assert!(needed < 32 << 30, "a 32 GiB cache");
     }
 
     /// The native reservation at the pinned geometry. A recent page table
     /// (8-bit): a 32 MiB database, two blocks of published masks, and the
     /// bound on two blocks of one-digit preprocessing (32 MiB of compiled
-    /// matrix plus both masks each). A txid display table (16-bit): its
-    /// database, one block of masks per 4,096-byte row and the two-digit
-    /// bound (64 MiB of compiled matrix plus both masks) per block.
+    /// matrix plus both masks each). A txid display table (8-bit) the same
+    /// per block, at four 2,048-byte blocks per 8,192-byte row.
     ///
     /// If this fails, the cache budget is being computed against a different
     /// scheme than the one deployed, and every sizing decision downstream of it
@@ -1744,13 +1726,13 @@ pub(crate) mod tests {
             Table::TxDirectory.rows(&TXID_2K8),
             Table::TxDirectory.row_bytes(&TXID_2K8),
         );
-        let blocks = u64::from(row_bytes) / 4_096;
+        let blocks = u64::from(row_bytes) / 2_048;
         assert_eq!(
             reservation(Table::TxDirectory, rows, row_bytes as usize),
             rows * u64::from(row_bytes)
-                + blocks * 14_848
+                + blocks * 11_264
                 + 16
-                + blocks * ((32 + 2 * 2_048 * 8 + 8) + (64 << 20))
+                + blocks * ((32 + 2 * 2_048 * 8 + 8) + (32 << 20))
         );
     }
 

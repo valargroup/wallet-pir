@@ -31,7 +31,17 @@ fn sizes_are_the_p8_profile() {
 
 #[test]
 fn p8_full_and_prefix_uploads_decode_the_row() {
-    let (rows, query_rows, cols, target) = (3 * D, D, 2 * D, 1_789usize);
+    full_and_prefix_uploads_decode_the_row(2 * D);
+}
+
+/// A txid display row is 8,192 bytes, four blocks.
+#[test]
+fn p8_four_block_rows_decode() {
+    full_and_prefix_uploads_decode_the_row(4 * D);
+}
+
+fn full_and_prefix_uploads_decode_the_row(cols: usize) {
+    let (rows, query_rows, target) = (3 * D, D, 1_789usize);
     let masks = P8.public_query_masks([31; 32], rows, cols).unwrap();
     assert_ne!(masks, public_query_masks([31; 32], rows, cols).unwrap());
     let setup = NativeSetup::new(P8.params(), [32; 32]);

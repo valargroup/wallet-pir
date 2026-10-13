@@ -126,8 +126,8 @@ The directory and pages use the 8-bit one-digit profile in source: 28-bit dither
 queries only, no `*_scheme_dq44`, and a new runtime cache format
 ([architecture](architecture.md#pir-scheme)). It replaces the 16-bit history profile with
 no compatibility path: a wallet built before it refuses the new schemes, and a wallet
-built from it refuses a 16-bit history service. Txid display tables keep the 16-bit
-profile. The [trial](../evidence/p8-trial-2026-10-12/README.md) sized it.
+built from it refuses a 16-bit history service. Txid display tables use it too (below).
+The [trial](../evidence/p8-trial-2026-10-12/README.md) sized it.
 
 - [x] Serve it on v12 staging with the recent worker's budgets raised, and pass the
   recovery regression (11/11 on the v12 host and through `/v2`;
@@ -139,6 +139,20 @@ profile. The [trial](../evidence/p8-trial-2026-10-12/README.md) sized it.
   (chainapsis/vizor-wallet#977).
 - [ ] Decide when wallets move from `/v1/` to `/v2/`, and when `/v1/` retires; v11 production and its
   wallets stay on 16 bits until then.
+
+## 8-bit txid display profile
+
+The `txid-2k8` display table uses the 8-bit profile in source, under its own native
+schema `transparent-txid-display-p8-v1`: 21,000-byte queries, 10,256-byte replies,
+144.17 MiB per runtime ([txid display](txid-display.md#lookup-one-row-of-one-table-per-bucket)).
+No released wallet reads `/v2/txid`, so it replaces the 16-bit `/v2/txid` service with no
+compatibility path; `/v1/txid` (txid-2k) is unchanged.
+
+- [ ] Certify every served display table under the served seeds, at the 50-bit floor, and
+  measure runtime memory, recent rebuild time and query time on the site's host.
+- [ ] Deploy to the one-query site with the worker's cache raised to 32 GiB, disk cache to
+  40 GiB and `MemoryMax` to 48G, and verify lookups and byte counts through `/v2/txid`.
+- [ ] Repin wallet-libraries and Vizor's v12 branch on it.
 
 ## Wallet API versions on one origin
 

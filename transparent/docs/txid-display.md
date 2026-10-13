@@ -186,15 +186,18 @@ holding an entry placed elsewhere is refused, so a server cannot move an
 entry between rows without the client noticing.
 
 Request and reply sizes depend only on the geometry and segment count: a
-38,920 B dithered query (40,200 B at the 49 bits every server also accepts)
-and an 11,280 B reply per segment. A cold lookup adds the bucket's setup,
-39.6 KB per segment as served. The server learns the range, tier, bucket and
+21,000 B query and a 10,256 B reply per segment. A cold lookup adds the
+bucket's setup, 60.1 KB per segment. The server learns the range, tier, bucket and
 shard, and the timing. It learns nothing about the transaction's size: there
 are no pages and no page-count classes.
 
-The native parameters are the history `txdirectory` kind's, at the display
-geometry's rows and row width; setup seeds are derived from the geometry and
-table names. Bindings and table names are display-specific (`directory-{b}`).
+Display tables use the 8-bit native profile
+([architecture](architecture.md#pir-scheme)), at the display geometry's rows
+and row width: one 28-bit dithered scheme, no second width. Masks, packing
+setup and setup seeds are derived under display's own native schema,
+`transparent-txid-display-p8-v1` (`display::NATIVE_SCHEMA`), independent of
+the history schema; init publishes it as `native_schema`. Bindings and table
+names are display-specific (`directory-{b}`).
 
 ## Tiered display publication (proof of concept)
 
@@ -231,8 +234,8 @@ geometry.
   bucket, which is a separate table. N is a manifest parameter.
 - **Publication.** A separate map (`txid-shards.json`), content-pure sealed
   manifests with absolute shard ids, and a recent revision lineage.
-  - The `txid-2k8` geometry (2,048 rows × 8,192 B, 38,920 B per dithered
-    query upload, or 40,200 B at the 49 bits every server also accepts)
+  - The `txid-2k8` geometry (2,048 rows × 8,192 B, 21,000 B per query
+    upload)
     lives in a display-only registry; it is the only display geometry.
   - One table per bucket halves a shard's tables and runtimes compared with v1.
 - **Split map.** The map is also published split, so a client's map bytes stay

@@ -5,13 +5,14 @@
 //! Transparent's own. Which parameters a table uses depends on its kind
 //! ([`profile_for`]):
 //!
-//! - History tables (`directory`, `pages`) use the 8-bit profile
-//!   [`HISTORY_PROFILE`]: one byte per coefficient, so a 4,096-byte row is two
-//!   2,048-coefficient packing blocks, a one-digit `K_g` key of 13,824 bytes,
-//!   22-bit masks, 28-bit dithered selections and 10-bit responses.
-//! - Every other table (the txid display tables) keeps the 16-bit profile
-//!   described below: one 16-bit coefficient per two bytes, so a 4,096-byte
-//!   row is exactly one packing block.
+//! - History tables (`directory`, `pages`) and the txid display table
+//!   (`txdirectory`) use the 8-bit profile [`P8_PROFILE`]: one byte per
+//!   coefficient, so a 4,096-byte row is two 2,048-coefficient packing blocks
+//!   (and a display row of 8,192 bytes four), a one-digit `K_g` key of 13,824
+//!   bytes, 22-bit masks, 28-bit dithered selections and 10-bit responses.
+//! - Every other table keeps the 16-bit profile described below: one 16-bit
+//!   coefficient per two bytes, so a 4,096-byte row is exactly one packing
+//!   block.
 //!
 //! Unlike Enhance, the setup is not bound to a shard: query masks and the
 //! packing setup are derived per geometry and table, so one query is answered
@@ -48,15 +49,15 @@ pub const PROFILE: &str = "reinspiring-two-mask-m29-v1";
 /// the selection uploaded at [`DITHERED_QUERY_BITS`] dithered bits.
 pub const DITHERED_PROFILE: &str = "reinspiring-two-mask-m29-dq44-v1";
 
-/// Name of the 8-bit history profile: p = 2^8, one 27-bit `K_g` digit, masks
-/// rounded to 22 bits, 28-bit dithered selections and 10-bit responses.
-pub const HISTORY_PROFILE: &str = "reinspiring-two-mask-p8-g27x1-m22-dq28-r10-v1";
+/// Name of the 8-bit profile: p = 2^8, one 27-bit `K_g` digit, masks rounded
+/// to 22 bits, 28-bit dithered selections and 10-bit responses.
+pub const P8_PROFILE: &str = "reinspiring-two-mask-p8-g27x1-m22-dq28-r10-v1";
 
 /// The native parameters a table of kind `table` is served with: [`P8`] for
-/// the history tables, [`P16`] for every other.
+/// the history tables and the txid display table, [`P16`] for every other.
 pub fn profile_for(table: &str) -> Profile {
     match table {
-        "directory" | "pages" => P8,
+        "directory" | "pages" | "txdirectory" => P8,
         _ => P16,
     }
 }
@@ -164,7 +165,7 @@ pub struct TableProfile {
     pub masks: Vec<Vec<u64>>,
     /// The table's own scheme: for a 16-bit table the 49-bit nearest-rounded
     /// [`PROFILE`], for an 8-bit table its 28-bit dithered
-    /// [`HISTORY_PROFILE`].
+    /// [`P8_PROFILE`].
     pub scheme: NativeScheme,
     /// A 16-bit table's 44-bit dithered scheme, [`DITHERED_PROFILE`]:
     /// `scheme` with only the profile name, query width and request length
@@ -203,7 +204,7 @@ impl TableProfile {
         let primary = native.primary_bits();
         let scheme = NativeScheme {
             profile: if native == P8 {
-                HISTORY_PROFILE
+                P8_PROFILE
             } else {
                 PROFILE
             }
@@ -454,7 +455,7 @@ mod tests {
     /// End-to-end over the primitives the server and wallet use.
     #[test]
     fn two_mask_rounded_roundtrip() {
-        let profile = TableProfile::new("test", "g", "txdirectory", 4_096, 4_096).unwrap();
+        let profile = TableProfile::new("test", "g", "t", 4_096, 4_096).unwrap();
         let (rows, cols) = (profile.rows, profile.cols);
         let db = database(rows, cols, 7);
         let hint = hint(&profile.masks, rows, cols, |c| {
@@ -517,7 +518,7 @@ mod tests {
             let p = TableProfile::new("s", "g", table, 2_048, 4_096).unwrap();
             assert_eq!(p.native, P8);
             assert_eq!((p.cols, p.blocks()), (4_096, 2));
-            assert_eq!(p.scheme.profile, HISTORY_PROFILE);
+            assert_eq!(p.scheme.profile, P8_PROFILE);
             assert_eq!(
                 (p.scheme.p_bits, p.scheme.gadget_bits, p.scheme.ell),
                 (8, 27, 1)
@@ -534,7 +535,20 @@ mod tests {
             table_seeds("s", "g", "directory"),
             table_seeds("s", "g", "txdirectory")
         );
-        assert_eq!(profile_for("txdirectory"), P16);
+    }
+
+    /// The txid display table is 8-bit too: its 8,192-byte rows are four
+    /// blocks, and its one scheme is the 28-bit dithered query.
+    #[test]
+    fn the_display_table_uses_the_8_bit_scheme() {
+        let p = TableProfile::new("s", "txid-2k8", "txdirectory", 2_048, 8_192).unwrap();
+        assert_eq!(p.native, P8);
+        assert_eq!((p.cols, p.blocks()), (8_192, 4));
+        assert_eq!(p.scheme.profile, P8_PROFILE);
+        assert_eq!(p.scheme.request_bytes, 13_824 + 7_168);
+        assert_eq!(p.scheme.public_bytes, 2 * 22_528);
+        assert_eq!(p.scheme.response_bytes, 2 * 5_120);
+        assert!(p.dithered_scheme.is_none());
     }
 
     /// End to end over an 8-bit history table, full and prefix uploads.

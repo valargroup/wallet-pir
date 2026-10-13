@@ -187,15 +187,13 @@ pub struct DisplayState {
 
 /// One geometry's table kind, as `GET /v2/txid/init` publishes it.
 ///
-/// `scheme` is the 49-bit query, which clients deployed before dithering read
-/// and send; `scheme_dq44` is the 44-bit dithered query over the same setup.
-/// The service accepts either, by the body's exact length.
+/// `scheme` is the table's one scheme, the 8-bit profile's 28-bit dithered
+/// query; the service accepts that length only.
 #[derive(Serialize)]
 pub struct TableInit {
     pub rows: u64,
     pub row_bytes: u32,
     pub scheme: transparent_native::NativeScheme,
-    pub scheme_dq44: transparent_native::NativeScheme,
     pub setup_seed: u64,
 }
 
@@ -660,15 +658,17 @@ impl RequestError {
 }
 
 /// The request body limit: the longest query any display geometry accepts,
-/// at either width. Fixed at startup, before any publication is loaded.
+/// at any width its profile takes. Fixed at startup, before any publication
+/// is loaded.
 pub fn body_limit() -> usize {
+    let native = transparent_native::profile_for(Table::TxDirectory.as_str());
+    let bits = native
+        .nearest_bits
+        .unwrap_or(0)
+        .max(native.dithered_bits);
     display::DISPLAY_PROFILES
         .iter()
-        .map(|geometry| geometry.directory_rows as usize)
-        .map(|rows| {
-            8 + transparent_native::request_len(rows)
-                .max(transparent_native::dithered_request_len(rows))
-        })
+        .map(|geometry| 8 + native.request_len_bits(geometry.directory_rows as usize, bits))
         .max()
         .unwrap_or(0)
 }
@@ -777,10 +777,6 @@ async fn init(State(state): State<DisplayState>) -> Response {
             rows: kind.rows(geometry),
             row_bytes: kind.row_bytes(geometry),
             scheme: shared.scheme().clone(),
-            scheme_dq44: shared
-                .dithered_scheme()
-                .cloned()
-                .expect("txid display tables keep the 16-bit profile"),
             setup_seed: shared.setup_seed,
         }
     };
@@ -1250,7 +1246,7 @@ mod tests {
     use std::sync::Arc;
     use transparent_shard::display::TXID_2K8;
 
-    /// The combined display worker runs under `MemoryMax=40G` and holds every
+    /// The combined display worker runs under `MemoryMax=48G` and holds every
     /// archive runtime and the recent one. Admission allows
     /// `current + held + new <= 0.9 * max`; a cold build holds four times a
     /// table's reservation and each query twice. While the recent table is
@@ -1262,10 +1258,10 @@ mod tests {
         let shared = SharedParams::build_display(&TXID_2K8, Table::TxDirectory).unwrap();
         let reserved = shared.reserved_bytes();
         assert_eq!(
-            reserved, 151_090_272,
-            "a 2,048-row, two-block display table"
+            reserved, 151_171_248,
+            "a 2,048-row, four-block display table"
         );
-        let limit = 40u64 << 30;
+        let limit = 48u64 << 30;
         // Charged memory with a build in flight: every resident runtime at its
         // built size and 1 GiB for the process.
         let current = GENESIS_RUNTIMES as u64 * shared.held_bytes() + (1 << 30);
