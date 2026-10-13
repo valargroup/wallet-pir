@@ -5783,11 +5783,12 @@ mod walk_tests {
         });
     }
 
-    /// An `older_runs` the chain did not promise is the link's defect too.
+    /// An `older_runs` the chain did not promise is the link's defect too:
+    /// here more older runs than a directory shard has page shards.
     #[test]
     fn an_older_runs_mismatch_fails_only_its_walk() {
         a_bad_link_is_padded(|link| RunLink {
-            older_runs: link.older_runs + 1,
+            older_runs: transparent_shard::layout::MAX_PAGE_CHILDREN as u8,
             ..link
         });
     }
