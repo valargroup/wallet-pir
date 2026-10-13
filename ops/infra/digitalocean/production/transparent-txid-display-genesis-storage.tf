@@ -1,8 +1,11 @@
-# Dedicated scratch volume for the txid display genesis ingest and its layout
-# experiments (journal from height 0, census scratch, experimental publication
-# roots). Kept off the node volume so the ingest cannot consume /srv/zakura's
-# 20% headroom. Nothing on it is served; destroy it once the backfill lineage
-# has its own host.
+# Volume for the txid display genesis ingest, mounted on the coordinator at
+# /srv/txid-display-genesis. It began as scratch for layout experiments and
+# census runs, but it now holds production state: the v2x genesis journal
+# (journal-v2x) and the publication roots the live txid display controller
+# builds from (v4/root for txid-4k8, and the txid-2k8 root kept for rollback).
+# See transparent/docs/status.md. Do not destroy or detach it while the txid
+# display serves from it. It is kept off the node volume so the ingest cannot
+# consume /srv/zakura's 20% headroom.
 resource "digitalocean_volume" "txid_display_genesis" {
   region                  = var.region
   name                    = "wallet-pir-txid-display-genesis"

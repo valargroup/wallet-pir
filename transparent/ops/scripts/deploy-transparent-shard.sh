@@ -1268,6 +1268,22 @@ fleet_rollback_all() {
 
 # ----------------------------------------------------------------------- main
 
+# The modes below that reach hosts were written for the pre-v11 fleet: they
+# read /opt/transparent-publisher/state/ and probe /v1/shards, which the v12
+# worker does not serve, and the public /v1/ answers 410. Run against today's
+# fleet they would fail after stopping services or point it back at old
+# configuration. The v12 fleet is deployed by runbook (see
+# transparent/docs/deployment.md); `library` still provides install_worker.
+case "$MODE" in
+  preflight|deploy|fleet-preflight|fleet-deploy|fleet-router|fleet-rollback)
+    if [[ "${TRANSPARENT_ALLOW_PRE_V12_DEPLOY:-}" != 1 ]]; then
+      echo "deploy-transparent-shard.sh $MODE targets the pre-v11 fleet (/v1/shards) and is disabled;" >&2
+      echo "set TRANSPARENT_ALLOW_PRE_V12_DEPLOY=1 only for a fleet that still serves /v1/shards" >&2
+      exit 2
+    fi
+    ;;
+esac
+
 case "$MODE" in
   library) ;;
   jq-programs)

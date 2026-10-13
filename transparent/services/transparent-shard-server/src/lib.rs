@@ -9,12 +9,14 @@
 
 pub mod admission;
 pub mod assignment;
+pub mod control;
 pub mod display;
 mod filecache;
 pub mod memory;
 pub mod metrics;
 mod prewarm;
 pub mod procmem;
+mod request;
 pub mod router;
 pub mod runtime;
 pub mod service;

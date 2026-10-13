@@ -13,10 +13,9 @@
 //! cached, then exactly one directory query for the entry's one row, which
 //! every segment of the bucket's table answers. Entries are fixed-size, so a
 //! found txid and an absent one send the same requests with the same body
-//! sizes. Each query carries a 44-bit
-//! dithered selection when init advertises the dithered scheme and it
-//! reproduces locally, and the 49-bit one every service accepts otherwise;
-//! either way every query of one client has the same size. Placement comes from the
+//! sizes. Each query carries the 8-bit profile's one 28-bit dithered
+//! selection, and a service whose init advertises any other scheme is
+//! refused, so every query of one client has the same size. Placement comes from the
 //! caller's mined height; nothing
 //! is asked to discover it, so placement and support results send no query.
 //! Neither does a height in a recent shard holding fewer txids per bucket

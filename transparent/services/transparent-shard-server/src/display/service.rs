@@ -1,17 +1,17 @@
 //! Serving one display publication snapshot over HTTP.
 //!
-//! The query and setup paths are copies of the history worker's
-//! (`crate::service`), kept separate so the history path does not change for
-//! a proof of concept. What differs is the address: a revision is resolved
+//! Queries go through the request path the history worker uses
+//! ([`crate::request`]). What differs is the address: a revision is resolved
 //! with its tier and this worker's role, a table is one bucket's entries, and
-//! the binding names the bucket. Everything that bounds
-//! work is the history worker's own: the runtime cache, admission, work-memory
-//! reservations and their status codes.
+//! the binding names the bucket. Everything that bounds work is shared: the
+//! runtime cache, admission, work-memory reservations and their status codes.
 
 use super::set::{DisplayRevision, DisplaySet};
 use super::{kind, runtime_key, tier};
-use crate::admission::{Admission, AdmissionConfig, AdmissionError};
+use crate::admission::{Admission, AdmissionConfig, Admitted};
 use crate::metrics::{Metrics, Snapshot};
+pub(crate) use crate::request::json;
+use crate::request::{answer_query, within, Query, RequestError, Worker};
 use crate::runtime::{
     disk::{DiskCache, ShippedRuntimes},
     warm_bytes, CacheError, Produced, RuntimeCache, RuntimeHandle, SharedParams,
@@ -209,8 +209,9 @@ pub struct InitResponse {
     pub schema: String,
     pub codec: String,
     pub bucket_domain: String,
-    /// The schema native profiles and setup seeds are derived under. Display
-    /// tables use the history kinds' parameters; only the binding is display.
+    /// The schema native profiles and setup seeds are derived under: display's
+    /// own native schema. Display tables take only their row shape from the
+    /// history kinds.
     pub native_schema: String,
     pub network: String,
     pub genesis_hash: String,
@@ -461,10 +462,7 @@ impl DisplayState {
             .collect::<Option<Vec<_>>>()
             .ok_or_else(|| {
                 Metrics::incr(&self.inner.runtime.metrics.stale_revisions);
-                RequestError::Stale {
-                    shard_id,
-                    digest: digest.to_string(),
-                }
+                stale(shard_id, digest)
             })
     }
 
@@ -490,10 +488,7 @@ impl DisplayState {
         let metrics = &self.inner.runtime.metrics;
         let Some(revision) = self.inner.set.revision(digest) else {
             Metrics::incr(&metrics.stale_revisions);
-            return Err(RequestError::Stale {
-                shard_id,
-                digest: digest.to_string(),
-            });
+            return Err(stale(shard_id, digest));
         };
         if revision.manifest.shard_id != shard_id {
             return Err(RequestError::Bad(format!(
@@ -539,121 +534,24 @@ impl DisplayState {
         }
     }
 
-    /// Reads and discards a refused query's body before answering; see the
-    /// history worker's `refuse_unread`.
-    async fn refuse_unread(&self, request: Request, refused: Response) -> Response {
-        use http_body::Body as _;
-        let limit = self.max_query_bytes();
-        let wait = self
-            .inner
-            .runtime
-            .admission
-            .config()
-            .upload_deadline
-            .min(std::time::Duration::from_secs(5));
-        let mut body = request.into_body();
-        let drained = tokio::time::timeout(wait, async {
-            let mut seen = 0usize;
-            loop {
-                match std::future::poll_fn(|cx| std::pin::Pin::new(&mut body).poll_frame(cx)).await
-                {
-                    None => return true,
-                    Some(Ok(frame)) => {
-                        seen += frame.data_ref().map_or(0, |data| data.len());
-                        if seen > limit {
-                            return false;
-                        }
-                    }
-                    Some(Err(_)) => return false,
-                }
-            }
-        })
-        .await;
-        if !matches!(drained, Ok(true)) {
-            Metrics::incr(&self.inner.runtime.metrics.refusals_unread);
-        }
-        refused
-    }
-}
-
-/// Why a request could not be answered.
-pub(crate) enum RequestError {
-    Bad(String),
-    /// The revision named is not known. Retryable after a map refresh.
-    Stale {
-        shard_id: u64,
-        digest: String,
-    },
-    /// No cache capacity could be freed. Retryable as-is.
-    Overloaded,
-    LengthRequired,
-    Busy(&'static str),
-    UploadTimeout,
-    /// Wrong tier or wrong role: a routing fault, not retryable here.
-    Misdirected(String),
-}
-
-impl From<AdmissionError> for RequestError {
-    fn from(error: AdmissionError) -> Self {
-        match error {
-            AdmissionError::QueueFull => RequestError::Busy("every waiting place is taken"),
-            AdmissionError::BodyBudget => RequestError::Busy("the body budget is full"),
-            AdmissionError::DeadlineExceeded => {
-                RequestError::Busy("the request waited its whole deadline without a slot")
-            }
-            AdmissionError::UploadTimeout => RequestError::UploadTimeout,
-            AdmissionError::ShuttingDown => RequestError::Bad("server is shutting down".into()),
+    /// The parts of this worker a request passes through.
+    fn worker(&self) -> Worker<'_> {
+        let runtime = &self.inner.runtime;
+        Worker {
+            admission: &runtime.admission,
+            work_memory: &runtime.cache.work_memory,
+            metrics: &runtime.metrics,
+            max_query_bytes: self.max_query_bytes(),
+            map_digest: &self.inner.set.map_digest,
         }
     }
 }
 
-impl From<CacheError> for RequestError {
-    fn from(error: CacheError) -> Self {
-        match error {
-            CacheError::Overloaded => RequestError::Overloaded,
-            CacheError::Failed(message) => RequestError::Bad(message),
-        }
-    }
-}
-
-impl RequestError {
-    pub(crate) fn into_response(self, map_digest: &str) -> Response {
-        let retry = |reason: &str| {
-            (
-                StatusCode::SERVICE_UNAVAILABLE,
-                [("content-type", "application/json"), ("retry-after", "1")],
-                serde_json::json!({"error": reason, "retry": "retry shortly"}).to_string(),
-            )
-                .into_response()
-        };
-        match self {
-            RequestError::Bad(message) => json(
-                StatusCode::BAD_REQUEST,
-                serde_json::json!({"error": message}),
-            ),
-            RequestError::LengthRequired => json(
-                StatusCode::LENGTH_REQUIRED,
-                serde_json::json!({"error": "a query must declare its length"}),
-            ),
-            RequestError::UploadTimeout => json(
-                StatusCode::REQUEST_TIMEOUT,
-                serde_json::json!({"error": "the query body did not arrive in time"}),
-            ),
-            RequestError::Misdirected(message) => json(
-                StatusCode::MISDIRECTED_REQUEST,
-                serde_json::json!({"error": message, "map_sha256": map_digest}),
-            ),
-            RequestError::Busy(reason) => retry(reason),
-            RequestError::Overloaded => retry("no cache capacity is free"),
-            RequestError::Stale { shard_id, digest } => json(
-                StatusCode::CONFLICT,
-                serde_json::json!({
-                    "error": format!("revision {digest} of display shard {shard_id} is no longer served"),
-                    "retry": "refresh the txid map",
-                    "map_sha256": map_digest,
-                }),
-            ),
-        }
+/// The revision named is no longer served: the wallet refreshes its txid map.
+fn stale(shard_id: u64, digest: &str) -> RequestError {
+    RequestError::Stale {
+        message: format!("revision {digest} of display shard {shard_id} is no longer served"),
+        retry: "refresh the txid map",
     }
 }
 
@@ -668,15 +566,6 @@ pub fn body_limit() -> usize {
         .map(|geometry| 8 + native.request_len_bits(geometry.directory_rows as usize, bits))
         .max()
         .unwrap_or(0)
-}
-
-pub(crate) fn json(status: StatusCode, body: serde_json::Value) -> Response {
-    (
-        status,
-        [("content-type", "application/json")],
-        body.to_string(),
-    )
-        .into_response()
 }
 
 pub fn router(state: DisplayState) -> Router {
@@ -879,7 +768,7 @@ async fn manifest(
     let map_digest = state.inner.set.map_digest.clone();
     let Some(revision) = state.inner.set.revision(&digest) else {
         Metrics::incr(&state.metrics().stale_revisions);
-        return RequestError::Stale { shard_id, digest }.into_response(&map_digest);
+        return stale(shard_id, &digest).into_response(&map_digest);
     };
     if revision.manifest.shard_id != shard_id {
         return RequestError::Bad(format!(
@@ -980,16 +869,10 @@ async fn setup(
         }
     } else {
         let key = runtime_key(&digest, table, segment);
-        match tokio::time::timeout(pending.remaining(), runtime.cache.get(key, shared, source))
-            .await
-        {
-            Ok(Ok(handle)) => handle,
-            Ok(Err(error)) => return RequestError::from(error).into_response(&map_digest),
-            Err(_) => {
-                Metrics::incr(&runtime.metrics.deadline_exceeded);
-                return RequestError::from(AdmissionError::DeadlineExceeded)
-                    .into_response(&map_digest);
-            }
+        let built = async { Ok::<_, RequestError>(runtime.cache.get(key, shared, source).await?) };
+        match within(pending.remaining(), &runtime.metrics, built).await {
+            Ok(handle) => handle,
+            Err(error) => return error.into_response(&map_digest),
         }
     };
     pending.complete();
@@ -1025,17 +908,17 @@ async fn query(
     response
 }
 
-/// The history query path (`service::query_inner`), addressed by tier,
-/// revision and display table.
+/// A query addressed by tier, revision and display table, answered through
+/// the request path the history worker uses.
 async fn query_inner(
     State(state): State<DisplayState>,
     sealed: bool,
     AxumPath((shard_id, digest, label)): QueryPath,
     request: Request,
 ) -> Response {
-    let map_digest = state.inner.set.map_digest.clone();
-    let runtime = state.runtime().clone();
-    let metrics = runtime.metrics.clone();
+    let worker = state.worker();
+    let map_digest = worker.map_digest;
+    let metrics = worker.metrics;
     let resolved = state
         .revision(sealed, shard_id, &digest)
         .and_then(|revision| {
@@ -1059,179 +942,52 @@ async fn query_inner(
         Ok(resolved) => resolved,
         Err(error) => {
             Metrics::incr(&metrics.query_errors);
-            let refused = error.into_response(&map_digest);
-            return state.refuse_unread(request, refused).await;
+            let refused = error.into_response(map_digest);
+            return worker.refuse_unread(request, refused).await;
         }
+    };
+    let query = Query {
+        query_rows: shared.profile.rows,
+        shared: shared.clone(),
+        table: label,
+        revision: digest.clone(),
+        // Names the revision and the bucket: a body prepared for another
+        // bucket's table is refused by `SharedParams::parse`.
+        binding: display::query_binding(&digest, table),
     };
 
-    // The two exact lengths, 49-bit and 44-bit dithered, are known before a
-    // byte is read; anything else is refused before it is buffered or queued.
-    let declared = request
-        .headers()
-        .get(axum::http::header::CONTENT_LENGTH)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.trim().parse::<u64>().ok())
-        .or_else(|| {
-            use http_body::Body as _;
-            request.body().size_hint().exact()
-        });
-    let Some(declared) = declared else {
-        Metrics::incr(&metrics.query_length_rejections);
-        return RequestError::LengthRequired.into_response(&map_digest);
-    };
-    let Some(expected) = usize::try_from(declared)
-        .ok()
-        .filter(|&len| shared.accepts_query_bytes(shared.profile.rows, len))
-    else {
-        Metrics::incr(&metrics.query_length_rejections);
-        let refused = RequestError::Bad(format!(
-            "a {label} query for geometry {} must be exactly {} bytes, not {declared}",
-            shared.geometry.name,
-            shared.query_lengths(shared.profile.rows),
-        ))
-        .into_response(&map_digest);
-        return state.refuse_unread(request, refused).await;
-    };
-
-    let pending = match runtime.admission.try_enter(Some(expected)) {
-        Ok(pending) => pending,
-        Err(error) => {
-            Metrics::incr(&metrics.query_errors);
-            let refused = RequestError::from(error).into_response(&map_digest);
-            return state.refuse_unread(request, refused).await;
+    let acquire = async |admitted: &Admitted| {
+        if state.is_retired() {
+            return state
+                .resident(shard_id, &digest, table, segments(&sources))
+                .map_err(|error| {
+                    Metrics::incr(&metrics.query_errors);
+                    error.into_response(map_digest)
+                });
         }
-    };
-    let upload_deadline = runtime.admission.config().upload_deadline;
-    let body = match tokio::time::timeout(
-        upload_deadline,
-        axum::body::to_bytes(request.into_body(), expected),
-    )
-    .await
-    {
-        Ok(Ok(body)) => body,
-        Ok(Err(error)) => {
-            Metrics::incr(&metrics.query_errors);
-            return RequestError::Bad(format!("reading the query body: {error}"))
-                .into_response(&map_digest);
-        }
-        Err(_) => {
-            Metrics::incr(&metrics.upload_timeouts);
-            Metrics::incr(&metrics.query_errors);
-            return RequestError::UploadTimeout.into_response(&map_digest);
-        }
-    };
-    if body.len() != expected {
-        Metrics::incr(&metrics.query_length_rejections);
-        Metrics::incr(&metrics.query_errors);
-        return RequestError::Bad(format!(
-            "the query body is {} bytes where {expected} were declared",
-            body.len()
-        ))
-        .into_response(&map_digest);
-    }
-
-    // Names the revision and the bucket: a body prepared for another bucket's
-    // table is refused by `SharedParams::parse`, and the prefix comes back in
-    // the response so a misrouted answer fails at the client too.
-    let binding = display::query_binding(&digest, table);
-
-    let admitted = match runtime.admission.wait_slot(pending).await {
-        Ok(admitted) => admitted,
-        Err(error) => {
-            Metrics::incr(&metrics.query_errors);
-            return RequestError::from(error).into_response(&map_digest);
-        }
-    };
-
-    // Every segment's runtime is held before any is evaluated, so a tight
-    // budget cannot evict one segment while another builds.
-    let handles = if state.is_retired() {
-        match state.resident(shard_id, &digest, table, segments(&sources)) {
-            Ok(handles) => handles,
-            Err(error) => {
-                Metrics::incr(&metrics.query_errors);
-                return error.into_response(&map_digest);
-            }
-        }
-    } else {
         let mut handles = Vec::with_capacity(sources.len());
         for (segment, source) in sources.into_iter().enumerate() {
             let key = runtime_key(&digest, table, segment as u32);
-            match tokio::time::timeout(
-                admitted.remaining(),
-                runtime.cache.get(key, shared.clone(), source),
-            )
-            .await
-            {
-                Ok(Ok(handle)) => handles.push(handle),
-                Ok(Err(error)) => {
+            let built = async {
+                Ok::<_, RequestError>(
+                    state
+                        .runtime()
+                        .cache
+                        .get(key, shared.clone(), source)
+                        .await?,
+                )
+            };
+            match within(admitted.remaining(), metrics, built).await {
+                Ok(handle) => handles.push(handle),
+                Err(error) => {
                     Metrics::incr(&metrics.query_errors);
-                    return RequestError::from(error).into_response(&map_digest);
-                }
-                Err(_) => {
-                    Metrics::incr(&metrics.deadline_exceeded);
-                    Metrics::incr(&metrics.query_errors);
-                    return RequestError::from(AdmissionError::DeadlineExceeded)
-                        .into_response(&map_digest);
+                    return Err(error.into_response(map_digest));
                 }
             }
         }
-        handles
+        Ok(handles)
     };
-
-    let memory = match runtime
-        .cache
-        .work_memory
-        .reserve_query(
-            shared.reserved_bytes().saturating_mul(2),
-            admitted.remaining(),
-        )
-        .await
-    {
-        Some(memory) => memory,
-        None => {
-            if admitted.remaining().is_zero() {
-                Metrics::incr(&metrics.deadline_exceeded);
-                Metrics::incr(&metrics.query_errors);
-                return RequestError::from(AdmissionError::DeadlineExceeded)
-                    .into_response(&map_digest);
-            }
-            Metrics::incr(&metrics.overloads);
-            return RequestError::Overloaded.into_response(&map_digest);
-        }
-    };
-    let evaluation_metrics = metrics.clone();
-    let evaluated = tokio::task::spawn_blocking(move || {
-        let _memory = memory;
-        let _timer = evaluation_metrics.evaluation_seconds.timer();
-        let query = shared.parse(binding, &body, shared.profile.rows)?;
-        let mut answer = Vec::with_capacity(shared.response_bytes() * handles.len());
-        for handle in &handles {
-            answer.extend(handle.get().answer(binding, &query)?);
-        }
-        admitted.complete();
-        Ok::<_, String>(answer)
-    })
-    .await;
-    match evaluated {
-        Ok(Ok(answer)) => {
-            Metrics::incr(&metrics.queries);
-            (
-                StatusCode::OK,
-                [("content-type", "application/octet-stream")],
-                answer,
-            )
-                .into_response()
-        }
-        Ok(Err(error)) => {
-            Metrics::incr(&metrics.query_errors);
-            RequestError::Bad(error).into_response(&map_digest)
-        }
-        Err(error) => {
-            Metrics::incr(&metrics.query_errors);
-            RequestError::Bad(format!("evaluation task failed: {error}")).into_response(&map_digest)
-        }
-    }
+    answer_query(worker, request, query, acquire).await
 }
 
 #[cfg(test)]

@@ -20,6 +20,7 @@
 use super::service::{self, json, DisplayRuntime, DisplayState};
 use super::set::{DisplayRevision, DisplaySet, MAP_FILE};
 use super::{serves, DisplayRole};
+use crate::control::persist;
 use crate::metrics::Snapshot;
 use crate::runtime::RuntimeHandle;
 use axum::extract::{Request, State};
@@ -31,7 +32,6 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tower::ServiceExt;
 use transparent_shard::display::DisplayMap;
 
@@ -695,38 +695,12 @@ impl DisplayLive {
         &self,
         path: &Path,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        use std::os::unix::fs::PermissionsExt;
-        if path.exists() {
-            if tokio::net::UnixStream::connect(path).await.is_ok() {
-                return Err("control socket already in use".into());
-            }
-            std::fs::remove_file(path)?;
-        }
-        let listener = tokio::net::UnixListener::bind(path)?;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
-        loop {
-            let (stream, _) = listener.accept().await?;
-            let service = self.clone();
-            tokio::spawn(async move {
-                let (read, mut write) = stream.into_split();
-                let mut reader = BufReader::new(read);
-                let mut bytes = Vec::new();
-                use tokio::io::AsyncReadExt;
-                let result = match (&mut reader)
-                    .take(1024 * 1024)
-                    .read_until(b'\n', &mut bytes)
-                    .await
-                {
-                    Ok(_) if bytes.last() == Some(&b'\n') => match serde_json::from_slice(&bytes) {
-                        Ok(command) => service.command(command).await,
-                        Err(error) => Err(error.to_string()),
-                    },
-                    _ => Err("invalid or oversized control command".into()),
-                };
-                let line = reply_line(result);
-                let _ = write.write_all(format!("{line}\n").as_bytes()).await;
-            });
-        }
+        let service = self.clone();
+        crate::control::listen(path, move |command: DisplayCommand| {
+            let service = service.clone();
+            async move { reply_line(service.command(command).await) }
+        })
+        .await
     }
 }
 
@@ -951,21 +925,6 @@ impl DisplayLive {
     pub fn expected(&self) -> String {
         self.active_sha256()
     }
-}
-
-fn persist(path: &Path, value: &impl Serialize) -> Result<(), String> {
-    use std::io::Write;
-    let parent = path.parent().ok_or("record needs a parent directory")?;
-    std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    let temp = path.with_extension("tmp");
-    let mut file = std::fs::File::create(&temp).map_err(|e| e.to_string())?;
-    file.write_all(&serde_json::to_vec(value).map_err(|e| e.to_string())?)
-        .map_err(|e| e.to_string())?;
-    file.sync_all().map_err(|e| e.to_string())?;
-    std::fs::rename(temp, path).map_err(|e| e.to_string())?;
-    std::fs::File::open(parent)
-        .and_then(|f| f.sync_all())
-        .map_err(|e| e.to_string())
 }
 
 #[cfg(test)]

@@ -1,0 +1,39 @@
+GET /v2/shards/0/revisions/<rev0>/setup/directory/0
+  200 content-type=application/json retry-after=-
+  {"geometry":"decoupled-2k-8k","manifest_digest":"<rev0>","public_params":"<generated>","public_params_epoch":"<generated>","public_params_sha256":"<generated>","segment":0,"segments":1,"shard_id":0,"table":"directory"}
+GET /v2/shards/0/revisions/<rev0>/setup/bogus/0
+  400 content-type=application/json retry-after=-
+  {"error":"unknown table"}
+GET /v2/shards/0/revisions/<rev0>/setup/directory/9
+  400 content-type=application/json retry-after=-
+  {"error":"shard 0 has no directory segment 9"}
+GET /v2/shards/0/revisions/<unknown>/setup/directory/0
+  409 content-type=application/json retry-after=-
+  {"error":"revision <unknown> of shard 0 is no longer served","map_sha256":"<map>","retry":"refresh the shard map and re-derive coverage for this shard"}
+GET /v2/shards/1/revisions/<rev0>/setup/directory/0
+  400 content-type=application/json retry-after=-
+  {"error":"revision <rev0> is not a revision of shard 1"}
+GET /v2/shards/3/revisions/<rev3>/setup/directory/0
+  421 content-type=application/json retry-after=-
+  {"error":"shard 3 is not assigned to worker archive-01","map_sha256":"<map>"}
+POST /v2/shards/0/revisions/<rev0>/query/bogus
+  400 content-type=application/json retry-after=-
+  {"error":"unknown table"}
+POST /v2/shards/0/revisions/<unknown>/query/directory
+  409 content-type=application/json retry-after=-
+  {"error":"revision <unknown> of shard 0 is no longer served","map_sha256":"<map>","retry":"refresh the shard map and re-derive coverage for this shard"}
+POST /v2/shards/3/revisions/<rev3>/query/directory
+  421 content-type=application/json retry-after=-
+  {"error":"shard 3 is not assigned to worker archive-01","map_sha256":"<map>"}
+POST /v2/shards/0/revisions/<rev0>/query/directory
+  411 content-type=application/json retry-after=-
+  {"error":"a query must declare its length"}
+POST /v2/shards/0/revisions/<rev0>/query/directory
+  400 content-type=application/json retry-after=-
+  {"error":"a directory query for geometry decoupled-2k-8k must be exactly 21000 bytes, not 16"}
+POST /v2/shards/0/revisions/<rev0>/query/directory
+  400 content-type=application/json retry-after=-
+  {"error":"query does not name this revision and table"}
+POST /v2/shards/0/revisions/<rev0>/query/directory
+  200 content-type=application/octet-stream retry-after=-
+  <5136 bytes>

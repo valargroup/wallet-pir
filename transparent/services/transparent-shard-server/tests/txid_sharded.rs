@@ -1153,3 +1153,150 @@ fn the_worker_binary_takes_and_restores_a_publication_by_control() {
     assert!(ok);
     assert_eq!(status["active"]["map_sha256"], map_sha256);
 }
+
+#[path = "support/golden.rs"]
+mod golden;
+
+/// Every refusal the display worker sends, and the answers it gives, as
+/// served: status, content type, retry delay and exact body. It shares the
+/// history worker's request path, so a change to one must not move these.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn display_answers_are_pinned() {
+    use golden::{Transcript, Upload};
+    let root = tempfile::tempdir().unwrap();
+    let mut a = spec(0, 1, 10, true, "");
+    a.n_buckets = 2;
+    let records = synth::records(80, 4);
+    let a0 = synth::write_shard(root.path(), &a, &records[..40]).unwrap();
+    let mut r = spec(1, 11, 20, false, &a0.digest);
+    r.n_buckets = 2;
+    let r0 = synth::write_shard(root.path(), &r, &records[40..]).unwrap();
+    let (dir, map_sha256) =
+        synth::write_candidate(root.path(), &params(2), &[a0.clone(), r0.clone()], "n2").unwrap();
+    let config = ServiceConfig {
+        readiness: ReadinessMode::LoadedOnly,
+        ..config()
+    };
+    let app = |role| {
+        router(
+            DisplayState::build(
+                DisplaySet::open(&dir, 3, role).unwrap(),
+                &DisplayRuntime::new(config, None),
+            )
+            .unwrap(),
+        )
+    };
+    let (owner, replica) = (
+        app(DisplayRole::ArchiveOwner),
+        app(DisplayRole::RecentReplica),
+    );
+    let unknown = "ab".repeat(32);
+    let mut t = Transcript::new(&[
+        (&a0.digest, "archive"),
+        (&r0.digest, "recent"),
+        (&map_sha256, "map"),
+        (&unknown, "unknown"),
+    ]);
+    let (a, rd) = (&a0.digest, &r0.digest);
+    let at = |tier: &str, id: u64, digest: &str, tail: &str| {
+        format!("/v2/txid/{tier}/shards/{id}/revisions/{digest}/{tail}")
+    };
+    let bound = |digest: &str, table: DisplayTable, len: usize| {
+        let mut body = display::query_binding(digest, table).to_vec();
+        body.resize(len, 0);
+        body
+    };
+    let query = QUERY_BYTES as usize;
+
+    // Setup: answered, a bucket the shard lacks, a malformed label, a
+    // segment past the table's, the wrong tier, a role that does not hold
+    // the tier, another shard's revision, and an unknown revision.
+    t.send(
+        &owner,
+        &at("archive", 0, a, "setup/directory-0/0"),
+        Upload::None,
+    )
+    .await;
+    t.send(
+        &owner,
+        &at("archive", 0, a, "setup/directory-2/0"),
+        Upload::None,
+    )
+    .await;
+    t.send(&owner, &at("archive", 0, a, "setup/pages/0"), Upload::None)
+        .await;
+    t.send(
+        &owner,
+        &at("archive", 0, a, "setup/directory-0/9"),
+        Upload::None,
+    )
+    .await;
+    t.send(
+        &owner,
+        &at("recent", 0, a, "setup/directory-0/0"),
+        Upload::None,
+    )
+    .await;
+    t.send(
+        &replica,
+        &at("archive", 0, a, "setup/directory-0/0"),
+        Upload::None,
+    )
+    .await;
+    t.send(
+        &owner,
+        &at("recent", 1, rd, "setup/directory-0/0"),
+        Upload::None,
+    )
+    .await;
+    t.send(
+        &owner,
+        &at("archive", 3, a, "setup/directory-0/0"),
+        Upload::None,
+    )
+    .await;
+    t.send(
+        &owner,
+        &at("archive", 0, &unknown, "setup/directory-0/0"),
+        Upload::None,
+    )
+    .await;
+
+    // Query: answered, another bucket's binding, a bucket the shard lacks,
+    // the wrong tier, an unknown revision, no declared length, and a wrong
+    // length.
+    let q0 = at("archive", 0, a, "query/directory-0");
+    t.send(
+        &owner,
+        &q0,
+        Upload::Sized(bound(a, DisplayTable::Directory(0), query)),
+    )
+    .await;
+    t.send(
+        &owner,
+        &q0,
+        Upload::Sized(bound(a, DisplayTable::Directory(1), query)),
+    )
+    .await;
+    t.send(
+        &owner,
+        &at("archive", 0, a, "query/directory-2"),
+        Upload::Sized(vec![0; query]),
+    )
+    .await;
+    t.send(
+        &owner,
+        &at("recent", 0, a, "query/directory-0"),
+        Upload::Sized(vec![0; query]),
+    )
+    .await;
+    t.send(
+        &owner,
+        &at("archive", 0, &unknown, "query/directory-0"),
+        Upload::Sized(vec![0; query]),
+    )
+    .await;
+    t.send(&owner, &q0, Upload::Unsized(vec![0; query])).await;
+    t.send(&owner, &q0, Upload::Sized(vec![0; 16])).await;
+    t.check("display_answers.txt");
+}

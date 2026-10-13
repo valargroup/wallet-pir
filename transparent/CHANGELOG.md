@@ -7,6 +7,14 @@ Covers the crates a wallet uses to recover transparent history over PIR:
 `transparent-block-server` services. Txid display lookups have their own
 [changelog](CHANGELOG-txid.md). Both are released under one tag.
 
+## Unreleased
+
+- **One request path for history and txid display queries.** The shard
+  server's history and txid display workers now share their query
+  handling, refusals and control socket instead of keeping copies. Answers
+  are unchanged: status codes, retry delays and bodies are pinned byte for
+  byte by golden transcripts of both workers.
+
 ## 0.1.0-rc.4 — 2026-10-13
 
 A service that corrupts reply content can no longer find a wallet's record by

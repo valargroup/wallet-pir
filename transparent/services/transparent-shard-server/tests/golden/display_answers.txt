@@ -1,0 +1,48 @@
+GET /v2/txid/archive/shards/0/revisions/<archive>/setup/directory-0/0
+  200 content-type=application/json retry-after=-
+  {"bucket":0,"geometry":"txid-2k8","manifest_digest":"<archive>","public_params":"<generated>","public_params_epoch":"<generated>","public_params_sha256":"<generated>","segment":0,"segments":1,"shard_id":0,"table":"directory-0"}
+GET /v2/txid/archive/shards/0/revisions/<archive>/setup/directory-2/0
+  400 content-type=application/json retry-after=-
+  {"error":"display shard 0 has 2 buckets; directory-2 is not one of them"}
+GET /v2/txid/archive/shards/0/revisions/<archive>/setup/pages/0
+  400 content-type=application/json retry-after=-
+  {"error":"unknown display table \"pages\""}
+GET /v2/txid/archive/shards/0/revisions/<archive>/setup/directory-0/9
+  400 content-type=application/json retry-after=-
+  {"error":"directory-0 of display shard 0 has 1 segments"}
+GET /v2/txid/recent/shards/0/revisions/<archive>/setup/directory-0/0
+  421 content-type=application/json retry-after=-
+  {"error":"revision <archive> of display shard 0 is archive, not recent","map_sha256":"<map>"}
+GET /v2/txid/archive/shards/0/revisions/<archive>/setup/directory-0/0
+  421 content-type=application/json retry-after=-
+  {"error":"this recent-replica worker does not serve archive display revisions","map_sha256":"<map>"}
+GET /v2/txid/recent/shards/1/revisions/<recent>/setup/directory-0/0
+  421 content-type=application/json retry-after=-
+  {"error":"this archive-owner worker does not serve recent display revisions","map_sha256":"<map>"}
+GET /v2/txid/archive/shards/3/revisions/<archive>/setup/directory-0/0
+  400 content-type=application/json retry-after=-
+  {"error":"revision <archive> is not a revision of display shard 3"}
+GET /v2/txid/archive/shards/0/revisions/<unknown>/setup/directory-0/0
+  409 content-type=application/json retry-after=-
+  {"error":"revision <unknown> of display shard 0 is no longer served","map_sha256":"<map>","retry":"refresh the txid map"}
+POST /v2/txid/archive/shards/0/revisions/<archive>/query/directory-0
+  200 content-type=application/octet-stream retry-after=-
+  <10256 bytes>
+POST /v2/txid/archive/shards/0/revisions/<archive>/query/directory-0
+  400 content-type=application/json retry-after=-
+  {"error":"query does not name this revision and table"}
+POST /v2/txid/archive/shards/0/revisions/<archive>/query/directory-2
+  400 content-type=application/json retry-after=-
+  {"error":"display shard 0 has 2 buckets; directory-2 is not one of them"}
+POST /v2/txid/recent/shards/0/revisions/<archive>/query/directory-0
+  421 content-type=application/json retry-after=-
+  {"error":"revision <archive> of display shard 0 is archive, not recent","map_sha256":"<map>"}
+POST /v2/txid/archive/shards/0/revisions/<unknown>/query/directory-0
+  409 content-type=application/json retry-after=-
+  {"error":"revision <unknown> of display shard 0 is no longer served","map_sha256":"<map>","retry":"refresh the txid map"}
+POST /v2/txid/archive/shards/0/revisions/<archive>/query/directory-0
+  411 content-type=application/json retry-after=-
+  {"error":"a query must declare its length"}
+POST /v2/txid/archive/shards/0/revisions/<archive>/query/directory-0
+  400 content-type=application/json retry-after=-
+  {"error":"a directory-0 query for geometry txid-2k8 must be exactly 21000 bytes, not 16"}

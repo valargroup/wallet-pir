@@ -1,4 +1,5 @@
-//! Schema-v11 row codec with canonical, bounded transaction metadata.
+//! Row codec with canonical, bounded transaction metadata. Introduced with
+//! schema v11; schema v12's records and page rows still encode with it.
 //! References are local to one entry: its first event is always self contained.
 
 use crate::records::RecordError;

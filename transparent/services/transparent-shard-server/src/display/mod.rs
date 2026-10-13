@@ -45,9 +45,10 @@ use crate::runtime::RuntimeKey;
 use crate::shardset::Table;
 use transparent_shard::display::{DisplayKind, DisplayTable};
 
-/// The history table kind whose native parameters, row count and row width
-/// a display table uses. Seeds are derived from the history schema and this
-/// kind's name, so the parameters are exactly the history display tables'.
+/// The history table kind whose row count and row width a display table
+/// uses. Its native profile and setup seeds are derived under display's own
+/// [`NATIVE_SCHEMA`](transparent_shard::display::NATIVE_SCHEMA) and this
+/// kind's name, not under the history schema.
 pub fn kind(table: DisplayTable) -> Table {
     match table.kind() {
         DisplayKind::TxDirectory => Table::TxDirectory,

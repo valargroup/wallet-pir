@@ -700,3 +700,112 @@ async fn a_publication_held_under_another_assignment_row_is_refused() {
         ASSIGNMENT_CHANGED
     );
 }
+
+#[path = "support/golden.rs"]
+mod golden;
+
+/// Every refusal the history worker sends, and a setup it answers, as served:
+/// status, content type, retry delay and exact body. The display worker shares
+/// this request path, so a change to one must not move the other's bytes.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn history_answers_are_pinned() {
+    use golden::{Transcript, Upload};
+    let dir = tempfile::tempdir().unwrap();
+    let map = publish(dir.path());
+    let assignment = planned(&map);
+    let set = load_as(dir.path(), &assignment, "archive-01", LoadOptions::whole(3));
+    let app = router(ServiceState::build(set, ServiceConfig::default()).unwrap());
+    let digest = |id: usize| map.shards[id].manifest_digest.clone();
+    let file_sha256 = hex::encode(<sha2::Sha256 as sha2::Digest>::digest(
+        std::fs::read(dir.path().join("shards.json")).unwrap(),
+    ));
+    let names: Vec<(String, String)> = (0..map.shards.len())
+        .map(|id| (digest(id), format!("rev{id}")))
+        .chain([
+            (map_sha256(&map), "map".into()),
+            (file_sha256, "map-file".into()),
+            ("ab".repeat(32), "unknown".into()),
+        ])
+        .collect();
+    let names: Vec<(&str, &str)> = names
+        .iter()
+        .map(|(a, b)| (a.as_str(), b.as_str()))
+        .collect();
+    let mut t = Transcript::new(&names);
+    let (d0, d3, unknown) = (digest(0), digest(3), "ab".repeat(32));
+    let path =
+        |id: usize, digest: &str, tail: &str| format!("/v2/shards/{id}/revisions/{digest}/{tail}");
+
+    // Setup: answered, unknown table, stale, another shard's revision, and
+    // a shard assigned to another worker.
+    t.send(&app, &path(0, &d0, "setup/directory/0"), Upload::None)
+        .await;
+    t.send(&app, &path(0, &d0, "setup/bogus/0"), Upload::None)
+        .await;
+    t.send(&app, &path(0, &d0, "setup/directory/9"), Upload::None)
+        .await;
+    t.send(&app, &path(0, &unknown, "setup/directory/0"), Upload::None)
+        .await;
+    t.send(&app, &path(1, &d0, "setup/directory/0"), Upload::None)
+        .await;
+    t.send(&app, &path(3, &d3, "setup/directory/0"), Upload::None)
+        .await;
+
+    // Query: unknown table, stale, misdirected, no declared length, a wrong
+    // length, a body of the right length that is not a query, and one bound
+    // to the revision but otherwise empty.
+    let query = path(0, &d0, "query/directory");
+    t.send(
+        &app,
+        &path(0, &d0, "query/bogus"),
+        Upload::Sized(vec![0; 16]),
+    )
+    .await;
+    t.send(
+        &app,
+        &path(0, &unknown, "query/directory"),
+        Upload::Sized(vec![0; 16]),
+    )
+    .await;
+    t.send(
+        &app,
+        &path(3, &d3, "query/directory"),
+        Upload::Sized(vec![0; 16]),
+    )
+    .await;
+    t.send(&app, &query, Upload::Unsized(vec![0; 16])).await;
+    t.send(&app, &query, Upload::Sized(vec![0; 16])).await;
+    let length = expected_query_length(&app, &query).await;
+    t.send(&app, &query, Upload::Sized(vec![0; length])).await;
+    let mut binding = transparent_shard::manifest::query_binding(&d0, "directory").to_vec();
+    binding.resize(length, 0);
+    t.send(&app, &query, Upload::Sized(binding)).await;
+    t.check("history_answers.txt");
+}
+
+/// The length a query to `path` must have, read from the refusal of a wrong one.
+async fn expected_query_length(app: &axum::Router, path: &str) -> usize {
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(path)
+                .header("content-length", "1")
+                .body(Body::from(vec![0u8]))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let error: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let error = error["error"].as_str().unwrap();
+    error
+        .split("must be exactly ")
+        .nth(1)
+        .and_then(|rest| rest.split([' ', ',']).next())
+        .and_then(|n| n.parse().ok())
+        .unwrap_or_else(|| panic!("no length in {error:?}"))
+}

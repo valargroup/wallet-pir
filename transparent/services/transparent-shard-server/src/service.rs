@@ -36,9 +36,10 @@
 //! paths on its own host, so two origins remain available to a wallet that
 //! wants them.
 
-use crate::admission::{Admission, AdmissionConfig, AdmissionError};
+use crate::admission::{Admission, AdmissionConfig, Admitted};
 use crate::metrics::{Metrics, Snapshot};
-use crate::runtime::{warm_bytes, CacheError, RuntimeCache, RuntimeHandle, SharedParams};
+use crate::request::{answer_query, json, within, Query, RequestError, Worker};
+use crate::runtime::{warm_bytes, RuntimeCache, RuntimeHandle, SharedParams};
 use crate::shardset::{LoadedShard, ShardSet, Table, TableRef};
 use axum::extract::{Path as AxumPath, Request, State};
 use axum::http::StatusCode;
@@ -528,51 +529,15 @@ impl ServiceState {
         self.inner.max_query_bytes
     }
 
-    /// Sends a query refusal decided before the body was read, after reading
-    /// and discarding the body.
-    ///
-    /// A proxy streams the upload while the worker answers. Answering and
-    /// closing with the upload unread tears the proxy's upload down mid-body
-    /// ("broken pipe"): the wallet then gets the proxy's 502 rather than this
-    /// refusal and its retry delay, and the proxy counts an error against the
-    /// worker's health. On the 2026-09-27 bench fleet such errors from
-    /// saturated workers ejected the whole pool.
-    ///
-    /// Discarding costs bandwidth, not memory: frames are dropped as they
-    /// arrive, at most [`Self::max_query_bytes`] are accepted, and the wait is
-    /// bounded. A body that is longer, slower or broken is abandoned, and the
-    /// connection closes as it did before.
-    async fn refuse_unread(&self, request: Request, refused: Response) -> Response {
-        use http_body::Body as _;
-        let limit = self.max_query_bytes();
-        let wait = self
-            .inner
-            .admission
-            .config()
-            .upload_deadline
-            .min(std::time::Duration::from_secs(5));
-        let mut body = request.into_body();
-        let drained = tokio::time::timeout(wait, async {
-            let mut seen = 0usize;
-            loop {
-                match std::future::poll_fn(|cx| std::pin::Pin::new(&mut body).poll_frame(cx)).await
-                {
-                    None => return true,
-                    Some(Ok(frame)) => {
-                        seen += frame.data_ref().map_or(0, |data| data.len());
-                        if seen > limit {
-                            return false;
-                        }
-                    }
-                    Some(Err(_)) => return false,
-                }
-            }
-        })
-        .await;
-        if !matches!(drained, Ok(true)) {
-            Metrics::incr(&self.inner.metrics.refusals_unread);
+    /// The parts of this worker a request passes through.
+    fn worker(&self) -> Worker<'_> {
+        Worker {
+            admission: &self.inner.admission,
+            work_memory: &self.inner.cache.work_memory,
+            metrics: &self.inner.metrics,
+            max_query_bytes: self.max_query_bytes(),
+            map_digest: &self.inner.set.map_digest,
         }
-        refused
     }
 
     pub fn metrics(&self) -> &Arc<Metrics> {
@@ -615,21 +580,18 @@ impl ServiceState {
                 // stale, and refreshing it would not help.
                 if self.inner.set.names(shard_id) && !self.inner.set.is_assigned(shard_id) {
                     Metrics::incr(&self.inner.metrics.unassigned_refusals);
-                    return Err(RequestError::NotAssigned {
-                        shard_id,
-                        worker_id: self
-                            .inner
-                            .set
-                            .scope()
-                            .map(|scope| scope.worker_id.clone())
-                            .unwrap_or_default(),
-                    });
+                    let worker_id = self
+                        .inner
+                        .set
+                        .scope()
+                        .map(|scope| scope.worker_id.clone())
+                        .unwrap_or_default();
+                    return Err(RequestError::Misdirected(format!(
+                        "shard {shard_id} is not assigned to worker {worker_id}"
+                    )));
                 }
                 Metrics::incr(&self.inner.metrics.stale_revisions);
-                Err(RequestError::Stale {
-                    shard_id,
-                    digest: digest.to_string(),
-                })
+                Err(stale(shard_id, digest))
             }
         }
     }
@@ -658,127 +620,17 @@ impl ServiceState {
             .cache
             .get(key, self.shared(shard, table.kind()), source)
             .await
-            .map_err(|error| match error {
-                CacheError::Overloaded => RequestError::Overloaded,
-                CacheError::Failed(message) => RequestError::Bad(message),
-            })
+            .map_err(RequestError::from)
     }
 }
 
-/// Why a request could not be answered.
-enum RequestError {
-    Bad(String),
-    /// The revision named is not held. Retryable after a map refresh.
-    Stale {
-        shard_id: u64,
-        digest: String,
-    },
-    /// No cache capacity could be freed. Retryable as-is.
-    Overloaded,
-    /// A query arrived without saying how long it is.
-    LengthRequired,
-    /// The worker is at a bound it will not exceed. Retryable as-is; the body
-    /// names which bound.
-    Busy(&'static str),
-    /// The body did not arrive in time. The client is the slow party.
-    UploadTimeout,
-    /// The shard exists but this worker does not hold its tables. A routing
-    /// fault; not retryable here and not a reason to refresh the map.
-    NotAssigned {
-        shard_id: u64,
-        worker_id: String,
-    },
-}
-
-impl From<AdmissionError> for RequestError {
-    fn from(error: AdmissionError) -> Self {
-        match error {
-            AdmissionError::QueueFull => RequestError::Busy("every waiting place is taken"),
-            AdmissionError::BodyBudget => RequestError::Busy("the body budget is full"),
-            AdmissionError::DeadlineExceeded => {
-                RequestError::Busy("the request waited its whole deadline without a slot")
-            }
-            AdmissionError::UploadTimeout => RequestError::UploadTimeout,
-            AdmissionError::ShuttingDown => RequestError::Bad("server is shutting down".into()),
-        }
+/// The revision named is no longer served: the wallet refreshes its map and
+/// re-derives the shard's coverage.
+fn stale(shard_id: u64, digest: &str) -> RequestError {
+    RequestError::Stale {
+        message: format!("revision {digest} of shard {shard_id} is no longer served"),
+        retry: "refresh the shard map and re-derive coverage for this shard",
     }
-}
-
-impl RequestError {
-    fn into_response(self, map_digest: &str) -> Response {
-        match self {
-            RequestError::Bad(message) => json(
-                StatusCode::BAD_REQUEST,
-                serde_json::json!({ "error": message }),
-            ),
-            RequestError::LengthRequired => json(
-                StatusCode::LENGTH_REQUIRED,
-                serde_json::json!({ "error": "a query must declare its length" }),
-            ),
-            RequestError::UploadTimeout => json(
-                StatusCode::REQUEST_TIMEOUT,
-                serde_json::json!({ "error": "the query body did not arrive in time" }),
-            ),
-            // 421: the request reached a server that is not configured to
-            // answer it. No retry delay, so a wallet does not spin on it, and
-            // the map digest so an operator can see which set the worker holds.
-            RequestError::NotAssigned {
-                shard_id,
-                worker_id,
-            } => json(
-                StatusCode::MISDIRECTED_REQUEST,
-                serde_json::json!({
-                    "error": format!("shard {shard_id} is not assigned to worker {worker_id}"),
-                    "map_sha256": map_digest,
-                }),
-            ),
-            // The same shape as the cache refusal: 503 with a delay, which is
-            // what the wallet keys its retry on. The body says which bound.
-            RequestError::Busy(reason) => (
-                StatusCode::SERVICE_UNAVAILABLE,
-                [("content-type", "application/json"), ("retry-after", "1")],
-                serde_json::json!({
-                    "error": reason,
-                    "retry": "retry shortly",
-                })
-                .to_string(),
-            )
-                .into_response(),
-            // 409 rather than 404: the shard exists and the wallet's request is
-            // well formed, but it is addressed to a publication that has been
-            // replaced. The current map digest is included so the client can
-            // tell whether refreshing will actually help.
-            RequestError::Stale { shard_id, digest } => json(
-                StatusCode::CONFLICT,
-                serde_json::json!({
-                    "error": format!(
-                        "revision {digest} of shard {shard_id} is no longer served"
-                    ),
-                    "retry": "refresh the shard map and re-derive coverage for this shard",
-                    "map_sha256": map_digest,
-                }),
-            ),
-            RequestError::Overloaded => (
-                StatusCode::SERVICE_UNAVAILABLE,
-                [("content-type", "application/json"), ("retry-after", "1")],
-                serde_json::json!({
-                    "error": "no cache capacity is free",
-                    "retry": "retry shortly",
-                })
-                .to_string(),
-            )
-                .into_response(),
-        }
-    }
-}
-
-fn json(status: StatusCode, body: serde_json::Value) -> Response {
-    (
-        status,
-        [("content-type", "application/json")],
-        body.to_string(),
-    )
-        .into_response()
 }
 
 pub fn router(state: ServiceState) -> Router {
@@ -1073,7 +925,7 @@ async fn manifest(
     // manifest, so the route needs no routing by owner.
     let Some((manifest, canonical, _)) = state.inner.set.meta_by_digest(&digest) else {
         Metrics::incr(&state.inner.metrics.stale_revisions);
-        return RequestError::Stale { shard_id, digest }.into_response(&map_digest);
+        return stale(shard_id, &digest).into_response(&map_digest);
     };
     if manifest.shard_id != shard_id {
         return RequestError::Bad(format!(
@@ -1115,15 +967,10 @@ async fn setup(
         };
         let segments = shard.segments(table);
         let geometry = shard.geometry.name.to_string();
-        match tokio::time::timeout(pending.remaining(), state.runtime(shard, table, segment)).await
-        {
-            Ok(Ok(handle)) => (segments, geometry, handle),
-            Ok(Err(error)) => return error.into_response(&map_digest),
-            Err(_) => {
-                Metrics::incr(&state.inner.metrics.deadline_exceeded);
-                return RequestError::from(AdmissionError::DeadlineExceeded)
-                    .into_response(&map_digest);
-            }
+        let runtime = state.runtime(shard, table, segment);
+        match within(pending.remaining(), &state.inner.metrics, runtime).await {
+            Ok(handle) => (segments, geometry, handle),
+            Err(error) => return error.into_response(&map_digest),
         }
     };
     pending.complete();
@@ -1162,29 +1009,26 @@ async fn query_inner(
     AxumPath((shard_id, digest, table)): AxumPath<(u64, String, String)>,
     request: Request,
 ) -> Response {
-    let map_digest = state.inner.set.map_digest.clone();
-    let metrics = state.inner.metrics.clone();
+    let worker = state.worker();
+    let map_digest = worker.map_digest;
+    let metrics = worker.metrics;
     let Some(table) = TableRef::parse(&table) else {
         Metrics::incr(&metrics.query_errors);
-        let refused = RequestError::Bad("unknown table".into()).into_response(&map_digest);
-        return state.refuse_unread(request, refused).await;
+        let refused = RequestError::Bad("unknown table".into()).into_response(map_digest);
+        return worker.refuse_unread(request, refused).await;
     };
     let (segments, shared, query_rows) = {
         let shard = match state.revision(shard_id, &digest) {
             Ok(shard) => shard,
             Err(error) => {
-                let refused = error.into_response(&map_digest);
-                return state.refuse_unread(request, refused).await;
+                let refused = error.into_response(map_digest);
+                return worker.refuse_unread(request, refused).await;
             }
         };
         if shard.segments(table) == 0 {
-            return state
-                .refuse_unread(
-                    request,
-                    RequestError::Bad("table capability unavailable".into())
-                        .into_response(&map_digest),
-                )
-                .await;
+            let refused =
+                RequestError::Bad("table capability unavailable".into()).into_response(map_digest);
+            return worker.refuse_unread(request, refused).await;
         }
         let shared = state.shared(shard, table.kind());
         // A page shard's queries may select over only the rows its manifest
@@ -1192,213 +1036,34 @@ async fn query_inner(
         let query_rows = shard.query_rows(table, shared.profile.rows);
         (shard.segments(table), shared, query_rows)
     };
-
-    // The exact lengths this table's query may have — 49-bit or 44-bit
-    // dithered, over every row or, for a growing tail's pages, over only the
-    // rows its manifest says can hold data — are known before a single body
-    // byte is read, so a body of any other length is refused here — before it
-    // is buffered, before it queues, before any runtime is built for it. The
-    // global body limit is the ceiling for the widest geometry; this is the
-    // check for the one actually addressed.
-    let declared = request
-        .headers()
-        .get(axum::http::header::CONTENT_LENGTH)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.trim().parse::<u64>().ok())
-        .or_else(|| {
-            use http_body::Body as _;
-            request.body().size_hint().exact()
-        });
-    let Some(declared) = declared else {
-        // Not discarded: with no declared length there is no bound to read to.
-        Metrics::incr(&metrics.query_length_rejections);
-        return RequestError::LengthRequired.into_response(&map_digest);
+    let query = Query {
+        shared,
+        query_rows,
+        table: table.name(),
+        revision: digest.clone(),
+        binding: query_binding(&digest, &table.name()),
     };
-    let Some(expected) = usize::try_from(declared)
-        .ok()
-        .filter(|&len| shared.accepts_query_bytes(query_rows, len))
-    else {
-        Metrics::incr(&metrics.query_length_rejections);
-        let refused = RequestError::Bad(format!(
-            "a {} query for geometry {} must be exactly {} bytes, not {declared}",
-            table.name(),
-            shared.geometry.name,
-            shared.query_lengths(query_rows),
-        ))
-        .into_response(&map_digest);
-        return state.refuse_unread(request, refused).await;
-    };
-
-    // Counted, and its bytes budgeted, before the body is read. A worker that
-    // buffered first and counted afterwards would be bounded only by how many
-    // clients chose to send at once.
-    let pending = match state.inner.admission.try_enter(Some(expected)) {
-        Ok(pending) => pending,
-        Err(error) => {
-            Metrics::incr(&metrics.query_errors);
-            // The capacity refusal is the one a saturated worker sends most,
-            // and the one whose retry delay matters most to reach the wallet.
-            let refused = RequestError::from(error).into_response(&map_digest);
-            return state.refuse_unread(request, refused).await;
-        }
-    };
-    let upload_deadline = state.inner.admission.config().upload_deadline;
-    let body = match tokio::time::timeout(
-        upload_deadline,
-        axum::body::to_bytes(request.into_body(), expected),
-    )
-    .await
-    {
-        Ok(Ok(body)) => body,
-        Ok(Err(error)) => {
-            Metrics::incr(&metrics.query_errors);
-            return RequestError::Bad(format!("reading the query body: {error}"))
-                .into_response(&map_digest);
-        }
-        Err(_) => {
-            Metrics::incr(&metrics.upload_timeouts);
-            Metrics::incr(&metrics.query_errors);
-            return RequestError::UploadTimeout.into_response(&map_digest);
-        }
-    };
-    // A declared length is a claim; the bytes that arrived are the fact.
-    if body.len() != expected {
-        Metrics::incr(&metrics.query_length_rejections);
-        Metrics::incr(&metrics.query_errors);
-        return RequestError::Bad(format!(
-            "the query body is {} bytes where {expected} were declared",
-            body.len()
-        ))
-        .into_response(&map_digest);
-    }
-
-    // The prefix names the revision and table, and the same bytes come back in
-    // the response, so a query answered by the wrong runtime fails a check at
-    // both ends rather than decoding into rows from a range nobody asked for.
-    let binding = query_binding(&digest, &table.name());
-
-    // Admission before work: bounded evaluation is what keeps a burst from
-    // pinning every runtime in the cache against eviction at once. The wait is
-    // bounded by the request's deadline, and a request that outwaits it is
-    // refused retryably rather than kept.
-    let query_stage = std::time::Instant::now();
-    let admitted = match state.inner.admission.wait_slot(pending).await {
-        Ok(admitted) => admitted,
-        Err(error) => {
-            Metrics::incr(&metrics.query_errors);
-            return RequestError::from(error).into_response(&map_digest);
-        }
-    };
-
-    tracing::debug!(revision = %digest, table = %table.name(), seconds = query_stage.elapsed().as_secs_f64(), stage = "query_admission", "query stage");
-    let query_stage = std::time::Instant::now();
 
     // Every segment answers the same query, and the results come back in
     // segment order. The client keeps the row whose contents it can identify
     // and discards the rest; asking only the segment that holds the script
     // would disclose the script's placement, which is a function of the script.
-    //
-    // Every segment's runtime is acquired *before* any of them is evaluated,
-    // and all the handles are held until the last one is done. Acquiring them
-    // one at a time would let a tight budget evict segment 0 while segment 1
-    // builds, and the next query would rebuild what this one just discarded —
-    // a multi-segment shard would thrash rather than be answered. Holding them
-    // together also means a shard whose segments do not fit the budget is
-    // refused once, retryably, instead of making progress it cannot keep.
-    let mut handles = Vec::with_capacity(segments as usize);
-    for segment in 0..segments {
-        let shard = match state.revision(shard_id, &digest) {
-            Ok(shard) => shard,
-            Err(error) => return error.into_response(&map_digest),
-        };
-        match tokio::time::timeout(admitted.remaining(), state.runtime(shard, table, segment)).await
-        {
-            Ok(Ok(handle)) => handles.push(handle),
-            Ok(Err(error)) => {
-                Metrics::incr(&metrics.query_errors);
-                return error.into_response(&map_digest);
-            }
-            Err(_) => {
-                Metrics::incr(&metrics.deadline_exceeded);
-                Metrics::incr(&metrics.query_errors);
-                return RequestError::from(AdmissionError::DeadlineExceeded)
-                    .into_response(&map_digest);
+    let acquire = async |admitted: &Admitted| {
+        let mut handles = Vec::with_capacity(segments as usize);
+        for segment in 0..segments {
+            let shard = state
+                .revision(shard_id, &digest)
+                .map_err(|error| error.into_response(map_digest))?;
+            let runtime = state.runtime(shard, table, segment);
+            match within(admitted.remaining(), metrics, runtime).await {
+                Ok(handle) => handles.push(handle),
+                Err(error) => {
+                    Metrics::incr(&metrics.query_errors);
+                    return Err(error.into_response(map_digest));
+                }
             }
         }
-    }
-
-    tracing::debug!(revision = %digest, table = %table.name(), seconds = query_stage.elapsed().as_secs_f64(), stage = "query_runtime", "query stage");
-
-    // Evaluated off the async runtime, holding the slot and every handle for
-    // exactly as long as the work runs. The admission moves into the closure:
-    // if the client goes away meanwhile the evaluation still finishes and is
-    // discarded, but the slot is released when it does, not when the dropped
-    // future would have been polled.
-    let memory_started = std::time::Instant::now();
-    let memory = match state
-        .inner
-        .cache
-        .work_memory
-        .reserve_query(
-            shared.reserved_bytes().saturating_mul(2),
-            admitted.remaining(),
-        )
-        .await
-    {
-        Some(memory) => memory,
-        None => {
-            tracing::debug!(revision = %digest, table = %table.name(), seconds = memory_started.elapsed().as_secs_f64(), admitted = false, stage = "query_memory_admission", "query stage");
-            if admitted.remaining().is_zero() {
-                Metrics::incr(&metrics.deadline_exceeded);
-                Metrics::incr(&metrics.query_errors);
-                return RequestError::from(AdmissionError::DeadlineExceeded)
-                    .into_response(&map_digest);
-            }
-            Metrics::incr(&metrics.overloads);
-            return RequestError::Overloaded.into_response(&map_digest);
-        }
+        Ok(handles)
     };
-    tracing::debug!(revision = %digest, table = %table.name(), seconds = memory_started.elapsed().as_secs_f64(), admitted = true, stage = "query_memory_admission", "query stage");
-    let evaluation_metrics = metrics.clone();
-    let query_stage = std::time::Instant::now();
-    let query_revision = digest.clone();
-    let evaluated = tokio::task::spawn_blocking(move || {
-        let _memory = memory;
-        tracing::debug!(revision = %query_revision, table = %table.name(), seconds = query_stage.elapsed().as_secs_f64(), stage = "query_dispatch", "query stage");
-        let query_stage = std::time::Instant::now();
-        let _timer = evaluation_metrics.evaluation_seconds.timer();
-        // The key and selection are parsed once: every segment shares the
-        // table's packing setup and query masks, so one parse serves them all.
-        let query = shared.parse(binding, &body, query_rows)?;
-        let mut answer = Vec::with_capacity(shared.response_bytes() * handles.len());
-        for handle in &handles {
-            match handle.get().answer(binding, &query) {
-                Ok(response) => answer.extend(response),
-                Err(error) => return Err(error),
-            }
-        }
-        tracing::debug!(revision = %query_revision, table = %table.name(), seconds = query_stage.elapsed().as_secs_f64(), stage = "query_evaluate", "query stage");
-        admitted.complete();
-        Ok(answer)
-    })
-    .await;
-    match evaluated {
-        Ok(Ok(answer)) => {
-            Metrics::incr(&metrics.queries);
-            (
-                StatusCode::OK,
-                [("content-type", "application/octet-stream")],
-                answer,
-            )
-                .into_response()
-        }
-        Ok(Err(error)) => {
-            Metrics::incr(&metrics.query_errors);
-            RequestError::Bad(error).into_response(&map_digest)
-        }
-        Err(error) => {
-            Metrics::incr(&metrics.query_errors);
-            RequestError::Bad(format!("evaluation task failed: {error}")).into_response(&map_digest)
-        }
-    }
+    answer_query(worker, request, query, acquire).await
 }

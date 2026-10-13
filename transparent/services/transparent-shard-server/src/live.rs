@@ -1,5 +1,6 @@
 //! Private publication control and request-scoped, atomic serving snapshots.
 //! The Unix socket is an operator interface, never routed through the public edge.
+use crate::control::persist;
 use crate::{
     assignment::Assignment,
     service::{self, ServiceConfig, ServiceState},
@@ -17,7 +18,6 @@ use std::{
     path::{Path, PathBuf},
     sync::{Arc, RwLock},
 };
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tower::ServiceExt;
 
 /// Refusal for a prepare that names a publication this worker already holds
@@ -487,41 +487,17 @@ impl LiveService {
         &self,
         path: &Path,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        use std::os::unix::fs::PermissionsExt;
-        if path.exists() {
-            if tokio::net::UnixStream::connect(path).await.is_ok() {
-                return Err("control socket already in use".into());
+        let service = self.clone();
+        crate::control::listen(path, move |command: Command| {
+            let service = service.clone();
+            async move {
+                match service.command(command).await {
+                    Ok(value) => serde_json::json!({"ok": true, "result": value}),
+                    Err(error) => serde_json::json!({"ok": false, "error": error}),
+                }
             }
-            std::fs::remove_file(path)?;
-        }
-        let listener = tokio::net::UnixListener::bind(path)?;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
-        loop {
-            let (stream, _) = listener.accept().await?;
-            let service = self.clone();
-            tokio::spawn(async move {
-                let (read, mut write) = stream.into_split();
-                let mut reader = BufReader::new(read);
-                let mut bytes = Vec::new();
-                use tokio::io::AsyncReadExt;
-                let result = match (&mut reader)
-                    .take(1024 * 1024)
-                    .read_until(b'\n', &mut bytes)
-                    .await
-                {
-                    Ok(_) if bytes.last() == Some(&b'\n') => match serde_json::from_slice(&bytes) {
-                        Ok(command) => service.command(command).await,
-                        Err(error) => Err(error.to_string()),
-                    },
-                    _ => Err("invalid or oversized control command".into()),
-                };
-                let body = match result {
-                    Ok(value) => serde_json::json!({"ok":true,"result":value}),
-                    Err(error) => serde_json::json!({"ok":false,"error":error}),
-                };
-                let _ = write.write_all(format!("{body}\n").as_bytes()).await;
-            });
-        }
+        })
+        .await
     }
 }
 
@@ -582,19 +558,4 @@ async fn dispatch(State(live): State<LiveService>, request: Request) -> Response
         return refused();
     }
     response
-}
-
-fn persist(path: &Path, value: &impl Serialize) -> Result<(), String> {
-    use std::io::Write;
-    let parent = path.parent().ok_or("record needs a parent directory")?;
-    std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    let temp = path.with_extension("tmp");
-    let mut file = std::fs::File::create(&temp).map_err(|e| e.to_string())?;
-    file.write_all(&serde_json::to_vec(value).map_err(|e| e.to_string())?)
-        .map_err(|e| e.to_string())?;
-    file.sync_all().map_err(|e| e.to_string())?;
-    std::fs::rename(temp, path).map_err(|e| e.to_string())?;
-    std::fs::File::open(parent)
-        .and_then(|f| f.sync_all())
-        .map_err(|e| e.to_string())
 }
