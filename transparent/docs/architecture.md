@@ -69,9 +69,9 @@ This is separate from script history discovery.
 
 The extractor writes the entries into block-hash-addressed sidecars under the
 existing event checkpoint. The tiered `txid-display-controller` publishes them
-as sealed archive shards of 90,000 entries and one per-block recent shard, a
-window of the newest 90,000 entries that may overlap the newest archives.
-Inside a shard, each hash bucket is one `txid-2k8` table of 72-entry,
+as sealed archive shards of 180,000 entries and one per-block recent shard, a
+window of the newest 180,000 entries that may overlap the newest archives.
+Inside a shard, each hash bucket is one `txid-4k8` table (4,096 rows) of 72-entry,
 8,192-byte rows, and an entry has one row under the bucket's published
 placement seed. A lookup is always one row query, so the server learns the
 range, tier, bucket and timing, but never the size of the transaction.
@@ -365,7 +365,8 @@ column-major bytes before interleaving, leaving out trailing all-zero row blocks
 data, so its runtime plans at its reservation; only a nearly empty table's matrix is written
 at four-byte words, and the disk cache accepts either.
 
-A display table (`txid-2k8`, 2,048 rows) takes the same 21,000-byte query and publishes
+A display table (`txid-4k8`, 4,096 rows) takes a 28,168-byte query (21,000 at
+`txid-2k8`'s 2,048 rows) and publishes
 one scheme, `scheme`, with no `scheme_dq44`. Each display segment publishes 45,056 bytes of
 masks (four blocks) and answers with the binding, the epoch and a 10,240-byte body. Its
 seeds are derived under display's own native schema, `transparent-txid-display-p8-v1`,
@@ -419,7 +420,7 @@ version changes when the wire format does, and its servers and clients ship toge
 | Prefix | Serves | Source |
 |---|---|---|
 | `/v1/` | schema v11 history with 16-bit tables, the txid-2k display | released binaries; `main` no longer builds it |
-| `/v2/` | schema v12 history with the 8-bit history profile, the one-query txid-2k8 display | `main` |
+| `/v2/` | schema v12 history with the 8-bit history profile, the one-query txid-4k8 display | `main` |
 
 Under `/v2/` the shard server answers `/v2/shards`, `/v2/shards/init`, manifests,
 setup and query, and `/v2/filters/shards`; the display service answers `/v2/txid/*`.
@@ -474,8 +475,9 @@ the runtime holds (`TableRuntime::held_bytes`): the same terms with the compiled
 its real width, four-byte words so far, or 27/28-bit packed on CPUs with AVX-512 VBMI. The
 charge only falls, the release happens before any waiter receives the runtime, and eviction
 returns exactly the lowered charge, so builds in flight together cannot be admitted past
-the budget on sizes they have not reached. `txid-2k8`, whose rows are four 8-bit blocks
-with one-digit matrices, reserves and is charged 144.17 MiB. Warm-mode fit checks (history and display) plan with the four-byte size plus
+the budget on sizes they have not reached. A display runtime's rows are four 8-bit blocks
+with one-digit matrices: `txid-4k8` reserves and is charged 160.17 MiB, `txid-2k8`
+144.17 MiB. Warm-mode fit checks (history and display) plan with the four-byte size plus
 one bound's excess per runtime the prewarm can have in flight, which never exceeds the sum
 of bounds they used to demand. The disk cache works the same way: a write reserves the
 largest valid entry under its directory lock, a written entry counts at its file length,

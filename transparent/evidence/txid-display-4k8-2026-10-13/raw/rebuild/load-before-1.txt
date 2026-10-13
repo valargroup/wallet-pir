@@ -1,0 +1,7 @@
+2026-10-13T02:55:44Z
+ 02:55:44 up  5:57,  3 users,  load average: 18.62, 18.50, 9.46
+               total        used        free      shared  buff/cache   available
+Mem:           64303       17550       40272           4        7114       46753
+Swap:              0           0           0
+MemoryCurrent=17010864128
+CPUUsageNSec=658965684000

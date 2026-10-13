@@ -1,0 +1,26 @@
+{
+ "sealed": {
+  "tables": 94,
+  "min": 246,
+  "median": 260.0,
+  "max": 269,
+  "below_50": 0,
+  "below_78": 0,
+  "below_128": 0
+ },
+ "recent": {
+  "tables": 1,
+  "min": 269,
+  "median": 269,
+  "max": 269,
+  "below_50": 0,
+  "below_78": 0,
+  "below_128": 0
+ },
+ "tool_run": {
+  "seconds_median": 15.62,
+  "seconds_max": 18.19,
+  "peak_rss_kib_max": 1388076,
+  "parallel": 4
+ }
+}

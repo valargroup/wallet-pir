@@ -3272,17 +3272,33 @@ the shared origin's `/v2` while `/v1/txid/` stays on the `txid-2k` lineage.
   Caddyfile) and `controller`; `stop` and `retire` write the withdrawn site.
   The worker host's own paths are the usual ones, so it must hold no other
   display worker.
-- **Profile and limits.** Since 2026-10-13 the site serves the 8-bit display
-  profile (release `3e705bb3`): 191 runtimes of 144.17 MiB, so the worker runs
-  at 48G `MemoryMax`, a 32 GiB cache and a 40 GiB disk cache. Moving a site to
-  a release whose runtimes change runs `stage`, `stop`, `workers` (with any
-  current `candidate-*` map; a worker that serves a map keeps it), `route`
-  and `controller`; `/v2/txid/` is down while the worker rebuilds.
+- **Profile and limits.** Since 2026-10-13 the site serves `txid-4k8` tables
+  at the 8-bit display profile (release `e1f94158`, the code of
+  `transparent-v0.1.0-rc.3`), with `archive_target` and `recent_window`
+  180,000: 96 runtimes of 160.17 MiB, about 15 GiB. The worker keeps the 48G
+  `MemoryMax`, 32 GiB cache and 40 GiB disk cache it had for `txid-2k8`'s 191
+  runtimes. Moving a site to a release whose runtimes change runs `stage`,
+  `stop`, `workers` (with any current `candidate-*` map; a worker that serves
+  a map keeps it), `route` and `controller`; `/v2/txid/` is down while the
+  worker rebuilds.
+- **Geometry change.** A root fixes its geometry and seal, so a new geometry
+  is a fresh root and lineage: bootstrap it, then `stop`, `workers
+  --replace-active <served map>`, `route`, `controller`. Bootstrap cannot read
+  the journal while the site's controller writes it, so the `txid-4k8` cutover
+  bootstrapped from a hardlinked snapshot of the journal (its data files
+  hardlinked, its checkpoint and metadata copied, its sidecar directory
+  linked) through 100 blocks below the snapshot's end, while `txid-2k8` kept
+  serving; the controller then replayed the rest. `/v2/txid/` was down about
+  six minutes. The bootstrap reads the journal twice and is limited by the
+  volume's read latency; warming the page cache ahead of it, 32 reads at a
+  time, took it from 67 to 36 minutes
+  ([evidence](../evidence/txid-display-4k8-2026-10-13/README.md)).
 - **Journal.** A live controller appends to its journal, so the site needs its
   own: `/srv/txid-display-genesis/journal-v3`, a copy of `journal-v2x` taken
   while the `txid-2k` controller is stopped for the copy. The volume is ext4, so
   the copy is a full second journal (66 GB), not a reflink. Its root is
-  `/srv/txid-display-genesis/v3/root`.
+  `/srv/txid-display-genesis/v4/root` (`txid-4k8`); the `txid-2k8` root,
+  `v3/root`, is kept for rollback.
 - **Order.** `terraform apply` for the host and record; add the host to the
   deploy inventory and to the coordinator's publisher `known_hosts`; copy the
   journal; then `plan`, `preflight`, `stage`, `bootstrap`, `workers`, `route`,

@@ -1,0 +1,202 @@
+{
+  "absent": [
+    {
+      "class": "absent",
+      "expect": "absent",
+      "height": 126690,
+      "kind": "random",
+      "shard_id": 3,
+      "tier": "archive",
+      "txid": "3b1c4cbf16c3d0092c24d745cb0b38829906f553c5923edf784c156cf5a9fbf9"
+    },
+    {
+      "class": "absent",
+      "expect": "absent",
+      "height": 69737,
+      "kind": "wrong-shard",
+      "shard_id": 1,
+      "tier": "archive",
+      "txid": "2e9cf8680e003f490a1cdfd4aa1717e37bcd0cbdd61f5af2fa87ecc166e0e8d2"
+    },
+    {
+      "class": "absent",
+      "expect": "absent",
+      "height": 2308504,
+      "kind": "random",
+      "shard_id": 69,
+      "tier": "archive",
+      "txid": "11c6a44529a3dd2c4aeeaf7c649df45909612e2043ad8a012786d3d2be9993b3"
+    }
+  ],
+  "available": {
+    "archive/complete": 10538687,
+    "archive/omission": 6382866,
+    "recent/complete": 137291,
+    "recent/omission": 42722
+  },
+  "candidate": "/srv/txid-display-genesis/v4/root/candidate-3515890-000000000082370eacc0ef827cb3555d8b18e4ade800dd1fb3f6d5e0c8bb1a7e-1791859836873589831",
+  "map_sha256": "52a3109508f8b485ac7c3eb146f68878c3ec81f31a5174cf27eab9a5e58db62a",
+  "per_class": 3,
+  "samples": [
+    {
+      "bucket": 0,
+      "class": "complete",
+      "digest": "9edc4bc79acd0541f167ac3e6623c3e6e2d3100e4472fa951fe4a8320c169280",
+      "entry_sha256": "d4a494e42cafcd80aa6e4751a9b3954b5d867be7b42672ac1af9c3ec35a30270",
+      "expect": "found",
+      "height": 209537,
+      "omissions": [],
+      "shard_id": 8,
+      "tier": "archive",
+      "txid": "2e9cf8680e003f490a1cdfd4aa1717e37bcd0cbdd61f5af2fa87ecc166e0e8d2"
+    },
+    {
+      "bucket": 0,
+      "class": "complete",
+      "digest": "4ee55026e0258c4ea38d3b7f6681becd43e6f19b020f367738b39f66822f593f",
+      "entry_sha256": "fea5f59f102adb6161721f7b7d33bdb27ce164b4470ee2db9b4ff5a04953c87b",
+      "expect": "found",
+      "height": 131317,
+      "omissions": [],
+      "shard_id": 3,
+      "tier": "archive",
+      "txid": "bbee161b7c3ef0f996c5ab6e5be3826e89b1e735cb7cee6933c4b22b02bea735"
+    },
+    {
+      "bucket": 0,
+      "class": "complete",
+      "digest": "34c79a7118cd924016bfc081d22aea300222c9e6ee0fbfdd36dbca3bf22ab038",
+      "entry_sha256": "e4179510d3a41635bd37ea42bcd3696b0eea87b7192d532bbbac0deef1855849",
+      "expect": "found",
+      "height": 1788544,
+      "omissions": [],
+      "shard_id": 58,
+      "tier": "archive",
+      "txid": "8e11420ee54d3347d93f35f1c50ba3a7de4f6306fce5e362282043881179c3dc"
+    },
+    {
+      "bucket": 0,
+      "class": "omission",
+      "digest": "3d283e639832b72b4f538c6a3947ac2081c07f8a3704bcb922e22f99208d70d6",
+      "entry_sha256": "ab50eac764e04c642012d6def468926dc8fbc8121c4d4b1bc44796d43f56afe8",
+      "expect": "found",
+      "height": 260565,
+      "omissions": [
+        "multiple_source_scripts"
+      ],
+      "shard_id": 12,
+      "tier": "archive",
+      "txid": "d1c82250c123b2b7aef941aebad5feed951be5d403ed89be8b42be80c9c64a45"
+    },
+    {
+      "bucket": 0,
+      "class": "omission",
+      "digest": "ee3fa78d61e18cbed53ac201f92466d2c174125e56adadfab16ea9081abc4b12",
+      "entry_sha256": "be12ef6a7818087ec2f47cb88295653443d4d6c0d056ee4bec3238fd17e6d3b0",
+      "expect": "found",
+      "height": 36210,
+      "omissions": [
+        "source_other"
+      ],
+      "shard_id": 1,
+      "tier": "archive",
+      "txid": "99b0027c05bfa1cc1ad18c58e6b99a73e00a029f4552c6959ae2a2fe4bf24d63"
+    },
+    {
+      "bucket": 0,
+      "class": "omission",
+      "digest": "ef885dd18441eefbfbe672b1c396d2a4f3ff1b6ea7553bf2853a6d20718c0e86",
+      "entry_sha256": "ef8013801f8dc40051bc1c9a607cfccbccd3704bdee120b17cbfefbf394099b8",
+      "expect": "found",
+      "height": 1122829,
+      "omissions": [
+        "more_than_two_outputs"
+      ],
+      "shard_id": 42,
+      "tier": "archive",
+      "txid": "46bc1691afd44d46a646dbb0439b1ed4e6ed59ee9d5e2b24fd74f5a354fb62c2"
+    },
+    {
+      "bucket": 0,
+      "class": "complete",
+      "digest": "cce27e4adb3f078a35e9989bdfe0166ac46c39e2aebc95babf89843a38bb1dc6",
+      "entry_sha256": "d0286a9915a20c297e30abb5a44c61b38a195371beaeb3c62020028138051144",
+      "expect": "found",
+      "height": 3491607,
+      "omissions": [],
+      "shard_id": 94,
+      "tier": "recent",
+      "txid": "e04aeb328b1ecfa9799c0e88e1f5a3ce1c4f9ba3a098ad9ad794532c699565ce"
+    },
+    {
+      "bucket": 0,
+      "class": "complete",
+      "digest": "cce27e4adb3f078a35e9989bdfe0166ac46c39e2aebc95babf89843a38bb1dc6",
+      "entry_sha256": "6d0e0ae63322bedd3ecc9a5ff5c197b579d4073215c42550168cef8c1e1c215e",
+      "expect": "found",
+      "height": 3493513,
+      "omissions": [],
+      "shard_id": 94,
+      "tier": "recent",
+      "txid": "a52685e1d5101c0aa6bc515e1b20fbcd8c2a05a0d8dfc82d3525530d80647e8b"
+    },
+    {
+      "bucket": 0,
+      "class": "complete",
+      "digest": "cce27e4adb3f078a35e9989bdfe0166ac46c39e2aebc95babf89843a38bb1dc6",
+      "entry_sha256": "75bfd2759ae7212eddbd3d1f07bde46feeb57f717a0bf8ff2ac06ee4dee3fcf7",
+      "expect": "found",
+      "height": 3500956,
+      "omissions": [],
+      "shard_id": 94,
+      "tier": "recent",
+      "txid": "277208bdb0accbd099c57e732f75d4a4eabb856362ff21a9c8b61b02d3c0286f"
+    },
+    {
+      "bucket": 0,
+      "class": "omission",
+      "digest": "cce27e4adb3f078a35e9989bdfe0166ac46c39e2aebc95babf89843a38bb1dc6",
+      "entry_sha256": "73cf2685f4d1419e16faf80a738703231b661d3ac5e741b5922160922bc98034",
+      "expect": "found",
+      "height": 3492182,
+      "omissions": [
+        "multiple_source_scripts"
+      ],
+      "shard_id": 94,
+      "tier": "recent",
+      "txid": "de8f9ca32b932cf066960c01fc84f5f547c161c6f585e97ae2823ecad905cde6"
+    },
+    {
+      "bucket": 0,
+      "class": "omission",
+      "digest": "cce27e4adb3f078a35e9989bdfe0166ac46c39e2aebc95babf89843a38bb1dc6",
+      "entry_sha256": "1ff2e06369c83d3765984db5e0845a856abb5477d60cb75f785a7a25ac414c9e",
+      "expect": "found",
+      "height": 3504848,
+      "omissions": [
+        "multiple_source_scripts"
+      ],
+      "shard_id": 94,
+      "tier": "recent",
+      "txid": "ccf63250287849b7625e1c9974d44d200f05d07a12b1878af146f1f7ad6e6f7a"
+    },
+    {
+      "bucket": 0,
+      "class": "omission",
+      "digest": "cce27e4adb3f078a35e9989bdfe0166ac46c39e2aebc95babf89843a38bb1dc6",
+      "entry_sha256": "8cda7439392287b513dc67684163b9dc6fc8310d47753c3b90d00489720226e9",
+      "expect": "found",
+      "height": 3493574,
+      "omissions": [
+        "more_than_two_outputs",
+        "output_other"
+      ],
+      "shard_id": 94,
+      "tier": "recent",
+      "txid": "cddda106348a52873b7ccd09831e21c8729fd4a1c424dd1797389f70d585c245"
+    }
+  ],
+  "schema": "transparent-txid-display-fixture-v2",
+  "seed": 4096,
+  "unplaced_txids": 0
+}

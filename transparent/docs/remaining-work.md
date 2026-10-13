@@ -156,24 +156,31 @@ compatibility path; `/v1/txid` (txid-2k) is unchanged.
 - [x] Deploy to the one-query site with the worker's cache raised to 32 GiB, disk cache to
   40 GiB and `MemoryMax` to 48G, and verify lookups through `/v2/txid`
   (2026-10-13, [status](status.md#txid-display-v2txid-on-the-8-bit-profile-2026-10-13)).
-- [ ] Repin wallet-libraries and Vizor's v12 branch on it.
+- [x] Superseded by `txid-4k8` (below): the wallet repin targets it.
 
-## Taller txid display tables (`txid-4k8`, proposed)
+## Taller txid display tables (`txid-4k8`, deployed 2026-10-13)
 
-A 4,096-row display geometry at the same 8,192-byte rows and 61% fill would hold about
-180,000 entries per table instead of 90,000: about 95 archives instead of 189, so about 97
-runtimes of 160.17 MiB, 15.2 GiB instead of 26.9 GiB (growth about 2.2 GiB a year instead of
-3.9), and each lookup hidden among twice the entries. The cost is a 28,168-byte query instead
-of 21,000; replies (10,256 B per segment) and setups (60.1 KB) do not change. It would be a
-new lineage and a breaking wallet repin, like the 8-bit switch. Not started; it waits for a go.
+The one-query site serves 4,096-row `txid-4k8` tables at the same 8,192-byte
+rows, with 180,000-entry archives and recent window: 94 archives instead of
+189, 96 runtimes of 160.17 MiB (about 15 GiB instead of 26.9), each lookup
+hidden among twice the entries, for a 28,168-byte query instead of 21,000
+([evidence](../evidence/txid-display-4k8-2026-10-13/README.md)). It is a new
+lineage and a breaking wallet repin, like the 8-bit switch; Roman approved the
+deploy directly.
 
-- [ ] Read-only census of the journal copy at `txid-4k8` with `archive_target` and
-  `recent_window` 180,000: first-seed placement rate, overflow segments, archive count.
-- [ ] Build a few `txid-4k8` tables from it and measure runtime memory (planned 160.17 MiB),
-  recent rebuild p95 and query time on the site's host, read-only; certify them at the
-  50-bit floor.
-- [ ] Decide the cutover: a fresh `txid-4k8` bootstrap beside or replacing the `txid-2k8`
-  `/v2/txid` lineage, and the wallet-libraries and Vizor repin.
+- [x] Census of the journal at `txid-4k8`: 94 archives, all one segment, 81 on
+  the first seed (86%), at most three seeds.
+- [x] Certify every served table at the 50-bit floor (95 of 95, at least 246
+  bits) and measure runtime memory (160.17 MiB, as planned), recent rebuild
+  (p95 1.48 s) and query time (3.3–3.4 ms p50) on the site's host.
+- [x] Cut over: a fresh `txid-4k8` root replaced the `txid-2k8` lineage on
+  `/v2/txid` (down about six minutes); the `txid-2k8` root stays for rollback.
+  Release `transparent-v0.1.0-rc.3`.
+- [ ] Merge the wallet-libraries repin (zakura-core/wallet-libraries#172), then
+  repin Vizor's v12 branch (chainapsis/vizor-wallet#977) on it. Until then no
+  wallet build reads `/v2/txid`: rc.2 and earlier clients refuse `txid-4k8`.
+- [ ] Delete the `txid-2k8` root (`/srv/txid-display-genesis/v3/root`) once the
+  new lineage has run a while.
 
 Not planned with it: other row widths, a two-digit 8-bit key, or any change to `/v1/txid`.
 
@@ -525,12 +532,10 @@ client or map of the old layout is supported.
   ([evidence](../evidence/txid-display-2k8-gates-2026-10-11/README.md)):
   placement census from the live map, recent rebuild time against
   `txid-2k`, runtime memory, and the native demo with one query per lookup.
-- [ ] Placement census over the v2x genesis journal itself: run
-  `txid-display-controller bootstrap` into a scratch root on a development
-  copy of the journal and read the seal records' `seed_tries` and
-  `dir_segments` from the timeline. Gate: every archive one segment, median
-  seed tries at most 2. No development copy was reachable from the task's
-  worker; the live-map census stands in for it.
+- [x] Placement census over the genesis journal itself: the site's 2026-10-12
+  `txid-2k8` bootstrap of `journal-v3` sealed 189 archives, all one segment,
+  182 on the first seed, at most four seeds
+  ([census](../evidence/txid-display-4k8-2026-10-13/README.md#placement-census)).
 - [ ] Repin `transparent-txid-client` in wallet-libraries and update its
   fixtures (`recent_window`, one query).
 - [ ] G, Roman: approve and run the fresh-lineage cutover (request and phases

@@ -6,6 +6,28 @@ M4–M6 are open.** This records observed progress, not a new live fleet health
 check. [Remaining work](remaining-work.md) is the authoritative outstanding
 checklist; [deployment](deployment.md) owns operating targets.
 
+## Txid display `/v2/txid` on `txid-4k8` tables, 2026-10-13
+
+The one-query site serves 4,096-row `txid-4k8` tables since about 02:45 UTC
+([evidence](../evidence/txid-display-4k8-2026-10-13/README.md),
+[deployment](deployment.md#txid-display-one-query-site-2026-10-12)).
+`/v1/txid/` was not touched.
+
+- **Serving.** Release `e1f94158` (the code of `transparent-v0.1.0-rc.3`).
+  `/v2/txid/init` publishes `txid-4k8`, 28,160-byte request bodies (28,168 B
+  with the binding) and 10,240-byte answers. 94 archives of 180,000–180,787
+  entries and a 180,000-entry recent window; root
+  `/srv/txid-display-genesis/v4/root`, the `txid-2k8` root kept for rollback.
+- **Checks.** 95 of 95 served tables certified at 246 bits or more; five cold
+  lookups through the public origin returned their exact entries in about
+  1.7 s.
+- **Memory.** 96 runtimes of 160.17 MiB: the worker holds 17.0 GB of its 48G
+  limit, against 30.0 GB on `txid-2k8`.
+- **Downtime.** About six minutes. The bootstrap ran beside the live lineage
+  from a hardlinked snapshot of the journal, in 36 minutes.
+- **Open.** No wallet reads `/v2/txid` until zakura-core/wallet-libraries#172
+  merges and Vizor's v12 branch repins on it.
+
 ## Txid display `/v2/txid` on the 8-bit profile, 2026-10-13
 
 The one-query site serves the display table at the 8-bit profile since

@@ -152,14 +152,15 @@ Display is published only by the tiered controller below.
 
 ## Lookup: one row of one table per bucket
 
-Every bucket of a display shard is one native table of the `txid-2k8`
-geometry: 2,048 rows of 8,192 bytes, two 4,096-byte instances per row. A row
-holds 72 entries in ascending tag order, then all-zero empty slots, then 56
+Every bucket of a display shard is one native table of a display geometry:
+`txid-4k8` (4,096 rows), which the one-query site serves since 2026-10-13, or
+`txid-2k8` (2,048 rows). Both have 8,192-byte rows, four 2,048-byte blocks at
+the 8-bit profile. A row holds 72 entries in ascending tag order, then all-zero empty slots, then 56
 zero bytes. A server checks that rows are canonical when it loads them, and a
 client checks again when it decodes them.
 
 An entry has exactly one row:
-`SHA-256("txid-display/row/v3" ‖ seed ‖ shard id ‖ bucket ‖ tag) mod 2,048`,
+`SHA-256("txid-display/row/v3" ‖ seed ‖ shard id ‖ bucket ‖ tag) mod rows`,
 with the seed as 4 bytes and the shard id and bucket as 8 and 4 bytes, little
 endian. The publisher tries seeds 0, 1, 2, … below 64 for each bucket and
 keeps the smallest that leaves no row over 72 entries, so rebuilding a range
@@ -173,8 +174,13 @@ order, into the same row of further segments. It logs
 `alert=txid_display_overflow`. Segment counts are public in the map, and a
 query is answered by every segment of its table.
 
-At 90,000 entries a table is 61% full and the first seed fits about 93% of
-the time ([census](../evidence/txid-display-2k8-gates-2026-10-11/README.md)).
+A table is 61% full either way: 180,000 entries in a `txid-4k8` table, 90,000
+in a `txid-2k8` one. Over the chain from genesis, the first seed fit 81 of 94
+`txid-4k8` archives (86%; the rest needed two or three seeds) and 182 of 189
+`txid-2k8` ones (96%), and no archive spilled into a second segment
+([census](../evidence/txid-display-4k8-2026-10-13/README.md#placement-census)).
+Twice the rows give twice the chances for one row to overflow, so the first
+seed fits less often.
 
 A lookup always sends the same transcript:
 1. the map, manifest and setups, when not cached;
@@ -186,7 +192,8 @@ holding an entry placed elsewhere is refused, so a server cannot move an
 entry between rows without the client noticing.
 
 Request and reply sizes depend only on the geometry and segment count: a
-21,000 B query and a 10,256 B reply per segment. A cold lookup adds the
+28,168 B query at `txid-4k8` (21,000 B at `txid-2k8`) and a 10,256 B reply per
+segment. A cold lookup adds the
 bucket's setup, 60.1 KB per segment. The server learns the range, tier, bucket and
 shard, and the timing. It learns nothing about the transaction's size: there
 are no pages and no page-count classes.
@@ -234,9 +241,10 @@ geometry.
   bucket, which is a separate table. N is a manifest parameter.
 - **Publication.** A separate map (`txid-shards.json`), content-pure sealed
   manifests with absolute shard ids, and a recent revision lineage.
-  - The `txid-2k8` geometry (2,048 rows × 8,192 B, 21,000 B per query
-    upload)
-    lives in a display-only registry; it is the only display geometry.
+  - The display geometries, `txid-4k8` (4,096 rows × 8,192 B, 28,168 B per
+    query upload) and `txid-2k8` (2,048 rows, 21,000 B), live in a
+    display-only registry. A root's `display-root.json` fixes its geometry, so
+    changing it is a fresh lineage.
   - One table per bucket halves a shard's tables and runtimes compared with v1.
 - **Split map.** The map is also published split, so a client's map bytes stay
   bounded as the archive window grows (below).
@@ -264,10 +272,10 @@ geometry.
   and the `workers` phase then stops and removes that worker's unit there. The
   worker's data on that host is kept.
 - **Leakage** is the range, tier, shard, bucket and timing. With
-  `archive_target` and `recent_window` both 90,000 and one bucket, every
-  lookup's anonymity set is at least 90,000 entries: archives hold
-  90,000–90,200, and the recent shard 90,000 plus at most one block, or every
-  unsealed entry when there are more.
+  `archive_target` and `recent_window` both 180,000 and one bucket, as the
+  one-query site runs `txid-4k8`, every lookup's anonymity set is at least
+  180,000 entries: archives hold 180,000–180,800, and the recent shard 180,000
+  plus at most one block, or every unsealed entry when there are more.
 
 Source:
 - `transparent-shard/src/display/` (format, placement and seal rule);
@@ -545,9 +553,11 @@ What remains to measure for v2 is in [remaining work](remaining-work.md):
 - the share of entries carrying an omission, against the usage figures above;
 - source-sidecar bytes from genesis.
 
-Placement at 90,000-entry tables, the recent rebuild time and runtime memory
-of `txid-2k8` are in the
-[gate evidence](../evidence/txid-display-2k8-gates-2026-10-11/README.md).
+Placement, certificates, runtime memory, rebuild and query time of the served
+`txid-4k8` tables are in the
+[4k8 evidence](../evidence/txid-display-4k8-2026-10-13/README.md); those of
+`txid-2k8` in the [gate evidence](../evidence/txid-display-2k8-gates-2026-10-11/README.md)
+and the [8-bit evidence](../evidence/txid-display-p8-2026-10-13/README.md).
 
 The journal census in `transparent/tools/txid-sizing` measured v2x journals.
 It builds against the last pre-v2 source, `a368f19b`.

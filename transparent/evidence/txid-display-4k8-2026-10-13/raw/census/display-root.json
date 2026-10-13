@@ -1,0 +1,15 @@
+{
+  "geometry": "txid-4k8",
+  "seal": {
+    "n_archive": 1,
+    "n_recent": 1,
+    "archive_target": 180000,
+    "recent_window": 180000,
+    "reorg_margin": 100
+  },
+  "max_archive_shards": 1000,
+  "network": "main",
+  "genesis_hash": "00040fe8ec8471911baa1db1266ea15dd06b4a8a5c453883c000b031973dce08",
+  "start_height": 1,
+  "base_parent": "00040fe8ec8471911baa1db1266ea15dd06b4a8a5c453883c000b031973dce08"
+}

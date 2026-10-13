@@ -1,0 +1,6 @@
+2026-10-13T02:02:19+00:00 enhance-pir-coordinator-01 systemd[1]: Started transparent-txid-display-k8-bootstrap-4k8-snap.service - /opt/transparent-txid-display-k8/releases/e1f9415852b596595f34641da5ea18834fee4276/txid-display-controller bootstrap --root /srv/txid-display-genesis/v4/root --journal /srv/txid-display-genesis/journal-v3-snap-4k8 --start 1 --through 3515756 --geometry txid-4k8 --n-archive 1 --n-recent 1 --archive-target 180000 --recent-window 180000 --reorg-margin 100 --max-archive-shards 1000.
+2026-10-13T02:38:07+00:00 enhance-pir-coordinator-01 txid-display-controller[3903555]: {"candidate":"/srv/txid-display-genesis/v4/root/candidate-3515756-00000000003179c35aefd7f1887a9961a280fd061ae4d3cfcc846e55b0f78141-1791859086874966649","first_shard_id":0,"map_sha256":"bfbcd1a5c8b438f47b8b31625420ba9b4037f0052f33a451f58424b00b35bff4","recent":{"digest":"f2d0565a5aa4603fd4a7ab9b98d838078d5df9ce670487750a88b578f49037d5","dir_segments":[1],"end":3515756,"id":94,"placement_seeds":[0],"records":180011,"revision":0,"seed_tries":[1],"start":3490670,"used_bytes":20341243},"seals":94}
+3515856 3515756
+ExecMainStartTimestamp=Tue 2026-10-13 02:02:19 UTC
+ExecMainExitTimestamp=Tue 2026-10-13 02:38:07 UTC
+CPUUsageNSec=954403625000
