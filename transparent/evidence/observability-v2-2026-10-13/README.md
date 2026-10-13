@@ -93,6 +93,11 @@ the txid-4k8 verify released it at about 04:00 UTC).
   one forced fire-and-recover per family through the policy file
   ([remaining work](../../docs/remaining-work.md#transparent-monitoring-on-v2)).
 
+## Incident
+
+The first monitor binary broke the Enhance canary for nine hours; see
+[incident-enhance-canary.md](incident-enhance-canary.md).
+
 ## Rollback
 
 - **APM:** remove `zzzzzzzzzzzzzzzzzzzzz-apm-obs-1868e5a6.conf` and
