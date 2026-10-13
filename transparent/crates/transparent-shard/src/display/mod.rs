@@ -21,7 +21,7 @@ pub mod seal;
 pub mod split;
 pub mod tables;
 
-pub use geometry::{display_by_name, DISPLAY_PROFILES, TXID_2K8};
+pub use geometry::{display_by_name, DISPLAY_PROFILES, TXID_2K8, TXID_4K8};
 pub use manifest::{
     DisplayBucket, DisplayLayout, DisplayManifest, DisplayMap, DisplayMapEntry, ManifestHeader,
 };

@@ -376,9 +376,10 @@ impl Iterator for RowCoefficients<'_> {
 /// by [`native::batched_hint`]: the recent tails and the display tables, whose
 /// recent shard is rebuilt at every block. Every other geometry, the history
 /// archives included, keeps the reference product over every block.
-const BATCHED_HINT_GEOMETRIES: [&Geometry; 2] = [
+const BATCHED_HINT_GEOMETRIES: [&Geometry; 3] = [
     &transparent_shard::layout::DECOUPLED_2K_8K,
     &transparent_shard::display::TXID_2K8,
+    &transparent_shard::display::TXID_4K8,
 ];
 
 fn uses_batched_hint(geometry: &Geometry) -> bool {
@@ -1403,7 +1404,7 @@ pub(crate) mod tests {
     }
 
     use super::*;
-    use transparent_shard::display::TXID_2K8;
+    use transparent_shard::display::{TXID_2K8, TXID_4K8};
     use transparent_shard::layout::{DECOUPLED_2K_8K, DECOUPLED_32K_32K};
 
     /// The masks a table's rows publish, from the whole-table hint over the
@@ -1470,6 +1471,17 @@ pub(crate) mod tests {
         let (reserved, held) = (shared.reserved_bytes(), shared.held_bytes());
         assert_eq!((reserved, held), (151_171_248, 151_171_248));
         assert!((mib(held) - 144.17).abs() < 0.01);
+    }
+
+    /// A `txid-4k8` runtime has twice the rows at the same four blocks: the
+    /// database doubles, the compiled matrices do not, so 160.17 MiB.
+    #[test]
+    fn the_planned_built_size_of_a_txid_4k8_runtime_is_its_reservation() {
+        let shared = SharedParams::build_display(&TXID_4K8, Table::TxDirectory).unwrap();
+        assert_eq!(shared.profile.blocks(), 4);
+        let (reserved, held) = (shared.reserved_bytes(), shared.held_bytes());
+        assert_eq!(reserved, held);
+        assert!((mib(held) - 160.17).abs() < 0.01, "{reserved}");
     }
 
     /// A built runtime, history or display, holds no more than the planned
@@ -1695,6 +1707,17 @@ pub(crate) mod tests {
         let needed = warm_bytes(runtimes, 4);
         assert!((gib(needed) - 26.89).abs() < 0.1, "{}", gib(needed));
         assert_eq!(needed, GENESIS_RUNTIMES as u64 * shared.reserved_bytes());
+        assert!(needed < 32 << 30, "a 32 GiB cache");
+    }
+
+    /// At `txid-4k8` with 180,000-entry archives, genesis coverage is about
+    /// 95 archives, so about 97 runtimes: 15.2 GiB.
+    #[test]
+    fn genesis_txid_4k8_runtimes_fit_at_their_built_size() {
+        let shared = SharedParams::build_display(&TXID_4K8, Table::TxDirectory).unwrap();
+        let gib = |bytes: u64| bytes as f64 / f64::from(1 << 30);
+        let needed = warm_bytes(std::iter::repeat_n(&shared, 97), 4);
+        assert!((gib(needed) - 15.17).abs() < 0.1, "{}", gib(needed));
         assert!(needed < 32 << 30, "a 32 GiB cache");
     }
 

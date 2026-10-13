@@ -10,9 +10,9 @@
 
 use crate::layout::{Geometry, INLINE_EVENTS};
 
-/// The native minimum row count, with two 4,096-byte instances per row:
-/// 72 entries of a row, 38,920 B of dithered upload and about 11.3 KB of
-/// download per query.
+/// The native minimum row count. At the 8-bit profile a row is four
+/// 2,048-byte blocks holding 72 entries: 21,000 B of dithered upload and
+/// 10,256 B of download per query.
 pub const TXID_2K8: Geometry = Geometry {
     name: "txid-2k8",
     directory_rows: 2_048,
@@ -22,7 +22,19 @@ pub const TXID_2K8: Geometry = Geometry {
     inline_events: INLINE_EVENTS,
 };
 
-pub const DISPLAY_PROFILES: &[Geometry] = &[TXID_2K8];
+/// Twice the rows of `txid-2k8` at the same row: 72 entries a row, about
+/// 180,000 entries a table at 61% fill. 28,168 B of dithered upload and the
+/// same 10,256 B of download per query.
+pub const TXID_4K8: Geometry = Geometry {
+    name: "txid-4k8",
+    directory_rows: 4_096,
+    directory_row_bytes: 8_192,
+    page_rows: 4_096,
+    page_row_bytes: 8_192,
+    inline_events: INLINE_EVENTS,
+};
+
+pub const DISPLAY_PROFILES: &[Geometry] = &[TXID_2K8, TXID_4K8];
 
 /// The display geometry named `name`; `None` must be treated as a hard error.
 pub fn display_by_name(name: &str) -> Option<&'static Geometry> {
@@ -46,7 +58,9 @@ mod tests {
         for geometry in crate::layout::PROFILES {
             assert!(display_by_name(geometry.name).is_none());
         }
-        assert_eq!(slots_per_row(TXID_2K8.directory_row_bytes), 72);
-        assert_eq!(TXID_2K8.directory_row_bytes - 72 * ENTRY_BYTES, 56);
+        for geometry in [TXID_2K8, TXID_4K8] {
+            assert_eq!(slots_per_row(geometry.directory_row_bytes), 72);
+            assert_eq!(geometry.directory_row_bytes - 72 * ENTRY_BYTES, 56);
+        }
     }
 }

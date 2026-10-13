@@ -73,7 +73,7 @@ FORMER_RECENT = 'former_recent'
 PHASES = ('stage', 'firewall', 'router-hook', 'workers', 'route', 'controller')
 ACTIONS = ('ingest-start', 'ingest-stop', 'bootstrap', 'verify', 'measure-start', 'measure-stop', 'stop')
 MODES = ('live', 'replay', 'replay-then-live')
-GEOMETRIES = ('txid-2k8',)
+GEOMETRIES = ('txid-2k8', 'txid-4k8')
 # DisplaySealParams plus the map window, as txid-display-controller's seal flags.
 SEAL_KEYS = ('n_archive', 'n_recent', 'archive_target', 'recent_window', 'reorg_margin', 'max_archive_shards')
 MAX_BUCKETS = 64
