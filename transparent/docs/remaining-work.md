@@ -157,6 +157,25 @@ compatibility path; `/v1/txid` (txid-2k) is unchanged.
   (2026-10-13, [status](status.md#txid-display-v2txid-on-the-8-bit-profile-2026-10-13)).
 - [ ] Repin wallet-libraries and Vizor's v12 branch on it.
 
+## Taller txid display tables (`txid-4k8`, proposed)
+
+A 4,096-row display geometry at the same 8,192-byte rows and 61% fill would hold about
+180,000 entries per table instead of 90,000: about 95 archives instead of 189, so about 97
+runtimes of 160.17 MiB, 15.2 GiB instead of 26.9 GiB (growth about 2.2 GiB a year instead of
+3.9), and each lookup hidden among twice the entries. The cost is a 28,168-byte query instead
+of 21,000; replies (10,256 B per segment) and setups (60.1 KB) do not change. It would be a
+new lineage and a breaking wallet repin, like the 8-bit switch. Not started; it waits for a go.
+
+- [ ] Read-only census of the journal copy at `txid-4k8` with `archive_target` and
+  `recent_window` 180,000: first-seed placement rate, overflow segments, archive count.
+- [ ] Build a few `txid-4k8` tables from it and measure runtime memory (planned 160.17 MiB),
+  recent rebuild p95 and query time on the site's host, read-only; certify them at the
+  50-bit floor.
+- [ ] Decide the cutover: a fresh `txid-4k8` bootstrap beside or replacing the `txid-2k8`
+  `/v2/txid` lineage, and the wallet-libraries and Vizor repin.
+
+Not planned with it: other row widths, a two-digit 8-bit key, or any change to `/v1/txid`.
+
 ## Wallet API versions on one origin
 
 `https://transparent-pir.valargroup.dev` serves `/v1/` (schema v11, txid-2k) and `/v2/`
