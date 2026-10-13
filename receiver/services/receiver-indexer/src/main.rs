@@ -998,15 +998,17 @@ mod tests {
     async fn a_publication_reports_the_feed_state_of_its_filters() {
         let reads = std::sync::atomic::AtomicI64::new(NOW - 10);
         let mut paused = Paused::new(move |provider| {
+            use receiver_indexer::near::Feed;
             let read = reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            let feed = receiver_indexer::near::Feed::Payouts.name();
-            provider
-                .record(feed, Some(NOW - 100), &[], &[], NOW - 50, read)
-                .unwrap();
+            for feed in [Feed::Payouts, Feed::Refunds] {
+                provider
+                    .record(feed.name(), Some(NOW - 100), &[], &[], NOW - 50, read)
+                    .unwrap();
+            }
         })
         .await;
         paused.refresh().await.unwrap();
-        // The seen set, the only one with only the payout feed read.
+        // The NEAR sets need both feeds, read together here.
         let until = paused.get("init").await["directory"]["filters"][0]["until_unix"].clone();
         let read = paused.get("health").await["indexer"]["feeds"]["near-payouts"].clone();
         assert_eq!(read, until);

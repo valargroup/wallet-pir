@@ -76,11 +76,12 @@ fn uncheckable_receiver() -> Receiver {
     Receiver::from_bytes(bytes).expect("a valid address")
 }
 
-/// The NEAR filter sets: `near-intents/recent` once both feeds have completed a read,
-/// and `near-intents/seen` once the payout feed has. A feed that never completed a read
-/// contributes no set, so wallets do not mistake its absence for an empty set. Each set
-/// declares when its feeds started and when their last complete read began, the point
-/// from which the recent window reaches back. They are read from one state of `store`.
+/// The NEAR filter sets, `near-intents/recent` and `near-intents/seen`, once both feeds
+/// have completed a read. Both hold payout and refund receivers, so a feed that never
+/// completed a read holds back both, and wallets do not mistake its absence for an empty
+/// set. Each set declares when its feeds started and when their last complete read
+/// began, the point from which the recent window reaches back. They are read from one
+/// state of `store`.
 pub fn provider_sets(store: &ProviderStore) -> Result<Vec<ProviderSet>> {
     store.view(sets_in)
 }
@@ -92,32 +93,30 @@ fn sets_in(store: &ProviderStore) -> Result<Vec<ProviderSet>> {
         let span = store.started(feed.name())?.zip(store.read(feed.name())?);
         Ok(span.filter(|(since, until)| since <= until))
     };
-    let payouts = span(Feed::Payouts)?;
-    let both = payouts
+    let both = span(Feed::Payouts)?
         .zip(span(Feed::Refunds)?)
         .map(|(p, r)| (p.0.max(r.0), p.1.min(r.1)))
         .filter(|(since, until)| since <= until);
-    let (recent, seen) = store.sets(both.map_or(i64::MAX, |(_, until)| until - RECENT_SECS))?;
-    let mut sets = Vec::new();
-    if let Some((since_unix, until_unix)) = both {
-        sets.push(ProviderSet {
+    let Some((since_unix, until_unix)) = both else {
+        return Ok(Vec::new());
+    };
+    let (recent, seen) = store.sets(until_unix - RECENT_SECS)?;
+    Ok(vec![
+        ProviderSet {
             label: format!("{PROVIDER}/{RECENT}"),
             window_secs: Some(RECENT_SECS as u64),
             since_unix,
             until_unix,
             receivers: recent,
-        });
-    }
-    if let Some((since_unix, until_unix)) = payouts {
-        sets.push(ProviderSet {
+        },
+        ProviderSet {
             label: format!("{PROVIDER}/{SEEN}"),
             window_secs: None,
             since_unix,
             until_unix,
             receivers: seen,
-        });
-    }
-    Ok(sets)
+        },
+    ])
 }
 
 /// A digest of every field of `sets` and their receivers in any order, so a
@@ -606,23 +605,41 @@ mod tests {
         store
             .record(payouts, Some(1_000), &[old, recent], &[], until, until + 30)
             .unwrap();
-        let sets = provider_sets(&store).unwrap();
-        assert_eq!(sets.len(), 1);
-        assert_eq!(sets[0].label, "near-intents/seen");
-        assert_eq!(
-            (sets[0].since_unix, sets[0].until_unix),
-            (1_000, until + 30)
-        );
-        // Recent needs both feeds, and reaches back from the older read.
-        let refund = (receiver(3), false, until - 120);
+        // Both sets hold refunds too, so neither is published before that feed reads.
+        assert!(provider_sets(&store).unwrap().is_empty());
+        let old_refund = (receiver(3), false, 1_500);
+        let refund = (receiver(4), false, until - 120);
+        // A receiver given as both a payout and a refund address counts once.
+        let both = (receiver(2), false, until - 90);
         store
-            .record(refunds, Some(2_000), &[refund], &[], until, until)
+            .record(
+                refunds,
+                Some(2_000),
+                &[old_refund, refund, both],
+                &[],
+                until,
+                until,
+            )
             .unwrap();
+        // Each set covers both feeds, and recent reaches back from the older read.
         let sets = provider_sets(&store).unwrap();
-        assert_eq!(sets[0].label, "near-intents/recent");
-        assert_eq!((sets[0].since_unix, sets[0].until_unix), (2_000, until));
-        assert_eq!(sets[0].receivers.len(), 2);
-        assert_eq!(sets[1].receivers.len(), 2);
+        let labels: Vec<_> = sets.iter().map(|set| set.label.as_str()).collect();
+        assert_eq!(labels, ["near-intents/recent", "near-intents/seen"]);
+        for set in &sets {
+            assert_eq!((set.since_unix, set.until_unix), (2_000, until));
+        }
+        let sorted = |mut receivers: Vec<Receiver>| {
+            receivers.sort();
+            receivers
+        };
+        assert_eq!(
+            sorted(sets[0].receivers.clone()),
+            sorted(vec![receiver(2), receiver(4)])
+        );
+        assert_eq!(
+            sorted(sets[1].receivers.clone()),
+            sorted(vec![receiver(1), receiver(2), receiver(3), receiver(4)])
+        );
     }
 
     /// A failed first read, including one over the page bound, records no start, so a
@@ -740,22 +757,26 @@ mod tests {
         // The seen set's declared start.
         let since_unix = |store: &ProviderStore| {
             let sets = provider_sets(store).unwrap();
-            assert_eq!(sets[0].label, "near-intents/seen");
-            sets[0].since_unix
+            assert_eq!(sets[1].label, "near-intents/seen");
+            sets[1].since_unix
         };
-        let mut store = ProviderStore::open(&path).unwrap();
-        Explorer::at(origin.clone())
-            .sync(&mut store, Feed::Payouts, 2_000)
-            .await
-            .unwrap();
+        let sync = |mut store: ProviderStore, since| {
+            let origin = origin.clone();
+            async move {
+                for feed in [Feed::Payouts, Feed::Refunds] {
+                    Explorer::at(origin.clone())
+                        .sync(&mut store, feed, since)
+                        .await
+                        .unwrap();
+                }
+                store
+            }
+        };
+        let mut store = sync(ProviderStore::open(&path).unwrap(), 2_000).await;
         assert_eq!(since_unix(&store), 2_000);
         for since in [1_000, 3_000] {
             drop(store);
-            store = ProviderStore::open(&path).unwrap();
-            Explorer::at(origin.clone())
-                .sync(&mut store, Feed::Payouts, since)
-                .await
-                .unwrap();
+            store = sync(ProviderStore::open(&path).unwrap(), since).await;
             assert_eq!(since_unix(&store), 2_000);
         }
     }

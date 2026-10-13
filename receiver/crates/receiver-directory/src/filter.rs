@@ -4,8 +4,8 @@
 //! Golomb-coded set built with `bitcoin::bip158` as Transparent's filters are. The
 //! directory's own set, [`PAID`], holds every receiver with a payment in the publication.
 //! A swap provider's feed adds `<provider>/recent`, the receivers it was given within a
-//! window, and `<provider>/seen`, every payout receiver it was given since its feed
-//! started; the manifest declares each set (see [`FilterSet`](crate::snapshot::FilterSet)).
+//! window, and `<provider>/seen`, every payout or refund receiver it was given since its
+//! feeds started; the manifest declares each set (see [`FilterSet`](crate::snapshot::FilterSet)).
 //! Wallets use the sets they recognize and ignore the rest. Every wallet downloads the
 //! same bytes, so a test reveals nothing. A match means only that a lookup or a watch may
 //! be worthwhile: a receiver outside a set matches it about once in [`M`] tests, and the
@@ -36,7 +36,8 @@ const MAX_LABEL: usize = 64;
 pub const PAID: &str = "paid";
 /// The kind of a provider set of receivers it was given within a declared window.
 pub const RECENT: &str = "recent";
-/// The kind of a provider set of every payout receiver it was given since its feed started.
+/// The kind of a provider set of every payout or refund receiver it was given since its feeds
+/// started.
 pub const SEEN: &str = "seen";
 
 /// Whether `label` names a set: [`PAID`], or `<provider>/recent` or `<provider>/seen`

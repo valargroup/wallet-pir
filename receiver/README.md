@@ -62,17 +62,19 @@ looking any up. The manifest declares every set's label and size:
 - `paid`: every receiver with a payment in the publication.
 - `<provider>/recent`: every Orchard receiver a swap provider was given within the
   window the manifest declares, as a payout or refund address, in any status.
-- `<provider>/seen`: every Orchard payout address the provider was given since its
-  feed started, which the manifest also declares.
+- `<provider>/seen`: every Orchard receiver the provider was given since its feeds
+  started, which the manifest also declares, as a payout or refund address.
+  Wallets check it before issuing an address, so two devices of one seed don't
+  give the provider the same one.
 
 For each provider set the manifest also declares when the feed's last complete read
 began, so a wallet can tell how current the set is. A recent window reaches back
 from that read.
 
 The indexer publishes `near-intents/recent` (24 hours) and `near-intents/seen`
-from the NEAR Intents explorer, and adds a provider's sets only once its feed
-has completed a read. Wallets use the sets they recognize and ignore the rest,
-so a new provider needs no format change.
+from the NEAR Intents explorer, and adds a provider's sets only once its payout
+and refund feeds have both completed a read. Wallets use the sets they recognize
+and ignore the rest, so a new provider needs no format change.
 
 Sets are built with `bitcoin::bip158`, as Transparent's filters are, with P = 10
 and M = 1,533 and SipHash keys from a domain-separated SHA-256 of the salt, so a
