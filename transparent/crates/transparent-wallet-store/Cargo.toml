@@ -1,20 +1,23 @@
 [package]
 name = "transparent-wallet-store"
-version = "0.1.0-rc.1"
+version = "0.1.0-rc.2"
 edition = "2021"
+description = "SQLite store for transparent PIR wallet recovery progress and history"
+license = "MIT"
+repository = "https://github.com/valargroup/wallet-pir"
 
 [lib]
 name = "transparent_wallet_store"
 path = "src/lib.rs"
 
 [dependencies]
-transparent-shard = { path = "../transparent-shard" }
+transparent-shard = { version = "=0.1.0-rc.2", path = "../transparent-shard" }
 hex = "0.4"
 rusqlite = { version = "0.37", features = ["bundled"] }
 serde_json = "1"
 thiserror = "2"
-transparent-events = { path = "../transparent-events" }
-transparent-wallet = { path = "../transparent-wallet" }
+transparent-events = { version = "=0.1.0-rc.2", path = "../transparent-events" }
+transparent-wallet = { version = "=0.1.0-rc.2", path = "../transparent-wallet" }
 
 [dev-dependencies]
 tempfile = "3"

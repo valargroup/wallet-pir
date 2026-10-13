@@ -1,7 +1,10 @@
 [package]
 name = "transparent-events"
-version = "0.1.0-rc.1"
+version = "0.1.0-rc.2"
 edition = "2021"
+description = "Transparent PIR event records and codecs shared by the publisher, server and wallet"
+license = "MIT"
+repository = "https://github.com/valargroup/wallet-pir"
 
 [lib]
 name = "transparent_events"

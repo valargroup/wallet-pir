@@ -2,8 +2,9 @@
 name = "pir-control"
 version = "0.1.0"
 edition = "2021"
-publish = false
 description = "Process identity, control-lease watchdog and admission shared by the Enhance, Status, Transparent and Receiver PIR services"
+license = "MIT"
+repository = "https://github.com/valargroup/wallet-pir"
 
 [features]
 # HTTP admission primitives; see `src/admission.rs`.

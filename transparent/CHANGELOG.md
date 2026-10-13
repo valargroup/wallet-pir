@@ -7,6 +7,18 @@ Covers the crates a wallet uses to recover transparent history over PIR:
 `transparent-block-server` services. Txid display lookups have their own
 [changelog](CHANGELOG-txid.md). Both are released under one tag.
 
+## 0.1.0-rc.2 — 2026-10-12
+
+First release published to crates.io, so wallets can depend on registry
+versions (`=0.1.0-rc.2`) instead of a git tag. No behaviour changes from
+0.1.0-rc.1.
+
+- The ipir-sp family now comes from crates.io at the same versions:
+  `ipir-sp 0.1.0-rc.7`, `reinspiring 0.1.3-rc.1`. A workspace can hold only one
+  `ipir-sp 0.1.0-rc.*` from crates.io, so anything else in it must use rc.7 too.
+- The shared helpers these crates need, `pir-native`, `pir-control` and
+  `pir-observability`, are published at 0.1.0.
+
 ## 0.1.0-rc.1 — 2026-10-12
 
 First tagged release. Earlier wallet-libraries builds pinned a bare revision;

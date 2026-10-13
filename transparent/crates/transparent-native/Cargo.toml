@@ -1,8 +1,10 @@
 [package]
 name = "transparent-native"
-version = "0.1.0-rc.1"
+version = "0.1.0-rc.2"
 edition = "2021"
 description = "Transparent's native ReinspiRING two-mask m29 PIR profile, shared by the shard server and the wallet"
+license = "MIT"
+repository = "https://github.com/valargroup/wallet-pir"
 
 [lib]
 name = "transparent_native"
@@ -10,13 +12,13 @@ path = "src/lib.rs"
 
 [dependencies]
 hex = "0.4"
-pir-native = { path = "../../../shared/pir-native" }
+pir-native = { version = "=0.1.0", path = "../../../shared/pir-native" }
 rayon = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
 
 [dev-dependencies]
-ipir-sp = { git = "https://github.com/valargroup/ipir-sp.git", tag = "v0.1.0-rc.7", features = ["native-reinspiring"] }
+ipir-sp = { version = "=0.1.0-rc.7", features = ["native-reinspiring"] }
 rand = "0.8"
 rand_chacha = "0.3"

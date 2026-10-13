@@ -2,7 +2,9 @@
 name = "pir-observability"
 version = "0.1.0"
 edition = "2021"
-publish = false
+description = "Metrics and tracing helpers shared by the PIR services"
+license = "MIT"
+repository = "https://github.com/valargroup/wallet-pir"
 
 [dependencies]
 axum = "0.7"

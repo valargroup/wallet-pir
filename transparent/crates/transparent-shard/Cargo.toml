@@ -1,7 +1,10 @@
 [package]
 name = "transparent-shard"
-version = "0.1.0-rc.1"
+version = "0.1.0-rc.2"
 edition = "2021"
+description = "Transparent PIR shard maps, manifests and table codecs"
+license = "MIT"
+repository = "https://github.com/valargroup/wallet-pir"
 
 [lib]
 name = "transparent_shard"
@@ -14,5 +17,5 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
 thiserror = "2"
-transparent-events = { path = "../transparent-events" }
-transparent-filter = { path = "../transparent-filter" }
+transparent-events = { version = "=0.1.0-rc.2", path = "../transparent-events" }
+transparent-filter = { version = "=0.1.0-rc.2", path = "../transparent-filter" }

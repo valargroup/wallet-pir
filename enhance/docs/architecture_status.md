@@ -137,8 +137,9 @@ body's exact length; the in-repo client keeps sending 49 bits, and the
 protocol, magic and manifest are unchanged. The session's public material is 44,544
 bytes: two 29-bit rounded masks per column.
 Hints use exact products modulo 2^54, so sparse incremental updates still apply.
-The independent wallet library implements only q48. The native profile is
-tested with the in-repo client.
+The independent wallet library speaks only the native profile and no longer
+implements q48. The native profile is tested with the in-repo client; q48 has
+no wallet interop test.
 
 The native profile is experimental. The
 [native packing trial](../evidence/reinspiring-production-trial-2026-09-25/README.md)

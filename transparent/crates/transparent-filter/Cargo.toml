@@ -1,7 +1,10 @@
 [package]
 name = "transparent-filter"
-version = "0.1.0-rc.1"
+version = "0.1.0-rc.2"
 edition = "2021"
+description = "Transparent PIR address filters and their client"
+license = "MIT"
+repository = "https://github.com/valargroup/wallet-pir"
 
 [lib]
 name = "transparent_filter"
