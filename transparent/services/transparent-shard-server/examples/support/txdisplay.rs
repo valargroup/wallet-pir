@@ -29,7 +29,7 @@ use transparent_shard::display::{
 use transparent_shard::layout::Geometry;
 use transparent_shard::txid::{self, DisplayEntry, Tag};
 use transparent_shard_server::display::kind;
-use transparent_shard_server::shardset::{setup_seed, Table};
+use transparent_shard_server::shardset::Table;
 
 #[derive(Debug)]
 pub enum LookupError {
@@ -551,7 +551,12 @@ impl DisplayClient {
         if served.scheme != profile.scheme
             || served.rows != table.rows(geometry)
             || served.row_bytes != table.row_bytes(geometry)
-            || served.setup_seed != setup_seed(geometry, table)
+            || served.setup_seed
+                != transparent_shard::display::setup_seed_in(
+                    transparent_shard::display::NATIVE_SCHEMA,
+                    geometry.name,
+                    table.as_str(),
+                )
         {
             return Err(protocol(format!(
                 "served {} parameters for {} differ from the derivation",
