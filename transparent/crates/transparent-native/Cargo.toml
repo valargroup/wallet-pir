@@ -1,6 +1,6 @@
 [package]
 name = "transparent-native"
-version = "0.1.0-rc.2"
+version = "0.1.0-rc.3"
 edition = "2021"
 description = "Transparent's native ReinspiRING two-mask m29 PIR profile, shared by the shard server and the wallet"
 license = "MIT"

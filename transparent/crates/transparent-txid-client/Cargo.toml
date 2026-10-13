@@ -1,6 +1,6 @@
 [package]
 name = "transparent-txid-client"
-version = "0.1.0-rc.2"
+version = "0.1.0-rc.3"
 edition = "2021"
 description = "Synchronous, transport-agnostic wallet client for the tiered txid display PIR publication"
 license = "MIT"
@@ -22,9 +22,9 @@ hex = "0.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
-transparent-events = { version = "=0.1.0-rc.2", path = "../transparent-events" }
-transparent-native = { version = "=0.1.0-rc.2", path = "../transparent-native" }
-transparent-shard = { version = "=0.1.0-rc.2", path = "../transparent-shard" }
+transparent-events = { version = "=0.1.0-rc.3", path = "../transparent-events" }
+transparent-native = { version = "=0.1.0-rc.3", path = "../transparent-native" }
+transparent-shard = { version = "=0.1.0-rc.3", path = "../transparent-shard" }
 
 [dev-dependencies]
 flate2 = "1"

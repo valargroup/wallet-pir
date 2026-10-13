@@ -1,6 +1,6 @@
 [package]
 name = "transparent-wallet"
-version = "0.1.0-rc.2"
+version = "0.1.0-rc.3"
 edition = "2021"
 description = "Wallet-side private recovery of transparent history over PIR"
 license = "MIT"
@@ -18,10 +18,10 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
 thiserror = "2"
-transparent-events = { version = "=0.1.0-rc.2", path = "../transparent-events" }
-transparent-filter = { version = "=0.1.0-rc.2", path = "../transparent-filter" }
-transparent-native = { version = "=0.1.0-rc.2", path = "../transparent-native" }
-transparent-shard = { version = "=0.1.0-rc.2", path = "../transparent-shard" }
+transparent-events = { version = "=0.1.0-rc.3", path = "../transparent-events" }
+transparent-filter = { version = "=0.1.0-rc.3", path = "../transparent-filter" }
+transparent-native = { version = "=0.1.0-rc.3", path = "../transparent-native" }
+transparent-shard = { version = "=0.1.0-rc.3", path = "../transparent-shard" }
 
 [features]
 # Reference HTTP adapters for the shard service and filter origin.

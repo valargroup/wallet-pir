@@ -7,6 +7,11 @@ Covers the crates a wallet uses to recover transparent history over PIR:
 `transparent-block-server` services. Txid display lookups have their own
 [changelog](CHANGELOG-txid.md). Both are released under one tag.
 
+## 0.1.0-rc.3 — 2026-10-13
+
+No history recovery changes; released with the txid display's `txid-4k8`
+tables ([txid changelog](CHANGELOG-txid.md)).
+
 ## 0.1.0-rc.2 — 2026-10-12
 
 First release published to crates.io, so wallets can depend on registry

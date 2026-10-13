@@ -5,6 +5,22 @@ crate, the display tables that `transparent-filter-server`'s txid display
 controller publishes, and the display service in `transparent-shard-server`. History
 recovery has its own [changelog](CHANGELOG.md). Both are released under one tag.
 
+## 0.1.0-rc.3 — 2026-10-13
+
+Taller display tables. Wallets reading `/v2/txid` need this release: the
+service now publishes `txid-4k8` tables, and 0.1.0-rc.2 clients refuse a map
+naming a geometry they do not know.
+
+- **`txid-4k8` geometry.** 4,096 rows of the same 8,192-byte, 72-entry rows,
+  so a table holds about 180,000 entries instead of 90,000 at the same 61%
+  fill. Archives seal at 180,000 entries and the recent window holds the
+  newest 180,000, so every lookup hides among twice as many transactions.
+- **Bytes per lookup.** A query uploads 28,168 bytes instead of 21,000;
+  replies (10,256 bytes per segment) and setups do not change.
+- **Server memory.** A runtime holds 160.17 MiB instead of 144.17 MiB, with
+  about half as many tables: about 15.2 GiB from genesis instead of 26.9 GiB.
+- `txid-2k8` stays in the registry, so a deployment can still serve it.
+
 ## 0.1.0-rc.2 — 2026-10-12
 
 First release published to crates.io, so wallets can depend on registry
