@@ -39,8 +39,8 @@ pub use store::{
     SetupBlob, SetupKey, ShardCommit, StoreError, StoredEvent, WalletStore,
 };
 pub use sync::{
-    sync, sync_into, Completion, GeometryParams, IncompleteReason, ServiceGeometry, SyncError,
-    SyncOutcome, SyncReport, WorkLimits,
+    sync, sync_into, Completion, FailedEntry, GeometryParams, IncompleteReason, ServiceGeometry,
+    SyncError, SyncOutcome, SyncReport, WorkLimits, MAX_CONTENT_FAILURES,
 };
 pub use transport::{
     refusal, ByteCharges, FilterSource, Overloaded, ShardReply, ShardRequest, ShardTransport,

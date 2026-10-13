@@ -24,9 +24,10 @@ use transparent_wallet::store::{
     StoredEvent, WalletStore,
 };
 
-/// Versioned persistence. Schema 6 holds schema-v12 chain walks, saved run
-/// fragments and the run cache; any other version is refused rather than misread or migrated.
-pub const SCHEMA_VERSION: u32 = 6;
+/// Versioned persistence. Schema 7 holds schema-v12 chain walks, saved run
+/// fragments, the run cache and per-entry content failures; any other version
+/// is refused rather than misread or migrated.
+pub const SCHEMA_VERSION: u32 = 7;
 
 /// Default bound on pending page retrievals a commit may leave.
 pub const DEFAULT_PENDING_LIMIT: usize = 4_096;
@@ -119,6 +120,12 @@ CREATE TABLE IF NOT EXISTS filter_cache (
     filter_hash TEXT NOT NULL,
     sealed INTEGER NOT NULL,
     bytes BLOB NOT NULL
+);
+CREATE TABLE IF NOT EXISTS failed_entries (
+    shard_id INTEGER NOT NULL,
+    script BLOB NOT NULL,
+    failures INTEGER NOT NULL,
+    PRIMARY KEY (shard_id, script)
 );
 CREATE TABLE IF NOT EXISTS commits (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -801,6 +808,14 @@ impl WalletStore for SqliteStore {
                 .map_err(io)?;
             }
         }
+        for script in &commit.failed_entries {
+            tx.execute(
+                "INSERT INTO failed_entries (shard_id, script, failures) VALUES (?1, ?2, 1) \
+                 ON CONFLICT(shard_id, script) DO UPDATE SET failures = failures + 1",
+                params![commit.shard_id as i64, script],
+            )
+            .map_err(io)?;
+        }
         let id = Self::record_commit(
             &tx,
             "shard",
@@ -1095,6 +1110,18 @@ impl WalletStore for SqliteStore {
                 row.get::<_, i64>(0)
             })
             .map(|id| id as u64)
+            .map_err(io)
+    }
+
+    fn entry_failures(&self, shard_id: u64, script: &[u8]) -> Result<u32, StoreError> {
+        self.conn
+            .query_row(
+                "SELECT failures FROM failed_entries WHERE shard_id = ?1 AND script = ?2",
+                params![shard_id as i64, script],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()
+            .map(|failures| failures.unwrap_or(0) as u32)
             .map_err(io)
     }
 }

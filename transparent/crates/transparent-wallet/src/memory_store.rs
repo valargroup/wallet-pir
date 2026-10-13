@@ -34,6 +34,8 @@ struct State {
     /// Run histories by page shard identity and script.
     runs: BTreeMap<(String, Vec<u8>), CachedRun>,
     filters: BTreeMap<String, (String, bool, Vec<u8>)>,
+    /// Content failures by shard id and script.
+    failures: BTreeMap<(u64, Vec<u8>), u32>,
     commits: u64,
 }
 
@@ -295,6 +297,13 @@ impl WalletStore for MemoryStore {
                 run.shard_id != commit.shard_id || !commit.covered_scripts.contains(script)
             });
         }
+        for script in commit.failed_entries {
+            *self
+                .state
+                .failures
+                .entry((commit.shard_id, script))
+                .or_default() += 1;
+        }
         for mut pending in commit.pending_upsert {
             let id = match pending.id {
                 Some(id) => id,
@@ -456,5 +465,14 @@ impl WalletStore for MemoryStore {
 
     fn last_commit(&self) -> Result<u64, StoreError> {
         Ok(self.state.commits)
+    }
+
+    fn entry_failures(&self, shard_id: u64, script: &[u8]) -> Result<u32, StoreError> {
+        Ok(self
+            .state
+            .failures
+            .get(&(shard_id, script.to_vec()))
+            .copied()
+            .unwrap_or(0))
     }
 }

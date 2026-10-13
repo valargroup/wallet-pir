@@ -35,7 +35,10 @@ two reference stores pass. The init document is parsed by
 `SyncStatus.completion` is `complete` or the reason the sync stopped:
 `query-budget`, `byte-budget`, `pending-limit`, `overloaded:<shard>`,
 `chain-unknown:<height>`, `publication-behind:<height>`, `unresolved-spends`,
-`discovery-unbounded`. `unresolved-spends` is reported once every script in
+`discovery-unbounded`, `content-failed`. `content-failed` means some directory
+entries' private replies failed to decode or verify; `failed_entries` lists each
+with its failure count, everything else was read, and an entry at three failures
+is no longer queried. `unresolved-spends` is reported once every script in
 scope is covered to the target and a spend's receive lies below the wallet's
 floor; the anchor does not commit for it, so every later run re-verifies
 against the target. A wallet may add words of its own for states the library

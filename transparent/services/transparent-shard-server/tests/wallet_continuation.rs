@@ -542,6 +542,9 @@ impl<S: WalletStore> WalletStore for CrashAt<S> {
     fn last_commit(&self) -> Result<u64, StoreError> {
         self.inner.last_commit()
     }
+    fn entry_failures(&self, shard_id: u64, script: &[u8]) -> Result<u32, StoreError> {
+        self.inner.entry_failures(shard_id, script)
+    }
 }
 
 /// A crash on either side of the directory commit that records page work

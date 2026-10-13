@@ -7,6 +7,29 @@ Covers the crates a wallet uses to recover transparent history over PIR:
 `transparent-block-server` services. Txid display lookups have their own
 [changelog](CHANGELOG-txid.md). Both are released under one tag.
 
+## Unreleased
+
+Versions are `0.1.0-rc.4`; not yet published.
+
+- **A bad reply fails one entry, not the sync.** A private reply that fails
+  to decode or verify, a page link outside the shard's tables, or a record
+  that contradicts the store now fails one directory entry (one script in
+  one shard), reported as `SyncError::Content` where it cannot be. The walk
+  finishes every other planned query in the same order: each script's
+  directory queries are all sent before any is decoded, the shard's commit
+  still lands for its other scripts, and a failed page walk sends only the
+  dummy queries valid replies had committed it to. A malformed map or
+  manifest, a broken filter and a lost answer still stop the sync.
+- **Three failures, then the entry is held.** The store counts content
+  failures per (shard, script) and never resets them: `WalletStore` gains
+  `entry_failures`, and `ShardCommit` gains `failed_entries`. An entry at
+  `MAX_CONTENT_FAILURES` (3) is not queried again. `SyncReport` and
+  `SyncStatus` list `failed_entries`, and an incomplete sync they explain
+  reports `IncompleteReason::ContentFailed` (`content-failed`). Request
+  failures (refusals, overload, stale revisions) do not count.
+- **Store schema 7, no migration.** `transparent-wallet-store` adds the
+  failure counts and refuses a schema 6 store, which must be recreated.
+
 ## 0.1.0-rc.3 — 2026-10-13
 
 No history recovery changes; released with the txid display's `txid-4k8`

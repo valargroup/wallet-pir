@@ -89,6 +89,18 @@ pub enum SyncError {
     AnchorRegressed { stored: u64, offered: u64 },
     #[error("{0}")]
     Invalid(String),
+    /// A private reply failed on content: it did not decode or verify, a
+    /// record or link in it was not what the shard declares, or it
+    /// contradicts what the store holds.
+    ///
+    /// A sync does not stop for one: it fails the directory entry the reply
+    /// was for, finishes everything else, counts the failure in the store
+    /// and reports [`IncompleteReason::ContentFailed`]; see
+    /// [`retrieve_shard_into`] and [`walk_chains`]. It reaches a caller from
+    /// the one-shot [`sync`], which has no store to count it in, and when a
+    /// contradiction cannot be laid at one entry's door.
+    #[error("content: {0}")]
+    Content(String),
     #[error("service serves schema {served}, this build reads {expected}")]
     Schema {
         served: String,
@@ -210,6 +222,14 @@ const OVERLOAD_BACKOFF_CAP: Duration = Duration::from_secs(2);
 /// gap-limit advance that never converges is a wallet fault; this stops it
 /// from becoming an unbounded sync.
 const MAX_DISCOVERY_PASSES: u32 = 16;
+
+/// Content failures after which a directory entry is no longer queried.
+///
+/// A service can aim a bad reply at chosen rows and watch what the wallet
+/// does next. Each failure changes later traffic once (the entry is asked
+/// again, then not), so this is how many such observations an entry gives
+/// away; a service could deny the entry service anyway by corrupting it.
+pub const MAX_CONTENT_FAILURES: u32 = 3;
 
 /// One geometry's parameters, as a service declares them.
 ///
@@ -406,6 +426,10 @@ pub enum IncompleteReason {
     },
     /// The wallet's rules kept adding scripts past the pass bound.
     DiscoveryUnbounded,
+    /// Coverage stops short at directory entries whose replies failed on
+    /// content; [`SyncReport::failed_entries`] lists them. Everything else
+    /// was read and committed.
+    ContentFailed,
     PublicationBehind {
         height: u64,
     },
@@ -447,6 +471,19 @@ pub struct SyncReport {
     pub scripts_added: usize,
     /// Store commits this sync made.
     pub commits: u64,
+    /// Directory entries this sync failed on content or held back because
+    /// they had failed [`MAX_CONTENT_FAILURES`] times, by shard and script.
+    pub failed_entries: Vec<FailedEntry>,
+}
+
+/// One script's directory entry in one shard that failed on content.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FailedEntry {
+    pub shard_id: u64,
+    pub script: Vec<u8>,
+    /// Content failures the store holds for the entry, this sync's included.
+    /// At [`MAX_CONTENT_FAILURES`] the entry is no longer queried.
+    pub failures: u32,
 }
 
 /// Runs one sync from `birthday` to the explicit wallet-accepted target.
@@ -511,6 +548,13 @@ pub fn sync(
             shard_id,
             attempts: MAX_OVERLOAD_ATTEMPTS,
         }),
+        Completion::Incomplete {
+            reason: IncompleteReason::ContentFailed,
+            ..
+        } => Err(SyncError::Content(format!(
+            "replies failed for {} directory entries",
+            report.failed_entries.len()
+        ))),
         Completion::Incomplete { reason, .. } => Err(SyncError::Invalid(format!(
             "the sync stopped short: {reason:?}"
         ))),
@@ -865,6 +909,7 @@ pub fn sync_into<S: WalletStore>(
     let mut held_map_digest: Option<String> = None;
     let mut active: Cow<'_, ShardMap> = Cow::Borrowed(map);
     let mut completion = Completion::Complete;
+    let mut failed: Vec<FailedEntry> = Vec::new();
 
     'passes: for pass in 0..=MAX_DISCOVERY_PASSES {
         if pass == MAX_DISCOVERY_PASSES {
@@ -887,7 +932,19 @@ pub fn sync_into<S: WalletStore>(
                 .or_default()
                 .push(item);
         }
-        for ((shard_id, digest), items) in by_revision {
+        for ((shard_id, digest), mut items) in by_revision {
+            // An entry that failed earlier in this sync, or too often, is
+            // not walked again.
+            let mut kept = Vec::with_capacity(items.len());
+            for item in items {
+                if !hold(store, &mut failed, shard_id, &item.script)? {
+                    kept.push(item);
+                }
+            }
+            items = kept;
+            if items.is_empty() {
+                continue;
+            }
             let Some(entry) = active.shards.get(shard_id as usize) else {
                 continue;
             };
@@ -920,6 +977,7 @@ pub fn sync_into<S: WalletStore>(
                         limits,
                         target_anchor,
                         chain,
+                        &mut failed,
                     )
                 },
             );
@@ -1006,6 +1064,7 @@ pub fn sync_into<S: WalletStore>(
                 transport,
                 target_anchor,
                 chain,
+                &failed,
             )?;
         }
         let mut position = 0usize;
@@ -1031,6 +1090,7 @@ pub fn sync_into<S: WalletStore>(
                 limits,
                 target_anchor,
                 chain,
+                &mut failed,
             );
             match result {
                 Ok(ShardRead::Done { matched }) => {
@@ -1149,8 +1209,13 @@ pub fn sync_into<S: WalletStore>(
         coverage_summary(store, &active, target_anchor.height)?;
     if completion == Completion::Complete {
         if covered_through < target_anchor.height {
+            // A failed entry leaves its script uncovered over its shard.
             completion = Completion::Incomplete {
-                reason: IncompleteReason::DiscoveryUnbounded,
+                reason: if failed.is_empty() {
+                    IncompleteReason::DiscoveryUnbounded
+                } else {
+                    IncompleteReason::ContentFailed
+                },
                 pending: store.pending()?.len(),
             };
         } else if !store.pending()?.is_empty() {
@@ -1168,6 +1233,7 @@ pub fn sync_into<S: WalletStore>(
         }
     }
     matched_shards.sort_unstable();
+    failed.sort_by(|a, b| (a.shard_id, &a.script).cmp(&(b.shard_id, &b.script)));
     Ok(SyncReport {
         ledger: store.ledger()?,
         charges,
@@ -1182,6 +1248,7 @@ pub fn sync_into<S: WalletStore>(
         replaced_revisions,
         scripts_added,
         commits: store.last_commit()? - first_commit,
+        failed_entries: failed,
     })
 }
 
@@ -1469,6 +1536,7 @@ fn read_shard_into<S: WalletStore>(
     limits: &WorkLimits,
     target_anchor: &Anchor,
     chain: &impl ChainView,
+    failed: &mut Vec<FailedEntry>,
 ) -> Result<ShardRead, SyncError> {
     let endpoint = endpoint_of(entry, target_anchor);
     match chain.is_accepted(endpoint.height, &endpoint.hash) {
@@ -1556,6 +1624,7 @@ fn read_shard_into<S: WalletStore>(
                 pending_upsert: Vec::new(),
                 pending_complete: Vec::new(),
                 cached_runs: Vec::new(),
+                failed_entries: Vec::new(),
             },
         )?;
         return Ok(ShardRead::Done {
@@ -1567,12 +1636,42 @@ fn read_shard_into<S: WalletStore>(
     if transparent_shard::layout::by_name(&entry.geometry).is_none() {
         return Err(SyncError::UnknownGeometry(entry.geometry.clone()));
     }
-    let matched_scripts: Vec<Vec<u8>> = matches.iter().map(|&i| scripts[i].clone()).collect();
+    let matched_all: Vec<Vec<u8>> = matches.iter().map(|&i| scripts[i].clone()).collect();
     let unmatched: Vec<Vec<u8>> = scripts
         .iter()
-        .filter(|script| !matched_scripts.contains(script))
+        .filter(|script| !matched_all.contains(script))
         .cloned()
         .collect();
+    // An entry held out of this sync is not queried at all, and stays
+    // uncovered over this shard.
+    let mut matched_scripts = Vec::with_capacity(matched_all.len());
+    for script in matched_all {
+        if !hold(store, failed, entry.shard_id, &script)? {
+            matched_scripts.push(script);
+        }
+    }
+    if matched_scripts.is_empty() {
+        if !unmatched.is_empty() {
+            commit_bounded(
+                store,
+                target_anchor,
+                ShardCommit {
+                    source_anchor: None,
+                    shard_id: entry.shard_id,
+                    revision_digest: entry.manifest_digest.clone(),
+                    sealed: entry.sealed,
+                    start_height: entry.start_height,
+                    end_height: entry.end_height,
+                    terminal_block_hash: entry.terminal_block_hash.clone(),
+                    covered_scripts: unmatched,
+                    ..Default::default()
+                },
+            )?;
+        }
+        return Ok(ShardRead::Done {
+            matched: Vec::new(),
+        });
+    }
 
     let outcome = with_refusals(
         store,
@@ -1603,6 +1702,7 @@ fn read_shard_into<S: WalletStore>(
                 limits,
                 target_anchor,
                 chain,
+                failed,
             )
         },
     )?;
@@ -1615,6 +1715,12 @@ fn read_shard_into<S: WalletStore>(
             let mut unproductive = 0u64;
             let events = store.events()?;
             for script in &matched_scripts {
+                if failed
+                    .iter()
+                    .any(|held| held.shard_id == entry.shard_id && held.script == *script)
+                {
+                    continue;
+                }
                 if holds_history(&events, script, entry, target_anchor.height) {
                     found.push(script.clone());
                 } else {
@@ -2090,6 +2196,13 @@ fn tag_salt_of(manifest: &ShardManifest) -> Result<[u8; 32], SyncError> {
 
 /// The directory phase for one shard: the candidate rows for every matched
 /// script, inline events committed, chain walks recorded; then the walks.
+///
+/// A script whose replies fail on content fails its entry alone: it gets no
+/// coverage and no walk, as an entry with inline history or a false-positive
+/// match sends no pages either, and the shard's one commit still lands for
+/// every other script, counting the failure. Every directory query planned for
+/// a script is sent before any of its replies is decoded, so the queries sent
+/// are the same whatever came back, and in the order a lookahead stashed them.
 #[allow(clippy::too_many_arguments)]
 fn retrieve_shard_into<S: WalletStore, T: ShardTransport>(
     store: &mut S,
@@ -2105,12 +2218,12 @@ fn retrieve_shard_into<S: WalletStore, T: ShardTransport>(
     limits: &WorkLimits,
     target_anchor: &Anchor,
     chain: &impl ChainView,
+    failed: &mut Vec<FailedEntry>,
 ) -> Result<Option<Completion>, SyncError> {
     let shard_id = entry.shard_id;
     let geometry = transparent_shard::layout::by_name(&entry.geometry)
         .ok_or_else(|| SyncError::UnknownGeometry(entry.geometry.clone()))?;
     let revision = entry.manifest_digest.as_str();
-    let children = manifest.page_children.len() as u32;
     // An overload can occur after the directory commit but before the walks
     // finish. with_refusals calls this function again on retry. Resume those
     // durable walks first: rediscovering their directories would enqueue
@@ -2120,18 +2233,25 @@ fn retrieve_shard_into<S: WalletStore, T: ShardTransport>(
         .into_iter()
         .filter(|p| p.shard_id == shard_id && p.revision_digest == revision)
         .collect();
-    if !pending.is_empty() {
+    let mut resumed = Vec::with_capacity(pending.len());
+    for item in &pending {
+        if !held(store, failed, shard_id, &item.script)? {
+            resumed.push(item.clone());
+        }
+    }
+    if !resumed.is_empty() {
         if let Some(stopped) = finish_pages(
             store,
             entry,
             manifest,
-            &pending,
+            &resumed,
             clients,
             transport,
             charges,
             limits,
             target_anchor,
             chain,
+            failed,
         )? {
             return Ok(Some(stopped));
         }
@@ -2171,6 +2291,7 @@ fn retrieve_shard_into<S: WalletStore, T: ShardTransport>(
     let mut events: Vec<StoredEvent> = Vec::new();
     let mut covered: Vec<Vec<u8>> = unmatched.to_vec();
     let mut pending_upsert: Vec<PendingPages> = Vec::new();
+    let mut failed_here: Vec<Vec<u8>> = Vec::new();
 
     for script in matched {
         // With a published choice table, exactly the one candidate row it
@@ -2181,17 +2302,17 @@ fn retrieve_shard_into<S: WalletStore, T: ShardTransport>(
         // taken over the shard's whole logical row space; each names one row
         // within a segment, and every segment answers it.
         let wanted = transparent_shard::script_tag(salt, script);
-        let mut found: Option<(u64, DirectoryEntry)> = None;
         let rows = geometry.directory_rows * entry.directory_segments as u64;
         let candidates = candidate_rows(shard_id, script, rows);
         let queried: &[u64] = match choice {
             Some(table) => std::slice::from_ref(&candidates[table.choice(shard_id, script)]),
             None => &candidates,
         };
+        let mut replies = Vec::with_capacity(queried.len());
         for &row in queried {
             let (_, within) = transparent_shard::layout::split_row(row, geometry.directory_rows);
             let directory_rows = clients.directory.rows();
-            let answers = clients.directory.fetch_row(
+            let answer = clients.directory.fetch_row(
                 transport,
                 shard_id,
                 revision,
@@ -2200,31 +2321,18 @@ fn retrieve_shard_into<S: WalletStore, T: ShardTransport>(
                 directory_rows,
                 within as usize,
                 charges,
-            )?;
-            for raw in answers {
-                for candidate in transparent_shard::records::decode_directory_row(&raw, children)? {
-                    // The row is selected by a hash of the raw script. The tag
-                    // derived from this manifest's salt is what settles a hit.
-                    // A tag from any other salt does not match.
-                    if candidate.tag == wanted {
-                        match &found {
-                            // The two candidate hashes can name the same row.
-                            // The row is still fetched twice, so the query
-                            // count does not depend on the script, and the
-                            // second sighting is the same entry, not a second.
-                            Some((seen_row, _)) if *seen_row == row => {}
-                            Some(_) => {
-                                return Err(SyncError::Invalid(format!(
-                                    "shard {shard_id} holds a script tag twice"
-                                )));
-                            }
-                            None => found = Some((row, candidate)),
-                        }
-                    }
-                }
-            }
+            );
+            replies.push((row, reply_of(answer)?));
         }
-        match found.map(|(_, entry)| entry) {
+        let found = match entry_in(entry, manifest, geometry, &wanted, &replies) {
+            Ok(found) => found,
+            Err(SyncError::Content(_)) => {
+                failed_here.push(script.clone());
+                continue;
+            }
+            Err(other) => return Err(other),
+        };
+        match found {
             // A filter match with no directory entry is either a false positive
             // or a script outside the private tables' coverage. Both are
             // wasted work rather than errors; coverage still advances.
@@ -2282,8 +2390,12 @@ fn retrieve_shard_into<S: WalletStore, T: ShardTransport>(
             pending_upsert,
             pending_complete: Vec::new(),
             cached_runs: Vec::new(),
+            failed_entries: failed_here.clone(),
         },
     )?;
+    for script in &failed_here {
+        record_failure(store, failed, shard_id, script)?;
+    }
     let owed: Vec<PendingPages> = store
         .pending()?
         .into_iter()
@@ -2307,7 +2419,67 @@ fn retrieve_shard_into<S: WalletStore, T: ShardTransport>(
         limits,
         target_anchor,
         chain,
+        failed,
     )
+}
+
+/// The entry tagged `wanted` among the replies to one script's candidate
+/// rows, if there is one, checked as far as it can be before a page is read:
+/// every reply decodes, the tag is in at most one row, the inline events lie
+/// in the shard, and the run it points to is a row a page query can select.
+/// Any of these failing is a content failure of the entry.
+fn entry_in(
+    entry: &transparent_filter::ShardMapEntry,
+    manifest: &ShardManifest,
+    geometry: &transparent_shard::layout::Geometry,
+    wanted: &[u8],
+    replies: &[(u64, Reply)],
+) -> Result<Option<DirectoryEntry>, SyncError> {
+    let shard_id = entry.shard_id;
+    let children = manifest.page_children.len() as u32;
+    let mut found: Option<(u64, DirectoryEntry)> = None;
+    for (row, reply) in replies {
+        for raw in content_of(reply)? {
+            let decoded = transparent_shard::records::decode_directory_row(raw, children)
+                .map_err(|error| SyncError::Content(format!("shard {shard_id}: {error}")))?;
+            for candidate in decoded {
+                // The row is selected by a hash of the raw script. The tag
+                // derived from this manifest's salt is what settles a hit.
+                // A tag from any other salt does not match.
+                if candidate.tag[..] != *wanted {
+                    continue;
+                }
+                match &found {
+                    // The two candidate hashes can name the same row. The row
+                    // is still fetched twice, so the query count does not
+                    // depend on the script, and the second sighting is the
+                    // same entry, not a second.
+                    Some((seen_row, _)) if seen_row == row => {}
+                    Some(_) => {
+                        return Err(SyncError::Content(format!(
+                            "shard {shard_id} holds a script tag twice"
+                        )));
+                    }
+                    None => found = Some((*row, candidate)),
+                }
+            }
+        }
+    }
+    let Some((_, found)) = found else {
+        return Ok(None);
+    };
+    if found.inline.iter().any(|event| {
+        let height = event_height(event);
+        height < entry.start_height || height > entry.end_height
+    }) {
+        return Err(SyncError::Content(format!(
+            "shard {shard_id} holds an inline event outside its range"
+        )));
+    }
+    if let Some((child, row)) = found.head() {
+        locate(manifest, geometry, shard_id, child, u64::from(row))?;
+    }
+    Ok(Some(found))
 }
 
 /// Walks the chains still owed for one directory shard revision, privately.
@@ -2326,6 +2498,7 @@ fn finish_pages<S: WalletStore, T: ShardTransport>(
     limits: &WorkLimits,
     target_anchor: &Anchor,
     chain: &impl ChainView,
+    failed: &mut Vec<FailedEntry>,
 ) -> Result<Option<Completion>, SyncError> {
     if entry.end_height < target_anchor.height {
         match chain.is_accepted(entry.end_height, &entry.terminal_block_hash) {
@@ -2353,7 +2526,15 @@ fn finish_pages<S: WalletStore, T: ShardTransport>(
         charges,
         limits,
     };
-    walk_chains(store, entry, manifest, owed, &mut rows, target_anchor)
+    walk_chains(
+        store,
+        entry,
+        manifest,
+        owed,
+        &mut rows,
+        target_anchor,
+        failed,
+    )
 }
 
 /// One page row a walk asks for: page shard `child`, and a row over its
@@ -2364,17 +2545,44 @@ struct RowRequest {
     row: u64,
 }
 
+/// One private reply as a walk takes it: a row from every table segment, or
+/// why the reply failed on content. A request the service refused, or that
+/// failed in transit, is not a reply; it fails the round.
+type Reply = Result<Vec<Vec<u8>>, String>;
+
+/// A fetched row as a [`Reply`], or the request's own failure.
+fn reply_of(answer: Result<Vec<Vec<u8>>, ClientError>) -> Result<Reply, SyncError> {
+    match answer {
+        Ok(rows) => Ok(Ok(rows)),
+        Err(ClientError::Response(why)) => Ok(Err(format!("reply: {why}"))),
+        Err(other) => Err(SyncError::Client(other)),
+    }
+}
+
+/// A reply's rows, or its content failure.
+fn content_of(reply: &Reply) -> Result<&[Vec<u8>], SyncError> {
+    reply
+        .as_deref()
+        .map_err(|why| SyncError::Content(why.clone()))
+}
+
 /// Where a walk's page rows come from: privately, or in tests, directly.
 trait RowSource {
     /// Why the walk must stop before another round, if it must.
     fn stopped(&self) -> Option<IncompleteReason>;
-    /// Answers for a prefix of the requests, in order. A budget may stop
-    /// dispatch between requests; each answer contains every table segment.
+    /// Replies for a prefix of the requests, in order. A budget may stop
+    /// dispatch between requests; each reply contains every table segment.
     fn fetch<S: WalletStore>(
         &mut self,
         store: &mut S,
         requests: &[RowRequest],
-    ) -> Result<Vec<Vec<Vec<u8>>>, SyncError>;
+    ) -> Result<Vec<Reply>, SyncError>;
+    /// A query whose reply is not read: row 0 of page shard `child`. Every
+    /// query to a table selects among the same rows, so it is the length of
+    /// any other query to that table, and the service cannot tell it apart.
+    fn dummy(&self, child: u32) -> RowRequest {
+        RowRequest { child, row: 0 }
+    }
 }
 
 /// Page rows by private query against one directory shard revision.
@@ -2399,7 +2607,7 @@ impl<T: ShardTransport> RowSource for PirRows<'_, T> {
         &mut self,
         store: &mut S,
         requests: &[RowRequest],
-    ) -> Result<Vec<Vec<Vec<u8>>>, SyncError> {
+    ) -> Result<Vec<Reply>, SyncError> {
         let shard_id = self.entry.shard_id;
         let revision = self.entry.manifest_digest.as_str();
         let geometry = transparent_shard::layout::by_name(&self.entry.geometry)
@@ -2448,7 +2656,7 @@ impl<T: ShardTransport> RowSource for PirRows<'_, T> {
             let mut answers = Vec::with_capacity(planned.len());
             if self.transport.concurrency() <= 1 || planned.len() <= 1 {
                 for (table, segments, query_rows, within) in planned {
-                    answers.push(self.client.fetch_row(
+                    answers.push(reply_of(self.client.fetch_row(
                         self.transport,
                         shard_id,
                         revision,
@@ -2457,7 +2665,7 @@ impl<T: ShardTransport> RowSource for PirRows<'_, T> {
                         query_rows,
                         within,
                         self.charges,
-                    )?);
+                    ))?);
                 }
                 return Ok(answers);
             }
@@ -2490,13 +2698,13 @@ impl<T: ShardTransport> RowSource for PirRows<'_, T> {
                             query.body.len() as u64,
                             response.len() as u64,
                         );
-                        answers.push(
+                        answers.push(reply_of(
                             self.client
-                                .decode(revision, table, segments, query, &response)?,
-                        );
+                                .decode(revision, table, segments, query, &response),
+                        )?);
                     }
                     Some(Err(error)) => return Err(SyncError::Client(classify_transport(error))),
-                    None => answers.push(self.client.fetch_row(
+                    None => answers.push(reply_of(self.client.fetch_row(
                         self.transport,
                         shard_id,
                         revision,
@@ -2505,7 +2713,7 @@ impl<T: ShardTransport> RowSource for PirRows<'_, T> {
                         query_rows,
                         within,
                         self.charges,
-                    )?),
+                    ))?),
                 }
             }
             return Ok(answers);
@@ -2541,7 +2749,7 @@ impl<T: ShardTransport> RowSource for PirRows<'_, T> {
                 break;
             }
             let (_, within) = transparent_shard::layout::split_row(request.row, geometry.page_rows);
-            answers.push(self.client.fetch_row(
+            answers.push(reply_of(self.client.fetch_row(
                 self.transport,
                 shard_id,
                 revision,
@@ -2550,7 +2758,7 @@ impl<T: ShardTransport> RowSource for PirRows<'_, T> {
                 child.query_rows() as usize,
                 within as usize,
                 self.charges,
-            )?);
+            ))?);
         }
         Ok(answers)
     }
@@ -2569,6 +2777,28 @@ struct Walk {
     /// shard: what the run cache is filled from once the walk ends.
     walked: Vec<(u8, Vec<TransparentEvent>)>,
     done: bool,
+    /// After a content failure: the page shard and number of queries the
+    /// walk had committed to and not sent, sent as dummies in the next round,
+    /// after which the walk ends.
+    dummies: Option<(u8, u32)>,
+}
+
+/// A walk's failure, with the queries valid replies had already committed it
+/// to: `dummies` of them, to page shard `child`.
+struct Failure {
+    error: SyncError,
+    child: u8,
+    dummies: u32,
+}
+
+impl From<SyncError> for Failure {
+    fn from(error: SyncError) -> Self {
+        Self {
+            error,
+            child: 0,
+            dummies: 0,
+        }
+    }
 }
 
 /// Walks the chains of runs `owed` describes, all scripts' rounds together,
@@ -2580,13 +2810,22 @@ struct Walk {
 /// checking the next request's budget. A walk reaching a cached sealed run
 /// stops there and takes that history.
 ///
-/// Refused, as protocol errors: a link to the same or a later page shard;
+/// Refused, as content failures: a link to the same or a later page shard;
 /// an `older_runs` that does not drop by exactly one per hop, which is how a
 /// chain cut short or extended shows; fragments out of ordinal, count or
 /// greedy boundary; events not strictly increasing from the oldest run into
 /// the inline events; and an event in a page shard other than the one open
 /// when it was pushed out — the event two places after it must lie in that
 /// page shard's range.
+///
+/// A content failure fails its walk alone; the other walks finish. The failed
+/// walk keeps its pending item, so a later sync retries it, and the failure is
+/// counted against the entry. It still sends what valid replies had already
+/// committed it to, the fragments of its current run not yet asked for, as
+/// dummy queries to that run's page shard, and then nothing. A run whose link
+/// names a page shard the manifest does not declare, or a row outside that
+/// table, sends one dummy to its own page shard in the link's place. Nothing
+/// that depends on the bad reply is sent.
 fn walk_chains<S: WalletStore, R: RowSource>(
     store: &mut S,
     entry: &transparent_filter::ShardMapEntry,
@@ -2594,6 +2833,7 @@ fn walk_chains<S: WalletStore, R: RowSource>(
     owed: &[PendingPages],
     rows: &mut R,
     target_anchor: &Anchor,
+    failed: &mut Vec<FailedEntry>,
 ) -> Result<Option<Completion>, SyncError> {
     let geometry = transparent_shard::layout::by_name(&entry.geometry)
         .ok_or_else(|| SyncError::UnknownGeometry(entry.geometry.clone()))?;
@@ -2620,57 +2860,65 @@ fn walk_chains<S: WalletStore, R: RowSource>(
         salts: &salts,
         target_anchor,
     };
-    let mut walks: Vec<Walk> = owed
-        .iter()
-        .map(|item| {
-            let head = item
-                .fragments
-                .first()
-                .map(|raw| {
-                    let head = walker.fragment(
-                        &item.script,
-                        item.cursor.child,
-                        std::slice::from_ref(raw),
-                        0,
-                        None,
-                    )?;
-                    check_head(&head, &item.cursor)?;
-                    Ok::<_, SyncError>(head)
-                })
-                .transpose()?;
-            Ok(Walk {
-                item: item.clone(),
-                head,
-                walked: Vec::new(),
-                done: false,
-            })
-        })
-        .collect::<Result<_, SyncError>>()?;
+    let mut walks: Vec<Walk> = Vec::with_capacity(owed.len());
+    for item in owed {
+        let mut walk = Walk {
+            item: item.clone(),
+            head: None,
+            walked: Vec::new(),
+            done: false,
+            dummies: None,
+        };
+        if let Some(raw) = item.fragments.first() {
+            let head = walker
+                .fragment(
+                    &item.script,
+                    item.cursor.child,
+                    std::slice::from_ref(raw),
+                    0,
+                    None,
+                )
+                .map_err(Failure::from)
+                .and_then(|head| {
+                    walker.check_located(&head, &item.cursor, item.fragments.len())?;
+                    Ok(head)
+                });
+            match head {
+                Ok(head) => walk.head = Some(head),
+                Err(failure) => walker.fail(store, &mut walk, failed, failure)?,
+            }
+        }
+        walks.push(walk);
+    }
     loop {
         // A walk at a run the store holds history for stops there.
-        for walk in walks.iter_mut().filter(|w| !w.done && w.head.is_none()) {
+        for walk in walks
+            .iter_mut()
+            .filter(|w| !w.done && w.dummies.is_none() && w.head.is_none())
+        {
             let child = walk.item.cursor.child;
-            if let Some(older) = walker.cached(store, &walk.item.script, child)? {
-                walker.finish(store, walk, Vec::new(), Some((child, older)))?;
+            let stopped = match walker.cached(store, &walk.item.script, child) {
+                Ok(Some(older)) => walker.finish(store, walk, Vec::new(), Some((child, older))),
+                Ok(None) => Ok(()),
+                Err(error) => Err(error),
+            };
+            if let Err(error) = stopped {
+                walker.fail(store, walk, failed, error.into())?;
             }
         }
         if walks.iter().all(|walk| walk.done) {
             return Ok(None);
         }
         if rows.stopped().is_some() {
-            for walk in walks.iter_mut().filter(|w| !w.done) {
+            for walk in walks.iter_mut().filter(|w| !w.done && w.dummies.is_none()) {
                 if walk
                     .head
                     .as_ref()
                     .is_some_and(|head| walk.item.fragments.len() == head.fragment_count as usize)
                 {
-                    let older = match walk.head.as_ref().unwrap().link.previous() {
-                        Some((child, _)) => walker
-                            .cached(store, &walk.item.script, child)?
-                            .map(|events| (child, events)),
-                        None => None,
-                    };
-                    walker.advance(store, walk, &[], older)?;
+                    if let Err(failure) = walker.complete(store, walk) {
+                        walker.fail(store, walk, failed, failure)?;
+                    }
                 }
             }
             if walks.iter().all(|walk| walk.done) {
@@ -2687,28 +2935,20 @@ fn walk_chains<S: WalletStore, R: RowSource>(
         // This round's rows, every walk's together.
         let mut requests: Vec<RowRequest> = Vec::new();
         let mut spans: Vec<(usize, usize, Option<CachedBelow>)> = Vec::new();
-        for walk in &walks {
+        for walk in walks.iter_mut() {
             let start = requests.len();
             let mut older = None;
-            if !walk.done {
-                let cursor = walk.item.cursor;
-                match &walk.head {
-                    None => requests.push(walker.locate(cursor.child, u64::from(cursor.row))?),
-                    Some(head) => {
-                        for ordinal in walk.item.fragments.len() as u32..head.fragment_count {
-                            let row = u64::from(cursor.row) + u64::from(ordinal);
-                            requests.push(walker.locate(cursor.child, row)?);
-                        }
-                        if let Some((child, row)) = head.link.previous() {
-                            older = walker
-                                .cached(store, &walk.item.script, child)?
-                                .map(|events| (child, events));
-                            if older.is_none() {
-                                requests.push(walker.locate(child, u64::from(row))?);
-                            }
-                        }
+            if walk.dummies.is_none() && !walk.done {
+                match walker.plan(store, walk) {
+                    Ok((planned, below)) => {
+                        requests.extend(planned);
+                        older = below;
                     }
+                    Err(error) => walker.fail(store, walk, failed, error.into())?,
                 }
+            }
+            if let Some((child, count)) = walk.dummies {
+                requests.extend((0..count).map(|_| rows.dummy(u32::from(child))));
             }
             spans.push((start, requests.len(), older));
         }
@@ -2719,7 +2959,16 @@ fn walk_chains<S: WalletStore, R: RowSource>(
             return Err(SyncError::Invalid("a round lost an answer".into()));
         }
         for (walk, (start, end, older)) in walks.iter_mut().zip(spans) {
-            if walk.done || start >= answers.len() && start != end {
+            if walk.done {
+                continue;
+            }
+            // A failed walk's dummies were this round's; their replies are
+            // not read, and the walk ends.
+            if walk.dummies.take().is_some() {
+                walk.done = true;
+                continue;
+            }
+            if start >= answers.len() && start != end {
                 continue;
             }
             let available = if start == end {
@@ -2727,7 +2976,9 @@ fn walk_chains<S: WalletStore, R: RowSource>(
             } else {
                 &answers[start..end.min(answers.len())]
             };
-            walker.advance(store, walk, available, older)?;
+            if let Err(failure) = walker.advance(store, walk, available, older) {
+                walker.fail(store, walk, failed, failure)?;
+            }
         }
     }
 }
@@ -2744,37 +2995,114 @@ struct Walker<'a> {
     target_anchor: &'a Anchor,
 }
 
+/// Page shard `child` of a directory shard, which its manifest must declare.
+fn page_child(manifest: &ShardManifest, shard_id: u64, child: u8) -> Result<&PageChild, SyncError> {
+    manifest.child(u32::from(child)).ok_or_else(|| {
+        SyncError::Content(format!(
+            "shard {shard_id} names page shard {child}, which it does not declare"
+        ))
+    })
+}
+
+/// The request for `row` of page shard `child`, if the row is one a query of
+/// that table can select. A pointer is a claim like any other.
+fn locate(
+    manifest: &ShardManifest,
+    geometry: &transparent_shard::layout::Geometry,
+    shard_id: u64,
+    child: u8,
+    row: u64,
+) -> Result<RowRequest, SyncError> {
+    let page = page_child(manifest, shard_id, child)?;
+    if page.page_segments.is_empty() {
+        return Err(SyncError::Content(format!(
+            "shard {shard_id} points into page shard {child}, which holds no rows"
+        )));
+    }
+    let space = geometry.page_rows * page.page_segments.len() as u64;
+    let (_, within) = transparent_shard::layout::split_row(row, geometry.page_rows);
+    if row >= space || within >= page.query_rows() {
+        return Err(SyncError::Content(format!(
+            "shard {shard_id} page {row} is outside page shard {child}'s table"
+        )));
+    }
+    Ok(RowRequest {
+        child: u32::from(child),
+        row,
+    })
+}
+
 impl Walker<'_> {
     fn child(&self, child: u8) -> Result<&PageChild, SyncError> {
-        self.manifest.child(u32::from(child)).ok_or_else(|| {
-            SyncError::Invalid(format!(
-                "shard {} names page shard {child}, which it does not declare",
-                self.entry.shard_id
-            ))
-        })
+        page_child(self.manifest, self.entry.shard_id, child)
     }
 
-    /// The request for `row` of page shard `child`, if the row is one a
-    /// query of that table can select. A pointer is a claim like any other.
+    /// The request for `row` of page shard `child`; see [`locate`].
     fn locate(&self, child: u8, row: u64) -> Result<RowRequest, SyncError> {
-        let shard_id = self.entry.shard_id;
-        let page = self.child(child)?;
-        if page.page_segments.is_empty() {
-            return Err(SyncError::Invalid(format!(
-                "shard {shard_id} points into page shard {child}, which holds no rows"
-            )));
-        }
-        let space = self.geometry.page_rows * page.page_segments.len() as u64;
-        let (_, within) = transparent_shard::layout::split_row(row, self.geometry.page_rows);
-        if row >= space || within >= page.query_rows() {
-            return Err(SyncError::Invalid(format!(
-                "shard {shard_id} page {row} is outside page shard {child}'s table"
-            )));
-        }
-        Ok(RowRequest {
-            child: u32::from(child),
+        locate(
+            self.manifest,
+            self.geometry,
+            self.entry.shard_id,
+            child,
             row,
-        })
+        )
+    }
+
+    /// Checks a run's first fragment, read at `cursor`, before the walk
+    /// relies on it: against the cursor (see [`check_head`]), and that every
+    /// fragment it declares is a row a page query can select. Then that the
+    /// run it links to starts at one: a link that does not still leaves this
+    /// run located, so the walk owes the queries for its fragments not yet
+    /// held, of `held`, and one in the link's place, all as dummies.
+    fn check_located(
+        &self,
+        head: &PageEntry,
+        cursor: &RunCursor,
+        held: usize,
+    ) -> Result<(), Failure> {
+        check_head(head, cursor)?;
+        let last = u64::from(cursor.row) + u64::from(head.fragment_count.max(1)) - 1;
+        self.locate(cursor.child, last)?;
+        if let Some((child, row)) = head.link.previous() {
+            self.locate(child, u64::from(row))
+                .map_err(|error| Failure {
+                    error,
+                    child: cursor.child,
+                    dummies: head.fragment_count.saturating_sub(held.max(1) as u32) + 1,
+                })?;
+        }
+        Ok(())
+    }
+
+    /// One round's requests for a walk, and the history cached below its
+    /// run when the walk will stop there.
+    fn plan<S: WalletStore>(
+        &self,
+        store: &S,
+        walk: &Walk,
+    ) -> Result<(Vec<RowRequest>, Option<CachedBelow>), SyncError> {
+        let cursor = walk.item.cursor;
+        let Some(head) = &walk.head else {
+            return Ok((
+                vec![self.locate(cursor.child, u64::from(cursor.row))?],
+                None,
+            ));
+        };
+        let mut requests = Vec::new();
+        for ordinal in walk.item.fragments.len() as u32..head.fragment_count {
+            let row = u64::from(cursor.row) + u64::from(ordinal);
+            requests.push(self.locate(cursor.child, row)?);
+        }
+        let mut older = None;
+        if let Some((child, row)) = head.link.previous() {
+            older = self
+                .cached(store, &walk.item.script, child)?
+                .map(|events| (child, events));
+            if older.is_none() {
+                requests.push(self.locate(child, u64::from(row))?);
+            }
+        }
+        Ok((requests, older))
     }
 
     /// The history cached for `script` from its run in page shard `child`
@@ -2842,18 +3170,21 @@ impl Walker<'_> {
         // not depend on which scripts share a row.
         let mut found = None;
         for raw in answers {
-            for candidate in transparent_shard::page_row::decode_page_row(raw)? {
+            let decoded = transparent_shard::page_row::decode_page_row(raw).map_err(|error| {
+                SyncError::Content(format!("shard {shard_id} page shard {child}: {error}"))
+            })?;
+            for candidate in decoded {
                 if candidate.tag != wanted || candidate.ordinal != ordinal {
                     continue;
                 }
                 if count.is_some_and(|count| candidate.fragment_count != count) {
-                    return Err(SyncError::Invalid(format!(
+                    return Err(SyncError::Content(format!(
                         "shard {shard_id} page shard {child}: fragment {ordinal} disagrees with \
                          its run's fragment count"
                     )));
                 }
                 if found.is_some() {
-                    return Err(SyncError::Invalid(format!(
+                    return Err(SyncError::Content(format!(
                         "shard {shard_id} page shard {child} holds fragment {ordinal} twice"
                     )));
                 }
@@ -2861,98 +3192,108 @@ impl Walker<'_> {
             }
         }
         found.ok_or_else(|| {
-            SyncError::Invalid(format!(
+            SyncError::Content(format!(
                 "shard {shard_id} page shard {child}: the row a link located does not hold \
                  fragment {ordinal} of the run"
             ))
         })
     }
 
-    /// Takes one walk through one round's answers.
+    /// Takes one walk through one round's replies.
     fn advance<S: WalletStore>(
         &self,
         store: &mut S,
         walk: &mut Walk,
-        answers: &[Vec<Vec<u8>>],
+        answers: &[Reply],
         older: Option<CachedBelow>,
-    ) -> Result<(), SyncError> {
+    ) -> Result<(), Failure> {
         let cursor = walk.item.cursor;
         let script = walk.item.script.clone();
         if walk.head.is_none() {
             let [answer] = answers else {
-                return Err(SyncError::Invalid("a round lost an answer".into()));
+                return Err(SyncError::Invalid("a round lost an answer".into()).into());
             };
-            let head = self.fragment(&script, cursor.child, answer, 0, None)?;
-            check_head(&head, &cursor)?;
-            walk.item
-                .fragments
-                .push(transparent_shard::page_row::encode_page_row(
-                    std::slice::from_ref(&head),
-                )?);
+            let head = self.fragment(&script, cursor.child, content_of(answer)?, 0, None)?;
+            self.check_located(&head, &cursor, 1)?;
+            walk.item.fragments.push(encode_fragment(&head)?);
             walk.head = Some(head);
-            return self.commit(
+            return Ok(self.commit(
                 store,
                 &script,
                 Vec::new(),
                 Some(walk.item.clone()),
                 None,
                 Vec::new(),
-            );
+            )?);
         }
         let head = walk.head.as_ref().expect("head decoded above").clone();
         let count = head.fragment_count as usize;
         if walk.item.fragments.len() > count {
-            return Err(SyncError::Invalid("a run has too many fragments".into()));
+            return Err(SyncError::Invalid("a run has too many fragments".into()).into());
         }
         let remaining = count - walk.item.fragments.len();
         let (answers, next) = answers.split_at(remaining.min(answers.len()));
         if next.len() > 1 {
-            return Err(SyncError::Invalid("a round has extra answers".into()));
+            return Err(SyncError::Invalid("a round has extra answers".into()).into());
         }
-        let mut boundary = validate_page_boundary(None, &head.events)?;
+        // The run's fragments this round asked for and a budget left unsent:
+        // what the walk still owes if this run fails.
+        let unsent = (remaining - answers.len()) as u32;
+        let failing = |error: SyncError| Failure {
+            error,
+            child: cursor.child,
+            dummies: unsent,
+        };
+        let mut boundary = validate_page_boundary(None, &head.events).map_err(failing)?;
         let mut run = head.events.clone();
         // Recheck saved boundaries before using them after a restart.
         for (ordinal, raw) in walk.item.fragments.iter().enumerate().skip(1) {
-            let fragment = self.fragment(
-                &script,
-                cursor.child,
-                std::slice::from_ref(raw),
-                ordinal as u32,
-                Some(head.fragment_count),
-            )?;
-            boundary = validate_page_boundary(Some(&boundary), &fragment.events)?;
+            let fragment = self
+                .fragment(
+                    &script,
+                    cursor.child,
+                    std::slice::from_ref(raw),
+                    ordinal as u32,
+                    Some(head.fragment_count),
+                )
+                .map_err(failing)?;
+            boundary =
+                validate_page_boundary(Some(&boundary), &fragment.events).map_err(failing)?;
             run.extend(fragment.events);
         }
         for answer in answers {
             let ordinal = walk.item.fragments.len() as u32;
-            let fragment = self.fragment(
-                &script,
-                cursor.child,
-                answer,
-                ordinal,
-                Some(head.fragment_count),
-            )?;
-            boundary = validate_page_boundary(Some(&boundary), &fragment.events)?;
+            let fragment = content_of(answer)
+                .and_then(|rows| {
+                    self.fragment(
+                        &script,
+                        cursor.child,
+                        rows,
+                        ordinal,
+                        Some(head.fragment_count),
+                    )
+                })
+                .map_err(failing)?;
+            boundary =
+                validate_page_boundary(Some(&boundary), &fragment.events).map_err(failing)?;
             run.extend(fragment.events.iter().copied());
-            walk.item
-                .fragments
-                .push(transparent_shard::page_row::encode_page_row(&[fragment])?);
+            walk.item.fragments.push(encode_fragment(&fragment)?);
         }
         if walk.item.fragments.len() < count {
-            return self.commit(
+            return Ok(self.commit(
                 store,
                 &script,
                 Vec::new(),
                 Some(walk.item.clone()),
                 None,
                 Vec::new(),
-            );
+            )?);
         }
         check_run(self.child(cursor.child)?, &run, &walk.item.carried)?;
         walk.walked.push((cursor.child, run.clone()));
         match head.link.previous() {
-            None => self.finish(store, walk, run, None),
-            Some(_) if older.is_some() => self.finish(store, walk, run, older),
+            None => Ok(self.finish(store, walk, run, None)?),
+            Some(_) if older.is_some() => Ok(self.finish(store, walk, run, older)?),
             Some((child, row)) => {
                 let mut following = run.clone();
                 following.extend(walk.item.carried.iter().copied());
@@ -2965,18 +3306,27 @@ impl Walker<'_> {
                 };
                 progressed.carried = following;
                 progressed.fragments.clear();
-                let next_head = if let [answer] = next {
-                    let head = self.fragment(&script, child, answer, 0, None)?;
-                    check_head(&head, &progressed.cursor)?;
-                    progressed
-                        .fragments
-                        .push(transparent_shard::page_row::encode_page_row(
-                            std::slice::from_ref(&head),
-                        )?);
-                    Some(head)
-                } else {
-                    None
-                };
+                // A bad head for the next run fails the walk, but not the run
+                // already checked: that is committed, and the walk resumes at
+                // the next run's head.
+                let mut failure = None;
+                let mut next_head = None;
+                if let [answer] = next {
+                    let checked = content_of(answer)
+                        .and_then(|rows| self.fragment(&script, child, rows, 0, None))
+                        .map_err(Failure::from)
+                        .and_then(|head| {
+                            self.check_located(&head, &progressed.cursor, 1)?;
+                            Ok(head)
+                        });
+                    match checked {
+                        Ok(head) => {
+                            progressed.fragments.push(encode_fragment(&head)?);
+                            next_head = Some(head);
+                        }
+                        Err(error) => failure = Some(error),
+                    }
+                }
                 progressed.attempts += 1;
                 self.commit(
                     store,
@@ -2988,9 +3338,65 @@ impl Walker<'_> {
                 )?;
                 walk.item = progressed;
                 walk.head = next_head;
-                Ok(())
+                failure.map_or(Ok(()), Err)
             }
         }
+    }
+
+    /// Takes a walk whose run is read in full through to its end, with no
+    /// replies: what a stopped round still finishes.
+    fn complete<S: WalletStore>(&self, store: &mut S, walk: &mut Walk) -> Result<(), Failure> {
+        let older = match walk.head.as_ref().and_then(|head| head.link.previous()) {
+            Some((child, _)) => self
+                .cached(store, &walk.item.script, child)?
+                .map(|events| (child, events)),
+            None => None,
+        };
+        self.advance(store, walk, &[], older)
+    }
+
+    /// Ends a walk after `failure`. A content failure is counted against the
+    /// walk's entry, which keeps its pending item for a later sync, and the
+    /// walk sends the dummies it owes in the next round, if any; any other
+    /// failure is the call's.
+    fn fail<S: WalletStore>(
+        &self,
+        store: &mut S,
+        walk: &mut Walk,
+        failed: &mut Vec<FailedEntry>,
+        failure: Failure,
+    ) -> Result<(), SyncError> {
+        let Failure {
+            error,
+            child,
+            dummies,
+        } = failure;
+        let SyncError::Content(_) = error else {
+            return Err(error);
+        };
+        let entry = self.entry;
+        commit_bounded(
+            store,
+            self.target_anchor,
+            ShardCommit {
+                source_anchor: None,
+                shard_id: entry.shard_id,
+                revision_digest: entry.manifest_digest.clone(),
+                sealed: entry.sealed,
+                start_height: entry.start_height,
+                end_height: entry.end_height,
+                terminal_block_hash: entry.terminal_block_hash.clone(),
+                failed_entries: vec![walk.item.script.clone()],
+                ..Default::default()
+            },
+        )?;
+        record_failure(store, failed, entry.shard_id, &walk.item.script)?;
+        if dummies > 0 {
+            walk.dummies = Some((child, dummies));
+        } else {
+            walk.done = true;
+        }
+        Ok(())
     }
 
     /// Ends a walk: `run` is the last run read, `older` the page shard and
@@ -3011,7 +3417,7 @@ impl Walker<'_> {
         let newer = run.first().or(walk.item.carried.first());
         if let (Some(last), Some(first)) = (older.last(), newer) {
             if last.sort_key() >= first.sort_key() {
-                return Err(SyncError::Invalid(
+                return Err(SyncError::Content(
                     "cached history is not older than the run that links to it".into(),
                 ));
             }
@@ -3081,6 +3487,7 @@ impl Walker<'_> {
                 pending_upsert: progressed.into_iter().collect(),
                 pending_complete: finished.into_iter().collect(),
                 cached_runs,
+                failed_entries: Vec::new(),
             },
         )?;
         Ok(())
@@ -3098,13 +3505,13 @@ fn check_head(head: &PageEntry, cursor: &RunCursor) -> Result<(), SyncError> {
     let link = head.link;
     match cursor.older_runs {
         Some(expected) if link.older_runs != expected => {
-            return Err(SyncError::Invalid(format!(
+            return Err(SyncError::Content(format!(
                 "a run in page shard {} reports {} older runs where its chain promised {expected}",
                 cursor.child, link.older_runs
             )))
         }
         _ if link.older_runs > cursor.child => {
-            return Err(SyncError::Invalid(format!(
+            return Err(SyncError::Content(format!(
                 "a run in page shard {} reports {} older runs",
                 cursor.child, link.older_runs
             )))
@@ -3113,7 +3520,7 @@ fn check_head(head: &PageEntry, cursor: &RunCursor) -> Result<(), SyncError> {
     }
     if let Some((child, _)) = link.previous() {
         if child >= cursor.child {
-            return Err(SyncError::Invalid(format!(
+            return Err(SyncError::Content(format!(
                 "a run in page shard {} links to page shard {child}, which is not earlier",
                 cursor.child
             )));
@@ -3134,7 +3541,7 @@ fn check_run(
     carried: &[TransparentEvent],
 ) -> Result<(), SyncError> {
     if run.is_empty() || carried.len() != transparent_shard::INLINE_EVENTS as usize {
-        return Err(SyncError::Invalid(format!(
+        return Err(SyncError::Content(format!(
             "a run in page shard {} cannot be checked",
             child.index
         )));
@@ -3144,7 +3551,7 @@ fn check_run(
         .windows(2)
         .any(|pair| pair[0].sort_key() >= pair[1].sort_key())
     {
-        return Err(SyncError::Invalid(format!(
+        return Err(SyncError::Content(format!(
             "a run in page shard {} is not older than the history after it",
             child.index
         )));
@@ -3152,7 +3559,7 @@ fn check_run(
     for (index, _) in run.iter().enumerate() {
         let height = event_height(following[index + 2]);
         if height < child.start_height || height > child.end_height {
-            return Err(SyncError::Invalid(format!(
+            return Err(SyncError::Content(format!(
                 "an event in page shard {} was pushed out at height {height}, when that page \
                  shard was not open",
                 child.index
@@ -3168,14 +3575,14 @@ fn validate_page_boundary(
 ) -> Result<crate::store::PageBoundary, SyncError> {
     let first = events
         .first()
-        .ok_or_else(|| SyncError::Invalid("empty fragment".into()))?;
+        .ok_or_else(|| SyncError::Content("empty fragment".into()))?;
     if let Some(previous) = previous {
         if previous.last_event.sort_key() > first.sort_key()
             || previous.event_bytes as usize
                 + transparent_shard::compact::event_len(first, Some(&previous.last_event))
                 <= transparent_shard::packing::FRAGMENT_PAYLOAD
         {
-            return Err(SyncError::Invalid("noncanonical fragment boundary".into()));
+            return Err(SyncError::Content("noncanonical fragment boundary".into()));
         }
     }
     Ok(crate::store::PageBoundary {
@@ -3287,7 +3694,7 @@ fn commit_bounded<S: WalletStore>(
     {
         let height = event_height(event);
         if height < commit.start_height || height > source.height {
-            return Err(SyncError::Invalid(
+            return Err(SyncError::Content(
                 "event lies outside its published shard".into(),
             ));
         }
@@ -3302,7 +3709,82 @@ fn commit_bounded<S: WalletStore>(
     commit
         .events
         .retain(|e| event_height(&e.event) <= target.height);
-    Ok(store.commit_shard(commit)?)
+    // What a reply carried contradicting what the store holds is the reply's
+    // content failure, not the store's.
+    store.commit_shard(commit).map_err(|error| match error {
+        StoreError::Contradiction(why) => SyncError::Content(format!("contradiction: {why}")),
+        other => SyncError::Store(other),
+    })
+}
+
+/// A checked fragment, saved as a page row holding only it.
+fn encode_fragment(fragment: &PageEntry) -> Result<Vec<u8>, SyncError> {
+    Ok(transparent_shard::page_row::encode_page_row(
+        std::slice::from_ref(fragment),
+    )?)
+}
+
+/// Whether `script`'s entry in shard `shard_id` is held out of this sync:
+/// it failed on content earlier in the sync, or has failed
+/// [`MAX_CONTENT_FAILURES`] times. A held entry is not queried at all.
+fn held<S: WalletStore>(
+    store: &S,
+    failed: &[FailedEntry],
+    shard_id: u64,
+    script: &[u8],
+) -> Result<bool, SyncError> {
+    Ok(failed
+        .iter()
+        .any(|entry| entry.shard_id == shard_id && entry.script == script)
+        || store.entry_failures(shard_id, script)? >= MAX_CONTENT_FAILURES)
+}
+
+/// [`held`], listing an entry held for its failure count in the report the
+/// first time this sync meets it.
+fn hold<S: WalletStore>(
+    store: &S,
+    failed: &mut Vec<FailedEntry>,
+    shard_id: u64,
+    script: &[u8],
+) -> Result<bool, SyncError> {
+    if failed
+        .iter()
+        .any(|entry| entry.shard_id == shard_id && entry.script == script)
+    {
+        return Ok(true);
+    }
+    let failures = store.entry_failures(shard_id, script)?;
+    if failures < MAX_CONTENT_FAILURES {
+        return Ok(false);
+    }
+    failed.push(FailedEntry {
+        shard_id,
+        script: script.to_vec(),
+        failures,
+    });
+    Ok(true)
+}
+
+/// Lists an entry whose failure a commit just counted, with the store's count.
+fn record_failure<S: WalletStore>(
+    store: &S,
+    failed: &mut Vec<FailedEntry>,
+    shard_id: u64,
+    script: &[u8],
+) -> Result<(), SyncError> {
+    let failures = store.entry_failures(shard_id, script)?;
+    match failed
+        .iter_mut()
+        .find(|entry| entry.shard_id == shard_id && entry.script == script)
+    {
+        Some(entry) => entry.failures = failures,
+        None => failed.push(FailedEntry {
+            shard_id,
+            script: script.to_vec(),
+            failures,
+        }),
+    }
+    Ok(())
 }
 
 pub(crate) fn event_height(event: &transparent_events::TransparentEvent) -> u64 {
@@ -3365,6 +3847,7 @@ fn chain_unknown<S: WalletStore>(
         replaced_revisions,
         scripts_added: 0,
         commits: store.last_commit()? - first_commit,
+        failed_entries: Vec::new(),
     })
 }
 
@@ -3389,6 +3872,7 @@ fn incomplete_at<S: WalletStore>(
         replaced_revisions: vec![],
         scripts_added: 0,
         commits: 0,
+        failed_entries: Vec::new(),
     })
 }
 
@@ -4512,11 +4996,17 @@ mod walk_tests {
     }
 
     /// Page rows read straight from the built tables, recording every
-    /// request and round.
+    /// request and round. Rows in `corrupt` reply with bytes that do not
+    /// decode, as a reply that fails to verify would; rows in `rewritten`
+    /// reply with other bytes that do.
     struct Direct<'a> {
         children: &'a [BuiltChild],
         requests: Vec<RowRequest>,
         rounds: usize,
+        /// Requests per round, in order.
+        round_sizes: Vec<usize>,
+        corrupt: std::collections::BTreeSet<(u32, u64)>,
+        rewritten: BTreeMap<(u32, u64), Vec<u8>>,
     }
 
     impl<'a> Direct<'a> {
@@ -4525,7 +5015,16 @@ mod walk_tests {
                 children: &directory.children,
                 requests: Vec::new(),
                 rounds: 0,
+                round_sizes: Vec::new(),
+                corrupt: Default::default(),
+                rewritten: BTreeMap::new(),
             }
+        }
+
+        /// The requests of round `round`, counted from zero.
+        fn round(&self, round: usize) -> &[RowRequest] {
+            let start: usize = self.round_sizes[..round].iter().sum();
+            &self.requests[start..start + self.round_sizes[round]]
         }
     }
 
@@ -4538,15 +5037,27 @@ mod walk_tests {
             &mut self,
             _: &mut S,
             requests: &[RowRequest],
-        ) -> Result<Vec<Vec<Vec<u8>>>, SyncError> {
+        ) -> Result<Vec<Reply>, SyncError> {
             self.rounds += 1;
+            self.round_sizes.push(requests.len());
             self.requests.extend_from_slice(requests);
             Ok(requests
                 .iter()
                 .map(|request| {
-                    vec![self.children[request.child as usize]
+                    let key = (request.child, request.row);
+                    if self.corrupt.contains(&key) {
+                        let mut row = self.children[request.child as usize]
+                            .page_row(&DECOUPLED_2K_8K, request.row)
+                            .to_vec();
+                        row.iter_mut().for_each(|byte| *byte ^= 0xa5);
+                        return Ok(vec![row]);
+                    }
+                    if let Some(row) = self.rewritten.get(&key) {
+                        return Ok(vec![row.clone()]);
+                    }
+                    Ok(vec![self.children[request.child as usize]
                         .page_row(&DECOUPLED_2K_8K, request.row)
-                        .to_vec()]
+                        .to_vec()])
                 })
                 .collect())
         }
@@ -4619,14 +5130,45 @@ mod walk_tests {
         owed: &[PendingPages],
         rows: &mut Direct<'_>,
     ) -> Result<Option<Completion>, SyncError> {
-        walk_chains(
+        let mut failed = Vec::new();
+        let walked = walk_chains(
             store,
             &entry_of(manifest),
             manifest,
             owed,
             rows,
             &target_of(manifest),
-        )
+            &mut failed,
+        );
+        assert!(
+            failed.is_empty(),
+            "an honest walk fails nothing: {failed:?}"
+        );
+        walked
+    }
+
+    /// [`walk`] where entries may fail: the entries that did.
+    fn walk_failing(
+        store: &mut MemoryStore,
+        manifest: &ShardManifest,
+        owed: &[PendingPages],
+        rows: &mut Direct<'_>,
+    ) -> Vec<FailedEntry> {
+        let mut failed = Vec::new();
+        assert_eq!(
+            walk_chains(
+                store,
+                &entry_of(manifest),
+                manifest,
+                owed,
+                rows,
+                &target_of(manifest),
+                &mut failed,
+            )
+            .unwrap(),
+            None
+        );
+        failed
     }
 
     fn stored(store: &MemoryStore, script: &[u8]) -> Vec<TransparentEvent> {
@@ -4821,7 +5363,8 @@ mod walk_tests {
 
     /// A walk over a manifest that places a page shard's range elsewhere
     /// finds the events of its runs pushed out while it was not open, and
-    /// refuses them.
+    /// refuses them: a content failure of the entry, counted, with the walk
+    /// still owed for a later sync.
     #[test]
     fn a_run_in_the_wrong_page_shard_is_refused() {
         let (_, directories) = fixture();
@@ -4842,9 +5385,261 @@ mod walk_tests {
             &manifest,
             std::slice::from_ref(&script),
         );
-        let error = walk(&mut store, &manifest, &owed, &mut Direct::new(directory)).unwrap_err();
-        assert!(error.to_string().contains("was not open"), "{error}");
+        let failed = walk_failing(&mut store, &manifest, &owed, &mut Direct::new(directory));
+        assert_eq!(
+            failed,
+            vec![FailedEntry {
+                shard_id: manifest.shard_id,
+                script: script.clone(),
+                failures: 1,
+            }]
+        );
+        assert_eq!(store.entry_failures(manifest.shard_id, &script).unwrap(), 1);
         assert_eq!(store.pending().unwrap().len(), 1, "the walk stays owed");
+        assert_eq!(store.coverage(&script).unwrap(), vec![]);
+        // Refused again, and counted again, on the next attempt.
+        let owed = store.pending().unwrap();
+        let failed = walk_failing(&mut store, &manifest, &owed, &mut Direct::new(directory));
+        assert_eq!(failed[0].failures, 2);
+    }
+
+    /// The first fragment of `script`'s run at `(child, row)`, read straight
+    /// from the table.
+    fn run_head(directory: &Directory, script: &[u8], (child, row): (u8, u32)) -> PageEntry {
+        let manifest = manifest_of(directory);
+        let page = &manifest.page_children[usize::from(child)];
+        let salt = transparent_shard::page_tag_salt(
+            manifest.shard_id,
+            page.index,
+            page.end_height,
+            &BlockHash::from_display_hex(&page.terminal_block_hash).unwrap(),
+            page.tag_salt_counter,
+        );
+        let tag = transparent_shard::script_tag(&salt, script);
+        transparent_shard::decode_page_row(
+            directory.children[usize::from(child)].page_row(&DECOUPLED_2K_8K, u64::from(row)),
+        )
+        .unwrap()
+        .into_iter()
+        .find(|e| e.tag == tag && e.ordinal == 0)
+        .unwrap()
+    }
+
+    fn sorted(requests: &[RowRequest]) -> Vec<(u32, u64)> {
+        let mut requests: Vec<(u32, u64)> = requests.iter().map(|r| (r.child, r.row)).collect();
+        requests.sort_unstable();
+        requests
+    }
+
+    /// A fragment that does not decode, in the middle of a run, fails that
+    /// script's walk alone. Every round until that run ends sends what the
+    /// honest walk sends; the failed walk sends nothing after, and every
+    /// other script's history comes back exactly. The failure is counted,
+    /// and the walk stays owed from the run it failed in.
+    #[test]
+    fn a_corrupt_fragment_fails_only_its_walk() {
+        // Script 0's one run spans several rows; script 1's is shorter.
+        let blocks = vec![(
+            1_000,
+            (0..200)
+                .map(|nonce| (ScriptBytes::new(script(0)), receive(1_000, nonce)))
+                .chain((200..230).map(|nonce| (ScriptBytes::new(script(1)), receive(1_000, nonce))))
+                .collect(),
+        )];
+        let directories = build(&blocks);
+        let directory = &directories[0];
+        let manifest = manifest_of(directory);
+        let scripts = [script(0), script(1)];
+        let victim = scripts[0].clone();
+        let runs = runs_of(directory, &victim);
+        let head = run_head(directory, &victim, runs[0]);
+        assert!(head.fragment_count >= 3, "{}", head.fragment_count);
+        let (child, row) = runs[0];
+
+        let mut honest_store = MemoryStore::new();
+        let owed = directory_phase(&mut honest_store, directory, &manifest, &scripts);
+        let mut honest = Direct::new(directory);
+        walk(&mut honest_store, &manifest, &owed, &mut honest).unwrap();
+
+        let mut store = MemoryStore::new();
+        let owed = directory_phase(&mut store, directory, &manifest, &scripts);
+        let mut corrupt = Direct::new(directory);
+        corrupt
+            .corrupt
+            .insert((u32::from(child), u64::from(row) + 1));
+        let failed = walk_failing(&mut store, &manifest, &owed, &mut corrupt);
+        assert_eq!(
+            failed,
+            vec![FailedEntry {
+                shard_id: manifest.shard_id,
+                script: victim.clone(),
+                failures: 1,
+            }]
+        );
+        // The run's head comes in the first round, the rest of it in the
+        // second, where it ends: the transcript is the honest one.
+        assert_eq!(corrupt.round_sizes, honest.round_sizes);
+        assert_eq!(corrupt.requests, honest.requests);
+        assert_eq!(
+            stored(&store, &scripts[1]),
+            history(&blocks, directory, &scripts[1])
+        );
+        assert_eq!(store.coverage(&scripts[1]).unwrap().len(), 1);
+        let pending = store.pending().unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].script, victim);
+        assert_eq!(
+            (pending[0].cursor.child, pending[0].cursor.row),
+            (child, row)
+        );
+        assert_eq!(pending[0].fragments.len(), 1, "the checked head is kept");
+        assert_eq!(store.coverage(&victim).unwrap(), vec![]);
+        assert_eq!(store.entry_failures(manifest.shard_id, &victim).unwrap(), 1);
+
+        // The retry resumes after the kept head and, answered honestly,
+        // finishes.
+        walk(&mut store, &manifest, &pending, &mut Direct::new(directory)).unwrap();
+        assert!(store.pending().unwrap().is_empty());
+        assert_eq!(
+            stored(&store, &victim),
+            history(&blocks, directory, &victim)
+        );
+    }
+
+    /// A run whose link points outside its page shard's table fails its walk
+    /// when its head arrives. In the next round the walk still sends the rest
+    /// of that run and one query in the link's place, as dummies to the run's
+    /// own page shard, so the round is the honest round's size; then it
+    /// stops. Every other walk finishes.
+    #[test]
+    fn a_link_outside_the_tables_fails_only_its_walk() {
+        let (blocks, directories) = fixture();
+        let directory = &directories[0];
+        let manifest = manifest_of(directory);
+        let scripts = paged(directory);
+        let victim = scripts[0].clone();
+        let runs = runs_of(directory, &victim);
+        assert!(runs.len() >= 2);
+        let (child, row) = runs[0];
+        let head = run_head(directory, &victim, runs[0]);
+        let link = head.link;
+        let mut entries = transparent_shard::decode_page_row(
+            directory.children[usize::from(child)].page_row(&DECOUPLED_2K_8K, u64::from(row)),
+        )
+        .unwrap();
+        for entry in entries
+            .iter_mut()
+            .filter(|e| e.tag == head.tag && e.ordinal == 0)
+        {
+            *entry = entry
+                .clone()
+                .with_link(RunLink {
+                    prev_row: 60_000,
+                    ..link
+                })
+                .unwrap();
+        }
+        let rewritten = transparent_shard::page_row::encode_page_row(&entries).unwrap();
+
+        let mut honest_store = MemoryStore::new();
+        let owed = directory_phase(&mut honest_store, directory, &manifest, &scripts);
+        let mut honest = Direct::new(directory);
+        walk(&mut honest_store, &manifest, &owed, &mut honest).unwrap();
+
+        let mut store = MemoryStore::new();
+        let owed = directory_phase(&mut store, directory, &manifest, &scripts);
+        let mut bad = Direct::new(directory);
+        bad.rewritten
+            .insert((u32::from(child), u64::from(row)), rewritten);
+        let failed = walk_failing(&mut store, &manifest, &owed, &mut bad);
+        assert_eq!(failed.len(), 1);
+        assert_eq!(failed[0].script, victim);
+
+        assert_eq!(sorted(bad.round(0)), sorted(honest.round(0)));
+        // The victim's honest second round: the rest of its newest run, and
+        // the head of the run it links to.
+        let mut theirs: Vec<(u32, u64)> = (1..head.fragment_count)
+            .map(|ordinal| (u32::from(child), u64::from(row + ordinal)))
+            .collect();
+        let (older, older_row) = link.previous().expect("a linked run");
+        theirs.push((u32::from(older), u64::from(older_row)));
+        let mut expected = sorted(honest.round(1));
+        for request in &theirs {
+            let at = expected.iter().position(|held| held == request).unwrap();
+            expected.remove(at);
+        }
+        expected.extend((0..head.fragment_count).map(|_| (u32::from(child), 0)));
+        expected.sort_unstable();
+        assert_eq!(sorted(bad.round(1)), expected);
+
+        for script in scripts.iter().filter(|script| **script != victim) {
+            assert_eq!(stored(&store, script), history(blocks, directory, script));
+        }
+        // The head was not kept: the next attempt asks for it again.
+        let pending = store.pending().unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(
+            (pending[0].cursor.child, pending[0].cursor.row),
+            (child, row)
+        );
+        assert!(pending[0].fragments.is_empty());
+    }
+
+    /// A directory reply that does not decode or verify fails its entry, on
+    /// content, whichever candidate row it was; the honest replies find the
+    /// entry.
+    #[test]
+    fn a_corrupt_directory_reply_fails_only_its_entry() {
+        let (_, directories) = fixture();
+        let directory = &directories[0];
+        let manifest = manifest_of(directory);
+        let entry = entry_of(&manifest);
+        let built = &directory.built;
+        let script = paged(directory).remove(0);
+        let salt = transparent_shard::tag_salt(
+            built.shard_id,
+            &hash_at(built.end_height),
+            built.tag_salt_counter,
+        );
+        let wanted = transparent_shard::script_tag(&salt, &script);
+        let replies = |corrupt: Option<usize>| -> Vec<(u64, Reply)> {
+            candidate_rows(built.shard_id, &script, built.geometry.directory_rows)
+                .into_iter()
+                .enumerate()
+                .map(|(index, row)| {
+                    let mut bytes = built.directory_row(row).to_vec();
+                    if corrupt == Some(index) {
+                        bytes.iter_mut().for_each(|byte| *byte ^= 0xa5);
+                    }
+                    (row, Ok(vec![bytes]))
+                })
+                .collect()
+        };
+        let found = entry_in(&entry, &manifest, built.geometry, &wanted, &replies(None))
+            .unwrap()
+            .expect("the entry");
+        assert_eq!(
+            found.head(),
+            directory_entry(directory, &script).unwrap().head()
+        );
+        for corrupt in 0..2 {
+            assert!(matches!(
+                entry_in(
+                    &entry,
+                    &manifest,
+                    built.geometry,
+                    &wanted,
+                    &replies(Some(corrupt))
+                ),
+                Err(SyncError::Content(_))
+            ));
+        }
+        let mut unverified = replies(None);
+        unverified[1].1 = Err("reply: parameter epoch mismatch".into());
+        assert!(matches!(
+            entry_in(&entry, &manifest, built.geometry, &wanted, &unverified),
+            Err(SyncError::Content(_))
+        ));
     }
 
     /// A walk resumes from its durable cursor after any round, and the
@@ -4874,7 +5669,7 @@ mod walk_tests {
                 &mut self,
                 store: &mut S,
                 requests: &[RowRequest],
-            ) -> Result<Vec<Vec<Vec<u8>>>, SyncError> {
+            ) -> Result<Vec<Reply>, SyncError> {
                 self.inner.fetch(store, requests)
             }
         }
@@ -4889,6 +5684,7 @@ mod walk_tests {
             &owed,
             &mut limited,
             &target_of(&manifest),
+            &mut Vec::new(),
         )
         .unwrap();
         assert!(matches!(
@@ -4931,7 +5727,7 @@ mod walk_tests {
                 &mut self,
                 store: &mut S,
                 requests: &[RowRequest],
-            ) -> Result<Vec<Vec<Vec<u8>>>, SyncError> {
+            ) -> Result<Vec<Reply>, SyncError> {
                 let remaining = usize::from(self.inner.requests.is_empty());
                 self.inner
                     .fetch(store, &requests[..requests.len().min(remaining)])
@@ -4953,6 +5749,7 @@ mod walk_tests {
                 &owed,
                 &mut rows,
                 &target_of(&manifest),
+                &mut Vec::new(),
             )
             .unwrap();
             assert_eq!(rows.inner.requests.len(), 1);
@@ -5010,7 +5807,7 @@ mod walk_tests {
                 &mut self,
                 store: &mut S,
                 requests: &[RowRequest],
-            ) -> Result<Vec<Vec<Vec<u8>>>, SyncError> {
+            ) -> Result<Vec<Reply>, SyncError> {
                 let remaining = 3usize.saturating_sub(self.inner.requests.len());
                 self.inner
                     .fetch(store, &requests[..requests.len().min(remaining)])
@@ -5026,6 +5823,7 @@ mod walk_tests {
             &owed,
             &mut rows,
             &target_of(&manifest),
+            &mut Vec::new(),
         )
         .unwrap();
         assert_eq!(rows.inner.requests.len(), 3);
