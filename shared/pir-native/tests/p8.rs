@@ -25,7 +25,10 @@ fn sizes_are_the_p8_profile() {
         P8.accepted_query_bits(2 * D, P16.request_len_bits(2 * D, 49)),
         None
     );
-    assert_eq!(P8.prepared_block_planned_bytes(), P8.prepared_block_max_bytes());
+    assert_eq!(
+        P8.prepared_block_planned_bytes(),
+        P8.prepared_block_max_bytes()
+    );
     assert!(P8.prepared_block_min_bytes() < P8.prepared_block_max_bytes());
 }
 

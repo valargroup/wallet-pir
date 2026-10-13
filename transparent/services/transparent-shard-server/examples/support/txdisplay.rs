@@ -682,10 +682,11 @@ impl DisplayClient {
         };
         let prepared = Instant::now();
         let prepare_profile = profile.clone();
-        let (secret, upload) = tokio::task::spawn_blocking(move || prepare_profile.prepare(row as usize))
-        .await
-        .map_err(protocol)?
-        .map_err(protocol)?;
+        let (secret, upload) =
+            tokio::task::spawn_blocking(move || prepare_profile.prepare(row as usize))
+                .await
+                .map_err(protocol)?
+                .map_err(protocol)?;
         trace.prepare_s = prepared.elapsed().as_secs_f64();
         let binding = display::query_binding(&entry.manifest_digest, table);
         let mut body = binding.to_vec();

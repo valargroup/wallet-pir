@@ -509,11 +509,7 @@ mod tests {
     }
 
     fn body_len(client: &TableClient, table: Table) -> usize {
-        client
-            .prepare("revision", table, 17)
-            .unwrap()
-            .body
-            .len()
+        client.prepare("revision", table, 17).unwrap().body.len()
     }
 
     /// The directory and pages are queried at the 8-bit profile's 28 bits,

@@ -54,11 +54,11 @@ use crate::metrics::Metrics;
 use crate::shardset::{SegmentSource, Table};
 use ipir_sp::server::IPIRServer;
 use ipir_sp::YpirSchemeParams;
+use rayon::prelude::*;
+use reinspiring::native_kernel::PreparedU16Query;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use rayon::prelude::*;
-use reinspiring::native_kernel::PreparedU16Query;
 use transparent_native::{
     self as native, NativeKeys, NativePreprocessed, NativeScheme, Profile, TableProfile,
 };
@@ -84,12 +84,7 @@ pub(crate) fn database_server(
     #[cfg(feature = "portable-kernel")]
     let server = IPIRServer::<u16>::new(transport, coefficients, transposed, true);
     #[cfg(not(feature = "portable-kernel"))]
-    let server = IPIRServer::<u16>::new_auto_kernel(
-        transport,
-        coefficients,
-        transposed,
-        true,
-    );
+    let server = IPIRServer::<u16>::new_auto_kernel(transport, coefficients, transposed, true);
     server
 }
 
@@ -262,7 +257,8 @@ impl SharedParams {
 
     /// The length of a 16-bit table's 44-bit dithered query body.
     pub fn dithered_query_bytes(&self) -> Option<usize> {
-        self.dithered_scheme().map(|scheme| 8 + scheme.request_bytes)
+        self.dithered_scheme()
+            .map(|scheme| 8 + scheme.request_bytes)
     }
 
     /// Whether `len` is one of the exact lengths a query body may have: the

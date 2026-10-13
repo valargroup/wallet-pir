@@ -203,12 +203,7 @@ impl TableProfile {
         let masks = native.public_query_masks(seeds.query_masks, rows_usize, cols)?;
         let primary = native.primary_bits();
         let scheme = NativeScheme {
-            profile: if native == P8 {
-                P8_PROFILE
-            } else {
-                PROFILE
-            }
-            .to_string(),
+            profile: if native == P8 { P8_PROFILE } else { PROFILE }.to_string(),
             d: D,
             q_bits: Q_BITS,
             p_bits: native.p_bits,

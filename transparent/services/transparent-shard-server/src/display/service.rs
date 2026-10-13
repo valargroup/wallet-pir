@@ -662,10 +662,7 @@ impl RequestError {
 /// is loaded.
 pub fn body_limit() -> usize {
     let native = transparent_native::profile_for(Table::TxDirectory.as_str());
-    let bits = native
-        .nearest_bits
-        .unwrap_or(0)
-        .max(native.dithered_bits);
+    let bits = native.nearest_bits.unwrap_or(0).max(native.dithered_bits);
     display::DISPLAY_PROFILES
         .iter()
         .map(|geometry| 8 + native.request_len_bits(geometry.directory_rows as usize, bits))
