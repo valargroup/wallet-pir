@@ -2858,6 +2858,10 @@ type Recorded = (
     Log,
 );
 
+/// Which replies [`CorruptsRows`] corrupts: a shard, its tables, and whether
+/// its manifest too.
+type Corruption = (u64, fn(Table) -> bool, bool);
+
 /// Syncs `store` once from the set's start to its tip, through the reference
 /// HTTP transport at `concurrency`, with the corruption `corrupt` chooses,
 /// recorded as the service sees it.
@@ -2869,7 +2873,7 @@ async fn sync_corrupted(
     store: transparent_wallet::MemoryStore,
     wallet: &[ScriptBytes],
     concurrency: usize,
-    corrupt: Option<(u64, fn(Table) -> bool, bool)>,
+    corrupt: Option<Corruption>,
 ) -> (transparent_wallet::MemoryStore, Recorded) {
     let filters = PublishedFilters::load(dir, map);
     let map = map.clone();
@@ -3034,7 +3038,7 @@ async fn a_corrupt_entry_is_asked_three_times_then_held() {
     let wallet = vec![script(1), script(2)];
     let mut store = MemoryStore::new();
     for attempt in 1..=5u32 {
-        let corrupt = (attempt <= 4).then_some((2, directory_tables as fn(Table) -> bool, false));
+        let corrupt: Option<Corruption> = (attempt <= 4).then_some((2, directory_tables, false));
         let (kept, (report, log)) =
             sync_corrupted(dir.path(), &base, &map, store, &wallet, 1, corrupt).await;
         store = kept;
