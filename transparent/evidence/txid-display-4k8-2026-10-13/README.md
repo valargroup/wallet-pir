@@ -22,6 +22,7 @@ for first was folded into it. `/v1/txid` was not touched.
 | Server time per query | Recorded | 3.30–3.42 ms p50, 3.61 ms p95 one at a time; 7.1–7.4 ms p50 two at a time | Recorded |
 | Live lookups | Exact entry | 5 of 5 cold lookups through `https://transparent-pir.valargroup.dev/v2/txid`: three archives, two recent; about 1.7 s each | Pass |
 | Downtime | — | `/v2/txid` down about six minutes (02:39–02:45 UTC) | — |
+| Controller verify | Exit 0 | `txid-display-verify` (transaction `txid-display-verify-20261013T025435Z-6da493`) re-read the journal against the `v4` root, 02:54–03:44 UTC: exit 0, status committed, 16 min CPU, 4.0 GB peak | Pass |
 | Live load, 20 lookups/s for 10 minutes | Every answer exact | 11,999 of 11,999 lookups exact, no errors, no missed slots; warm lookups p50 0.21 s, p99 0.77 s; fresh clients p50 1.56 s, p99 1.71 s; worker 0.56 cores on average | Pass |
 
 ## Placement census
