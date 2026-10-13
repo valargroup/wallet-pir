@@ -1,6 +1,6 @@
 [package]
 name = "transparent-shard-server"
-version = "0.1.0-rc.3"
+version = "0.1.0-rc.4"
 edition = "2021"
 description = "Transparent PIR shard and txid display server"
 license = "MIT"
@@ -52,14 +52,14 @@ tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.5", features = ["limit"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-transparent-filter = { version = "=0.1.0-rc.3", path = "../../crates/transparent-filter" }
+transparent-filter = { version = "=0.1.0-rc.4", path = "../../crates/transparent-filter" }
 # The native profile helper. Deliberately not enhance-pir[-server]: their
 # `native-reinspiring` feature would switch the q48 Enhance binaries through
 # feature unification.
-transparent-native = { version = "=0.1.0-rc.3", path = "../../crates/transparent-native" }
-transparent-shard = { version = "=0.1.0-rc.3", path = "../../crates/transparent-shard" }
+transparent-native = { version = "=0.1.0-rc.4", path = "../../crates/transparent-native" }
+transparent-shard = { version = "=0.1.0-rc.4", path = "../../crates/transparent-shard" }
 # Record types for the display tooling's synthetic publications.
-transparent-events = { version = "=0.1.0-rc.3", path = "../../crates/transparent-events" }
+transparent-events = { version = "=0.1.0-rc.4", path = "../../crates/transparent-events" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 rustix = { version = "1.1", features = ["fs", "process", "thread"] }

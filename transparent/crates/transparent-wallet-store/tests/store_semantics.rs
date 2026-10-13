@@ -121,21 +121,42 @@ fn the_sqlite_store_meets_the_contract_on_disk_and_survives_reopening() {
     assert_eq!(store.last_commit().unwrap(), 2);
 }
 
-/// Schema 6 is a fresh schema: a store from an earlier one holds walks and
-/// coverage of a shard schema this build does not read, and is refused
-/// rather than migrated.
+/// Schema 7 is a fresh schema: a store from an earlier one lacks the
+/// content-failure counts, or holds walks and coverage of a shard schema this
+/// build does not read, and is refused rather than migrated.
 #[test]
 fn a_store_from_an_earlier_schema_is_refused() {
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("v4.sqlite");
+    let path = dir.path().join("v6.sqlite");
     let mut store = SqliteStore::open(&path).unwrap();
     store.bind_set(&identity()).unwrap();
     drop(store);
     let db = rusqlite::Connection::open(&path).unwrap();
-    db.execute_batch("UPDATE wallet_meta SET value = '4' WHERE key = 'schema_version';")
+    db.execute_batch("UPDATE wallet_meta SET value = '6' WHERE key = 'schema_version';")
         .unwrap();
     drop(db);
     assert!(SqliteStore::open(&path).is_err());
+}
+
+/// A content-failure count is on disk once its commit returns, and keeps
+/// counting after a reopen.
+#[test]
+fn entry_failures_survive_reopening() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("failures.sqlite");
+    let mut store = SqliteStore::open(&path).unwrap();
+    store.bind_set(&identity()).unwrap();
+    let mut failed = commit(4, "r0", true, (0, 99), vec![], vec![]);
+    failed.failed_entries = vec![script(1)];
+    store.commit_shard(failed.clone()).unwrap();
+    drop(store);
+    let mut store = SqliteStore::open(&path).unwrap();
+    assert_eq!(store.entry_failures(4, &script(1)).unwrap(), 1);
+    store.commit_shard(failed).unwrap();
+    drop(store);
+    let store = SqliteStore::open(&path).unwrap();
+    assert_eq!(store.entry_failures(4, &script(1)).unwrap(), 2);
+    assert_eq!(store.entry_failures(4, &script(2)).unwrap(), 0);
 }
 
 /// A walk's cursor and carried events, and the run cache, are on disk once

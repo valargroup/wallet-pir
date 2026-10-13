@@ -223,8 +223,22 @@ and the events the placement check carries; events and coverage commit only when
 the run is complete. Query and byte budgets stop page retrieval between atomic
 responses, including setup downloads. Finite byte budgets dispatch sequentially;
 with no byte ceiling, concurrent rounds are capped by the remaining query count.
-SQLite schema 6 holds the cursor, saved fragments and the run cache, with no
-migration from earlier schemas.
+SQLite schema 7 holds the cursor, saved fragments, the run cache and per-entry
+content-failure counts, with no migration from earlier schemas.
+
+A private reply that fails to decode or verify, a link outside the shard's tables,
+or a record that contradicts the store fails one directory entry (one script in one
+shard), not the sync. Each script's planned directory queries are all sent before
+any is decoded, and the shard's directory commit still lands for its other scripts;
+a failed entry sends no pages. A failed page walk keeps its pending item while the
+other walks finish, and still sends, as dummy queries to its current run's page
+shard, the fragments a validated head had committed it to and one query in place of
+a bad link; nothing that depends on the bad reply is sent. The store counts content
+failures per (shard, script) and never resets them; an entry at three is not
+queried again, and the sync reports `content-failed` with the failed entries. A
+malformed map or manifest, a broken filter or a lost answer in a round still stops
+the sync, as do request failures (refusals, overload, stale revisions), which do
+not count.
 
 A page row starts with a 4-byte entry count. Each entry has a 40-byte header:
 script tag, fragment ordinal, fragment count, event count, two height bounds and the
