@@ -103,6 +103,18 @@ oracle; the monitor's probe is. A failed check, one still running at its
 480-second `timeout`, or `rollback` restores the previous unit file and binary.
 Report `status receiver` and the rollback command after each deploy.
 
+The `Deploy receiver PIR` workflow
+([`deploy-receiver.yml`](../../../.github/workflows/deploy-receiver.yml)) runs
+these commands on the coordinator runner for a commit on `main` with a successful
+CI full run, taking the `receiver-pir` artifact from that run. Its `mode` is
+`plan`, `preflight` (which stages), `capture-baseline`, `deploy`, `rollback` or
+`status`. It builds the inventory from the `production` environment's
+`WALLET_PIR_RECEIVER_HOST`, `WALLET_PIR_RECEIVER_SSH_KNOWN_HOSTS` and
+`WALLET_PIR_RECEIVER_NEAR_KEY`, connects with `WALLET_PIR_DEPLOY_SSH_KEY` and
+takes the production lock on the coordinator directly. It keeps its journal and
+baseline in `/var/lib/wallet-pir-deploy/receiver`, so run `capture-baseline` once
+before its first `preflight`, and roll back a workflow deploy with the workflow.
+
 A deploy whose binary and effective unit already run is a no-op: it commits no
 transaction and runs no check, so it is not a fresh qualification. A change to
 only the inventory's `exact_check` deploys nothing either: run its `argv` by hand
@@ -181,7 +193,7 @@ coordinator:
    deleted, since rolling back through several transactions needs the older ones,
    so a retry uses a new id. The legacy `near.env` stays too.
 2. Set `services.receiver.template_vars.NEAR_KEY` to the new id in the
-   coordinator's inventory.
+   coordinator's inventory, and `WALLET_PIR_RECEIVER_NEAR_KEY` for the workflow.
 3. Deploy the running release again with the reviewed drift. `plan` should show one
    `drift` line, `Service.EnvironmentFile`, from the old key file to the new one:
 
