@@ -6,6 +6,27 @@ M4–M6 are open.** This records observed progress, not a new live fleet health
 check. [Remaining work](remaining-work.md) is the authoritative outstanding
 checklist; [deployment](deployment.md) owns operating targets.
 
+## Wallet API v1 retired, 2026-10-13
+
+`/v1/*` on `https://transparent-pir.valargroup.dev` answers 410 since 17:13:50 UTC.
+`/v2/` is the only wallet API ([evidence](../evidence/v1-sunset-2026-10-13/README.md)).
+Vizor main pins the `/v2/` client (chainapsis/vizor-wallet#977), and over 30 minutes no
+wallet traffic reached the v11 workers beyond our own load.
+
+- **Router.** A shell installed by `transparent-public-router.py` holds one route file
+  per version. No fleet adapter writes it any more.
+- **Journal.** The v12 controller now writes the shared journal that the retired v11
+  controller used to write.
+- **Stopped.** The v11 controller, scaler, reconciler, control sessions and 5 QPS
+  load; the `txid-2k` controller; and the serving units on recent-01, recent-02,
+  archive-03 and txid-display-01. The droplets are kept 48 hours for rollback.
+- **Incident.** `/v2` history metadata (`/v2/shards/init`, `/v2/filters/shards`)
+  answered 502 from 17:13:49 to about 17:24:45. The v12 unit's sandbox mounted the
+  journal read-only, so the controller crash-looped as writer. Queries and `/v2/txid`
+  kept serving.
+- **Open.** The `/v2` load gate, the continuous load on `/v2`, and destroying the
+  droplets ([remaining work](remaining-work.md#wallet-api-versions-on-one-origin)).
+
 ## Monitoring on `/v2`, in shadow, 2026-10-13
 
 pir-apm and pir-monitor watch the v12 history service and the one-query txid

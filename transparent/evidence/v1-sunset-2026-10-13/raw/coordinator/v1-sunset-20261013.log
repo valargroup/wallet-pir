@@ -1,0 +1,18 @@
+2026-10-13T17:13:46Z backups in /root/v1-sunset-20261013
+2026-10-13T17:13:46Z router shell rendered
+2026-10-13T17:13:47Z stopped+disabled transparent-5qps-continuous.service (inactive)
+2026-10-13T17:13:48Z stopped+disabled transparent-fleet-actuator.timer (inactive)
+2026-10-13T17:13:48Z stopped+disabled transparent-fleet-scaler.service (inactive)
+2026-10-13T17:13:48Z stopped+disabled transparent-replica-reconciler.service (inactive)
+2026-10-13T17:13:48Z stopped+disabled transparent-control-sessions.service (inactive)
+2026-10-13T17:13:49Z stopped+disabled transparent-publish-controller.service (inactive)
+2026-10-13T17:13:49Z stopped+disabled transparent-txid-display-controller.service (inactive)
+2026-10-13T17:13:49Z journal writer lock released
+2026-10-13T17:13:49Z v12 controller restarted as journal writer
+{"level":"info","ts":1791911629.9489727,"msg":"using provided configuration","config_file":"/etc/caddy/Caddyfile.live-next","config_adapter":"caddyfile"}
+{"level":"info","ts":1791911629.9530146,"logger":"http","msg":"server is listening only on the HTTPS port but has no TLS connection policies; adding one to enable TLS","server_name":"srv0","https_port":443}
+{"level":"info","ts":1791911629.9531863,"logger":"tls.cache.maintenance","msg":"started background certificate maintenance","cache":"0xc0001969a0"}
+{"level":"info","ts":1791911629.9532452,"logger":"http","msg":"enabling automatic HTTP->HTTPS redirects","server_name":"srv0"}
+{"level":"info","ts":1791911629.9548092,"logger":"tls.cache.maintenance","msg":"stopped background certificate maintenance","cache":"0xc0001969a0"}
+Valid configuration
+2026-10-13T17:13:50Z router shell applied

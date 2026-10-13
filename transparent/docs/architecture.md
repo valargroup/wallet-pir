@@ -440,7 +440,7 @@ version changes when the wire format does, and its servers and clients ship toge
 
 | Prefix | Serves | Source |
 |---|---|---|
-| `/v1/` | schema v11 history with 16-bit tables, the txid-2k display | released binaries; `main` no longer builds it |
+| `/v1/` | retired 2026-10-13; answers 410 (it served schema v11 history with 16-bit tables and the txid-2k display) | none |
 | `/v2/` | schema v12 history with the 8-bit history profile, the one-query txid-4k8 display | `main` |
 
 Under `/v2/` the shard server answers `/v2/shards`, `/v2/shards/init`, manifests,

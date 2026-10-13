@@ -198,14 +198,14 @@ Not planned with it: other row widths, a two-digit 8-bit key, or any change to `
   activation is tracked [below](#transparent-monitoring-on-v2).
 - [x] Make the public router version-independent: a shell around one route file per prefix,
   so a later `/v3/` is one more file (`transparent-public-router.py`).
-- [ ] Retire `/v1/` (Roman, 2026-10-13). Each step waits on the one before:
-  - [ ] confirm that no wallet traffic reaches `/v1/`, beyond our own load and probes;
-  - [ ] hand the shared journal's writer role from the v11 controller to the v12 controller
-    (`follow_journal: false`), which until now only follows it;
-  - [ ] stop the v11 controller, scaler, reconciler and control sessions, and install the
-    router shell with `/v1/*` answering 410;
-  - [ ] stop serving on recent-01, recent-02, archive-03 and txid-display-01, keeping the
-    droplets 48 h for rollback;
+- [ ] Retire `/v1/` (Roman, 2026-10-13; [evidence](../evidence/v1-sunset-2026-10-13/README.md)). Each step waits on the one before:
+  - [x] confirm that no wallet traffic reaches `/v1/`, beyond our own load and probes;
+  - [x] hand the shared journal's writer role from the v11 controller to the v12 controller
+    (`follow_journal: false` and a sandbox drop-in that makes the journal writable);
+  - [x] stop the v11 controller, scaler, reconciler and control sessions, and install the
+    router shell with `/v1/*` answering 410 (17:13:50 UTC);
+  - [x] stop serving on recent-01, recent-02, archive-03 and txid-display-01, keeping the
+    droplets 48 h for rollback (17:26 UTC);
   - [ ] point the continuous 5 QPS load at `/v2/`, pass 20 QPS on `/v2/` (p99 < 2 s, p50 <
     700 ms), and update the APM dashboard so it shows no v11 sources;
   - [ ] after 48 h and Roman's go on the saved plan, destroy the four droplets with Terraform,
