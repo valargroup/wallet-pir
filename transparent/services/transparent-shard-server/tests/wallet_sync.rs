@@ -1012,9 +1012,12 @@ async fn coverage_does_not_advance_when_a_segment_is_missing() {
     .await
     .unwrap();
 
+    // A short answer does not verify: the entries it answered fail on
+    // content, and the one-shot sync, with no store to count them in, reports
+    // that instead of a balance.
     assert!(
-        error.to_string().contains("length"),
-        "expected a length refusal, got: {error}"
+        matches!(error, transparent_wallet::SyncError::Content(_)),
+        "expected a content failure, got: {error}"
     );
 }
 
