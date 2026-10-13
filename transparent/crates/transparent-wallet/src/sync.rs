@@ -2865,8 +2865,9 @@ impl From<SyncError> for Failure {
 /// committed it to, the fragments of its current run not yet asked for, as
 /// dummy queries to that run's page shard, and then nothing. A run whose link
 /// names a page shard the manifest does not declare, or a row outside that
-/// table, sends one dummy to its own page shard in the link's place. Nothing
-/// that depends on the bad reply is sent.
+/// table, sends one dummy to its own page shard in the link's place, unless
+/// the honest walk would not query a head after this run. Nothing that
+/// depends on the bad reply is sent.
 fn walk_chains<S: WalletStore, R: RowSource>(
     store: &mut S,
     entry: &transparent_filter::ShardMapEntry,
@@ -2925,7 +2926,13 @@ fn walk_chains<S: WalletStore, R: RowSource>(
                 )
                 .map_err(Failure::from)
                 .and_then(|head| {
-                    walker.check_located(&head, &item.cursor, item.fragments.len())?;
+                    walker.check_located(
+                        store,
+                        &item.script,
+                        &head,
+                        &item.cursor,
+                        item.fragments.len(),
+                    )?;
                     Ok(head)
                 });
             match head {
@@ -3101,10 +3108,12 @@ impl Walker<'_> {
     /// link to that starts at a row of an earlier, declared page shard. A
     /// link that fails any of these still leaves this run located, so the
     /// walk owes the queries for its fragments not yet held, of `held`, and
-    /// one in the link's place unless the chain promised no older run, all
-    /// as dummies: the round the honest walk would send.
-    fn check_located(
+    /// one in the link's place unless the honest walk would not follow it,
+    /// all as dummies: the round the honest walk would send.
+    fn check_located<S: WalletStore>(
         &self,
+        store: &S,
+        script: &[u8],
         head: &PageEntry,
         cursor: &RunCursor,
         held: usize,
@@ -3115,14 +3124,36 @@ impl Walker<'_> {
             Some((child, row)) => self.locate(child, u64::from(row)).map(|_| ()),
             None => Ok(()),
         });
-        // A run its chain promised no older run is the oldest: the honest
-        // walk sends no head after it.
-        let link_query = u32::from(cursor.older_runs != Some(0));
-        link.map_err(|error| Failure {
+        let Err(error) = link else {
+            return Ok(());
+        };
+        let link_query = self.owed_link_query(store, script, cursor)?;
+        Err(Failure {
             error,
             child: cursor.child,
             dummies: head.fragment_count.saturating_sub(held.max(1) as u32) + link_query,
         })
+    }
+
+    /// Whether the honest walk would query a head after the run at `cursor`.
+    ///
+    /// It would not when the chain already promised this run was the oldest,
+    /// nor when this script's previous run is the cached run in the page
+    /// shard just below: a tip catch-up stops there and sends nothing for it.
+    /// Either way a bad link must not add a query the honest walk omits.
+    fn owed_link_query<S: WalletStore>(
+        &self,
+        store: &S,
+        script: &[u8],
+        cursor: &RunCursor,
+    ) -> Result<u32, SyncError> {
+        if cursor.older_runs == Some(0) {
+            return Ok(0);
+        }
+        let Some(previous) = cursor.child.checked_sub(1) else {
+            return Ok(1);
+        };
+        Ok(u32::from(self.cached(store, script, previous)?.is_none()))
     }
 
     /// One round's requests for a walk, and the history cached below its
@@ -3265,7 +3296,7 @@ impl Walker<'_> {
                 return Err(SyncError::Invalid("a round lost an answer".into()).into());
             };
             let head = self.fragment(&script, cursor.child, answer, 0, None)?;
-            self.check_located(&head, &cursor, 1)?;
+            self.check_located(store, &script, &head, &cursor, 1)?;
             walk.item.fragments.push(encode_fragment(&head)?);
             walk.head = Some(head);
             return Ok(self.commit(
@@ -3365,7 +3396,7 @@ impl Walker<'_> {
                         .fragment(&script, child, answer, 0, None)
                         .map_err(Failure::from)
                         .and_then(|head| {
-                            self.check_located(&head, &progressed.cursor, 1)?;
+                            self.check_located(store, &script, &head, &progressed.cursor, 1)?;
                             Ok(head)
                         });
                     match checked {
@@ -5758,6 +5789,71 @@ mod walk_tests {
         // The rest of the run, in the round after its head, as dummies.
         let rest = head.fragment_count as usize - 1;
         assert_eq!(dummies(&bad), dummies(&honest) + rest);
+    }
+
+    /// Tip catch-up reads the open run and stops at the cached run below it.
+    /// A bad link on that open run owes the rest of the run and no head after
+    /// it: the honest catch-up sends none.
+    #[test]
+    fn a_bad_link_owes_no_head_when_the_next_run_is_cached() {
+        let (_, directories) = fixture();
+        let tail = directories.last().unwrap();
+        let manifest = manifest_of(tail);
+        let open = manifest.page_children.len() as u8 - 1;
+        assert!(!manifest.page_children[usize::from(open)].sealed);
+        assert!(manifest.page_children[usize::from(open - 1)].sealed);
+        let scripts = paged(tail);
+        let victim = scripts
+            .iter()
+            .find(|script| {
+                let runs = runs_of(tail, script);
+                runs.len() >= 2 && runs[0].0 == open && runs[1].0 + 1 == runs[0].0
+            })
+            .cloned()
+            .expect("a tip script whose previous run is in the page shard below");
+        let ((child, row), head, bytes) = rewritten_head(tail, &victim, |entry| {
+            let link = entry.link;
+            entry
+                .with_link(RunLink {
+                    prev_row: 60_000,
+                    ..link
+                })
+                .unwrap()
+        });
+        assert!(head.link.previous().is_some());
+
+        let mut seeded = MemoryStore::new();
+        let owed = directory_phase(&mut seeded, tail, &manifest, &scripts);
+        walk(&mut seeded, &manifest, &owed, &mut Direct::new(tail)).unwrap();
+
+        let mut honest_store = seeded.clone();
+        let owed = directory_phase(&mut honest_store, tail, &manifest, &scripts);
+        let mut honest = Direct::new(tail);
+        walk(&mut honest_store, &manifest, &owed, &mut honest).unwrap();
+        assert!(honest
+            .requests
+            .iter()
+            .all(|request| request.child == u32::from(open)));
+
+        let mut bad_store = seeded;
+        let owed = directory_phase(&mut bad_store, tail, &manifest, &scripts);
+        let mut bad = Direct::new(tail);
+        bad.rewritten
+            .insert((u32::from(child), u64::from(row)), vec![bytes]);
+        let failed = walk_failing(&mut bad_store, &manifest, &owed, &mut bad);
+        assert_eq!(failed.len(), 1);
+        assert_eq!(failed[0].script, victim);
+        assert_eq!(bad.round_sizes, honest.round_sizes);
+        assert_eq!(sorted(bad.round(0)), sorted(honest.round(0)));
+        let dummies = |walk: &Direct<'_>| {
+            walk.requests
+                .iter()
+                .filter(|request| (request.child, request.row) == (u32::from(child), 0))
+                .count()
+        };
+        let rest = head.fragment_count as usize - 1;
+        assert_eq!(dummies(&bad), dummies(&honest) + rest);
+        assert_eq!(bad.requests.len(), honest.requests.len());
     }
 
     /// A link to a row outside the page shard's table.
