@@ -1,0 +1,21 @@
+{
+  "run_id": "observability-v2-2026-10-13",
+  "utc": "2026-10-13T04:10:00Z",
+  "kind": "monitoring deployment",
+  "source": {"pir_apm": ["1868e5a6", "5ad1ef61"], "pir_monitor": "1868e5a6", "quality_canary": "1868e5a6", "txid_quality_canary": "1868e5a6", "fixture_exporter": "1a1cae3e"},
+  "build": {"host": "roman-ipir-bench-8vcpu", "profile": "release", "rustflags": "-C target-cpu=haswell",
+            "sha256": {"pir-apm@1868e5a6": "a4ab946f8be2812e167ba586759706ec03945c093666c81a77eaf2c278672bc6",
+                       "pir-apm@5ad1ef61": "e63c02ded46ebc38063c82a26b225b2487f01c7c57a59031e04c78671d26b8fb",
+                       "pir-monitor@1868e5a6": "029455ff3512725bb908882bb06945ad0d59ab0a7dc5745ccfa1d372f90b7918",
+                       "quality-canary@1868e5a6": "137ffb9ee0a4f5c4c356cd7cdae648e6b188c6cf076749ff8e7b388598192f59",
+                       "txid-quality-canary@1868e5a6": "5135def5e6abc232a9a2deab01231bcc0b69b38f6c11708ae0635ce8fb3075f7"}},
+  "hosts": {"coordinator": "wallet-pir-coordinator-01", "monitor": "wallet-pir-monitor-01"},
+  "services": {"transparent": {"kind": "history", "schema": "transparent-shard-v12", "path_prefix": "/v2", "alert_mode": "shadow"},
+               "txid": {"kind": "txid", "geometry": "txid-4k8", "path_prefix": "/v2", "alert_mode": "shadow"}},
+  "capacity_alert_mode": "shadow",
+  "canary_fixture_v12": {"tables": 233, "sha256": "5a4e1fe74a36c0cddc6e33dae38bc85a4dc33b27aa8b369b8462566bc69c5f5b",
+                         "source_height": 3515907, "anchor_height": 3499356,
+                         "anchor_hash": "000000000083e9125d5bbfbfce8d11cf8bf4929d47e382ea8cf44ec1409c8591"},
+  "txid_fixture_sha256": "c6af1b9ca8b96cf1f3600cbb9f5dc15b223057db76875af34da88cc89907897b",
+  "result": "deployed in shadow; all sources fresh; no Slack delivery"
+}

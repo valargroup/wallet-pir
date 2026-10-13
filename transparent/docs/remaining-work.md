@@ -193,9 +193,30 @@ Not planned with it: other row widths, a two-digit 8-bit key, or any change to `
 (schema v12 at the 8-bit profile, the one-query txid display) side by side
 ([architecture](architecture.md#api-versions), [deployment](deployment.md#wallet-api-v2-on-the-public-origin)).
 
-- [ ] Monitor `/v2/`: canary fixture, APM roster and alerts, as `/v1/` has.
+- [x] Monitor `/v2/`: canary fixtures, APM services and alerts, in shadow since
+  2026-10-13 ([evidence](../evidence/observability-v2-2026-10-13/README.md));
+  activation is tracked [below](#transparent-monitoring-on-v2).
 - [ ] Retire `/v1/` once no supported wallet uses it: remove its fleet, and move the
   public router and its route files to the v2 fleet's adapter.
+
+## Transparent monitoring on /v2
+
+pir-apm watches the v12 history service and the one-query txid display, and
+pir-monitor probes both, every family in shadow since about 04:00 UTC on
+2026-10-13 ([evidence](../evidence/observability-v2-2026-10-13/README.md),
+[rules](../../enhance/docs/observability-alerting.md)). v1 is not monitored.
+
+- [ ] Roll the v12 workers to a release with `transparent_shard_prepare_seconds`
+  (`8ec7eed1` or later) so the worker prepare rows and alerts have data.
+- [ ] After 24 hours of shadow, review every incident of the `quality-transparent`,
+  `quality-txid` and `transparent_capacity` families and the `transparent` and
+  `txid` probes; adjust thresholds in the alert policy, not in code.
+- [ ] Exercise one fire and recovery per family through the outbox with a
+  temporary low threshold in the policy file, then restore it.
+- [ ] Set `alert_mode` to `active` for both services, `capacity_alert_mode` to
+  `active`, and `PIR_MONITOR_SERVICE_ALERT_MODE=active`; observe 24 active hours.
+- [ ] After three days of daily peaks, check the capacity forecasts against the
+  hosts' known growth and record the first reprovisioning dates.
 
 ## Dithered 44-bit queries (deployed 2026-10-09)
 
@@ -1010,8 +1031,8 @@ changes run `make check-docs`.
 
 - [x] Superseded 2026-09-29 at the owner's request: the six-hour / 300-block telemetry canary and gated five-worker rollout were stopped, and recent replicas were rolled to `dbeb3960` without the soak (see [replica membership](../evidence/replica-membership-2026-09-29/README.md)). Archive owners still run the predecessor binary and need a maintenance-window upgrade.
 - [ ] Complete full-fleet observation; retain failures and exact-query/configuration provenance.
-- [ ] Review 24 hours of complete shadow coverage and exercise firing/recovery through the existing notification outbox.
-- [ ] Activate only the new APM quality and independent service-probe families, then observe 24 active hours.
+- [x] Superseded 2026-10-13: v1 is no longer monitored; the shadow review and
+  activation moved to [Transparent monitoring on /v2](#transparent-monitoring-on-v2).
 
 The live dashboard and initial passing probes do not close these elapsed-time gates.
 

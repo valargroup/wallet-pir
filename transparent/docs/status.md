@@ -6,6 +6,26 @@ M4–M6 are open.** This records observed progress, not a new live fleet health
 check. [Remaining work](remaining-work.md) is the authoritative outstanding
 checklist; [deployment](deployment.md) owns operating targets.
 
+## Monitoring on `/v2`, in shadow, 2026-10-13
+
+pir-apm and pir-monitor watch the v12 history service and the one-query txid
+display under `/v2`; v1 is no longer monitored
+([evidence](../evidence/observability-v2-2026-10-13/README.md)).
+
+- **APM.** pir-apm `5ad1ef61` on the coordinator since about 04:00 UTC. It shows
+  `transparent` (v12 history) and `txid` pages with publication freshness and
+  recent-rebuild timing, and `/apm/capacity/` with per-host and per-unit memory,
+  growth forecasts and next droplet sizes. All 7 sources were fresh at switch.
+  v12 publication cycle p50 19.8 s, p95 29.0 s.
+- **Probes.** On `wallet-pir-monitor-01`, the `transparent` probe runs the v12
+  canary (233-table fixture, anchor 3,499,356) and a new `txid` probe looks up a
+  pinned sealed entry; both pass.
+- **Alerts.** Every Transparent and txid family is in shadow; nothing has been
+  sent to Slack. Enhance and Status alerting are unchanged and active.
+- **Open.** v12 workers lack the prepare histogram until their next rollout;
+  capacity forecasts need three days; activation follows a 24-hour shadow review
+  ([remaining work](remaining-work.md#transparent-monitoring-on-v2)).
+
 ## Txid display `/v2/txid` on `txid-4k8` tables, 2026-10-13
 
 The one-query site serves 4,096-row `txid-4k8` tables since about 02:45 UTC

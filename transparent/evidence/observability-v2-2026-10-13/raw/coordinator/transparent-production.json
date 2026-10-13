@@ -1,0 +1,37 @@
+{
+  "host_snapshot": "/var/lib/pir-apm/hosts.json",
+  "capacity_alert_mode": "shadow",
+  "services": [
+    {
+      "service": "transparent",
+      "kind": "history",
+      "publisher_url": "http://10.142.0.3:8096/metrics",
+      "status_url": "http://10.142.0.3:8096/v1/status",
+      "roster": "/opt/transparent-publisher/v12/roster.json",
+      "router_metrics_url": "file:///var/lib/pir-apm/edge.prom",
+      "public_origins": [
+        "https://transparent-pir.valargroup.dev"
+      ],
+      "path_prefix": "/v2",
+      "alert_mode": "shadow",
+      "min_recent_replicas": 1
+    },
+    {
+      "service": "txid",
+      "kind": "txid",
+      "controller_url": "http://127.0.0.1:8098",
+      "workers": [
+        {
+          "id": "transparent-pir-txid-k8-01",
+          "role": "display-worker",
+          "upstream": "10.142.0.18:8095"
+        }
+      ],
+      "public_origins": [
+        "https://transparent-pir.valargroup.dev"
+      ],
+      "path_prefix": "/v2",
+      "alert_mode": "shadow"
+    }
+  ]
+}
