@@ -309,10 +309,11 @@ retired and is not monitored:
   "capacity_alert_mode": "shadow",
   "services": [
     {"service": "transparent", "kind": "history",
-     "publisher_url": "http://127.0.0.1:8094/metrics",
-     "status_url": "http://127.0.0.1:8094/v1/status",
+     "publisher_url": "http://10.142.0.3:8096/metrics",
+     "status_url": "http://10.142.0.3:8096/v1/status",
      "roster": "/opt/transparent-publisher/v12/roster.json",
-     "router_metrics_url": null, "synthetic_status": null,
+     "router_metrics_url": "file:///var/lib/pir-apm/edge.prom",
+     "min_recent_replicas": 1,
      "public_origins": ["https://transparent-pir.valargroup.dev"],
      "path_prefix": "/v2", "alert_mode": "shadow"},
     {"service": "txid", "kind": "txid",
@@ -337,8 +338,10 @@ retired and is not monitored:
   rollout mode. `capacity_alert_mode` is the capacity family's.
 - History: `publisher_url` (its `/metrics`), optional `status_url` (default:
   the publisher's origin plus `/v1/status`), `roster` (reread every 15 s; roles
-  `archive-owner` and `recent-replica`), optional `router_metrics_url` and
-  `synthetic_status`.
+  `archive-owner` and `recent-replica`), optional `router_metrics_url`,
+  `synthetic_status` and `min_recent_replicas` (1–32, default 2: the ready
+  recent replicas below which the redundancy warning fires; the v12 fleet runs
+  one recent worker by design and sets 1).
 - Txid: `controller_url`, scraped at `/metrics` (role `display-controller`) with
   its published block and map read from `/v1/status`; `workers` with role
   `display-worker`, each scraped at `/metrics` and `/v1/ready`.
@@ -596,7 +599,7 @@ txid display controller.
 | `prepare_<worker>_warning`, `_critical` | both | warning / critical | > 5% of 15-min revision prepares above 32 s / 64 s | 60 s |
 | `ready_<worker>` | archive owner, display worker | critical | not ready on the published map | 60 s |
 | `recent_availability` | history | critical | no recent replica ready on the published map | 60 s |
-| `recent_redundancy` | history | warning | fewer than two ready recent replicas | 120 s |
+| `recent_redundancy` | history | warning | fewer ready recent replicas than the service's `min_recent_replicas` (default 2; a one-replica fleet sets 1, leaving only `recent_availability`) | 120 s |
 | `coverage_<source>` | both | warning | source unavailable | 45 s |
 | `http_coverage_<source>` | history | warning | publisher or worker lacks HTTP observation version 1 | 45 s |
 | `http_errors_<source>` | both | warning | 5xx > 5% with ≥ 10 responses in 5 min | – |

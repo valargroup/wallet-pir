@@ -547,15 +547,17 @@ fn service_rules(a: &mut Adder, svc: &ServiceView, view: &View, now: u64, p: &Po
                 format!("{ready} ready replicas"),
                 "no recent replica for 60s",
             );
+            // With a one-replica floor the critical above already covers it.
+            let floor = svc.min_recent_replicas;
             a.add(
                 "recent_redundancy",
                 name,
-                known.then_some(ready < 2),
+                known.then_some(floor > 1 && ready < floor),
                 "warning",
                 120,
                 now,
                 format!("{ready} ready replicas"),
-                "fewer than two recent replicas for 120s",
+                format!("fewer than {floor} ready recent replicas for 120s"),
             );
         }
     }
@@ -846,6 +848,7 @@ mod tests {
             name: name.into(),
             kind,
             path_prefix: "/v2".into(),
+            min_recent_replicas: 2,
             shadow: true,
             ..Default::default()
         }
@@ -1367,6 +1370,30 @@ mod tests {
         v.sources.get_mut("k8").unwrap().publication = Some(map);
         let f = conditions(&v, 105, &Policy::default());
         assert_eq!(firing(&f, "txid", "ready_k8"), Some(false));
+    }
+
+    #[test]
+    fn one_replica_fleet_sets_its_own_redundancy_floor() {
+        let map = "ab".repeat(32);
+        let mut svc = service("transparent", Kind::History);
+        svc.publication = publication::View {
+            sampled_at: 100,
+            map_sha256: Some(map.clone()),
+            ..Default::default()
+        };
+        let mut recent = source("transparent", "recent-replica", 100, &[]);
+        recent.ready = Some(true);
+        recent.publication = Some(map);
+        let mut v = view(vec![svc], vec![("r", recent)]);
+        let f = conditions(&v, 105, &Policy::default());
+        assert_eq!(firing(&f, "transparent", "recent_redundancy"), Some(true));
+        assert_eq!(
+            firing(&f, "transparent", "recent_availability"),
+            Some(false)
+        );
+        v.services[0].min_recent_replicas = 1;
+        let f = conditions(&v, 105, &Policy::default());
+        assert_eq!(firing(&f, "transparent", "recent_redundancy"), Some(false));
     }
 
     #[test]

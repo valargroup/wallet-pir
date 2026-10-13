@@ -54,6 +54,10 @@ pub struct Service {
     pub roster: Option<PathBuf>,
     pub router_metrics_url: Option<String>,
     pub synthetic_status: Option<PathBuf>,
+    /// Ready recent replicas below which the redundancy warning fires; 2 when
+    /// absent. A fleet built with one recent replica sets 1, which leaves only
+    /// the no-replica critical.
+    pub min_recent_replicas: Option<u32>,
     // Txid services.
     pub controller_url: Option<String>,
     pub workers: Option<Vec<Worker>>,
@@ -155,6 +159,11 @@ impl Service {
                     self.controller_url.is_none() && self.workers.is_none(),
                     "{name}: controller_url and workers belong to txid services"
                 );
+                anyhow::ensure!(
+                    self.min_recent_replicas
+                        .is_none_or(|n| (1..=32).contains(&n)),
+                    "{name}: min_recent_replicas must be 1..32"
+                );
             }
             Kind::Txid => {
                 anyhow::ensure!(
@@ -170,7 +179,8 @@ impl Service {
                         && self.status_url.is_none()
                         && self.roster.is_none()
                         && self.router_metrics_url.is_none()
-                        && self.synthetic_status.is_none(),
+                        && self.synthetic_status.is_none()
+                        && self.min_recent_replicas.is_none(),
                     "{name}: publisher, roster, edge and synthetic fields belong to history services"
                 );
             }

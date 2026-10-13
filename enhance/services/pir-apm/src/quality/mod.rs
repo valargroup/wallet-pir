@@ -100,6 +100,8 @@ pub struct ServiceView {
     pub kind: services::Kind,
     pub path_prefix: String,
     pub public_origins: Vec<String>,
+    /// Ready recent replicas a history service needs before redundancy is met.
+    pub min_recent_replicas: usize,
     pub shadow: bool,
     pub inventory_error: bool,
     pub publication: publication::View,
@@ -557,6 +559,7 @@ pub fn start(dashboard: SharedDashboard, config: &Config) -> Result<()> {
                     kind: s.kind,
                     path_prefix: s.path_prefix.clone(),
                     public_origins: s.public_origins.clone(),
+                    min_recent_replicas: s.min_recent_replicas.unwrap_or(2) as usize,
                     shadow: s.alert_mode == services::Mode::Shadow,
                     ..Default::default()
                 })
