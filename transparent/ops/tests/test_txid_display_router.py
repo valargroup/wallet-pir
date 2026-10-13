@@ -38,7 +38,14 @@ GOLDEN = {
 
 
 def render(internal, guarded, live=True, **extra):
-    """The live and withdrawn routers the adapter would send for a fixed fleet."""
+    """The live and withdrawn routers the adapter would send for a fixed fleet.
+
+    The fleet serves `/v1` unless `api_version` is given; `api_version=None`
+    leaves the key out.
+    """
+    extra.setdefault('api_version', 'v1')
+    if extra['api_version'] is None:
+        del extra['api_version']
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
         roster = [dict(id=f'a{i}', role='archive-owner', ssh_host=f'10.0.0.{i}', upstream=f'10.0.0.{i}:8093')
@@ -111,10 +118,21 @@ class RouterHookTests(unittest.TestCase):
                     self.assertIn('health_uri /v1/ready', v2.decode())
                 self.assertEqual(withdrawn_v2, withdrawn)
 
-    def test_an_unknown_api_version_refuses(self):
-        for version in ('v3', '2', ''):
-            with self.subTest(version=version), self.assertRaises(ValueError):
+    def test_an_invalid_or_missing_api_version_refuses(self):
+        for version in (None, '2', '', 'v0', 'v01', 'v2/', 'V2', 2):
+            with self.subTest(version=version), self.assertRaisesRegex(ValueError, 'invalid api version'):
                 render(False, False, api_version=version)
+
+    def test_any_numbered_api_version_renders(self):
+        live, _ = render(False, False, api_version='v3')
+        self.assertIn('^/v3/shards/(', live.decode())
+        self.assertNotIn('/v1/shards', live.decode())
+
+    def test_withdrawal_needs_no_api_version(self):
+        for (internal, guarded), digests in GOLDEN.items():
+            with self.subTest(internal=internal, guarded=guarded):
+                withdrawn, = render(internal, guarded, live=False, api_version=None)
+                self.assertEqual(hashlib.sha256(withdrawn).hexdigest(), digests[1])
 
     def test_invalid_imports_refuse_before_any_router_change(self):
         for value in ('/etc/caddy/x/*.caddy', ['/etc/caddy/x/*.conf'], ['relative/*.caddy'],
@@ -139,7 +157,7 @@ class RouterHookTests(unittest.TestCase):
             self.skipTest('caddy is not installed')
         with tempfile.TemporaryDirectory() as tmp:
             snippet = (ROOT / 'transparent/ops/deploy/txid-display-routes.caddy.in').read_text()
-            snippet = snippet.replace('@ARCHIVE_UPSTREAM@', '10.0.0.5:8095').replace('@RECENT_UPSTREAM@', '10.0.0.6:8095')
+            snippet = snippet.replace('@TXID@', '/v1/txid').replace('@ARCHIVE_UPSTREAM@', '10.0.0.5:8095').replace('@RECENT_UPSTREAM@', '10.0.0.6:8095')
             (Path(tmp) / 'routes.caddy').write_text(snippet)
             live, _ = render(True, False, route_imports=[tmp + '/*.caddy'])
             (Path(tmp) / 'Caddyfile').write_text(live.decode())

@@ -30,7 +30,7 @@ class FleetTests(unittest.IsolatedAsyncioTestCase):
         roster = self.root/'roster.json'
         roster.write_text(json.dumps(self.roster))
         self.fleet = module.Fleet(dict(roster=str(roster),state_dir=str(self.root),known_hosts='known',ssh_key='key',
-                                     public_host='pir.example',authority_upstream='https://filters.example',router_host='10.0.0.9'))
+                                     public_host='pir.example',authority_upstream='https://filters.example',router_host='10.0.0.9',api_version='v2'))
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -593,7 +593,7 @@ time.sleep(10)
         self.assertNotIn('10.0.1.1:8093',text)
         self.assertIn('10.0.1.2:8093',text)
         self.assertIn('https://filters.example',text)
-        self.assertIn('/v1/filters/shards',text)
+        self.assertIn('/v2/filters/shards',text)
 
     async def test_live_router_uses_the_saturation_tolerant_health_policy(self):
         captured=[]

@@ -96,12 +96,24 @@ def route_import_lines(config):
 
 
 def api_version(config):
-    """The wallet API path version the fleet serves: production's v11 schema is
-    `v1` (the default), the v12 schema with 8-bit history is `v2`."""
-    version = config.get('api_version', 'v1')
-    if version not in ('v1', 'v2'):
+    """The wallet API path version the fleet serves, such as `v2` for the v12
+    schema with 8-bit history. A fleet that renders a router must name it."""
+    version = config.get('api_version')
+    if not isinstance(version, str) or not re.fullmatch(r'v[1-9][0-9]*', version):
         raise ValueError('invalid api version')
     return version
+
+
+def caddy_swap_command(target):
+    """Remote shell that installs the Caddyfile on stdin at `target`.
+
+    It validates first, keeps the previous file, and restores it if the reload
+    fails. Successful application is recorded separately: a crash after rename
+    but before reload must not turn a retry into a false no-op. Caddy reload is
+    atomic.
+    """
+    quoted = shlex.quote(target)
+    return f'set -eu\ncat > {quoted}.live-next\nif cmp -s {quoted}.live-next {quoted} && sha256sum {quoted} | cmp -s - {quoted}.live-applied.sha256; then rm {quoted}.live-next; exit 0; fi\ncaddy validate --config {quoted}.live-next --adapter caddyfile >&2\ncp {quoted} {quoted}.live-previous\nmv {quoted}.live-next {quoted}\nif ! systemctl reload caddy; then cp {quoted}.live-previous {quoted}; systemctl reload caddy; exit 1; fi\nsha256sum {quoted} > {quoted}.live-applied.sha256.next\nmv {quoted}.live-applied.sha256.next {quoted}.live-applied.sha256'
 
 
 def atomic_json(path, value):
@@ -692,9 +704,10 @@ class Fleet:
         authority = self.c['authority_upstream']
         if not re.fullmatch(r'[A-Za-z0-9_.:-]+', host) or not re.fullmatch(r'(https://)?[A-Za-z0-9_.:-]+', authority):
             raise ValueError('invalid router addresses')
-        api = api_version(self.c)
         body = ['\trequest_body {\n\t\tmax_size 1MB\n\t}']
         if workers:
+            # Withdrawal never needs the version, so a bad one cannot block it.
+            api = api_version(self.c)
             # Only serving sites import, so a bad key can never block withdrawal.
             imports = route_import_lines(self.c)
             workers = self.render_set(workers, assignment)
@@ -730,11 +743,7 @@ class Fleet:
         text = '{\n\tservers {\n\t\tmetrics\n\t}\n}\n' + text
         if not workers:
             text = withdrawn_router(self.c, guarded)
-        target = self.c.get('router_file','/etc/caddy/Caddyfile')
-        quoted = shlex.quote(target)
-        # Record successful application separately: a crash after rename but before
-        # reload must not turn a retry into a false no-op. Caddy reload is atomic.
-        command = f'set -eu\ncat > {quoted}.live-next\nif cmp -s {quoted}.live-next {quoted} && sha256sum {quoted} | cmp -s - {quoted}.live-applied.sha256; then rm {quoted}.live-next; exit 0; fi\ncaddy validate --config {quoted}.live-next --adapter caddyfile >&2\ncp {quoted} {quoted}.live-previous\nmv {quoted}.live-next {quoted}\nif ! systemctl reload caddy; then cp {quoted}.live-previous {quoted}; systemctl reload caddy; exit 1; fi\nsha256sum {quoted} > {quoted}.live-applied.sha256.next\nmv {quoted}.live-applied.sha256.next {quoted}.live-applied.sha256'
+        command = caddy_swap_command(self.c.get('router_file','/etc/caddy/Caddyfile'))
         audit_path = self.root/'routing-availability.json'
         audit = self.routing_availability() if audit_path.exists() else dict(
             schema=1, epoch=uuid.uuid4().hex, unavailable_events=0, available=False)

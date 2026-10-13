@@ -3222,31 +3222,42 @@ fails. All original rollback phase budgets remain 60/140/300/100/140 seconds
 through the guarded deployment wrapper and retain their actual raw evidence.
 The lifecycle gate remains open until those executions and reinspection pass.
 
-## Wallet API v2 on the public origin
+## Public router and API versions
 
-`https://transparent-pir.valargroup.dev` serves both wallet API versions
-([architecture](architecture.md#api-versions)). Its router,
-`transparent-pir-router-01`, is rendered by the v11 fleet's adapter, which keeps
-`/v1/` exactly as before and imports the v2 routes:
+`https://transparent-pir.valargroup.dev` serves each wallet API version under its
+own prefix ([architecture](architecture.md#api-versions)). Its router,
+`transparent-pir-router-01`, holds no version of its own. It is a shell (both
+sites, the 1 MB body bound, a catch-all 404, proxy errors with `Retry-After`)
+around one route file per version in [ops/deploy/api](../ops/deploy/api):
 
-- **v11 fleet:** `route_imports` lists `/etc/caddy/txid-display/*.caddy` and
-  `/etc/caddy/api-v2/*.caddy`. The second holds
-  [api-v2-routes.caddy](../ops/deploy/api-v2-routes.caddy):
-  - `/v2/txid/*` goes to the one-query display site at `10.142.0.18:8095`;
-  - every other `/v2/*` path goes to the v12 worker's internal listener at
-    `10.142.0.9:8080`, with the upstream's own host header.
-- **v12 fleet:** `fleet.json` sets `"api_version": "v2"`, so its adapter renders
-  `/v2/` routes on `transparent-pir-v12.valargroup.dev` and on that internal
-  listener. The staging hostname serves history only.
-- **Firewall:** the v12 worker's firewall admits the router's tag on 8080
-  (`transparent-v12.tf`); the display site's worker rule already admits it on 8095.
-- **Changing a route file:** validate the router configuration with the import
-  before opting a fleet into a new glob. The adapter validates each render and a
-  failure blocks that publication's route step. A change to an imported file alone
-  needs `systemctl reload caddy` on the router; the adapter reloads only when its
-  own render changes.
-- **Rollback:** restore the v11 fleet's `route_imports`; the next publication
-  renders the router without `/v2/`.
+- [v2.caddy](../ops/deploy/api/v2.caddy): `/v2/txid/*` goes to the one-query
+  display site at `10.142.0.18:8095`, and every other `/v2/*` path goes to the
+  v12 fleet's internal listener at `10.142.0.9:8080` with the upstream's own host
+  header. The v12 fleet's `fleet.json` sets `"api_version": "v2"`, so its own
+  adapter renders `/v2/` on `transparent-pir-v12.valargroup.dev` and on that
+  listener.
+- [v1.caddy](../ops/deploy/api/v1.caddy): `/v1/*` answers 410 with a JSON body
+  naming `/v2`, once v1 is retired.
+
+`transparent-public-router.py` inlines the files in version order and installs
+the result as one file through the adapter's swap step, which validates it,
+keeps the previous file and restores it if the reload fails. A file may only
+handle paths under its own prefix. Its config is a JSON file with `public_host`,
+`internal_listen`, `router_host`, `ssh_key` and `known_hosts`; it runs from the
+coordinator under the production lock:
+
+- `render --config <file>` prints the router;
+- `apply --config <file>` installs it;
+- `--withdraw vN` answers that prefix 503 and leaves the others serving.
+
+Adding a version means one more `v<N>.caddy` that sends `/v<N>/*` to the new
+fleet's router, then `apply`. Each version's fleet keeps rendering its own
+router; no fleet writes the public one. **Firewall:** the v12 worker's firewall
+admits the router's tag on 8080 (`transparent-v12.tf`), and the display site's
+worker rule admits it on 8095.
+
+**Rollback:** reinstall the previous router file (`Caddyfile.live-previous` on
+the router) and reload Caddy.
 
 ## Txid display one-query site (2026-10-12)
 

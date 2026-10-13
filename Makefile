@@ -72,6 +72,8 @@ check-ops-parents:
 
 check-ops-fleet:
 	python3 transparent/ops/tests/test_transparent_fleet.py
+	python3 transparent/ops/tests/test_txid_display_router.py
+	python3 transparent/ops/tests/test_public_router.py
 
 check-ops-publication:
 	python3 transparent/ops/tests/test_transparent_publication.py

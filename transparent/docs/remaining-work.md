@@ -136,10 +136,10 @@ The [trial](../evidence/p8-trial-2026-10-12/README.md) sized it.
   reused-tail timeout as at 16 bits; [evidence](../evidence/api-v2-p8-2026-10-12/README.md)).
 - [ ] Certify every served segment under the served seeds with `native_certificate`
   (always the dithered report for these tables), at the 50-bit floor.
-- [ ] Merge Vizor's v12 branch (chainapsis/vizor-wallet#977); zakura-core/wallet-libraries#165
-  is merged.
-- [ ] Decide when wallets move from `/v1/` to `/v2/`, and when `/v1/` retires; v11 production and its
-  wallets stay on 16 bits until then.
+- [x] Merge Vizor's v12 branch (chainapsis/vizor-wallet#977, merged 2026-10-13); Vizor main pins
+  wallet-libraries `391d0b02` with the transparent 0.1.0-rc.3 crates, which use only `/v2/`.
+- [x] Decide when `/v1/` retires: once Vizor main is on `/v2/` (Roman, 2026-10-13); see
+  [below](#wallet-api-versions-on-one-origin).
 
 ## 8-bit txid display profile
 
@@ -191,13 +191,27 @@ Not planned with it: other row widths, a two-digit 8-bit key, or any change to `
 
 `https://transparent-pir.valargroup.dev` serves `/v1/` (schema v11, txid-2k) and `/v2/`
 (schema v12 at the 8-bit profile, the one-query txid display) side by side
-([architecture](architecture.md#api-versions), [deployment](deployment.md#wallet-api-v2-on-the-public-origin)).
+([architecture](architecture.md#api-versions), [deployment](deployment.md#public-router-and-api-versions)).
 
 - [x] Monitor `/v2/`: canary fixtures, APM services and alerts, in shadow since
   2026-10-13 ([evidence](../evidence/observability-v2-2026-10-13/README.md));
   activation is tracked [below](#transparent-monitoring-on-v2).
-- [ ] Retire `/v1/` once no supported wallet uses it: remove its fleet, and move the
-  public router and its route files to the v2 fleet's adapter.
+- [x] Make the public router version-independent: a shell around one route file per prefix,
+  so a later `/v3/` is one more file (`transparent-public-router.py`).
+- [ ] Retire `/v1/` (Roman, 2026-10-13). Each step waits on the one before:
+  - [ ] confirm that no wallet traffic reaches `/v1/`, beyond our own load and probes;
+  - [ ] hand the shared journal's writer role from the v11 controller to the v12 controller
+    (`follow_journal: false`), which until now only follows it;
+  - [ ] stop the v11 controller, scaler, reconciler and control sessions, and install the
+    router shell with `/v1/*` answering 410;
+  - [ ] stop serving on recent-01, recent-02, archive-03 and txid-display-01, keeping the
+    droplets 48 h for rollback;
+  - [ ] point the continuous 5 QPS load at `/v2/`, pass 20 QPS on `/v2/` (p99 < 2 s, p50 <
+    700 ms), and update the APM dashboard so it shows no v11 sources;
+  - [ ] after 48 h and Roman's go on the saved plan, destroy the four droplets with Terraform,
+    delete the v11 state on the coordinator, and delete the v1-only tooling: the txid router
+    mode in `txid_display_poc.py`, the publisher's coordinator `/v1` route step and that route
+    in `ops/deploy/coordinator/Caddyfile`, and the `/v1` routes in `transparent-Caddyfile`.
 
 ## Transparent monitoring on /v2
 

@@ -3,6 +3,9 @@
 import argparse,collections,concurrent.futures,datetime,gzip,json,os,pathlib,re,signal,subprocess,threading,time,urllib.request,urllib.error
 ROOT=pathlib.Path('/opt/transparent-5qps-20260929')
 FLEET={};NODES=[];EXPECTED_BINARY="";EXPECTED_FILE=None;EXPECTED_BINARIES={};FLEET_PATH=pathlib.Path("/opt/transparent-publisher/fleet.json")
+# The public origin, the wallet API version under it, and the publisher this
+# fleet answers to; set from the command line.
+URL="https://transparent-pir.valargroup.dev";API="";CONTROLLER_STATUS="";CONTROLLER_UNIT="transparent-publish-controller";WORKER_UNITS={}
 LOCK=threading.Lock();COUNTS=collections.Counter();WINDOW=collections.deque();LATCH=[];PROC=None;STOP=False;LAST_READY=None
 
 def utc():return datetime.datetime.now(datetime.timezone.utc).isoformat()
@@ -17,7 +20,7 @@ def fetch(url):
  except urllib.error.HTTPError as e:return {'http':e.code}
  except Exception as e:return {'error':str(e)}
 def worker(w):
- service=w.get('service','transparent-shard-server')
+ service=w.get('service',WORKER_UNITS.get(w['id'],'transparent-shard-server'))
  disk_paths='/ /srv/transparent-activity /srv/zakura' if w.get('local') else '/ /srv/transparent-pir' if 'upstream' in w else '/ /srv'
  command=f'cat /proc/meminfo; systemctl show {service} -p ActiveState -p NRestarts -p MemoryCurrent -p MemoryPeak -p CPUUsageNSec; cat /sys/fs/cgroup/system.slice/{service}.service/memory.events; cat /proc/loadavg; df -P {disk_paths}'
  args=['ssh','-i',FLEET['ssh_key'],'-o','BatchMode=yes','-o','IdentitiesOnly=yes','-o','StrictHostKeyChecking=yes','-o','UserKnownHostsFile='+FLEET['known_hosts'],'-o','ConnectTimeout=4','root@'+w.get('ssh_host','localhost'),command]
@@ -65,7 +68,7 @@ def stop(signum,frame):
 signal.signal(signal.SIGTERM,stop);signal.signal(signal.SIGINT,stop)
 
 def nodes(roster):
- return roster+[{'id':'transparent-router','ssh_host':FLEET['router_host'],'service':'caddy'},{'id':'transparent-coordinator','local':True,'service':'transparent-publish-controller'}]
+ return roster+[{'id':'transparent-router','ssh_host':FLEET['router_host'],'service':'caddy'},{'id':'transparent-coordinator','local':True,'service':CONTROLLER_UNIT}]
 
 def current_roster(previous):
  # The inventory adds and retires recent replicas; follow it, keeping the
@@ -95,7 +98,7 @@ def main():
  NODES=nodes(roster)
  (ROOT/'permit').write_text('deny\n')
  if (ROOT/'latched.json').exists():LATCH.append({'event':'health_latch','reason':'persisted critical incident; inspect latched.json'})
- args=[str(ROOT/'rate-query'),'--url','https://transparent-pir.valargroup.dev','--fixture',str(ROOT/'fixture.json'),'--qps','5','--workers','8','--permit',str(ROOT/'permit')]
+ args=[str(ROOT/'rate-query'),'--url',URL,'--fixture',str(ROOT/'fixture.json'),'--qps','5','--workers','8','--permit',str(ROOT/'permit')]
  started=time.time();baseline={};bad_streak=0;healthy_streak=0;mode='starting';incidents=0
  with (ROOT/'client-stderr.log').open('a') as err:
   PROC=subprocess.Popen(args,stdout=subprocess.PIPE,stderr=err,text=True,bufsize=1)
@@ -106,7 +109,7 @@ def main():
    roster=current_roster(roster);NODES=nodes(monitored(roster))
    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as pool:
     futures=[pool.submit(worker,w) for w in NODES]
-    c=pool.submit(fetch,'http://127.0.0.1:8094/v1/status');public=pool.submit(fetch,'https://transparent-pir.valargroup.dev/v1/shards/init')
+    c=pool.submit(fetch,CONTROLLER_STATUS);public=pool.submit(fetch,f'{URL}/{API}/shards/init')
     workers=[f.result() for f in futures];controller=c.result();init=public.result()
    if STOP:break
    health={'utc':utc(),'workers':workers,'controller':controller,'public_init':init}
@@ -170,11 +173,19 @@ if __name__=='__main__':
  parser=argparse.ArgumentParser()
  parser.add_argument('--root',type=pathlib.Path,required=True)
  parser.add_argument('--fleet',type=pathlib.Path,required=True)
+ parser.add_argument('--url',default=URL,help='public origin the queries and init probe use')
+ parser.add_argument('--api',required=True,help='wallet API version under the origin, e.g. v2')
+ parser.add_argument('--controller-status',required=True,help='publisher status URL, e.g. http://10.142.0.3:8096/v1/status')
+ parser.add_argument('--controller-unit',default=CONTROLLER_UNIT,help='systemd unit of that publisher on this host')
+ parser.add_argument('--worker-unit',action='append',default=[],metavar='ID=UNIT',help='systemd unit of a roster worker that names none')
  group=parser.add_mutually_exclusive_group(required=True)
  group.add_argument('--expected-worker-sha256')
  group.add_argument('--expected-worker-sha256-file',type=pathlib.Path)
  args=parser.parse_args()
  if args.expected_worker_sha256 and not re.fullmatch('[0-9a-f]{64}',args.expected_worker_sha256):parser.error('expected a qualified binary SHA-256')
+ if not re.fullmatch('v[1-9][0-9]*',args.api):parser.error('expected an API version such as v2')
+ if not all(re.fullmatch(r'[A-Za-z0-9_.-]+=[A-Za-z0-9_.@-]+',v) for v in args.worker_unit):parser.error('expected --worker-unit ID=UNIT')
+ URL=args.url.rstrip('/');API=args.api;CONTROLLER_STATUS=args.controller_status;CONTROLLER_UNIT=args.controller_unit;WORKER_UNITS=dict(v.split('=',1) for v in args.worker_unit)
  ROOT=args.root;FLEET_PATH=args.fleet;EXPECTED_BINARY=args.expected_worker_sha256;EXPECTED_FILE=args.expected_worker_sha256_file
  try:main()
  finally:

@@ -447,8 +447,12 @@ Under `/v2/` the shard server answers `/v2/shards`, `/v2/shards/init`, manifests
 setup and query, and `/v2/filters/shards`; the display service answers `/v2/txid/*`.
 `/v1/health`, `/v1/ready` and `/v1/status` are operator probes, not wallet API, and keep
 their paths. The fleet adapter renders a fleet's routes for the prefix its configuration
-names (`api_version`, default `v1`), and the public router sends each prefix to that
-version's fleet. A new wire format takes the next prefix beside the live ones.
+names (`api_version`, required for a fleet that renders a router). The public router owns
+no version: it is a shell around one route file per prefix
+(`transparent/ops/deploy/api/v<N>.caddy`, rendered by
+`transparent/ops/scripts/transparent-public-router.py`) that sends each prefix to its
+version's fleet. A new wire format takes the next prefix and one more route file; a
+retired prefix keeps a file that answers 410.
 
 ### Runtime cache
 
