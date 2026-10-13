@@ -4,7 +4,6 @@ use enhance_pir::status::{Error as StatusError, Hash, Manifest};
 use serde::{Deserialize, Serialize};
 use std::{
     fs::{self, File, OpenOptions},
-    io::Write,
     path::{Path, PathBuf},
 };
 
@@ -133,16 +132,9 @@ impl Authority {
 }
 
 fn persist(dir: &Path, state: &State) -> Result<(), AuthorityError> {
-    let temp = dir.join("authority.json.tmp");
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open(&temp)?;
-    file.write_all(&serde_json::to_vec(state)?)?;
-    file.sync_all()?;
-    fs::rename(temp, dir.join("authority.json"))?;
-    File::open(dir)?.sync_all()?;
+    let bytes = serde_json::to_vec(state)?;
+    crate::artifact::write_atomic(dir, "authority.json", |file| file.write_all(&bytes))?;
+    pir_control::durable::sync_dir(dir)?;
     Ok(())
 }
 

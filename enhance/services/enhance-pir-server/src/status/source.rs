@@ -8,7 +8,7 @@ use enhance_pir::status::{Error as StatusError, Hash};
 use std::{
     collections::BTreeMap,
     fs::{self, File, OpenOptions},
-    io::{Read, Write},
+    io::Read,
     path::{Path, PathBuf},
     time::Instant,
 };
@@ -189,35 +189,43 @@ impl RollingWindow {
         if self.network == Some(network) && self.blocks == blocks && self.forks == forks {
             return Ok(());
         }
-        let temp = dir.join("source.bin.tmp");
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(&temp)?;
-        file.write_all(CHECKPOINT_MAGIC)?;
-        file.write_all(&self.window_blocks.to_le_bytes())?;
-        file.write_all(&self.salt)?;
-        file.write_all(&network)?;
-        write_len(&mut file, blocks.len())?;
+        // Every count is a u32 in the checkpoint; refuse one that is not
+        // before anything is written.
+        let len = |len: usize| {
+            u32::try_from(len)
+                .map(u32::to_le_bytes)
+                .map_err(|_| SourceError::Checkpoint)
+        };
+        len(blocks.len())?;
+        len(forks.len())?;
         for block in blocks {
-            file.write_all(&block.height.to_le_bytes())?;
-            file.write_all(&block.hash)?;
-            file.write_all(&block.parent)?;
-            write_len(&mut file, block.txids.len())?;
-            for txid in &block.txids {
-                file.write_all(txid)?;
+            len(block.txids.len())?;
+        }
+        let len = |n: usize| (n as u32).to_le_bytes();
+        crate::artifact::write_atomic(dir, "source.bin", |file| {
+            file.write_all(CHECKPOINT_MAGIC)?;
+            file.write_all(&self.window_blocks.to_le_bytes())?;
+            file.write_all(&self.salt)?;
+            file.write_all(&network)?;
+            file.write_all(&len(blocks.len()))?;
+            for block in blocks {
+                file.write_all(&block.height.to_le_bytes())?;
+                file.write_all(&block.hash)?;
+                file.write_all(&block.parent)?;
+                file.write_all(&len(block.txids.len()))?;
+                for txid in &block.txids {
+                    file.write_all(txid)?;
+                }
             }
-        }
-        write_len(&mut file, forks.len())?;
-        for fork in forks {
-            file.write_all(&fork.txid)?;
-            file.write_all(&fork.height.to_le_bytes())?;
-            file.write_all(&fork.block)?;
-        }
-        file.sync_all()?;
-        fs::rename(temp, dir.join("source.bin"))?;
-        File::open(dir)?.sync_all()?;
+            file.write_all(&len(forks.len()))?;
+            for fork in forks {
+                file.write_all(&fork.txid)?;
+                file.write_all(&fork.height.to_le_bytes())?;
+                file.write_all(&fork.block)?;
+            }
+            Ok(())
+        })?;
+        pir_control::durable::sync_dir(dir)?;
         Ok(())
     }
 
@@ -333,12 +341,6 @@ fn read_hash(input: &mut File) -> Result<Hash, SourceError> {
         .read_exact(&mut hash)
         .map_err(|_| SourceError::Checkpoint)?;
     Ok(hash)
-}
-
-fn write_len(file: &mut File, len: usize) -> Result<(), SourceError> {
-    let len = u32::try_from(len).map_err(|_| SourceError::Checkpoint)?;
-    file.write_all(&len.to_le_bytes())?;
-    Ok(())
 }
 
 /// One-shot collection for the diagnostic CLI.

@@ -2,7 +2,7 @@
 name = "pir-control"
 version = "0.1.0"
 edition = "2021"
-description = "Process identity, control-lease watchdog and admission shared by the Enhance, Status, Transparent and Receiver PIR services"
+description = "Process identity, control-lease watchdog, admission and durable state files shared by the Enhance, Status, Transparent and Receiver PIR services"
 license = "MIT"
 repository = "https://github.com/valargroup/wallet-pir"
 
@@ -19,5 +19,6 @@ sha2 = "0.10"
 tokio = { version = "1", features = ["sync", "time"], optional = true }
 
 [dev-dependencies]
+tempfile = "3"
 tokio = { version = "1", features = ["macros", "rt", "sync", "time"] }
 tokio-stream = "0.1"

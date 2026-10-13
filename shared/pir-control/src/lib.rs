@@ -8,12 +8,15 @@
 //! roles each enforced with their own copy of the constant.
 //!
 //! With the `admission` feature, [`admission`] holds the HTTP admission
-//! primitives the Enhance roles, Status and Receiver share.
+//! primitives the Enhance roles, Status and Receiver share. [`durable`] is how
+//! each of them replaces a state file so that a crash leaves the old or the
+//! new contents, never a partial file.
 //!
 //! The contract these implement is `docs/serving-contract.md`.
 
 #[cfg(feature = "admission")]
 pub mod admission;
+pub mod durable;
 
 use serde::Serialize;
 use std::sync::OnceLock;

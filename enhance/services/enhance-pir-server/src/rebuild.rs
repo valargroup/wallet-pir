@@ -14,11 +14,12 @@ use crate::zakura::{Prevouts, ZakuraClient, ZakuraError};
 use enhance_pir::types::{
     EnhanceRecord, FLAG_HAS_FEE, RECORD_BYTES, RECORD_FEE_OFFSET, RECORD_FLAGS_OFFSET,
 };
+use pir_control::durable::sync_dir;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeSet, VecDeque};
 use std::fs::{self, File};
-use std::io::{Read, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -105,20 +106,7 @@ pub fn fee_only_change(old: &[u8], new: &[u8]) -> Result<bool, String> {
 }
 
 fn sha256_file(path: &Path) -> Result<String, std::io::Error> {
-    let mut file = File::open(path)?;
-    let mut hasher = Sha256::new();
-    let mut buffer = vec![0u8; 1 << 20];
-    loop {
-        let read = file.read(&mut buffer)?;
-        if read == 0 {
-            return Ok(hex::encode(hasher.finalize()));
-        }
-        hasher.update(&buffer[..read]);
-    }
-}
-
-fn sync_dir(path: &Path) -> Result<(), std::io::Error> {
-    File::open(path)?.sync_all()
+    pir_control::durable::sha256_file(path).map(hex::encode)
 }
 
 /// One streaming pass over two journals.

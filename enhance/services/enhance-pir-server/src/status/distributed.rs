@@ -4,7 +4,6 @@ use super::*;
 use serde::{Deserialize, Serialize};
 use std::{
     fs::{self, File, OpenOptions},
-    io::Write,
     net::SocketAddr,
     path::{Path as FsPath, PathBuf},
 };
@@ -153,15 +152,9 @@ pub fn loopback_origin(origin: &str) -> Result<(), Failure> {
     Ok(())
 }
 fn persist(dir: &FsPath, fence: &Fence) -> Result<(), Failure> {
-    let mut file = OpenOptions::new()
-        .create(true)
-        .truncate(true)
-        .write(true)
-        .open(dir.join("fence.tmp"))?;
-    file.write_all(&serde_json::to_vec(fence)?)?;
-    file.sync_all()?;
-    fs::rename(dir.join("fence.tmp"), dir.join("fence.json"))?;
-    File::open(dir)?.sync_all()?;
+    let bytes = serde_json::to_vec(fence)?;
+    crate::artifact::write_atomic(dir, "fence.json", |file| file.write_all(&bytes))?;
+    pir_control::durable::sync_dir(dir)?;
     Ok(())
 }
 /// Persist a fence on the blocking pool. An ext4 journal commit can hold

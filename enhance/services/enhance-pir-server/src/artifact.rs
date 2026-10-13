@@ -1,8 +1,8 @@
 //! Bounded artifact I/O. Open handles pin immutable, atomically replaced files.
 use axum::body::Bytes;
 use sha2::{Digest, Sha256};
-use std::fs::{self, File};
-use std::io::{self, BufReader, BufWriter, Read, Write};
+use std::fs::File;
+use std::io::{self, BufReader, Read, Write};
 #[cfg(target_os = "linux")]
 use std::os::fd::AsRawFd;
 use std::os::unix::fs::FileExt;
@@ -12,7 +12,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 
-pub const IO_BUFFER_BYTES: usize = 64 * 1024;
+pub const IO_BUFFER_BYTES: usize = pir_control::durable::IO_BUFFER_BYTES;
 const STREAM_QUEUE_CHUNKS: usize = 2;
 
 /// Best-effort release of clean artifact pages. The file remains durable and
@@ -227,22 +227,6 @@ impl<R: Read> Read for VerifiedReader<R> {
     }
 }
 
-struct HashWriter<W> {
-    inner: W,
-    hash: Sha256,
-}
-
-impl<W: Write> Write for HashWriter<W> {
-    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-        let n = self.inner.write(bytes)?;
-        self.hash.update(&bytes[..n]);
-        Ok(n)
-    }
-    fn flush(&mut self) -> io::Result<()> {
-        self.inner.flush()
-    }
-}
-
 /// Commits one file after a successful flush and sync. Callers commit metadata
 /// last and sync the directory. A failed attempt never renames its temporary.
 pub(crate) fn write_atomic(
@@ -250,7 +234,7 @@ pub(crate) fn write_atomic(
     name: &str,
     write: impl FnOnce(&mut dyn Write) -> io::Result<()>,
 ) -> io::Result<String> {
-    write_atomic_with_cache_policy(directory, name, false, write)
+    pir_control::durable::write_atomic(directory, name, write)
 }
 
 /// Sync first, then request eviction for large artifacts that are already
@@ -260,44 +244,13 @@ pub(crate) fn write_atomic_cold(
     name: &str,
     write: impl FnOnce(&mut dyn Write) -> io::Result<()>,
 ) -> io::Result<String> {
-    write_atomic_with_cache_policy(directory, name, true, write)
-}
-
-fn write_atomic_with_cache_policy(
-    directory: &Path,
-    name: &str,
-    cold: bool,
-    write: impl FnOnce(&mut dyn Write) -> io::Result<()>,
-) -> io::Result<String> {
-    let temporary = directory.join(format!("{name}.tmp"));
-    let result = (|| {
-        let file = File::create(&temporary)?;
-        let mut writer = BufWriter::with_capacity(
-            IO_BUFFER_BYTES,
-            HashWriter {
-                inner: file,
-                hash: Sha256::new(),
-            },
-        );
-        write(&mut writer)?;
-        writer.flush()?;
-        writer.get_ref().inner.sync_all()?;
-        if cold {
-            release_file_cache(&writer.get_ref().inner);
-        }
-        let digest = hex::encode(writer.get_ref().hash.clone().finalize());
-        fs::rename(&temporary, directory.join(name))?;
-        Ok(digest)
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(temporary);
-    }
-    result
+    pir_control::durable::write_atomic_with(directory, name, release_file_cache, write)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
     use std::io::Cursor;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tokio_stream::StreamExt;
