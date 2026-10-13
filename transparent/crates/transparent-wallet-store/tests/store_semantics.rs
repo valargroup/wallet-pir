@@ -121,18 +121,16 @@ fn the_sqlite_store_meets_the_contract_on_disk_and_survives_reopening() {
     assert_eq!(store.last_commit().unwrap(), 2);
 }
 
-/// Schema 7 is a fresh schema: a store from an earlier one lacks the
-/// content-failure counts, or holds walks and coverage of a shard schema this
-/// build does not read, and is refused rather than migrated.
+/// Versions before schema 6 hold walks or coverage this build cannot read.
 #[test]
-fn a_store_from_an_earlier_schema_is_refused() {
+fn a_store_from_an_unsupported_schema_is_refused() {
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("v6.sqlite");
+    let path = dir.path().join("v5.sqlite");
     let mut store = SqliteStore::open(&path).unwrap();
     store.bind_set(&identity()).unwrap();
     drop(store);
     let db = rusqlite::Connection::open(&path).unwrap();
-    db.execute_batch("UPDATE wallet_meta SET value = '6' WHERE key = 'schema_version';")
+    db.execute_batch("UPDATE wallet_meta SET value = '5' WHERE key = 'schema_version';")
         .unwrap();
     drop(db);
     assert!(SqliteStore::open(&path).is_err());

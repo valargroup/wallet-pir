@@ -25,8 +25,8 @@ use transparent_wallet::store::{
 };
 
 /// Versioned persistence. Schema 7 holds schema-v12 chain walks, saved run
-/// fragments, the run cache and per-entry content failures; any other version
-/// is refused rather than misread or migrated.
+/// fragments, the run cache and per-entry content failures. Schema 6 upgrades
+/// in place by adding the failure counts; other versions are refused.
 pub const SCHEMA_VERSION: u32 = 7;
 
 /// Default bound on pending page retrievals a commit may leave.
@@ -179,6 +179,7 @@ impl SqliteStore {
     }
 
     fn prepare(&mut self) -> Result<(), StoreError> {
+        let target_version = SCHEMA_VERSION.to_string();
         // Fence unknown readers before changing journal mode or creating indexes.
         let has_meta: bool = self.conn.query_row(
             "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'wallet_meta')",
@@ -186,9 +187,9 @@ impl SqliteStore {
         ).map_err(io)?;
         if has_meta {
             if let Some(found) = self.meta("schema_version")? {
-                // No migration: earlier stores lack saved fragments or hold
-                // coverage of a shard schema this build does not read.
-                if found != SCHEMA_VERSION.to_string() {
+                // Schema 6 has the same history and walk representation. Older
+                // stores lack saved fragments or use another shard schema.
+                if found != "6" && found != target_version {
                     return Err(StoreError::Corrupt(format!(
                         "store schema {found}, this build reads {SCHEMA_VERSION}"
                     )));
@@ -201,10 +202,47 @@ impl SqliteStore {
                 "PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL; PRAGMA foreign_keys = ON;",
             )
             .map_err(io)?;
-        self.conn.execute_batch(SCHEMA).map_err(io)?;
-        if self.meta("schema_version")?.is_none() {
-            self.set_meta("schema_version", &SCHEMA_VERSION.to_string())?;
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(io)?;
+        // Read again under the write lock: another opener may have upgraded
+        // the file after the initial compatibility check.
+        let has_meta: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'wallet_meta')",
+            [], |row| row.get(0),
+        ).map_err(io)?;
+        let version: Option<String> = if has_meta {
+            tx.query_row(
+                "SELECT value FROM wallet_meta WHERE key = 'schema_version'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(io)?
+        } else {
+            None
+        };
+        if let Some(found) = &version {
+            if found != "6" && found != &target_version {
+                return Err(StoreError::Corrupt(format!(
+                    "store schema {found}, this build reads {SCHEMA_VERSION}"
+                )));
+            }
         }
+        // Existing tables and their rows are untouched. For schema 6 this
+        // creates only the empty failure-count table. Its creation and the
+        // version update either both commit or both roll back.
+        tx.execute_batch(SCHEMA).map_err(io)?;
+        if version.as_deref() != Some(target_version.as_str()) {
+            tx.execute(
+                "INSERT INTO wallet_meta (key, value) VALUES ('schema_version', ?1)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                [target_version],
+            )
+            .map_err(io)?;
+        }
+        tx.commit().map_err(io)?;
         Ok(())
     }
 

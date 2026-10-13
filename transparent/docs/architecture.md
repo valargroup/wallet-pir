@@ -224,7 +224,10 @@ the run is complete. Query and byte budgets stop page retrieval between atomic
 responses, including setup downloads. Finite byte budgets dispatch sequentially;
 with no byte ceiling, concurrent rounds are capped by the remaining query count.
 SQLite schema 7 holds the cursor, saved fragments, the run cache and per-entry
-content-failure counts, with no migration from earlier schemas.
+content-failure counts. Opening a schema-6 cache adds the empty failure-count
+table and updates the version in one transaction, preserving its history,
+coverage, saved walks, caches and any wallet-libraries catalog in the same file.
+Other schema versions are refused.
 
 Row content in a private reply that does not decode or check out, including a run
 link the shard cannot follow, or a record that contradicts the store, fails one
