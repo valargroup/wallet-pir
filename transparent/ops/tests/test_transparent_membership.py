@@ -257,7 +257,8 @@ class DynamicRosterTests(unittest.IsolatedAsyncioTestCase):
         self.write_roster()
         self.f = M.Fleet(dict(roster=str(self.roster_path), state_dir=str(self.root), known_hosts='unused',
                               ssh_key='unused', manage_all_workers=True, public_host='pir.example',
-                              authority_upstream='https://filters.example', router_host='router'))
+                              authority_upstream='https://filters.example', router_host='router',
+                              api_version='v2'))
         self.assignment = self.root/'assignment'
         self.assignment.write_text(json.dumps({'workers': [{'id': w['id'], 'shards': [0] if w['role'] == 'archive-owner' else [1]}
                                                            for w in self.members]}))

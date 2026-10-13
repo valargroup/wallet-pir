@@ -78,7 +78,8 @@ class MaintenanceTests(unittest.IsolatedAsyncioTestCase):
         self.worker = dict(id='recent', role='recent-replica', ssh_host='host', upstream='host:8093')
         (self.root/'roster').write_text(json.dumps([self.worker]))
         self.config = dict(roster=str(self.root/'roster'), state_dir=str(self.root/'state'), known_hosts='unused', ssh_key='unused',
-                           public_host='public.test', authority_upstream='https://filters.test', router_host='router', internal_listen='router:8080')
+                           public_host='public.test', authority_upstream='https://filters.test', router_host='router', internal_listen='router:8080',
+                           api_version='v2')
         self.fleet = M.L.Fleet(self.config)
         self.fleet.ssh = AsyncMock()
 
