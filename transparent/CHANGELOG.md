@@ -11,15 +11,20 @@ Covers the crates a wallet uses to recover transparent history over PIR:
 
 Versions are `0.1.0-rc.4`; not yet published.
 
-- **A bad reply fails one entry, not the sync.** A private reply that fails
-  to decode or verify, a page link outside the shard's tables, or a record
-  that contradicts the store now fails one directory entry (one script in
-  one shard), reported as `SyncError::Content` where it cannot be. The walk
-  finishes every other planned query in the same order: each script's
-  directory queries are all sent before any is decoded, the shard's commit
-  still lands for its other scripts, and a failed page walk sends only the
-  dummy queries valid replies had committed it to. A malformed map or
-  manifest, a broken filter and a lost answer still stop the sync.
+- **Bad row content fails one entry, not the sync.** A row whose content
+  does not decode or check out (a directory entry or page fragment that is
+  malformed, missing, held twice or out of place, a run link the shard
+  cannot follow) or that contradicts the store now fails one directory
+  entry (one script in one shard), reported as `SyncError::Content` where
+  it cannot be. The walk finishes every other planned query in the same
+  order: each script's directory queries are all sent before any is
+  decoded, the shard's commit still lands for its other scripts, and a
+  failed page walk sends only the dummy queries valid replies had committed
+  it to, the rest of its run and one in place of a bad link. A reply whose
+  length, revision binding or parameter epoch does not verify fails its
+  request as before (an epoch mismatch also drops the cached setup:
+  `WalletStore::drop_setup`); a malformed map or manifest, a broken filter
+  and a lost answer still stop the sync.
 - **Three failures, then the entry is held.** The store counts content
   failures per (shard, script) and never resets them: `WalletStore` gains
   `entry_failures`, and `ShardCommit` gains `failed_entries`. An entry at

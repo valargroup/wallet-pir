@@ -58,6 +58,15 @@ pub enum ClientError {
     /// stands, without refreshing anything.
     #[error(transparent)]
     Overloaded(#[from] Overloaded),
+    /// A reply was made under other published parameters than the setup the
+    /// wallet holds for that segment. The held setup is stale: the caller
+    /// drops it, so the next attempt fetches the published one again.
+    #[error("revision {revision} table {} segment {segment}: the reply was made under other parameters than the setup held", .table.name())]
+    SetupMismatch {
+        revision: String,
+        table: Table,
+        segment: u32,
+    },
 }
 
 /// Which table a query addresses.
@@ -268,6 +277,12 @@ impl TableClient {
         Ok(())
     }
 
+    /// Drops one segment's setup, so it is opened again before the next query.
+    pub(crate) fn forget(&mut self, revision: &str, table: Table, segment: u32) {
+        self.segments
+            .remove(&(revision.to_string(), table.name(), segment));
+    }
+
     pub fn is_open(&self, revision: &str, table: Table, segment: u32) -> bool {
         self.segments
             .contains_key(&(revision.to_string(), table.name(), segment))
@@ -367,7 +382,11 @@ impl TableClient {
                 return Err(ClientError::Response("revision or table mismatch".into()));
             }
             if part.get(8..16) != Some(setup.epoch.as_slice()) {
-                return Err(ClientError::Response("parameter epoch mismatch".into()));
+                return Err(ClientError::SetupMismatch {
+                    revision: revision.to_string(),
+                    table,
+                    segment,
+                });
             }
             let row = self
                 .profile

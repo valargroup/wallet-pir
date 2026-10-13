@@ -226,14 +226,18 @@ with no byte ceiling, concurrent rounds are capped by the remaining query count.
 SQLite schema 7 holds the cursor, saved fragments, the run cache and per-entry
 content-failure counts, with no migration from earlier schemas.
 
-A private reply that fails to decode or verify, a link outside the shard's tables,
-or a record that contradicts the store fails one directory entry (one script in one
-shard), not the sync. Each script's planned directory queries are all sent before
+Row content in a private reply that does not decode or check out, including a run
+link the shard cannot follow, or a record that contradicts the store, fails one
+directory entry (one script in one shard), not the sync. Each script's planned directory queries are all sent before
 any is decoded, and the shard's directory commit still lands for its other scripts;
 a failed entry sends no pages. A failed page walk keeps its pending item while the
 other walks finish, and still sends, as dummy queries to its current run's page
 shard, the fragments a validated head had committed it to and one query in place of
-a bad link; nothing that depends on the bad reply is sent. The store counts content
+any bad link (an undeclared or later page shard, a broken older-run count, a row
+outside the table); nothing that depends on the bad reply is sent. A reply whose
+length, revision binding or parameter epoch does not verify was made without
+knowledge of the row, so it fails the request as before; an epoch mismatch also
+drops the cached setup. The store counts content
 failures per (shard, script) and never resets them; an entry at three is not
 queried again, and the sync reports `content-failed` with the failed entries. A
 malformed map or manifest, a broken filter or a lost answer in a round still stops

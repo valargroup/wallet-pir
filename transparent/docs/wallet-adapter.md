@@ -36,7 +36,7 @@ two reference stores pass. The init document is parsed by
 `query-budget`, `byte-budget`, `pending-limit`, `overloaded:<shard>`,
 `chain-unknown:<height>`, `publication-behind:<height>`, `unresolved-spends`,
 `discovery-unbounded`, `content-failed`. `content-failed` means some directory
-entries' private replies failed to decode or verify; `failed_entries` lists each
+entries' rows failed to decode or check out; `failed_entries` lists each
 with its failure count, everything else was read, and an entry at three failures
 is no longer queried. `unresolved-spends` is reported once every script in
 scope is covered to the target and a spend's receive lies below the wallet's

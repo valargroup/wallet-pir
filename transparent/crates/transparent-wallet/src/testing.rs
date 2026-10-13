@@ -372,6 +372,12 @@ fn setup_is_keyed_by_set_revision_table_and_segment<S: WalletStore>(make: &impl 
     ] {
         assert_eq!(store.setup(&other).unwrap(), None, "{other:?}");
     }
+    // Dropping a stale setup forgets that one alone, and dropping one not
+    // held is no error.
+    store.drop_setup(&page(1)).unwrap();
+    assert_eq!(store.setup(&page(1)).unwrap(), None);
+    assert_eq!(store.setup(&key).unwrap(), Some(blob.clone()));
+    store.drop_setup(&page(2)).unwrap();
     store
         .put_filter("rev-a", "hash-a", true, b"filter bytes")
         .unwrap();

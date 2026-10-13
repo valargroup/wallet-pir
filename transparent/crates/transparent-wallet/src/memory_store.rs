@@ -436,6 +436,11 @@ impl WalletStore for MemoryStore {
         Ok(())
     }
 
+    fn drop_setup(&mut self, key: &SetupKey) -> Result<(), StoreError> {
+        self.state.setups.remove(key);
+        Ok(())
+    }
+
     fn filter(
         &self,
         revision_digest: &str,
