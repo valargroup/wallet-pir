@@ -6,7 +6,7 @@ the 8-bit, one-digit-key profile, and the public origin
 txid display is also under `/v2/txid/`. `/v1/` is unchanged production: schema
 v11 history and the txid-2k display. **Production wallets still use `/v1/`.**
 Only clients built from wallet-pir `ff27d649` or later speak `/v2/`
-(zakura-core/wallet-libraries#165, chainapsis/vizor-wallet#977, neither merged).
+(zakura-core/wallet-libraries#165, merged; chainapsis/vizor-wallet#977, not merged).
 
 ## Provenance
 
@@ -29,7 +29,9 @@ gadget 27×1 (one key), 28-bit queries only, 10-bit responses
 `/v2/txid/map` answer 200.
 
 **Memory and warm-up (8-bit, measured).**
-- Cold warm-up on new cache directories: 186 archive tables at 22:24 UTC (17 min), RSS 36.9 GB; 49 recent tables, 4.9 GB.
+- Cold warm-up on new cache directories: 186 archive tables at 22:24 UTC (17 min); cgroup memory 36.9 GB for the archive worker and 4.9 GB for the recent worker.
+- After the load run, process RSS was 35.3 GiB for the archive worker (23.7 GiB anonymous, 11.6 GiB mapped cache files) and 4.73 GiB for the recent worker (1.8 / 2.9 GiB). That totals 40.1 GiB against 31.4 GiB at 16 bits (28.5 and 2.87 GiB; [v12 staging](../v12-staging-2026-10-12/README.md)): the archive worker grew 24% and the recent worker 65% ([rss-after-load](raw/worker/rss-after-load.txt)). The planner's estimate was 37.5 GB and 4.4 GB.
+- The runtime caches on disk are 35 GB (archive) and 5.3 GB (recent), against 30 and 3.3 GB at 16 bits. The 16-bit cache directories are still on the host as rollback material.
 - After the `/v2` restart, both workers were ready from the disk cache in about 3.5 min.
 - The recent worker's cache budget rose to 8 GiB and its memory limit to 9G/10G ([rss](raw/worker/rss.txt)).
 
@@ -54,9 +56,44 @@ gadget 27×1 (one key), 28-bit queries only, 10-bit responses
 - **Total download:** about 36 MB for a full-history wallet, almost all public membership filters, which this change does not touch.
 - **Latency:** median query latency is unchanged (0.15–0.75 s by case).
 
+**Sustained load (20 wallets, 10 minutes, 01:32–01:43 UTC on 2026-10-13).**
+`transparent-loadtest` from `ff27d649` on roman-dev-2, over HTTPS to the v12 host's
+own `/v2/` listener (`https://transparent-pir-v12.valargroup.dev`, not the public
+router). It used the same scenario and frozen sample as the 16-bit runs
+([scenario](../v12-staging-2026-10-12/raw/load/mixed-20-sustained-v12.json)).
+The summary and the one non-exact wallet are in [summary-v2.json](raw/load/summary-v2.json).
+The full 16 MB report is kept gzipped on the development hub at
+`/mnt/roman-dev-2-data/ai-dev/evidence/api-v2-p8-2026-10-12/`
+([sha256s](raw/load/archive-SHA256SUMS)).
+
+The run synced 2,949 wallets: 2,948 exact and 1 timed out, with no failed requests
+and every response 200. That is the same outcome as all four 16-bit runs
+([v12 staging](../v12-staging-2026-10-12/README.md)). The timed-out wallet is
+sample 965 (reused-tail), the same wallet that missed the 600 s recovery deadline at
+16 bits.
+
+| Against 16-bit run 4 | 16-bit | 8-bit |
+|---|---|---|
+| Exact syncs/s | 5.00 | 4.88 |
+| Directory query mean / upload | 0.240 s / 529 MB | 0.239 s / 290 MB |
+| Pages query mean / upload | 0.201 s / 1,484 MB | 0.186 s / 904 MB |
+| Directory setup mean / download | 0.382 s / 119 MB | 0.435 s / 176 MB |
+| Pages setup mean / download | 0.217 s / 58 MB | 0.224 s / 87 MB |
+| `init` / filters mean | 0.456 / 0.558 s | 0.458 / 0.560 s |
+
+Recovery time per wallet, p50 / p99, was within a few percent of the 16-bit runs for
+every profile, for example small-active 2.94 / 5.28 s, restore-6m 3.82 / 6.07 s and
+restore-old 6.73 / 48.8 s. Multi-script p99 was 21 s against 113 s at 16 bits; about
+100 wallets is too few to call that tail a change. Throughput is 2.4% below run 4 and
+1.6% below the slowest 16-bit run.
+
+Preparation is not measured. All 104 reused-tail wallets prepared one at a time
+because that class's limit equals its user count, so the first attempt stalled. The
+run that produced these numbers raised the limit to 24
+(`--preparation-class-concurrency 24`) and reused the 736 finished preparations.
+
 ## Not done
 
-- The 20-wallet sustained load run on `/v2` was started at 23:43 UTC against the v12 host. Its result is not recorded here.
 - The served tables have not been certified under the served seeds at the 50-bit floor.
-- Neither client PR is merged, so no shipped wallet uses `/v2/`.
+- Vizor #977 is not merged, so no shipped wallet uses `/v2/`.
 - The v11 query latency gate (20 QPS) has not been run against v12.

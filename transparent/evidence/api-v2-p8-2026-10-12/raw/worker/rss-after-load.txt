@@ -1,0 +1,12 @@
+2026-10-13T01:45:33Z
+transparent-v12-archive
+VmRSS:	37040824 kB
+RssAnon:	24828708 kB
+RssFile:	12212116 kB
+transparent-v12-recent
+VmRSS:	 4953600 kB
+RssAnon:	 1863148 kB
+RssFile:	 3090452 kB
+               total        used        free      shared  buff/cache   available
+Mem:           64303       27362       20764           4       16861       36941
+Swap:              0           0           0

@@ -43,20 +43,25 @@ side ([evidence](../evidence/api-v2-p8-2026-10-12/README.md)):
 - `/v2/` is the v12 fleet with its history tables at the 8-bit, one-digit-key
   profile, plus the one-query txid display.
 
-No shipped wallet uses `/v2/` yet; zakura-core/wallet-libraries#165 and
-chainapsis/vizor-wallet#977 carry the client and are not merged.
+No shipped wallet uses `/v2/` yet. zakura-core/wallet-libraries#165 carries the
+client and is merged; chainapsis/vizor-wallet#977 is not.
 
 - **Serving:** all four v12 tables use `reinspiring-two-mask-p8-g27x1-m22-dq28-r10-v1`
   (wallet-pir `f7debf84`, deployed 22:07 UTC). The `/v2/` paths come from `ff27d649`,
   deployed 23:18 UTC, and the public router has routed `/v2/` since 23:31 UTC.
   `/v1/` init and txid answered 200 before and after.
-- **Memory:** archive 36.9 GB RSS for 186 tables, recent 4.9 GB for 49. The recent
-  worker's budget rose to 8 GiB of cache and a 10G limit.
+- **Memory:** after the load run, RSS was 35.3 GiB for the archive worker (186 tables)
+  and 4.73 GiB for the recent worker (49), 40.1 GiB in all against 31.4 GiB at 16 bits.
+  The recent worker's budget rose to 8 GiB of cache and a 10G limit.
 - **Regression:** 11 of 11 on the v12 host and again through the public `/v2/` route.
 - **Bytes against the same fixture at 16 bits:** uploads 40–46% smaller, table setup
   about 51% larger (30.4 KB), responses 9% smaller. A wallet's PIR bytes fall 24–34%.
   Public membership filters, about 36 MB for a full-history wallet, are unchanged.
-- **Open:** the `/v2/` load run, certificates under the served seeds at the 50-bit
+- **Load:** 20 wallets for 10 minutes against the v12 host's `/v2/` (01:32 UTC,
+  2026-10-13): 2,948 of 2,949 syncs exact at 4.88/s, with no failed requests. As in
+  all four 16-bit runs, one reused-tail wallet missed the 600 s deadline. Query means
+  matched or improved on 16 bits; directory setup mean rose from 0.38 to 0.44 s.
+- **Open:** certificates under the served seeds at the 50-bit
   floor, `/v2/` monitoring, and the move of wallets from `/v1/` to `/v2/`.
 
 ## Txid display one-query site live beside txid-2k, 2026-10-12

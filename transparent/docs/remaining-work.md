@@ -132,11 +132,12 @@ The [trial](../evidence/p8-trial-2026-10-12/README.md) sized it.
 - [x] Serve it on v12 staging with the recent worker's budgets raised, and pass the
   recovery regression (11/11 on the v12 host and through `/v2`;
   [evidence](../evidence/api-v2-p8-2026-10-12/README.md)).
-- [ ] Pass a 20-wallet sustained load run on `/v2`.
+- [x] Pass a 20-wallet sustained load run on `/v2` (2,948 of 2,949 exact, the same
+  reused-tail timeout as at 16 bits; [evidence](../evidence/api-v2-p8-2026-10-12/README.md)).
 - [ ] Certify every served segment under the served seeds with `native_certificate`
   (always the dithered report for these tables), at the 50-bit floor.
-- [ ] Merge the client repins: zakura-core/wallet-libraries#165 and Vizor's v12 branch
-  (chainapsis/vizor-wallet#977).
+- [ ] Merge Vizor's v12 branch (chainapsis/vizor-wallet#977); zakura-core/wallet-libraries#165
+  is merged.
 - [ ] Decide when wallets move from `/v1/` to `/v2/`, and when `/v1/` retires; v11 production and its
   wallets stay on 16 bits until then.
 

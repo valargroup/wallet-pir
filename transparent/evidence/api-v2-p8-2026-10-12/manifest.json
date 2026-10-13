@@ -1,6 +1,6 @@
 {
  "run_id": "api-v2-p8-2026-10-12",
- "utc": "2026-10-12T22:07Z/2026-10-12T23:45Z",
+ "utc": "2026-10-12T22:07Z/2026-10-13T01:46Z",
  "source_sha": {
   "p8_serving": "f7debf84 (binaries built from 921016dc, non-test code identical)",
   "api_v2": "ff27d649"
@@ -71,12 +71,33 @@
   "recent_rss_gb": 4.9,
   "recent_tables": 49,
   "cold_warmup_minutes": 17,
-  "cache_restart_minutes": 3.5
+  "cache_restart_minutes": 3.5,
+  "after_load_rss_gib": {
+   "archive": 35.3,
+   "archive_anon": 23.7,
+   "archive_file": 11.6,
+   "recent": 4.73,
+   "total": 40.1,
+   "total_16bit": 31.4
+  }
+ },
+ "load": {
+  "target": "https://transparent-pir-v12.valargroup.dev /v2",
+  "source": "ff27d649",
+  "window_utc": "2026-10-13T01:32:16Z/01:42:47Z",
+  "scenario": "../v12-staging-2026-10-12/raw/load/mixed-20-sustained-v12.json",
+  "syncs": 2949,
+  "exact": 2948,
+  "timed_out": 1,
+  "timed_out_wallet": "sample 965 (reused-tail), same as every 16-bit run",
+  "failed_requests": 0,
+  "exact_per_second": 4.88,
+  "baseline_exact_per_second_16bit": "4.96-5.02 (runs 1-4)",
+  "full_report": "raw/load/archive-SHA256SUMS"
  },
  "not_done": [
-  "20-wallet sustained load on /v2",
   "certificates under served seeds",
   "v2 monitoring",
-  "client PRs merged"
+  "Vizor PR merged"
  ]
 }
