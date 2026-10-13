@@ -4,6 +4,7 @@
 use crate::{
     admission::{read_body, BodyError, Queue, Refusal},
     runtime::Packing,
+    serving_fence::{ControlledView, FenceRefusal, PreparedView, Withheld},
     worker::{Evaluate, Revocation},
 };
 use axum::{
@@ -30,8 +31,6 @@ pub const CONTROL_VERSION: u16 = 2;
 #[cfg(feature = "native-reinspiring")]
 pub const CONTROL_VERSION: u16 = 4;
 const BODY_LIMIT: usize = 512 * 1024;
-// A liveness watchdog, not permission to complete recovery without a fence ACK.
-use pir_control::Watchdog;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -81,6 +80,17 @@ struct Loaded {
     digest: String,
     packing: BTreeMap<String, Arc<Packing>>,
 }
+impl PreparedView for Loaded {
+    fn controller_epoch(&self) -> u64 {
+        self.view.controller_epoch
+    }
+    fn revocation(&self) -> &Revocation {
+        &self.view.revocation
+    }
+    fn digest(&self) -> &str {
+        &self.digest
+    }
+}
 
 #[derive(Default, Serialize, Deserialize)]
 struct DurableFence {
@@ -89,11 +99,8 @@ struct DurableFence {
 }
 
 struct Inner {
-    fence: DurableFence,
-    active: Option<Arc<Loaded>>,
-    candidate: Option<Arc<Loaded>>,
+    control: ControlledView<Loaded>,
     material: BTreeMap<String, Weak<Packing>>,
-    refreshed: Watchdog,
     outstanding: BTreeMap<String, usize>,
     cursor: usize,
     worker_health: BTreeMap<String, WorkerHealth>,
@@ -206,11 +213,8 @@ impl PackingRouter {
             loader,
             packing_budget: crate::packing_budget::PackingBudget::router(),
             inner: Arc::new(Mutex::new(Inner {
-                fence,
-                active: None,
-                candidate: None,
+                control: ControlledView::new(fence.controller_epoch, fence.revocation),
                 material: BTreeMap::new(),
-                refreshed: Watchdog::default(),
                 outstanding: BTreeMap::new(),
                 cursor: 0,
                 worker_health: BTreeMap::new(),
@@ -266,7 +270,7 @@ impl PackingRouter {
         let targets: BTreeMap<String, Vec<(u64, String)>> = {
             let inner = self.inner.lock().unwrap();
             let mut targets = BTreeMap::new();
-            if let Some(active) = &inner.active {
+            if let Some(active) = &inner.control.active {
                 for snapshot in &active.view.snapshots {
                     for urls in snapshot.preferred.values() {
                         for url in urls {
@@ -346,45 +350,45 @@ impl PackingRouter {
         epoch: u64,
         revocation: Revocation,
     ) -> Result<(), String> {
-        match crate::serving_fence::advance(
-            inner.fence.controller_epoch,
-            &inner.fence.revocation,
-            epoch,
-            &revocation,
-        ) {
-            Err(()) => return Err("stale or nonmonotonic serving fence".into()),
-            Ok(crate::serving_fence::Advance::Unchanged) => return Ok(()),
-            Ok(crate::serving_fence::Advance::Newer) => {}
-        }
+        inner
+            .control
+            .advance_fence(epoch, revocation, |epoch, revocation| {
+                self.persist_fence(epoch, revocation)
+            })
+            .map_err(|refusal| match refusal {
+                FenceRefusal::Backwards => "stale or nonmonotonic serving fence".into(),
+                FenceRefusal::Persist(e) => e,
+            })
+    }
+
+    fn persist_fence(&self, epoch: u64, revocation: &Revocation) -> Result<(), String> {
         let fence = DurableFence {
             controller_epoch: epoch,
-            revocation,
+            revocation: revocation.clone(),
         };
         crate::artifact::write_atomic(&self.root, "fence.json", |f| {
             serde_json::to_writer(f, &fence).map_err(std::io::Error::other)
         })
         .map_err(|e| e.to_string())?;
-        inner.fence = fence;
-        // A new controller must explicitly activate after reconciliation.
-        inner.refreshed.clear();
         Ok(())
     }
 
     fn response_allowed(&self, session: &str, epoch: u64) -> Result<(), String> {
         let inner = self.inner.lock().unwrap();
-        if inner.fence.revocation.sessions.contains(session) {
-            return Err("noncanonical_session".into());
-        }
-        if inner.fence.controller_epoch != epoch || !inner.refreshed.live() {
-            return Err("serving authority unavailable".into());
-        }
-        Ok(())
+        inner
+            .control
+            .release(session, epoch)
+            .map_err(|withheld| match withheld {
+                Withheld::Revoked => "noncanonical_session".into(),
+                Withheld::NoAuthority => "serving authority unavailable".into(),
+            })
     }
 }
 
 async fn health(State(r): State<PackingRouter>) -> Json<serde_json::Value> {
     let i = r.inner.lock().unwrap();
     let domain_eligible: BTreeMap<u64, usize> = i
+        .control
         .active
         .as_ref()
         .and_then(|a| {
@@ -409,9 +413,9 @@ async fn health(State(r): State<PackingRouter>) -> Json<serde_json::Value> {
         .unwrap_or_default();
     Json(
         serde_json::json!({"domain_eligible_workers":domain_eligible,"protocol":PROTOCOL_REVISION,"control_version":CONTROL_VERSION,
-        "incarnation":r.incarnation,"controller_epoch":i.fence.controller_epoch,
-        "active_digest":i.active.as_ref().map(|s| &s.digest),
-        "ready":i.refreshed.live(),
+        "incarnation":r.incarnation,"controller_epoch":i.control.epoch,
+        "active_digest":i.control.active.as_ref().map(|s| &s.digest),
+        "ready":i.control.refreshed.live(),
         "binary_sha256":pir_control::binary_sha256(),
         "resident_objects":i.material.values().filter(|v| v.strong_count()>0).count(),
         "packing_charged_bytes":r.packing_budget.charged_bytes(),
@@ -514,8 +518,12 @@ async fn prepare(
         let mut i = r.inner.lock().unwrap();
         r.save_fence(&mut i, view.controller_epoch, view.revocation.clone())
             .map_err(unavailable)?;
-        if i.active.as_ref().is_some_and(|v| v.digest == view_digest)
-            || i.candidate
+        if i.control
+            .active
+            .as_ref()
+            .is_some_and(|v| v.digest == view_digest)
+            || i.control
+                .candidate
                 .as_ref()
                 .is_some_and(|v| v.digest == view_digest)
         {
@@ -526,7 +534,7 @@ async fn prepare(
             }));
         }
         // Discard an uncommitted preparation; active and request pins remain charged.
-        i.candidate = None;
+        i.control.candidate = None;
     }
     // The preparation guard excludes concurrent downloads. Keep both the new
     // assignment and the currently active view; query pins own decoded state.
@@ -535,7 +543,7 @@ async fn prepare(
         .iter()
         .flat_map(|s| s.artifacts.values().map(|a| format!("{}.bin", a.sha256)))
         .collect();
-    if let Some(active) = &r.inner.lock().unwrap().active {
+    if let Some(active) = &r.inner.lock().unwrap().control.active {
         keep.extend(
             active
                 .view
@@ -701,10 +709,10 @@ async fn prepare(
         packing,
     });
     let mut i = r.inner.lock().unwrap();
-    if i.fence.controller_epoch != loaded.view.controller_epoch
+    if i.control.epoch != loaded.view.controller_epoch
         || !i
+            .control
             .fence
-            .revocation
             .sessions
             .is_subset(&loaded.view.revocation.sessions)
     {
@@ -719,34 +727,20 @@ async fn prepare(
         digest: view_digest,
         controller_epoch: loaded.view.controller_epoch,
     };
-    i.candidate = Some(loaded);
+    i.control.candidate = Some(loaded);
     Ok(Json(ack))
 }
 
-fn matches(r: &PackingRouter, i: &Inner, a: &Activation, v: &Loaded) -> bool {
-    crate::serving_fence::activation_matches(
-        &r.incarnation,
-        i.fence.controller_epoch,
-        &i.fence.revocation,
-        a,
-        v.view.controller_epoch,
-        &v.view.revocation,
-        &v.digest,
-    )
-}
 async fn activate(
     State(r): State<PackingRouter>,
     Json(a): Json<Activation>,
 ) -> Result<StatusCode, Error> {
     let mut i = r.inner.lock().unwrap();
-    if i.candidate.as_ref().is_some_and(|v| matches(&r, &i, &a, v)) {
-        i.active = i.candidate.take();
-    } else if !i.active.as_ref().is_some_and(|v| matches(&r, &i, &a, v)) {
+    if !i.control.activate(&r.incarnation, &a) {
         return Err(unavailable(
             "activation was not prepared by this incarnation",
         ));
     }
-    i.refreshed.renew();
     Ok(StatusCode::NO_CONTENT)
 }
 async fn refresh(
@@ -754,10 +748,9 @@ async fn refresh(
     Json(a): Json<Activation>,
 ) -> Result<StatusCode, Error> {
     let mut i = r.inner.lock().unwrap();
-    if !i.active.as_ref().is_some_and(|v| matches(&r, &i, &a, v)) {
+    if !i.control.refresh(&r.incarnation, &a) {
         return Err(unavailable("refresh requires current activated view"));
     }
-    i.refreshed.renew();
     Ok(StatusCode::NO_CONTENT)
 }
 async fn revoke(
@@ -765,15 +758,15 @@ async fn revoke(
     Json(fence): Json<Revocation>,
 ) -> Result<StatusCode, Error> {
     let mut i = r.inner.lock().unwrap();
-    let epoch = i.fence.controller_epoch;
+    let epoch = i.control.epoch;
     r.save_fence(&mut i, epoch, fence).map_err(unavailable)?;
     Ok(StatusCode::NO_CONTENT)
 }
 async fn drain(State(r): State<PackingRouter>) -> StatusCode {
     let mut i = r.inner.lock().unwrap();
-    i.refreshed.clear();
-    i.active = None;
-    i.candidate = None;
+    i.control.refreshed.clear();
+    i.control.active = None;
+    i.control.candidate = None;
     StatusCode::NO_CONTENT
 }
 
@@ -900,13 +893,14 @@ async fn serve(r: PackingRouter, request: Request) -> Result<Response, Error> {
     let session = hex::encode(binding.session_id);
     let (routes, preferred, epoch, pack, query_rows) = {
         let i = r.inner.lock().unwrap();
-        if i.fence.revocation.sessions.contains(&session) {
+        if i.control.fence.sessions.contains(&session) {
             return Err((StatusCode::GONE, "noncanonical_session".into()));
         }
-        if !i.refreshed.live() {
+        if !i.control.refreshed.live() {
             return Err(unavailable("control connection stale"));
         }
         let loaded = i
+            .control
             .active
             .clone()
             .ok_or_else(|| unavailable("router not activated"))?;
@@ -1074,6 +1068,7 @@ async fn download_prepared(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pir_control::Watchdog;
     fn router(root: &Path) -> PackingRouter {
         PackingRouter::open(root, "http://127.0.0.1:1234", 6, 4).unwrap()
     }
@@ -1204,9 +1199,9 @@ mod tests {
         )
         .await
         .unwrap();
-        r.inner.lock().unwrap().refreshed =
+        r.inner.lock().unwrap().control.refreshed =
             Watchdog::renewed_at(Instant::now() - Duration::from_secs(6));
         assert!(r.response_allowed(&"bb".repeat(32), 1).is_err());
-        assert!(r.inner.lock().unwrap().fence.revocation.sessions.is_empty());
+        assert!(r.inner.lock().unwrap().control.fence.sessions.is_empty());
     }
 }

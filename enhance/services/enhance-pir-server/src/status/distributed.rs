@@ -761,6 +761,7 @@ async fn router_query(State(s): State<Service>, body: Bytes) -> Result<Vec<u8>, 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rayon::prelude::*;
     fn open(role: Role, dir: &FsPath) -> Service {
         Service::open(
             role,

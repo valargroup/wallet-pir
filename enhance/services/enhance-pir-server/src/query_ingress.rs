@@ -1,6 +1,7 @@
 //! Bounded EPQ7 prefix routing. No upload-key decoding, packing or query replay.
 use crate::admission::{client_key, read_body, BodyError, ClientSlots};
 use crate::packing_router::{Ack, Activation, CONTROL_VERSION};
+use crate::serving_fence::{ControlledView, FenceRefusal, PreparedView, Withheld};
 use crate::worker::Revocation;
 use axum::{
     body::Bytes,
@@ -41,12 +42,19 @@ struct Loaded {
     view: IngressView,
     digest: String,
 }
+impl PreparedView for Loaded {
+    fn controller_epoch(&self) -> u64 {
+        self.view.controller_epoch
+    }
+    fn revocation(&self) -> &Revocation {
+        &self.view.revocation
+    }
+    fn digest(&self) -> &str {
+        &self.digest
+    }
+}
 struct Inner {
-    active: Option<Arc<Loaded>>,
-    candidate: Option<Arc<Loaded>>,
-    epoch: u64,
-    fence: Revocation,
-    refreshed: pir_control::Watchdog,
+    control: ControlledView<Loaded>,
     cursor: usize,
 }
 #[derive(Clone)]
@@ -93,11 +101,7 @@ impl QueryIngress {
         Ok(Self {
             metrics,
             inner: Arc::new(Mutex::new(Inner {
-                active: None,
-                candidate: None,
-                epoch,
-                fence,
-                refreshed: pir_control::Watchdog::default(),
+                control: ControlledView::new(epoch, fence),
                 cursor: 0,
             })),
             root: root.into(),
@@ -134,29 +138,30 @@ impl QueryIngress {
             .with_state(self.clone())
     }
     fn fence(&self, i: &mut Inner, epoch: u64, fence: Revocation) -> Result<(), String> {
-        match crate::serving_fence::advance(i.epoch, &i.fence, epoch, &fence) {
-            Err(()) => return Err("nonmonotonic ingress fence".into()),
-            Ok(crate::serving_fence::Advance::Unchanged) => return Ok(()),
-            Ok(crate::serving_fence::Advance::Newer) => {}
-        }
+        i.control
+            .advance_fence(epoch, fence, |epoch, fence| {
+                self.persist_fence(epoch, fence)
+            })
+            .map_err(|refusal| match refusal {
+                FenceRefusal::Backwards => "nonmonotonic ingress fence".into(),
+                FenceRefusal::Persist(e) => e,
+            })
+    }
+    fn persist_fence(&self, epoch: u64, fence: &Revocation) -> Result<(), String> {
         crate::artifact::write_atomic(&self.root, "fence.json", |f| {
-            serde_json::to_writer(f, &(epoch, &fence)).map_err(std::io::Error::other)
+            serde_json::to_writer(f, &(epoch, fence)).map_err(std::io::Error::other)
         })
         .map_err(|e| e.to_string())?;
-        i.epoch = epoch;
-        i.fence = fence;
-        i.refreshed.clear();
         Ok(())
     }
     fn allowed(&self, session: &str, epoch: u64) -> Result<(), String> {
         let i = self.inner.lock().unwrap();
-        if i.fence.sessions.contains(session) {
-            return Err("noncanonical_session".into());
-        }
-        if i.epoch != epoch || !i.refreshed.live() {
-            return Err("ingress serving authority unavailable".into());
-        }
-        Ok(())
+        i.control
+            .release(session, epoch)
+            .map_err(|withheld| match withheld {
+                Withheld::Revoked => "noncanonical_session".into(),
+                Withheld::NoAuthority => "ingress serving authority unavailable".into(),
+            })
     }
 }
 /// Proxy-supplied client address when present, else the socket peer.
@@ -185,7 +190,7 @@ async fn health(State(r): State<QueryIngress>) -> Json<serde_json::Value> {
     let i = r.inner.lock().unwrap();
     Json(
         serde_json::json!({"incarnation":r.incarnation,"control_version":CONTROL_VERSION,
-        "active_digest":i.active.as_ref().map(|v|&v.digest),"ready":i.refreshed.live(),
+        "active_digest":i.control.active.as_ref().map(|v|&v.digest),"ready":i.control.refreshed.live(),
         "binary_sha256":pir_control::binary_sha256()}),
     )
 }
@@ -220,31 +225,17 @@ async fn prepare(
         serde_json::to_writer(f, &view).map_err(std::io::Error::other)
     })
     .map_err(fail)?;
-    i.candidate = Some(Arc::new(Loaded { view, digest: hash }));
+    i.control.candidate = Some(Arc::new(Loaded { view, digest: hash }));
     Ok(Json(ack))
-}
-fn matches(r: &QueryIngress, i: &Inner, a: &Activation, v: &Loaded) -> bool {
-    crate::serving_fence::activation_matches(
-        &r.incarnation,
-        i.epoch,
-        &i.fence,
-        a,
-        v.view.controller_epoch,
-        &v.view.revocation,
-        &v.digest,
-    )
 }
 async fn activate(
     State(r): State<QueryIngress>,
     Json(a): Json<Activation>,
 ) -> Result<StatusCode, Error> {
     let mut i = r.inner.lock().unwrap();
-    if i.candidate.as_ref().is_some_and(|v| matches(&r, &i, &a, v)) {
-        i.active = i.candidate.take();
-    } else if !i.active.as_ref().is_some_and(|v| matches(&r, &i, &a, v)) {
+    if !i.control.activate(&r.incarnation, &a) {
         return Err(fail("ingress activation not prepared"));
     }
-    i.refreshed.renew();
     Ok(StatusCode::NO_CONTENT)
 }
 async fn refresh(
@@ -252,10 +243,9 @@ async fn refresh(
     Json(a): Json<Activation>,
 ) -> Result<StatusCode, Error> {
     let mut i = r.inner.lock().unwrap();
-    if !i.active.as_ref().is_some_and(|v| matches(&r, &i, &a, v)) {
+    if !i.control.refresh(&r.incarnation, &a) {
         return Err(fail("ingress refresh stale"));
     }
-    i.refreshed.renew();
     Ok(StatusCode::NO_CONTENT)
 }
 async fn revoke(
@@ -263,7 +253,7 @@ async fn revoke(
     Json(fence): Json<Revocation>,
 ) -> Result<StatusCode, Error> {
     let mut i = r.inner.lock().unwrap();
-    let epoch = i.epoch;
+    let epoch = i.control.epoch;
     r.fence(&mut i, epoch, fence).map_err(fail)?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -307,13 +297,14 @@ async fn serve(r: QueryIngress, request: Request) -> Result<Response, Error> {
     let session = hex::encode(binding.session_id);
     let (url, epoch) = {
         let mut i = r.inner.lock().unwrap();
-        if i.fence.sessions.contains(&session) {
+        if i.control.fence.sessions.contains(&session) {
             return Err((StatusCode::GONE, "noncanonical_session".into()));
         }
-        if !i.refreshed.live() {
+        if !i.control.refreshed.live() {
             return Err(fail("ingress control stale"));
         }
         let active = i
+            .control
             .active
             .as_ref()
             .ok_or_else(|| fail("ingress not activated"))?;
@@ -327,7 +318,7 @@ async fn serve(r: QueryIngress, request: Request) -> Result<Response, Error> {
             .ok_or_else(|| (StatusCode::GONE, "session_unavailable".into()))?;
         let url = routes[i.cursor % routes.len()].clone();
         i.cursor = i.cursor.wrapping_add(1);
-        (url, i.epoch)
+        (url, i.control.epoch)
     };
     // Never retry a forwarded body. The detached task retains admission even if
     // the wallet disconnects while the router may already be doing crypto work.
