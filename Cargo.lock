@@ -4314,7 +4314,7 @@ dependencies = [
 
 [[package]]
 name = "transparent-block-server"
-version = "0.1.0"
+version = "0.1.0-rc.1"
 dependencies = [
  "anyhow",
  "axum",
@@ -4330,7 +4330,7 @@ dependencies = [
 
 [[package]]
 name = "transparent-blocks"
-version = "0.1.0"
+version = "0.1.0-rc.1"
 dependencies = [
  "anyhow",
  "flate2",
@@ -4347,7 +4347,7 @@ dependencies = [
 
 [[package]]
 name = "transparent-events"
-version = "0.1.0"
+version = "0.1.0-rc.1"
 dependencies = [
  "hex",
  "thiserror 2.0.18",
@@ -4355,7 +4355,7 @@ dependencies = [
 
 [[package]]
 name = "transparent-filter"
-version = "0.1.0"
+version = "0.1.0-rc.1"
 dependencies = [
  "bitcoin",
  "clap",
@@ -4369,7 +4369,7 @@ dependencies = [
 
 [[package]]
 name = "transparent-filter-server"
-version = "0.1.0"
+version = "0.1.0-rc.1"
 dependencies = [
  "axum",
  "chrono",
@@ -4401,7 +4401,7 @@ dependencies = [
 
 [[package]]
 name = "transparent-loadtest"
-version = "0.1.0"
+version = "0.1.0-rc.1"
 dependencies = [
  "anyhow",
  "axum",
@@ -4427,7 +4427,7 @@ dependencies = [
 
 [[package]]
 name = "transparent-measure"
-version = "0.1.0"
+version = "0.1.0-rc.1"
 dependencies = [
  "axum",
  "clap",
@@ -4445,7 +4445,7 @@ dependencies = [
 
 [[package]]
 name = "transparent-native"
-version = "0.1.0"
+version = "0.1.0-rc.1"
 dependencies = [
  "hex",
  "ipir-sp 0.1.0-rc.7",
@@ -4460,7 +4460,7 @@ dependencies = [
 
 [[package]]
 name = "transparent-regression"
-version = "0.1.0"
+version = "0.1.0-rc.1"
 dependencies = [
  "anyhow",
  "axum",
@@ -4481,7 +4481,7 @@ dependencies = [
 
 [[package]]
 name = "transparent-shard"
-version = "0.1.0"
+version = "0.1.0-rc.1"
 dependencies = [
  "base64",
  "hex",
@@ -4495,7 +4495,7 @@ dependencies = [
 
 [[package]]
 name = "transparent-shard-server"
-version = "0.1.0"
+version = "0.1.0-rc.1"
 dependencies = [
  "axum",
  "base64",
@@ -4534,7 +4534,7 @@ dependencies = [
 
 [[package]]
 name = "transparent-txid-client"
-version = "0.1.0"
+version = "0.1.0-rc.1"
 dependencies = [
  "base64",
  "clap",
@@ -4551,7 +4551,7 @@ dependencies = [
 
 [[package]]
 name = "transparent-wallet"
-version = "0.1.0"
+version = "0.1.0-rc.1"
 dependencies = [
  "base64",
  "hex",
@@ -4568,7 +4568,7 @@ dependencies = [
 
 [[package]]
 name = "transparent-wallet-store"
-version = "0.1.0"
+version = "0.1.0-rc.1"
 dependencies = [
  "hex",
  "rusqlite",

@@ -1,6 +1,6 @@
 [package]
 name = "transparent-txid-client"
-version = "0.1.0"
+version = "0.1.0-rc.1"
 edition = "2021"
 description = "Synchronous, transport-agnostic wallet client for the tiered txid display PIR publication"
 
