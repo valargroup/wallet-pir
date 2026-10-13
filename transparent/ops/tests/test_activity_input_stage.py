@@ -500,17 +500,20 @@ class ServiceInputs(unittest.TestCase):
     def test_real_fixture_stdout_does_not_create_output_file(self):
         table=b'\x01'+b'\x00'*4095
         shard=self.output/('c'*64);shard.mkdir()
-        for name in ('directory','pages'):(shard/(name+'.0.bin')).write_bytes(table)
+        for name in ('directory','pages-0','pages-1'):(shard/(name+'.0.bin')).write_bytes(table)
         segment={'rows':1,'row_bytes':4096,'sha256':hashlib.sha256(table).hexdigest()}
-        (shard/'manifest.json').write_text(json.dumps({'schema':'transparent-shard-v11',
-            'directory_segments':[segment],'page_segments':[segment]}))
+        child=lambda index,sealed:{'index':index,'sealed':sealed,'page_segments':[segment]}
+        (shard/'manifest.json').write_text(json.dumps({'schema':'transparent-shard-v12',
+            'directory_segments':[segment],'page_children':[child(0,True),child(1,False),
+            {'index':2,'sealed':True,'page_segments':[]}]}))
         (self.output/'shards.json').write_text(json.dumps({'shards':[{'shard_id':0,'manifest_digest':'c'*64,
             'geometry':'archive-wide','sealed':True}]}))
         script=Path(__file__).parents[1]/'scripts/activity-query-fixture.py'
         result=subprocess.run([sys.executable,str(script),'--shard-dir',str(self.output),'--out','-'],
                               cwd=self.root,capture_output=True,check=True)
         fixture=json.loads(result.stdout);summary=json.loads(result.stderr)
-        self.assertEqual(len(fixture['tables']),2)
+        # The open page shard and the empty one have no fixture table.
+        self.assertEqual([t['table'] for t in fixture['tables']],['directory','pages-0'])
         self.assertEqual(summary['sha256'],hashlib.sha256(result.stdout).hexdigest())
         self.assertFalse((self.root/'-').exists())
 

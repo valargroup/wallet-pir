@@ -7,6 +7,8 @@ import json
 import sys
 from pathlib import Path
 
+SCHEMA = 'transparent-shard-v12'
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -22,12 +24,16 @@ def main():
             continue
         root = args.shard_dir / entry['manifest_digest']
         manifest = json.loads((root / 'manifest.json').read_bytes())
-        if manifest['schema'] != 'transparent-shard-v11':
-            raise ValueError('candidate fixture requires v11')
-        for name, key in [('directory', 'directory_segments'), ('pages', 'page_segments')]:
-            segments = manifest[key]
+        if manifest['schema'] != SCHEMA:
+            raise ValueError('candidate fixture requires ' + SCHEMA)
+        # A directory shard's own table, then each page shard's `pages-<j>`;
+        # an empty page shard has no table, and an open one is still growing.
+        named = [('directory', manifest['directory_segments'])] + [
+            (f"pages-{child['index']}", child['page_segments']) for child in manifest['page_children']
+            if child['page_segments'] and (child['sealed'] or args.include_provisional)]
+        for name, segments in named:
             rows, width = segments[0]['rows'], segments[0]['row_bytes']
-            if width != 4096 or not all(s['rows'] == rows and s['row_bytes'] == width for s in segments):
+            if width <= 0 or not all(s['rows'] == rows and s['row_bytes'] == width for s in segments):
                 raise ValueError('inconsistent table geometry')
             indices = {0, rows - 1, *[i * (rows - 1) // 31 for i in range(32)]}
             files = [(root / f'{name}.{i}.bin').open('rb') for i in range(len(segments))]
@@ -57,7 +63,7 @@ def main():
                                geometry=entry['geometry'], table=name, rows=rows, row_bytes=width,
                                segments=len(segments), samples=samples, sealed=entry['sealed'],
                                source_table_sha256=[s['sha256'] for s in segments]))
-    result = dict(schema='transparent-shard-v11', source=str(args.shard_dir),
+    result = dict(schema=SCHEMA, source=str(args.shard_dir),
                   created_utc=datetime.datetime.now(datetime.timezone.utc).isoformat(),
                   source_map_sha256=hashlib.sha256(raw).hexdigest(), tables=tables,
                   oracle='Exact row hashes from independently verified published plaintext; extraction correctness is a separate chain oracle gate',
