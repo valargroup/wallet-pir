@@ -52,7 +52,7 @@ zakura-chain = { git = "https://github.com/zakura-core/zakura.git", rev = "1faf1
 
 [dev-dependencies]
 # Independent wallet Enhance client, which is native-only.
-zakura-pir-enhance = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "e56cf6b116b05891ddfd87604d823198c6f91932", default-features = false }
+zakura-pir-enhance = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "a71ccf63ce0373b253f06c7350f921f0bd83b6f3", default-features = false }
 simplepir-kernel = "=0.1.0-rc.4"
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
