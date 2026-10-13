@@ -215,6 +215,12 @@ fn publish_choosing(
 /// each shard as built: its table and its row in that table's logical space.
 type BadRow<'a> = &'a dyn Fn(u64, &BuiltDirectory, &[BuiltChild]) -> Option<(Table, u64)>;
 
+/// A published row a dishonest publisher replaces, chosen from each shard as
+/// built: its table, its row in that table's logical space, and the bytes
+/// published in its place.
+type RewrittenRow<'a> =
+    &'a dyn Fn(u64, &BuiltDirectory, &[BuiltChild]) -> Option<(Table, u64, Vec<u8>)>;
+
 /// As [`publish_profiled`] under the default profile, with every byte of
 /// the row `bad` names inverted before publication. The manifest describes
 /// the corrupted tables, so the service serves them as it would any other:
@@ -223,6 +229,26 @@ fn publish_corrupting(
     dir: &Path,
     per_shard: &[Vec<(ScriptBytes, TransparentEvent)>],
     bad: BadRow<'_>,
+) -> ShardMap {
+    publish_rewriting(dir, per_shard, &|shard_id, built, children| {
+        let (table, row) = bad(shard_id, built, children)?;
+        let mut bytes = match table {
+            Table::Directory => built.directory_row(row).to_vec(),
+            Table::Pages(child) => children[child as usize]
+                .page_row(built.geometry, row)
+                .to_vec(),
+        };
+        bytes.iter_mut().for_each(|byte| *byte ^= 0xa5);
+        Some((table, row, bytes))
+    })
+}
+
+/// As [`publish_corrupting`], with the row `bad` names replaced by the
+/// bytes it gives: content that decodes, but says what the publisher chose.
+fn publish_rewriting(
+    dir: &Path,
+    per_shard: &[Vec<(ScriptBytes, TransparentEvent)>],
+    bad: RewrittenRow<'_>,
 ) -> ShardMap {
     publish_with_bad_row(
         dir,
@@ -267,7 +293,7 @@ fn publish_with_bad_row(
     tail_supersedes: &str,
     choice: impl Fn(u64, &BuiltDirectory) -> Option<String>,
     profile: &str,
-    bad: BadRow<'_>,
+    bad: RewrittenRow<'_>,
 ) -> ShardMap {
     let mut entries = Vec::new();
     let mut parent_digest = String::new();
@@ -294,22 +320,18 @@ fn publish_with_bad_row(
         let mut children = prepared.1.clone();
         let mut directory = built.directory.clone();
         let bad_row = bad(shard_id, built, &children);
-        match bad_row {
-            Some((Table::Directory, row)) => {
+        match &bad_row {
+            Some((Table::Directory, row, bytes)) => {
                 let (segment, within) =
-                    transparent_shard::layout::split_row(row, geometry.directory_rows);
+                    transparent_shard::layout::split_row(*row, geometry.directory_rows);
                 let width = geometry.directory_row_bytes;
                 let at = within as usize * width;
-                directory[segment as usize][at..at + width]
-                    .iter_mut()
-                    .for_each(|byte| *byte ^= 0xa5);
+                directory[segment as usize][at..at + width].copy_from_slice(bytes);
             }
-            Some((Table::Pages(child), row)) => {
+            Some((Table::Pages(child), row, bytes)) => {
                 let width = geometry.page_row_bytes;
-                let at = row as usize * width;
-                children[child as usize].pages[at..at + width]
-                    .iter_mut()
-                    .for_each(|byte| *byte ^= 0xa5);
+                let at = *row as usize * width;
+                children[*child as usize].pages[at..at + width].copy_from_slice(bytes);
             }
             None => {}
         }
@@ -334,7 +356,7 @@ fn publish_with_bad_row(
             described.sha256 = hex::encode(<sha2::Sha256 as sha2::Digest>::digest(segment));
         }
         let (_, entry) = revision::write_manifest(dir, &spec, manifest, built, children);
-        if matches!(bad_row, Some((Table::Directory, _))) {
+        if matches!(bad_row, Some((Table::Directory, ..))) {
             for (index, segment) in directory.iter().enumerate() {
                 std::fs::write(
                     dir.join(&entry.manifest_digest)
@@ -2848,6 +2870,9 @@ enum Alter {
     /// binding, 8 in the parameter epoch.
     ReplyByte(usize),
     Manifest,
+    /// Refuses the shard's first page query as an overloaded service does,
+    /// once, without sending it: a later round than the directory's.
+    RefusePage,
 }
 
 /// Which shard [`Alters`] alters, and how.
@@ -2857,9 +2882,24 @@ type Corruption = (u64, Alter);
 struct Alters<T> {
     inner: T,
     corruption: Option<Corruption>,
+    /// Whether [`Alter::RefusePage`] has refused its query.
+    refused: bool,
 }
 
 impl<T> Alters<T> {
+    /// The overload refusal for this query, if [`Alter::RefusePage`] makes
+    /// one of it.
+    fn refusal(&mut self, shard_id: u64, revision: &str, table: Table) -> Option<BoxError> {
+        let refuses =
+            matches!(self.corruption, Some((shard, Alter::RefusePage)) if shard == shard_id);
+        if !refuses || self.refused || !matches!(table, Table::Pages(_)) {
+            return None;
+        }
+        self.refused = true;
+        let body = br#"{"error":"no cache capacity is free","retry":"retry shortly"}"#;
+        refusal(503, Some("0"), body, shard_id, revision)
+    }
+
     fn reply(&self, shard_id: u64, table: Table, mut reply: Vec<u8>) -> Vec<u8> {
         if let Some((shard, Alter::ReplyByte(byte))) = self.corruption {
             if shard == shard_id && table == Table::Directory {
@@ -2907,6 +2947,9 @@ impl<T: ShardTransport> ShardTransport for Alters<T> {
         table: Table,
         body: &[u8],
     ) -> Result<Vec<u8>, BoxError> {
+        if let Some(refused) = self.refusal(shard_id, revision, table) {
+            return Err(refused);
+        }
         let answer = self.inner.query(shard_id, revision, table, body)?;
         Ok(self.reply(shard_id, table, answer))
     }
@@ -2916,7 +2959,29 @@ impl<T: ShardTransport> ShardTransport for Alters<T> {
     }
 
     fn batch(&mut self, requests: &[ShardRequest<'_>]) -> Vec<Option<ShardReply>> {
-        let replies = self.inner.batch(requests);
+        // A refused request ends the batch, as a refusal from the service
+        // does: what came before it is sent, nothing after it.
+        let mut refused = None;
+        for (index, request) in requests.iter().enumerate() {
+            if let ShardRequest::Query {
+                shard_id,
+                revision,
+                table,
+                ..
+            } = *request
+            {
+                if let Some(error) = self.refusal(shard_id, revision, table) {
+                    refused = Some((index, error));
+                    break;
+                }
+            }
+        }
+        let sent = refused.as_ref().map_or(requests.len(), |(index, _)| *index);
+        let mut replies = self.inner.batch(&requests[..sent]);
+        if let Some((_, error)) = refused {
+            replies.push(Some(Err(error)));
+            replies.resize_with(requests.len(), || None);
+        }
         requests
             .iter()
             .zip(replies)
@@ -2974,6 +3039,7 @@ async fn sync_recorded(
             inner: Alters {
                 inner: http,
                 corruption,
+                refused: false,
             },
             log: log.clone(),
             batches: Batches::Pass,
@@ -3071,6 +3137,17 @@ fn last_page_row(
     children: &[BuiltChild],
     script: &ScriptBytes,
 ) -> (u32, u64) {
+    let (child, row, head) = oldest_run(built, children, script);
+    (child, row + u64::from(head.fragment_count) - 1)
+}
+
+/// `script`'s oldest run in a built shard: its page shard, the row of its
+/// first fragment, and that fragment.
+fn oldest_run(
+    built: &BuiltDirectory,
+    children: &[BuiltChild],
+    script: &ScriptBytes,
+) -> (u32, u64, transparent_shard::PageEntry) {
     let (_, entry) = entry_row(built, script);
     let mut next = entry.head();
     let mut last = None;
@@ -3090,11 +3167,8 @@ fn last_page_row(
                 .into_iter()
                 .find(|entry| entry.tag == tag && entry.ordinal == 0)
                 .unwrap();
-        last = Some((
-            u32::from(child),
-            u64::from(row) + u64::from(head.fragment_count) - 1,
-        ));
         next = head.link.previous();
+        last = Some((u32::from(child), u64::from(row), head));
     }
     last.expect("a paged script")
 }
@@ -3305,6 +3379,250 @@ async fn a_corrupt_page_row_fails_one_walk_with_the_honest_transcript() {
             sync_recorded(dir.path(), &base, &map, store, &wallet, concurrency, None).await;
         assert!(retried.unwrap().failed_entries[0].failures == 2);
         assert_eq!(store.entry_failures(1, script(3).as_slice()).unwrap(), 2);
+    }
+}
+
+/// [`chain`] with script 4 active in shard 1 on both sides of its page-shard
+/// boundary: an older run of several fragments, then a short newer one.
+fn chain_with_a_long_oldest_run() -> Vec<Vec<(ScriptBytes, TransparentEvent)>> {
+    let mut per_shard = chain();
+    let start = FIRST + SPAN;
+    let older = 2 * transparent_shard::EVENTS_PER_PAGE + 10;
+    for i in 0..older + 3 {
+        let height = if i < older {
+            start + u64::from(i) % 90
+        } else {
+            start + 150 + u64::from(i - older)
+        };
+        per_shard[1].push((
+            script(4),
+            TransparentEvent::Receive(ReceiveEvent {
+                metadata: None,
+                height: height as u32,
+                txid: txid(50_000 + u64::from(i)),
+                transaction_index: 4,
+                output_index: 0,
+                value: 13,
+                coinbase: false,
+            }),
+        ));
+    }
+    per_shard
+}
+
+/// A published page row that decodes but whose first fragment carries a bad
+/// link, on the head of script 4's oldest run in shard 1, which its chain
+/// promised no older run. The walk fails there and still owes the run's
+/// other fragments: it sends them as dummies of the same length to the same
+/// table, and no head after them, as the honest walk sends the fragments and
+/// stops. So the padded dummies cross the real HTTP transport and the service
+/// sees exactly the honest transcript, sequentially and at concurrency 4.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_bad_link_owes_dummies_and_keeps_the_honest_transcript() {
+    use transparent_shard::{decode_page_row, encode_page_row, page_tag_salt, script_tag, RunLink};
+    use transparent_wallet::{Completion, IncompleteReason, MemoryStore, WalletStore};
+    let per_shard = chain_with_a_long_oldest_run();
+    let honest_dir = tempfile::tempdir().unwrap();
+    let honest_map = publish(honest_dir.path(), &per_shard);
+    let dir = tempfile::tempdir().unwrap();
+    let owed = std::sync::atomic::AtomicU32::new(0);
+    let map = publish_rewriting(dir.path(), &per_shard, &|shard_id, built, children| {
+        if shard_id != 1 {
+            return None;
+        }
+        let (child, row, head) = oldest_run(built, children, &script(4));
+        assert_ne!(
+            entry_row(built, &script(4)).1.head(),
+            Some((child as u8, row as u32)),
+            "a run reached by a link"
+        );
+        assert_eq!(head.link, RunLink::default(), "the oldest run");
+        owed.store(
+            head.fragment_count - 1,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        let page = &children[child as usize];
+        let tag = script_tag(
+            &page_tag_salt(
+                built.shard_id,
+                page.index,
+                page.end_height,
+                &page.terminal_block_hash,
+                page.tag_salt_counter,
+            ),
+            script(4).as_slice(),
+        );
+        let entries = decode_page_row(page.page_row(built.geometry, row))
+            .unwrap()
+            .into_iter()
+            .map(|entry| {
+                if entry.tag == tag && entry.ordinal == 0 {
+                    // A link to an older run the chain did not promise.
+                    entry
+                        .with_link(RunLink {
+                            prev_child: 0,
+                            prev_row: 1,
+                            older_runs: 1,
+                        })
+                        .unwrap()
+                } else {
+                    entry
+                }
+            })
+            .collect::<Vec<_>>();
+        Some((Table::Pages(child), row, encode_page_row(&entries).unwrap()))
+    });
+    let owed = owed.into_inner();
+    assert!(owed >= 2, "{owed} fragments after the head");
+    let honest_base = serve(honest_dir.path()).await;
+    let base = serve(dir.path()).await;
+    let wallet = vec![script(1), script(2), script(3), script(4)];
+    for concurrency in [1, 4] {
+        let (_, (honest, honest_log)) = sync_recorded(
+            honest_dir.path(),
+            &honest_base,
+            &honest_map,
+            MemoryStore::new(),
+            &wallet,
+            concurrency,
+            None,
+        )
+        .await;
+        assert_eq!(honest.unwrap().completion, Completion::Complete);
+        let (store, (report, log)) = sync_recorded(
+            dir.path(),
+            &base,
+            &map,
+            MemoryStore::new(),
+            &wallet,
+            concurrency,
+            None,
+        )
+        .await;
+        let report = report.unwrap();
+        assert_eq!(
+            transcript(&log, &map),
+            transcript(&honest_log, &honest_map),
+            "concurrency {concurrency}: the service sees the honest transcript"
+        );
+        assert!(matches!(
+            report.completion,
+            Completion::Incomplete {
+                reason: IncompleteReason::ContentFailed,
+                ..
+            }
+        ));
+        assert_eq!(report.failed_entries.len(), 1);
+        assert_eq!(report.failed_entries[0].shard_id, 1);
+        assert_eq!(report.failed_entries[0].script, script(4).as_slice());
+        assert_eq!(store.entry_failures(1, script(4).as_slice()).unwrap(), 1);
+    }
+}
+
+/// A corrupt directory row fails script 2's entry in shard 1, whose honest
+/// history there is inline, and the service then refuses the shard's first
+/// page round as overloaded. The retried read asks the directory again for
+/// every matched script without a saved walk, as the honest retry does, the
+/// failed entry included: the same queries in the same order, so the
+/// directory queries of the re-read do not show which row the wallet read.
+/// The failure is counted once.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_overload_after_a_failed_entry_retries_with_the_honest_transcript() {
+    use transparent_wallet::{Completion, FailedEntry, IncompleteReason, MemoryStore, WalletStore};
+    let per_shard = chain();
+    let ((honest_dir, honest_map, honest_base), (dir, map, base)) =
+        honest_and_corrupt(&per_shard, &|shard_id, built, _| {
+            (shard_id == 1).then(|| (Table::Directory, entry_row(built, &script(2)).0))
+        })
+        .await;
+    let wallet = vec![script(2), script(3)];
+    let refuse = Some((1, Alter::RefusePage));
+    // Shard 1's directory queries after the refused page query: the re-read.
+    let reread = |log: &Log| -> Vec<(String, usize)> {
+        let refused = log
+            .sent
+            .iter()
+            .position(|(route, _)| {
+                route.starts_with("/v2/shards/1/") && route.contains("/query/pages")
+            })
+            .expect("a page query");
+        log.sent[refused + 1..]
+            .iter()
+            .filter(|(route, _)| {
+                route.starts_with("/v2/shards/1/") && route.ends_with("/query/directory")
+            })
+            .cloned()
+            .collect()
+    };
+    for concurrency in [1, 4] {
+        let (_, (honest, honest_log)) = sync_recorded(
+            honest_dir.path(),
+            &honest_base,
+            &honest_map,
+            MemoryStore::new(),
+            &wallet,
+            concurrency,
+            refuse,
+        )
+        .await;
+        assert_eq!(honest.unwrap().completion, Completion::Complete);
+        let honest_reread = reread(&honest_log);
+        assert!(!honest_reread.is_empty(), "the honest retry asks again");
+
+        let (store, (report, log)) = sync_recorded(
+            dir.path(),
+            &base,
+            &map,
+            MemoryStore::new(),
+            &wallet,
+            concurrency,
+            refuse,
+        )
+        .await;
+        let report = report.unwrap();
+        let honest_reread: Vec<_> = honest_reread
+            .iter()
+            .map(|(route, len)| {
+                (
+                    route.replace(&honest_map.shards[1].manifest_digest, "shard-1"),
+                    *len,
+                )
+            })
+            .collect();
+        let corrupt_reread: Vec<_> = reread(&log)
+            .iter()
+            .map(|(route, len)| {
+                (
+                    route.replace(&map.shards[1].manifest_digest, "shard-1"),
+                    *len,
+                )
+            })
+            .collect();
+        assert_eq!(
+            corrupt_reread, honest_reread,
+            "concurrency {concurrency}: the re-read asks what the honest one asks"
+        );
+        assert_eq!(
+            transcript(&log, &map),
+            transcript(&honest_log, &honest_map),
+            "concurrency {concurrency}: the service sees the honest transcript"
+        );
+        assert!(matches!(
+            report.completion,
+            Completion::Incomplete {
+                reason: IncompleteReason::ContentFailed,
+                ..
+            }
+        ));
+        assert_eq!(
+            report.failed_entries,
+            vec![FailedEntry {
+                shard_id: 1,
+                script: script(2).as_slice().to_vec(),
+                failures: 1,
+            }]
+        );
+        assert_eq!(store.entry_failures(1, script(2).as_slice()).unwrap(), 1);
     }
 }
 

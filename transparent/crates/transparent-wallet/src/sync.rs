@@ -2240,6 +2240,8 @@ fn tag_salt_of(manifest: &ShardManifest) -> Result<[u8; 32], SyncError> {
 /// every other script, counting the failure. Every directory query planned for
 /// a script is sent before any of its replies is decoded, so the queries sent
 /// are the same whatever came back, and in the order a lookahead stashed them.
+/// A retry after an overload sends them again for every script without a
+/// saved walk, failed ones included, so it too is the honest retry.
 #[allow(clippy::too_many_arguments)]
 fn retrieve_shard_into<S: WalletStore, T: ShardTransport>(
     store: &mut S,
@@ -2295,14 +2297,16 @@ fn retrieve_shard_into<S: WalletStore, T: ShardTransport>(
             return Ok(Some(stopped));
         }
     }
-    // A retry after an overload does not ask again for an entry that already
-    // failed in this sync, nor count it twice.
+    // A retry after an overload asks again for every matched script without
+    // a saved walk, as an honest retry does for inline entries and false
+    // positives. An entry that already failed in this sync is asked again
+    // too, so the queries do not show which entries failed, but its replies
+    // are not read: it is not counted twice, covered, or walked.
     let mut unowed = Vec::with_capacity(matched.len());
     for script in matched {
-        if !pending.iter().any(|p| &p.script == script)
-            && !held(store, &failures.entries, shard_id, script)?
-        {
-            unowed.push(script);
+        if !pending.iter().any(|p| &p.script == script) {
+            let failed = held(store, &failures.entries, shard_id, script)?;
+            unowed.push((script, failed));
         }
     }
     let matched = unowed;
@@ -2339,7 +2343,7 @@ fn retrieve_shard_into<S: WalletStore, T: ShardTransport>(
     let mut pending_upsert: Vec<PendingPages> = Vec::new();
     let mut failed_here: Vec<Vec<u8>> = Vec::new();
 
-    for script in matched {
+    for (script, failed) in matched {
         // With a published choice table, exactly the one candidate row it
         // names is queried. Without one, both candidate rows are. Either way
         // the query count per matched script is fixed for the shard: querying
@@ -2369,6 +2373,9 @@ fn retrieve_shard_into<S: WalletStore, T: ShardTransport>(
                 charges,
             );
             replies.push((row, answer?));
+        }
+        if failed {
+            continue;
         }
         let found = match entry_in(entry, manifest, geometry, &wanted, &replies) {
             Ok(found) => found,
@@ -3094,8 +3101,8 @@ impl Walker<'_> {
     /// link to that starts at a row of an earlier, declared page shard. A
     /// link that fails any of these still leaves this run located, so the
     /// walk owes the queries for its fragments not yet held, of `held`, and
-    /// one in the link's place, all as dummies: the round the honest walk
-    /// would send.
+    /// one in the link's place unless the chain promised no older run, all
+    /// as dummies: the round the honest walk would send.
     fn check_located(
         &self,
         head: &PageEntry,
@@ -3108,10 +3115,13 @@ impl Walker<'_> {
             Some((child, row)) => self.locate(child, u64::from(row)).map(|_| ()),
             None => Ok(()),
         });
+        // A run its chain promised no older run is the oldest: the honest
+        // walk sends no head after it.
+        let link_query = u32::from(cursor.older_runs != Some(0));
         link.map_err(|error| Failure {
             error,
             child: cursor.child,
-            dummies: head.fragment_count.saturating_sub(held.max(1) as u32) + 1,
+            dummies: head.fragment_count.saturating_sub(held.max(1) as u32) + link_query,
         })
     }
 
@@ -3799,7 +3809,9 @@ impl Failures {
 
 /// Whether `script`'s entry in shard `shard_id` is held out of this sync:
 /// it failed on content earlier in the sync, or has failed
-/// [`MAX_CONTENT_FAILURES`] times. A held entry is not queried at all.
+/// [`MAX_CONTENT_FAILURES`] times. A held entry's replies are not read; it
+/// is queried again only by a shard read retried after an overload, which
+/// asks what the first attempt asked.
 fn held<S: WalletStore>(
     store: &S,
     failed: &[FailedEntry],
@@ -5591,7 +5603,17 @@ mod walk_tests {
         victim: &[u8],
         rewrite: impl Fn(PageEntry) -> PageEntry,
     ) -> ((u8, u32), PageEntry, Vec<u8>) {
-        let (child, row) = runs_of(directory, victim)[0];
+        rewritten_run(directory, victim, 0, rewrite)
+    }
+
+    /// [`rewritten_head`] for `victim`'s run `run`, counted from the newest.
+    fn rewritten_run(
+        directory: &Directory,
+        victim: &[u8],
+        run: usize,
+        rewrite: impl Fn(PageEntry) -> PageEntry,
+    ) -> ((u8, u32), PageEntry, Vec<u8>) {
+        let (child, row) = runs_of(directory, victim)[run];
         let head = run_head(directory, victim, (child, row));
         let entries: Vec<PageEntry> = transparent_shard::decode_page_row(
             directory.children[usize::from(child)].page_row(&DECOUPLED_2K_8K, u64::from(row)),
@@ -5611,8 +5633,9 @@ mod walk_tests {
     }
 
     /// Walks every paged script of the fixture's first directory shard
-    /// honestly, and again with `victim`'s newest run's head row replaced by
-    /// `segments`: both walks' requests, and the store the second leaves.
+    /// honestly, and again with the head row of `victim`'s run at `at`
+    /// replaced by `segments`: both walks' requests, and the store the second
+    /// leaves.
     fn honest_and_rewritten(
         victim: &[u8],
         at: (u8, u32),
@@ -5654,21 +5677,35 @@ mod walk_tests {
         (honest, bad, store, failed)
     }
 
+    /// A paged script of `directory` whose chain is two runs, the older one
+    /// fragment long: its honest walk ends with the round that reads the
+    /// newer run's rest and the older run's head.
+    fn linked_once(directory: &Directory) -> Vec<u8> {
+        paged(directory)
+            .into_iter()
+            .find(|script| {
+                let runs = runs_of(directory, script);
+                runs.len() == 2 && run_head(directory, script, runs[1]).fragment_count == 1
+            })
+            .expect("a script whose chain ends one fragment after its link")
+    }
+
     /// A run whose head is otherwise valid but whose link is not fails its
     /// walk when the head arrives. In the next round the walk still sends the
     /// rest of that run and one query in the link's place, as dummies to the
-    /// run's own page shard, so every round is the honest round's size until
-    /// that run ends; then it stops, and every other walk finishes.
+    /// run's own page shard, and then stops while every other walk finishes.
+    /// The victim's honest walk ends with that round too, so every round is
+    /// the honest round's size.
     fn a_bad_link_is_padded(rewrite: impl Fn(RunLink) -> RunLink) {
         let (_, directories) = fixture();
         let directory = &directories[0];
-        let victim = paged(directory).remove(0);
+        let victim = linked_once(directory);
         let ((child, row), head, bytes) = rewritten_head(directory, &victim, |entry| {
             let link = rewrite(entry.link);
             entry.with_link(link).unwrap()
         });
         let (honest, bad, ..) = honest_and_rewritten(&victim, (child, row), vec![bytes]);
-        assert_eq!(bad.round_sizes[..2], honest.round_sizes[..2]);
+        assert_eq!(bad.round_sizes, honest.round_sizes);
         assert_eq!(sorted(bad.round(0)), sorted(honest.round(0)));
         // The victim's honest second round: the rest of its newest run, and
         // the head of the run it links to.
@@ -5685,9 +5722,42 @@ mod walk_tests {
         expected.extend((0..head.fragment_count).map(|_| (u32::from(child), 0)));
         expected.sort_unstable();
         assert_eq!(sorted(bad.round(1)), expected);
-        for (failing, honest) in bad.round_sizes[2..].iter().zip(&honest.round_sizes[2..]) {
-            assert!(failing <= honest);
+        for round in 2..honest.round_sizes.len() {
+            assert_eq!(sorted(bad.round(round)), sorted(honest.round(round)));
         }
+    }
+
+    /// A bad link on the oldest run, which its chain promised no older run:
+    /// the honest walk sends the rest of that run and no head after it, so
+    /// the failed walk owes only the rest, as dummies.
+    #[test]
+    fn a_bad_link_on_the_oldest_run_owes_no_head() {
+        let (_, directories) = fixture();
+        let directory = &directories[0];
+        let victim = paged(directory).remove(0);
+        let runs = runs_of(directory, &victim).len();
+        assert!(runs >= 2, "{runs} runs");
+        let ((child, row), head, bytes) = rewritten_run(directory, &victim, runs - 1, |entry| {
+            assert_eq!(entry.link.previous(), None, "the oldest run");
+            entry
+                .with_link(RunLink {
+                    prev_child: 0,
+                    prev_row: 1,
+                    older_runs: 1,
+                })
+                .unwrap()
+        });
+        let (honest, bad, ..) = honest_and_rewritten(&victim, (child, row), vec![bytes]);
+        assert_eq!(bad.round_sizes, honest.round_sizes);
+        let dummies = |walk: &Direct<'_>| {
+            walk.requests
+                .iter()
+                .filter(|request| (request.child, request.row) == (u32::from(child), 0))
+                .count()
+        };
+        // The rest of the run, in the round after its head, as dummies.
+        let rest = head.fragment_count as usize - 1;
+        assert_eq!(dummies(&bad), dummies(&honest) + rest);
     }
 
     /// A link to a row outside the page shard's table.
@@ -5810,12 +5880,39 @@ mod walk_tests {
             &mut failures,
         )
         .unwrap();
-        let dummies = retry
-            .round(0)
-            .iter()
-            .filter(|request| (request.child, request.row) == (u32::from(child), 0))
-            .count();
-        assert!(dummies >= head.fragment_count as usize, "{dummies}");
+        // The retried round is the honest walk's second, with the victim's
+        // rest of its run and the head it links to sent as dummies.
+        let mut honest_store = MemoryStore::new();
+        let owed = directory_phase(&mut honest_store, directory, &manifest, &scripts);
+        let mut honest = Direct::new(directory);
+        walk(&mut honest_store, &manifest, &owed, &mut honest).unwrap();
+        let theirs: Vec<(u32, u64)> = (1..head.fragment_count)
+            .map(|ordinal| (u32::from(child), u64::from(row + ordinal)))
+            .chain(
+                head.link
+                    .previous()
+                    .map(|(older, older_row)| (u32::from(older), u64::from(older_row))),
+            )
+            .collect();
+        assert_eq!(theirs.len(), head.fragment_count as usize, "a linked run");
+        let mut expected = sorted(honest.round(1));
+        for request in &theirs {
+            let at = expected.iter().position(|held| held == request).unwrap();
+            expected.remove(at);
+        }
+        expected.extend(theirs.iter().map(|_| (u32::from(child), 0)));
+        expected.sort_unstable();
+        assert_eq!(sorted(retry.round(0)), expected);
+        let dummies = |round: &[RowRequest]| {
+            round
+                .iter()
+                .filter(|request| (request.child, request.row) == (u32::from(child), 0))
+                .count()
+        };
+        assert_eq!(
+            dummies(retry.round(0)),
+            dummies(honest.round(1)) + head.fragment_count as usize
+        );
         assert!(failures.owed.is_empty());
         assert_eq!(failures.entries.len(), 1);
         assert_eq!(store.entry_failures(manifest.shard_id, &victim).unwrap(), 1);
