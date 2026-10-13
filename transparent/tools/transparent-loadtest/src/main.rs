@@ -1066,6 +1066,7 @@ fn incomplete_reason(completion: &Completion) -> Option<String> {
             }
             IncompleteReason::UnresolvedSpends => "unresolved-spends".into(),
             IncompleteReason::DiscoveryUnbounded => "discovery-unbounded".into(),
+            IncompleteReason::ContentFailed => "content-failed".into(),
         }),
     }
 }

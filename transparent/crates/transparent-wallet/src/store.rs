@@ -257,6 +257,12 @@ pub struct ShardCommit {
     pub pending_complete: Vec<u64>,
     /// Verified runs to keep for later walks.
     pub cached_runs: Vec<CachedRun>,
+    /// Scripts whose directory entry in this shard failed on content in this
+    /// commit's retrieval: a reply that did not decode or verify, or a record
+    /// that contradicts what the store holds. Each adds one to the entry's
+    /// [`WalletStore::entry_failures`]; unlike everything else here, that is
+    /// not idempotent, so a commit carrying failures is made once.
+    pub failed_entries: Vec<Vec<u8>>,
 }
 
 impl ShardCommit {
@@ -389,6 +395,13 @@ pub trait WalletStore {
 
     /// The id of the last commit, zero before any.
     fn last_commit(&self) -> Result<u64, StoreError>;
+
+    /// Content failures recorded for `script`'s directory entry in shard
+    /// `shard_id`, across every sync: the number of commits that named it in
+    /// [`ShardCommit::failed_entries`]. Never reset by a later success, a
+    /// new revision of the shard or a rollback, so the cap on attempts holds
+    /// whatever the service does in between.
+    fn entry_failures(&self, shard_id: u64, script: &[u8]) -> Result<u32, StoreError>;
 }
 
 impl<T: WalletStore + ?Sized> WalletStore for Box<T> {
@@ -474,6 +487,9 @@ impl<T: WalletStore + ?Sized> WalletStore for Box<T> {
     }
     fn last_commit(&self) -> Result<u64, StoreError> {
         (**self).last_commit()
+    }
+    fn entry_failures(&self, shard_id: u64, script: &[u8]) -> Result<u32, StoreError> {
+        (**self).entry_failures(shard_id, script)
     }
 }
 

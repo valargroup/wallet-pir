@@ -18,7 +18,9 @@
 use crate::adapters::{Acceptance, ChainView, ScriptProvider};
 use crate::ledger::{ConfirmedSpend, TransactionSummary, UnresolvedSpend, Utxo};
 use crate::store::{Anchor, ScriptEntry, WalletStore};
-use crate::sync::{sync_into, Completion, IncompleteReason, ServiceGeometry, WorkLimits};
+use crate::sync::{
+    sync_into, Completion, FailedEntry, IncompleteReason, ServiceGeometry, WorkLimits,
+};
 use crate::transport::{FilterSource, ShardTransport};
 use std::collections::BTreeMap;
 use transparent_filter::ShardMap;
@@ -53,6 +55,9 @@ pub struct SyncStatus {
     pub rolled_back_to: Option<u64>,
     pub scripts_added: usize,
     pub map_refreshes: u32,
+    /// Directory entries whose replies failed on content, with the failure
+    /// count each now has; an entry at three is no longer queried.
+    pub failed_entries: Vec<FailedEntry>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -195,6 +200,7 @@ impl TransparentSync {
                 }
                 IncompleteReason::UnresolvedSpends => "unresolved-spends".into(),
                 IncompleteReason::DiscoveryUnbounded => "discovery-unbounded".into(),
+                IncompleteReason::ContentFailed => "content-failed".into(),
             },
         };
         Ok(SyncStatus {
@@ -208,6 +214,7 @@ impl TransparentSync {
             rolled_back_to: report.rolled_back_to,
             scripts_added: report.scripts_added,
             map_refreshes: report.map_refreshes,
+            failed_entries: report.failed_entries,
         })
     }
 
@@ -229,6 +236,7 @@ impl TransparentSync {
             rolled_back_to: None,
             scripts_added: 0,
             map_refreshes: 0,
+            failed_entries: Vec::new(),
         })
     }
 

@@ -57,8 +57,8 @@
 //! depends on page work only the walk discovers.
 
 use super::{
-    directory_choice, endpoint_of, match_filter, previous_digest_of, verify_manifest, Clients,
-    ServiceGeometry, SyncError,
+    directory_choice, endpoint_of, held, match_filter, previous_digest_of, verify_manifest,
+    Clients, FailedEntry, ServiceGeometry, SyncError,
 };
 use crate::adapters::{Acceptance, ChainView};
 use crate::client::Table;
@@ -243,6 +243,7 @@ pub(super) fn look_ahead<S: WalletStore, F: FilterSource, T: ShardTransport>(
     transport: &mut Staged<'_, T>,
     target_anchor: &Anchor,
     chain: &impl ChainView,
+    failed: &[FailedEntry],
 ) -> Result<(), SyncError> {
     // Match every shard the walk will reach, as it would. Filters not in the
     // store are taken from the source here and stashed for the walk, which
@@ -298,10 +299,17 @@ pub(super) fn look_ahead<S: WalletStore, F: FilterSource, T: ShardTransport>(
         {
             continue;
         }
-        planned.push(Planned {
-            entry,
-            matched: matches.iter().map(|&i| scripts[i].clone()).collect(),
-        });
+        // Entries the walk holds out of this sync are not queried.
+        let mut matched = Vec::with_capacity(matches.len());
+        for &i in &matches {
+            if !held(store, failed, entry.shard_id, &scripts[i])? {
+                matched.push(scripts[i].clone());
+            }
+        }
+        if matched.is_empty() {
+            continue;
+        }
+        planned.push(Planned { entry, matched });
     }
     if planned.is_empty() {
         return Ok(());
