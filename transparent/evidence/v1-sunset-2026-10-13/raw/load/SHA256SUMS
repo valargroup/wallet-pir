@@ -1,0 +1,9 @@
+669895b94aa7a50fc86a4f5e946ff466c7f416270a1ada891fb91fa6f4513b4f  ./etc/systemd/system/transparent-v2-5qps-continuous.service
+62ccd338ebb5f258985ebb8942f22c58399cadda6f0c81d3d732b2b1f60f44e6  ./root/v2-gate-run2.log
+5ee3e19a7e2b1c2c793a893e6f8a6695ee51ce8e61f139218e38a5ca080507fc  ./root/v2-gate.sh
+2136cf13dc8b25f2820f36c627ac4598197bf7b474613a5d9f68025f0c5ec678  ./srv/transparent-activity/canonical-load/v12/fixture.json
+f8186db0623d2486713367214ff49294fe175adbef4931d68df315a099b9764a  ./srv/transparent-activity/canonical-load/v12/pins.json
+6a3a23dd0731360efae6d32675f282c5674834f3f17ae262d4f244977c15083e  ./srv/transparent-activity/v2-gate-20261013-run2/client-1.jsonl.gz
+ec258a5978e899da8139256be1148d2d5db49d4540ea4baaf2170351f68c38d9  ./srv/transparent-activity/v2-gate-20261013-run2/client-2.jsonl.gz
+adce2b81c0194cf703a95624e8e88bb561c30bb7e6b9c9b88abb58b02be61787  ./srv/transparent-activity/v2-gate-20261013-run2/client-3.jsonl.gz
+d97630aacd2f723108da12129834da38bdc4d091c0ff9438fbbfd889ff37d456  ./summary.txt

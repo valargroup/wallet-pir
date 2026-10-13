@@ -206,8 +206,9 @@ Not planned with it: other row widths, a two-digit 8-bit key, or any change to `
     router shell with `/v1/*` answering 410 (17:13:50 UTC);
   - [x] stop serving on recent-01, recent-02, archive-03 and txid-display-01, keeping the
     droplets 48 h for rollback (17:26 UTC);
-  - [ ] point the continuous 5 QPS load at `/v2/`, pass 20 QPS on `/v2/` (p99 < 2 s, p50 <
-    700 ms), and update the APM dashboard so it shows no v11 sources;
+  - [x] point the continuous 5 QPS load at `/v2/` (`transparent-v2-5qps-continuous`) and pass
+    20 QPS on `/v2/`: 20.99 QPS, all 12,573 exact, p50 11 ms, p99 38 ms. APM has no v11
+    sources;
   - [ ] after 48 h and Roman's go on the saved plan, destroy the four droplets with Terraform,
     delete the v11 state on the coordinator, and delete the v1-only tooling: the txid router
     mode in `txid_display_poc.py`, the publisher's coordinator `/v1` route step and that route

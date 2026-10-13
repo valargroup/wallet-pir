@@ -1,0 +1,21 @@
+[Unit]
+Description=Transparent PIR continuous 5 QPS exact-query load and health watchdog on /v2 (v12 fleet)
+Wants=network-online.target
+After=network-online.target transparent-v12-publish-controller.service
+
+[Service]
+Environment=PYTHONDONTWRITEBYTECODE=1
+Type=simple
+WorkingDirectory=/srv/transparent-activity/canonical-load/v12
+ExecStart=/usr/bin/python3 -B /srv/transparent-activity/ops/sources/c9262e84/transparent/ops/scripts/transparent-quality-load.py --root /srv/transparent-activity/canonical-load/v12 --fleet /opt/transparent-publisher/v12/fleet.json --api v2 --controller-status http://10.142.0.3:8096/v1/status --controller-unit transparent-v12-publish-controller --worker-unit transparent-pir-v12-archive=transparent-v12-archive --worker-unit transparent-pir-v12-recent=transparent-v12-recent --expected-worker-sha256-file /srv/transparent-activity/canonical-load/v12/pins.json
+Environment=RAYON_NUM_THREADS=2
+Nice=10
+CPUQuota=200%
+MemoryHigh=2G
+MemoryMax=3G
+KillMode=control-group
+TimeoutStopSec=20
+Restart=no
+
+[Install]
+WantedBy=multi-user.target

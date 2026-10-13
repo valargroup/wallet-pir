@@ -24,8 +24,10 @@ wallet traffic reached the v11 workers beyond our own load.
   answered 502 from 17:13:49 to about 17:24:45. The v12 unit's sandbox mounted the
   journal read-only, so the controller crash-looped as writer. Queries and `/v2/txid`
   kept serving.
-- **Open.** The `/v2` load gate, the continuous load on `/v2`, and destroying the
-  droplets ([remaining work](remaining-work.md#wallet-api-versions-on-one-origin)).
+- **Load.** The continuous 5 QPS load runs on `/v2`. The 20 QPS gate passed at 20.99 QPS:
+  all 12,573 queries exact, p50 11 ms, p99 38 ms.
+- **Open.** Destroying the droplets after 48 hours
+  ([remaining work](remaining-work.md#wallet-api-versions-on-one-origin)).
 
 ## Monitoring on `/v2`, in shadow, 2026-10-13
 

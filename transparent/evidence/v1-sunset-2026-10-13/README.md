@@ -86,6 +86,42 @@ publisher returned no metadata, so `/v2/shards/init` and `/v2/filters/shards` an
 
 APM was in shadow for every Transparent family, so no alert fired.
 
+## `/v2` load gate and continuous load (18:59–19:10 UTC)
+
+**Continuous load.** `transparent-v2-5qps-continuous` replaces the v11 load
+([unit](raw/load/etc/systemd/system/transparent-v2-5qps-continuous.service)). It runs
+`transparent-quality-load.py` from `c9262e84` with these settings:
+- `--api v2` against the public origin;
+- the v12 fleet and publisher (`10.142.0.3:8096`);
+- both v12 workers pinned to binary `b89ebae3…` ([pins](raw/load/srv/transparent-activity/canonical-load/v12/pins.json)).
+
+Its fixture ([fixture.json](raw/load/srv/transparent-activity/canonical-load/v12/fixture.json),
+sha256 `2136cf13…`) was exported by `activity-query-fixture.py` from `c9262e84`. It holds
+233 sealed tables from the 3,516,596 publication: 21 recent directory, 26 recent page,
+12 archive directory and 174 archive page tables. `rate-query` was built from
+`c9262e84` (`release-fast`, `x86-64-v3 +pclmulqdq`; sha256 `2d9f04dd…`) on
+`roman-ipir-bench-8vcpu`.
+
+**Gate.** It had the same shape as the accepted 2026-09-29 gates: three 7 QPS
+`rate-query` clients for 600 s on the coordinator, on top of the continuous 5 QPS load
+([script](raw/load/root/v2-gate.sh), [clients](raw/load/srv/transparent-activity/v2-gate-20261013-run2/),
+[summary](raw/load/summary.txt)).
+
+| | Queries | Rate | p50 | p99 | max | Errors / missed |
+|---|---|---|---|---|---|---|
+| Gate clients | 12,573, all exact | 20.99 QPS | 11 ms | 38 ms | 0.72 s | 0 / 0 |
+| Recent tier | 10,059 | | 10 ms | 34 ms | | |
+| Archive tier | 2,514 | | 15 ms | 48 ms | | |
+| Continuous load, last minute | 300 exact | 5.0 QPS | 7 ms | 22 ms | | 0 / 0 |
+
+The criterion (p99 < 2 s, p50 < 700 ms) passes. Times are whole-query client times,
+including encryption and HTTPS through the public router.
+
+An earlier attempt at 18:51 is not counted. It ran one 20 QPS client under
+`CPUQuota=400%` with a permit file that was never refreshed. The client paused and
+missed 257 slots ("client admission delayed beyond one interval"), while server time
+stayed under 40 ms at p99. Its raw output was not retained.
+
 ## Rollback
 
 Within 48 hours, [v1-sunset-rollback.sh](raw/coordinator/v1-sunset-rollback.sh)
@@ -99,7 +135,5 @@ destroyed, there is no rollback.
 
 ## Not done here
 
-- `/v2` load gate and the continuous load on `/v2`: see
-  [remaining work](../../docs/remaining-work.md#wallet-api-versions-on-one-origin).
 - Destroying the four droplets, deleting v11 state on the coordinator, and deleting
   the v1-only tooling.
