@@ -5,6 +5,11 @@ crate, the display tables that `transparent-filter-server`'s txid display
 controller publishes, and the display service in `transparent-shard-server`. History
 recovery has its own [changelog](CHANGELOG.md). Both are released under one tag.
 
+## 0.1.0-rc.4 — 2026-10-13
+
+No txid display changes; released with history recovery's handling of bad
+row content ([history changelog](CHANGELOG.md)).
+
 ## 0.1.0-rc.3 — 2026-10-13
 
 Taller display tables. Wallets reading `/v2/txid` need this release: the
