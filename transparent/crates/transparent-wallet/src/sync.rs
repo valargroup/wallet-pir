@@ -89,9 +89,12 @@ pub enum SyncError {
     AnchorRegressed { stored: u64, offered: u64 },
     #[error("{0}")]
     Invalid(String),
-    /// A private reply failed on content: it did not decode or verify, a
+    /// A row in a private reply failed on content: it did not decode, a
     /// record or link in it was not what the shard declares, or it
-    /// contradicts what the store holds.
+    /// contradicts what the store holds. A reply failing as a whole (its
+    /// length, revision binding or parameter epoch) is a request failure
+    /// instead, [`SyncError::Client`]: the service makes those without
+    /// knowing the row.
     ///
     /// A sync does not stop for one: it fails the directory entry the reply
     /// was for, finishes everything else, counts the failure in the store
