@@ -6,6 +6,35 @@ M4–M6 are open.** This records observed progress, not a new live fleet health
 check. [Remaining work](remaining-work.md) is the authoritative outstanding
 checklist; [deployment](deployment.md) owns operating targets.
 
+## Txid display `/v2/txid` on the 8-bit profile, 2026-10-13
+
+The one-query site serves the display table at the 8-bit profile since
+01:10 UTC ([txid display](txid-display.md#lookup-one-row-of-one-table-per-bucket),
+[deployment](deployment.md#txid-display-one-query-site-2026-10-12)).
+`/v1/txid/` and its `txid-2k` lineage were not touched.
+
+- **Serving.** Release `3e705bb3`, built on a development host with the CI
+  release flags (bundle `0c1045df…`). `/v2/txid/init` on
+  `https://transparent-pir.valargroup.dev` and on the site hostname publishes
+  native schema `transparent-txid-display-p8-v1`, profile
+  `reinspiring-two-mask-p8-g27x1-m22-dq28-r10-v1`, 21,000-byte queries and no
+  `scheme_dq44`; the setup seed is 392291412234735037. The worker serves map
+  `213f30c0…` (tip 3515811) warm.
+- **Limits.** The worker unit runs at 48G `MemoryMax` with a 32 GiB cache and
+  a 40 GiB disk cache. It held 28.0 GiB (page cache included) once warm,
+  against 26.9 GiB planned for 191 runtimes.
+- **Order.** `stage`, `stop` (controller stopped, site route withdrawn),
+  `workers`, `route`, `controller`. `/v2/txid/` was down from 01:02 to about
+  01:10 UTC while the worker rebuilt its runtimes. The 65-minute `verify` was
+  not rerun: publication bytes did not change, and it passed at 00:45 UTC.
+- **Lookups.** Three cold lookups of a pinned archive entry with the
+  `txid-quality-canary` built from `3e705bb3` returned exactly that entry
+  through the public origin, in about 1.7 s each.
+- **Open.** Certificates of the served tables and the rebuild-time measurement
+  ([remaining work](remaining-work.md#8-bit-txid-display-profile)); a deployed
+  txid canary must be rebuilt from `3e705bb3` or later; wallet-libraries and
+  Vizor repins.
+
 ## Wallet API v2 with the 8-bit history profile, 2026-10-12
 
 `https://transparent-pir.valargroup.dev` serves two wallet API versions side by

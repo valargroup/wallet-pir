@@ -3272,6 +3272,12 @@ the shared origin's `/v2` while `/v1/txid/` stays on the `txid-2k` lineage.
   Caddyfile) and `controller`; `stop` and `retire` write the withdrawn site.
   The worker host's own paths are the usual ones, so it must hold no other
   display worker.
+- **Profile and limits.** Since 2026-10-13 the site serves the 8-bit display
+  profile (release `3e705bb3`): 191 runtimes of 144.17 MiB, so the worker runs
+  at 48G `MemoryMax`, a 32 GiB cache and a 40 GiB disk cache. Moving a site to
+  a release whose runtimes change runs `stage`, `stop`, `workers` (with any
+  current `candidate-*` map; a worker that serves a map keeps it), `route`
+  and `controller`; `/v2/txid/` is down while the worker rebuilds.
 - **Journal.** A live controller appends to its journal, so the site needs its
   own: `/srv/txid-display-genesis/journal-v3`, a copy of `journal-v2x` taken
   while the `txid-2k` controller is stopped for the copy. The volume is ext4, so
