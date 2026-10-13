@@ -43,6 +43,11 @@ next to the live `txid-2k` lineage, which is unchanged
   `transparent-txid-display-k8-controller`, follows its own journal copy,
   `journal-v3`. `/v2/txid/init` published native schema
   `transparent-shard-v11` and the txdirectory setup seed 15378491149841498399.
+  `txid-display-verify` rebuilt the site from `journal-v3` and matched the
+  deployed root, exiting 0 at about 00:45 UTC on 2026-10-13 (about 65 minutes).
+  The production router has forwarded `/v2/txid/` on
+  `transparent-pir.valargroup.dev` to the site's worker since about 23:31 UTC,
+  with no rewrite.
 - **Native schema frozen.** Main's history schema is v12, and the display's
   setup seeds and native profile had been derived from it, so a release built
   from main would have served the v12-derived seed. The display now pins them
