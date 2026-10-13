@@ -7,9 +7,11 @@ Covers the crates a wallet uses to recover transparent history over PIR:
 `transparent-block-server` services. Txid display lookups have their own
 [changelog](CHANGELOG-txid.md). Both are released under one tag.
 
-## Unreleased
+## 0.1.0-rc.4 — 2026-10-13
 
-Versions are `0.1.0-rc.4`; not yet published.
+A service that corrupts reply content can no longer find a wallet's record by
+watching it react: the wallet's queries after a bad reply are the queries it
+would have sent after a good one. No txid display changes.
 
 - **Bad row content fails one entry, not the sync.** A row whose content
   does not decode or check out (a directory entry or page fragment that is
@@ -20,7 +22,11 @@ Versions are `0.1.0-rc.4`; not yet published.
   order: each script's directory queries are all sent before any is
   decoded, the shard's commit still lands for its other scripts, and a
   failed page walk sends only the dummy queries valid replies had committed
-  it to, the rest of its run and one in place of a bad link. A reply whose
+  it to, the rest of its run and one in place of a bad link. It sends no
+  query in a bad link's place when the honest walk would send none: when the
+  chain promised no older run, or when the previous run is already cached
+  (in the page shard the link names, if that one is declared and earlier,
+  otherwise in the page shard just below). A reply whose
   length, revision binding or parameter epoch does not verify fails its
   request as before (an epoch mismatch also drops the cached setup:
   `WalletStore::drop_setup`); a malformed map or manifest, a broken filter
@@ -32,8 +38,16 @@ Versions are `0.1.0-rc.4`; not yet published.
   `SyncStatus` list `failed_entries`, and an incomplete sync they explain
   reports `IncompleteReason::ContentFailed` (`content-failed`). Request
   failures (refusals, overload, stale revisions) do not count.
-- **Store schema 7, no migration.** `transparent-wallet-store` adds the
-  failure counts and refuses a schema 6 store, which must be recreated.
+- **Overload retries look honest.** An overload retry of a shard read asks
+  again for entries that already failed in this sync and ignores their
+  replies, so it sends the same directory queries as an honest retry and a
+  failure is still counted once. A failed walk's owed dummies survive the
+  retry.
+- **Store schema 7, upgraded in place.** `transparent-wallet-store` adds the
+  failure counts. Opening a schema 6 store adds the empty failure-count table
+  and the new version in one transaction, keeping its history, coverage,
+  saved walks, caches and any other tables in the same file. Other versions
+  are still refused.
 
 ## 0.1.0-rc.3 — 2026-10-13
 
