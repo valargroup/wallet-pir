@@ -471,21 +471,22 @@ impl ProviderStore {
             .flatten())
     }
 
-    /// The receivers seen at or after `since`, payout or refund, and every payout
-    /// receiver.
+    /// The receivers seen at or after `since`, and every receiver seen at all, payout or
+    /// refund.
     pub fn sets(&self, since: i64) -> Result<(Vec<Receiver>, Vec<Receiver>), Error> {
-        let read = |sql: &str, arg: i64| -> Result<Vec<Receiver>, Error> {
+        let read = |sql: &str, args: &[i64]| -> Result<Vec<Receiver>, Error> {
             let mut query = self.db.prepare(sql)?;
-            let rows = query.query_map([arg], |r| r.get::<_, Vec<u8>>(0))?;
+            let rows =
+                query.query_map(rusqlite::params_from_iter(args), |r| r.get::<_, Vec<u8>>(0))?;
             rows.map(|bytes| Receiver::from_bytes(bytes?.try_into().map_err(|_| Error::Malformed)?))
                 .collect()
         };
         Ok((
             read(
                 "SELECT DISTINCT receiver FROM receivers WHERE seen_at>=?1",
-                since,
+                &[since],
             )?,
-            read("SELECT receiver FROM receivers WHERE payout=?1", 1)?,
+            read("SELECT DISTINCT receiver FROM receivers", &[])?,
         ))
     }
 }

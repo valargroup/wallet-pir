@@ -245,8 +245,12 @@ fn provider_store_keeps_latest_times_and_never_rewinds_its_cursor() {
     read(&mut store, 110, 340);
     assert_eq!(store.cursor("near-payouts").unwrap(), Some(110));
     assert_eq!(store.read("near-payouts").unwrap(), Some(340));
-    let (recent, seen) = store.sets(150).unwrap();
-    assert_eq!((recent, seen), (vec![refund], vec![payout]));
+    // Recent holds the refund given since 150, and seen every receiver, payout or refund.
+    let (recent, mut seen) = store.sets(150).unwrap();
+    seen.sort();
+    let mut every = vec![payout, refund];
+    every.sort();
+    assert_eq!((recent, seen), (vec![refund], every));
     // The feed's start is its initial read's; see the test below.
     assert_eq!(store.started("near-payouts").unwrap(), Some(40));
     // A payout keeps the earliest time a read saw it complete, and a reused receiver
