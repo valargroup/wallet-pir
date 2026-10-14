@@ -1,4 +1,5 @@
 {
+  "example": "Sanitized complete shape: documentation addresses and placeholders. It is not the live fleet and records nothing observed.",
   "lock": {
     "type": "remote",
     "host": "coordinator"
@@ -12,7 +13,8 @@
   },
   "hosts": {
     "coordinator": {
-      "address": "192.0.2.10"
+      "address": "192.0.2.10",
+      "machine_id": "0123456789abcdef0123456789abcdef"
     },
     "worker-01": {
       "address": "192.0.2.15"
@@ -27,13 +29,17 @@
       "address": "192.0.2.19",
       "user": "paperspace",
       "sudo": true,
-      "jump": "coordinator"
+      "jump": "coordinator",
+      "accelerator": "cuda"
     },
     "status-01": {
       "address": "192.0.2.17"
     },
     "receiver-01": {
       "address": "192.0.2.18"
+    },
+    "transparent-router-01": {
+      "address": "192.0.2.20"
     }
   },
   "services": {
@@ -200,7 +206,10 @@
             "host": "coordinator",
             "vars": {
               "listen": "127.0.0.1:8096"
-            }
+            },
+            "responsibilities": [
+              "journal-writer"
+            ]
           }
         ]
       }
@@ -222,10 +231,66 @@
             "unit": "transparent-txid-display-4k8-controller.service",
             "vars": {
               "listen": "127.0.0.1:8500"
-            }
+            },
+            "responsibilities": [
+              "journal-writer"
+            ]
           }
         ]
       }
+    }
+  },
+  "ancillary": {
+    "coordinator-edge": {
+      "host": "coordinator",
+      "unit": "caddy.service",
+      "kind": "routing",
+      "consumers": [
+        "enhance"
+      ]
+    },
+    "control-sessions": {
+      "host": "coordinator",
+      "unit": "wallet-pir-control-sessions.service",
+      "kind": "supervision",
+      "consumers": [
+        "status"
+      ]
+    },
+    "transparent-public-router": {
+      "host": "transparent-router-01",
+      "unit": "caddy.service",
+      "kind": "routing",
+      "consumers": [
+        "transparent-history",
+        "transparent-display"
+      ]
+    },
+    "receiver-edge": {
+      "host": "receiver-01",
+      "unit": "caddy.service",
+      "kind": "routing",
+      "consumers": [
+        "receiver"
+      ]
+    }
+  },
+  "retired_hosts": {
+    "transparent-recent-01": {
+      "retired": "2026-10-14",
+      "evidence": "transparent/evidence/v1-sunset-2026-10-13/README.md"
+    },
+    "transparent-recent-02": {
+      "retired": "2026-10-14",
+      "evidence": "transparent/evidence/v1-sunset-2026-10-13/README.md"
+    },
+    "transparent-archive-03": {
+      "retired": "2026-10-14",
+      "evidence": "transparent/evidence/v1-sunset-2026-10-13/README.md"
+    },
+    "transparent-txid-display-01": {
+      "retired": "2026-10-14",
+      "evidence": "transparent/evidence/v1-sunset-2026-10-13/README.md"
     }
   }
 }

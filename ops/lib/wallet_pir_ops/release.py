@@ -61,7 +61,9 @@ FILES['enhance-pir-native'] = FILES['enhance-pir'] + ['enhance/ops/deploy/native
 FILES['enhance-pir-native-cuda'] = FILES['enhance-pir-native'] + [
     'enhance/ops/scripts/cuda-smoke.py', 'enhance/ops/scripts/verify-cuda-deployment.py',
 ]
-ON_REQUEST = ('enhance-pir-native', 'enhance-pir-native-cuda', 'status-pir')
+# The operations package needs no compiled binary: full CI assembles and tests
+# it in its own job, so publishing it never waits on Rust compilation.
+ON_REQUEST = ('enhance-pir-native', 'enhance-pir-native-cuda', 'status-pir', 'wallet-pir-ops')
 # Build-time protocol identity recorded in candidate.json and re-checked on extract.
 PROTOCOLS = {
     'enhance-pir': 'ironwood-enhance-pir-v7',

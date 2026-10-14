@@ -91,6 +91,30 @@ class Executor:
         """Context manager holding `flock -n path` on `host`; raises LockHeld if taken."""
         raise NotImplementedError
 
+    # Operations package (`host_helper.package_*`); none touches a unit.
+
+    def package_observe(self, host, root, fleet, revision, machine_id_path):
+        raise NotImplementedError
+
+    def package_tree(self, host, path):
+        raise NotImplementedError
+
+    def package_unpack(self, host, archive, path, archive_sha256, manifest_sha256):
+        """Mutating: create the transaction-owned `path` holding exactly a local archive's manifest files."""
+        raise NotImplementedError
+
+    def package_copy(self, host, source, destination, sha256, mode):
+        """Mutating: copy a file on `host` to a new path, verifying its digest."""
+        raise NotImplementedError
+
+    def replace_link(self, host, path, target):
+        """Mutating: atomically point a symlink at `target`."""
+        raise NotImplementedError
+
+    def remove_tree(self, host, path, owner):
+        """Mutating: remove a directory directly below `owner`."""
+        raise NotImplementedError
+
 
 class SSHExecutor(Executor):
     """Every action is `python3 -c <host_helper> <request>` over SSH.
@@ -212,6 +236,26 @@ class SSHExecutor(Executor):
     def run(self, host, argv, timeout):
         reply = self.call(host, 'run', deadline=timeout + 30, argv=list(argv), timeout=timeout)
         return reply['returncode'], reply['output']
+
+    def package_observe(self, host, root, fleet, revision, machine_id_path):
+        return self.call(host, 'package_observe', root=root, fleet=fleet, revision=revision,
+                         machine_id_path=machine_id_path)
+
+    def package_tree(self, host, path):
+        return self.call(host, 'package_tree', deadline=300, path=path)
+
+    def package_unpack(self, host, archive, path, archive_sha256, manifest_sha256):
+        self.call(host, 'package_unpack', stdin=Path(archive), deadline=600, path=path,
+                  archive_sha256=archive_sha256, manifest_sha256=manifest_sha256)
+
+    def package_copy(self, host, source, destination, sha256, mode):
+        self.call(host, 'package_copy', source=source, destination=destination, sha256=sha256, mode=mode)
+
+    def replace_link(self, host, path, target):
+        self.call(host, 'replace_link', path=path, target=target)
+
+    def remove_tree(self, host, path, owner):
+        self.call(host, 'remove_tree', deadline=300, path=path, owner=owner)
 
     @contextlib.contextmanager
     def hold_lock(self, host, path):
