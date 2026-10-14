@@ -387,22 +387,29 @@ def file_digest(path, limit=PACKAGE_LIMIT):
     return hashlib.sha256(bounded(path, limit)).hexdigest()
 
 
-def package_observe(root, fleet, revision, machine_id_path='/etc/machine-id'):
-    """Everything a package plan binds on this host, read in one pass without changes."""
+def package_observe(root, files, revision, machine_id_path='/etc/machine-id'):
+    """Everything a package plan binds on this host, read in one pass without changes.
+
+    `files` are the managed files outside the releases (the operator inventory
+    and its host-key pins); each is summarized with its digest.
+    """
     parents = [os.path.dirname(root), root] + ['%s/%s' % (root, n) for n in ('releases', 'staging', 'transactions')]
-    parents.append(os.path.dirname(fleet))
+    parents += sorted({os.path.dirname(path) for path in files})
     staging = '%s/staging' % root
     staged = sorted(os.listdir(staging)) if (summary(staging) or {}).get('kind') == 'dir' else []
-    fleet_state = summary(fleet)
-    if fleet_state and fleet_state['kind'] == 'file':
-        fleet_state['sha256'] = file_digest(fleet, 1 << 20)
+    managed = {}
+    for path in files:
+        state = summary(path)
+        if state and state['kind'] == 'file':
+            state['sha256'] = file_digest(path, 1 << 20)
+        managed[path] = state
     pointer = '%s/transactions/latest.json' % root
     pointer_text = bounded(pointer, 4096).decode() if (summary(pointer) or {}).get('kind') == 'file' else None
     return {'machine_id': bounded(machine_id_path, 4096).decode().strip(),
             'paths': {path: summary(path) for path in parents},
             'current': summary('%s/current' % root),
             'release': summary('%s/releases/%s' % (root, revision)),
-            'staging': staged, 'fleet': fleet_state, 'pointer': pointer_text,
+            'staging': staged, 'files': managed, 'pointer': pointer_text,
             'free_bytes': free_bytes(root)}
 
 
