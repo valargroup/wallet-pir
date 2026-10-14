@@ -9,7 +9,7 @@ description = "Publicly recoverable Ironwood receiver directory and private look
 store = ["dep:rusqlite"]
 
 [dependencies]
-receiver-protocol = { package = "zakura-receiver-directory", version = "=0.0.1-rc0", git = "https://github.com/zakura-core/wallet-libraries", rev = "9c34609cb978392fa98a6c13391c5ae64ca30920" }
+receiver-protocol = { package = "zakura-receiver-directory", version = "=0.0.1-rc0", git = "https://github.com/zakura-core/wallet-libraries", rev = "dad2df94b1b2d4f87912b128b1927d6d1779d563" }
 # Pinned exactly, as in `transparent-filter`: the filter bytes are what every wallet
 # tests, so the encoder may not move without revalidation.
 bitcoin = { version = "=0.32.102", default-features = false, features = ["std"] }

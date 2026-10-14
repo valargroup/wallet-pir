@@ -11,7 +11,7 @@ name = "pir_native"
 path = "src/lib.rs"
 
 [dependencies]
-zakura-pir-native = { version = "=0.0.1-rc2", git = "https://github.com/zakura-core/wallet-libraries", rev = "9c34609cb978392fa98a6c13391c5ae64ca30920" }
+zakura-pir-native = { version = "=0.0.1-rc2", git = "https://github.com/zakura-core/wallet-libraries", rev = "dad2df94b1b2d4f87912b128b1927d6d1779d563" }
 # `native-reinspiring` only exposes `ipir_sp::native`; it changes no existing
 # ipir-sp behaviour. This crate has no features of its own, so depending on it
 # never switches the q48 Enhance binaries: only `enhance-pir/native-reinspiring`
