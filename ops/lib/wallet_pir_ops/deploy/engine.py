@@ -573,9 +573,15 @@ class Deployer:
             self.out('no %s transaction recorded' % self.service.name)
         observed = []
         for target in self.targets:
-            state = self.ex.probe_unit(target.host, target.unit)
+            # An unreachable role is reported as such, never left out.
+            try:
+                state = self.ex.probe_unit(target.host, target.unit)
+            except Exception as error:  # noqa: BLE001 - each host's failure is its own result
+                self.out('%s %s: unobserved (%s)' % (target.key, target.unit, error))
+                observed.append({'role': target.role.name, 'host': target.host, 'unit': target.unit,
+                                 'active_state': None, 'binary_sha256': None, 'error': str(error)})
+                continue
             self.out('%s %s: %s %s' % (target.key, target.unit, state['active_state'], state['exe_sha256']))
-
             observed.append({'role': target.role.name, 'host': target.host, 'unit': target.unit,
                              'active_state': state['active_state'], 'binary_sha256': state['exe_sha256']})
         return {'targets': observed, 'transaction': journal.id if journal else None,

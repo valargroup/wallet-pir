@@ -8,7 +8,9 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / 'ops/lib'))
+from wallet_pir_ops import pinned_ssh  # noqa: E402
 from wallet_pir_ops.deploy import descriptors  # noqa: E402
+from wallet_pir_ops.deploy.remote import SSHExecutor  # noqa: E402
 from wallet_pir_ops.fleet import Fleet  # noqa: E402
 
 EXAMPLE = json.loads((ROOT / 'enhance/ops/deploy/deploy-inventory.example.json').read_text())
@@ -47,6 +49,10 @@ class FleetInventoryTests(unittest.TestCase):
         cuda = [r for r in view['roles'] if r['artifact_kind'] == 'enhance-pir-native-cuda']
         self.assertEqual([r['host'] for r in cuda], ['enhance-pir-gpu-01'])
         self.assertEqual(sorted(view['retired_hosts'])[:1], ['transparent-archive-03'])
+        # Two history workers on one host keep distinct keys.
+        keys = [t.key for t in descriptors.targets(SERVICES['transparent-history'], self.fleet().inventory)]
+        self.assertIn('worker@transparent-v12-01:transparent-v12-archive.service', keys)
+        self.assertEqual(len(keys), len(set(keys)))
 
     def test_required_roles_services_responsibilities_and_ancillary(self):
         self.refused(lambda d: d['services']['enhance']['roles'].pop('packing-router'), 'required roles missing')
@@ -127,6 +133,31 @@ class FleetInventoryTests(unittest.TestCase):
         self.assertTrue(any('services missing' in p for p in fleet.problems(complete=True)))
         targets = descriptors.targets(SERVICES['enhance'], fleet.inventory)
         self.assertEqual(len(targets), 6)
+
+
+    def test_hosts_may_use_their_own_identity_and_pin(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            shared, product = root / 'known_hosts', root / 'product_known_hosts'
+            shared.write_text('192.0.2.10 ssh-ed25519 AAAA\n')
+            product.write_text('192.0.2.20 ssh-ed25519 BBBB\n')
+            def change(d):
+                d['ssh'].update(key=str(root / 'fallback'), known_hosts=str(shared),
+                                known_hosts_sha256=pinned_ssh.sha256(shared.read_bytes()))
+                d['hosts']['transparent-router-01'].update(key=str(root / 'product-key'), known_hosts=str(product),
+                                                           known_hosts_sha256=pinned_ssh.sha256(product.read_bytes()))
+            executor = SSHExecutor(self.fleet(change).inventory)
+            router = ' '.join(executor.raw_transport('transparent-router-01'))
+            coordinator = ' '.join(executor.raw_transport('coordinator'))
+            self.assertIn('-i %s' % (root / 'product-key'), router)
+            self.assertIn('UserKnownHostsFile=%s' % product, router)
+            self.assertIn('-i %s' % (root / 'fallback'), coordinator)
+            self.assertIn('UserKnownHostsFile=%s' % shared, coordinator)
+            product.write_text('192.0.2.20 ssh-ed25519 CCCC\n')
+            with self.assertRaisesRegex(ValueError, 'changed'):
+                executor.raw_transport('transparent-router-01')
+        with self.assertRaisesRegex(descriptors.DescriptorError, 'together with its known_hosts_sha256'):
+            self.fleet(lambda d: d['hosts']['worker-01'].update(known_hosts='/etc/wallet-pir/known_hosts'))
 
 
 if __name__ == '__main__':

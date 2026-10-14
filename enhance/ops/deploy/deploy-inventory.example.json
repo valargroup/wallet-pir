@@ -40,6 +40,12 @@
     },
     "transparent-router-01": {
       "address": "192.0.2.20"
+    },
+    "transparent-v12-01": {
+      "address": "192.0.2.21"
+    },
+    "transparent-txid-k8-01": {
+      "address": "192.0.2.22"
     }
   },
   "services": {
@@ -194,18 +200,26 @@
       "roles": {
         "worker": [
           {
-            "host": "worker-01",
-            "unit": "transparent-v12-shard-server.service",
+            "host": "transparent-v12-01",
+            "unit": "transparent-v12-archive.service",
             "vars": {
-              "listen": "192.0.2.15:8097"
+              "listen": "192.0.2.21:8093"
+            }
+          },
+          {
+            "host": "transparent-v12-01",
+            "unit": "transparent-v12-recent.service",
+            "vars": {
+              "listen": "192.0.2.21:8193"
             }
           }
         ],
         "controller": [
           {
             "host": "coordinator",
+            "unit": "transparent-v12-publish-controller.service",
             "vars": {
-              "listen": "127.0.0.1:8096"
+              "listen": "192.0.2.10:8096"
             },
             "responsibilities": [
               "journal-writer"
@@ -218,19 +232,19 @@
       "roles": {
         "worker": [
           {
-            "host": "worker-02",
-            "unit": "transparent-txid-display-4k8-worker.service",
+            "host": "transparent-txid-k8-01",
+            "unit": "transparent-txid-display-worker.service",
             "vars": {
-              "listen": "192.0.2.16:8501"
+              "listen": "192.0.2.22:8095"
             }
           }
         ],
         "controller": [
           {
             "host": "coordinator",
-            "unit": "transparent-txid-display-4k8-controller.service",
+            "unit": "transparent-txid-display-k8-controller.service",
             "vars": {
-              "listen": "127.0.0.1:8500"
+              "listen": "127.0.0.1:8098"
             },
             "responsibilities": [
               "journal-writer"
@@ -263,6 +277,22 @@
       "kind": "routing",
       "consumers": [
         "transparent-history",
+        "transparent-display"
+      ]
+    },
+    "transparent-v12-origin": {
+      "host": "transparent-v12-01",
+      "unit": "caddy.service",
+      "kind": "routing",
+      "consumers": [
+        "transparent-history"
+      ]
+    },
+    "transparent-display-site": {
+      "host": "transparent-txid-k8-01",
+      "unit": "caddy.service",
+      "kind": "routing",
+      "consumers": [
         "transparent-display"
       ]
     },
