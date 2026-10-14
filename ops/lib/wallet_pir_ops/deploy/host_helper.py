@@ -10,12 +10,15 @@ Standard library only, and no state between invocations: every operation is
 safe to repeat, which is what lets a rollback be re-run after an interruption.
 """
 import hashlib
+import io
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+import shutil
 import stat
 import subprocess
 import sys
+import tarfile
 import urllib.error
 import urllib.request
 
@@ -355,8 +358,182 @@ def ownership_probe(roots, lock_path, machine_id_path, classes, proc='/proc', en
             'ticks': os.sysconf('SC_CLK_TCK'), 'processes': processes,'ancillary':proof}
 
 
+# ------------------------------------------------------- operations package
+# The package lives in one root-owned tree on the coordinator. These operations
+# read it without following links, and change it only by creating a new
+# transaction-owned directory, renaming a whole directory, or replacing the
+# `current` link; none of them touches a unit or a serving process.
+
+PACKAGE_LIMIT = 64 << 20
+PACKAGE_ENTRIES = 8192
+
+
+def summary(path):
+    """Kind, owner and permission bits of `path` itself, or None if absent."""
+    try:
+        info = os.lstat(path)
+    except FileNotFoundError:
+        return None
+    mode = info.st_mode
+    kind = ('link' if stat.S_ISLNK(mode) else 'dir' if stat.S_ISDIR(mode)
+            else 'file' if stat.S_ISREG(mode) else 'other')
+    result = {'kind': kind, 'uid': info.st_uid, 'gid': info.st_gid, 'mode': stat.S_IMODE(mode)}
+    if kind == 'link':
+        result['target'] = os.readlink(path)
+    return result
+
+
+def file_digest(path, limit=PACKAGE_LIMIT):
+    return hashlib.sha256(bounded(path, limit)).hexdigest()
+
+
+def package_observe(root, fleet, revision, machine_id_path='/etc/machine-id'):
+    """Everything a package plan binds on this host, read in one pass without changes."""
+    parents = [os.path.dirname(root), root] + ['%s/%s' % (root, n) for n in ('releases', 'staging', 'transactions')]
+    parents.append(os.path.dirname(fleet))
+    staging = '%s/staging' % root
+    staged = sorted(os.listdir(staging)) if (summary(staging) or {}).get('kind') == 'dir' else []
+    fleet_state = summary(fleet)
+    if fleet_state and fleet_state['kind'] == 'file':
+        fleet_state['sha256'] = file_digest(fleet, 1 << 20)
+    pointer = '%s/transactions/latest.json' % root
+    pointer_text = bounded(pointer, 4096).decode() if (summary(pointer) or {}).get('kind') == 'file' else None
+    return {'machine_id': bounded(machine_id_path, 4096).decode().strip(),
+            'paths': {path: summary(path) for path in parents},
+            'current': summary('%s/current' % root),
+            'release': summary('%s/releases/%s' % (root, revision)),
+            'staging': staged, 'fleet': fleet_state, 'pointer': pointer_text,
+            'free_bytes': free_bytes(root)}
+
+
+def package_tree(path, entry_limit=PACKAGE_ENTRIES):
+    """Every entry below `path` with owner, mode and file digest; links are listed, never followed."""
+    root = summary(path)
+    if root is None or root['kind'] != 'dir':
+        return {'root': root, 'entries': {}}
+    entries, stack = {}, [path]
+    while stack:
+        directory = stack.pop()
+        for name in sorted(os.listdir(directory)):
+            if len(entries) >= entry_limit:
+                raise ValueError('package tree exceeds the entry bound')
+            child = os.path.join(directory, name)
+            record = summary(child)
+            relative = os.path.relpath(child, path)
+            if record['kind'] == 'dir':
+                stack.append(child)
+            elif record['kind'] == 'file':
+                record['sha256'] = file_digest(child)
+            entries[relative] = record
+    return {'root': root, 'entries': entries}
+
+
+def package_mode(name):
+    """`bundle.mode`: the runner's tree check refuses any difference."""
+    return 0o755 if name.endswith(('.py', '.sh')) else 0o644
+
+
+def package_unpack(path, archive_sha256, manifest_sha256, stream=None):
+    """Create `path` holding exactly the files of the gzip tar on stdin.
+
+    `path` must not exist: a staging directory belongs to one transaction. The
+    archive must have the planned digest and its `operations.json` the planned
+    manifest digest; that manifest closes the file set. Any other member, or a
+    member whose digest differs from the manifest, refuses.
+    """
+    stream = stream or sys.stdin.buffer
+    data = stream.read(PACKAGE_LIMIT + 1)
+    if len(data) > PACKAGE_LIMIT or hashlib.sha256(data).hexdigest() != archive_sha256:
+        raise ValueError('package archive differs from the plan')
+    with tarfile.open(fileobj=io.BytesIO(data), mode='r:gz') as archive:
+        manifest = archive.extractfile('operations.json').read()
+    if hashlib.sha256(manifest).hexdigest() != manifest_sha256:
+        raise ValueError('package manifest differs from the plan')
+    files = {name: [digest, package_mode(name)] for name, digest in json.loads(manifest)['files'].items()}
+    files['operations.json'] = [manifest_sha256, 0o644]
+    for name in files:
+        parts = PurePosixPath(name)
+        if parts.is_absolute() or '..' in parts.parts or str(parts) != name:
+            raise ValueError('unsafe package path: ' + name)
+    os.mkdir(path, 0o755)
+    os.chmod(path, 0o755)
+    written, directories = set(), {path}
+    with tarfile.open(fileobj=io.BytesIO(data), mode='r:gz') as archive:
+        for member in archive:
+            name = member.name
+            if not member.isfile() or name not in files or name in written:
+                raise ValueError('package archive member is not planned: ' + name)
+            content = archive.extractfile(member).read()
+            digest, mode = files[name]
+            if hashlib.sha256(content).hexdigest() != digest or mode not in (0o644, 0o755):
+                raise ValueError('package member differs from the plan: ' + name)
+            target = os.path.join(path, name)
+            parent = os.path.dirname(target)
+            missing = []
+            while parent not in directories and not os.path.isdir(parent):
+                missing.append(parent)
+                parent = os.path.dirname(parent)
+            for directory in reversed(missing):
+                os.mkdir(directory, 0o755)
+                os.chmod(directory, 0o755)
+                directories.add(directory)
+            descriptor = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+            with os.fdopen(descriptor, 'wb') as handle:
+                handle.write(content)
+                handle.flush()
+                os.fchmod(handle.fileno(), mode)
+                os.fsync(handle.fileno())
+            written.add(name)
+    if written != set(files):
+        raise ValueError('package archive lacks planned files: %s' % sorted(set(files) - written)[:5])
+    for directory, _, _ in os.walk(path):
+        fsync_directory(directory)
+    fsync_directory(os.path.dirname(path))
+
+
+def package_copy(source, destination, sha256, mode):
+    """Copy one regular file, never through a link, to a new file; the copy must have `sha256`."""
+    data = bounded(source, 1 << 20)
+    if hashlib.sha256(data).hexdigest() != sha256:
+        raise ValueError('%s changed since it was planned' % source)
+    if os.path.lexists(destination):
+        if file_digest(destination) != sha256:
+            raise FileExistsError(destination)
+        return
+    write(destination, mode, io.BytesIO(data))
+
+
+def replace_link(path, target):
+    """Atomically point the symlink `path` at `target`; refuses to replace anything but a link."""
+    if os.path.lexists(path) and not os.path.islink(path):
+        raise ValueError('%s is not a link' % path)
+    temporary = os.path.join(os.path.dirname(path), '.wallet-pir-deploy-%d-link' % os.getpid())
+    if os.path.lexists(temporary):
+        os.unlink(temporary)
+    os.symlink(target, temporary)
+    os.replace(temporary, path)
+    fsync_directory(os.path.dirname(path))
+
+
+def remove_tree(path, owner):
+    """Remove a transaction-owned directory directly below `owner`, never following links."""
+    if os.path.dirname(path) != owner.rstrip('/') or os.path.basename(path) in ('', '.', '..'):
+        raise ValueError('%s is not directly below %s' % (path, owner))
+    if os.path.lexists(path):
+        if os.path.islink(path):
+            raise ValueError('%s is a link' % path)
+        shutil.rmtree(path)
+        fsync_directory(owner)
+
+
 OPERATIONS = {
     'ownership_probe': ownership_probe,
+    'package_observe': package_observe,
+    'package_tree': package_tree,
+    'package_unpack': package_unpack,
+    'package_copy': package_copy,
+    'replace_link': replace_link,
+    'remove_tree': remove_tree,
     'ping': lambda: None,
     'sha256': sha256,
     'read': read,

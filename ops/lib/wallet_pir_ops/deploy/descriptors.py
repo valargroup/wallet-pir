@@ -22,6 +22,17 @@ HOST_NAME = re.compile(r'^[A-Za-z0-9._-]+$')
 # line or a path segment wherever a template puts it. NEAR key ids use it too.
 TEMPLATE_VALUE = re.compile(r'[A-Za-z0-9._-]+')
 LOCK_PATH = '/run/lock/wallet-pir-production.lock'
+RESPONSIBILITIES = ('journal-writer',)
+ANCILLARY_KINDS = ('routing', 'supervision')
+# What the shared CLI may do to each lifecycle driver's roles. Product drivers
+# keep their own recipe families (`schema-*`, `txid-display-*`); ancillary
+# routing and supervision units are inspected only, never changed here.
+OPERATIONS = {
+    'binary': ('plan', 'preflight', 'deploy', 'rollback', 'status', 'capture-baseline'),
+    'transparent-history': ('status', 'schema-*'),
+    'txid-display': ('status', 'txid-display-*'),
+}
+ANCILLARY_OPERATIONS = ('inspect',)
 
 
 class DescriptorError(ValueError):
@@ -48,6 +59,10 @@ class Role:
     # the tool would keep is refused, so none can add settings the deploy did not
     # review, such as another EnvironmentFile.
     owns_unit: bool = False
+    # Duties exactly one instance of the role must hold in a complete fleet,
+    # such as the journal writer on a publication controller. They are
+    # attributes of that instance, never a unit of their own.
+    responsibilities: tuple = ()
 
 
 @dataclass(frozen=True)
@@ -62,6 +77,9 @@ class Service:
     min_free_bytes: int = 1 << 30
     template_vars: tuple = ()
     driver: str = 'binary'
+    # Kinds of shared ancillary unit (routing, supervision) a complete fleet
+    # must name this service as a consumer of.
+    ancillary: tuple = ()
 
     def release_dir(self, sha):
         return '%s/releases/%s' % (self.root, sha)
@@ -84,6 +102,7 @@ class Target:
     # A release artifact kind other than the transaction's, e.g. a CUDA build
     # for a GPU worker. None means the binary given to the transaction.
     artifact_kind: str = None
+    responsibilities: tuple = ()
 
     @property
     def key(self):
@@ -131,18 +150,25 @@ def load_descriptors(path, _parents=()):
             owns_unit = spec.get('owns_unit', False)
             require(isinstance(owns_unit, bool) and (not owns_unit or mode == 'template'),
                     '%s.%s: owns_unit is a boolean, true only for a template role' % (name, role_name))
+            duties = spec.get('responsibilities', [])
+            require(isinstance(duties, list) and all(d in RESPONSIBILITIES for d in duties),
+                    '%s.%s: responsibilities are among %s' % (name, role_name, RESPONSIBILITIES))
             roles[role_name] = Role(role_name, spec['unit'], mode, spec['health'], template, ready,
                                     spec.get('ready_url'), int(spec.get('ready_timeout', 180)),
-                                    tuple(spec.get('adoptable_drop_ins', ())), owns_unit)
+                                    tuple(spec.get('adoptable_drop_ins', ())), owns_unit, tuple(duties))
         order = tuple(raw.get('order', ()))
         require(order and sorted(order) == sorted(roles), '%s: order must list every role once' % name)
         require(PLAIN_PATH.match(raw.get('root', '')), '%s: root must be a plain absolute path' % name)
         require(PLAIN_NAME.match(raw.get('binary', '')), '%s: binary must be a plain file name' % name)
         driver = raw.get('driver', 'binary')
-        require(driver in ('binary', 'transparent-history', 'txid-display'), 'unknown service lifecycle driver')
+        require(driver in OPERATIONS, 'unknown service lifecycle driver')
+        ancillary = raw.get('ancillary', [])
+        require(isinstance(ancillary, list) and all(k in ANCILLARY_KINDS for k in ancillary),
+                '%s: ancillary kinds are among %s' % (name, ANCILLARY_KINDS))
         services[name] = Service(name, raw['root'], raw['binary'], order, roles,
                                  tuple(raw.get('artifact_kinds', ())), tuple(raw.get('self_check', ('--help',))),
-                                 int(raw.get('min_free_bytes', 1 << 30)), tuple(raw.get('template_vars', ())), driver)
+                                 int(raw.get('min_free_bytes', 1 << 30)), tuple(raw.get('template_vars', ())), driver,
+                                 tuple(ancillary))
     return services
 
 
@@ -152,13 +178,27 @@ class Inventory:
     ssh: dict
     lock: dict
     services: dict
+    # Shared routing and supervision units, each listed once with the services
+    # that consume it; inspected, never changed by the shared CLI.
+    ancillary: dict = field(default_factory=dict)
+    # Hosts that no longer exist, kept so a stale reference names the retirement.
+    retired_hosts: dict = field(default_factory=dict)
 
 
 def load_inventory(path):
     document = json.loads(Path(path).read_text())
     hosts = document.get('hosts', {})
     require(hosts and all(HOST_NAME.match(name) for name in hosts), 'inventory: hosts must be named')
+    retired = document.get('retired_hosts', {})
+    require(isinstance(retired, dict) and all(HOST_NAME.match(n) and isinstance(v, dict) for n, v in retired.items()),
+            'inventory: retired_hosts maps host names to a retirement record')
+    require(not retired.keys() & hosts.keys(), 'inventory: a host cannot be both live and retired: %s'
+            % sorted(retired.keys() & hosts.keys()))
+    for name, entry in hosts.items():
+        require(not isinstance(entry, dict) or entry.get('jump') not in retired,
+                'inventory: %s jumps through retired host %s' % (name, isinstance(entry, dict) and entry.get('jump')))
     lock = document.get('lock')
+    require(not isinstance(lock, dict) or lock.get('host') not in retired, 'inventory: the lock names a retired host')
     require(isinstance(lock, dict) and (
         (lock.get('type') == 'pinned_host' and set(lock) == {'type', 'machine_id'})
         or (lock.get('type') == 'remote' and set(lock) == {'type', 'host'} and lock['host'] in hosts)),
@@ -175,7 +215,11 @@ def load_inventory(path):
                 and not hosts[entry['jump']].get('jump')), 'inventory: jump must name a direct host')
         require(isinstance(entry.get('sudo', False), bool), 'inventory: sudo must be boolean')
         require(PLAIN_NAME.fullmatch(entry.get('user', ssh.get('user', 'root'))), 'inventory: invalid SSH user')
-    return Inventory(hosts, ssh, lock, document.get('services', {}))
+    ancillary = document.get('ancillary', {})
+    require(isinstance(ancillary, dict) and all(PLAIN_NAME.fullmatch(n) and isinstance(v, dict)
+                                                for n, v in ancillary.items()),
+            'inventory: ancillary maps names to unit records')
+    return Inventory(hosts, ssh, lock, document.get('services', {}), ancillary, retired)
 
 
 def select(targets, only):
@@ -205,6 +249,8 @@ def targets(service, inventory):
         role = service.roles[role_name]
         for entry in spec.get('roles', {}).get(role_name, []):
             host = entry.get('host')
+            require(host not in inventory.retired_hosts, '%s.%s: host %r is retired (%s)'
+                    % (service.name, role_name, host, inventory.retired_hosts.get(host, {}).get('retired', 'no date')))
             require(host in inventory.hosts, '%s.%s: unknown host %r' % (service.name, role_name, host))
             unit = entry.get('unit', role.unit)
             require(UNIT.match(unit), '%s.%s: invalid unit override' % (service.name, role_name))
@@ -222,7 +268,11 @@ def targets(service, inventory):
             require(kind is None or kind in service.artifact_kinds,
                     '%s.%s@%s: artifact_kind must be one of %s'
                     % (service.name, role_name, host, list(service.artifact_kinds)))
-            result.append(Target(role, host, unit, values, expected, kind))
+            duties = entry.get('responsibilities', [])
+            require(isinstance(duties, list) and set(duties) <= set(role.responsibilities),
+                    '%s.%s@%s: responsibilities must be among %s'
+                    % (service.name, role_name, host, list(role.responsibilities)))
+            result.append(Target(role, host, unit, values, expected, kind, tuple(duties)))
     require(result, 'inventory lists no %s hosts' % service.name)
     return result
 
@@ -245,6 +295,7 @@ def exact_check(service, inventory):
     """The post-deploy exact-answer command, `{"host", "argv", "timeout"}`, or None."""
     check = inventory.services.get(service.name, {}).get('exact_check')
     if check is not None:
+        require(check.get('host') not in inventory.retired_hosts, '%s.exact_check names a retired host' % service.name)
         require(check.get('host') in inventory.hosts and isinstance(check.get('argv'), list) and check['argv'],
                 '%s.exact_check needs a known host and a non-empty argv' % service.name)
     return check

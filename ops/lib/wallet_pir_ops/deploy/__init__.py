@@ -9,4 +9,5 @@
 - `host_helper`: the host side of each remote action.
 - `transaction`: the runner-side journal.
 - `engine`: plan, preflight, deploy, rollback, status and baselines.
+- `package`: the operations package and operator inventory on the coordinator.
 """
