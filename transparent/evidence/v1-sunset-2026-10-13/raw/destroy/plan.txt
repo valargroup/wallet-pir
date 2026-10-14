@@ -1,0 +1,281 @@
+digitalocean_tag.transparent_router: Refreshing state... [id=transparent-pir-router]
+digitalocean_tag.coordinator: Refreshing state... [id=wallet-pir-coordinator]
+digitalocean_vpc.wallet: Refreshing state... [id=c5bd6679-aa32-48fc-9d5d-51d422fb3468]
+digitalocean_tag.enhance_worker: Refreshing state... [id=enhance-pir-worker]
+digitalocean_volume.txid_display_genesis: Refreshing state... [id=54c1a072-c28a-11f1-8ebb-9e22010d5e91]
+digitalocean_volume.transparent_activity: Refreshing state... [id=2b66871b-bcf5-11f1-8277-ce9c1f649990]
+digitalocean_volume.zakura: Refreshing state... [id=acc70a79-a6bc-11f1-ad2b-5eeddbd662ff]
+digitalocean_tag.transparent_txid_display_site[0]: Refreshing state... [id=transparent-pir-txid-site]
+digitalocean_tag.transparent_v12[0]: Refreshing state... [id=transparent-pir-v12]
+digitalocean_droplet.pir_monitor[0]: Refreshing state... [id=603865638]
+digitalocean_tag.enhance_packing_router: Refreshing state... [id=enhance-pir-packing-router]
+digitalocean_tag.transparent_worker: Refreshing state... [id=transparent-pir-worker]
+digitalocean_tag.status_host: Refreshing state... [id=status-pir-host]
+cloudflare_dns_record.enhance: Refreshing state... [id=cea56604e164528f0bdabc06122c473d]
+digitalocean_droplet.coordinator: Refreshing state... [id=597174997]
+digitalocean_droplet.enhance_worker[1]: Refreshing state... [id=600225445]
+digitalocean_droplet.enhance_worker[0]: Refreshing state... [id=600225444]
+digitalocean_project_resources.transparent_activity_storage: Refreshing state... [id=85639967-fecb-4c8d-88be-c0e3dee3f86c]
+digitalocean_firewall.transparent_txid_display_site[0]: Refreshing state... [id=b33fa036-0401-41f1-943f-710af179eca9]
+digitalocean_droplet.transparent_router[0]: Refreshing state... [id=598646451]
+digitalocean_firewall.transparent_router: Refreshing state... [id=1cbc7ece-e294-4e2f-9755-ca58cdd20c7a]
+digitalocean_firewall.transparent_v12[0]: Refreshing state... [id=af9762b2-ad5b-4e9c-8891-733ee9180756]
+digitalocean_project_resources.txid_display_genesis_storage: Refreshing state... [id=85639967-fecb-4c8d-88be-c0e3dee3f86c]
+digitalocean_project_resources.pir_monitor[0]: Refreshing state... [id=85639967-fecb-4c8d-88be-c0e3dee3f86c]
+cloudflare_dns_record.pir_monitor[0]: Refreshing state... [id=9b465bd770b3acb3fe9b85f7eb10f8aa]
+digitalocean_firewall.pir_monitor[0]: Refreshing state... [id=0790c899-b6d3-4894-aa50-19bcd9d9653e]
+digitalocean_droplet.transparent_txid_display_archive[0]: Refreshing state... [id=607272856]
+digitalocean_firewall.transparent_worker: Refreshing state... [id=a01c9b02-48bd-447b-b708-5413965730d0]
+digitalocean_droplet.transparent_txid_display_site[0]: Refreshing state... [id=608508349]
+digitalocean_droplet.transparent_archive["transparent-pir-archive-03"]: Refreshing state... [id=604693648]
+digitalocean_droplet.transparent_v12[0]: Refreshing state... [id=608272396]
+digitalocean_droplet.transparent_recent[0]: Refreshing state... [id=598646453]
+digitalocean_droplet.transparent_recent[1]: Refreshing state... [id=598646448]
+digitalocean_droplet.enhance_packing_router[0]: Refreshing state... [id=603350474]
+digitalocean_firewall.enhance_worker: Refreshing state... [id=16a746b4-5067-40ee-b080-ed82f0fbbfc0]
+digitalocean_firewall.enhance_packing_router: Refreshing state... [id=b56759a3-2f1a-4cc7-8ffa-a793bc517fc8]
+digitalocean_droplet.status_host[0]: Refreshing state... [id=604110074]
+digitalocean_firewall.status_host: Refreshing state... [id=cd241fe9-6e97-40ae-a114-340ab40a37fe]
+digitalocean_volume_attachment.txid_display_genesis: Refreshing state... [id=597174997-54c1a072-c28a-11f1-8ebb-9e22010d5e91-20261007200454283800000001]
+digitalocean_volume_attachment.zakura: Refreshing state... [id=597174997-acc70a79-a6bc-11f1-ad2b-5eeddbd662ff-20260902105506221800000001]
+digitalocean_volume_attachment.transparent_activity: Refreshing state... [id=597174997-2b66871b-bcf5-11f1-8277-ce9c1f649990-20260930173434897000000001]
+cloudflare_dns_record.transparent[0]: Refreshing state... [id=65c3923986f44095db0a7983aef26730]
+digitalocean_project_resources.transparent_txid_display_archive[0]: Refreshing state... [id=85639967-fecb-4c8d-88be-c0e3dee3f86c]
+digitalocean_project_resources.transparent_txid_display_site[0]: Refreshing state... [id=85639967-fecb-4c8d-88be-c0e3dee3f86c]
+cloudflare_dns_record.transparent_txid_display_site[0]: Refreshing state... [id=a57bef333e8a75ae553ceb43835745e6]
+digitalocean_project_resources.transparent_v12[0]: Refreshing state... [id=85639967-fecb-4c8d-88be-c0e3dee3f86c]
+cloudflare_dns_record.transparent_v12_staging[0]: Refreshing state... [id=c2d835ce6565eac2d7f1904ed83f8d75]
+digitalocean_project_resources.wallet: Refreshing state... [id=85639967-fecb-4c8d-88be-c0e3dee3f86c]
+digitalocean_project_resources.enhance_packing_router[0]: Refreshing state... [id=85639967-fecb-4c8d-88be-c0e3dee3f86c]
+digitalocean_project_resources.status_host[0]: Refreshing state... [id=85639967-fecb-4c8d-88be-c0e3dee3f86c]
+
+Terraform used the selected providers to generate the following execution
+plan. Resource actions are indicated with the following symbols:
+  ~ update in-place
+  - destroy
+
+Terraform will perform the following actions:
+
+  # digitalocean_droplet.transparent_archive["transparent-pir-archive-03"] will be destroyed
+  # (because key ["transparent-pir-archive-03"] is not in for_each map)
+  - resource "digitalocean_droplet" "transparent_archive" {
+      - backups              = false -> null
+      - created_at           = "2026-09-29T15:34:45Z" -> null
+      - disk                 = 200 -> null
+      - graceful_shutdown    = false -> null
+      - id                   = "604693648" -> null
+      - image                = "ubuntu-24-04-x64" -> null
+      - ipv4_address         = "209.38.35.199" -> null
+      - ipv4_address_private = "10.142.0.7" -> null
+      - ipv6                 = true -> null
+      - ipv6_address         = "2a03:b0c0:2:f0:0:2:9f2:9001" -> null
+      - locked               = false -> null
+      - memory               = 65536 -> null
+      - monitoring           = true -> null
+      - name                 = "transparent-pir-archive-03" -> null
+      - price_hourly         = 0.5 -> null
+      - price_monthly        = 336 -> null
+      - private_networking   = true -> null
+      - public_networking    = true -> null
+      - region               = "ams3" -> null
+      - resize_disk          = true -> null
+      - size                 = "m-8vcpu-64gb" -> null
+      - ssh_keys             = [
+          - "56343657",
+        ] -> null
+      - status               = "active" -> null
+      - tags                 = [
+          - "transparent-pir-worker",
+        ] -> null
+      - urn                  = "do:droplet:604693648" -> null
+      - user_data            = "1415b624ec782451f496dc77bf41585a3f8039a4" -> null
+      - vcpus                = 8 -> null
+      - volume_ids           = [] -> null
+      - vpc_uuid             = "c5bd6679-aa32-48fc-9d5d-51d422fb3468" -> null
+    }
+
+  # digitalocean_droplet.transparent_recent[0] will be destroyed
+  # (because index [0] is out of range for count)
+  - resource "digitalocean_droplet" "transparent_recent" {
+      - backups              = false -> null
+      - created_at           = "2026-09-08T05:01:29Z" -> null
+      - disk                 = 160 -> null
+      - graceful_shutdown    = false -> null
+      - id                   = "598646453" -> null
+      - image                = "ubuntu-24-04-x64" -> null
+      - ipv4_address         = "167.99.216.45" -> null
+      - ipv4_address_private = "10.142.0.10" -> null
+      - ipv6                 = true -> null
+      - ipv6_address         = "2a03:b0c0:2:f0:0:1:f0c1:f001" -> null
+      - locked               = false -> null
+      - memory               = 8192 -> null
+      - monitoring           = true -> null
+      - name                 = "transparent-pir-recent-01" -> null
+      - price_hourly         = 0.07143 -> null
+      - price_monthly        = 48 -> null
+      - private_networking   = true -> null
+      - public_networking    = true -> null
+      - region               = "ams3" -> null
+      - resize_disk          = true -> null
+      - size                 = "s-4vcpu-8gb" -> null
+      - ssh_keys             = [
+          - "56343657",
+        ] -> null
+      - status               = "active" -> null
+      - tags                 = [
+          - "transparent-pir-worker",
+        ] -> null
+      - urn                  = "do:droplet:598646453" -> null
+      - user_data            = "4bc0d9b0d0485d3cc04d779efd26b91d607f27db" -> null
+      - vcpus                = 4 -> null
+      - volume_ids           = [] -> null
+      - vpc_uuid             = "c5bd6679-aa32-48fc-9d5d-51d422fb3468" -> null
+    }
+
+  # digitalocean_droplet.transparent_recent[1] will be destroyed
+  # (because index [1] is out of range for count)
+  - resource "digitalocean_droplet" "transparent_recent" {
+      - backups              = false -> null
+      - created_at           = "2026-09-08T05:01:29Z" -> null
+      - disk                 = 160 -> null
+      - graceful_shutdown    = false -> null
+      - id                   = "598646448" -> null
+      - image                = "ubuntu-24-04-x64" -> null
+      - ipv4_address         = "161.35.153.98" -> null
+      - ipv4_address_private = "10.142.0.8" -> null
+      - ipv6                 = true -> null
+      - ipv6_address         = "2a03:b0c0:2:f0:0:1:f0c1:d001" -> null
+      - locked               = false -> null
+      - memory               = 8192 -> null
+      - monitoring           = true -> null
+      - name                 = "transparent-pir-recent-02" -> null
+      - price_hourly         = 0.07143 -> null
+      - price_monthly        = 48 -> null
+      - private_networking   = true -> null
+      - public_networking    = true -> null
+      - region               = "ams3" -> null
+      - resize_disk          = true -> null
+      - size                 = "s-4vcpu-8gb" -> null
+      - ssh_keys             = [
+          - "56343657",
+        ] -> null
+      - status               = "active" -> null
+      - tags                 = [
+          - "transparent-pir-worker",
+        ] -> null
+      - urn                  = "do:droplet:598646448" -> null
+      - user_data            = "4bc0d9b0d0485d3cc04d779efd26b91d607f27db" -> null
+      - vcpus                = 4 -> null
+      - volume_ids           = [] -> null
+      - vpc_uuid             = "c5bd6679-aa32-48fc-9d5d-51d422fb3468" -> null
+    }
+
+  # digitalocean_droplet.transparent_txid_display_archive[0] will be destroyed
+  # (because index [0] is out of range for count)
+  - resource "digitalocean_droplet" "transparent_txid_display_archive" {
+      - backups              = false -> null
+      - created_at           = "2026-10-08T13:00:46Z" -> null
+      - disk                 = 200 -> null
+      - graceful_shutdown    = false -> null
+      - id                   = "607272856" -> null
+      - image                = "ubuntu-24-04-x64" -> null
+      - ipv4_address         = "209.38.97.181" -> null
+      - ipv4_address_private = "10.142.0.6" -> null
+      - ipv6                 = true -> null
+      - ipv6_address         = "2a03:b0c0:2:f0:0:2:15f3:5001" -> null
+      - locked               = false -> null
+      - memory               = 65536 -> null
+      - monitoring           = true -> null
+      - name                 = "transparent-pir-txid-display-01" -> null
+      - price_hourly         = 0.5 -> null
+      - price_monthly        = 336 -> null
+      - private_networking   = true -> null
+      - public_networking    = true -> null
+      - region               = "ams3" -> null
+      - resize_disk          = true -> null
+      - size                 = "m-8vcpu-64gb" -> null
+      - ssh_keys             = [
+          - "56343657",
+        ] -> null
+      - status               = "active" -> null
+      - tags                 = [
+          - "transparent-pir-worker",
+        ] -> null
+      - urn                  = "do:droplet:607272856" -> null
+      - user_data            = "26aa9cc0f15746e2d3501e1e824366b7f92a3eba" -> null
+      - vcpus                = 8 -> null
+      - volume_ids           = [] -> null
+      - vpc_uuid             = "c5bd6679-aa32-48fc-9d5d-51d422fb3468" -> null
+    }
+
+  # digitalocean_project_resources.transparent_txid_display_archive[0] will be destroyed
+  # (because index [0] is out of range for count)
+  - resource "digitalocean_project_resources" "transparent_txid_display_archive" {
+      - id        = "85639967-fecb-4c8d-88be-c0e3dee3f86c" -> null
+      - project   = "85639967-fecb-4c8d-88be-c0e3dee3f86c" -> null
+      - resources = [
+          - "do:droplet:607272856",
+        ] -> null
+    }
+
+  # digitalocean_project_resources.wallet will be updated in-place
+  ~ resource "digitalocean_project_resources" "wallet" {
+        id        = "85639967-fecb-4c8d-88be-c0e3dee3f86c"
+      ~ resources = [
+          - "do:droplet:598646448",
+          - "do:droplet:598646453",
+          - "do:droplet:604693648",
+            # (5 unchanged elements hidden)
+        ]
+        # (1 unchanged attribute hidden)
+    }
+
+Plan: 0 to add, 1 to change, 5 to destroy.
+
+Changes to Outputs:
+  ~ transparent_fleet_json              = jsonencode(
+      ~ [
+          - {
+              - build_slots   = 1
+              - cache_bytes   = 5368709120
+              - id            = "transparent-pir-recent-01"
+              - memory_max    = "7G"
+              - replica_group = "recent"
+              - role          = "recent-replica"
+              - ssh_host      = "10.142.0.10"
+              - upstream      = "10.142.0.10:8093"
+            },
+          - {
+              - build_slots   = 1
+              - cache_bytes   = 5368709120
+              - id            = "transparent-pir-recent-02"
+              - memory_max    = "7G"
+              - replica_group = "recent"
+              - role          = "recent-replica"
+              - ssh_host      = "10.142.0.8"
+              - upstream      = "10.142.0.8:8093"
+            },
+          - {
+              - build_slots   = 1
+              - cache_bytes   = 51539607552
+              - id            = "transparent-pir-archive-03"
+              - memory_max    = "56G"
+              - replica_group = null
+              - role          = "archive-owner"
+              - ssh_host      = "10.142.0.7"
+              - upstream      = "10.142.0.7:8093"
+            },
+        ]
+    )
+  - transparent_txid_display_archive    = {
+      - name         = "transparent-pir-txid-display-01"
+      - private_ipv4 = "10.142.0.6"
+      - public_ipv4  = "209.38.97.181"
+    } -> null
+
+─────────────────────────────────────────────────────────────────────────────
+
+Saved the plan to: /root/v1-destroy-20261014/v1-destroy.tfplan
+
+To perform exactly these actions, run the following command to apply:
+    terraform apply "/root/v1-destroy-20261014/v1-destroy.tfplan"

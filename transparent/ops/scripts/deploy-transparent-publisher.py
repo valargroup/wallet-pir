@@ -196,28 +196,6 @@ def align_filter_origin(initial):
         execute(['systemctl','restart','transparent-filter-server'])
 
 
-def route_coordinator():
-    path=Path('/etc/caddy/Caddyfile')
-    text=path.read_text()
-    if '# Continuous transparent publication' in text:
-        return
-    marker='\thandle /v1/filters/* {'
-    if text.count(marker)!=1:
-        raise RuntimeError('unexpected coordinator Caddyfile; cannot identify transparent filter handler')
-    block='''\t# Continuous transparent publication: both origins read this authority.
-\t@transparent_publication path /v1/shards /v1/shards/init /v1/shards/*/revisions/*/manifest /v1/filters/shards /v1/filters/shards/*
-\thandle @transparent_publication {
-\t\treverse_proxy 127.0.0.1:8094
-\t}
-\t@legacy_transparent_filters path /v1/filters/*
-\thandle @legacy_transparent_filters {'''
-    candidate=path.with_suffix('.publication-next')
-    candidate.write_text(text.replace(marker,block))
-    execute(['caddy','validate','--config',candidate,'--adapter','caddyfile'])
-    os.replace(candidate,path)
-    execute(['systemctl','reload','caddy'])
-
-
 STORAGE_PATH = '/usr/local/lib/transparent-pir/storage-policy.py'
 STORAGE_PRESTART = 'ExecStartPre=+/usr/bin/python3 '+STORAGE_PATH+' --apply'
 
@@ -526,7 +504,6 @@ async def main():
             raise RuntimeError('activation must name the shadow-tested source SHA')
         config['shadow']=False
         LIVE.atomic_json(ROOT/'controller.json',config)
-        route_coordinator()
         execute(['systemctl','restart','transparent-publish-controller'])
         execute(['systemctl','enable','transparent-replica-reconciler'])
         # Restart rather than start: a reconciler that is already running keeps

@@ -122,7 +122,28 @@ An earlier attempt at 18:51 is not counted. It ran one 20 QPS client under
 missed 257 slots ("client admission delayed beyond one interval"), while server time
 stayed under 40 ms at p99. Its raw output was not retained.
 
-## Rollback
+## v1 droplets destroyed (2026-10-14, about 15:50 UTC)
+
+After about 22 hours of clean `/v2` serving, Roman ended the 48-hour rollback window
+early and approved the saved plan.
+- **Applied:** 4 droplets destroyed (recent-01, recent-02, archive-03, txid-display-01),
+  plus txid-display-01's project entry; the wallet project was updated
+  ([plan](raw/destroy/plan.txt), [apply](raw/destroy/apply.txt)).
+- **Check after apply:** a full plan showed "No changes"
+  ([after](raw/destroy/plan-after.txt)). `/v2` served throughout.
+- **Rejected first plan.** The first plan also removed the shared worker firewall's 8095
+  rule, which still admits the public router to the `/v2` txid host. That host's own
+  firewall admits 8095 only from the coordinator. The plan was discarded unapplied and
+  `transparent_txid_display_port_enabled` stays `true`
+  ([rejected plan](raw/destroy/plan-rejected-8095.txt)).
+- **Variables now set:** `transparent_recent_count = 0` and `transparent_archive_names = []`
+  in `/etc/enhance-pir/production.tfvars`, and
+  `transparent_txid_display_archive_count = 0`. The originals are in
+  `/root/v1-destroy-20261014/`.
+
+There is no rollback to v1 any more.
+
+## Rollback (until 2026-10-14; no longer possible)
 
 Within 48 hours, [v1-sunset-rollback.sh](raw/coordinator/v1-sunset-rollback.sh)
 restores:
