@@ -32,7 +32,7 @@ implemented. The profile remains experimental.
 
 ## Build matching native components
 
-Use Rust 1.91 and build Enhance separately from transparent services to avoid
+Use Rust 1.97.1 and build Enhance separately from transparent services to avoid
 Cargo feature unification selecting the native path in shared server code.
 
 ```sh

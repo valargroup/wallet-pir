@@ -56,7 +56,7 @@ available for rollback.
    hint and public files. Check unchanged manifests, sessions, routes, recovery
    state and domain keys. Opening the controller store advances its fencing
    epoch; this is expected. A second migration should reuse valid artifacts.
-3. Build using Rust 1.91 and `-C target-cpu=skylake-avx512`. Stage immutable,
+3. Build using Rust 1.97.1 and `-C target-cpu=skylake-avx512`. Stage immutable,
    checksummed release binaries. Hold `/run/lock/wallet-pir-production.lock`
    throughout cutover. Save the latest service definitions and Caddy config.
 4. Pause public query admission and review load; let pending publication settle.

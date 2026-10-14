@@ -279,7 +279,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         if: inputs.action == 'start' || inputs.action == 'census' || inputs.action == 'publish' || inputs.action == 'measure'
         with:
-          toolchain: 1.91.0
+          toolchain: 1.97.1
 
       - name: Build the ingest binary
         if: inputs.action == 'start'

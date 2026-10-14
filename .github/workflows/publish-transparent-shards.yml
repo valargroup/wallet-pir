@@ -146,7 +146,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.91.0
+          toolchain: 1.97.1
 
       - name: Build the publisher and the dataset tools
         env:

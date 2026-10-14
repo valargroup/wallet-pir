@@ -16,7 +16,7 @@ Production topology:
 - Worker pool starts with the existing .15/.16 replicas, replication factor 2.
   Automatic host expansion is not enabled by this cutover.
 
-Build with Rust 1.91 and `RUSTFLAGS='-C target-cpu=skylake-avx512'` on the Linux
+Build with Rust 1.97.1 and `RUSTFLAGS='-C target-cpu=skylake-avx512'` on the Linux
 build host. Repository default `target-cpu=native` is unsafe for artifacts copied
 from the newer build CPU to these hosts. Record the source manifest, toolchain,
 flags and SHA-256 of every deployed binary. Do not overwrite an executing binary;

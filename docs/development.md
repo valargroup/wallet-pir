@@ -17,7 +17,7 @@ make check-package PACKAGE=transparent-shard-server TEST_TARGET=wallet_sync TEST
 make check-full   # comprehensive local validation, not the default inner loop
 ```
 
-Prerequisites: Rust 1.91.0 with rustfmt/clippy, Python 3.11+, Git, Clang/libclang,
+Prerequisites: Rust 1.97.1 with rustfmt/clippy, Python 3.11+, Git, Clang/libclang,
 protoc, jq, shellcheck, Node and make. Linux additionally needs the standard C/C++
 build tools, pkg-config and OpenSSL development headers. macOS uses Xcode Command
 Line Tools. `make doctor NETWORK=1` checks authenticated GitHub/dependency access;

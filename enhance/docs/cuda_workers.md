@@ -135,7 +135,7 @@ same single-permit worker. Wrong-length and unreduced queries must return HTTP
 ## CI artifact and manual GPU deployment
 
 Full CI on main builds `enhance-pir-native-cuda-<full-sha>` separately from the
-CPU/native bundles. Its digest-pinned Ubuntu 22.04 build uses Rust 1.91.0,
+CPU/native bundles. Its digest-pinned Ubuntu 22.04 build uses Rust 1.97.1,
 glibc 2.35 and `x86-64-v3`, matching the older GPU host ABI. The archive includes
 native v9 server/client/load binaries, checksums, source identity, strict build
 metadata and isolated CUDA validation scripts. Successful CI establishes build
