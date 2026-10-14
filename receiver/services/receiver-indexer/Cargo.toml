@@ -31,9 +31,9 @@ thiserror = "2"
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-zakura-chain = { git = "https://github.com/zakura-core/zakura.git", rev = "1faf150fc3648aae22c55a6b30f8f5a9b9ce934e" }
+zakura-chain = { git = "https://github.com/zakura-core/zakura.git", rev = "83738c07468bee30a7db8a8d678cb27bf60094f4" }
 zcash_address = "0.13"
 zcash_protocol = "0.10"
 
 [dev-dependencies]
-orchard = { package = "zakura-orchard", version = "2", default-features = false }
+orchard = { package = "zakura-orchard", version = "=3.0.0", default-features = false, features = ["zip32-addresses"] }

@@ -17,7 +17,7 @@ thiserror = "2"
 transparent-events = { path = "../../../crates/transparent-events" }
 transparent-filter = { path = "../../../crates/transparent-filter" }
 transparent-shard = { path = "../../../crates/transparent-shard" }
-zakura-chain = { git = "https://github.com/zakura-core/zakura.git", rev = "af944f5194ef2e9921bc96af017629450375013c" }
+zakura-chain = { git = "https://github.com/zakura-core/zakura.git", rev = "83738c07468bee30a7db8a8d678cb27bf60094f4" }
 
 [profile.release-fast]
 inherits = "release"
