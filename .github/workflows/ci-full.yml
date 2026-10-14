@@ -123,9 +123,17 @@ jobs:
           terraform_version: 1.14.8
           terraform_wrapper: false
       - name: Validate provider schema and mock fleet plans
-        working-directory: ops/infra/digitalocean/enhance-v4
+        working-directory: ops/infra/digitalocean/enhance/worker-pool
         run: |
           terraform fmt -check -recursive
+          terraform init -backend=false -input=false -lockfile=readonly
+          terraform validate -no-color
+          terraform test -no-color
+
+      - name: Validate fleet and service modules
+        working-directory: ops/infra/digitalocean/fleet
+        run: |
+          terraform fmt -check -recursive ..
           terraform init -backend=false -input=false -lockfile=readonly
           terraform validate -no-color
           terraform test -no-color
@@ -142,7 +150,7 @@ jobs:
           terraform_version: 1.14.8
           terraform_wrapper: false
       - name: Validate provider schema and mock member plans
-        working-directory: ops/infra/digitalocean/transparent-elastic
+        working-directory: ops/infra/digitalocean/transparent/worker-pool
         run: |
           terraform fmt -check -recursive
           terraform init -backend=false -input=false -lockfile=readonly

@@ -121,7 +121,7 @@ PREPARE_CALL_SECONDS = 540
 MEASURE_LIMITS = {'MemoryMax': '256M', 'CPUQuota': '25%', 'CPUWeight': '20', 'IOWeight': '20', 'Nice': '10'}
 # Ports history, Enhance, the node and the prototype already use.
 RESERVED_PORTS = (8080, 8081, 8083, 8090, 8092, 8093, 8094, 8192, 8232)
-# ops/infra/digitalocean/production/transparent.tf opens exactly this port.
+# ops/infra/digitalocean/transparent/main.tf opens exactly this port.
 WORKER_PORT = 8095
 HISTORY_ROOTS = ('/srv/transparent-pir', '/srv/transparent-activity', '/opt/transparent-publisher',
                  '/run/transparent-pir', '/opt/enhance-pir')

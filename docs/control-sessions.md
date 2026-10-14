@@ -78,7 +78,7 @@ The key line is
   listeners to the configured literal `IPv4:port` endpoints.
 
 For the Status example the generator reproduces the key line in
-`ops/infra/digitalocean/production/status/cloud-init.yaml.tftpl` byte for byte.
+`ops/infra/digitalocean/status/cloud-init.yaml.tftpl` byte for byte.
 An empty `permitopen` list would allow every destination, so a key needs at
 least one local forward.
 

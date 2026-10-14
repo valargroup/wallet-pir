@@ -27,7 +27,7 @@ FAKE_SSH = Path(__file__).resolve().parent / 'fake_ssh.py'
 EXAMPLE = ROOT / 'ops/deploy/control-sessions.status.example.json'
 UNITS = {'status-control': ROOT / 'enhance/ops/deploy/status-control-tunnel.service.in',
          'status-query': ROOT / 'enhance/ops/deploy/status-query-tunnel.service.in'}
-CLOUD_INIT = ROOT / 'ops/infra/digitalocean/production/status/cloud-init.yaml.tftpl'
+CLOUD_INIT = ROOT / 'ops/infra/digitalocean/status/cloud-init.yaml.tftpl'
 PUBLIC_KEY = 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOVJfyTmLRUrVY7xJ3LvsjGEEBPy/b0TkM5A2HpVRZl9 status-control'
 
 

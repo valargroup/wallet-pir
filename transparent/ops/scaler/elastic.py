@@ -1,6 +1,6 @@
 """Run the transparent elastic Terraform root for the fleet actuator.
 
-The root, ops/infra/digitalocean/transparent-elastic/, holds one droplet and
+The root, ops/infra/digitalocean/transparent/worker-pool/, holds one droplet and
 one project entry per elastic recent replica. This module plans it from a
 member map, applies only the saved plan whose digest the caller validated,
 reads the members back from state and compares them with DigitalOcean.

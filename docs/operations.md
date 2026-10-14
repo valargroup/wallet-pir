@@ -147,3 +147,12 @@ No retired host, journal, rollback artifact or immutable evidence is deleted her
 Rust packages, serving protocols and persisted journals remain product-owned.
 The next fleet-management frontend can consume the lifecycle and inventory APIs;
 this pass adds no new provisioning service, paid infrastructure or serving lease.
+
+## Infrastructure source layout
+
+The [DigitalOcean service layout](../ops/infra/digitalocean/README.md) keeps the
+existing production and worker-pool state boundaries. Source paths are
+`fleet/`, the four service modules, and the two service-owned `worker-pool/`
+roots. Installed runtime paths, backend keys and writer locks retain their
+existing names. Follow the [activation gate](../ops/infra/digitalocean/fleet/activation.md)
+before installing this source or updating production state.

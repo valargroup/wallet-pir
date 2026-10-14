@@ -16,7 +16,7 @@ pins this edge, the unit and cloud-init. The public-chain index lives in
 
 ## Infrastructure
 
-`ops/infra/digitalocean/production/receiver.tf` manages the Droplet (`nyc3`,
+`ops/infra/digitalocean/fleet/receiver.tf` manages the Droplet (`nyc3`,
 `s-4vcpu-8gb-amd`, Ubuntu 24.04, with this directory's `cloud-init.yaml`), its project
 membership, its firewall and the unproxied A record `receiver-pir.valargroup.dev`
 (TTL 300), behind `receiver_pir_enabled`. The Droplet has `prevent_destroy` and

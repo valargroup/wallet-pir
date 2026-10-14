@@ -79,13 +79,13 @@ resource "digitalocean_project_resources" "wallet" {
   project = var.wallet_pir_project_id
   resources = concat(
     [digitalocean_droplet.coordinator.urn, digitalocean_volume.zakura.urn],
-    [for worker in slice(digitalocean_droplet.enhance_worker, 0, 2) : worker.urn],
-    [for worker in digitalocean_droplet.enhance_legacy_worker : worker.urn],
-    [for worker in digitalocean_droplet.transparent_recent : worker.urn],
+    [for worker in slice(module.enhance.digitalocean_droplet_enhance_worker, 0, 2) : worker.urn],
+    [for worker in module.enhance.digitalocean_droplet_enhance_legacy_worker : worker.urn],
+    [for worker in module.transparent.digitalocean_droplet_transparent_recent : worker.urn],
     # values() of a for_each resource is in name order: archive-01, archive-02, ...
-    [for worker in values(digitalocean_droplet.transparent_archive) : worker.urn],
-    [for router in digitalocean_droplet.transparent_router : router.urn],
-    [for host in digitalocean_droplet.transparent_loadgen : host.urn],
+    [for worker in values(module.transparent.digitalocean_droplet_transparent_archive) : worker.urn],
+    [for router in module.transparent.digitalocean_droplet_transparent_router : router.urn],
+    [for host in module.transparent.digitalocean_droplet_transparent_loadgen : host.urn],
   )
 }
 

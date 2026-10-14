@@ -4,16 +4,16 @@ This Terraform root owns the elastic recent replicas of transparent PIR and
 nothing else: one `digitalocean_droplet.recent["<name>"]` and one
 `digitalocean_project_resources.recent["<name>"]` per member, keyed by the
 member's permanent name `transparent-pir-recent-NN`. The
-[elastic recent contract](../../../../transparent/docs/elastic-recent.md)
+[elastic recent contract](../../../../../transparent/docs/elastic-recent.md)
 describes the actuator, the inventory and the invariants this root serves.
 
 ## Ownership
 
 - **Actuator only.** The transparent fleet actuator is the only writer. It
   plans with a sensitive variables file, validates the saved plan with
-  [`transparent-plan.py`](../../../../transparent/ops/scripts/transparent-plan.py)
+  [`transparent-plan.py`](../../../../../transparent/ops/scripts/transparent-plan.py)
   and applies exactly that plan, by digest, through
-  [`elastic.py`](../../../../transparent/ops/scaler/elastic.py). No operator
+  [`elastic.py`](../../../../../transparent/ops/scaler/elastic.py). No operator
   applies this root by hand, and nothing else ever plans against it.
 - **Its own state.** The backend is the production Spaces bucket
   `enhance-pir-terraform` under its own key,

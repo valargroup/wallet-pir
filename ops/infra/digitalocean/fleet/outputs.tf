@@ -11,15 +11,15 @@ output "wallet_pir_coordinator_private_ipv4" {
 }
 
 output "enhance_worker_public_ipv4" {
-  value = [for worker in digitalocean_droplet.enhance_worker : worker.ipv4_address]
+  value = [for worker in module.enhance.digitalocean_droplet_enhance_worker : worker.ipv4_address]
 }
 
 output "enhance_legacy_worker_count" {
-  value = length(digitalocean_droplet.enhance_legacy_worker)
+  value = length(module.enhance.digitalocean_droplet_enhance_legacy_worker)
 }
 
 output "enhance_worker_private_ipv4" {
-  value = [for worker in digitalocean_droplet.enhance_worker : worker.ipv4_address_private]
+  value = [for worker in module.enhance.digitalocean_droplet_enhance_worker : worker.ipv4_address_private]
 }
 
 output "enhance_worker_groups" {
@@ -28,8 +28,8 @@ output "enhance_worker_groups" {
     name = group.name
     replicas = [for replica_name in group.replicas : {
       name         = replica_name
-      public_ipv4  = digitalocean_droplet.enhance_worker[index(local.enhance_worker_names, replica_name)].ipv4_address
-      private_ipv4 = digitalocean_droplet.enhance_worker[index(local.enhance_worker_names, replica_name)].ipv4_address_private
+      public_ipv4  = module.enhance.digitalocean_droplet_enhance_worker[index(local.enhance_worker_names, replica_name)].ipv4_address
+      private_ipv4 = module.enhance.digitalocean_droplet_enhance_worker[index(local.enhance_worker_names, replica_name)].ipv4_address_private
     }]
   }]
 }
@@ -45,7 +45,7 @@ output "zakura_volume_id" {
 output "transparent_fleet_json" {
   description = "Roster for TRANSPARENT_FLEET_JSON; ssh_host and upstream are VPC addresses."
   value = jsonencode(concat(
-    [for worker in digitalocean_droplet.transparent_recent : {
+    [for worker in module.transparent.digitalocean_droplet_transparent_recent : {
       id            = worker.name
       role          = "recent-replica"
       replica_group = "recent"
@@ -55,7 +55,7 @@ output "transparent_fleet_json" {
       memory_max    = var.transparent_recent_memory_max
       build_slots   = 1
     }],
-    [for worker in values(digitalocean_droplet.transparent_archive) : {
+    [for worker in values(module.transparent.digitalocean_droplet_transparent_archive) : {
       id            = worker.name
       role          = "archive-owner"
       replica_group = null
@@ -70,13 +70,13 @@ output "transparent_fleet_json" {
 
 output "transparent_router_host" {
   description = "For TRANSPARENT_ROUTER_HOST: the router's VPC address, or empty without a router."
-  value       = var.transparent_router_count > 0 ? digitalocean_droplet.transparent_router[0].ipv4_address_private : ""
+  value       = var.transparent_router_count > 0 ? module.transparent.digitalocean_droplet_transparent_router[0].ipv4_address_private : ""
 }
 
 output "transparent_router_public_ipv4" {
-  value = [for router in digitalocean_droplet.transparent_router : router.ipv4_address]
+  value = [for router in module.transparent.digitalocean_droplet_transparent_router : router.ipv4_address]
 }
 
 output "transparent_loadgen_ipv4" {
-  value = [for host in digitalocean_droplet.transparent_loadgen : { public = host.ipv4_address, private = host.ipv4_address_private }]
+  value = [for host in module.transparent.digitalocean_droplet_transparent_loadgen : { public = host.ipv4_address, private = host.ipv4_address_private }]
 }

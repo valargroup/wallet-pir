@@ -70,15 +70,17 @@ def route(path):
         return {'check-docs'}, {'ops'}
     if path.startswith('.github/workflows/deploy-') or path.startswith('.github/workflows/configure-'):
         return {'check-tools', 'check-ops-contracts', 'check-ops-deploy'}, {'ops'}
-    if path.startswith('ops/infra/digitalocean/enhance-v4/'):
+    if path.startswith(('ops/infra/digitalocean/enhance/worker-pool/', 'ops/infra/digitalocean/enhance-v4/')):
         return {'check-ops-deploy'}, {'enhance_infra', 'ops'}
-    if path.startswith('ops/infra/digitalocean/transparent-elastic/'):
+    if path.startswith(('ops/infra/digitalocean/transparent/worker-pool/', 'ops/infra/digitalocean/transparent-elastic/')):
         return {'check-ops-elastic'}, {'transparent_infra', 'ops'}
     if path.startswith('ops/lib/'):
         return OPS, {'ops'}
-    if path.startswith('ops/infra/digitalocean/production/'):
+    if path.startswith(('ops/infra/digitalocean/fleet/', 'ops/infra/digitalocean/production/',
+                        'ops/infra/digitalocean/enhance/', 'ops/infra/digitalocean/status/',
+                        'ops/infra/digitalocean/transparent/', 'ops/infra/digitalocean/transparent-tx-detail/')):
         # The txid display deploy pins this root's firewall sources.
-        return {'check-ops-shared', 'check-ops-contracts', 'check-ops-deploy', 'check-ops-txid-display'}, {'ops'}
+        return {'check-ops-shared', 'check-ops-control-sessions', 'check-ops-contracts', 'check-ops-deploy', 'check-ops-txid-display'}, {'enhance_infra', 'ops'}
     if path.startswith('ops/tests/control_sessions/') or 'control-session' in path:
         return {'check-ops-control-sessions'}, {'ops'}
     if path.startswith(('ops/tests/deploy/', 'ops/scripts/wallet-pir-deploy', 'ops/scripts/deploy-')):

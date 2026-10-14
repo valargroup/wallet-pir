@@ -124,7 +124,7 @@ The accepted recent tier is two full copies; four hosts was a load target, not a
 requirement. Two replicas passed the 20 QPS gate at 20.9 QPS, p99 53 ms, with
 runtime construction in its own low-priority pool
 ([evidence](../evidence/recent-floor-2026-09-29/README.md)). Elastic copies are
-added and removed by the actuator from `ops/infra/digitalocean/transparent-elastic/`
+added and removed by the actuator from `ops/infra/digitalocean/transparent/worker-pool/`
 (one droplet and project entry per member, its own state and host lock), never
 by the production root; the scaler decides within `scaler/policy.json`
 (`min_recent` 2, `max_recent`, budgets, cost cap). Serving recent replicas never
@@ -3719,7 +3719,7 @@ follows the swap without downtime, as
      the new candidate, and rolls back by restoring the record;
    - point the request's archive host and the route's archive upstream at the
      new host.
-4. **Infrastructure** (`ops/infra/digitalocean/production`): an
+4. **Infrastructure** (`ops/infra/digitalocean/fleet`): an
    `m-16vcpu-128gb` display-archive droplet resource and its firewall rule for
    port 8095 from the router.
 5. **`shard-residency`** reads display geometries. Done with code item 1: the

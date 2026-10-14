@@ -10,7 +10,7 @@ def validate(plan, policy, existing):
     count = policy['existing_pool_workers']
     if type(count) is not int or not 0 <= count < 14:
         raise ValueError('invalid existing worker count')
-    droplet = f'digitalocean_droplet.enhance_pool_worker[{count}]'
+    droplet = f'module.enhance.digitalocean_droplet.enhance_pool_worker[{count}]'
     member = f'digitalocean_project_resources.enhance_pool_worker[{count}]'
     creates = set()
     for drift in plan.get('resource_drift', []):

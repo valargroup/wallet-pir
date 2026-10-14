@@ -2,7 +2,7 @@
 """Validate a saved plan of the transparent elastic Terraform root.
 
 Reads `terraform show -json <saved plan>` for
-ops/infra/digitalocean/transparent-elastic/ and passes it only if every change
+ops/infra/digitalocean/transparent/worker-pool/ and passes it only if every change
 is one the actuator asked for:
 
 - create `digitalocean_droplet.recent["<name>"]` or

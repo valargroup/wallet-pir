@@ -19,46 +19,26 @@ variable "transparent_txid_display_archive_count" {
   }
 }
 
+
 variable "transparent_txid_display_archive_size" {
   description = "Txid display archive host size."
   type        = string
   default     = "m-8vcpu-64gb"
 }
 
-resource "digitalocean_droplet" "transparent_txid_display_archive" {
-  count      = var.transparent_txid_display_archive_count
-  name       = format("transparent-pir-txid-display-%02d", count.index + 1)
-  image      = var.image
-  region     = var.region
-  size       = var.transparent_txid_display_archive_size
-  ssh_keys   = var.ssh_key_ids
-  vpc_uuid   = digitalocean_vpc.wallet.id
-  tags       = [digitalocean_tag.transparent_worker.name]
-  monitoring = true
-  backups    = var.enable_backups
-  ipv6       = true
-
-  user_data = templatefile("${path.module}/transparent/cloud-init-transparent-worker.yaml.tftpl", {
-    packages          = jsonencode(concat(local.common_packages, ["caddy"]))
-    deploy_public_key = var.transparent_worker_deploy_public_key
-  })
-
-  lifecycle {
-    ignore_changes = [user_data]
-  }
-}
 
 resource "digitalocean_project_resources" "transparent_txid_display_archive" {
   count     = var.transparent_txid_display_archive_count
   project   = var.wallet_pir_project_id
-  resources = [digitalocean_droplet.transparent_txid_display_archive[0].urn]
+  resources = [module.transparent_tx_detail.digitalocean_droplet_transparent_txid_display_archive[0].urn]
 }
+
 
 output "transparent_txid_display_archive" {
   description = "The txid display archive host's name and addresses, or null."
   value = var.transparent_txid_display_archive_count > 0 ? {
-    name         = digitalocean_droplet.transparent_txid_display_archive[0].name
-    private_ipv4 = digitalocean_droplet.transparent_txid_display_archive[0].ipv4_address_private
-    public_ipv4  = digitalocean_droplet.transparent_txid_display_archive[0].ipv4_address
+    name         = module.transparent_tx_detail.digitalocean_droplet_transparent_txid_display_archive[0].name
+    private_ipv4 = module.transparent_tx_detail.digitalocean_droplet_transparent_txid_display_archive[0].ipv4_address_private
+    public_ipv4  = module.transparent_tx_detail.digitalocean_droplet_transparent_txid_display_archive[0].ipv4_address
   } : null
 }

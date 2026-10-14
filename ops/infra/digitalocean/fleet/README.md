@@ -14,9 +14,14 @@ the `wallet-pir` DigitalOcean project:
 - a dedicated VPC and firewalls. Only the coordinator may reach worker port
   8091. Worker SSH is restricted to `allowed_ssh_cidrs`; the coordinator has no firewall.
 
-Enhance resources are grouped in `enhance.tf`, Transparent resources in
-`transparent.tf`, and the coordinator, network, volume, project membership and
-state-address moves in `shared.tf`. `receiver.tf` holds the opt-in receiver
+Service resources live in the sibling `enhance/`, `status/`, `transparent/`
+and `transparent-tx-detail/` modules. This fleet root owns the backend,
+providers, coordinator, VPC, node storage, monitoring, Receiver and all existing
+project-membership resource sets. `services.tf` passes shared references and
+`moves.tf` extracts the resources without changing their instance keys;
+`shared.tf` retains the earlier rename and archive-key move chains.
+
+`receiver.tf` holds the opt-in receiver
 directory Droplet, firewall and DNS record; import the existing Droplet and record as the
 [receiver deployment](../../../../receiver/ops/digitalocean/README.md#infrastructure)
 describes before enabling it. Use the [transparent deployment target](../../../../transparent/docs/deployment.md)
@@ -33,11 +38,10 @@ and populated `*.tfvars`. The production backend is the private, versioned Space
 `enhance-pir-terraform`, key `production/terraform.tfstate`, in `ams3`. The
 bucket name is a documented historical exception and is not migrated for branding.
 Use the bucket-scoped `WALLET_PIR_TF_STATE_ACCESS_KEY` and
-`WALLET_PIR_TF_STATE_SECRET_KEY` from Infisical production. When this root was
-renamed from `memo-poc`, the untracked state stayed in the old directory of
-whichever checkout ran the last apply; move `terraform.tfstate`,
-`terraform.tfstate.backup`, and `.terraform/` into `production/` before the
-next plan.
+`WALLET_PIR_TF_STATE_SECRET_KEY` from Infisical production. The repository path changed from `production/` to `fleet/`; the backend key
+and lineage did not change. Saved local plans and state backups from this
+checkout were retained privately outside the source tree. Never execute those
+saved plans or copy a historical local state over the remote state.
 
 The committed `backend.tf` enables versioned remote state. Spaces did not
 enforce conditional lock writes in the rollout test; native S3 locking is
@@ -45,13 +49,9 @@ disabled. All writes must execute under the coordinator's
 `/run/lock/wallet-pir-production.lock`, shared with deployment and autoscaling.
 Use `ops/scripts/wallet-pir-terraform.sh` on the coordinator for manual operations;
 do not run a direct apply from another host.
-For an existing local checkout, migrate once after backing up and reconciling
-its state; fresh checkouts use plain `terraform init`:
-
-```bash
-infisical run --projectId=40862c6d-a089-4355-b405-0477be0ee3b1 --env=prod --path=/ -- \
-  sh -c 'export AWS_ACCESS_KEY_ID="$WALLET_PIR_TF_STATE_ACCESS_KEY" AWS_SECRET_ACCESS_KEY="$WALLET_PIR_TF_STATE_SECRET_KEY"; terraform init -migrate-state'
-```
+The service extraction needs no backend migration. Initialize a fresh staging
+copy without changing the backend configuration. Follow the
+[activation procedure](activation.md) before writing production state.
 
 ## Plan and apply
 
@@ -67,8 +67,8 @@ origin certificate directly.
 
 Always save and inspect the production plan before applying it. Renaming the
 fleet must not replace the coordinator, workers, VPC, volume, or attachment.
-The tag resources are the only expected replacements because DigitalOcean tag
-names are immutable. The Zakura volume keeps its historical provider name and
+This repository reorganization must contain only declared state-address moves;
+no tag or other provider resource may change. The Zakura volume keeps its historical provider name and
 has `prevent_destroy` because DigitalOcean cannot rename it in place.
 
 Transparent archive owners are listed by name in `transparent_archive_names`
@@ -91,7 +91,7 @@ cuts the router off from `/v2/txid/`. No deploy phase writes it any more.
 
 `transparent_txid_display_site_enabled` (default false) creates the one-query
 txid display site: its host, firewall and DNS record
-(`transparent-txid-display-site.tf`). Set it in an `*.auto.tfvars` file in the
+(the `transparent-tx-detail` module). Set it in an `*.auto.tfvars` file in the
 coordinator's root, like the display archive count.
 
 ## Capacity

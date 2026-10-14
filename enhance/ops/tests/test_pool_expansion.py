@@ -31,7 +31,7 @@ class PoolExpansionTests(unittest.TestCase):
     def test_worker_plan_rejects_deletion_and_unexpected_changes(self):
         policy = {'existing_pool_workers': 0, 'region': 'ams3', 'vpc_id': 'vpc', 'ssh_key_ids': ['roman'], 'project_id': 'wallet-pir'}
         plan = {'resource_changes': [
-            {'address': 'digitalocean_droplet.enhance_pool_worker[0]', 'change': {'actions': ['create'], 'after': {
+            {'address': 'module.enhance.digitalocean_droplet.enhance_pool_worker[0]', 'change': {'actions': ['create'], 'after': {
                 'name': 'enhance-pir-pool-01', 'size': 'c-4', 'image': 'ubuntu-24-04-x64', 'region': 'ams3',
                 'vpc_uuid': 'vpc', 'ssh_keys': ['roman'], 'tags': ['enhance-pir-worker']}}},
             {'address': 'digitalocean_project_resources.enhance_pool_worker[0]', 'change': {'actions': ['create'],

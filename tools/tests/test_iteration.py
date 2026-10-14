@@ -68,7 +68,7 @@ class PlannerTests(unittest.TestCase):
             self.assertEqual(result['packages'], [])
         # The history adapter's hook and the pinned firewall sources reach it too.
         for path in ['transparent/ops/scripts/transparent-live-fleet.py',
-                     'ops/infra/digitalocean/production/transparent.tf']:
+                     'ops/infra/digitalocean/transparent/main.tf']:
             self.assertIn('check-ops-txid-display', fast.plan(self.packages, [path])['helpers'], path)
 
     def test_leaf_reverse_dependencies_and_embedded_fixture(self):
@@ -106,7 +106,7 @@ class PlannerTests(unittest.TestCase):
             self.assertEqual(len(result['packages']), len(self.packages))
 
     def test_infra_maps_to_its_own_validation(self):
-        result = fast.plan(self.packages, ['ops/infra/digitalocean/transparent-elastic/main.tf'])
+        result = fast.plan(self.packages, ['ops/infra/digitalocean/transparent/worker-pool/main.tf'])
         self.assertIn('transparent_infra', result['groups'])
         self.assertNotIn('enhance_infra', result['groups'])
 

@@ -24,7 +24,7 @@ M = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(M)
 from wallet_pir_ops import hostlock  # noqa: E402  (elastic.py put ops/lib on sys.path)
 
-TF_ROOT = ROOT / 'ops/infra/digitalocean/transparent-elastic'
+TF_ROOT = ROOT / 'ops/infra/digitalocean/transparent/worker-pool'
 MACHINE = 'c' * 32
 R5, R6, R7 = (f'transparent-pir-recent-0{i}' for i in (5, 6, 7))
 MEMBER = {'size': 's-4vcpu-8gb', 'image': 'ubuntu-24-04-x64'}
@@ -365,7 +365,7 @@ class ElasticTerraformRootTests(unittest.TestCase):
     """The root's source keeps to its contract; `terraform test` covers planning."""
 
     def test_template_is_the_production_worker_template_plus_a_pinned_host_key(self):
-        production = (ROOT / 'ops/infra/digitalocean/production/transparent/cloud-init-transparent-worker.yaml.tftpl').read_text()
+        production = (ROOT / 'ops/infra/digitalocean/transparent/cloud-init-transparent-worker.yaml.tftpl').read_text()
         elastic = (TF_ROOT / 'cloud-init-transparent-worker.yaml.tftpl').read_text()
         start = elastic.index('%{ if host_key != null ~}\n')
         end = elastic.index('%{ endif ~}\n', start) + len('%{ endif ~}\n')
