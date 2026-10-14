@@ -37,6 +37,8 @@ artifact_kinds = ["enhance-pir", "enhance-pir-native", "enhance-pir-native-cuda"
 self_check = ["--help"]
 min_free_bytes = 1073741824
 order = ["worker", "packing-router", "query-ingress", "coordinator"]
+# The coordinator's public edge, listed once in the inventory's `ancillary`.
+ancillary = ["routing"]
 
 [services.enhance.roles.worker]
 unit = "enhance-pir-worker.service"
@@ -79,6 +81,8 @@ artifact_kinds = ["status-pir"]
 self_check = ["--help"]
 min_free_bytes = 1073741824
 order = ["worker", "router", "controller"]
+# The supervised control sessions that carry the controller's forwards.
+ancillary = ["supervision"]
 # Supplied by the inventory's services.status.template_vars.
 template_vars = ["NETWORK"]
 

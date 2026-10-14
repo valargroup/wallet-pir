@@ -384,6 +384,49 @@ jobs:
                   raise SystemExit(f'{job}: {results[job]["result"]}, expected {expected}')
           PYCHECK
 
+  # The operations package is Python and needs no compiled binary, so it is
+  # tested, assembled and published here, apart from the release build. Like
+  # every artifact of this workflow, it is eligible for production only when
+  # the whole run on main succeeds (`release.py resolve`).
+  release-ops:
+    name: Prepare operations package
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: [complete]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Test package transactions, fleet validation and the relocated bundle
+        run: |
+          python3 -m unittest discover -s ops/tests/deploy -p 'test_ops_package.py'
+          python3 -m unittest discover -s ops/tests/deploy -p 'test_fleet_inventory.py'
+          python3 -m unittest discover -s ops/tests -p 'test_operations_bundle.py'
+      - name: Assemble, verify and run the unpacked package
+        env:
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          python3 tools/ci/release.py assemble --sha "$SHA" --kind wallet-pir-ops --output release-ops
+          python3 ops/scripts/wallet-pir-bundle.py verify --sha "$SHA" --archive release-ops/wallet-pir-ops.tar.gz
+          unpacked="$RUNNER_TEMP/wallet-pir-ops-$SHA"
+          python3 ops/scripts/wallet-pir-bundle.py extract --sha "$SHA" --archive release-ops/wallet-pir-ops.tar.gz --output "$unpacked"
+          cd "$RUNNER_TEMP"
+          "$unpacked/ops/scripts/wallet-pir-bundle.py" self-check --sha "$SHA"
+          "$unpacked/ops/scripts/wallet-pir-deploy.py" --help >/dev/null
+          "$unpacked/ops/scripts/wallet-pir-deploy.py" --inventory "$GITHUB_WORKSPACE/enhance/ops/deploy/deploy-inventory.example.json" fleet --complete >/dev/null
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wallet-pir-ops-${{ github.sha }}
+          path: release-ops/wallet-pir-ops.tar.gz
+          overwrite: true
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 14
+
   release:
     name: Prepare qualified release artifacts
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
@@ -503,14 +546,6 @@ jobs:
         with:
           name: receiver-pir-${{ github.sha }}
           path: release-bundles/receiver-pir.tar.gz
-          overwrite: true
-          compression-level: 0
-          if-no-files-found: error
-          retention-days: 14
-      - uses: actions/upload-artifact@v4
-        with:
-          name: wallet-pir-ops-${{ github.sha }}
-          path: release-bundles/wallet-pir-ops.tar.gz
           overwrite: true
           compression-level: 0
           if-no-files-found: error

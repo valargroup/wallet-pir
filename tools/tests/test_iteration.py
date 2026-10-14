@@ -271,6 +271,20 @@ class IntegrityTests(unittest.TestCase):
             self.assertIn('path: release-bundles/%s.tar.gz' % kind, job)
         self.assertIn('cargo build --locked --release', build)
 
+    def test_operations_package_is_published_without_rust(self):
+        workflow = (ROOT / '.github/workflows/ci-full.yml').read_text()
+        job = workflow.split('\n  release-ops:\n', 1)[1].split('\n  release:\n', 1)[0]
+        release_job = workflow.split('\n  release:\n', 1)[1].split('\n  release-cuda:\n', 1)[0]
+        self.assertIn('needs: [complete]', job)
+        self.assertNotIn('cargo', job)
+        self.assertNotIn('rust-setup', job)
+        self.assertIn('--kind wallet-pir-ops', job)
+        self.assertIn('self-check --sha', job)
+        self.assertIn('fleet --complete', job)
+        self.assertIn('name: wallet-pir-ops-${{ github.sha }}', job)
+        self.assertNotIn('wallet-pir-ops', release_job)
+        self.assertIn('wallet-pir-ops', load('release').ON_REQUEST)
+
     def test_release_native_does_not_use_checkout_local_target(self):
         workflow = (ROOT / '.github/workflows/ci-full.yml').read_text()
         self.assertIn('lane: release-native', workflow)

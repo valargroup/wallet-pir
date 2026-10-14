@@ -1,9 +1,21 @@
 # Control sessions and restricted forwarding accounts
 
 The shared control transport for Enhance, Status and Transparent: supervised
-SSH masters that carry restricted forwards. This page describes source. It is
-not deployed for any product; each product's deployment and status documents
-record what runs.
+SSH masters that carry restricted forwards. This page describes source; each
+product's deployment and status documents record what runs.
+
+Recorded state, not a live check: the Status baselines retained with the
+[2026-10-09](../enhance/evidence/production-deploy-06a972db-2026-10-09/README.md)
+and [2026-10-10](../enhance/evidence/production-deploy-9d2cbda0-2026-10-10/README.md)
+deploys show the Status controller ordered after
+`wallet-pir-control-sessions.service`, through a drop-in stating that the Status
+tunnels run under it since 2026-09-30. The shared supervisor was therefore
+observed carrying Status on those dates. No retained record shows the rest of
+[rollout step 1](#rollout-order) (the `wallet-pir-control` account and its
+group-readable key, or the fault drill) or which source revision that supervisor
+runs; treat them as not adopted. Transparent and Enhance (steps 2 and 3) are not
+adopted. Installing the operations package does not install or adopt the
+supervisor.
 
 ## Supervisor
 
@@ -149,9 +161,10 @@ control protocol. That decision precedes the Transparent step below.
 
 ## Rollout order
 
-Only the Status sshd change in step 1 has been done (2026-09-30). Each other
-step needs Roman's approval, the production lock, armed APM alerts and the
-product's own gates. Replacing the two Status tunnels briefly closes the public
+The Status sshd change in step 1 was made on 2026-09-30, and the retained
+captures above show the Status transport swap; the remaining items of step 1
+have no record. Each other step needs Roman's approval, the production lock,
+armed APM alerts and the product's own gates. Replacing the two Status tunnels briefly closes the public
 Status query path, so it needs a window.
 
 1. **Status** (canary). On the Status host, `AllowStreamLocalForwarding no` is
