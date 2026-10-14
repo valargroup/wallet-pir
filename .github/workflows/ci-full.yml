@@ -531,7 +531,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     env:
-      RUSTUP_TOOLCHAIN: 1.91.0
+      RUSTUP_TOOLCHAIN: 1.97.1
       # The flags tools/ci/build-cuda.sh exports, visible to the cache identity.
       RUSTFLAGS: -C target-cpu=x86-64-v3 -C target-feature=+pclmulqdq
       CFLAGS: -mpclmul
@@ -552,7 +552,7 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.91.0
+          toolchain: 1.97.1
       - name: Identify native CUDA Cargo cache
         id: identity
         env:

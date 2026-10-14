@@ -72,7 +72,7 @@ PROTOCOLS = {
 # ABI/build identity is checked separately from live GPU qualification.
 CUDA_BUILD = {
     'cuda': True, 'cpu_target': 'x86-64-v3', 'os': 'ubuntu-22.04',
-    'glibc': '2.35', 'rust': '1.91.0', 'target': 'x86_64-unknown-linux-gnu',
+    'glibc': '2.35', 'rust': '1.97.1', 'target': 'x86_64-unknown-linux-gnu',
 }
 
 

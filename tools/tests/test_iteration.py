@@ -278,7 +278,7 @@ class IntegrityTests(unittest.TestCase):
         self.assertIn('--lane native-cuda --scope cuda', workflow)
 
     def test_cuda_toolchain_overrides_the_checkout_toolchain(self):
-        # Installing 1.91 alone does not select it: rust-toolchain.toml wins
+        # Installing the pinned compiler alone does not select it: rust-toolchain.toml wins
         # over rustup's default. Every command and the cache must share the
         # compiler recorded in the CUDA ABI manifest.
         workflow = (ROOT / '.github/workflows/ci-full.yml').read_text()

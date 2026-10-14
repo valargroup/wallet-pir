@@ -5,7 +5,7 @@ set -euo pipefail
 source /etc/os-release
 [[ "$ID" == ubuntu && "$VERSION_ID" == 22.04 ]]
 [[ "$(getconf GNU_LIBC_VERSION)" == 'glibc 2.35' ]]
-[[ "$(rustc --version | cut -d' ' -f2)" == 1.91.0 ]]
+[[ "$(rustc --version | cut -d' ' -f2)" == 1.97.1 ]]
 [[ "$(rustc -vV | sed -n 's/^host: //p')" == x86_64-unknown-linux-gnu ]]
 export CARGO_TARGET_DIR=target/native-cuda
 export RUSTFLAGS='-C target-cpu=x86-64-v3 -C target-feature=+pclmulqdq'
