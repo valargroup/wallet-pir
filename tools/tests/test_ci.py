@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 import tomllib
@@ -15,6 +16,7 @@ import unittest
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / 'ops/lib'))
 
 
 def load(name):
@@ -25,7 +27,7 @@ def load(name):
 
 
 fast = load('fast')
-release = load('release')
+from wallet_pir_ops import release
 timings = load('timings')
 cargo_cache = load('cargo_cache')
 stage = load('stage')
@@ -111,10 +113,11 @@ class ReleaseTests(unittest.TestCase):
     def test_all_product_bundles_round_trip(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
+            revision = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
             (root / 'target/release').mkdir(parents=True)
             for name in set(sum(release.BINARIES.values(), [])):
                 (root / 'target/release' / name).write_bytes(b'fake binary')
-            release.assemble(SHA, root / 'target', root / 'bundles')
+            release.assemble(revision, root / 'target', root / 'bundles')
             # Native bundles are only assembled on request, from their own target.
             for kind in release.ON_REQUEST:
                 self.assertFalse((root / 'bundles' / f'{kind}.tar.gz').exists())
@@ -122,25 +125,25 @@ class ReleaseTests(unittest.TestCase):
                 (target / 'release').mkdir(parents=True)
                 for name in release.BINARIES[kind]:
                     (target / 'release' / name).write_bytes(kind.encode())
-                release.assemble(SHA, target, root / f'bundles-{kind}', kind,
+                release.assemble(revision, target, root / f'bundles-{kind}', kind,
                                  release.CUDA_BUILD if kind == 'enhance-pir-native-cuda' else None)
             for kind in release.BINARIES:
                 bundles = root / (f'bundles-{kind}' if kind in release.ON_REQUEST else 'bundles')
-                release.extract(bundles / f'{kind}.tar.gz', root / kind, SHA, kind)
+                release.extract(bundles / f'{kind}.tar.gz', root / kind, revision, kind)
                 expected = kind.encode() if kind in release.ON_REQUEST else b'fake binary'
                 for name in release.BINARIES[kind]:
                     self.assertEqual((root / kind / name).read_bytes(), expected)
             native = json.loads((root / 'enhance-pir-native' / 'candidate.json').read_text())
             self.assertEqual(native['protocol_revision'], 'ironwood-enhance-pir-v9-native-two-mask-m29')
             with self.assertRaises(ValueError):
-                release.extract(root / 'bundles-enhance-pir-native' / 'enhance-pir-native.tar.gz', root / 'cross', SHA, 'enhance-pir')
+                release.extract(root / 'bundles-enhance-pir-native' / 'enhance-pir-native.tar.gz', root / 'cross', revision, 'enhance-pir')
             # The Status bundle carries the unit templates its deploy renders, and no candidate claim.
             self.assertEqual(sorted(p.name for p in (root / 'status-pir').iterdir()),
                              ['SHA256SUMS', 'revision', 'status-controller-qualification.service.in',
                               'status-pir', 'status-router.service.in', 'status-worker.service.in'])
             self.assertTrue((root / 'status-pir' / 'status-pir').stat().st_mode & 0o111)
             with self.assertRaises(ValueError):
-                release.extract(root / 'bundles-status-pir' / 'status-pir.tar.gz', root / 'cross-status', SHA, 'enhance-pir-native')
+                release.extract(root / 'bundles-status-pir' / 'status-pir.tar.gz', root / 'cross-status', revision, 'enhance-pir-native')
 
     def test_cuda_metadata_and_kind_are_required_before_extraction(self):
         kind = 'enhance-pir-native-cuda'

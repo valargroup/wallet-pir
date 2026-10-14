@@ -1245,7 +1245,7 @@ class CommandLineTests(DeployedFleet):
 
     def test_every_command_is_closed_and_requires_the_request(self):
         parser = cli.parser()
-        for name in cli.TXID_DISPLAY:
+        for name in cli.transparent_cli().TXID_DISPLAY:
             with self.subTest(name=name), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
                 parser.parse_args(['txid-display-' + name])
         for phase in ('everything', 'firewall', 'router-hook'):
@@ -1255,7 +1255,7 @@ class CommandLineTests(DeployedFleet):
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
             parser.parse_args(['txid-display-retire', '--request', 'r', '--request-sha256', 'h',
                                '--expect-plan-sha256', 'h', '--terraform-plan-sha256', 'h'])
-        self.assertEqual(cli.TXID_DISPLAY_PHASES, P.PHASES)
+        self.assertEqual(cli.transparent_cli().TXID_DISPLAY_PHASES, P.PHASES)
 
 
 if __name__ == '__main__':
