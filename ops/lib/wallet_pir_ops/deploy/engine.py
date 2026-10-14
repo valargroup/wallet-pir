@@ -30,6 +30,21 @@ class DeployError(RuntimeError):
     pass
 
 
+def mutation_fence(inventory, executor, lock=None):
+    """Refuse while a Transparent schema transaction is unfinished; read-only.
+
+    Under the held production lock (`lock`) before every mutation; without one
+    it is the same check for a read-only preflight.
+    """
+    if lock is not None:
+        lock.verify()
+    host = inventory.lock.get('host')
+    if inventory.lock.get('type') == 'pinned_host':
+        schema_fence.local_schema_fence()
+    elif host:
+        schema_fence.schema_mutation_fence(lambda path: executor.read(host, path))
+
+
 def file_sha256(path):
     digest = hashlib.sha256()
     with open(path, 'rb') as handle:
@@ -426,12 +441,7 @@ class Deployer:
                 self.lock = None
 
     def schema_fence(self):
-        self.lock.verify()
-        host = self.inventory.lock.get('host')
-        if self.inventory.lock.get('type') == 'pinned_host':
-            schema_fence.local_schema_fence()
-        elif host:
-            schema_fence.schema_mutation_fence(lambda path: self.ex.read(host, path))
+        mutation_fence(self.inventory, self.ex, self.lock)
 
     def _deploy(self, sha, binary, source, allow_drift, retire_historical, check, verify_noop=False):
         latest = Journal.load(self.state_dir, self.service.name)
