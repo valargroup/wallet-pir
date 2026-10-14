@@ -78,8 +78,8 @@ class LocalHost(Executor):
     def remove(self, host, path):
         self.mutate('remove', lambda: host_helper.remove(path), path=path)
 
-    def package_observe(self, host, root, fleet, revision, machine_id_path):
-        observed = host_helper.package_observe(root, fleet, revision, machine_id_path)
+    def package_observe(self, host, root, files, revision, machine_id_path):
+        observed = host_helper.package_observe(root, files, revision, machine_id_path)
         observed['free_bytes'] = self.free
         return observed
 

@@ -2,35 +2,51 @@
 
 The package is the unpacked operations release (`bundle`), kept on the
 coordinator as root-owned `/opt/wallet-pir-ops/releases/<full-sha>`; the
-`current` link selects one. The maintained operator inventory,
-`/etc/wallet-pir/fleet.json`, lives outside the releases. Installing a package
-and adopting an inventory change only those paths: no unit is written, reloaded
-or restarted, so a package transaction never adopts or changes a service.
+`current` link selects one. Two managed files live outside the releases: the
+operator inventory `/etc/wallet-pir/fleet.json` and, when given, the reviewed
+public host-key pins `/etc/wallet-pir/known_hosts`. A package transaction
+changes only those paths: no unit is written, reloaded or restarted, so it
+never adopts or changes a service.
+
+The archive's bytes come from the exact full-CI artifact on GitHub: the run
+must be a successful full CI on main for the revision, the artifact
+`wallet-pir-ops-<revision>` is downloaded and checked against GitHub's own
+digest when it reports one, and the archive inside it is what installs. A
+local `--archive` is accepted only when its digest equals those bytes. There
+is no other way to qualify an archive.
 
 Every install is planned first. The plan binds the archive and manifest
-digests, the source revision, the full-CI run that produced the archive, the
-coordinator's machine id, the candidate inventory, and what the coordinator
-holds now (selection, inventory, release directory, latest package
-transaction). Install takes the production lock, re-plans and refuses unless
-the plan digest equals the reviewed one. It then runs fixed steps. Before each
-step the runner journal (`transaction.Journal`) and, once it exists, the
-coordinator's transaction directory record the intent; afterwards both record
-completion. A transport failure leaves the outcome unknown: nothing is guessed
-or undone until `reconcile` (finish) or `rollback` (undo) observes the host.
-Reconcile continues only where each step's observed state is exactly its
-recorded before or after state; anything else is refused. Rollback restores the
-previous selection and inventory, including their absence on a first install,
-and keeps the release directory and the transaction's records.
+digests, the source revision, the run and artifact identities, the
+coordinator's machine id, the candidate managed files, and what the
+coordinator holds now (selection, managed files, release directory, latest
+package transaction). Install takes the production lock, re-plans and refuses
+unless the plan digest equals the reviewed one. It then runs fixed steps.
+Before each step the runner journal (`transaction.Journal`) and, once it
+exists, the coordinator's transaction directory record the intent; afterwards
+both record completion. A transport failure leaves the outcome unknown:
+nothing is guessed or undone until `reconcile` (finish) or `rollback` (undo)
+observes the host. Reconcile continues only where each step's observed state
+is exactly its recorded before or after state; anything else is refused.
+Rollback restores the previous selection and managed files, including their
+absence on a first install, and keeps the release directory and the
+transaction's records. A later plan may select that retained release again:
+a release directory is reused only when a recorded package transaction
+promoted it and its files still match, and is never overwritten.
 """
 from dataclasses import dataclass
+import base64
+import binascii
 import hashlib
+import io
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
 import sys
 import tempfile
 import time
+import zipfile
 
 from .. import bundle, durable, release
 from .engine import DeployError, file_sha256, mutation_fence
@@ -38,13 +54,16 @@ from .remote import LockHeld, RemoteError, production_lock
 from .transaction import FINAL, Journal
 
 SERVICE = 'ops-package'
-PLAN_SCHEMA = 'wallet-pir-ops-package-plan-v1'
+PLAN_SCHEMA = 'wallet-pir-ops-package-plan-v2'
 RECORD_SCHEMA = 'wallet-pir-ops-package-record-v1'
 REVISION = re.compile('[0-9a-f]{40}')
 TRANSACTION = re.compile(r'ops-package-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{12}-[0-9a-f]{6}')
 SELECTION = re.compile(r'releases/[0-9a-f]{40}')
+ARCHIVE = 'wallet-pir-ops.tar.gz'
 HEADROOM = 64 << 20
 SELF_CHECK_SECONDS = 60
+KEY_TYPES = {'ssh-ed25519', 'ssh-rsa', 'ecdsa-sha2-nistp256', 'ecdsa-sha2-nistp384', 'ecdsa-sha2-nistp521',
+             'sk-ssh-ed25519@openssh.com', 'sk-ecdsa-sha2-nistp256@openssh.com'}
 # Failures that leave a remote effect's outcome unknown.
 TRANSPORT = (RemoteError, LockHeld, subprocess.TimeoutExpired, OSError)
 
@@ -57,6 +76,7 @@ class PackageError(DeployError):
 class Layout:
     root: str = '/opt/wallet-pir-ops'
     fleet: str = '/etc/wallet-pir/fleet.json'
+    known_hosts: str = '/etc/wallet-pir/known_hosts'
     machine_id: str = '/etc/machine-id'
     owner_uid: int = 0
 
@@ -83,19 +103,59 @@ class Layout:
     def transaction(self, identifier):
         return '%s/%s' % (self.transactions, identifier)
 
+    def managed(self):
+        """`(step, path, retained copy name)` of each managed file, in install order."""
+        return (('known-hosts', self.known_hosts, 'previous-known_hosts'),
+                ('fleet', self.fleet, 'previous-fleet.json'))
 
-def qualification(run, revision):
-    """The full-CI provenance of an archive, from the GitHub run record that produced it."""
-    if run is None:
-        return {'provenance': 'absent'}
-    fields = ('id', 'head_sha', 'head_branch', 'event', 'status', 'conclusion', 'path')
-    if not isinstance(run, dict) or not all(k in run for k in fields):
-        raise PackageError('the CI run record must be the GitHub run object (gh api .../actions/runs/ID)')
-    record = {k: run[k] for k in fields}
-    if not release.qualified(run, revision):
-        return {'provenance': 'not-qualified', 'run': record}
-    return {'provenance': 'full-ci-main', 'run': record,
-            'artifact': 'wallet-pir-ops-%s' % revision}
+
+class GitHub:
+    """Run and artifact records, and artifact bytes, from the repository's Actions API."""
+
+    def __init__(self, repository=None):
+        self.repository = repository or os.environ.get('GITHUB_REPOSITORY') or 'valargroup/wallet-pir'
+
+    def run(self, run_id):
+        return release.api('repos/%s/actions/runs/%d' % (self.repository, run_id))
+
+    def artifacts(self, run_id):
+        return release.api('repos/%s/actions/runs/%d/artifacts?per_page=100' % (self.repository, run_id))['artifacts']
+
+    def download(self, artifact_id):
+        # gh follows the redirect to storage without forwarding the token.
+        return subprocess.run(['gh', 'api', 'repos/%s/actions/artifacts/%d/zip' % (self.repository, artifact_id)],
+                              capture_output=True, check=True, timeout=900).stdout
+
+
+def sha256(data):
+    return hashlib.sha256(data).hexdigest()
+
+
+def known_hosts_problems(data):
+    """Why `data` is not a plain file of public host keys."""
+    try:
+        text = data.decode()
+    except UnicodeDecodeError:
+        return ['known-hosts file is not text']
+    if 'PRIVATE KEY' in text:
+        return ['known-hosts file contains private key material']
+    problems = []
+    for number, line in enumerate(text.splitlines(), 1):
+        fields = line.split()
+        if not fields or fields[0].startswith('#'):
+            continue
+        if fields[0] in ('@cert-authority', '@revoked'):
+            fields = fields[1:]
+        if len(fields) < 3 or fields[1] not in KEY_TYPES:
+            problems.append('known-hosts line %d is not "hosts key-type key"' % number)
+            continue
+        try:
+            base64.b64decode(fields[2], validate=True)
+        except (binascii.Error, ValueError):
+            problems.append('known-hosts line %d has an invalid key' % number)
+    if not any(line.split() and not line.startswith('#') for line in text.splitlines()):
+        problems.append('known-hosts file pins no host')
+    return problems
 
 
 def tree_problems(tree, files, owner):
@@ -130,7 +190,7 @@ class Package:
     """Plan, preflight, install, status, reconcile and rollback of the package on one coordinator host."""
 
     def __init__(self, inventory, executor, state_dir, host=None, layout=None, lock=None, out=print,
-                 inventory_path='<inventory>'):
+                 inventory_path='<inventory>', github=None):
         self.inventory = inventory
         self.ex = executor
         self.state_dir = Path(state_dir)
@@ -146,10 +206,67 @@ class Package:
         self.lock = None
         self.out = out
         self.inventory_path = inventory_path
+        self.github = github or GitHub()
+        self.candidates = {}
 
     def command(self, name, *arguments):
         return ' '.join(['python3', 'ops/scripts/wallet-pir-deploy.py', '--inventory', str(self.inventory_path),
                          name, *arguments])
+
+    # ----------------------------------------------------------- provenance
+
+    def artifact_dir(self, artifact_id):
+        return self.state_dir / 'artifacts' / str(int(artifact_id))
+
+    def acquire(self, run_id, revision):
+        """`(provenance, archive path)` for the exact full-CI artifact of `revision` in run `run_id`."""
+        run = self.github.run(run_id)
+        if run.get('id') != run_id or not release.qualified(run, revision):
+            raise PackageError('run %s is not a successful full CI on main for %s' % (run_id, revision))
+        name = 'wallet-pir-ops-' + revision
+        matches = [a for a in self.github.artifacts(run_id) if a.get('name') == name]
+        if len(matches) != 1 or matches[0].get('expired') or not isinstance(matches[0].get('id'), int):
+            raise PackageError('run %s has no single unexpired %s artifact' % (run_id, name))
+        artifact = matches[0]
+        reported = artifact.get('digest')
+        if reported is not None and not re.fullmatch('sha256:[0-9a-f]{64}', reported):
+            raise PackageError('GitHub reports an unrecognized digest for %s' % name)
+        expected = reported and reported[len('sha256:'):]
+        cache = self.artifact_dir(artifact['id'])
+        zipped = cache / 'artifact.zip'
+        data = zipped.read_bytes() if zipped.is_file() else None
+        if data is None or expected and sha256(data) != expected:
+            data = self.github.download(artifact['id'])
+            if expected and sha256(data) != expected:
+                raise PackageError('the downloaded %s differs from the digest GitHub reports' % name)
+            cache.mkdir(mode=0o700, parents=True, exist_ok=True)
+            self.write_private(zipped, data)
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            members = archive.infolist()
+            if [m.filename for m in members] != [ARCHIVE] or members[0].is_dir():
+                raise PackageError('%s must hold exactly %s' % (name, ARCHIVE))
+            payload = archive.read(ARCHIVE)
+        path = cache / ARCHIVE
+        if not path.is_file() or path.read_bytes() != payload:
+            self.write_private(path, payload)
+        provenance = {
+            'provenance': 'full-ci-main', 'repository': self.github.repository,
+            'run': {k: run[k] for k in ('id', 'head_sha', 'head_branch', 'event', 'status', 'conclusion', 'path')},
+            'artifact': {'id': artifact['id'], 'name': name, 'zip_sha256': sha256(data),
+                         'digest_source': 'github' if expected else 'downloaded'},
+            'archive_sha256': sha256(payload),
+        }
+        return provenance, path
+
+    @staticmethod
+    def write_private(path, data):
+        temporary = path.with_name('.' + path.name + '.tmp')
+        with open(temporary, 'wb') as handle:
+            handle.write(data)
+            handle.flush()
+            os.fchmod(handle.fileno(), 0o600)
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
 
     # ------------------------------------------------------------- planning
 
@@ -166,9 +283,25 @@ class Package:
                     % (revision[:12], (result.stdout + result.stderr).strip()[-2000:])]
         return []
 
+    def pin_problems(self, fleet_bytes, known_hosts_sha256):
+        """Inventory entries that name the managed pin file must pin its planned digest."""
+        document = json.loads(fleet_bytes)
+        problems = []
+        entries = [('ssh', document.get('ssh', {}))] + list(document.get('hosts', {}).items())
+        for name, entry in entries:
+            if isinstance(entry, dict) and entry.get('known_hosts') == self.layout.known_hosts:
+                if known_hosts_sha256 is None:
+                    problems.append('%s names %s, which this plan leaves absent' % (name, self.layout.known_hosts))
+                elif entry.get('known_hosts_sha256') != known_hosts_sha256:
+                    problems.append('%s pins %s to %s, not the planned %s'
+                                    % (name, self.layout.known_hosts, entry.get('known_hosts_sha256'),
+                                       known_hosts_sha256))
+        return problems
+
     def observe(self, revision):
         layout = self.layout
-        return self.ex.package_observe(self.host, layout.root, layout.fleet, revision, layout.machine_id)
+        return self.ex.package_observe(self.host, layout.root, [path for _, path, _ in layout.managed()],
+                                       revision, layout.machine_id)
 
     def remote_record(self, identifier):
         text = self.ex.read(self.host, self.layout.transaction(identifier) + '/record.json')
@@ -178,24 +311,46 @@ class Package:
         text = self.ex.read(self.host, self.layout.transaction(identifier) + '/final.json')
         return None if text is None else json.loads(text)
 
-    def build_plan(self, archive, revision, fleet, ci_run=None):
-        """`(plan, problems)`; reads the archive, the candidate inventory and the coordinator only."""
+    def promoted_by(self, revision, manifest_sha256):
+        """The recorded package transaction that promoted this exact release, or None."""
+        tree = self.ex.package_tree(self.host, self.layout.transactions)
+        for name in sorted(tree['entries']):
+            parts = name.split('/')
+            if (len(parts) == 3 and parts[1] == 'steps' and TRANSACTION.fullmatch(parts[0])
+                    and re.fullmatch(r'[0-9]{2}-promote\.done\.json', parts[2])):
+                record = self.remote_record(parts[0])
+                package = (record or {}).get('plan', {}).get('package', {})
+                if package.get('revision') == revision and package.get('manifest_sha256') == manifest_sha256:
+                    return parts[0]
+        return None
+
+    def build_plan(self, revision, fleet, run_id=None, archive=None, known_hosts=None):
+        """`(plan, problems, archive path)`; reads GitHub, the inputs and the coordinator, changing none."""
         if not REVISION.fullmatch(revision or ''):
             raise PackageError('--sha must be the full 40-hex source revision')
+        problems = []
+        if run_id is not None:
+            provenance, trusted = self.acquire(run_id, revision)
+            if archive is not None and file_sha256(archive) != provenance['archive_sha256']:
+                problems.append('%s is not the archive of artifact %s' % (archive, provenance['artifact']['name']))
+            archive = trusted
+        elif archive is not None:
+            provenance = {'provenance': 'absent'}
+            problems.append('no full-CI run qualifies this archive; pass --ci-run-id (local bytes alone never install)')
+        else:
+            raise PackageError('give --ci-run-id (or --archive to inspect an unqualified archive)')
         archive = Path(archive).resolve()
         manifest, files, size = bundle.planned_files(archive, revision)
-        fleet_bytes = Path(fleet).read_bytes()
-        json.loads(fleet_bytes)
         layout = self.layout
+        candidates = {'fleet': Path(fleet).read_bytes(),
+                      'known-hosts': Path(known_hosts).read_bytes() if known_hosts else None}
+        json.loads(candidates['fleet'])
+        if candidates['known-hosts'] is not None:
+            problems += known_hosts_problems(candidates['known-hosts'])
         observed = self.observe(revision)
-        problems = []
         problems += self.candidate_problems(archive, revision, fleet)
         if manifest['source_dirty']:
             problems.append('the archive was built from a dirty source tree; only a clean full-CI archive installs')
-        provenance = qualification(ci_run, revision)
-        if provenance['provenance'] != 'full-ci-main':
-            problems.append('no successful full-CI run on main for %s binds this archive (%s)'
-                            % (revision, provenance['provenance']))
         machine_id = observed['machine_id']
         expected = [v for v in (self.inventory.hosts[self.host].get('machine_id'),
                                 self.inventory.lock.get('machine_id')) if v]
@@ -214,52 +369,60 @@ class Package:
                 problems.append('%s is not a link to releases/<revision>' % layout.current)
             else:
                 prior_selection = current['target']
-        fleet_state = observed['fleet']
-        prior_fleet = None
-        if fleet_state is not None:
-            if fleet_state['kind'] != 'file' or fleet_state['uid'] != layout.owner_uid or fleet_state['mode'] & 0o022:
-                problems.append('%s must be a regular file owned by uid %d and writable only by it'
-                                % (layout.fleet, layout.owner_uid))
-            else:
-                prior_fleet = fleet_state['sha256']
+        prior_files, target_files = {}, {}
+        for step, path, _ in layout.managed():
+            state = observed['files'][path]
+            prior_files[step] = None
+            if state is not None:
+                if state['kind'] != 'file' or state['uid'] != layout.owner_uid or state['mode'] & 0o022:
+                    problems.append('%s must be a regular file owned by uid %d and writable only by it'
+                                    % (path, layout.owner_uid))
+                else:
+                    prior_files[step] = state['sha256']
+            data = candidates[step]
+            # An absent candidate leaves the file as it is.
+            target_files[step] = prior_files[step] if data is None else sha256(data)
+        problems += self.pin_problems(candidates['fleet'], target_files['known-hosts'])
         prior_transaction = None
         if observed['pointer'] is not None:
             pointer = json.loads(observed['pointer'])
             prior_transaction = pointer.get('id') if isinstance(pointer, dict) else None
             if set(pointer) != {'id'} or not TRANSACTION.fullmatch(prior_transaction or ''):
                 problems.append('invalid package transaction pointer')
-            else:
-                final = self.remote_final(prior_transaction)
-                if final is None:
-                    problems.append('package transaction %s is unfinished; run %s' % (
-                        prior_transaction, self.command('ops-package-status')))
+            elif self.remote_final(prior_transaction) is None:
+                problems.append('package transaction %s is unfinished; run %s' % (
+                    prior_transaction, self.command('ops-package-status')))
         if observed['staging']:
             problems.append('%s holds %s; reconcile or roll back their transactions first'
                             % (layout.staging, observed['staging']))
         release_state = 'absent'
         if observed['release'] is not None:
-            tree = self.ex.package_tree(self.host, '%s/%s' % (layout.releases, revision))
-            collision = tree_problems(tree, files, layout.owner_uid)
-            if collision:
-                problems.append('%s/%s exists and differs from this archive (%s); a release directory is never '
-                                'overwritten' % (layout.releases, revision, '; '.join(collision[:3])))
-            release_state = 'present-verified'
+            release_state = 'retained'
+            path = '%s/%s' % (layout.releases, revision)
+            differences = tree_problems(self.ex.package_tree(self.host, path), files, layout.owner_uid)
+            if differences:
+                problems.append('%s exists and differs from this archive (%s); a release directory is never '
+                                'overwritten' % (path, '; '.join(differences[:3])))
+            elif self.promoted_by(revision, files['operations.json'][0]) is None:
+                problems.append('%s matches this archive but no recorded package transaction created it; '
+                                'it is not reused' % path)
         required = HEADROOM + (2 * size if release_state == 'absent' else 0)
         if observed['free_bytes'] < required:
             problems.append('%s has %d bytes free; the package needs %d' % (self.host, observed['free_bytes'], required))
         target_selection = 'releases/' + revision
-        candidate_fleet = hashlib.sha256(fleet_bytes).hexdigest()
         changes = []
         if release_state == 'absent':
             changes.append('stage, verify and add %s/%s' % (layout.releases, revision))
-        if candidate_fleet != prior_fleet:
-            changes.append('%s %s' % ('replace' if prior_fleet else 'install', layout.fleet))
+        for step, path, _ in layout.managed():
+            if target_files[step] != prior_files[step]:
+                changes.append('%s %s' % ('replace' if prior_files[step] else 'install', path))
         if target_selection != prior_selection:
-            changes.append('point %s at %s' % (layout.current, target_selection))
+            changes.append('point %s at %s%s' % (layout.current, target_selection,
+                                                 ' (retained release)' if release_state == 'retained' else ''))
         plan = {
             'schema': PLAN_SCHEMA,
             'coordinator': {'host': self.host, 'machine_id': machine_id},
-            'layout': {'root': layout.root, 'fleet': layout.fleet},
+            'layout': {'root': layout.root, 'files': {step: path for step, path, _ in layout.managed()}},
             'package': {'revision': revision, 'archive_sha256': file_sha256(archive),
                         'manifest_sha256': files['operations.json'][0],
                         'source_dirty': manifest['source_dirty'], 'files': files, 'bytes': size},
@@ -267,12 +430,13 @@ class Package:
             # provenance below is the separate full-CI record.
             'integrity': {'manifest_qualification': manifest['qualification'], 'checksums': 'verified'},
             'qualification': provenance,
-            'prior': {'selection': prior_selection, 'fleet_sha256': prior_fleet,
+            'prior': {'selection': prior_selection, 'files': prior_files,
                       'transaction': prior_transaction, 'release': release_state},
-            'target': {'selection': target_selection, 'fleet_sha256': candidate_fleet},
+            'target': {'selection': target_selection, 'files': target_files},
             'changes': changes,
         }
-        return plan, problems
+        self.candidates = candidates
+        return plan, problems, archive
 
     def describe(self, plan, problems):
         package = plan['package']
@@ -281,18 +445,19 @@ class Package:
         self.out('  integrity: archive %s, %d files, manifest label %r (integrity only)'
                  % (package['archive_sha256'], len(package['files']), plan['integrity']['manifest_qualification']))
         self.out('  provenance: %s' % json.dumps(plan['qualification'], sort_keys=True))
-        self.out('  prior: selection %s, inventory %s, release %s'
-                 % (plan['prior']['selection'], plan['prior']['fleet_sha256'], plan['prior']['release']))
+        self.out('  prior: selection %s, files %s, release %s'
+                 % (plan['prior']['selection'], json.dumps(plan['prior']['files'], sort_keys=True),
+                    plan['prior']['release']))
         for change in plan['changes'] or ['no change']:
             self.out('  change: ' + change)
         self.out('  services: unchanged; a package transaction restarts and reloads nothing')
         for problem in problems:
             self.out('  refused: ' + problem)
 
-    def preflight(self, archive, revision, fleet, ci_run=None):
+    def preflight(self, revision, fleet, run_id=None, archive=None, known_hosts=None):
         """The plan plus the read-only mutation fences an install would apply."""
         self.ex.check_identity(self.host)
-        plan, problems = self.build_plan(archive, revision, fleet, ci_run)
+        plan, problems, archive = self.build_plan(revision, fleet, run_id, archive, known_hosts)
         try:
             mutation_fence(self.inventory, self.ex)
         except ValueError as error:
@@ -310,8 +475,9 @@ class Package:
             result += ['stage', 'verify', 'promote']
         else:
             result += ['verify']
-        if plan['target']['fleet_sha256'] != plan['prior']['fleet_sha256']:
-            result.append('fleet')
+        for step, _, _ in self.layout.managed():
+            if plan['target']['files'][step] != plan['prior']['files'][step]:
+                result.append(step)
         if plan['target']['selection'] != plan['prior']['selection']:
             result.append('select')
         return result + ['commit']
@@ -334,6 +500,9 @@ class Package:
     def staged_path(self, identifier):
         return '%s/%s' % (self.layout.staging, identifier)
 
+    def managed_path(self, step):
+        return next(path for name, path, _ in self.layout.managed() if name == step)
+
     def state(self, identifier, plan, name):
         """'before', 'after', 'partial' (owned, discardable) or a conflict description."""
         layout, revision = self.layout, plan['package']['revision']
@@ -342,7 +511,7 @@ class Package:
         if name == 'record':
             record = self.ex.package_tree(self.host, layout.transaction(identifier))
             pointer = observed['pointer']
-            expected = hashlib.sha256(self.record_bytes(identifier, plan)).hexdigest()
+            expected = sha256(self.record_bytes(identifier, plan))
             if record['root'] is None:
                 prior = plan['prior']['transaction']
                 if pointer is None and prior is None or pointer and json.loads(pointer).get('id') == prior:
@@ -350,8 +519,9 @@ class Package:
                 return 'the package transaction pointer moved since the plan'
             entries = record['entries']
             complete = (entries.get('record.json', {}).get('sha256') == expected and
-                        (plan['prior']['fleet_sha256'] is None or
-                         entries.get('previous-fleet.json', {}).get('sha256') == plan['prior']['fleet_sha256']) and
+                        all(plan['prior']['files'][step] is None or
+                            entries.get(copy, {}).get('sha256') == plan['prior']['files'][step]
+                            for step, _, copy in layout.managed()) and
                         pointer is not None and pointer.encode() == self.pointer_bytes(identifier))
             return 'after' if complete else 'partial'
         if name == 'stage':
@@ -369,13 +539,14 @@ class Package:
             if staged['root'] is None and not tree_problems(final, files, layout.owner_uid):
                 return 'after'
             return 'neither the staged nor the final release directory is exactly the planned package'
-        if name == 'fleet':
-            current = (observed['fleet'] or {}).get('sha256')
-            if current == plan['prior']['fleet_sha256']:
+        if name in plan['target']['files']:
+            path = self.managed_path(name)
+            current = (observed['files'][path] or {}).get('sha256')
+            if current == plan['prior']['files'][name]:
                 return 'before'
-            if current == plan['target']['fleet_sha256']:
+            if current == plan['target']['files'][name]:
                 return 'after'
-            return '%s is %s, neither the prior nor the planned inventory' % (layout.fleet, current)
+            return '%s is %s, neither the prior nor the planned file' % (path, current)
         if name == 'select':
             current = (observed['current'] or {}).get('target')
             if current == plan['prior']['selection']:
@@ -406,10 +577,10 @@ class Package:
                                (layout.transactions, 0o700), (directory + '/steps', 0o700)):
                 self.ex.mkdir(host, path, mode)
             self.ex.write(host, directory + '/record.json', self.record_bytes(identifier, plan), 0o600)
-            if plan['prior']['fleet_sha256'] is not None:
-                # The previous inventory, kept immutable for rollback.
-                self.ex.package_copy(host, layout.fleet, directory + '/previous-fleet.json',
-                                     plan['prior']['fleet_sha256'], 0o600)
+            for step, path, copy in layout.managed():
+                if plan['prior']['files'][step] is not None:
+                    # The previous file, kept immutable for rollback.
+                    self.ex.package_copy(host, path, '%s/%s' % (directory, copy), plan['prior']['files'][step], 0o600)
             self.ex.write(host, layout.pointer, self.pointer_bytes(identifier), 0o600)
         elif name == 'stage':
             if archive is None:
@@ -429,9 +600,13 @@ class Package:
             self.verify_entrypoints(path, plan)
         elif name == 'promote':
             self.ex.rename(host, self.staged_path(identifier), '%s/%s' % (layout.releases, revision))
-        elif name == 'fleet':
-            self.ex.mkdir(host, str(Path(layout.fleet).parent), 0o755)
-            self.ex.write(host, layout.fleet, self.candidate, 0o600)
+        elif name in plan['target']['files']:
+            data = self.candidates.get(name)
+            if data is None or sha256(data) != plan['target']['files'][name]:
+                raise PackageError('finishing needs the planned %s file; pass it again' % name)
+            path = self.managed_path(name)
+            self.ex.mkdir(host, str(Path(path).parent), 0o755)
+            self.ex.write(host, path, data, 0o600 if name == 'fleet' else 0o644)
         elif name == 'select':
             self.ex.replace_link(host, layout.current, plan['target']['selection'])
         elif name == 'commit':
@@ -482,15 +657,16 @@ class Package:
             finally:
                 self.lock = None
 
-    def install(self, archive, revision, fleet, expect, ci_run=None):
+    def install(self, revision, fleet, expect, run_id=None, archive=None, known_hosts=None):
         """Returns the committed journal, or None when the coordinator already matches."""
         if not re.fullmatch('[0-9a-f]{64}', expect or ''):
             raise PackageError('install needs the reviewed plan digest (--expect-plan-sha256)')
         def action():
             latest = Journal.load(self.state_dir, SERVICE)
             if latest is not None and latest.status not in FINAL:
-                raise PackageError('transaction %s is %s; run %s' % (latest.id, latest.status, self.next_command(latest.id, latest.status)))
-            plan, problems = self.build_plan(archive, revision, fleet, ci_run)
+                raise PackageError('transaction %s is %s; run %s'
+                                   % (latest.id, latest.status, self.next_command(latest.id, latest.status)))
+            plan, problems, trusted = self.build_plan(revision, fleet, run_id, archive, known_hosts)
             digest = durable.digest(plan)
             if digest != expect:
                 raise PackageError('the coordinator or inputs changed since the reviewed plan (%s, now %s); '
@@ -498,20 +674,20 @@ class Package:
             if problems:
                 raise PackageError('refused before any change:\n  ' + '\n  '.join(problems))
             if not plan['changes']:
-                self.out('no-op: %s already selects %s with this inventory' % (self.host, revision))
+                self.out('no-op: %s already selects %s with these files' % (self.host, revision))
                 return None
-            self.candidate = Path(fleet).read_bytes()
             journal = Journal.create(self.state_dir, SERVICE, revision, {'plan_sha256': digest}, [], None)
             journal.data['plan'] = plan
             journal.set_status('installing')
             self.out('transaction %s (%s)' % (journal.id, journal.path))
-            self.execute(journal, plan, archive)
+            self.execute(journal, plan, trusted)
             return journal
         return self.locked(action)
 
     def next_command(self, identifier, status):
         if status in ('unknown', 'installing'):
-            return '%s or %s' % (self.command('ops-package-reconcile', '--transaction', identifier, '--archive', '<archive>'),
+            return '%s or %s' % (self.command('ops-package-reconcile', '--transaction', identifier,
+                                              '--fleet', '<fleet.json>', '[--known-hosts <file>]'),
                                  self.command('ops-package-rollback', '--transaction', identifier))
         if status in ('refused', 'rolling-back', 'rollback-unknown'):
             return self.command('ops-package-rollback', '--transaction', identifier)
@@ -567,7 +743,7 @@ class Package:
             journal.save()
         return journal, plan
 
-    def reconcile(self, identifier=None, archive=None, fleet=None):
+    def reconcile(self, identifier=None, archive=None, fleet=None, known_hosts=None):
         """Finish an unfinished install whose every observed step state matches its record."""
         def action():
             journal, plan = self.load(identifier)
@@ -577,25 +753,33 @@ class Package:
                 journal.set_status(final['status'], observed='final record')
                 self.out('%s is already %s' % (journal.id, final['status']))
                 return journal
-            if 'fleet' in self.steps(plan):
-                self.candidate = Path(fleet).read_bytes() if fleet else None
-                if self.candidate is None or hashlib.sha256(self.candidate).hexdigest() != plan['target']['fleet_sha256']:
-                    if self.state(journal.id, plan, 'fleet') != 'after':
-                        raise PackageError('finishing needs the planned inventory; pass --fleet')
+            self.candidates = {'fleet': Path(fleet).read_bytes() if fleet else None,
+                               'known-hosts': Path(known_hosts).read_bytes() if known_hosts else None}
+            source = archive
+            artifact = plan['qualification'].get('artifact')
+            if source is None and artifact:
+                # The bytes this runner acquired from the qualified artifact when it planned.
+                cached = self.artifact_dir(artifact['id']) / ARCHIVE
+                source = cached if cached.is_file() else None
             journal.set_status('installing')
-            self.execute(journal, plan, archive)
+            self.execute(journal, plan, source)
             return journal
         return self.locked(action)
 
     def rollback(self, identifier=None):
-        """Restore the prior selection and inventory; keep the release and the records."""
+        """Restore the prior selection and managed files; keep the release and the records."""
         def action():
             journal, plan = self.load(identifier)
             layout, host = self.layout, self.host
             pointer = self.observe(plan['package']['revision'])['pointer']
             latest = json.loads(pointer)['id'] if pointer else None
-            if latest not in (journal.id, plan['prior']['transaction']):
-                raise PackageError('later package transaction %s exists; roll it back first' % latest)
+            # Every later transaction must already be rolled back.
+            later = latest
+            while later not in (journal.id, plan['prior']['transaction']):
+                final, record = self.remote_final(later), self.remote_record(later)
+                if not final or final.get('status') != 'rolled-back' or record is None:
+                    raise PackageError('later package transaction %s is not rolled back; roll it back first' % later)
+                later = record['plan']['prior']['transaction']
             final = self.remote_final(journal.id)
             if final is not None and final.get('status') == 'rolled-back':
                 journal.set_status('rolled-back')
@@ -603,12 +787,13 @@ class Package:
                 return journal
             observed = self.observe(plan['package']['revision'])
             selection = (observed['current'] or {}).get('target')
-            fleet = (observed['fleet'] or {}).get('sha256')
+            current = {step: (observed['files'][path] or {}).get('sha256') for step, path, _ in layout.managed()}
             conflicts = []
             if selection not in (plan['prior']['selection'], plan['target']['selection']):
                 conflicts.append('%s points at %s, changed outside this transaction' % (layout.current, selection))
-            if fleet not in (plan['prior']['fleet_sha256'], plan['target']['fleet_sha256']):
-                conflicts.append('%s is %s, changed outside this transaction' % (layout.fleet, fleet))
+            for step, path, _ in layout.managed():
+                if current[step] not in (plan['prior']['files'][step], plan['target']['files'][step]):
+                    conflicts.append('%s is %s, changed outside this transaction' % (path, current[step]))
             if conflicts:
                 journal.event('rollback refused', conflicts=conflicts)
                 raise PackageError('rollback refused; nothing was changed:\n  ' + '\n  '.join(conflicts))
@@ -622,16 +807,21 @@ class Package:
                     else:
                         self.ex.replace_link(host, layout.current, plan['prior']['selection'])
                     journal.event('done', step='restore-selection')
-                if fleet != plan['prior']['fleet_sha256']:
-                    journal.event('intent', step='restore-inventory')
-                    if plan['prior']['fleet_sha256'] is None:
-                        self.ex.remove(host, layout.fleet)
+                # The inventory first, then the pins it may name.
+                for step, path, copy in reversed(layout.managed()):
+                    prior = plan['prior']['files'][step]
+                    if current[step] == prior:
+                        continue
+                    journal.event('intent', step='restore-' + step)
+                    if prior is None:
+                        self.ex.remove(host, path)
                     else:
-                        previous = (self.ex.read(host, directory + '/previous-fleet.json') or '').encode()
-                        if hashlib.sha256(previous).hexdigest() != plan['prior']['fleet_sha256']:
-                            raise PackageError('the retained previous inventory of %s is missing or altered' % journal.id)
-                        self.ex.write(host, layout.fleet, previous, 0o600)
-                    journal.event('done', step='restore-inventory')
+                        previous = (self.ex.read(host, '%s/%s' % (directory, copy)) or '').encode()
+                        if sha256(previous) != prior:
+                            raise PackageError('the retained previous %s of %s is missing or altered'
+                                               % (path, journal.id))
+                        self.ex.write(host, path, previous, 0o600 if step == 'fleet' else 0o644)
+                    journal.event('done', step='restore-' + step)
                 if self.ex.package_tree(host, self.staged_path(journal.id))['root'] is not None:
                     journal.event('intent', step='discard-staging')
                     self.ex.remove_tree(host, self.staged_path(journal.id), layout.staging)
@@ -646,9 +836,9 @@ class Package:
                 raise PackageError('transport failed during rollback (%s); re-run %s'
                                    % (error, self.next_command(journal.id, 'rollback-unknown'))) from error
             journal.set_status('rolled-back')
-            self.out('rolled back %s: selection %s, inventory %s; release %s and the transaction records are kept'
-                     % (journal.id, plan['prior']['selection'] or 'absent', plan['prior']['fleet_sha256'] or 'absent',
-                        plan['package']['revision']))
+            self.out('rolled back %s: selection %s, files %s; release %s and the transaction records are kept'
+                     % (journal.id, plan['prior']['selection'] or 'absent',
+                        json.dumps(plan['prior']['files'], sort_keys=True), plan['package']['revision']))
             return journal
         return self.locked(action)
 
@@ -662,8 +852,8 @@ class Package:
         selection = (observed['current'] or {}).get('target')
         result = {'operation': 'ops-package-status', 'host': self.host, 'machine_id': observed['machine_id'],
                   'selection': selection, 'revision': None, 'integrity': None, 'qualification': None,
-                  'fleet_sha256': (observed['fleet'] or {}).get('sha256'), 'transaction': None,
-                  'phase': None, 'next': None,
+                  'files': {step: (observed['files'][path] or {}).get('sha256') for step, path, _ in layout.managed()},
+                  'transaction': None, 'phase': None, 'next': None,
                   'services': 'not changed by package transactions; service adoption is a product deployment'}
         if selection and SELECTION.fullmatch(selection):
             revision = selection.split('/')[1]
@@ -674,26 +864,27 @@ class Package:
                 result['integrity'] = 'missing manifest'
             else:
                 files = {name: [digest, bundle.mode(name)] for name, digest in json.loads(manifest)['files'].items()}
-                files['operations.json'] = [hashlib.sha256(manifest.encode()).hexdigest(), 0o644]
+                files['operations.json'] = [sha256(manifest.encode()), 0o644]
                 problems = tree_problems(self.ex.package_tree(self.host, path), files, layout.owner_uid)
                 result['integrity'] = 'verified' if not problems else 'changed: ' + '; '.join(problems[:3])
+                # Provenance is the record of the transaction that promoted these exact files.
+                owner = self.promoted_by(revision, files['operations.json'][0])
+                record = owner and self.remote_record(owner)
+                result['qualification'] = record['plan']['qualification'] if record else 'unrecorded'
         if observed['pointer']:
             identifier = json.loads(observed['pointer'])['id']
-            record = self.remote_record(identifier)
             final = self.remote_final(identifier)
             result['transaction'] = identifier
             result['phase'] = final['status'] if final else 'unfinished'
-            if record:
-                if record['plan']['target']['selection'] == selection:
-                    result['qualification'] = record['plan']['qualification']
-                if not final:
-                    result['next'] = self.next_command(identifier, 'unknown')
+            if not final:
+                result['next'] = self.next_command(identifier, 'unknown')
         latest = Journal.load(self.state_dir, SERVICE)
         if latest is not None:
             result['runner'] = {'transaction': latest.id, 'status': latest.status}
             if latest.status not in FINAL and result['next'] is None:
                 result['next'] = self.next_command(latest.id, latest.status)
-        for key in ('selection', 'revision', 'integrity', 'qualification', 'fleet_sha256', 'transaction', 'phase',
+        for key in ('selection', 'revision', 'integrity', 'qualification', 'files', 'transaction', 'phase',
                     'services', 'next'):
-            self.out('%s: %s' % (key, json.dumps(result[key]) if isinstance(result[key], dict) else result[key]))
+            value = result[key]
+            self.out('%s: %s' % (key, json.dumps(value, sort_keys=True) if isinstance(value, dict) else value))
         return result
