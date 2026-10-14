@@ -11,7 +11,7 @@ repository = "https://github.com/valargroup/wallet-pir"
 admission = ["dep:axum", "dep:tokio", "dep:pir-admission"]
 
 [dependencies]
-pir-admission = { package = "zakura-pir-admission", version = "=0.0.1-rc0", git = "https://github.com/zakura-core/wallet-libraries", rev = "dad2df94b1b2d4f87912b128b1927d6d1779d563", optional = true }
+pir-admission = { package = "zakura-pir-admission", version = "=0.0.1-rc0", git = "https://github.com/zakura-core/wallet-libraries", rev = "2dd72aa27368d6e976d43accd4abd40edc1fcc7b", optional = true }
 axum = { version = "0.7", optional = true }
 hex = "0.4"
 rand = "0.8"

@@ -10,7 +10,7 @@ description = "Private lookups for immutable Ironwood receiver publications"
 server = ["receiver-protocol-pir/server", "dep:ipir-sp"]
 
 [dependencies]
-receiver-protocol-pir = { package = "zakura-receiver-pir", version = "=0.0.1-rc0", git = "https://github.com/zakura-core/wallet-libraries", rev = "dad2df94b1b2d4f87912b128b1927d6d1779d563" }
+receiver-protocol-pir = { package = "zakura-receiver-pir", version = "=0.0.1-rc0", git = "https://github.com/zakura-core/wallet-libraries", rev = "2dd72aa27368d6e976d43accd4abd40edc1fcc7b" }
 hex = "0.4"
 receiver-directory = { path = "../receiver-directory" }
 ipir-sp = { version = "=0.1.0-rc.7", optional = true }
