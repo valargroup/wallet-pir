@@ -25,6 +25,34 @@ Operations bundles include all module Terraform files and cloud-init resources;
 private state, plans, populated variables and provider caches are excluded.
 Immutable evidence and historical source manifests retain their original paths.
 
+## Current preparation receipt
+
+Read-only validation on 2026-10-14 established production state lineage
+`47c0cd92-6d01-19e2-c94f-9cf7e524bf8a`, serial 35, with 45 managed instances.
+The old and new configurations against that protected snapshot preserve every
+ID, value and root output; the new configuration declares 29 instance moves
+and zero provider actions. All four deployed automatic variable files were
+retained privately. Coordinator health and readiness returned HTTP 200, and
+query ingress reported ready. Ten running coordinator executable identities
+were captured without restarting a process.
+
+Coordinator SSH is now verified: its hostname resolves to the already trusted
+IP, and the presented ED25519 key matched that trusted identity before adding
+the hostname entry. The earlier SSH gate below describes the preparation
+failure and remains the procedure if trust changes again.
+
+Fresh provider reads of both configurations also produce zero provider
+actions, but report one existing state-metadata difference: the Transparent
+worker tag's `droplets_count` and `total_resource_count` are stored as 6 and
+currently read as 2. The strict comparator refuses this reported drift.
+Reconcile those computed counters in a separately approved, locked state-only
+refresh before requiring the clean baseline and moves-only activation plan.
+Do not change the tag or its memberships to make the counters match old state.
+
+The provider versions remain DigitalOcean 2.100.0 and Cloudflare 5.24.0.
+The lock file includes the registry-verified Mac and Linux package hashes;
+Linux CI uses the same pinned versions as the local validation.
+
 ## Read-only live gate
 
 The coordinator failed SSH host-key verification during preparation. Have its
