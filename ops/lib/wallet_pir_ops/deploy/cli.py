@@ -95,6 +95,22 @@ Transparent schema recipes run on the pinned coordinator under the same lock.
       Every mutation holds the production lock, journals prior bytes and prints the
       rollback command.
 
+  fleet [--complete]
+      Configured roles and ancillary units; --complete also requires the whole fleet.
+  ancillary-status NAME
+      Read-only systemd state of one shared routing or supervision unit.
+
+  ops-package-{plan,preflight} --sha REV --archive F --fleet F --ci-run F [--host H]
+  ops-package-install ...same... --expect-plan-sha256 H
+  ops-package-status [--host H]
+  ops-package-reconcile [--transaction ID] [--archive F] [--fleet F]
+  ops-package-rollback [--transaction ID]
+      Install the operations package on the coordinator as root-owned
+      /opt/wallet-pir-ops/releases/<sha> selected by the `current` link, and the
+      operator inventory /etc/wallet-pir/fleet.json. Journaled under the production
+      lock; never touches a unit. --ci-run is the GitHub run object of the full-CI
+      run on main that produced the archive (`gh api repos/O/R/actions/runs/ID`).
+
 The inventory (hosts, SSH, lock) is --inventory or WALLET_PIR_DEPLOY_INVENTORY.
 """
 
@@ -205,7 +221,28 @@ def parser():
     top.add_argument('--state-dir', default=str(default_state_dir()))
     top.add_argument('--baseline', help='baseline file (default <state-dir>/baselines/<service>.json)')
     commands = top.add_subparsers(dest='command', required=True)
-    commands.add_parser('fleet', help='read configured hosts and roles; makes no host connections')
+    command = commands.add_parser('fleet', help='read configured hosts and roles; makes no host connections')
+    command.add_argument('--complete', action='store_true',
+                         help='also require every registered service, role, responsibility and ancillary kind')
+    command = commands.add_parser('ancillary-status', help='read-only state of one ancillary unit')
+    command.add_argument('name')
+    for name in ('ops-package-plan', 'ops-package-preflight', 'ops-package-install'):
+        command = commands.add_parser(name)
+        command.add_argument('--sha', required=True, help='full source revision of the archive')
+        command.add_argument('--archive', required=True, help='wallet-pir-ops.tar.gz from that revision\'s full CI')
+        command.add_argument('--fleet', required=True, help='the complete operator inventory to install')
+        command.add_argument('--ci-run', help='GitHub run object (JSON) of the full-CI run on main')
+        command.add_argument('--host', help='coordinator inventory host (default: the remote lock host)')
+        if name == 'ops-package-install':
+            command.add_argument('--expect-plan-sha256', required=True)
+    for name in ('ops-package-status', 'ops-package-reconcile', 'ops-package-rollback'):
+        command = commands.add_parser(name)
+        command.add_argument('--host', help='coordinator inventory host (default: the remote lock host)')
+        if name != 'ops-package-status':
+            command.add_argument('--transaction')
+        if name == 'ops-package-reconcile':
+            command.add_argument('--archive', help='the planned archive, if staging must be finished')
+            command.add_argument('--fleet', help='the planned inventory, if it is not yet installed')
     transparent_cli().register(commands)
     for name in ('plan', 'preflight', 'deploy'):
         command = commands.add_parser(name)
@@ -241,7 +278,58 @@ def parser():
     return top
 
 
-def main(argv=None, executor=None, out=print, **options):
+def run_package(args, inventory, executor, layout, out):
+    """One `ops-package-*` command; see `package.Package`."""
+    from . import package
+    log = (lambda message: None) if args.json else out
+    target = package.Package(inventory, executor, args.state_dir, args.host, layout, out=log,
+                             inventory_path=args.inventory)
+    command = args.command[len('ops-package-'):]
+    if command in ('plan', 'preflight', 'install'):
+        ci_run = json.loads(Path(args.ci_run).read_text()) if args.ci_run else None
+    if command in ('plan', 'preflight'):
+        if command == 'plan':
+            target.ex.check_identity(target.host)
+            plan, problems = target.build_plan(args.archive, args.sha, args.fleet, ci_run)
+        else:
+            plan, problems = target.preflight(args.archive, args.sha, args.fleet, ci_run)
+        digest = package.durable.digest(plan)
+        install = target.command('ops-package-install', '--sha', args.sha, '--archive', args.archive,
+                                 '--fleet', args.fleet, '--ci-run', args.ci_run or '<run.json>',
+                                 '--expect-plan-sha256', digest)
+        if args.json:
+            out(json.dumps({'operation': args.command, 'plan': plan, 'plan_sha256': digest,
+                            'problems': problems, 'install': install}, sort_keys=True))
+        else:
+            target.describe(plan, problems)
+            out('plan sha256: ' + digest)
+            out('install: ' + install)
+        return 1 if command == 'preflight' and problems else 0
+    if command == 'status':
+        result = target.status()
+        if args.json:
+            out(json.dumps(result, sort_keys=True))
+        return 0
+    if command == 'install':
+        journal = target.install(args.archive, args.sha, args.fleet, args.expect_plan_sha256, ci_run)
+    elif command == 'reconcile':
+        journal = target.reconcile(args.transaction, args.archive, args.fleet)
+    else:
+        journal = target.rollback(args.transaction)
+    result = {'operation': args.command, 'transaction': journal.id if journal else None,
+              'phase': journal.status if journal else 'no-op',
+              'rollback': journal and target.command('ops-package-rollback', '--transaction', journal.id),
+              'status': target.command('ops-package-status')}
+    if args.json:
+        out(json.dumps(result, sort_keys=True))
+    else:
+        out('status: ' + result['status'])
+        if journal and journal.status == 'committed':
+            out('rollback: ' + result['rollback'])
+    return 0
+
+
+def main(argv=None, executor=None, out=print, package_layout=None, **options):
     """`executor` and `options` (passed to `Deployer`) let tests substitute a fake fleet and clock."""
     args = parser().parse_args(argv)
     def error_result(message, phase='failed'):
@@ -252,10 +340,13 @@ def main(argv=None, executor=None, out=print, **options):
             out('error: ' + message)
     try:
         from ..bundle import check_installed
-        product_command = args.command.startswith(('schema-', 'txid-display-'))
+        product_command = args.command.startswith(('schema-', 'txid-display-', 'ops-package-'))
         mutation = (args.command in ('deploy', 'rollback') or getattr(args, 'stage', False)
                     or product_command and not args.command.endswith(('-plan', '-preflight', '-status', '-summary', '-recipe')))
-        check_installed(mutation=mutation, revision=getattr(args, 'sha', None))
+        # A clean installed package may install a newer package revision; every
+        # binary change still names the same source revision as the package.
+        package_command = args.command.startswith('ops-package-')
+        check_installed(mutation=mutation, revision=None if package_command else getattr(args, 'sha', None))
         if args.command.startswith(('schema-', 'txid-display-')):
             if args.json:
                 raise DeployError('product recipes already provide their own JSON receipts; omit --json')
@@ -264,7 +355,21 @@ def main(argv=None, executor=None, out=print, **options):
             raise DeployError('pass --inventory or set WALLET_PIR_DEPLOY_INVENTORY')
         if args.command == 'fleet':
             from ..fleet import Fleet
-            out(json.dumps(Fleet.load(args.inventory, args.descriptors).describe(), sort_keys=True))
+            out(json.dumps(Fleet.load(args.inventory, args.descriptors).describe(args.complete), sort_keys=True))
+            return 0
+        if package_command:
+            inventory = descriptors.load_inventory(args.inventory)
+            return run_package(args, inventory, executor or SSHExecutor(inventory), package_layout, out)
+        if args.command == 'ancillary-status':
+            inventory = descriptors.load_inventory(args.inventory)
+            entry = inventory.ancillary.get(args.name)
+            if entry is None:
+                raise DeployError('unknown ancillary unit %r; known: %s' % (args.name, sorted(inventory.ancillary)))
+            state = (executor or SSHExecutor(inventory)).probe_unit(entry['host'], entry['unit'])
+            out(json.dumps({'name': args.name, 'host': entry['host'], 'unit': entry['unit'],
+                            'consumers': entry.get('consumers'), 'active_state': state['active_state'],
+                            'load_state': state['load_state'], 'binary_sha256': state['exe_sha256']},
+                           sort_keys=True))
             return 0
         log = (lambda message: None) if args.json else out
         services = descriptors.load_descriptors(args.descriptors)

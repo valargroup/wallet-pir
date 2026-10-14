@@ -71,7 +71,7 @@ class FleetViewTests(unittest.TestCase):
     def test_two_products_cannot_own_the_same_host_unit(self):
         fleet = ConfiguredFleet.load(ROOT / 'enhance/ops/deploy/deploy-inventory.example.json')
         fleet.inventory.services['transparent-history']['roles']['worker'][0]['unit'] = 'enhance-pir-worker.service'
-        with self.assertRaisesRegex(ValueError, 'two services own'):
+        with self.assertRaisesRegex(ValueError, 'both own enhance-pir-worker.service'):
             fleet.describe()
 
 
