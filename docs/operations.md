@@ -78,6 +78,9 @@ transaction under the production lock:
 - `/opt/wallet-pir-ops/current`: a link to `releases/<full-sha>`, replaced atomically.
 - `/etc/wallet-pir/fleet.json`: the maintained operator inventory (`0600`), outside
   every release, validated as a complete fleet by the target package itself.
+- `/etc/wallet-pir/known_hosts`: optional reviewed public host-key pins (`0644`).
+  Pins come from a trusted census or from Roman, never from `ssh-keyscan`; the file
+  never holds a private key. Inventory entries that name it must pin its digest.
 - `/opt/wallet-pir-ops/staging/<transaction>`: the transaction's own partial copy.
 - `/opt/wallet-pir-ops/transactions/<transaction>/`: the coordinator's recovery
   records: the plan, the previous inventory's bytes, per-step intent and completion
@@ -89,28 +92,36 @@ restarts nothing. Each product's locked deployment adopts services separately, a
 status documents must keep the two apart.
 
 ```sh
-gh api repos/valargroup/wallet-pir/actions/runs/<run-id> > run.json
 python3 <release>/ops/scripts/wallet-pir-deploy.py --inventory <inventory> ops-package-plan \
-    --sha <full-revision> --archive wallet-pir-ops.tar.gz --fleet fleet.json --ci-run run.json
+    --sha <full-revision> --ci-run-id <full-CI run on main> --fleet fleet.json [--known-hosts known_hosts]
 python3 <release>/ops/scripts/wallet-pir-deploy.py --inventory <inventory> ops-package-preflight ...same...
 python3 <release>/ops/scripts/wallet-pir-deploy.py --inventory <inventory> ops-package-install ...same... \
     --expect-plan-sha256 <reviewed plan digest>
 python3 <release>/ops/scripts/wallet-pir-deploy.py --inventory <inventory> ops-package-status
 ```
 
-Plan and preflight change nothing. The plan binds the archive and manifest digests,
-the source revision, the full-CI run (`provenance`, separate from the artifact's
-`integrity`), the coordinator's machine id, the candidate inventory's digest, the
-current selection, inventory, release directory and latest package transaction,
-and the planned changes. They refuse a dirty-source archive, a run that is not a
-successful full CI on main for that revision, altered, missing or unsafe files,
-unsafe or foreign-owned package paths, a different release already at the final
-path, staging left by another transaction, an unfinished transaction, an inventory
-that is not a complete fleet, and too little space. Install re-plans under the
+Plan and preflight change nothing on the coordinator. The archive is the one inside
+the `wallet-pir-ops-<sha>` artifact of the named run: the run must be a successful
+full CI on main for that revision, and the artifact ZIP is downloaded with `gh` and
+checked against the digest GitHub reports (or, for an artifact without one, the
+downloaded bytes are used as acquired). A local `--archive` is accepted only when it
+equals that archive; caller-supplied run metadata or local bytes never qualify a
+package. The plan binds the archive and manifest digests, the source revision, the
+run and artifact identities (`provenance`, separate from the artifact's
+`integrity`), the coordinator's machine id, the candidate inventory and pins, the
+current selection, managed files, release directory and latest package transaction,
+and the planned changes. They refuse a dirty-source archive, altered, missing or
+unsafe files, unsafe or foreign-owned package paths, a different or unrecorded
+directory at the final path, staging left by another transaction, an unfinished
+transaction, an inventory that is not a complete fleet, pins that are not public
+host keys or do not match the inventory, and too little space. Install re-plans under the
 lock, behind the Transparent schema fence, and refuses unless the digest equals
 the reviewed one. It stages, checks the staged tree's files, modes and owner, runs
 its entrypoints in place, then promotes the directory, installs the inventory and
-selects the release.
+selects the release. A release kept by an earlier rollback is selected again
+without staging when the transaction that promoted it is recorded and its files
+still match; that rehearsal (install, rollback, plan, install) reuses the exact
+retained bytes and never overwrites the directory.
 
 A clean installed package may install a newer package revision. Binary deploys
 keep requiring the operations package and the binary archive to name the same
@@ -125,11 +136,13 @@ where each step's observed state is exactly its recorded before or after state
 A refusal after the first step (for example an altered staged file) selects
 nothing and needs rollback. Rollback refuses if the selection or inventory changed
 outside the transaction; otherwise it restores the previous selection and
-inventory, or removes them when the transaction installed the first ones. It keeps
-the release directory and every record. Only the latest transaction rolls back.
+inventory and pins, or removes them when the transaction installed the first ones.
+It keeps the release directory and every record. An earlier transaction rolls back
+only after every later one has.
 Rollback and reconcile work from another runner using the coordinator's records.
 `ops-package-status` reports the selected revision, whether its files still match
-its manifest, its provenance, the latest transaction and the next command.
+its manifest (integrity), the provenance recorded by the transaction that promoted
+it, the managed files' digests, the latest transaction and the next command.
 
 ## Fleet configuration and lifecycle
 
@@ -148,8 +161,13 @@ once under `ancillary` with the services that consume them, inspected only
 reach the same address; explicit CUDA variants on hosts marked
 `"accelerator": "cuda"`, verified through health; and no field that copies
 controller-owned membership. References to `retired_hosts` and unknown hosts are
-refused. A product inventory that lists only its own services keeps working for
-that product's commands. The example inventory is complete in shape but uses
+refused. A role repeated on one host (the history archive and recent workers) is
+keyed `role@host:unit`. A host may name its own existing `key` and a
+`known_hosts`/`known_hosts_sha256` pair, falling back to the inventory-wide `ssh`
+settings; only the private-key path is recorded, never key material. A product
+inventory that lists only its own services keeps working for that product's
+commands. `status SERVICE --only ROLE[@HOST]` and `ancillary-status [NAME]` are
+read-only and report an unreachable host as a result instead of leaving it out. The example inventory is complete in shape but uses
 documentation values; it is not the live fleet.
 
 ```sh

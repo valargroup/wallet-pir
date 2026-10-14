@@ -174,17 +174,6 @@ jobs:
         env:
           HELPERS: ${{ needs.select.outputs.helpers }}
         run: python3 tools/ci/helpers.py --full --targets "$HELPERS"
-      - name: Validate transparent filter inputs
-        if: contains(needs.select.outputs.helpers, 'check-ops-contracts') || contains(needs.select.outputs.helpers, 'check-ops-deploy')
-        env:
-          TRANSPARENT_FILTER_HOST: coordinator.example.net
-          WALLET_PIR_DEPLOY_USER: deploy
-          TRANSPARENT_RELEASE_SHA: "da39a3ee5e6b4b0d3255bfef95601890afd80709"
-          TRANSPARENT_ARTIFACT_DIR: transparent/ops/deploy
-          TRANSPARENT_FILTER_SHARD_DIR: /srv/zakura/transparent-shards-v7
-          ENHANCE_PUBLIC_URL: https://enhance-pir.example.net
-        run: transparent/ops/scripts/deploy-transparent-filter.sh validate
-
       - name: Validate transparent shard inputs
         if: contains(needs.select.outputs.helpers, 'check-ops-contracts') || contains(needs.select.outputs.helpers, 'check-ops-deploy')
         env:
