@@ -161,10 +161,10 @@ resource "digitalocean_firewall" "transparent_worker" {
     )
   }
 
-  # The txid display proof of concept's worker port: the router proxies
-  # /v1/txid/ and the display controller verifies workers. Off unless the
-  # deploy's `firewall` phase sets the variable, so the plan is otherwise
-  # unchanged.
+  # The txid display worker port, shared by every worker-tagged host. The
+  # public router proxies /v2/txid/ to the one-query site through this rule
+  # (the site's own firewall admits only the coordinator), so production keeps
+  # the variable true in txid-display.auto.tfvars.
   dynamic "inbound_rule" {
     for_each = var.transparent_txid_display_port_enabled ? [8095] : []
     content {

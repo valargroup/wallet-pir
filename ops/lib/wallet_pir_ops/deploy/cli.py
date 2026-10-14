@@ -88,20 +88,20 @@ Transparent schema recipes run on the pinned coordinator under the same lock.
 
   txid-display-{plan,preflight,status,ingest-status} --request F --request-sha256 H
   txid-display-deploy --request F --request-sha256 H --expect-plan-sha256 H
-      --phase stage|firewall|router-hook|workers|route|controller
+      --phase stage|workers|route|controller
       [workers: --publication-map-sha256 H [--replace-active H]]
   txid-display-{ingest-start,bootstrap,verify,measure-start,retire} ... --expect-plan-sha256 H
   txid-display-{ingest-stop,measure-stop,stop} --request F --request-sha256 H
   txid-display-rollback --request F --request-sha256 H [--transaction ID]
-      Side-by-side txid display proof of concept (transparent/ops/lib/txid_display_poc.py).
+      One txid display site beside history (transparent/ops/lib/txid_display_poc.py).
       Every mutation holds the production lock, journals prior bytes and prints the
-      rollback command; Terraform phases need a second run with --terraform-plan-sha256.
+      rollback command.
 
 The inventory (hosts, SSH, lock) is --inventory or WALLET_PIR_DEPLOY_INVENTORY.
 """
 TXID_DISPLAY = ('plan', 'preflight', 'deploy', 'status', 'stop', 'rollback', 'retire', 'ingest-start',
                 'ingest-status', 'ingest-stop', 'bootstrap', 'verify', 'measure-start', 'measure-stop')
-TXID_DISPLAY_PHASES = ('stage', 'firewall', 'router-hook', 'workers', 'route', 'controller')
+TXID_DISPLAY_PHASES = ('stage', 'workers', 'route', 'controller')
 
 
 def load_release():
@@ -381,8 +381,6 @@ def parser():
         command.add_argument('--request-sha256', required=True)
         if name in ('deploy', 'ingest-start', 'bootstrap', 'verify', 'measure-start', 'retire'):
             command.add_argument('--expect-plan-sha256', required=True)
-        if name in ('deploy', 'rollback', 'retire'):
-            command.add_argument('--terraform-plan-sha256', help='apply this reviewed saved Terraform plan')
         if name == 'deploy':
             command.add_argument('--phase', choices=TXID_DISPLAY_PHASES, required=True)
             command.add_argument('--archive', help='stage: the CI transparent-txid-display bundle')

@@ -3,9 +3,7 @@
 
 Only hosts are fake: requests, rendering, journals, the release bundle and the
 CLI are the repository's own. The fake models files, systemd units, the
-adapter on the coordinator, the history router's re-render, Caddy and the
-Terraform wrapper, and refuses to run the wrapper while the production lock
-is held.
+adapter on the coordinator and the site host's Caddy.
 """
 import contextlib
 import hashlib
@@ -39,24 +37,22 @@ RELEASE = load('release_txid_test', ROOT / 'tools/ci/release.py')
 
 SHA = 'a' * 40
 NOW = 1_800_000_000.0
-OLD_ADAPTER = b'#!/usr/bin/env python3\n# the deployed history adapter before the hook\n'
-GLOB = '/etc/caddy/txid-display/*.caddy'
-IMPORT = '\timport ' + GLOB
-HOSTS = {'coordinator': 'coordinator', 'archive': 'archive-03', 'recent': 'recent-01', 'router': 'router-01'}
-VPC = {'archive': '10.142.0.5', 'recent': '10.142.0.6'}
+HOSTS = {'coordinator': 'coordinator', 'archive': 'archive-03'}
+# A host that ran an earlier recent-replica worker, for hosts.former_recent.
+FORMER_HOST = 'recent-01'
+VPC = {'archive': '10.142.0.5'}
 LOAD = '/opt/transparent-5qps-20260929/status.json'
 ADAPTER = '/srv/transparent-activity/ops/sources/%s/transparent/ops/scripts/transparent-live-fleet.py' % ('e' * 40)
 FLEET = '/opt/transparent-publisher/v11/fleet.json'
 MEMBERSHIP = '/opt/transparent-publisher/v11/state/membership.json'
 HISTORY_EXEC = '{ path=/usr/bin/python3 ; argv[]=/usr/bin/python3 -B %s %s --reconcile }' % (ADAPTER, FLEET)
-WRAPPER = '/opt/enhance-pir/ops/wallet-pir-terraform.sh'
-TF_ROOT = '/opt/enhance-pir/infra/production'
 MAP = 'c' * 64
 CANDIDATE = '/srv/zakura/txid-display-poc/root/candidate-100-%s-1' % ('d' * 64)
-ROUTER = ('{\n\tservers {\n\t\tmetrics\n\t}\n}\n' + ''.join(
-    site + ' {\n\trequest_body {\n\t\tmax_size 1MB\n\t}\n\t@recent path_regexp ^/v1/shards/(1)/\n'
-    '\t@metadata path /v1/shards /v1/shards/init\n\thandle {\n\t\trespond 404\n\t}\n}\n'
-    for site in ('pir.example', 'http://10.142.0.9:8080')))
+SITE = {'name': 'k8', 'hostname': 'txid.example'}
+N = P.names(SITE)
+RELEASE_DIR = '/opt/transparent-txid-display-k8/releases/' + SHA
+# The site host's Caddyfile before the first route.
+DEFAULT_CADDY = ':80 {\n\troot * /usr/share/caddy\n\tfile_server\n}\n'
 
 
 def sha256(data):
@@ -68,23 +64,19 @@ def binary_bytes(name):
 
 
 def request():
+    """A site: its own hostname, coordinator names and journal, one combined worker."""
     return {
         'schema': P.SCHEMA, 'source_sha': SHA,
         'release': {'archive_sha256': 'b' * 64, 'ci_run': 7,
                     'binaries': {name: sha256(binary_bytes(name)) for name in P.BINARIES},
                     'files': {name: sha256((ROOT / path).read_bytes()) for name, path in P.RELEASE_FILES.items()}},
         'hosts': {'coordinator': {'inventory': 'coordinator'},
-                  'archive': {'inventory': 'archive-03', 'vpc_ip': VPC['archive']},
-                  'recent': {'inventory': 'recent-01', 'vpc_ip': VPC['recent']},
-                  'router': {'inventory': 'router-01'}},
-        'ports': {'worker': 8095, 'controller_status': 8099},
+                  'archive': {'inventory': 'archive-03', 'vpc_ip': VPC['archive']}},
+        'ports': {'worker': 8095, 'controller_status': 8098},
         'units': {
             'archive': {'cache_bytes': 4 << 30, 'memory_max': '6G', 'cpu_quota': '200%', 'cpu_weight': 20, 'nice': 10,
                         'oom_score_adjust': 1000, 'build_threads': 2, 'build_slots': 1, 'query_slots': 2,
                         'retain_revisions': 2, 'disk_cache_bytes': 8 << 30, 'ready_timeout_seconds': 1800},
-            'recent': {'cache_bytes': 512 << 20, 'memory_max': '1.5G', 'cpu_quota': '100%', 'cpu_weight': 20,
-                       'nice': 10, 'oom_score_adjust': 1000, 'build_threads': 1, 'build_slots': 1, 'query_slots': 2,
-                       'retain_revisions': 1, 'disk_cache_bytes': None, 'ready_timeout_seconds': 600},
             'controller': {'memory_max': '4G', 'cpu_quota': '200%', 'cpu_weight': 20, 'nice': 10},
             'ingest': {'memory_max': '12G', 'cpu_quota': '400%', 'cpu_weight': 20, 'io_weight': 20, 'nice': 10,
                        'workers': 4},
@@ -97,39 +89,11 @@ def request():
                        'recent_window': 90000, 'reorg_margin': 100, 'max_archive_shards': 24, 'archives': 15,
                        'replay_seals': 4, 'rpc_url': 'http://127.0.0.1:8232',
                        'rpc_cookie': '/root/.cache/zakura/.cookie'},
-        'router': {'import_glob': GLOB, 'live_fleet_sha256': sha256(OLD_ADAPTER)},
-        'terraform': {'wrapper': WRAPPER, 'root': TF_ROOT},
+        'site': dict(SITE),
         'history': {'load_status': LOAD, 'adapter': ADAPTER, 'fleet': FLEET, 'membership': MEMBERSHIP},
-        'measure': {'output': '/srv/zakura/txid-display-poc/measure', 'public_url': 'https://pir.example'},
-        'baseline': {'coordinator': {'mem_available_bytes': 48 << 30}, 'archive': {'mem_available_bytes': 12 << 30},
-                     'recent': {'mem_available_bytes': 12 << 30}},
+        'measure': {'output': '/srv/zakura/txid-display-poc/measure', 'public_url': 'https://txid.example'},
+        'baseline': {'coordinator': {'mem_available_bytes': 48 << 30}, 'archive': {'mem_available_bytes': 12 << 30}},
     }
-
-
-def combined_request():
-    """The combined layout: no recent host, one combined worker on the archive host."""
-    value = request()
-    for field in ('hosts', 'units', 'baseline'):
-        del value[field]['recent']
-    return value
-
-
-SITE = {'name': 'k8', 'hostname': 'txid.example'}
-SITE_NAMES = P.names(SITE)
-
-
-def site_request():
-    """A second lineage beside the router's: its own hostname, coordinator names and journal."""
-    value = combined_request()
-    for field in ('router', 'terraform'):
-        del value[field]
-    del value['hosts']['router']
-    value['site'] = dict(SITE)
-    value['ports']['controller_status'] = 8098
-    value['journal']['data_dir'] = '/srv/zakura/txid-display-poc/journal-k8'
-    value['publication']['root'] = '/srv/zakura/txid-display-poc/root-k8'
-    value['measure'] = {'output': '/srv/zakura/txid-display-poc/measure-k8', 'public_url': 'https://txid.example'}
-    return value
 
 
 class Lock:
@@ -154,8 +118,6 @@ class Fake(Executor):
         self.wait_results = {}
         self.caddy_rejects = None
         self.reload_fails = False
-        self.summaries = []
-        self.applied = []
         self.active, self.prepared = {}, {}
         # Prepare calls that give up before the worker finishes (txid-control's 600 s wait).
         self.slow_prepares = 0
@@ -163,8 +125,7 @@ class Fake(Executor):
         self.calls = []
         self.history = {'freshness_seconds': 3, 'ready_replicas': 2}
         self.worker_binary = sha256(binary_bytes('transparent-txid-server'))
-        self.reconciler_renders = True
-        # The role each worker reports; the combined layout overrides it.
+        # The role each worker reports.
         self.roles = dict(P.ROLES)
         # Whether a site's Caddy holds its certificate yet.
         self.certificate = True
@@ -200,7 +161,7 @@ class Fake(Executor):
         self.put(coordinator, MEMBERSHIP, json.dumps({'routed_recent': 2, 'updated_unix': now}))
         self.put(coordinator, LOAD, json.dumps({'mode': 'running', 'utc': '2027-01-15T08:00:00+00:00',
                                                 'trailing_60s': {'exact': 300, 'errors': 0}}))
-        for host in HOSTS.values():
+        for host in (*HOSTS.values(), FORMER_HOST):
             self.put(host, '/proc/meminfo', 'MemTotal:       16777216 kB\nMemAvailable:   12582912 kB\n')
             self.disk[host] = (1000, 500)
         # The m-8vcpu-64gb coordinator.
@@ -274,36 +235,21 @@ class Fake(Executor):
                 raise RemoteError('%s: unit %s not found' % (host, unit))
             state.update(load='loaded', active='active', sub='running',
                          fragment='/etc/systemd/system/' + unit)
-            if unit == P.WORKER_UNIT:
+            worker = next((key for key, name in HOSTS.items() if name == host and key in P.WORKERS), None)
+            if unit == P.WORKER_UNIT and worker is not None:
                 # A worker starts from its durable record, or serves nothing.
-                worker = next(key for key, name in HOSTS.items() if name == host and key in P.WORKERS)
                 record = self.text(host, P.ACTIVE_RECORD)
                 if record is None:
                     self.active.pop(worker, None)
                 else:
                     self.active[worker] = json.loads(record)['map_sha256']
-            if unit in (P.CONTROLLER_UNIT, SITE_NAMES.CONTROLLER_UNIT):
-                port = 8099 if unit == P.CONTROLLER_UNIT else 8098
-                self.listen.setdefault(host, []).append('127.0.0.1:%d' % port)
-            if unit == 'transparent-replica-reconciler.service' and self.reconciler_renders:
-                self.render_history()
+            if unit == N.CONTROLLER_UNIT:
+                self.listen.setdefault(host, []).append('127.0.0.1:8098')
         elif verb == 'reload':
             if self.reload_fails:
                 raise RemoteError('caddy reload failed')
         else:
             raise AssertionError('unexpected systemctl %s' % (args,))
-
-    def render_history(self):
-        """The history adapter's next render: the import before metadata in each site."""
-        fleet = json.loads(self.text('coordinator', FLEET))
-        lines = [line for line in ROUTER.split('\n')]
-        imports = fleet.get('route_imports') or []
-        rendered = []
-        for line in lines:
-            if line.startswith('\t@metadata'):
-                rendered += ['\timport ' + glob for glob in imports]
-            rendered.append(line)
-        self.files[('router-01', P.CADDYFILE)] = '\n'.join(rendered).encode()
 
     def http_get(self, host, url, timeout=5):
         if url == P.HISTORY_STATUS:
@@ -315,11 +261,6 @@ class Fake(Executor):
                     return 503, '{}'
                 return 200, json.dumps({'ready': True, 'role': self.roles[key], 'map_sha256': self.active[key],
                                         'warm': True})
-        if url == 'https://pir.example/v1/txid/map':
-            routed = self.text('router-01', '/etc/caddy/txid-display/routes.caddy')
-            return (200, json.dumps({'chunks': []})) if routed and 'withdrawn' not in routed else (404, '')
-        if url == 'https://pir.example/v1/shards':
-            return 200, json.dumps({'shards': []})
         if url == 'https://txid.example/v2/txid/map':
             site = self.text('archive-03', P.CADDYFILE) or ''
             served = 'txid.example {' in site and 'handle /v2/txid/archive/*' in site
@@ -427,23 +368,10 @@ class Fake(Executor):
             if self.caddy_rejects and self.caddy_rejects(argv[3], config):
                 return 1, 'Error: adapting config'
             return 0, 'Valid configuration'
-        if command == 'python3' and argv[1] == '-c':
-            assert not self.locked, 'Terraform summary under the production lock'
-            return 0, json.dumps(self.summaries.pop(0) if len(self.summaries) > 1 else self.summaries[0])
-        if command == WRAPPER:
-            # The wrapper takes the production lock with `flock -n` itself.
-            if self.locked:
-                return 1, 'flock: failed to get lock'
-            if argv[1] == 'plan':
-                path = argv[3].removeprefix('-out=')
-                self.files[(host, path)] = b'saved plan with secrets'
-                return 0, 'Plan: 0 to add, 1 to change, 0 to destroy.'
-            self.applied.append(argv[2])
-            return 0, 'Apply complete!'
         if argv[-1] == '--help':
             return 0, 'Usage: ...'
         if command == '/usr/bin/python3' and argv[1].endswith('txid-display-fleet.py'):
-            assert argv[2] in (P.FLEET_JSON, SITE_NAMES.FLEET_JSON)
+            assert argv[2] == N.FLEET_JSON
             if len(argv) == 4:
                 return 0, 'usage'
             reply = self.adapter(host, json.loads(self.files[(host, argv[3])]))
@@ -477,7 +405,7 @@ class Clock:
 
 
 def inventory():
-    return descriptors.Inventory(hosts={name: {} for name in HOSTS.values()}, ssh={'mode': 'config'},
+    return descriptors.Inventory(hosts={name: {} for name in (*HOSTS.values(), FORMER_HOST)}, ssh={'mode': 'config'},
                                  lock={'type': 'remote', 'host': 'coordinator'}, services={})
 
 
@@ -520,8 +448,8 @@ class RequestTests(Base):
             (('extra',), 1), (('schema',), 'other'), (('source_sha',), 'abc'),
             (('journal', 'data_dir'), '/srv/transparent-pir/display'),
             (('publication', 'root'), '/srv/zakura/txid-display-poc/journal/root'),
-            (('units', 'recent', 'cpu_weight'), 100), (('units', 'archive', 'nice'), 0),
-            (('units', 'recent', 'oom_score_adjust'), 0), (('units', 'recent', 'cache_bytes'), 2 << 30),
+            (('units', 'archive', 'cpu_weight'), 100), (('units', 'archive', 'nice'), 0),
+            (('units', 'archive', 'oom_score_adjust'), 0), (('units', 'archive', 'cache_bytes'), 8 << 30),
             (('controller', 'recent_window'), 9999), (('controller', 'archive_target'), 5000),
             (('controller', 'reorg_margin'), 99), (('controller', 'n_archive'), 65), (('controller', 'n_recent'), 0),
             (('controller', 'max_archive_shards'), 0), (('controller', 'archives'), 0),
@@ -530,11 +458,8 @@ class RequestTests(Base):
             (('controller', 'n_buckets'), 1), (('controller', 'replay_seals'), KeyError),
             (('controller', 'mode'), 'fast'), (('controller', 'rpc_url'), 'http://10.0.0.1:8232'),
             (('ports', 'worker'), 8096), (('ports', 'controller_status'), 8094),
-            (('hosts', 'recent', 'inventory'), 'archive-03'), (('hosts', 'archive', 'vpc_ip'), '8.8.8.8'),
-            (('router', 'import_glob'), '/etc/caddy/Caddyfile'), (('router', 'import_glob'), '/tmp/x/*.caddy'),
-            (('router', 'import_glob'), '/etc/caddy/../*.caddy'), (('router', 'import_glob'), '/etc/caddy/./*.caddy'),
-            (('router', 'import_glob'), '/etc/caddy/.hidden/*.caddy'),
-            (('release', 'binaries', 'txid-control'), KeyError), (('measure', 'public_url'), 'http://pir.example'),
+            (('hosts', 'archive', 'inventory'), 'coordinator'), (('hosts', 'archive', 'vpc_ip'), '8.8.8.8'),
+            (('release', 'binaries', 'txid-control'), KeyError), (('measure', 'public_url'), 'http://txid.example'),
             (('baseline', 'archive'), {}),
             (('history', 'adapter'), '/srv/transparent-activity/ops/sources/x/transparent-fleet-scaler.py'),
             (('history', 'fleet'), '/opt/transparent-publisher/v11/../fleet.json'), (('history', 'membership'), KeyError),
@@ -548,24 +473,39 @@ class RequestTests(Base):
             with self.subTest(path=path, value=value):
                 P.validate(mutate(path, value), inventory())
         remote_elsewhere = descriptors.Inventory(hosts={n: {} for n in HOSTS.values()}, ssh={'mode': 'config'},
-                                                 lock={'type': 'remote', 'host': 'router-01'}, services={})
+                                                 lock={'type': 'remote', 'host': 'archive-03'}, services={})
         with self.assertRaisesRegex(P.PocError, 'lock host'):
             P.validate(self.request, remote_elsewhere)
 
-    def test_an_accepted_import_glob_is_one_the_history_adapter_renders(self):
-        accepted = []
-        for glob in (GLOB, '/etc/caddy/display.d/*.caddy', '/etc/caddy/a..b/*.caddy', '/etc/caddy/../*.caddy',
-                     '/etc/caddy/./*.caddy', '/etc/caddy/..x/*.caddy', '/etc/caddy/x/../*.caddy'):
-            changed = request()
-            changed['router']['import_glob'] = glob
-            try:
-                P.validate(changed, inventory())
-            except P.PocError:
-                continue
-            # A glob the adapter refused would fail every history router render.
-            self.assertEqual(LIVE.route_import_lines({'route_imports': [glob]}), ['\timport ' + glob])
-            accepted.append(glob)
-        self.assertEqual(accepted, [GLOB, '/etc/caddy/display.d/*.caddy'])
+    def test_a_request_must_be_a_site_with_one_combined_worker(self):
+        def changed(edit):
+            value = request()
+            edit(value)
+            return value
+        retired_router = {'import_glob': '/etc/caddy/txid-display/*.caddy', 'live_fleet_sha256': 'f' * 64}
+        refused = [
+            # The retired /v1 history router lineage: no site, a router and Terraform.
+            (lambda v: (v.pop('site'), v.update(router=retired_router)), 'request must name a site'),
+            (lambda v: v.pop('site'), 'request must name a site'),
+            (lambda v: v.update(router=retired_router), 'request must have exactly'),
+            (lambda v: v.update(terraform={'wrapper': '/x', 'root': '/y'}), 'request must have exactly'),
+            (lambda v: v['hosts'].update(router={'inventory': 'coordinator'}), 'hosts must have exactly'),
+            (lambda v: v['hosts'].update(recent={'inventory': FORMER_HOST, 'vpc_ip': '10.142.0.6'}),
+             'combined layout'),
+            (lambda v: v['units'].update(recent=dict(v['units']['archive'])), 'combined layout'),
+            (lambda v: v['baseline'].update(recent={'mem_available_bytes': 1}), 'combined layout'),
+            (lambda v: v['site'].update(name='K8'), 'site.name'),
+            (lambda v: v['site'].update(name=''), 'site.name'),
+            (lambda v: v['site'].update(hostname='https://txid.example'), 'site.hostname'),
+            (lambda v: v['site'].update(extra=1), 'site must have exactly'),
+            (lambda v: v['measure'].update(public_url='https://pir.example'), 'site.s own'),
+            (lambda v: v['hosts'].update({P.FORMER_RECENT: {'inventory': 'archive-03'}}), 'must be distinct hosts'),
+        ]
+        for edit, pattern in refused:
+            with self.subTest(pattern=pattern), self.assertRaisesRegex(P.PocError, pattern):
+                P.validate(changed(edit), inventory())
+        with self.assertRaisesRegex(P.PocError, 'coordinator and archive must be distinct hosts'):
+            P.validate(changed(lambda v: v['hosts']['archive'].update(inventory='coordinator')), inventory())
 
     def test_request_file_must_match_reviewed_digest_and_have_unique_keys(self):
         path = Path(self.tmp.name) / 'request.json'
@@ -590,39 +530,61 @@ class PlanTests(Base):
                        executor=Refuses())
         self.assertEqual(first.plan_sha256(), second.plan_sha256())
         changed = request()
-        changed['units']['recent']['memory_max'] = '1G'
+        changed['units']['archive']['memory_max'] = '5G'
         self.assertNotEqual(first.plan_sha256(), self.poc(changed).plan_sha256())
+
+    def test_plan_names_its_own_coordinator_paths_units_and_site(self):
+        poc = self.poc()
+        files, plan = poc.render(), poc.plan()
+        self.assertEqual(plan['phases'], ['stage', 'workers', 'route', 'controller'])
+        self.assertEqual(sorted(plan), ['files', 'hosts', 'phases', 'release', 'release_dir', 'request_sha256',
+                                        'retires', 'schema', 'site', 'source_sha', 'templates', 'transient'])
+        self.assertEqual(sorted(files), ['fleet.json', 'routes.caddy', 'unit:archive', 'unit:controller',
+                                         'withdrawn.caddy', 'workers.json'])
+        self.assertEqual(plan['hosts'], {'coordinator': 'coordinator', 'archive': 'archive-03'})
+        self.assertEqual(sorted(plan['release']), ['archive', 'coordinator'])
+        self.assertEqual(plan['retires'], {})
+        self.assertEqual(plan['site'], {**SITE, 'host': 'archive-03', 'opt': '/opt/transparent-txid-display-k8',
+                                        'units': sorted({N.CONTROLLER_UNIT, *N.TRANSIENT})})
+        self.assertEqual(plan['files']['routes.caddy']['host'], 'archive')
+        self.assertEqual(plan['files']['routes.caddy']['path'], P.CADDYFILE)
+        self.assertEqual(plan['files']['unit:controller']['path'],
+                         '/etc/systemd/system/transparent-txid-display-k8-controller.service')
+        self.assertEqual(plan['files']['fleet.json']['path'], '/opt/transparent-txid-display-k8/fleet.json')
+        self.assertEqual(plan['release_dir'], RELEASE_DIR)
+        controller = files['unit:controller']
+        self.assertIn('ReadWritePaths=/srv/zakura/txid-display-poc/root /srv/zakura/txid-display-poc/journal '
+                      '/opt/transparent-txid-display-k8/state\n', controller)
+        self.assertNotIn('/opt/transparent-txid-display/', controller)
+        self.assertEqual(json.loads(files['fleet.json'])['control_dir'], '/opt/transparent-txid-display-k8/state/ssh')
+        transient = plan['transient']
+        self.assertEqual({argv[1] for argv in transient.values()},
+                         {'--unit=' + unit for unit in (*N.TRANSIENT, N.PLAN_START_UNIT, N.VERIFY_UNIT)})
 
     def test_rendered_units_carry_the_reviewed_limits(self):
         files = self.poc().render()
-        archive, recent, controller = files['unit:archive'], files['unit:recent'], files['unit:controller']
-        release = '/opt/transparent-txid-display/releases/' + SHA
-        self.assertIn('ExecStart=%s/transparent-txid-server --listen 10.142.0.5:8095 --role archive-owner '
-                      '--cache-bytes %d' % (release, 4 << 30), archive)
+        archive, controller = files['unit:archive'], files['unit:controller']
+        self.assertIn('ExecStart=%s/transparent-txid-server --listen 10.142.0.5:8095 --role combined '
+                      '--cache-bytes %d' % (RELEASE_DIR, 4 << 30), archive)
         for line in ('MemoryMax=6G', 'CPUQuota=200%', 'CPUWeight=20', 'IOWeight=20', 'Nice=10',
                      'OOMScoreAdjust=1000', 'Environment=TRANSPARENT_BUILD_THREADS=2', 'MemorySwapMax=0',
                      'ProtectSystem=strict'):
             self.assertIn('\n' + line + '\n', archive)
         self.assertIn('--runtime-cache-dir /srv/transparent-txid-display/runtime-cache', archive)
         self.assertIn('--control-socket /run/transparent-txid-display/control.sock', archive)
+        self.assertIn('--retain-revisions 2', archive)
         # `collect` deletes on disk only under its collect roots: the adapter's
         # publications directory, where every cycle's candidate lands, and its
         # staged directory, where sealed revisions wait to be named.
         publications = json.loads(files['fleet.json'])['workers']
-        for key, unit in (('archive', archive), ('recent', recent)):
-            argv = [line for line in unit.splitlines() if line.startswith('ExecStart=')][0].split()
-            roots = [argv[i + 1] for i, a in enumerate(argv) if a == '--collect-root']
-            self.assertEqual(roots, [publications[key]['publications'], publications[key]['staged']])
-            self.assertEqual(argv[argv.index('--active-record') + 1], P.ACTIVE_RECORD)
-        self.assertNotIn('runtime-cache', recent)
-        for line in ('MemoryMax=1.5G', 'CPUQuota=100%', 'Environment=TRANSPARENT_BUILD_THREADS=1'):
-            self.assertIn('\n' + line + '\n', recent)
-        self.assertIn('--retain-revisions 1', recent)
-        self.assertIn('--role recent-replica', recent)
+        argv = [line for line in archive.splitlines() if line.startswith('ExecStart=')][0].split()
+        roots = [argv[i + 1] for i, a in enumerate(argv) if a == '--collect-root']
+        self.assertEqual(roots, [publications['archive']['publications'], publications['archive']['staged']])
+        self.assertEqual(argv[argv.index('--active-record') + 1], P.ACTIVE_RECORD)
         for line in ('MemoryMax=4G', 'CPUQuota=200%', 'CPUWeight=20', 'Nice=10', 'ProtectSystem=strict'):
             self.assertIn('\n' + line + '\n', controller)
-        self.assertIn('--workers /opt/transparent-txid-display/workers.json --mode replay-then-live '
-                      '--status-listen 127.0.0.1:8099', controller)
+        self.assertIn('--workers /opt/transparent-txid-display-k8/workers.json --mode replay-then-live '
+                      '--status-listen 127.0.0.1:8098', controller)
         self.assertIn('--blocks-per-step 25 --step-interval-ms 2000', controller)
         # `run` takes no seal flags: the bootstrapped root carries the rule.
         start = [line for line in controller.splitlines() if line.startswith('ExecStart=')][0]
@@ -632,46 +594,49 @@ class PlanTests(Base):
             self.assertNotIn(flag, start)
         # The node's RPC cookie under /root stays readable.
         self.assertFalse([line for line in controller.splitlines() if line.startswith('ProtectHome')])
-        for unit in (archive, recent, controller):
+        for unit in (archive, controller):
             for path in ('/srv/transparent-pir', '/opt/transparent-publisher/state', 'control.sock\n'):
                 self.assertNotIn('ReadWritePaths=' + path, unit)
 
     def test_rendered_configs_follow_the_transport_contract(self):
         files = self.poc().render()
         workers = json.loads(files['workers.json'])['workers']
-        self.assertEqual([(w['name'], w['role']) for w in workers],
-                         [('archive', 'archive-owner'), ('recent', 'recent-replica')])
+        self.assertEqual([(w['name'], w['role']) for w in workers], [('archive', 'combined')])
         self.assertEqual(workers[0]['transport'], {
-            'command': '/opt/transparent-txid-display/releases/%s/txid-display-fleet.py' % SHA,
-            'config': '/opt/transparent-txid-display/fleet.json'})
+            'command': RELEASE_DIR + '/txid-display-fleet.py', 'config': '/opt/transparent-txid-display-k8/fleet.json'})
         fleet = json.loads(files['fleet.json'])
         self.assertEqual((fleet['ssh_key'], fleet['known_hosts']), (
             '/opt/transparent-publisher/credentials/deploy-ssh', '/opt/transparent-publisher/credentials/known_hosts'))
-        self.assertEqual(fleet['workers']['recent']['ssh_host'], '10.142.0.6')
+        self.assertEqual(sorted(fleet['workers']), ['archive'])
+        self.assertEqual(fleet['workers']['archive']['ssh_host'], '10.142.0.5')
         adapter = load('fleet_config_check', ROOT / 'transparent/ops/scripts/txid-display-fleet.py')
         with tempfile.TemporaryDirectory() as tmp:
             config = json.loads(files['fleet.json'])
             config['control_dir'] = tmp + '/ssh'
             (Path(tmp) / 'fleet.json').write_text(json.dumps(config))
             self.assertEqual(adapter.load_config(Path(tmp) / 'fleet.json')['workers'], fleet['workers'])
-        snippet = files['routes.caddy']
-        self.assertEqual(snippet.count(LIVE.ROUTER_HEALTH), 2)
-        archive = snippet.index('handle /v1/txid/archive/* {')
-        recent = snippet.index('handle /v1/txid/* {')
-        self.assertLess(archive, recent)
-        self.assertIn('reverse_proxy 10.142.0.5:8095 {', snippet[archive:recent])
-        self.assertIn('reverse_proxy 10.142.0.6:8095 {', snippet[recent:])
+        site = files['routes.caddy']
+        self.assertTrue(site.split('\n')[2] == 'txid.example {', site)
+        self.assertIn('\thandle {\n\t\trespond 404\n\t}\n}\n', site)
+        self.assertEqual(site.count(LIVE.ROUTER_HEALTH), 2)
+        # Every /v2/txid/ path reaches the one combined worker; nothing names /v1/txid.
+        archive = site.index('\thandle /v2/txid/archive/* {\n')
+        rest = site.index('\thandle /v2/txid/* {\n')
+        self.assertLess(archive, rest)
+        self.assertIn('reverse_proxy 10.142.0.5:8095 {', site[archive:rest])
+        self.assertIn('reverse_proxy 10.142.0.5:8095 {', site[rest:])
+        self.assertNotIn('/v1/txid', site + files['withdrawn.caddy'])
         self.assertIn('respond "transparent txid display withdrawn" 503', files['withdrawn.caddy'])
-        self.assertEqual(files['tfvars'].splitlines()[-1], 'transparent_txid_display_port_enabled = true')
+        self.assertIn('txid.example {', files['withdrawn.caddy'])
 
     def test_transient_units_carry_their_limits(self):
         transient = self.poc().plan()['transient']
         ingest = transient['ingest']
-        for item in ('--unit=transparent-txid-display-ingest.service', '--property=CPUQuota=400%',
+        for item in ('--unit=transparent-txid-display-k8-ingest.service', '--property=CPUQuota=400%',
                      '--property=CPUWeight=20', '--property=IOWeight=20', '--property=MemoryMax=12G',
                      '--property=Nice=10', '--property=RemainAfterExit=yes'):
             self.assertIn(item, ingest)
-        tail = ingest[ingest.index('/opt/transparent-txid-display/releases/%s/transparent-event-ingest' % SHA):]
+        tail = ingest[ingest.index(RELEASE_DIR + '/transparent-event-ingest'):]
         self.assertEqual(tail[1:], ['--state-dir', '/root/.cache/zakura', '--workers', '4', '--txid-display',
                                     '--start-height', '3289805', '--data-dir', '/srv/zakura/txid-display-poc/journal'])
         smoke = transient['ingest-smoke']
@@ -682,7 +647,7 @@ class PlanTests(Base):
         # txid-display-controller's flags: DisplaySealParams plus the map window.
         seal = ['--geometry', 'txid-2k8', '--n-archive', '1', '--n-recent', '1', '--archive-target', '90000',
                 '--recent-window', '90000', '--reorg-margin', '100', '--max-archive-shards', '24']
-        controller = '/opt/transparent-txid-display/releases/%s/txid-display-controller' % SHA
+        controller = RELEASE_DIR + '/txid-display-controller'
         plan_start = transient['plan-start']
         self.assertEqual(plan_start[plan_start.index(controller):], [
             controller, 'plan-start', '--journal', '/srv/zakura/txid-display-poc/journal', '--archives', '15',
@@ -697,7 +662,7 @@ class PlanTests(Base):
             '/srv/zakura/txid-display-poc/journal'])
         self.assertIn('getbestblockhash', (ROOT / P.RELEASE_FILES['txid-display-observe.py']).read_text())
         self.assertIn('--interval-ms', transient['observer'])
-        self.assertIn('https://pir.example/v1/txid/shards', transient['mapwatch'])
+        self.assertIn('https://txid.example/v2/txid/shards', transient['mapwatch'])
 
     def test_release_bundle_kind_matches_the_deploy(self):
         self.assertEqual(RELEASE.BINARIES[P.KIND], list(P.BINARIES))
@@ -712,7 +677,7 @@ class PreflightTests(Base):
             poc.deploy(phase, poc.plan_sha256(), map_sha256=MAP)
         self.assertTrue(any(re.search(pattern, line) for line in self.output), self.output)
         changed = [entry for entry in self.fake.mutations()
-                   if not (isinstance(entry[2], str) and entry[2].startswith(P.TRANSACTIONS))]
+                   if not (isinstance(entry[2], str) and entry[2].startswith(N.TRANSACTIONS))]
         self.assertEqual(changed, [])
         transaction = self.journal(json.loads((self.state / 'latest.json').read_text())['id'])
         self.assertEqual((transaction['status'], transaction['changes']), ('failed', []))
@@ -748,11 +713,11 @@ class PreflightTests(Base):
 
     def test_resource_and_port_refusals(self):
         cases = [
-            (lambda f: f.put('recent-01', '/proc/meminfo', 'MemTotal: 8388608 kB\nMemAvailable: 2097152 kB\n'),
-             'recent: current MemAvailable', 'workers'),
+            (lambda f: f.put('archive-03', '/proc/meminfo', 'MemTotal: 8388608 kB\nMemAvailable: 2097152 kB\n'),
+             'archive: current MemAvailable', 'workers'),
             (lambda f: f.disk.update({'archive-03': (1000, 100)}), '10.0% free', 'workers'),
             (lambda f: f.listen.update({'archive-03': ['10.142.0.5:8095']}), 'port 8095 is already in use', 'workers'),
-            (lambda f: f.listen.update({'coordinator': ['127.0.0.1:8099']}), 'port 8099', 'controller'),
+            (lambda f: f.listen.update({'coordinator': ['127.0.0.1:8098']}), 'port 8098', 'controller'),
         ]
         for mutate, pattern, phase in cases:
             with self.subTest(pattern=pattern):
@@ -818,20 +783,20 @@ class StageTests(Base):
         archive = self.bundle()
         poc = self.poc()
         poc.deploy('stage', poc.plan_sha256(), archive=str(archive))
-        release = '/opt/transparent-txid-display/releases/' + SHA
+        self.assertEqual(sorted(P.HOST_RELEASE), sorted(HOSTS))
         for key, names in P.HOST_RELEASE.items():
             host = HOSTS[key]
             for name in names:
-                self.assertEqual(self.fake.sha256(host, release + '/' + name),
+                self.assertEqual(self.fake.sha256(host, RELEASE_DIR + '/' + name),
                                  self.request['release']['binaries'].get(name) or self.request['release']['files'][name])
                 if name == 'txid-control':
                     # Its contract has no --help; with no socket it prints its usage and exits 1.
-                    self.assertIn([release + '/' + name], self.fake.commands(host))
-                    self.assertNotIn([release + '/' + name, '--help'], self.fake.commands(host))
+                    self.assertIn([RELEASE_DIR + '/' + name], self.fake.commands(host))
+                    self.assertNotIn([RELEASE_DIR + '/' + name, '--help'], self.fake.commands(host))
                     continue
-                self.assertIn([release + '/' + name, '--help'] if not name.endswith('.py')
-                              else ['/usr/bin/python3', release + '/' + name, '--help'], self.fake.commands(host))
-        self.assertIsNone(self.fake.sha256('archive-03', release + '/txid-display-controller'))
+                self.assertIn([RELEASE_DIR + '/' + name, '--help'] if not name.endswith('.py')
+                              else ['/usr/bin/python3', RELEASE_DIR + '/' + name, '--help'], self.fake.commands(host))
+        self.assertIsNone(self.fake.sha256('archive-03', RELEASE_DIR + '/txid-display-controller'))
         self.assertEqual(self.journal(poc.transaction.id)['status'], 'committed')
         uploads = len([m for m in self.fake.mutations() if m[1] == 'upload'])
         poc = self.poc()
@@ -843,7 +808,7 @@ class StageTests(Base):
         run = self.fake.run
 
         def broken(host, argv, timeout):
-            if argv == ['/opt/transparent-txid-display/releases/%s/txid-control' % SHA]:
+            if argv == [RELEASE_DIR + '/txid-control']:
                 return 127, 'exec format error'
             return run(host, argv, timeout)
         self.fake.run = broken
@@ -861,103 +826,21 @@ class StageTests(Base):
         self.request = request()
         archive = self.bundle(2)
         self.request['release']['archive_sha256'] = sha256(archive.read_bytes())
-        self.fake.put('recent-01', '/opt/transparent-txid-display/releases/%s/txid-control' % SHA, b'other')
-        self.fake.put('recent-01', '/opt/transparent-txid-display/releases/%s/transparent-txid-server' % SHA, b'x')
+        self.fake.put('archive-03', RELEASE_DIR + '/txid-control', b'other')
+        self.fake.put('archive-03', RELEASE_DIR + '/transparent-txid-server', b'x')
         poc = self.poc()
         with self.assertRaisesRegex(P.PocError, 'holds other bytes'):
             poc.deploy('stage', poc.plan_sha256(), archive=str(archive))
 
 
-class HookTests(Base):
-    def setUp(self):
-        super().setUp()
-        self.fake.put('coordinator', ADAPTER, OLD_ADAPTER, 0o755)
-        self.fleet = json.dumps({'roster': '/opt/transparent-publisher/roster.json', 'public_host': 'pir.example'})
-        self.fake.put('coordinator', FLEET, self.fleet, 0o600)
-        self.fake.put('router-01', P.CADDYFILE, ROUTER)
-
-    def test_hook_validates_first_installs_restarts_and_waits_for_the_render(self):
-        poc = self.poc()
-        poc.deploy('router-hook', poc.plan_sha256())
-        validate = [argv for argv in self.fake.commands('router-01') if argv[0] == 'caddy']
-        self.assertEqual(len(validate), 1)
-        self.assertEqual(self.fake.text('coordinator', ADAPTER),
-                         (ROOT / 'transparent/ops/scripts/transparent-live-fleet.py').read_text())
-        self.assertEqual(self.fake.modes[('coordinator', ADAPTER)], 0o755)
-        self.assertEqual(json.loads(self.fake.text('coordinator', FLEET))['route_imports'], [GLOB])
-        restarts = [m[2] for m in self.fake.mutations('coordinator') if m[1] == 'systemctl']
-        self.assertEqual(restarts, [('restart', unit) for unit in P.HISTORY_DAEMONS])
-        self.assertEqual(self.fake.text('router-01', P.CADDYFILE).count(IMPORT), 2)
-        self.assertIn(('router-01', '/etc/caddy/txid-display'), self.fake.dirs)
-        record = self.journal(poc.transaction.id)
-        self.assertEqual(record['status'], 'committed')
-        previous = {entry['path']: entry['previous'] for entry in record['changes']}
-        self.assertEqual(previous, {ADAPTER: OLD_ADAPTER.decode(), FLEET: self.fleet})
-        self.assertFalse(record['events'][-2]['other_changes'])
-        self.assertTrue(any(m[2].startswith(P.TRANSACTIONS + '/' + poc.transaction.id + '/files/')
-                            for m in self.fake.mutations('coordinator') if m[1] == 'write'))
-
-        rollback = self.poc()
-        rollback.rollback(poc.transaction.id)
-        self.assertEqual(self.fake.files[('coordinator', ADAPTER)], OLD_ADAPTER)
-        self.assertEqual(self.fake.modes[('coordinator', ADAPTER)], 0o755)
-        self.assertEqual(self.fake.text('coordinator', FLEET), self.fleet)
-        self.assertEqual(self.fake.text('router-01', P.CADDYFILE), ROUTER)
-        self.assertEqual(self.journal(poc.transaction.id)['status'], 'rolled-back')
-
-    def test_rollback_never_puts_older_bytes_over_another_writer(self):
-        poc = self.poc()
-        poc.deploy('router-hook', poc.plan_sha256())
-        # A history publisher redeploy rewrites fleet.json after the hook.
-        redeployed = json.dumps({**json.loads(self.fake.text('coordinator', FLEET)),
-                                 'managed_recent_workers': ['recent-02']})
-        self.fake.put('coordinator', FLEET, redeployed, 0o600)
-        before = len(self.fake.mutations())
-        with self.assertRaisesRegex(P.PocError, 'rollback refused before any change: %s on coordinator changed'
-                                    % FLEET):
-            self.poc().rollback(poc.transaction.id)
-        self.assertEqual(self.fake.mutations()[before:], [])
-        self.assertEqual(self.fake.text('coordinator', FLEET), redeployed)
-        self.assertEqual(self.fake.text('coordinator', ADAPTER),
-                         (ROOT / 'transparent/ops/scripts/transparent-live-fleet.py').read_text())
-        self.assertEqual(self.journal(poc.transaction.id)['status'], 'committed')
-        # Put back the bytes the hook wrote, and the same rollback proceeds.
-        self.fake.put('coordinator', FLEET, json.dumps({**json.loads(self.fleet), 'route_imports': [GLOB]}),
-                      0o600)
-        self.poc().rollback(poc.transaction.id)
-        self.assertEqual(self.fake.text('coordinator', FLEET), self.fleet)
-        self.assertEqual(self.fake.files[('coordinator', ADAPTER)], OLD_ADAPTER)
-
-    def test_hook_refuses_an_unreviewed_adapter_or_a_rejected_composition(self):
-        self.fake.put('coordinator', ADAPTER, b'something else', 0o755)
-        poc = self.poc()
-        with self.assertRaisesRegex(P.PocError, 'neither the reviewed one'):
-            poc.deploy('router-hook', poc.plan_sha256())
-        self.fake.put('coordinator', ADAPTER, OLD_ADAPTER, 0o755)
-        self.fake.caddy_rejects = lambda path, config: IMPORT in config
-        with self.assertRaisesRegex(P.PocError, 'caddy rejected'):
-            poc.deploy('router-hook', poc.plan_sha256())
-        self.assertEqual(self.fake.files[('coordinator', ADAPTER)], OLD_ADAPTER)
-        self.assertEqual(self.fake.text('coordinator', FLEET), self.fleet)
-        self.assertFalse([m for m in self.fake.mutations() if m[1] == 'systemctl'])
-
-    def test_hook_waits_for_the_history_render_and_fails_without_it(self):
-        self.fake.reconciler_renders = False
-        poc = self.poc()
-        with self.assertRaisesRegex(P.PocError, 'import hook did not happen'):
-            poc.deploy('router-hook', poc.plan_sha256())
-        self.assertGreaterEqual(self.clock.t, 900)
-
-
 class DeployedFleet(Base):
-    """A coordinator with a bootstrap candidate and the router hook in place."""
+    """A coordinator with a bootstrap candidate, and the site host's default Caddyfile."""
 
     def setUp(self):
         super().setUp()
         self.fake.put('coordinator', CANDIDATE + '/txid-shards.json', b'map')
         self.map = sha256(b'map')
-        self.fake.put('router-01', P.CADDYFILE, ROUTER.replace('\t@metadata', IMPORT + '\n\t@metadata'))
-        self.fake.dirs.add(('router-01', '/etc/caddy/txid-display'))
+        self.fake.put('archive-03', P.CADDYFILE, DEFAULT_CADDY)
 
     def deploy(self, phase, **options):
         poc = self.poc()
@@ -969,104 +852,103 @@ class WorkerTests(DeployedFleet):
     def test_workers_ship_verify_install_prepare_activate_and_wait_warm(self):
         poc = self.deploy('workers', map_sha256=self.map)
         files = poc.render()
-        for key in P.WORKERS:
-            host = HOSTS[key]
-            self.assertEqual(self.fake.text(host, '/etc/systemd/system/' + P.WORKER_UNIT), files['unit:' + key])
-            self.assertEqual(self.fake.unit(host, P.WORKER_UNIT)['active'], 'active')
-            self.assertTrue(self.fake.unit(host, P.WORKER_UNIT)['enabled'])
-            self.assertEqual(self.fake.active[key], self.map)
-            verify = [argv for argv in self.fake.commands(host) if argv[0] == 'systemd-run']
-            self.assertEqual(len(verify), 1)
-            self.assertEqual(verify[0][-7:], ['--role', P.ROLES[key], '--publication-dir',
-                                              '%s/%s' % (P.PUBLICATIONS, self.map), '--cache-bytes',
-                                              str(self.request['units'][key]['cache_bytes']), '--verify-only'])
-            self.assertIn('--property=MemoryMax=' + self.request['units'][key]['memory_max'], verify[0])
-            order = [m[2] for m in self.fake.mutations(host) if m[1] == 'systemctl']
-            self.assertEqual(order, [('daemon-reload',), ('enable', P.WORKER_UNIT), ('restart', P.WORKER_UNIT)])
-        self.assertEqual(self.fake.text('coordinator', P.FLEET_JSON), files['fleet.json'])
-        # Archive owner first, completely, before the recent replica.
-        hosts = [m[0] for m in self.fake.mutations() if m[1] == 'systemctl']
-        self.assertEqual(hosts, ['archive-03'] * 3 + ['recent-01'] * 3)
-        self.assertEqual([path for h, path in self.fake.files if path.startswith(P.REQUESTS)], [])
+        host = 'archive-03'
+        self.assertEqual(self.fake.text(host, '/etc/systemd/system/' + P.WORKER_UNIT), files['unit:archive'])
+        self.assertEqual(self.fake.unit(host, P.WORKER_UNIT)['active'], 'active')
+        self.assertTrue(self.fake.unit(host, P.WORKER_UNIT)['enabled'])
+        self.assertEqual(self.fake.active, {'archive': self.map})
+        verify = [argv for argv in self.fake.commands(host) if argv[0] == 'systemd-run']
+        self.assertEqual(len(verify), 1)
+        self.assertEqual(verify[0][-7:], ['--role', 'combined', '--publication-dir',
+                                          '%s/%s' % (P.PUBLICATIONS, self.map), '--cache-bytes',
+                                          str(self.request['units']['archive']['cache_bytes']), '--verify-only'])
+        self.assertIn('--property=MemoryMax=' + self.request['units']['archive']['memory_max'], verify[0])
+        order = [m[2] for m in self.fake.mutations(host) if m[1] == 'systemctl']
+        self.assertEqual(order, [('daemon-reload',), ('enable', P.WORKER_UNIT), ('restart', P.WORKER_UNIT)])
+        self.assertEqual(self.fake.text('coordinator', N.FLEET_JSON), files['fleet.json'])
+        self.assertEqual([m[0] for m in self.fake.mutations() if m[1] == 'systemctl'], [host] * 3)
+        self.assertEqual({worker for worker, _ in self.fake.calls}, {'archive'})
+        self.assertEqual([path for h, path in self.fake.files if path.startswith(N.REQUESTS)], [])
         events = [event['message'] for event in self.journal(poc.transaction.id)['events']]
         self.assertIn('archive: serving %s warm' % self.map, events)
-        self.assertLess(events.index('archive: serving %s warm' % self.map),
-                        events.index('recent: shipped candidate %s' % self.map))
+        status = poc.status()
+        self.assertEqual(list(status['workers']), ['archive'])
+        self.assertEqual(status['workers']['archive']['ready']['role'], 'combined')
+        self.assertNotIn('router_hook', status)
 
         poc.rollback(poc.transaction.id)
-        for key in P.WORKERS:
-            host = HOSTS[key]
-            self.assertIsNone(self.fake.text(host, '/etc/systemd/system/' + P.WORKER_UNIT))
-            self.assertEqual(self.fake.unit(host, P.WORKER_UNIT)['active'], 'inactive')
-            self.assertFalse(self.fake.unit(host, P.WORKER_UNIT)['enabled'])
-        self.assertIsNone(self.fake.text('coordinator', P.FLEET_JSON))
+        self.assertIsNone(self.fake.text(host, '/etc/systemd/system/' + P.WORKER_UNIT))
+        self.assertEqual(self.fake.unit(host, P.WORKER_UNIT)['active'], 'inactive')
+        self.assertFalse(self.fake.unit(host, P.WORKER_UNIT)['enabled'])
+        self.assertIsNone(self.fake.text('coordinator', N.FLEET_JSON))
         self.assertEqual(self.journal(poc.transaction.id)['status'], 'rolled-back')
 
     def test_workers_refuse_while_the_controller_runs(self):
-        self.fake.unit('coordinator', P.CONTROLLER_UNIT).update(load='loaded', active='active', sub='running')
+        self.fake.unit('coordinator', N.CONTROLLER_UNIT).update(load='loaded', active='active', sub='running')
         poc = self.poc()
         with self.assertRaisesRegex(P.PocError, 'controller drives the workers; stop it first'):
             poc.deploy('workers', poc.plan_sha256(), map_sha256=self.map)
-        self.assertEqual([m for m in self.fake.mutations() if not m[2].startswith(P.TRANSACTIONS)], [])
+        self.assertEqual([m for m in self.fake.mutations() if not m[2].startswith(N.TRANSACTIONS)], [])
         self.assertEqual(self.fake.active, {})
 
-    def test_a_rerun_keeps_each_workers_own_map_and_restarts_only_changed_units(self):
+    def test_a_rerun_keeps_the_workers_own_map_and_restarts_only_a_changed_unit(self):
         self.deploy('workers', map_sha256=self.map)
-        # The controller then advanced both workers, and was stopped.
+        # The controller then advanced the worker, and was stopped.
         newer = 'e' * 64
-        for key in P.WORKERS:
-            self.fake.serve(key, newer)
+        self.fake.serve('archive', newer)
+        self.fake.log.clear()
+        self.fake.calls.clear()
+        self.fake.runs.clear()
+        poc = self.deploy('workers', map_sha256=self.map)
+        events = [event['message'] for event in self.journal(poc.transaction.id)['events']]
+        self.assertIn('archive: unit unchanged; the worker keeps running', events)
+        self.assertEqual([m[2] for m in self.fake.mutations('archive-03') if m[1] == 'systemctl'], [])
         changed = request()
-        changed['units']['recent']['query_slots'] = 3
+        changed['units']['archive']['query_slots'] = 3
         self.request = changed
         self.fake.log.clear()
         self.fake.calls.clear()
         self.fake.runs.clear()
         poc = self.deploy('workers', map_sha256=self.map)
         # No ship, verify, prepare or activate: the bootstrap map never replaces a newer one.
-        self.assertEqual(self.fake.active, {'archive': newer, 'recent': newer})
-        self.assertEqual(self.fake.calls, [('archive', 'status'), ('recent', 'status')])
+        self.assertEqual(self.fake.active, {'archive': newer})
+        self.assertEqual(self.fake.calls, [('archive', 'status')])
         self.assertEqual([argv for argv in self.fake.commands() if argv[0] == 'systemd-run'], [])
-        self.assertEqual([m[2] for m in self.fake.mutations('archive-03') if m[1] == 'systemctl'], [])
-        self.assertEqual([m[2] for m in self.fake.mutations('recent-01') if m[1] == 'systemctl'],
+        self.assertEqual([m[2] for m in self.fake.mutations('archive-03') if m[1] == 'systemctl'],
                          [('daemon-reload',), ('enable', P.WORKER_UNIT), ('restart', P.WORKER_UNIT)])
         events = [event['message'] for event in self.journal(poc.transaction.id)['events']]
-        self.assertIn('archive: unit unchanged; the worker keeps running', events)
-        self.assertIn('recent: keeps serving %s, not the requested %s' % (newer, self.map), events)
-        self.assertIn('recent: serving %s warm' % newer, events)
+        self.assertIn('archive: keeps serving %s, not the requested %s' % (newer, self.map), events)
+        self.assertIn('archive: serving %s warm' % newer, events)
 
-    def test_a_fresh_lineage_replaces_each_workers_active_map_and_rolls_back(self):
+    def test_a_fresh_lineage_replaces_the_workers_active_map_and_rolls_back(self):
         self.deploy('workers', map_sha256=self.map)
         old = 'e' * 64
-        for key in P.WORKERS:
-            self.fake.serve(key, old)
-        records = {key: self.fake.text(HOSTS[key], P.ACTIVE_RECORD) for key in P.WORKERS}
+        self.fake.serve('archive', old)
+        record = self.fake.text('archive-03', P.ACTIVE_RECORD)
         poc = self.poc()
         with self.assertRaisesRegex(P.PocError, 'not the new one'):
             poc.deploy('workers', poc.plan_sha256(), map_sha256=self.map, replace_active=self.map)
         with self.assertRaisesRegex(P.PocError, 'serves %s, not the replaced' % old):
             poc.deploy('workers', poc.plan_sha256(), map_sha256=self.map, replace_active='f' * 64)
-        self.assertEqual(self.fake.active, {'archive': old, 'recent': old})
+        self.assertEqual(self.fake.active, {'archive': old})
         poc = self.deploy('workers', map_sha256=self.map, replace_active=old)
-        # Each worker is stopped, loses its record, then ships, verifies,
+        # The worker is stopped, loses its record, then ships, verifies,
         # prepares and activates the new lineage as an empty worker would.
-        self.assertEqual(self.fake.active, {'archive': self.map, 'recent': self.map})
+        self.assertEqual(self.fake.active, {'archive': self.map})
         events = [event['message'] for event in self.journal(poc.transaction.id)['events']]
-        for key in P.WORKERS:
-            self.assertIn('%s: removed the active record of %s' % (key, old), events)
-            self.assertIn('%s: shipped candidate %s' % (key, self.map), events)
-            self.assertIn('stopped %s on %s' % (P.WORKER_UNIT, key), events)
+        self.assertIn('archive: removed the active record of %s' % old, events)
+        self.assertIn('archive: shipped candidate %s' % self.map, events)
+        self.assertIn('stopped %s on archive' % P.WORKER_UNIT, events)
         poc.rollback(poc.transaction.id)
-        for key in P.WORKERS:
-            self.assertEqual(self.fake.text(HOSTS[key], P.ACTIVE_RECORD), records[key])
-            self.assertEqual(self.fake.unit(HOSTS[key], P.WORKER_UNIT)['active'], 'active')
+        self.assertEqual(self.fake.text('archive-03', P.ACTIVE_RECORD), record)
+        self.assertEqual(self.fake.unit('archive-03', P.WORKER_UNIT)['active'], 'active')
         with self.assertRaisesRegex(P.PocError, 'belongs to the workers phase'):
             poc.deploy('route', poc.plan_sha256(), replace_active=old)
 
     def test_a_prepare_longer_than_one_control_call_is_polled_to_completion(self):
         self.fake.slow_prepares = 2
         poc = self.deploy('workers', map_sha256=self.map)
-        self.assertEqual(self.fake.active, {'archive': self.map, 'recent': self.map})
+        self.assertEqual(self.fake.active, {'archive': self.map})
         events = [event['message'] for event in self.journal(poc.transaction.id)['events']]
         self.assertEqual(events.count('archive: still preparing %s' % self.map[:12]), 2)
 
@@ -1096,249 +978,104 @@ class WorkerTests(DeployedFleet):
         poc.rollback(poc.transaction.id)
         self.assertIsNone(self.fake.text('archive-03', '/etc/systemd/system/' + P.WORKER_UNIT))
 
-
-class RouteTests(DeployedFleet):
-    def test_route_validates_a_scratch_composition_then_reloads(self):
-        poc = self.deploy('route')
-        snippet = poc.render()['routes.caddy']
-        self.assertEqual(self.fake.text('router-01', '/etc/caddy/txid-display/routes.caddy'), snippet)
-        configs = [argv[3] for argv in self.fake.commands('router-01') if argv[0] == 'caddy']
-        scratch = '%s/%s' % (P.VALIDATE, poc.transaction.id)
-        self.assertEqual(configs, [scratch + '/Caddyfile', P.CADDYFILE])
-        self.assertNotIn(('router-01', scratch + '/Caddyfile'), self.fake.files)
-        self.assertIn(('router-01', 'systemctl', ('reload', 'caddy')), self.fake.mutations('router-01'))
-        poc.rollback(poc.transaction.id)
-        self.assertIsNone(self.fake.text('router-01', '/etc/caddy/txid-display/routes.caddy'))
-        self.assertEqual([m[2] for m in self.fake.mutations('router-01') if m[1] == 'systemctl'],
-                         [('reload', 'caddy')] * 2)
-
-    def test_a_rejected_live_router_never_keeps_the_snippet(self):
-        self.fake.caddy_rejects = lambda path, config: path == P.CADDYFILE
-        poc = self.poc()
-        with self.assertRaisesRegex(P.PocError, 'caddy rejected the live router'):
-            poc.deploy('route', poc.plan_sha256())
-        self.assertIsNone(self.fake.text('router-01', '/etc/caddy/txid-display/routes.caddy'))
-
-    def test_route_needs_the_hook(self):
-        self.fake.put('router-01', P.CADDYFILE, ROUTER)
-        poc = self.poc()
-        with self.assertRaisesRegex(P.PocError, 'deploy router-hook first'):
-            poc.deploy('route', poc.plan_sha256())
-
-
-class CombinedLayoutTests(DeployedFleet):
-    """A request without a recent host runs one combined worker on the archive host."""
-
-    def setUp(self):
-        super().setUp()
-        self.request = combined_request()
-        self.fake.roles = dict(P.COMBINED_ROLES)
-
-    def test_a_combined_request_validates_and_partial_recent_keys_are_refused(self):
-        P.validate(self.request, inventory())
-        for field in ('hosts', 'units', 'baseline'):
-            partial = request()
-            del partial[field]['recent']
-            with self.assertRaisesRegex(P.PocError, 'all present .split layout. or all absent'):
-                P.validate(partial, inventory())
-            partial = combined_request()
-            partial[field]['recent'] = request()[field]['recent']
-            with self.assertRaisesRegex(P.PocError, 'all present .split layout. or all absent'):
-                P.validate(partial, inventory())
-        shared = combined_request()
-        shared['hosts']['router']['inventory'] = 'archive-03'
-        with self.assertRaisesRegex(P.PocError, 'coordinator, archive and router must be distinct hosts'):
-            P.validate(shared, inventory())
-
-    def test_plan_renders_one_combined_worker_and_routes_everything_to_it(self):
-        poc = self.poc()
-        files = poc.render()
-        self.assertNotIn('unit:recent', files)
-        self.assertIn('--listen 10.142.0.5:8095 --role combined ', files['unit:archive'])
-        self.assertEqual([(w['name'], w['role']) for w in json.loads(files['workers.json'])['workers']],
-                         [('archive', 'combined')])
-        self.assertEqual(sorted(json.loads(files['fleet.json'])['workers']), ['archive'])
-        snippet = files['routes.caddy']
-        archive, rest = snippet.index('handle /v1/txid/archive/* {'), snippet.index('handle /v1/txid/* {')
-        self.assertIn('reverse_proxy 10.142.0.5:8095 {', snippet[archive:rest])
-        self.assertIn('reverse_proxy 10.142.0.5:8095 {', snippet[rest:])
-        self.assertNotIn('10.142.0.6', snippet)
-        plan = poc.plan()
-        self.assertEqual(sorted(plan['hosts']), ['archive', 'coordinator', 'router'])
-        self.assertEqual(sorted(plan['release']), ['archive', 'coordinator'])
-        self.assertNotIn('unit:recent', plan['files'])
-        # The split layout's plan is a different review token.
-        self.assertNotEqual(poc.plan_sha256(), self.poc(request()).plan_sha256())
-
-    def test_workers_and_status_touch_no_recent_host(self):
-        poc = self.deploy('workers', map_sha256=self.map)
-        self.assertEqual(self.fake.active, {'archive': self.map})
-        self.assertEqual(self.fake.text('archive-03', '/etc/systemd/system/' + P.WORKER_UNIT),
-                         poc.render()['unit:archive'])
-        verify = [argv for argv in self.fake.commands('archive-03') if argv[0] == 'systemd-run']
-        self.assertEqual(verify[0][-7:-5], ['--role', 'combined'])
-        self.assertEqual({worker for worker, _ in self.fake.calls}, {'archive'})
-        self.assertEqual(json.loads(self.fake.text('coordinator', P.FLEET_JSON))['workers'].keys(), {'archive'})
-        status = poc.status()
-        self.assertEqual(list(status['workers']), ['archive'])
-        self.assertEqual(status['workers']['archive']['ready']['role'], 'combined')
-        self.assertFalse([key for key in status['units'] if 'recent' in key])
-        self.assertEqual(self.poc().preflight(), [])
-        self.assertEqual(self.fake.mutations('recent-01'), [])
-        self.assertEqual(self.fake.commands('recent-01'), [])
-        poc.rollback(poc.transaction.id)
-        self.assertIsNone(self.fake.text('archive-03', '/etc/systemd/system/' + P.WORKER_UNIT))
-        self.assertEqual(self.fake.mutations('recent-01'), [])
-
-    def test_controller_writes_one_combined_worker(self):
-        self.deploy('workers', map_sha256=self.map)
-        self.deploy('controller')
-        workers = json.loads(self.fake.text('coordinator', P.WORKERS_JSON))['workers']
-        self.assertEqual([(w['name'], w['role']) for w in workers], [('archive', 'combined')])
-        self.assertEqual(self.fake.mutations('recent-01'), [])
-
-    def test_switching_from_split_retires_the_former_recent_worker(self):
-        self.fake.roles = dict(P.ROLES)
-        split = self.poc(request())
-        split.deploy('workers', split.plan_sha256(), map_sha256=self.map)
-        self.fake.roles = dict(P.ROLES, **P.COMBINED_ROLES)
+    def test_a_former_recent_host_has_its_worker_unit_retired(self):
         unit = '/etc/systemd/system/' + P.WORKER_UNIT
-        previous = self.fake.text('recent-01', unit)
-        self.assertEqual(self.fake.unit('recent-01', P.WORKER_UNIT)['active'], 'active')
-        # Validation: only the combined layout may name a former recent host,
-        # and it must be a distinct inventory host.
-        wrong = request()
-        wrong['hosts'][P.FORMER_RECENT] = {'inventory': 'recent-01'}
-        with self.assertRaisesRegex(P.PocError, 'combined layout only'):
-            P.validate(wrong, inventory())
-        wrong = combined_request()
-        wrong['hosts'][P.FORMER_RECENT] = {'inventory': 'archive-03'}
-        with self.assertRaisesRegex(P.PocError, 'must be distinct hosts'):
-            P.validate(wrong, inventory())
-
-        self.request['hosts'][P.FORMER_RECENT] = {'inventory': 'recent-01'}
+        previous = 'an earlier recent-replica unit'
+        self.fake.put(FORMER_HOST, unit, previous)
+        self.fake.unit(FORMER_HOST, P.WORKER_UNIT).update(load='loaded', active='active', sub='running',
+                                                          enabled=True, fragment=unit)
+        self.request['hosts'][P.FORMER_RECENT] = {'inventory': FORMER_HOST}
         poc = self.poc()
-        self.assertEqual(poc.plan()['retires'], {P.FORMER_RECENT: 'recent-01'})
-        self.assertNotEqual(poc.plan_sha256(), self.poc(combined_request()).plan_sha256())
+        self.assertEqual(poc.plan()['retires'], {P.FORMER_RECENT: FORMER_HOST})
+        self.assertNotEqual(poc.plan_sha256(), self.poc(request()).plan_sha256())
         poc.deploy('workers', poc.plan_sha256(), map_sha256=self.map)
         self.assertIn('--role combined ', self.fake.text('archive-03', unit))
         self.assertEqual(self.fake.unit('archive-03', P.WORKER_UNIT)['active'], 'active')
-        self.assertIsNone(self.fake.text('recent-01', unit))
-        self.assertNotEqual(self.fake.unit('recent-01', P.WORKER_UNIT)['active'], 'active')
-        self.assertIn(['systemctl', 'disable', P.WORKER_UNIT], self.fake.commands('recent-01'))
+        self.assertIsNone(self.fake.text(FORMER_HOST, unit))
+        self.assertNotEqual(self.fake.unit(FORMER_HOST, P.WORKER_UNIT)['active'], 'active')
+        self.assertIn(['systemctl', 'disable', P.WORKER_UNIT], self.fake.commands(FORMER_HOST))
 
         poc.rollback(poc.transaction.id)
-        self.assertEqual(self.fake.text('recent-01', unit), previous)
-        self.assertEqual(self.fake.unit('recent-01', P.WORKER_UNIT)['active'], 'active')
+        self.assertEqual(self.fake.text(FORMER_HOST, unit), previous)
+        self.assertEqual(self.fake.unit(FORMER_HOST, P.WORKER_UNIT)['active'], 'active')
+
+
+class RouteTests(DeployedFleet):
+    def test_route_validates_writes_the_site_and_waits_for_its_certificate(self):
+        self.fake.certificate = False
+        # The certificate arrives while the route waits for the public map.
+        sleep = self.clock.sleep
+
+        def issuing(seconds):
+            sleep(seconds)
+            if self.clock.t > 30:
+                self.fake.certificate = True
+        self.clock.sleep = issuing
+        poc = self.deploy('route')
+        self.assertEqual(self.fake.text('archive-03', P.CADDYFILE), poc.render()['routes.caddy'])
+        self.assertIn(('archive-03', 'systemctl', ('reload', 'caddy')), self.fake.mutations('archive-03'))
+        configs = [argv[3] for argv in self.fake.commands('archive-03') if argv[0] == 'caddy']
+        scratch = '%s/%s' % (N.VALIDATE, poc.transaction.id)
+        self.assertEqual(configs, [scratch + '/Caddyfile', P.CADDYFILE])
+        self.assertNotIn(('archive-03', scratch + '/Caddyfile'), self.fake.files)
+        self.assertEqual([c for c in self.fake.commands('coordinator') if c[0] == 'caddy'], [])
+        poc.rollback(poc.transaction.id)
+        self.assertEqual(self.fake.text('archive-03', P.CADDYFILE), DEFAULT_CADDY)
+        self.assertEqual([m[2] for m in self.fake.mutations('archive-03') if m[1] == 'systemctl'],
+                         [('reload', 'caddy')] * 2)
+
+    def test_a_rejected_site_never_keeps_its_caddyfile(self):
+        self.fake.caddy_rejects = lambda path, config: path == P.CADDYFILE
+        poc = self.poc()
+        with self.assertRaisesRegex(P.PocError, 'caddy rejected the live site'):
+            poc.deploy('route', poc.plan_sha256())
+        self.assertEqual(self.fake.text('archive-03', P.CADDYFILE), DEFAULT_CADDY)
+        self.fake.caddy_rejects = lambda path, config: path != P.CADDYFILE
+        with self.assertRaisesRegex(P.PocError, 'caddy rejected the composed site'):
+            poc.deploy('route', poc.plan_sha256())
+        self.assertEqual(self.fake.text('archive-03', P.CADDYFILE), DEFAULT_CADDY)
+
+    def test_route_waits_for_the_public_map_and_fails_without_it(self):
+        self.fake.certificate = False
+        poc = self.poc()
+        with self.assertRaisesRegex(P.PocError, 'display map at https://txid.example/v2/txid/map did not happen'):
+            poc.deploy('route', poc.plan_sha256())
+        self.assertGreaterEqual(self.clock.t, P.SITE_SECONDS)
+        poc.rollback(poc.transaction.id)
+        self.assertEqual(self.fake.text('archive-03', P.CADDYFILE), DEFAULT_CADDY)
+
+    def test_retired_router_phases_are_unknown(self):
+        poc = self.poc()
+        for phase in ('firewall', 'router-hook'):
+            with self.subTest(phase=phase), self.assertRaisesRegex(P.PocError, 'unknown phase'):
+                poc.deploy(phase, poc.plan_sha256())
 
 
 class ControllerTests(DeployedFleet):
     def setUp(self):
         super().setUp()
-        for key in P.WORKERS:
-            self.fake.put(HOSTS[key], '/etc/systemd/system/' + P.WORKER_UNIT, 'unit')
-            self.fake.unit(HOSTS[key], P.WORKER_UNIT).update(load='loaded', active='active', sub='running')
+        self.fake.put('archive-03', '/etc/systemd/system/' + P.WORKER_UNIT, 'unit')
+        self.fake.unit('archive-03', P.WORKER_UNIT).update(load='loaded', active='active', sub='running')
 
     def test_controller_installs_configs_and_unit_and_checks_stability(self):
         poc = self.deploy('controller')
         files = poc.render()
-        self.assertEqual(self.fake.text('coordinator', P.WORKERS_JSON), files['workers.json'])
-        self.assertEqual(self.fake.text('coordinator', '/etc/systemd/system/' + P.CONTROLLER_UNIT),
+        self.assertEqual(self.fake.text('coordinator', N.WORKERS_JSON), files['workers.json'])
+        self.assertEqual([(w['name'], w['role']) for w in json.loads(files['workers.json'])['workers']],
+                         [('archive', 'combined')])
+        self.assertEqual(self.fake.text('coordinator', '/etc/systemd/system/' + N.CONTROLLER_UNIT),
                          files['unit:controller'])
-        self.assertEqual(self.fake.unit('coordinator', P.CONTROLLER_UNIT)['active'], 'active')
+        self.assertEqual(self.fake.unit('coordinator', N.CONTROLLER_UNIT)['active'], 'active')
         poc.rollback(poc.transaction.id)
-        self.assertIsNone(self.fake.text('coordinator', P.WORKERS_JSON))
-        self.assertEqual(self.fake.unit('coordinator', P.CONTROLLER_UNIT)['active'], 'inactive')
+        self.assertIsNone(self.fake.text('coordinator', N.WORKERS_JSON))
+        self.assertEqual(self.fake.unit('coordinator', N.CONTROLLER_UNIT)['active'], 'inactive')
 
     def test_controller_refuses_while_another_journal_writer_runs(self):
-        self.fake.unit('coordinator', P.INGEST_UNIT).update(load='loaded', active='active', sub='running')
+        self.fake.unit('coordinator', N.INGEST_UNIT).update(load='loaded', active='active', sub='running')
         poc = self.poc()
         with self.assertRaisesRegex(P.PocError, 'only journal writer'):
             poc.deploy('controller', poc.plan_sha256())
-        self.assertIsNone(self.fake.text('coordinator', P.WORKERS_JSON))
-
-
-class FirewallTests(Base):
-    def setUp(self):
-        super().setUp()
-        for name in P.TF_SOURCES:
-            self.fake.put('coordinator', '%s/%s' % (TF_ROOT, name),
-                          (ROOT / 'ops/infra/digitalocean/production' / name).read_bytes())
-
-    def test_two_step_plan_then_apply_the_reviewed_plan_unlocked(self):
-        poc = self.poc()
-        self.fake.summaries = [poc.expected_firewall(True)]
-        poc.deploy('firewall', poc.plan_sha256())
-        tfvars = '%s/%s' % (TF_ROOT, P.TFVARS)
-        self.assertEqual(self.fake.text('coordinator', tfvars), poc.render()['tfvars'])
-        record = self.journal(poc.transaction.id)
-        self.assertEqual(record['status'], 'planned')
-        digest = record['terraform']['plan_sha256']
-        self.assertEqual(digest, sha256(b'saved plan with secrets'))
-        self.assertIn('review the saved plan, then re-run with --terraform-plan-sha256 ' + digest, self.output)
-        self.assertEqual(self.fake.applied, [])
-        apply = self.poc()
-        with self.assertRaisesRegex(P.PocError, 'must equal the reviewed saved plan'):
-            apply.deploy('firewall', apply.plan_sha256(), terraform_plan_sha256='f' * 64)
-        apply.deploy('firewall', apply.plan_sha256(), terraform_plan_sha256=digest)
-        self.assertEqual(self.fake.applied, [record['terraform']['plan_file']])
-        self.assertNotIn(('coordinator', record['terraform']['plan_file']), self.fake.files)
-        self.assertEqual(self.journal(poc.transaction.id)['status'], 'committed')
-
-        # Rolling back an applied rule plans and applies its removal the same way.
-        self.fake.summaries = [poc.expected_firewall(False)]
-        rollback = self.poc()
-        rollback.rollback(poc.transaction.id)
-        self.assertIsNone(self.fake.text('coordinator', tfvars))
-        removal = self.journal(rollback.transaction.id)
-        self.assertEqual((removal['action'], removal['status']), ('firewall-rollback', 'planned'))
-        rollback = self.poc()
-        rollback.rollback(poc.transaction.id, removal['terraform']['plan_sha256'])
-        self.assertEqual(len(self.fake.applied), 2)
-        self.assertEqual(self.journal(poc.transaction.id)['status'], 'rolled-back')
-
-    def test_any_other_change_is_refused_and_the_variable_file_restored(self):
-        poc = self.poc()
-        self.fake.summaries = [{'changes': [{'address': P.FIREWALL, 'actions': ['update']},
-                                            {'address': 'digitalocean_droplet.coordinator', 'actions': ['delete', 'create']}],
-                                'added': poc.expected_firewall(True)['added'], 'removed': []}]
-        with self.assertRaisesRegex(P.PocError, 'not exactly one in-place worker firewall change'):
-            poc.deploy('firewall', poc.plan_sha256())
-        self.assertIsNone(self.fake.text('coordinator', '%s/%s' % (TF_ROOT, P.TFVARS)))
-        self.assertEqual([path for h, path in self.fake.files if path.endswith('.tfplan')], [])
-        self.assertEqual(self.journal(poc.transaction.id)['status'], 'rolled-back')
-        self.assertEqual(self.fake.applied, [])
-
-    def test_a_rule_already_in_place_needs_no_apply(self):
-        poc = self.poc()
-        self.fake.summaries = [{'changes': [], 'added': [], 'removed': []}]
-        poc.deploy('firewall', poc.plan_sha256())
-        self.assertEqual(self.journal(poc.transaction.id)['status'], 'committed')
-        self.assertEqual([path for h, path in self.fake.files if path.endswith('.tfplan')], [])
-        self.assertEqual(self.fake.applied, [])
-
-    def test_the_coordinator_root_must_carry_these_sources(self):
-        self.fake.put('coordinator', TF_ROOT + '/transparent.tf', b'older root')
-        poc = self.poc()
-        with self.assertRaisesRegex(P.PocError, 'differs from this checkout'):
-            poc.deploy('firewall', poc.plan_sha256())
-        self.assertEqual(self.fake.applied, [])
-
-    def test_the_variable_rule_is_off_by_default(self):
-        text = (ROOT / 'ops/infra/digitalocean/production/transparent.tf').read_text()
-        rule = text[text.index('dynamic "inbound_rule" {\n    for_each = var.transparent_txid_display_port_enabled'):]
-        rule = rule[:rule.index('\n  }\n')]
-        self.assertIn('? [%d] : []' % P.WORKER_PORT, rule)
-        self.assertIn('source_tags = [digitalocean_tag.coordinator.name, digitalocean_tag.transparent_router.name]',
-                      rule)
-        variables = (ROOT / 'ops/infra/digitalocean/production/variables.tf').read_text()
-        block = variables[variables.index('variable "%s"' % P.TF_VARIABLE):]
-        self.assertIn('default     = false', block[:block.index('\n}\n')])
-        for tag, name in (('coordinator', 'wallet-pir-coordinator'), ('transparent_router', 'transparent-pir-router')):
-            source = (ROOT / 'ops/infra/digitalocean/production' / ('shared.tf' if tag == 'coordinator'
-                                                                     else 'transparent.tf')).read_text()
-            self.assertIn('resource "digitalocean_tag" "%s" {\n  name = "%s"' % (tag, name), source)
-            self.assertIn(name, P.FIREWALL_TAGS)
+        self.assertIsNone(self.fake.text('coordinator', N.WORKERS_JSON))
 
 
 class TransientTests(Base):
@@ -1347,24 +1084,24 @@ class TransientTests(Base):
         poc.act('ingest-start', poc.plan_sha256(), smoke=True)
         smoke = [argv for argv in self.fake.commands('coordinator') if argv[0] == 'systemd-run']
         self.assertEqual(smoke, [poc.plan()['transient']['ingest-smoke']])
-        self.fake.wait_results[P.SMOKE_UNIT] = (1, 'state directory format mismatch')
+        self.fake.wait_results[N.SMOKE_UNIT] = (1, 'state directory format mismatch')
         with self.assertRaisesRegex(P.PocError, 'smoke ingest failed'):
             self.poc().act('ingest-start', poc.plan_sha256(), smoke=True)
         poc = self.poc()
         poc.act('ingest-start', poc.plan_sha256())
-        self.assertEqual(self.fake.unit('coordinator', P.INGEST_UNIT)['active'], 'active')
+        self.assertEqual(self.fake.unit('coordinator', N.INGEST_UNIT)['active'], 'active')
         with self.assertRaisesRegex(P.PocError, 'stop it first'):
             self.poc().act('ingest-start', poc.plan_sha256())
         status = self.poc().ingest_status()
-        self.assertEqual(status[P.INGEST_UNIT]['active'], 'active')
-        self.assertEqual(status[P.INGEST_UNIT]['log'], ['ingest progress height=3290000'])
+        self.assertEqual(status[N.INGEST_UNIT]['active'], 'active')
+        self.assertEqual(status[N.INGEST_UNIT]['log'], ['ingest progress height=3290000'])
         stop = self.poc()
         stop.act('ingest-stop')
-        self.assertEqual(self.fake.unit('coordinator', P.INGEST_UNIT)['load'], 'not-found')
+        self.assertEqual(self.fake.unit('coordinator', N.INGEST_UNIT)['load'], 'not-found')
         self.assertEqual(self.journal(stop.transaction.id)['undo'], [])
 
     def test_bootstrap_uses_plan_start_unless_given_a_range(self):
-        self.fake.wait_results['transparent-txid-display-plan-start.service'] = (
+        self.fake.wait_results[N.PLAN_START_UNIT] = (
             0, 'counting\n{"start": 3300000, "through": 3500000, "journal_start": 3289805, '
                '"archives_at_through": 15, "replay_seals": 4, "expected_drops": 0}\n')
         poc = self.poc()
@@ -1386,16 +1123,16 @@ class TransientTests(Base):
         observer = [a for a in self.fake.commands('coordinator') if a[0] == 'systemd-run'][0]
         self.assertIn('/srv/zakura/txid-display-poc/measure/%s/observer.jsonl' % run, observer)
         self.assertIn('--property=MemoryMax=256M', observer)
-        for unit in (P.OBSERVER_UNIT, P.MAPWATCH_UNIT):
+        for unit in (N.OBSERVER_UNIT, N.MAPWATCH_UNIT):
             self.assertEqual(self.fake.unit('coordinator', unit)['active'], 'active')
         self.poc().act('measure-stop')
-        for unit in (P.OBSERVER_UNIT, P.MAPWATCH_UNIT):
+        for unit in (N.OBSERVER_UNIT, N.MAPWATCH_UNIT):
             self.assertEqual(self.fake.unit('coordinator', unit)['active'], 'inactive')
 
     def test_verify_reports_the_controller_result(self):
         poc = self.poc()
         poc.act('verify', poc.plan_sha256())
-        self.fake.wait_results['transparent-txid-display-verify.service'] = (1, 'sealed digest 7 differs')
+        self.fake.wait_results[N.VERIFY_UNIT] = (1, 'sealed digest 7 differs')
         with self.assertRaisesRegex(P.PocError, 'sealed digest 7 differs'):
             self.poc().act('verify', poc.plan_sha256())
 
@@ -1405,248 +1142,67 @@ class StopAndRetireTests(DeployedFleet):
         super().setUp()
         poc = self.poc()
         self.routes = poc.render()['routes.caddy']
-        self.fake.put('router-01', '/etc/caddy/txid-display/routes.caddy', self.routes)
-        for key, unit in (('archive', P.WORKER_UNIT), ('recent', P.WORKER_UNIT), ('coordinator', P.CONTROLLER_UNIT)):
-            self.fake.put(HOSTS[key], '/etc/systemd/system/' + unit, poc.render()['unit:' + ('controller' if key ==
-                                                                                            'coordinator' else key)])
-            self.fake.unit(HOSTS[key], unit).update(load='loaded', active='active', sub='running', enabled=True,
-                                                     fragment='/etc/systemd/system/' + unit)
+        self.fake.put('archive-03', P.CADDYFILE, self.routes)
+        for host, unit, name in (('archive-03', P.WORKER_UNIT, 'unit:archive'),
+                                 ('coordinator', N.CONTROLLER_UNIT, 'unit:controller')):
+            self.fake.put(host, '/etc/systemd/system/' + unit, poc.render()[name])
+            self.fake.unit(host, unit).update(load='loaded', active='active', sub='running', enabled=True,
+                                              fragment='/etc/systemd/system/' + unit)
 
     def test_stop_withdraws_then_stops_the_controller_and_rolls_back(self):
         poc = self.poc()
         poc.act('stop')
-        self.assertEqual(self.fake.text('router-01', '/etc/caddy/txid-display/routes.caddy'), P.WITHDRAWN % P.ROUTER_API)
-        self.assertEqual(self.fake.unit('coordinator', P.CONTROLLER_UNIT)['active'], 'inactive')
-        router = [m for m in self.fake.mutations() if m[0] == 'router-01' and m[1] == 'systemctl']
-        controller = [i for i, m in enumerate(self.fake.mutations()) if m[2] == ('stop', P.CONTROLLER_UNIT)]
-        self.assertLess(self.fake.mutations().index(router[0]), controller[0])
+        self.assertEqual(self.fake.text('archive-03', P.CADDYFILE), poc.render()['withdrawn.caddy'])
+        self.assertEqual(self.fake.unit('coordinator', N.CONTROLLER_UNIT)['active'], 'inactive')
+        reload = [m for m in self.fake.mutations() if m[0] == 'archive-03' and m[1] == 'systemctl']
+        controller = [i for i, m in enumerate(self.fake.mutations()) if m[2] == ('stop', N.CONTROLLER_UNIT)]
+        self.assertLess(self.fake.mutations().index(reload[0]), controller[0])
         record = self.journal(poc.transaction.id)
         self.assertLess(record['stop_seconds'], P.STOP_TARGET_SECONDS)
         poc.rollback(poc.transaction.id)
-        self.assertEqual(self.fake.text('router-01', '/etc/caddy/txid-display/routes.caddy'), self.routes)
-        self.assertEqual(self.fake.unit('coordinator', P.CONTROLLER_UNIT)['active'], 'active')
+        self.assertEqual(self.fake.text('archive-03', P.CADDYFILE), self.routes)
+        self.assertEqual(self.fake.unit('coordinator', N.CONTROLLER_UNIT)['active'], 'active')
 
     def test_stop_still_stops_the_controller_when_caddy_refuses(self):
         self.fake.reload_fails = True
         poc = self.poc()
         with self.assertRaisesRegex(P.PocError, 'controller stopped, but the route was not withdrawn'):
             poc.act('stop')
-        self.assertEqual(self.fake.text('router-01', '/etc/caddy/txid-display/routes.caddy'), self.routes)
-        self.assertEqual(self.fake.unit('coordinator', P.CONTROLLER_UNIT)['active'], 'inactive')
+        self.assertEqual(self.fake.text('archive-03', P.CADDYFILE), self.routes)
+        self.assertEqual(self.fake.unit('coordinator', N.CONTROLLER_UNIT)['active'], 'inactive')
 
-    def test_retire_removes_units_route_and_hook_keeps_data_and_closes_the_firewall(self):
-        hook = self.poc()
-        self.fake.put('coordinator', ADAPTER, OLD_ADAPTER, 0o755)
-        self.fake.put('coordinator', FLEET, json.dumps({'public_host': 'pir.example'}), 0o600)
-        self.fake.put('router-01', P.CADDYFILE, ROUTER)
-        hook.deploy('router-hook', hook.plan_sha256())
-        self.fake.put('coordinator', '%s/%s' % (TF_ROOT, P.TFVARS), hook.render()['tfvars'], 0o600)
-        self.fake.unit('coordinator', P.MAPWATCH_UNIT).update(load='loaded', active='active', sub='running',
-                                                              fragment='/run/systemd/transient/' + P.MAPWATCH_UNIT)
+    def test_retire_removes_units_withdraws_the_site_and_keeps_data(self):
+        self.fake.unit('coordinator', N.MAPWATCH_UNIT).update(load='loaded', active='active', sub='running',
+                                                              fragment='/run/systemd/transient/' + N.MAPWATCH_UNIT)
         poc = self.poc()
-        self.fake.summaries = [poc.expected_firewall(False)]
-        poc.retire(poc.plan_sha256(), None)
-        for key, unit in (('archive', P.WORKER_UNIT), ('recent', P.WORKER_UNIT), ('coordinator', P.CONTROLLER_UNIT)):
-            self.assertIsNone(self.fake.text(HOSTS[key], '/etc/systemd/system/' + unit))
-            self.assertFalse(self.fake.unit(HOSTS[key], unit)['enabled'])
-            mutations = [m[2] for m in self.fake.mutations(HOSTS[key])]
+        poc.retire(poc.plan_sha256())
+        for host, unit in (('archive-03', P.WORKER_UNIT), ('coordinator', N.CONTROLLER_UNIT)):
+            self.assertIsNone(self.fake.text(host, '/etc/systemd/system/' + unit))
+            self.assertFalse(self.fake.unit(host, unit)['enabled'])
+            mutations = [m[2] for m in self.fake.mutations(host)]
             self.assertLess(mutations.index(('disable', unit)), mutations.index('/etc/systemd/system/' + unit))
-        self.assertEqual(self.fake.unit('coordinator', P.MAPWATCH_UNIT)['load'], 'not-found')
-        self.assertIsNone(self.fake.text('router-01', '/etc/caddy/txid-display/routes.caddy'))
-        self.assertEqual(self.fake.files[('coordinator', ADAPTER)], OLD_ADAPTER)
-        self.assertNotIn('route_imports', json.loads(self.fake.text('coordinator', FLEET)))
-        self.assertIsNone(self.fake.text('coordinator', '%s/%s' % (TF_ROOT, P.TFVARS)))
-        record = self.journal(poc.transaction.id)
-        self.assertEqual(record['status'], 'planned')
+        self.assertEqual(self.fake.unit('coordinator', N.MAPWATCH_UNIT)['load'], 'not-found')
+        # The host keeps a Caddyfile, so Caddy keeps running: the withdrawn site.
+        self.assertEqual(self.fake.text('archive-03', P.CADDYFILE), poc.render()['withdrawn.caddy'])
+        self.assertEqual(self.journal(poc.transaction.id)['status'], 'committed')
         self.assertIn('  coordinator:/srv/zakura/txid-display-poc/journal', self.output)
         self.assertIn('  archive-03:/srv/transparent-txid-display', self.output)
         self.assertFalse([m for m in self.fake.mutations() if m[1] == 'remove' and m[2].startswith('/srv/')])
-        apply = self.poc()
-        apply.retire(apply.plan_sha256(), record['terraform']['plan_sha256'])
-        self.assertEqual(self.journal(poc.transaction.id)['status'], 'committed')
 
-        # Retirement itself rolls back from its journal: units, route and hook return.
+        # Retirement itself rolls back from its journal: units and route return.
         restore = self.poc()
         restore.rollback(poc.transaction.id)
-        self.assertEqual(self.fake.text('router-01', '/etc/caddy/txid-display/routes.caddy'), self.routes)
-        for key, unit in (('archive', P.WORKER_UNIT), ('coordinator', P.CONTROLLER_UNIT)):
-            self.assertEqual(self.fake.unit(HOSTS[key], unit)['active'], 'active')
-            self.assertTrue(self.fake.unit(HOSTS[key], unit)['enabled'])
+        self.assertEqual(self.fake.text('archive-03', P.CADDYFILE), self.routes)
+        for host, unit in (('archive-03', P.WORKER_UNIT), ('coordinator', N.CONTROLLER_UNIT)):
+            self.assertEqual(self.fake.unit(host, unit)['active'], 'active')
+            self.assertTrue(self.fake.unit(host, unit)['enabled'])
 
 
-class SiteTests(DeployedFleet):
-    """A second lineage on its own hostname and host, beside the router's lineage."""
-
-    def setUp(self):
-        super().setUp()
-        self.request = site_request()
-        self.fake.roles = dict(P.COMBINED_ROLES)
-        self.fake.put('coordinator', '/srv/zakura/txid-display-poc/root-k8/candidate-100-%s-1/txid-shards.json'
-                      % ('d' * 64), b'map')
-        # The router lineage's controller runs and must never be touched.
-        self.fake.put('coordinator', '/etc/systemd/system/' + P.CONTROLLER_UNIT, 'router lineage controller')
-        self.fake.unit('coordinator', P.CONTROLLER_UNIT).update(load='loaded', active='active', sub='running',
-                                                                enabled=True)
-        self.fake.listen['coordinator'] = ['127.0.0.1:8099']
-        self.fake.put('archive-03', P.CADDYFILE, ':80 {\n\troot * /usr/share/caddy\n\tfile_server\n}\n')
-
-    def untouched(self):
-        self.assertEqual(self.fake.mutations('router-01'), [])
-        self.assertEqual(self.fake.commands('router-01'), [])
-        self.assertEqual(self.fake.unit('coordinator', P.CONTROLLER_UNIT)['active'], 'active')
-        self.assertEqual(self.fake.text('coordinator', '/etc/systemd/system/' + P.CONTROLLER_UNIT),
-                         'router lineage controller')
-        legacy = [m for m in self.fake.mutations('coordinator') if isinstance(m[2], str)
-                  and (m[2] == P.OPT or m[2].startswith(P.OPT + '/'))]
-        self.assertEqual(legacy, [])
-        for path in (P.FLEET_JSON, P.WORKERS_JSON):
-            self.assertIsNone(self.fake.text('coordinator', path))
-
-    def test_a_site_request_validates_and_refuses_router_keys_and_the_split_layout(self):
-        P.validate(self.request, inventory())
-
-        def changed(edit):
-            value = site_request()
-            edit(value)
-            return value
-        refused = [
-            (lambda v: v.update(router=request()['router']), 'must have exactly'),
-            (lambda v: v.update(terraform=request()['terraform']), 'must have exactly'),
-            (lambda v: v['hosts'].update(router={'inventory': 'router-01'}), 'hosts must have exactly'),
-            (lambda v: [v[f].update(recent=request()[f]['recent']) for f in ('hosts', 'units', 'baseline')],
-             'combined layout'),
-            (lambda v: v['site'].update(name='K8'), 'site.name'),
-            (lambda v: v['site'].update(name=''), 'site.name'),
-            (lambda v: v['site'].update(hostname='https://txid.example'), 'site.hostname'),
-            (lambda v: v['site'].update(extra=1), 'site must have exactly'),
-            (lambda v: v['measure'].update(public_url='https://pir.example'), 'site.s own'),
-        ]
-        for edit, pattern in refused:
-            with self.subTest(pattern=pattern), self.assertRaisesRegex(P.PocError, pattern):
-                P.validate(changed(edit), inventory())
-
-    def test_plan_names_its_own_coordinator_paths_units_and_site(self):
-        poc = self.poc()
-        files, plan = poc.render(), poc.plan()
-        self.assertEqual(plan['phases'], list(P.SITE_PHASES))
-        self.assertNotIn('router_hook', plan)
-        self.assertNotIn('terraform', plan)
-        self.assertNotIn('tfvars', files)
-        self.assertEqual(plan['site']['host'], 'archive-03')
-        self.assertEqual(plan['files']['routes.caddy']['host'], 'archive')
-        self.assertEqual(plan['files']['routes.caddy']['path'], P.CADDYFILE)
-        self.assertEqual(plan['files']['unit:controller']['path'],
-                         '/etc/systemd/system/transparent-txid-display-k8-controller.service')
-        self.assertEqual(plan['files']['fleet.json']['path'], '/opt/transparent-txid-display-k8/fleet.json')
-        self.assertEqual(plan['release_dir'], '/opt/transparent-txid-display-k8/releases/' + SHA)
-        controller = files['unit:controller']
-        self.assertIn('--workers /opt/transparent-txid-display-k8/workers.json ', controller)
-        self.assertIn('--status-listen 127.0.0.1:8098 ', controller)
-        self.assertIn('ReadWritePaths=/srv/zakura/txid-display-poc/root-k8 /srv/zakura/txid-display-poc/journal-k8 '
-                      '/opt/transparent-txid-display-k8/state\n', controller)
-        self.assertNotIn('/opt/transparent-txid-display/', controller)
-        self.assertEqual(json.loads(files['fleet.json'])['control_dir'], '/opt/transparent-txid-display-k8/state/ssh')
-        transient = plan['transient']
-        self.assertEqual({argv[1] for argv in transient.values()},
-                         {'--unit=' + unit for unit in (*SITE_NAMES.TRANSIENT, SITE_NAMES.PLAN_START_UNIT,
-                                                        SITE_NAMES.VERIFY_UNIT)})
-        site = files['routes.caddy']
-        self.assertTrue(site.split('\n')[2] == 'txid.example {', site)
-        self.assertIn('reverse_proxy 10.142.0.5:8095 {', site)
-        self.assertIn('\thandle {\n\t\trespond 404\n\t}\n}\n', site)
-        # A site serves its release's own /v2 paths; nothing names /v1/txid.
-        self.assertIn('\thandle /v2/txid/archive/* {\n', site)
-        self.assertIn('\thandle /v2/txid/* {\n', site)
-        self.assertNotIn('/v1/txid', site + files['withdrawn.caddy'])
-        self.assertIn('https://txid.example/v2/txid/shards', transient['mapwatch'])
-        self.assertIn('respond "transparent txid display withdrawn" 503', files['withdrawn.caddy'])
-        self.assertIn('txid.example {', files['withdrawn.caddy'])
-        for phase in ('firewall', 'router-hook'):
-            with self.subTest(phase=phase), self.assertRaisesRegex(P.PocError, 'site request has no'):
-                poc.deploy(phase, poc.plan_sha256())
-
-    def test_workers_route_controller_stop_and_retire_leave_the_router_lineage_alone(self):
-        self.fake.certificate = False
-        poc = self.poc()
-        candidate = '/srv/zakura/txid-display-poc/root-k8/candidate-100-%s-1' % ('d' * 64)
-        adapter = self.fake.adapter
-
-        def shipping(host, request):
-            if request['operation'] == 'ship':
-                request = dict(request, source=CANDIDATE)
-            return adapter(host, request)
-        self.fake.adapter = shipping
-        poc.deploy('workers', poc.plan_sha256(), map_sha256=self.map)
-        self.assertEqual(self.fake.active, {'archive': self.map})
-        self.assertEqual(self.fake.text('coordinator', SITE_NAMES.FLEET_JSON), poc.render()['fleet.json'])
-        self.assertEqual(poc.candidate(self.map), candidate)
-
-        # The certificate arrives while the route waits for the public map.
-        sleep = self.clock.sleep
-
-        def issuing(seconds):
-            sleep(seconds)
-            if self.clock.t > 30:
-                self.fake.certificate = True
-        self.clock.sleep = issuing
-        route = self.poc()
-        route.deploy('route', route.plan_sha256())
-        self.assertEqual(self.fake.text('archive-03', P.CADDYFILE), route.render()['routes.caddy'])
-        self.assertIn(('archive-03', 'systemctl', ('reload', 'caddy')), self.fake.mutations('archive-03'))
-        configs = [argv[3] for argv in self.fake.commands('archive-03') if argv[0] == 'caddy']
-        self.assertEqual(configs, ['%s/%s/Caddyfile' % (SITE_NAMES.VALIDATE, route.transaction.id), P.CADDYFILE])
-
-        controller = self.poc()
-        controller.deploy('controller', controller.plan_sha256())
-        self.assertEqual(self.fake.unit('coordinator', SITE_NAMES.CONTROLLER_UNIT)['active'], 'active')
-        self.assertEqual(self.fake.text('coordinator', SITE_NAMES.WORKERS_JSON), controller.render()['workers.json'])
-        self.untouched()
-
-        stop = self.poc()
-        stop.act('stop')
-        self.assertEqual(self.fake.text('archive-03', P.CADDYFILE), stop.render()['withdrawn.caddy'])
-        self.assertEqual(self.fake.unit('coordinator', SITE_NAMES.CONTROLLER_UNIT)['active'], 'inactive')
-        self.untouched()
-        stop.rollback(stop.transaction.id)
-        self.assertEqual(self.fake.text('archive-03', P.CADDYFILE), stop.render()['routes.caddy'])
-        self.assertEqual(self.fake.unit('coordinator', SITE_NAMES.CONTROLLER_UNIT)['active'], 'active')
-
-        retire = self.poc()
-        retire.retire(retire.plan_sha256(), None)
-        self.assertEqual(self.journal(retire.transaction.id)['status'], 'committed')
-        self.assertEqual(self.fake.text('archive-03', P.CADDYFILE), retire.render()['withdrawn.caddy'])
-        self.assertIsNone(self.fake.text('coordinator', '/etc/systemd/system/' + SITE_NAMES.CONTROLLER_UNIT))
-        self.assertIsNone(self.fake.text('archive-03', '/etc/systemd/system/' + P.WORKER_UNIT))
-        self.assertFalse([argv for argv in self.fake.commands() if argv[0] == WRAPPER])
-        self.untouched()
-        with self.assertRaisesRegex(P.PocError, 'plans no Terraform change'):
-            retire.retire(retire.plan_sha256(), 'f' * 64)
-
-    def test_route_waits_for_the_public_map_and_fails_without_it(self):
-        self.fake.certificate = False
-        poc = self.poc()
-        with self.assertRaisesRegex(P.PocError, 'display map at https://txid.example/v2/txid/map did not happen'):
-            poc.deploy('route', poc.plan_sha256())
-        self.assertGreaterEqual(self.clock.t, P.SITE_SECONDS)
-        poc.rollback(poc.transaction.id)
-        self.assertIn(':80 {', self.fake.text('archive-03', P.CADDYFILE))
-
-    def test_the_controller_port_of_the_router_lineage_is_refused(self):
-        self.request['ports']['controller_status'] = 8099
-        self.fake.put('archive-03', '/etc/systemd/system/' + P.WORKER_UNIT, 'unit')
-        self.fake.unit('archive-03', P.WORKER_UNIT).update(load='loaded', active='active', sub='running')
-        poc = self.poc()
-        with self.assertRaisesRegex(P.PocError, 'preflight refused'):
-            poc.deploy('controller', poc.plan_sha256())
-        self.assertTrue(any('port 8099 is already in use' in line for line in self.output), self.output)
-        self.untouched()
-
-
-class CommandLineTests(Base):
+class CommandLineTests(DeployedFleet):
     def run_cli(self, *argv):
         inventory_path = Path(self.tmp.name) / 'inventory.json'
         inventory_path.write_text(json.dumps({
-            'hosts': {name: {} for name in HOSTS.values()}, 'ssh': {'mode': 'config'},
+            'hosts': {name: {} for name in (*HOSTS.values(), FORMER_HOST)}, 'ssh': {'mode': 'config'},
             'lock': {'type': 'remote', 'host': 'coordinator'}}))
         request_path = Path(self.tmp.name) / 'request.json'
         request_path.write_text(json.dumps(self.request))
@@ -1662,7 +1218,6 @@ class CommandLineTests(Base):
         self.assertEqual(code, 0)
         digest = lines[-1].removeprefix('plan sha256: ')
         self.assertEqual(digest, durable.digest(json.loads(lines[0])))
-        self.fake.put('router-01', P.CADDYFILE, ROUTER.replace('\t@metadata', IMPORT + '\n\t@metadata'))
         code, lines = self.run_cli('txid-display-deploy', '--phase', 'route', '--expect-plan-sha256', digest)
         self.assertEqual(code, 0, lines)
         rollback = [line for line in lines if line.startswith('rollback: ')]
@@ -1674,6 +1229,12 @@ class CommandLineTests(Base):
         code, lines = self.run_cli('txid-display-deploy', '--phase', 'route', '--expect-plan-sha256', 'f' * 64)
         self.assertEqual(code, 1)
         self.assertTrue(lines[-1].startswith('error: plan changed since review'))
+
+    def test_a_request_without_a_site_is_refused(self):
+        del self.request['site']
+        code, lines = self.run_cli('txid-display-plan')
+        self.assertEqual(code, 1)
+        self.assertIn('request must name a site', lines[-1])
 
     def test_preflight_exit_status(self):
         code, lines = self.run_cli('txid-display-preflight')
@@ -1687,9 +1248,13 @@ class CommandLineTests(Base):
         for name in cli.TXID_DISPLAY:
             with self.subTest(name=name), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
                 parser.parse_args(['txid-display-' + name])
+        for phase in ('everything', 'firewall', 'router-hook'):
+            with self.subTest(phase=phase), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                parser.parse_args(['txid-display-deploy', '--request', 'r', '--request-sha256', 'h',
+                                   '--expect-plan-sha256', 'h', '--phase', phase])
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
-            parser.parse_args(['txid-display-deploy', '--request', 'r', '--request-sha256', 'h',
-                               '--expect-plan-sha256', 'h', '--phase', 'everything'])
+            parser.parse_args(['txid-display-retire', '--request', 'r', '--request-sha256', 'h',
+                               '--expect-plan-sha256', 'h', '--terraform-plan-sha256', 'h'])
         self.assertEqual(cli.TXID_DISPLAY_PHASES, P.PHASES)
 
 

@@ -1,15 +1,15 @@
 """The `wallet-pir-deploy.py txid-display-*` command family.
 
-Runs the tiered txid display proof of concept side by side with history on
-production: a controller and a fresh display journal on the coordinator, the
-display workers and a `/v1/txid/` route on the history router. A request picks
-the worker layout. The split layout names a `recent` host and runs an
-archive-owner worker on the archive host and a recent-replica worker on the
-recent host. The combined layout omits `recent` from `hosts`, `units` and
-`baseline`, and runs one worker with role `combined` on the archive host,
-holding both the sealed archives and the recent shard; the route then sends
-every `/v1/txid/` request to it. History units and data are never changed; the
-only history-adjacent change is the router import hook (`router-hook`).
+Runs one txid display site side by side with history on production: a
+controller and a fresh display journal on the coordinator, under coordinator
+paths and unit names of the site's own, and one worker with role `combined` on
+the site's archive host, holding both the sealed archives and the recent shard.
+Caddy on that host serves the site's own hostname, and every `/v2/txid/`
+request goes to the worker. History units and data are never changed.
+
+A request must name its `site`. The `/v1/txid/` lineage served through the
+history router, with its split archive/recent layout, router import hook and
+worker firewall phase, was retired with the wallet API `/v1` on 2026-10-13.
 
 Every command takes the reviewed request and its sha256. `plan` is read-only
 and deterministic: rendered units, configs and snippets come from the request
@@ -60,17 +60,15 @@ RELEASE_FILES.update({name: 'transparent/ops/scripts/' + name for name in SCRIPT
 HOST_RELEASE = {
     'coordinator': ('txid-display-controller', 'transparent-event-ingest', 'txid-inventory', 'txid-control', *SCRIPTS),
     'archive': ('transparent-txid-server', 'txid-control'),
-    'recent': ('transparent-txid-server', 'txid-control'),
 }
-# The split layout's workers; the combined layout runs only COMBINED_ROLES.
-WORKERS = ('archive', 'recent')
-ROLES = {'archive': 'archive-owner', 'recent': 'recent-replica'}
-COMBINED_ROLES = {'archive': 'combined'}
-HOST_KEYS = ('coordinator', 'archive', 'recent', 'router')
-# A combined request may name the host a split deployment ran its recent
-# replica on; the workers phase stops and removes that worker's unit there.
+# One combined worker on the archive host, which also serves the site.
+WORKERS = ('archive',)
+ROLES = {'archive': 'combined'}
+HOST_KEYS = ('coordinator', 'archive')
+# A request may name a host that ran an earlier recent-replica worker; the
+# workers phase stops and removes that worker's unit there.
 FORMER_RECENT = 'former_recent'
-PHASES = ('stage', 'firewall', 'router-hook', 'workers', 'route', 'controller')
+PHASES = ('stage', 'workers', 'route', 'controller')
 ACTIONS = ('ingest-start', 'ingest-stop', 'bootstrap', 'verify', 'measure-start', 'measure-stop', 'stop')
 MODES = ('live', 'replay', 'replay-then-live')
 GEOMETRIES = ('txid-2k8', 'txid-4k8')
@@ -81,15 +79,8 @@ MAX_BUCKETS = 64
 # 90,000 entries, growing about 30 a year.
 MAX_ARCHIVE_SHARDS = 1024
 
+# Worker-host paths; coordinator paths are each site's own (names()).
 OPT = '/opt/transparent-txid-display'
-RELEASES = OPT + '/releases'
-TRANSACTIONS = OPT + '/transactions'
-STATE = OPT + '/state'
-REQUESTS = STATE + '/requests'
-TERRAFORM_PLANS = OPT + '/terraform'
-VALIDATE = OPT + '/validate'
-WORKERS_JSON = OPT + '/workers.json'
-FLEET_JSON = OPT + '/fleet.json'
 WORKER_DATA = '/srv/transparent-txid-display'
 PUBLICATIONS = WORKER_DATA + '/publications'
 STAGED = WORKER_DATA + '/staged'
@@ -99,14 +90,6 @@ ACTIVE_RECORD = WORKER_STATE + '/active.json'
 CONTROL_SOCKET = '/run/transparent-txid-display/control.sock'
 SYSTEM = '/etc/systemd/system'
 WORKER_UNIT = 'transparent-txid-display-worker.service'
-CONTROLLER_UNIT = 'transparent-txid-display-controller.service'
-INGEST_UNIT = 'transparent-txid-display-ingest.service'
-SMOKE_UNIT = 'transparent-txid-display-ingest-smoke.service'
-BOOTSTRAP_UNIT = 'transparent-txid-display-bootstrap.service'
-OBSERVER_UNIT = 'transparent-txid-display-observer.service'
-MAPWATCH_UNIT = 'transparent-txid-display-mapwatch.service'
-TRANSIENT = (INGEST_UNIT, SMOKE_UNIT, BOOTSTRAP_UNIT, OBSERVER_UNIT, MAPWATCH_UNIT)
-JOURNAL_WRITERS = (INGEST_UNIT, SMOKE_UNIT, BOOTSTRAP_UNIT)
 CADDYFILE = '/etc/caddy/Caddyfile'
 PUBLISHER = '/opt/transparent-publisher'
 HISTORY_DAEMONS = ('transparent-replica-reconciler.service', 'transparent-control-sessions.service')
@@ -116,14 +99,7 @@ KNOWN_HOSTS = PUBLISHER + '/credentials/known_hosts'
 ACTUATOR_OPERATION = PUBLISHER + '/scaler/journal/operation.json'
 HISTORY_STATUS = 'http://127.0.0.1:8094/v1/status'
 NODE_STATE = 'state/v29/mainnet'
-TFVARS = 'txid-display.auto.tfvars'
-TF_VARIABLE = 'transparent_txid_display_port_enabled'
-TF_SOURCES = ('transparent.tf', 'variables.tf')
-FIREWALL = 'digitalocean_firewall.transparent_worker'
-FIREWALL_TAGS = ('transparent-pir-router', 'wallet-pir-coordinator')
-# The public txid prefix: the router lineage keeps wallets' /v1, while a site
-# serves its release's own /v2 paths.
-ROUTER_API = '/v1/txid'
+# The public txid prefix: a site serves its release's own /v2 paths.
 SITE_API = '/v2/txid'
 WITHDRAWN = ('# Written by `wallet-pir-deploy.py txid-display-stop`: display withdrawn.\n'
              '\thandle %s/* {\n\t\theader Retry-After 1\n'
@@ -149,10 +125,9 @@ RESERVED_PORTS = (8080, 8081, 8083, 8090, 8092, 8093, 8094, 8192, 8232)
 WORKER_PORT = 8095
 HISTORY_ROOTS = ('/srv/transparent-pir', '/srv/transparent-activity', '/opt/transparent-publisher',
                  '/run/transparent-pir', '/opt/enhance-pir')
-# A site request runs one more display lineage beside the router's: its own
-# public hostname, served by Caddy on its combined worker's host, and its own
-# coordinator paths and unit names, so neither lineage touches the other's.
-SITE_PHASES = ('stage', 'workers', 'route', 'controller')
+# A site is one display lineage: its own public hostname, served by Caddy on
+# its combined worker's host, and its own coordinator paths and unit names, so
+# no two sites touch each other's.
 SITE_NAME = re.compile('[a-z0-9]{1,12}')
 HOSTNAME = re.compile(r'(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}')
 
@@ -161,9 +136,6 @@ HEX64 = re.compile('[0-9a-f]{64}')
 PLAIN_PATH = re.compile(r'/[A-Za-z0-9._/-]+')
 MEMORY = re.compile(r'([0-9]+(?:\.[0-9]+)?)([KMGT])')
 QUOTA = re.compile(r'[1-9][0-9]{0,3}%')
-# No `.`, `..` or hidden directory. validate() also refuses any `..`, as the
-# history adapter's route_import_lines does: a glob it refuses fails its render.
-GLOB = re.compile(r'(/etc/caddy/[A-Za-z0-9_-][A-Za-z0-9._-]*)/\*\.caddy')
 PUBLIC_URL = re.compile(r'https://[A-Za-z0-9.-]+')
 RPC_URL = re.compile(r'http://127\.0\.0\.1:[0-9]{2,5}')
 TRANSACTION = re.compile(r'txid-display-[a-z-]+-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{6}')
@@ -173,12 +145,12 @@ class PocError(ValueError):
     pass
 
 
-def names(site=None):
-    """Coordinator paths and unit names: the router lineage's, or one site's beside them.
+def names(site):
+    """One site's coordinator paths and unit names.
 
     Worker-host paths stay the module's: a site's worker runs on a host of its own.
     """
-    suffix = '' if site is None else '-' + site['name']
+    suffix = '-' + site['name']
     opt = OPT + suffix
     state = opt + '/state'
 
@@ -186,7 +158,7 @@ def names(site=None):
         return 'transparent-txid-display%s-%s.service' % (suffix, role)
     found = types.SimpleNamespace(
         OPT=opt, RELEASES=opt + '/releases', TRANSACTIONS=opt + '/transactions', STATE=state,
-        REQUESTS=state + '/requests', TERRAFORM_PLANS=opt + '/terraform', VALIDATE=opt + '/validate',
+        REQUESTS=state + '/requests', VALIDATE=opt + '/validate',
         WORKERS_JSON=opt + '/workers.json', FLEET_JSON=opt + '/fleet.json', CONTROLLER_UNIT=unit('controller'),
         INGEST_UNIT=unit('ingest'), SMOKE_UNIT=unit('ingest-smoke'), BOOTSTRAP_UNIT=unit('bootstrap'),
         OBSERVER_UNIT=unit('observer'), MAPWATCH_UNIT=unit('mapwatch'), PLAN_START_UNIT=unit('plan-start'),
@@ -241,29 +213,16 @@ def inside(path, root):
     return path == root or path.startswith(root.rstrip('/') + '/')
 
 
-def layout(request):
-    """`(worker keys, role by worker key)` of a validated request.
-
-    A request without a recent host runs one combined worker on the archive host.
-    """
-    return (WORKERS, ROLES) if 'recent' in request['hosts'] else (tuple(COMBINED_ROLES), COMBINED_ROLES)
-
-
 def validate(request, inventory):
     """The reviewed request, or PocError. Closed key sets throughout."""
-    site = isinstance(request, dict) and 'site' in request
+    require(isinstance(request, dict) and 'site' in request,
+            'request must name a site: the /v1 history router lineage (router, terraform) is retired')
     exact(request, ('schema', 'source_sha', 'release', 'hosts', 'ports', 'units', 'journal', 'publication',
-                    'controller', *(('site',) if site else ('router', 'terraform')), 'history', 'measure',
-                    'baseline'), 'request')
-    recent = [isinstance(request[field], dict) and 'recent' in request[field]
-              for field in ('hosts', 'units', 'baseline')]
-    require(all(recent) or not any(recent),
-            'hosts.recent, units.recent and baseline.recent must be all present (split layout) '
-            'or all absent (combined layout)')
-    workers, _ = layout(request) if isinstance(request['hosts'], dict) else (WORKERS, ROLES)
-    host_keys = tuple(key for key in HOST_KEYS if (key in workers or key not in WORKERS)
-                      and not (site and key == 'router'))
-    require(not site or 'recent' not in workers, 'a site request runs the combined layout')
+                    'controller', 'site', 'history', 'measure', 'baseline'), 'request')
+    require(not any(isinstance(request[field], dict) and 'recent' in request[field]
+                    for field in ('hosts', 'units', 'baseline')),
+            'a site request runs the combined layout: hosts, units and baseline name no recent worker')
+    workers, host_keys = WORKERS, HOST_KEYS
     require(request['schema'] == SCHEMA, 'request schema must be %s' % SCHEMA)
     require(isinstance(request['source_sha'], str) and HEX40.fullmatch(request['source_sha']),
             'source_sha must be a full lowercase commit')
@@ -278,7 +237,6 @@ def validate(request, inventory):
                 'release.%s values must be sha256 digests' % field)
 
     former = isinstance(request['hosts'], dict) and FORMER_RECENT in request['hosts']
-    require(not (former and 'recent' in workers), 'hosts.%s belongs to the combined layout only' % FORMER_RECENT)
     hosts = exact(request['hosts'], host_keys + ((FORMER_RECENT,) if former else ()), 'hosts')
     if former:
         exact(hosts[FORMER_RECENT], ('inventory',), 'hosts.' + FORMER_RECENT)
@@ -365,21 +323,11 @@ def validate(request, inventory):
             'controller.rpc_url must be the loopback node RPC')
     plain_path(controller['rpc_cookie'], 'controller.rpc_cookie')
 
-    if site:
-        exact(request['site'], ('name', 'hostname'), 'site')
-        require(isinstance(request['site']['name'], str) and SITE_NAME.fullmatch(request['site']['name']),
-                'site.name must be 1 to 12 lowercase letters or digits')
-        require(isinstance(request['site']['hostname'], str) and HOSTNAME.fullmatch(request['site']['hostname']),
-                'site.hostname must be a lowercase DNS name')
-    else:
-        router = exact(request['router'], ('import_glob', 'live_fleet_sha256'), 'router')
-        require(isinstance(router['import_glob'], str) and GLOB.fullmatch(router['import_glob'])
-                and '..' not in router['import_glob'], 'router.import_glob must be /etc/caddy/<dir>/*.caddy')
-        require(isinstance(router['live_fleet_sha256'], str) and HEX64.fullmatch(router['live_fleet_sha256']),
-                'router.live_fleet_sha256 must be the reviewed deployed history adapter digest')
-        terraform = exact(request['terraform'], ('wrapper', 'root'), 'terraform')
-        plain_path(terraform['wrapper'], 'terraform.wrapper', history=True)
-        plain_path(terraform['root'], 'terraform.root', history=True)
+    exact(request['site'], ('name', 'hostname'), 'site')
+    require(isinstance(request['site']['name'], str) and SITE_NAME.fullmatch(request['site']['name']),
+            'site.name must be 1 to 12 lowercase letters or digits')
+    require(isinstance(request['site']['hostname'], str) and HOSTNAME.fullmatch(request['site']['hostname']),
+            'site.hostname must be a lowercase DNS name')
     # Schema cutovers move history's adapter, fleet and state, so the request names them.
     history = exact(request['history'], ('load_status', 'adapter', 'fleet', 'membership'), 'history')
     for key, value in history.items():
@@ -390,7 +338,7 @@ def validate(request, inventory):
     plain_path(measure['output'], 'measure.output')
     require(isinstance(measure['public_url'], str) and PUBLIC_URL.fullmatch(measure['public_url']),
             'measure.public_url must be https://<host>')
-    require(not site or measure['public_url'] == 'https://' + request['site']['hostname'],
+    require(measure['public_url'] == 'https://' + request['site']['hostname'],
             'measure.public_url must be the site\'s own https://<site.hostname>')
     data = [journal['data_dir'], journal['data_dir'] + '.smoke', publication['root'], measure['output']]
     require(not any(inside(a, b) for i, a in enumerate(data) for j, b in enumerate(data) if i != j),
@@ -552,18 +500,14 @@ class Poc:
         self.inventory = inventory
         self.request = validate(request, inventory)
         self.request_sha256 = request_sha256
-        # Only the workers and hosts this request's layout names; see layout().
-        self.worker_keys, self.roles = layout(self.request)
-        self.host_keys = tuple(key for key in HOST_KEYS if key in self.request['hosts'])
-        # A site request serves its own hostname from Caddy on its worker host.
-        self.site = self.request.get('site')
+        self.worker_keys, self.roles = WORKERS, ROLES
+        self.host_keys = HOST_KEYS
+        # The site serves its own hostname from Caddy on its worker host.
+        self.site = self.request['site']
         self.n = names(self.site)
-        self.phases = SITE_PHASES if self.site else PHASES
-        self.route_host = 'archive' if self.site else 'router'
+        self.route_host = 'archive'
         self.former_recent = FORMER_RECENT in self.request['hosts']
-        self.host_release = {key: names for key, names in HOST_RELEASE.items() if key in self.host_keys}
-        # The worker that serves the map and every non-archive /v1/txid/ path.
-        self.map_worker = 'recent' if 'recent' in self.roles else 'archive'
+        self.host_release = HOST_RELEASE
         self.journal_dir = Path(state_dir)
         self.ex = executor or SSHExecutor(inventory)
         self.lock_factory = lock or (lambda: production_lock(inventory, self.ex))
@@ -598,30 +542,18 @@ class Poc:
         return self.request['history']['fleet']
 
     @property
-    def import_line(self):
-        return '\timport ' + self.request['router']['import_glob']
-
-    @property
-    def routes_dir(self):
-        return GLOB.fullmatch(self.request['router']['import_glob'])[1]
-
-    @property
     def api(self):
-        return SITE_API if self.site else ROUTER_API
+        return SITE_API
 
     @property
     def routes_path(self):
-        return CADDYFILE if self.site else self.routes_dir + '/routes.caddy'
+        return CADDYFILE
 
     def site_file(self, body):
         """The whole Caddyfile of a site's worker host around one display snippet."""
         return ('# Rendered by `wallet-pir-deploy.py txid-display-deploy --phase route`: the %s txid display\n'
                 '# site. Anything outside %s/ is not served here.\n%s {\n%s\thandle {\n\t\trespond 404\n\t}\n}\n'
                 % (self.site['name'], self.api, self.site['hostname'], body))
-
-    @property
-    def tfvars_path(self):
-        return '%s/%s' % (self.request['terraform']['root'], TFVARS)
 
     def upstream(self, key):
         return '%s:%d' % (self.request['hosts'][key]['vpc_ip'], self.request['ports']['worker'])
@@ -668,8 +600,7 @@ class Poc:
             starts = [value for _, key, value in units.entries(files[name]) if key == 'ExecStart']
             require(len(starts) == 1, '%s must have exactly one ExecStart' % name)
         transport = {'command': self.binary('txid-display-fleet.py'), 'config': self.n.FLEET_JSON}
-        # Archive owners first: the controller stages and prepares them before
-        # the recent replica, which serves the map. A combined worker does both.
+        # One combined worker serves the archives and the map.
         files['workers.json'] = json.dumps({'workers': [
             {'name': key, 'role': self.roles[key], 'transport': transport} for key in self.worker_keys]},
             indent=2) + '\n'
@@ -681,15 +612,10 @@ class Poc:
                               'control_binary': self.binary('txid-control')} for key in self.worker_keys},
         }, indent=2, sort_keys=True) + '\n'
         files['routes.caddy'] = units.render(self.template('txid-display-routes.caddy.in'), {
-            'ARCHIVE_UPSTREAM': self.upstream('archive'), 'RECENT_UPSTREAM': self.upstream(self.map_worker),
+            'ARCHIVE_UPSTREAM': self.upstream('archive'), 'RECENT_UPSTREAM': self.upstream('archive'),
             'TXID': self.api})
-        files['withdrawn.caddy'] = WITHDRAWN % self.api
-        if self.site:
-            files['routes.caddy'] = self.site_file(files['routes.caddy'])
-            files['withdrawn.caddy'] = self.site_file(files['withdrawn.caddy'])
-        else:
-            files['tfvars'] = ('# txid display proof of concept; removed by txid-display-retire.\n%s = true\n'
-                               % TF_VARIABLE)
+        files['routes.caddy'] = self.site_file(files['routes.caddy'])
+        files['withdrawn.caddy'] = self.site_file(WITHDRAWN % self.api)
         return files
 
     def targets(self):
@@ -701,7 +627,6 @@ class Poc:
             'fleet.json': ('coordinator', self.n.FLEET_JSON, 0o600),
             'routes.caddy': (self.route_host, self.routes_path, 0o644),
             'withdrawn.caddy': (self.route_host, self.routes_path, 0o644),
-            **({} if self.site else {'tfvars': ('coordinator', self.tfvars_path, 0o600)}),
         }
 
     def unit_limits(self, key):
@@ -768,12 +693,6 @@ class Poc:
             '--cache-bytes', str(spec['cache_bytes']), '--verify-only'],
             wait=True, environment=('TRANSPARENT_BUILD_THREADS=%d' % spec['build_threads'],))
 
-    def expected_firewall(self, enabled):
-        rule = {'protocol': 'tcp', 'port_range': str(self.request['ports']['worker']),
-                'source_tags': sorted(FIREWALL_TAGS), 'source_addresses': 0}
-        return {'changes': [{'address': FIREWALL, 'actions': ['update']}],
-                'added': [rule] if enabled else [], 'removed': [] if enabled else [rule]}
-
     def plan(self):
         if self._plan is None:
             files = self.render()
@@ -783,30 +702,16 @@ class Poc:
                 'source_sha': self.request['source_sha'], 'release_dir': self.release_dir,
                 'hosts': {key: self.host(key) for key in self.host_keys},
                 'retires': {FORMER_RECENT: self.host(FORMER_RECENT)} if self.former_recent else {},
-                'phases': list(self.phases),
+                'phases': list(PHASES),
                 'files': {name: {'host': targets[name][0], 'path': targets[name][1],
                                  'mode': '%04o' % targets[name][2], 'sha256': sha256(text)}
                           for name, text in sorted(files.items())},
                 'release': {key: list(names) for key, names in self.host_release.items()},
                 'templates': {name: file_sha256(self.root / path) for name, path in sorted(RELEASE_FILES.items())},
                 'transient': self.transient(),
+                'site': {**self.site, 'host': self.host(self.route_host), 'units': sorted(
+                    {self.n.CONTROLLER_UNIT, *self.n.TRANSIENT}), 'opt': self.n.OPT},
             }
-            if self.site:
-                self._plan['site'] = {**self.site, 'host': self.host(self.route_host), 'units': sorted(
-                    {self.n.CONTROLLER_UNIT, *self.n.TRANSIENT}), 'opt': self.n.OPT}
-            else:
-                self._plan['router_hook'] = {
-                    'host': 'coordinator', 'script': self.live_fleet,
-                    'previous_sha256': self.request['router']['live_fleet_sha256'],
-                    'new_sha256': file_sha256(self.root / 'transparent/ops/scripts/transparent-live-fleet.py'),
-                    'fleet_config': self.history_fleet, 'route_imports': [self.request['router']['import_glob']],
-                    'restart': list(HISTORY_DAEMONS), 'router_dir': self.routes_dir}
-                self._plan['terraform'] = {
-                    'root': self.request['terraform']['root'], 'wrapper': self.request['terraform']['wrapper'],
-                    'tfvars': self.tfvars_path,
-                    'sources': {name: file_sha256(self.root / 'ops/infra/digitalocean/production' / name)
-                                for name in TF_SOURCES},
-                    'expected': self.expected_firewall(True)}
         return self._plan
 
     def plan_sha256(self):
@@ -1024,7 +929,7 @@ class Poc:
         problems = self.memory_problems(self.reservations(action))
         paths = {'stage': [(key, self.n.OPT) for key in self.host_release],
                  'workers': [(key, WORKER_DATA) for key in self.worker_keys],
-                 'route': [(self.route_host, '/etc/caddy')], 'router-hook': [('router', '/etc/caddy')],
+                 'route': [(self.route_host, '/etc/caddy')],
                  'measure-start': [('coordinator', r['measure']['output'])]}
         default = [('coordinator', p) for p in (r['journal']['data_dir'], r['publication']['root'], self.n.OPT)]
         problems += self.disk_problems(paths.get(action, default))
@@ -1112,207 +1017,23 @@ class Poc:
             return ['/usr/bin/python3', path, '--help'], 0, ''
         return [path, '--help'], 0, ''
 
-    # --------------------------------------------------------- terraform
-
-    def terraform_summary(self, plan_file):
-        """Resource changes and worker-firewall rule delta of a saved plan, computed on the coordinator.
-
-        `terraform show -json` carries variable values, secrets included, so
-        only this summary leaves the host.
-        """
-        _, output = self.run('coordinator', ['python3', '-c', SUMMARIZE, self.request['terraform']['wrapper'],
-                                             plan_file, FIREWALL], 600)
-        return json.loads(output.strip().splitlines()[-1])
-
-    def terraform_plan(self, transaction, enabled):
-        """Save and check a plan with no lock held: the wrapper takes the production lock itself.
-
-        A plan with no change at all means the rule is already as wanted.
-        Anything but exactly one in-place worker firewall update is refused.
-        """
-        require(self.lock is None, 'the Terraform wrapper takes the production lock itself')
-        plan_file = '%s/%s.tfplan' % (self.n.TERRAFORM_PLANS, transaction.id)
-        record = transaction.data['terraform'] = {'plan_file': plan_file, 'plan_sha256': None, 'summary': None,
-                                                  'enabled': enabled}
-        transaction.save()
-        try:
-            self.run('coordinator', [self.request['terraform']['wrapper'], 'plan', '-input=false',
-                                     '-out=' + plan_file], 900)
-            summary = self.terraform_summary(plan_file)
-            digest = self.ex.sha256(self.host('coordinator'), plan_file)
-        except BaseException:
-            self.discard_plan(transaction)
-            raise
-        record.update(plan_sha256=digest, summary=summary)
-        transaction.save()
-        if summary == {'changes': [], 'added': [], 'removed': []}:
-            self.discard_plan(transaction)
-            transaction.finish('committed', firewall='already ' + ('open' if enabled else 'closed'))
-            return None
-        if summary != self.expected_firewall(enabled):
-            self.discard_plan(transaction)
-            raise PocError('saved plan is not exactly one in-place worker firewall change: %s'
-                           % json.dumps(summary, sort_keys=True))
-        transaction.finish('planned')
-        self.out(json.dumps({'terraform_plan': summary, 'plan_file': plan_file, 'plan_sha256': digest},
-                            sort_keys=True))
-        self.out('review the saved plan, then re-run with --terraform-plan-sha256 %s' % digest)
-        return digest
-
-    def terraform_apply(self, transaction, expected):
-        """Apply exactly the reviewed saved plan, then delete it (it holds variable values)."""
-        record = transaction.data.get('terraform')
-        require(record and transaction.status == 'planned', 'transaction %s has no saved plan to apply'
-                % transaction.id)
-        require(expected == record['plan_sha256'],
-                '--terraform-plan-sha256 must equal the reviewed saved plan %s' % record['plan_sha256'])
-        coordinator = self.host('coordinator')
-        require(self.ex.sha256(coordinator, record['plan_file']) == expected, 'saved plan file changed since review')
-        require(self.terraform_summary(record['plan_file']) == self.expected_firewall(record['enabled']),
-                'saved plan summary changed since review')
-        require(self.lock is None, 'the Terraform wrapper takes the production lock itself')
-        self.run('coordinator', [self.request['terraform']['wrapper'], 'apply', record['plan_file']], 1800)
-        self.discard_plan(transaction)
-        transaction.finish('committed', applied_plan_sha256=expected)
-
-    def discard_plan(self, transaction):
-        """Saved plans hold variable values; keep none that will not be applied."""
-        with self.locked(None):
-            self.ex.remove(self.host('coordinator'), transaction.data['terraform']['plan_file'])
-
-    def transactions(self, action, status, of=None):
-        """This request's transactions of `action` in `status`, oldest first."""
-        found = []
-        for path in self.journal_dir.glob('txid-display-*.json'):
-            data = json.loads(path.read_text())
-            if (data.get('kind') == JOURNAL_KIND and data.get('request_sha256') == self.request_sha256
-                    and data.get('action') == action and data.get('status') == status
-                    and (of is None or data.get('of') == of)):
-                found.append((data['created_unix'], data['id']))
-        return [Transaction.load(self, identifier) for _, identifier in sorted(found)]
-
-    def planned(self, action, of=None):
-        found = self.transactions(action, 'planned', of)
-        require(found, 'no planned %s transaction to apply' % action)
-        return found[-1]
-
-    def apply_planned(self, action, expected, of=None):
-        """Second invocation of a Terraform step: fence and preflight, then apply unlocked."""
-        transaction = self.transaction = self.planned(action, of)
-        with self.locked(None):
-            if action == 'deploy-firewall':
-                self.require_preflight('firewall')
-        self.terraform_apply(transaction, expected)
-        return transaction
-
-    def firewall(self, expected, terraform_plan_sha256):
-        """Two invocations: save and summarize a plan, then apply that exact plan."""
-        self.check_plan(expected)
-        if terraform_plan_sha256:
-            return self.apply_planned('deploy-firewall', terraform_plan_sha256)
-        with self.locked('deploy-firewall') as transaction:
-            self.require_preflight('firewall')
-            coordinator = self.host('coordinator')
-            for name, digest in self.plan()['terraform']['sources'].items():
-                path = posixpath.join(self.request['terraform']['root'], name)
-                require(self.ex.sha256(coordinator, path) == digest,
-                        'coordinator Terraform root %s differs from this checkout' % path)
-            transaction.change('coordinator', self.tfvars_path, self.render()['tfvars'], 0o600)
-            self.guard()
-            self.ex.mkdir(coordinator, self.n.TERRAFORM_PLANS, 0o700)
-            transaction.finish('planning')
-        try:
-            self.terraform_plan(transaction, True)
-        except BaseException:
-            # A refused or failed plan opens nothing; put the variable file back.
-            with self.locked(None):
-                self.restore(transaction)
-            raise
-
-    def firewall_rollback(self, transaction, terraform_plan_sha256):
-        """Close the rule again: remove the variable file, then plan and apply its removal."""
-        if terraform_plan_sha256:
-            self.apply_planned('firewall-rollback', terraform_plan_sha256, of=transaction.id)
-            transaction.finish('rolled-back', rolled_back_by=self.transaction.id)
-            return
-        with self.locked('firewall-rollback') as removal:
-            removal.data['of'] = transaction.id
-            removal.remove('coordinator', self.tfvars_path)
-            removal.finish('planning')
-        try:
-            if self.terraform_plan(removal, False) is None:
-                transaction.finish('rolled-back', rolled_back_by=removal.id)
-        except BaseException:
-            with self.locked(None):
-                self.restore(removal)
-            raise
-
-    # ------------------------------------------------------- router hook
-
-    def simulate_import(self, caddyfile):
-        """The live router with the hook's import where the history adapter renders it."""
-        result, inserted = [], 0
-        for line in caddyfile.split('\n'):
-            if line.startswith('\t@metadata path '):
-                result.append(self.import_line)
-                inserted += 1
-            result.append(line)
-        require(inserted, 'the live router has no metadata route; history is not serving normally')
-        return '\n'.join(result)
+    # ----------------------------------------------------------- route
 
     def caddy_validate(self, transaction, files):
         """`caddy validate` a scratch composition on the route host, then remove the scratch files."""
-        router = self.host(self.route_host)
+        host = self.host(self.route_host)
         scratch = '%s/%s' % (self.n.VALIDATE, transaction.id)
         self.guard()
-        self.ex.mkdir(router, scratch, 0o700)
+        self.ex.mkdir(host, scratch, 0o700)
         try:
             for name, text in files.items():
-                self.ex.write(router, '%s/%s' % (scratch, name), text.encode(), 0o600)
+                self.ex.write(host, '%s/%s' % (scratch, name), text.encode(), 0o600)
             code, output = self.run(self.route_host, ['caddy', 'validate', '--config', scratch + '/Caddyfile',
-                                               '--adapter', 'caddyfile'], 120, check=False)
+                                                      '--adapter', 'caddyfile'], 120, check=False)
         finally:
             for name in files:
-                self.ex.remove(router, '%s/%s' % (scratch, name))
-        require(code == 0, 'caddy rejected the composed router: %s' % output[-1500:])
-
-    def hook_rendered(self):
-        """The live router once every site carries the import line."""
-        text = self.ex.read(self.host('router'), CADDYFILE) or ''
-        lines = text.split('\n')
-        sites = sum(line.startswith('\t@metadata path ') for line in lines)
-        return text if sites and lines.count(self.import_line) == sites else None
-
-    def router_hook(self, transaction):
-        plan = self.plan()['router_hook']
-        coordinator, router = self.host('coordinator'), self.host('router')
-        glob = self.request['router']['import_glob']
-        current = self.ex.sha256(coordinator, self.live_fleet)
-        require(current in (plan['previous_sha256'], plan['new_sha256']),
-                'deployed history adapter %s is neither the reviewed one nor this checkout' % current)
-        fleet = self.read_json('coordinator', self.history_fleet)
-        require(isinstance(fleet, dict), 'history fleet.json is missing')
-        require(fleet.get('route_imports') in (None, [], [glob]), 'history fleet.json imports other routes')
-        before = self.ex.read(router, CADDYFILE)
-        require(before is not None, 'router Caddyfile is missing')
-        if self.import_line not in before.split('\n'):
-            # A bad hook would stall every history activation at its own
-            # `caddy validate`; prove the composition before touching history.
-            self.caddy_validate(transaction, {'Caddyfile': self.simulate_import(before)})
-        self.guard()
-        self.ex.mkdir(router, self.routes_dir, 0o755)
-        # Loaded code persists in these daemons; activations exec the script fresh.
-        transaction.undo('post', 'coordinator', 'restart', units=list(HISTORY_DAEMONS))
-        script = (self.root / 'transparent/ops/scripts/transparent-live-fleet.py').read_bytes()
-        changed = transaction.change('coordinator', self.live_fleet, script, 0o755)
-        # The history adapter's own atomic_json serialization.
-        changed |= transaction.change('coordinator', self.history_fleet,
-                                      json.dumps({**fleet, 'route_imports': [glob]}), 0o600)
-        if changed:
-            self.apply('coordinator', {'op': 'restart', 'units': list(HISTORY_DAEMONS)})
-        rendered = self.wait('the history router render with the import hook', self.hook_rendered, 900)
-        strip = lambda text: [line for line in text.split('\n') if line != self.import_line]  # noqa: E731
-        transaction.event('history router imports %s' % glob, other_changes=strip(rendered) != strip(before))
+                self.ex.remove(host, '%s/%s' % (scratch, name))
+        require(code == 0, 'caddy rejected the composed site: %s' % output[-1500:])
 
     # ----------------------------------------------------------- workers
 
@@ -1372,7 +1093,7 @@ class Poc:
             self.retire_former_recent(transaction)
 
     def retire_former_recent(self, transaction):
-        """Stop, disable and remove the split layout's recent-replica unit; its data stays.
+        """Stop, disable and remove an earlier recent-replica unit; its data stays.
 
         Runs after the combined worker serves warm. A rollback puts the unit
         file back and starts it again if it was running.
@@ -1493,17 +1214,15 @@ class Poc:
         ready = json.loads(body)
         return ready.get('role') == self.roles[key] and ready.get('map_sha256') == map_sha256 and ready.get('warm') is True
 
-    # ------------------------------------------------------------- route
-
     def reload_caddy(self):
         self.guard()
         code, output = self.run(self.route_host, ['caddy', 'validate', '--config', CADDYFILE, '--adapter',
                                                   'caddyfile'], 120, check=False)
-        require(code == 0, 'caddy rejected the live router: %s' % output[-1500:])
+        require(code == 0, 'caddy rejected the live site: %s' % output[-1500:])
         self.ex.systemctl(self.host(self.route_host), 'reload', 'caddy')
 
     def write_route(self, transaction, snippet):
-        """Replace the display snippet and reload; never leave an unaccepted one in the glob."""
+        """Replace the site Caddyfile and reload; never leave bytes Caddy refused."""
         transaction.undo('post', self.route_host, 'reload-caddy')
         if not transaction.change(self.route_host, self.routes_path, snippet, 0o644):
             return
@@ -1513,7 +1232,7 @@ class Poc:
             self.restore(transaction)
             raise
 
-    def site_route(self, transaction):
+    def route(self, transaction):
         """Replace the site host's whole Caddyfile, then wait for the public map over TLS.
 
         The first route on a new host waits for Caddy's certificate as well.
@@ -1528,29 +1247,6 @@ class Poc:
             return status == 200 and isinstance(json.loads(body).get('chunks'), list)
         self.wait('the display map at %s' % url, served, SITE_SECONDS)
         transaction.event('%s serves %s/' % (self.site['hostname'], self.api))
-
-    def route(self, transaction):
-        if self.site:
-            return self.site_route(transaction)
-        router = self.host('router')
-        live = self.ex.read(router, CADDYFILE) or ''
-        require(self.import_line in live.split('\n'), 'the live router lacks %r; deploy router-hook first'
-                % self.import_line.strip())
-        snippet = self.render()['routes.caddy']
-        scratch = '%s/%s' % (self.n.VALIDATE, transaction.id)
-        composed = '\n'.join('\timport %s/routes.caddy' % scratch if line == self.import_line else line
-                             for line in live.split('\n'))
-        self.caddy_validate(transaction, {'Caddyfile': composed, 'routes.caddy': snippet})
-        self.write_route(transaction, snippet)
-        public = self.request['measure']['public_url']
-        # The recent map: small at any coverage, where the full listing outgrows
-        # the helper's 64 KiB read at genesis coverage.
-        status, body = self.ex.http_get(router, public + '/v1/txid/map', 10)
-        require(status == 200 and isinstance(json.loads(body).get('chunks'), list),
-                'the display map is not served through the router (HTTP %s)' % status)
-        status, _ = self.ex.http_get(router, public + '/v1/shards', 10)
-        require(status == 200, 'history metadata is not served after the reload (HTTP %s)' % status)
-        transaction.event('router serves /v1/txid/ and history metadata')
 
     # -------------------------------------------------------- controller
 
@@ -1675,24 +1371,23 @@ class Poc:
     # --------------------------------------------- stop, rollback, retire
 
     def stop(self, transaction):
-        """Withdraw `/v1/txid/` with a 503 snippet, then stop the controller; under a minute.
+        """Withdraw `/v2/txid/` with a 503 site, then stop the controller; under a minute.
 
-        A route that cannot be withdrawn puts the previous snippet back, so the
-        glob never holds bytes Caddy refused, and the controller still stops.
+        A route that cannot be withdrawn puts the previous Caddyfile back, so
+        the host never holds bytes Caddy refused, and the controller still stops.
         """
         started = self.clock()
         failure = None
-        if self.site or self.exists('router', self.routes_dir, '-d'):
-            transaction.undo('post', self.route_host, 'reload-caddy')
-            try:
-                if transaction.change(self.route_host, self.routes_path, self.render()['withdrawn.caddy'], 0o644):
-                    self.reload_caddy()
-            except Exception as error:
-                failure = error
-                entry = transaction.data['changes'][-1] if transaction.data['changes'] else None
-                if entry and entry['path'] == self.routes_path:
-                    self.revert(entry)
-                    transaction.event('withdrawal refused; previous snippet restored')
+        transaction.undo('post', self.route_host, 'reload-caddy')
+        try:
+            if transaction.change(self.route_host, self.routes_path, self.render()['withdrawn.caddy'], 0o644):
+                self.reload_caddy()
+        except Exception as error:
+            failure = error
+            entry = transaction.data['changes'][-1] if transaction.data['changes'] else None
+            if entry and entry['path'] == self.routes_path:
+                self.revert(entry)
+                transaction.event('withdrawal refused; previous snippet restored')
         self.stop_units(transaction, 'coordinator', [self.n.CONTROLLER_UNIT])
         seconds = round(self.clock() - started, 3)
         transaction.data['stop_seconds'] = seconds
@@ -1739,8 +1434,8 @@ class Poc:
     def drifted(self, transaction):
         """Journaled files that hold neither the bytes the transaction wrote nor its prior bytes.
 
-        Another writer owns those bytes now (a history publisher redeploy of
-        fleet.json, or a later display transaction), and putting the prior
+        Another writer owns those bytes now (a later display transaction, or
+        a hand edit), and putting the prior
         bytes back would silently undo its change. Entries are checked newest
         first against what the restore would leave, so a path changed twice
         in one transaction is judged step by step.
@@ -1767,7 +1462,7 @@ class Poc:
         data = transaction.data
         drifted = self.drifted(transaction)
         require(not drifted, 'rollback refused before any change: %s; roll back later transactions first, '
-                'or use txid-display-retire, which removes the hook by content' % '; '.join(drifted))
+                'or use txid-display-retire' % '; '.join(drifted))
         transaction.finish('rolling-back')
         for step in reversed([s for s in data['undo'] if s['when'] == 'pre']):
             self.apply(step['host'], step)
@@ -1779,32 +1474,19 @@ class Poc:
             self.apply(step['host'], step)
         transaction.finish('rolled-back')
 
-    def rollback(self, identifier, terraform_plan_sha256=None):
+    def rollback(self, identifier):
         transaction = self.transaction = Transaction.load(self, identifier)
         require(transaction.status not in ('rolled-back', 'superseded'),
                 'transaction %s is already %s' % (transaction.id, transaction.status))
-        firewall = transaction.data.get('terraform')
-        if firewall and firewall['enabled'] and transaction.status != 'planned':
-            # The rule may exist: removing the variable file alone would not close it.
-            return self.firewall_rollback(transaction, terraform_plan_sha256)
         with self.locked(None):
             self.restore(transaction)
-            if firewall:
-                self.ex.remove(self.host('coordinator'), firewall['plan_file'])
-        if firewall and not firewall['enabled'] and firewall.get('summary'):
-            self.out('note: the worker firewall stays as Terraform left it; deploy --phase firewall reopens it')
 
-    def retire(self, expected, terraform_plan_sha256):
-        """Remove every unit, the route and the hook, then close the firewall. Data stays.
+    def retire(self, expected):
+        """Remove every unit and withdraw the site's Caddyfile. Data stays.
 
-        A site withdraws its Caddyfile instead; its host and firewall are Terraform's.
+        The site's host and firewall are Terraform's.
         """
         self.check_plan(expected)
-        require(not (self.site and terraform_plan_sha256), 'a site retire plans no Terraform change')
-        if terraform_plan_sha256:
-            self.apply_planned('retire', terraform_plan_sha256)
-            self.print_data()
-            return
         with self.locked('retire') as transaction:
             persistent = (('coordinator', self.n.CONTROLLER_UNIT), *((key, WORKER_UNIT) for key in self.worker_keys))
             self.stop_units(transaction, 'coordinator', [self.n.CONTROLLER_UNIT, *self.n.TRANSIENT])
@@ -1820,45 +1502,12 @@ class Poc:
                 self.run(key, ['systemctl', 'disable', unit], 120, check=False)
                 transaction.remove(key, path)
                 self.ex.systemctl(self.host(key), 'daemon-reload')
-            if self.site:
-                # The host keeps a Caddyfile, so Caddy keeps running: the withdrawn site.
-                transaction.undo('post', self.route_host, 'reload-caddy')
-                if transaction.change(self.route_host, self.routes_path, self.render()['withdrawn.caddy'], 0o644):
-                    self.reload_caddy()
-                transaction.finish('committed')
-                self.print_data()
-                return
-            if self.ex.read(self.host('router'), self.routes_path) is not None:
-                transaction.undo('post', 'router', 'reload-caddy')
-                transaction.remove('router', self.routes_path)
+            # The host keeps a Caddyfile, so Caddy keeps running: the withdrawn site.
+            transaction.undo('post', self.route_host, 'reload-caddy')
+            if transaction.change(self.route_host, self.routes_path, self.render()['withdrawn.caddy'], 0o644):
                 self.reload_caddy()
-            self.unhook(transaction)
-            transaction.remove('coordinator', self.tfvars_path)
-            transaction.finish('planning')
-        # Always plan: a plan without changes proves the rule is already closed.
-        try:
-            self.terraform_plan(transaction, False)
-        except BaseException as error:
-            transaction.finish('failed', error='%s: %s' % (type(error).__name__, error))
-            raise
+            transaction.finish('committed')
         self.print_data()
-
-    def unhook(self, transaction):
-        """Revert the router hook: the exact prior adapter while it is still ours, and the fleet key."""
-        coordinator = self.host('coordinator')
-        changed = False
-        hooks = self.transactions('deploy-router-hook', 'committed')
-        script = next((entry for hook in reversed(hooks) for entry in hook.data['changes']
-                       if entry['path'] == self.live_fleet and entry['previous'] is not None), None)
-        transaction.undo('post', 'coordinator', 'restart', units=list(HISTORY_DAEMONS))
-        if script and self.ex.sha256(coordinator, self.live_fleet) == self.plan()['router_hook']['new_sha256']:
-            changed |= transaction.change('coordinator', self.live_fleet, script['previous'], 0o755)
-        fleet = self.read_json('coordinator', self.history_fleet)
-        if isinstance(fleet, dict) and 'route_imports' in fleet:
-            fleet.pop('route_imports')
-            changed |= transaction.change('coordinator', self.history_fleet, json.dumps(fleet), 0o600)
-        if changed:
-            self.apply('coordinator', {'op': 'restart', 'units': list(HISTORY_DAEMONS)})
 
     def print_data(self):
         r = self.request
@@ -1893,10 +1542,6 @@ class Poc:
             except ValueError:
                 ready = None
             result['workers'][key] = {'http': status, 'ready': ready}
-        if not self.site:
-            fleet = self.read_json('coordinator', self.history_fleet) or {}
-            result['router_hook'] = {'route_imports': fleet.get('route_imports'),
-                                     'adapter_sha256': self.ex.sha256(self.host('coordinator'), self.live_fleet)}
         recent = []
         for path in sorted(self.journal_dir.glob('txid-display-*.json'), key=lambda p: p.stat().st_mtime)[-10:]:
             data = json.loads(path.read_text())
@@ -1907,22 +1552,14 @@ class Poc:
 
     # ----------------------------------------------------------- entries
 
-    def deploy(self, phase, expected, archive=None, map_sha256=None, terraform_plan_sha256=None,
-               replace_active=None):
+    def deploy(self, phase, expected, archive=None, map_sha256=None, replace_active=None):
         require(phase in PHASES, 'unknown phase %r' % (phase,))
-        require(phase in self.phases, 'a site request has no %s phase: its route is its own Caddy site, and '
-                'its host and firewall are Terraform\'s' % phase)
         require(replace_active is None or phase == 'workers', '--replace-active belongs to the workers phase')
-        if phase == 'firewall':
-            return self.firewall(expected, terraform_plan_sha256)
-        require(terraform_plan_sha256 is None, '--terraform-plan-sha256 belongs to the firewall phase')
         self.check_plan(expected)
         with self.locked('deploy-' + phase) as transaction:
             self.require_preflight(phase)
             if phase == 'stage':
                 self.stage(transaction, archive)
-            elif phase == 'router-hook':
-                self.router_hook(transaction)
             elif phase == 'workers':
                 self.workers(transaction, map_sha256, replace_active)
             elif phase == 'route':
@@ -1974,30 +1611,6 @@ def load_release():
     return module
 
 
-# Runs on the coordinator; only this summary of a saved plan leaves the host.
-SUMMARIZE = r'''
-import json, subprocess, sys
-wrapper, plan, firewall = sys.argv[1:4]
-shown = json.loads(subprocess.run([wrapper, "show", "-json", plan], check=True, capture_output=True).stdout)
-def rules(value):
-    return {json.dumps({"protocol": r.get("protocol"), "port_range": r.get("port_range"),
-                        "source_tags": sorted(r.get("source_tags") or []),
-                        "source_addresses": len(r.get("source_addresses") or [])}, sort_keys=True)
-            for r in (value or {}).get("inbound_rule") or []}
-changes, added, removed = [], [], []
-for change in shown.get("resource_changes", []):
-    actions = change["change"]["actions"]
-    if actions in (["no-op"], ["read"]):
-        continue
-    changes.append({"address": change["address"], "actions": actions})
-    if change["address"] == firewall:
-        before, after = rules(change["change"].get("before")), rules(change["change"].get("after"))
-        added = [json.loads(r) for r in sorted(after - before)]
-        removed = [json.loads(r) for r in sorted(before - after)]
-print(json.dumps({"changes": changes, "added": added, "removed": removed}, sort_keys=True))
-'''
-
-
 def rollback_command(args, transaction):
     return shlex.join([sys.executable, str(ROOT / 'ops/scripts/wallet-pir-deploy.py'),
                        *(['--inventory', args.inventory] if args.inventory else []), '--state-dir', args.state_dir,
@@ -2035,12 +1648,11 @@ def main(args, inventory, out=print, executor=None, lock=None, **options):
     try:
         if command == 'deploy':
             poc.deploy(args.phase, args.expect_plan_sha256, archive=args.archive,
-                       map_sha256=args.publication_map_sha256, terraform_plan_sha256=args.terraform_plan_sha256,
-                       replace_active=args.replace_active)
+                       map_sha256=args.publication_map_sha256, replace_active=args.replace_active)
         elif command == 'rollback':
-            poc.rollback(args.transaction, args.terraform_plan_sha256)
+            poc.rollback(args.transaction)
         elif command == 'retire':
-            poc.retire(args.expect_plan_sha256, args.terraform_plan_sha256)
+            poc.retire(args.expect_plan_sha256)
         else:
             poc.act(command, getattr(args, 'expect_plan_sha256', None), smoke=getattr(args, 'smoke', False),
                     start=getattr(args, 'start_height', None), through=getattr(args, 'through_height', None))

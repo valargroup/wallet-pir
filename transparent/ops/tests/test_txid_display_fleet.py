@@ -456,7 +456,7 @@ class ObserverTests(unittest.TestCase):
         served[3] = b'not the manifest'
 
         def fetch(url):
-            if url.endswith('/v1/txid/shards'):
+            if url.endswith('/v2/txid/shards'):
                 body = next(sequence)
                 return 200, {'x-txid-map-sha256': hashlib.sha256(body).hexdigest()}, body
             shard = int(url.split('/shards/')[1].split('/')[0])
@@ -464,7 +464,7 @@ class ObserverTests(unittest.TestCase):
             return 200, {}, served[3] if wanted == digest[3] else served[shard]
         with tempfile.TemporaryDirectory() as tmp:
             events = []
-            watch = O.MapWatch('https://pir.example/v1/txid/shards', tmp, fetch,
+            watch = O.MapWatch('https://txid.example/v2/txid/shards', tmp, fetch,
                                lambda event, **fields: events.append((event, fields)), now=lambda: 1.0)
             for _ in range(4):
                 watch.poll()
@@ -495,10 +495,10 @@ class ObserverTests(unittest.TestCase):
         bodies = iter(json.dumps(m).encode() for m in maps)
 
         def fetch(url):
-            return (200, {}, next(bodies)) if url.endswith('/v1/txid/shards') else (404, {}, b'')
+            return (200, {}, next(bodies)) if url.endswith('/v2/txid/shards') else (404, {}, b'')
         with tempfile.TemporaryDirectory() as tmp:
             events = []
-            watch = O.MapWatch('https://pir.example/v1/txid/shards', tmp, fetch,
+            watch = O.MapWatch('https://txid.example/v2/txid/shards', tmp, fetch,
                                lambda event, **fields: events.append((event, fields)))
             for _ in maps:
                 watch.poll()

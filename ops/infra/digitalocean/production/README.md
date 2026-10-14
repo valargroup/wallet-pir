@@ -83,11 +83,11 @@ exactly one destroy per removed name and one in-place project change. The
 procedure.
 
 `transparent_txid_display_port_enabled` (default false) opens port 8095 on the
-transparent worker firewall for the txid display proof of concept. Only
-`wallet-pir-deploy.py txid-display-deploy --phase firewall` sets it, by writing
-`txid-display.auto.tfvars` into the coordinator's root; keep that file when the
-root is refreshed, or the next plan closes the port. `txid-display-retire`
-removes it and plans the closing change.
+transparent worker firewall. The public router reaches the one-query txid site
+(`/v2/txid/`) through it, because the site's own firewall admits 8095 only from
+the coordinator. Production sets it in `txid-display.auto.tfvars` in the
+coordinator's root. Keep that file when the root is refreshed, or the next plan
+cuts the router off from `/v2/txid/`. No deploy phase writes it any more.
 
 `transparent_txid_display_site_enabled` (default false) creates the one-query
 txid display site: its host, firewall and DNS record

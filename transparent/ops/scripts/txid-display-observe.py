@@ -2,7 +2,7 @@
 """Independent observers for the txid display proof of concept's measurements.
 
     txid-display-observe.py observer --rpc-url URL --cookie FILE --out FILE.jsonl
-    txid-display-observe.py mapwatch --url https://HOST/v1/txid/shards --out-dir DIR
+    txid-display-observe.py mapwatch --url https://HOST/v2/txid/shards --out-dir DIR
 
 `observer` polls the node's best block every 250 ms and records when each new
 tip was first seen; it shares nothing with the controller, so the controller's
