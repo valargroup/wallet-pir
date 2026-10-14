@@ -1,5 +1,6 @@
 use super::*;
 use crate::txid_display::fixture::{self, block_hash, chain_records, chain_sources};
+use crate::txid_display::offline::{bench_recent, plan_start, synthetic_records, verify};
 use crate::txid_display::publisher::{bootstrap, CANDIDATE_PREFIX, SEALED_DIR};
 use crate::txid_display::serving::{Transport, WorkerRole, WorkersFile};
 use crate::txid_display::source::{open_writer, Script, ScriptStep};

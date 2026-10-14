@@ -6,6 +6,7 @@ use transparent_filter_server::events::EventStore;
 use transparent_filter_server::publication::BoxError;
 use transparent_filter_server::txid_display::{
     controller::{self, Controller, Outcome, Settings},
+    offline,
     publisher::{self, DisplayRoot},
     serving::WorkersFile,
     source::{open_writer, LiveSource, ReplaySource, Source},
@@ -241,7 +242,7 @@ async fn main() -> Result<(), BoxError> {
             seal,
         } => {
             let store = EventStore::open_existing(&journal)?;
-            print(&controller::plan_start(
+            print(&offline::plan_start(
                 &store,
                 &seal.params(),
                 archives,
@@ -324,7 +325,7 @@ async fn main() -> Result<(), BoxError> {
             scratch,
         } => {
             let report = tokio::task::spawn_blocking(move || {
-                controller::verify(&root, &journal, scratch.as_deref())
+                offline::verify(&root, &journal, scratch.as_deref())
             })
             .await??;
             print(&report);
@@ -339,10 +340,10 @@ async fn main() -> Result<(), BoxError> {
             mean_records,
             seed,
         } => {
-            let records = controller::synth_journal(&out, start, blocks, mean_records, seed)?;
+            let records = offline::synth_journal(&out, start, blocks, mean_records, seed)?;
             print(&serde_json::json!({
                 "journal": out, "start": start, "blocks": blocks, "records": records,
-                "genesis": controller::SYNTHETIC_GENESIS,
+                "genesis": offline::SYNTHETIC_GENESIS,
             }));
         }
         Command::BenchRecent {
@@ -351,7 +352,7 @@ async fn main() -> Result<(), BoxError> {
             scratch,
             seed,
         } => {
-            for line in controller::bench_recent(&records, &geometry, &scratch, seed)? {
+            for line in offline::bench_recent(&records, &geometry, &scratch, seed)? {
                 print(&line);
             }
         }
