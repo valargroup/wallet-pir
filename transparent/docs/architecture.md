@@ -431,7 +431,7 @@ because which pages a script needs is known only after its directory entry decod
 Concurrency 1 is the sequential walk. Requests sent ahead for shards the walk does not
 reach, because it stopped or refreshed the map first, are sent but unused. No query is
 skipped because an unrelated response happened to mention a watched script. Source:
-`transparent/crates/transparent-wallet/src/sync_ahead.rs`.
+`transparent/crates/transparent-wallet/src/sync/ahead.rs`.
 
 ## Serving and publication
 
@@ -569,7 +569,7 @@ bits, and a map may declare at most 65,536 superseded entries across all its re-
 (`MAX_SUPERSEDED`), far above any real publication, so a hostile map cannot make wallets
 store or scan an unbounded list. The checks themselves cannot overflow on hostile values.
 
-A wallet (`transparent-wallet` `sync.rs`) keeps its history across a declared re-cut:
+A wallet (`transparent-wallet` `sync/manifest.rs`) keeps its history across a declared re-cut:
 
 - Stored sealed coverage is looked up by the height it starts at, not by shard id. It stays
   good while the map publishes that revision there, or declares exactly that revision
