@@ -1,11 +1,14 @@
 # Role discovery and process status use the common inventory. Publication,
 # activation and rollback stay in the named product driver, not the binary engine.
 # Unit names are defaults; the operator inventory names the actual v12/4k8 units.
+# The journal writer is a duty of one controller instance, not a unit of its
+# own; public routing is a shared ancillary unit listed once in the inventory.
 [services.transparent-history]
 driver = "transparent-history"
 root = "/opt/transparent-publisher"
 binary = "transparent-shard-server"
 order = ["worker", "controller"]
+ancillary = ["routing"]
 
 [services.transparent-history.roles.worker]
 unit = "transparent-shard-server.service"
@@ -18,12 +21,14 @@ ready_url = "http://{listen}/v1/ready"
 unit = "transparent-v12-publish-controller.service"
 mode = "exec-drop-in"
 health = "http://{listen}/v1/status"
+responsibilities = ["journal-writer"]
 
 [services.transparent-display]
 driver = "txid-display"
 root = "/opt/transparent-txid-display"
 binary = "transparent-txid-server"
 order = ["worker", "controller"]
+ancillary = ["routing"]
 
 [services.transparent-display.roles.worker]
 unit = "transparent-txid-display-worker.service"
@@ -36,3 +41,4 @@ ready_url = "http://{listen}/v1/ready"
 unit = "transparent-txid-display-controller.service"
 mode = "exec-drop-in"
 health = "http://{listen}/v1/status"
+responsibilities = ["journal-writer"]

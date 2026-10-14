@@ -17,8 +17,9 @@ not establish what is running; inspect the fleet and retained deployment evidenc
 The [serving contract](serving-contract.md) records their shared process identity
 and deliberate differences. A running process is not necessarily authorized,
 warm, publishing or answering correctly. Preserve those distinctions in status
-reports. The shared control-session supervisor remains source-only as recorded in
-[control sessions](control-sessions.md); packaging it does not deploy it.
+reports. [Control sessions](control-sessions.md) records what dated captures show
+of the shared supervisor (observed carrying Status; its restricted account and the
+other products not adopted); packaging it does not deploy or adopt it.
 
 Shared operations live in `ops/lib/wallet_pir_ops`. Product adapters live with the
 product, including `transparent/ops/lib/deploy_cli.py`. The shared
@@ -30,7 +31,10 @@ uses documentation addresses and is not the live fleet.
 ## Operations releases
 
 Full CI on main produces `wallet-pir-ops-<sha>` containing
-`wallet-pir-ops.tar.gz`, alongside the binary artifacts. It contains the standard
+`wallet-pir-ops.tar.gz`. Its own job (`release-ops`) tests, assembles and runs the
+unpacked package without compiling Rust, so publishing it never waits on the
+binary build; like the binaries, it is eligible only when that whole run on main
+succeeds. It contains the standard
 library Python modules, wrappers, product descriptors, templates, remote helpers
 and this guide. It contains no operator inventories, credentials, runtime state,
 tests or retained evidence. It needs Python 3.11+, OpenSSH and the existing host
@@ -47,8 +51,9 @@ python3 ops/scripts/wallet-pir-bundle.py extract --sha <full-revision> --archive
 
 Verification refuses unsafe paths, links, duplicates, incomplete inventories,
 wrong revisions and checksum mismatches before creating the destination. These
-checks establish artifact integrity; the resolver's full-CI provenance and product
-qualification remain separate requirements. The unpacked tool checks its resources
+checks establish artifact integrity; the manifest's `"qualification":
+"unqualified"` labels that integrity artifact, not the CI run. The resolver's
+full-CI provenance and product qualification remain separate requirements. The unpacked tool checks its resources
 before operating. Dirty operations releases support inspection only. When a binary
 archive names a source revision, it must match the operations release's revision.
 
@@ -59,8 +64,72 @@ python3 ops/scripts/wallet-pir-bundle.py assemble --sha <checkout-revision> --ar
 ```
 
 Use wrappers from the unpacked release's directory tree. Do not copy individual
-Python files out of it. Retained installed standalone scripts have their recorded
-source identities; adopting this package is a separately reviewed deployment.
+Python files out of it. `wallet-pir-bundle.py self-check --sha <revision>` checks
+the unpacked release it belongs to, wherever it was moved. Retained installed
+standalone scripts have their recorded source identities.
+
+## Installing the package on the coordinator
+
+`ops-package-*` installs a package release on the coordinator as one journaled
+transaction under the production lock:
+
+- `/opt/wallet-pir-ops/releases/<full-sha>`: root-owned, `0755` directories,
+  `0755` scripts and modules, `0644` other files; never overwritten.
+- `/opt/wallet-pir-ops/current`: a link to `releases/<full-sha>`, replaced atomically.
+- `/etc/wallet-pir/fleet.json`: the maintained operator inventory (`0600`), outside
+  every release, validated as a complete fleet by the target package itself.
+- `/opt/wallet-pir-ops/staging/<transaction>`: the transaction's own partial copy.
+- `/opt/wallet-pir-ops/transactions/<transaction>/`: the coordinator's recovery
+  records: the plan, the previous inventory's bytes, per-step intent and completion
+  markers and the final status. `latest.json` names the latest transaction.
+
+A package is *installed* when `current` selects it. That says nothing about which
+code runs a service: a package transaction writes no unit, reloads no daemon and
+restarts nothing. Each product's locked deployment adopts services separately, and
+status documents must keep the two apart.
+
+```sh
+gh api repos/valargroup/wallet-pir/actions/runs/<run-id> > run.json
+python3 <release>/ops/scripts/wallet-pir-deploy.py --inventory <inventory> ops-package-plan \
+    --sha <full-revision> --archive wallet-pir-ops.tar.gz --fleet fleet.json --ci-run run.json
+python3 <release>/ops/scripts/wallet-pir-deploy.py --inventory <inventory> ops-package-preflight ...same...
+python3 <release>/ops/scripts/wallet-pir-deploy.py --inventory <inventory> ops-package-install ...same... \
+    --expect-plan-sha256 <reviewed plan digest>
+python3 <release>/ops/scripts/wallet-pir-deploy.py --inventory <inventory> ops-package-status
+```
+
+Plan and preflight change nothing. The plan binds the archive and manifest digests,
+the source revision, the full-CI run (`provenance`, separate from the artifact's
+`integrity`), the coordinator's machine id, the candidate inventory's digest, the
+current selection, inventory, release directory and latest package transaction,
+and the planned changes. They refuse a dirty-source archive, a run that is not a
+successful full CI on main for that revision, altered, missing or unsafe files,
+unsafe or foreign-owned package paths, a different release already at the final
+path, staging left by another transaction, an unfinished transaction, an inventory
+that is not a complete fleet, and too little space. Install re-plans under the
+lock, behind the Transparent schema fence, and refuses unless the digest equals
+the reviewed one. It stages, checks the staged tree's files, modes and owner, runs
+its entrypoints in place, then promotes the directory, installs the inventory and
+selects the release.
+
+A clean installed package may install a newer package revision. Binary deploys
+keep requiring the operations package and the binary archive to name the same
+source revision.
+
+**Recovery.** Before each step the runner journal and the coordinator record the
+intent, and after it the completion. A transport failure leaves the step's outcome
+unknown; the command prints the exact `ops-package-reconcile` and
+`ops-package-rollback` commands and nothing is guessed. Reconcile finishes only
+where each step's observed state is exactly its recorded before or after state
+(a partial staging copy is discarded and staged again) and refuses anything else.
+A refusal after the first step (for example an altered staged file) selects
+nothing and needs rollback. Rollback refuses if the selection or inventory changed
+outside the transaction; otherwise it restores the previous selection and
+inventory, or removes them when the transaction installed the first ones. It keeps
+the release directory and every record. Only the latest transaction rolls back.
+Rollback and reconcile work from another runner using the coordinator's records.
+`ops-package-status` reports the selected revision, whether its files still match
+its manifest, its provenance, the latest transaction and the next command.
 
 ## Fleet configuration and lifecycle
 
@@ -70,8 +139,21 @@ membership, publication assignments and their persisted revisions remain owned b
 the current controllers and Transparent inventory; the shared view does not write
 them or introduce another state database.
 
+`fleet --complete` checks the whole fleet: every registered service and role; the
+journal writer as a responsibility of exactly one controller per Transparent
+service, not a unit of its own; shared routing (the coordinator edge, the public
+Transparent router, the receiver edge) and supervision (control sessions) listed
+once under `ancillary` with the services that consume them, inspected only
+(`ancillary-status`); one owner per unit on each machine, counting host names that
+reach the same address; explicit CUDA variants on hosts marked
+`"accelerator": "cuda"`, verified through health; and no field that copies
+controller-owned membership. References to `retired_hosts` and unknown hosts are
+refused. A product inventory that lists only its own services keeps working for
+that product's commands. The example inventory is complete in shape but uses
+documentation values; it is not the live fleet.
+
 ```sh
-python3 <release>/ops/scripts/wallet-pir-deploy.py --inventory /path/to/inventory.json fleet
+python3 <release>/ops/scripts/wallet-pir-deploy.py --inventory /path/to/inventory.json fleet --complete
 python3 <release>/ops/scripts/wallet-pir-deploy.py --inventory /path/to/inventory.json --json status enhance
 python3 <release>/ops/scripts/wallet-pir-deploy.py --inventory /path/to/inventory.json --json status transparent-history
 ```

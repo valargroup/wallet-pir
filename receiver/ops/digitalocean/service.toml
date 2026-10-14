@@ -6,6 +6,8 @@ artifact_kinds = ["receiver-pir"]
 self_check = ["--help"]
 min_free_bytes = 1073741824
 order = ["server"]
+# The receiver host's own Caddy edge.
+ancillary = ["routing"]
 # The id of the installed NEAR key file, /etc/receiver-pir/near-<id>.env.
 template_vars = ["NEAR_KEY"]
 
