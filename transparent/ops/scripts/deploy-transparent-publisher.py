@@ -174,8 +174,6 @@ def align_filter_origin(initial):
         execute(['systemctl','restart','transparent-filter-server'])
 
 
-
-
 STORAGE_PATH = '/usr/local/lib/transparent-pir/storage-policy.py'
 STORAGE_PRESTART = 'ExecStartPre=+/usr/bin/python3 '+STORAGE_PATH+' --apply'
 

@@ -1,11 +1,15 @@
 # Wallet PIR
 
-This repository implements two private retrieval products for Zcash wallets:
+This repository implements private retrieval services for Zcash wallets:
 
 - **[Enhance PIR](enhance/docs/README.md)** retrieves the encrypted Ironwood
   output data needed to complete a note from its output position.
 - **[Transparent PIR](transparent/docs/README.md)** combines public activity
   filters with private script-history recovery at a wallet-accepted chain anchor.
+- **[Status PIR](enhance/docs/architecture_status.md)** observes recent transaction
+  status privately through its own controller, router and worker roles.
+- **[Receiver PIR](receiver/README.md)** lets a restored wallet retrieve payments
+  indexed under an Ironwood receiver.
 
 Each product index links its protocol, architecture, deployment, dated status,
 and outstanding acceptance gates. Implementation is not proof of live rollout.

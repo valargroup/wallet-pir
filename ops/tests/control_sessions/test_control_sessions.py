@@ -413,7 +413,9 @@ class SupervisorTest(unittest.TestCase):
     def test_one_supervisor_per_runtime_directory(self):
         config = self.config()
         self.start(config)
-        wait_for(lambda: (s := self.status(config)) and all(v['state'] == 'connected' for v in s.values()))
+        # Status is first written after the runtime lock is held. Lock ownership
+        # does not depend on SSH children finishing their connection startup.
+        wait_for(lambda: self.status(config))
         with self.assertRaisesRegex(RuntimeError, 'another control-session supervisor'):
             cs.Supervisor(config, log=io.StringIO()).run()
 
