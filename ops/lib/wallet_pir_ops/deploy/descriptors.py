@@ -1,6 +1,6 @@
 """Service descriptors from the repository and the fleet from an operator inventory.
 
-The descriptors (`enhance/ops/deploy/deploy.toml`) say what a service is: its
+The shared registry (`ops/deploy/services.toml`) includes product descriptors: its
 roles in rollout order, each role's unit, how its unit is changed and how its
 readiness is checked. They never name hosts. The inventory is a local JSON file
 outside the repository that says where each role runs and how to reach it;

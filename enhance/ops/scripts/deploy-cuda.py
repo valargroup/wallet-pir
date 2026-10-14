@@ -99,7 +99,7 @@ def main():
     effective.write_text(json.dumps(document))
     effective.chmod(0o600)
     inventory = descriptors.load_inventory(effective)
-    service = descriptors.load_descriptors(ROOT / 'enhance/ops/deploy/deploy.toml')['enhance']
+    service = descriptors.load_descriptors(ROOT / 'ops/deploy/services.toml')['enhance']
     target = validate_inventory(inventory, service)
     executor = SSHExecutor(inventory)
     verification_dir = args.evidence_dir / 'public-check'

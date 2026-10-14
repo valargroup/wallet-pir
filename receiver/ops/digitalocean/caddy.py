@@ -96,7 +96,7 @@ class Droplet:
 
     def __init__(self, inventory_path):
         inventory = descriptors.load_inventory(inventory_path)
-        service = descriptors.load_descriptors(ROOT / 'enhance/ops/deploy/deploy.toml')['receiver']
+        service = descriptors.load_descriptors(ROOT / 'ops/deploy/services.toml')['receiver']
         (server,) = descriptors.targets(service, inventory)
         check = descriptors.exact_check(service, inventory)
         if check is None or check['host'] != server.host:

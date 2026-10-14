@@ -71,7 +71,7 @@ def main(argv=None):
               file=sys.stderr)
         return 2
     inventory = descriptors.load_inventory(inventory_path)
-    service = descriptors.load_descriptors(ROOT / 'enhance/ops/deploy/deploy.toml')['receiver']
+    service = descriptors.load_descriptors(ROOT / 'ops/deploy/services.toml')['receiver']
     (server,) = descriptors.targets(service, inventory)
     prefix = ['sudo', '-n', '--'] if inventory.hosts[server.host].get('sudo') else []
     # Stages a key file no unit names yet, under the lock; a locked deploy activates it (see the docstring).
