@@ -198,7 +198,7 @@ Not planned with it: other row widths, a two-digit 8-bit key, or any change to `
   activation is tracked [below](#transparent-monitoring-on-v2).
 - [x] Make the public router version-independent: a shell around one route file per prefix,
   so a later `/v3/` is one more file (`transparent-public-router.py`).
-- [ ] Retire `/v1/` (Roman, 2026-10-13; [evidence](../evidence/v1-sunset-2026-10-13/README.md)). Each step waits on the one before:
+- [x] Retire `/v1/` (Roman, 2026-10-13; [evidence](../evidence/v1-sunset-2026-10-13/README.md)). Each step waits on the one before:
   - [x] confirm that no wallet traffic reaches `/v1/`, beyond our own load and probes;
   - [x] hand the shared journal's writer role from the v11 controller to the v12 controller
     (`follow_journal: false` and a sandbox drop-in that makes the journal writable);
@@ -209,10 +209,14 @@ Not planned with it: other row widths, a two-digit 8-bit key, or any change to `
   - [x] point the continuous 5 QPS load at `/v2/` (`transparent-v2-5qps-continuous`) and pass
     20 QPS on `/v2/`: 20.99 QPS, all 12,573 exact, p50 11 ms, p99 38 ms. APM has no v11
     sources;
-  - [ ] after 48 h and Roman's go on the saved plan, destroy the four droplets with Terraform,
-    delete the v11 state on the coordinator, and delete the v1-only tooling: the txid router
-    mode in `txid_display_poc.py`, the publisher's coordinator `/v1` route step and that route
-    in `ops/deploy/coordinator/Caddyfile`, and the `/v1` routes in `transparent-Caddyfile`.
+  - [x] destroy the four droplets with Terraform (2026-10-14, Roman ended the window early),
+    remove the coordinator's `/v1` routes, and delete the txid router lineage from the
+    display deploy.
+  - [ ] delete the v1 data left on the coordinator (about 72 GB, Roman): `journal-v2x`, the
+    `txid-display-genesis/v2` root, `canonical-load/v11*`, `/opt/transparent-publisher/v11*`
+    and `/opt/transparent-txid-display`;
+  - [ ] move the remaining pre-v11 `/v1` paths in `transparent-Caddyfile` and
+    `deploy-transparent-shard.sh` to `/v2`, or delete that single-worker deploy path.
 
 ## Transparent monitoring on /v2
 
