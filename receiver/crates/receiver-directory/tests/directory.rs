@@ -380,7 +380,7 @@ fn a_provider_view_reads_one_state() {
         .unwrap();
     let mut writer = ProviderStore::open(&path).unwrap();
     let reads = store
-        .view(|view| -> Result<_, receiver_directory::Error> {
+        .view(|view| -> Result<_, receiver_directory::store::Error> {
             let before = view.read("near-payouts")?;
             writer
                 .record("near-payouts", None, &[], &[], 200, 400)
@@ -675,7 +675,7 @@ fn unsnapshottable_payments_are_refused() {
     for bad in [second.clone(), other_txid, earlier_tx, earlier_action] {
         assert!(matches!(
             store.append(&block(vec![first.clone(), bad])),
-            Err(Error::Malformed)
+            Err(receiver_directory::store::Error::Malformed)
         ));
         assert_eq!(store.tip().unwrap().height, 99);
         assert_eq!(store.counts().unwrap(), (0, 0));
@@ -704,7 +704,7 @@ fn store_positions_end_within_the_tree() {
     };
     assert!(matches!(
         Store::open(dir.path().join("over.sqlite"), config(TREE_SIZE + 1)),
-        Err(Error::Malformed)
+        Err(receiver_directory::store::Error::Malformed)
     ));
     let mut store = Store::open(dir.path().join("last.sqlite"), config(TREE_SIZE - 1)).unwrap();
     let crossing = IndexedBlock {
@@ -717,7 +717,10 @@ fn store_positions_end_within_the_tree() {
         payments: vec![],
         commitments: vec![[6; 32]; 2],
     };
-    assert!(matches!(store.append(&crossing), Err(Error::Coverage)));
+    assert!(matches!(
+        store.append(&crossing),
+        Err(receiver_directory::store::Error::Coverage)
+    ));
     // The last leaf fills the tree, which can still be published.
     store
         .append(&IndexedBlock {
@@ -896,7 +899,7 @@ fn cached_store_proofs_follow_rewinds_reopen_and_replacement_blocks() {
     store.witnesses(&first.manifest, &mut cache, len).unwrap();
     assert!(matches!(
         store.witnesses(&first.manifest, &mut cache, len - 1),
-        Err(Error::Capacity)
+        Err(receiver_directory::store::Error::Capacity)
     ));
     assert_eq!(
         store
@@ -1055,7 +1058,10 @@ fn a_history_beyond_the_slots_is_a_capacity_failure() {
             commitments: vec![[6; 32]; n as usize],
         })
         .unwrap();
-    assert!(matches!(store.snapshot(1, &[]), Err(Error::Capacity)));
+    assert!(matches!(
+        store.snapshot(1, &[]),
+        Err(receiver_directory::store::Error::Capacity)
+    ));
     assert_eq!(
         store.snapshot(4, &[]).unwrap().manifest.records,
         u64::from(n)

@@ -6,7 +6,6 @@ use receiver_directory::{
     snapshot::{Snapshot, MAX_ROWS},
     store::{Config, ProviderStore, Store},
     witness::WitnessCache,
-    Error,
 };
 use receiver_indexer::{
     blocks::{MAX_RECEIVER_BATCH_BLOCKS, MAX_RECEIVER_CONCURRENCY},
@@ -424,7 +423,7 @@ async fn refresh(
         }
         match store.snapshot(rows, &capture.sets) {
             Ok(s) => break s,
-            Err(Error::Capacity) => rows *= 2,
+            Err(receiver_directory::store::Error::Capacity) => rows *= 2,
             Err(e) => return Err(e.into()),
         }
     };
@@ -446,7 +445,7 @@ async fn refresh(
             witness_cache,
             args.max_witness_commitments,
         ) {
-            Err(Error::Capacity) => {
+            Err(receiver_directory::store::Error::Capacity) => {
                 return Err(format!(
                     "witnesses for {} commitments exceed --max-witness-commitments or the \
                      witness file's node limit; no publication created",

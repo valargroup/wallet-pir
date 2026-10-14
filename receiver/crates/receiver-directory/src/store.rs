@@ -1,7 +1,36 @@
-//! Atomic contiguous coverage with explicit rewind. Empty blocks are retained too.
+/// Why directory data or coverage was rejected.
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error("malformed receiver directory data")]
+    Malformed,
+    #[error("receiver directory coverage is incomplete or uses a different anchor")]
+    Coverage,
+    #[error("receiver directory table or witness limit exceeded")]
+    Capacity,
+    #[error("missing continuation page")]
+    MissingPage,
+    #[error(transparent)]
+    Sql(#[from] rusqlite::Error),
+    #[error(transparent)]
+    Json(#[from] serde_json::Error),
+}
+
+impl From<receiver_protocol::Error> for Error {
+    fn from(error: receiver_protocol::Error) -> Self {
+        match error {
+            receiver_protocol::Error::Malformed => Self::Malformed,
+            receiver_protocol::Error::Coverage => Self::Coverage,
+            receiver_protocol::Error::Capacity => Self::Capacity,
+            receiver_protocol::Error::MissingPage => Self::MissingPage,
+            receiver_protocol::Error::Json(error) => Self::Json(error),
+        }
+    }
+}
+
+// Atomic contiguous coverage with explicit rewind. Empty blocks are retained too.
 use crate::{
     snapshot::{self, Manifest, ProviderSet, Snapshot, PROFILE, TREE_SIZE},
-    Error, Hash, Payment, Receiver, Record,
+    Hash, Payment, Receiver, Record,
 };
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
@@ -125,7 +154,9 @@ impl Store {
             .collect::<Result<std::collections::BTreeSet<_>, _>>()?;
         drop(query);
         tx.commit()?;
-        cache.build(manifest, &commitments, &positions)
+        cache
+            .build(manifest, &commitments, &positions)
+            .map_err(Error::from)
     }
 
     /// The last stored block, or the configured boundary when none is stored.
@@ -313,7 +344,7 @@ impl Store {
                 filters: Vec::new(),
                 filters_sha256: [0; 32],
             };
-            match Snapshot::build(manifest, &records, provider) {
+            match Snapshot::build(manifest, &records, provider).map_err(Error::from) {
                 Err(Error::Capacity) => continue,
                 built => return built,
             }
@@ -478,8 +509,11 @@ impl ProviderStore {
             let mut query = self.db.prepare(sql)?;
             let rows =
                 query.query_map(rusqlite::params_from_iter(args), |r| r.get::<_, Vec<u8>>(0))?;
-            rows.map(|bytes| Receiver::from_bytes(bytes?.try_into().map_err(|_| Error::Malformed)?))
-                .collect()
+            rows.map(|bytes| {
+                Receiver::from_bytes(bytes?.try_into().map_err(|_| Error::Malformed)?)
+                    .map_err(Error::from)
+            })
+            .collect()
         };
         Ok((
             read(
