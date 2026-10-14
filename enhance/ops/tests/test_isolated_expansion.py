@@ -19,6 +19,7 @@ PAIR = [{'address': f'digitalocean_droplet.worker[{i + 2}]',
          'resource_id': str(102 + i), 'name': f'enhance-pir-v4-g02-r{i + 1}',
          'private_ipv4': f'10.0.0.{i + 3}'} for i in range(2)]
 REQUEST = 'successor-5-pair-2'
+PROTOCOL = 'ironwood-enhance-pir-v9-native-two-mask-m29'
 
 
 class NoOpLock:
@@ -51,13 +52,13 @@ class RegistrationTests(unittest.TestCase):
             config = directory / 'bootstrap.json'
             inventory.write_text(json.dumps(OLD))
             config.write_text(json.dumps({'revision': 'a' * 40, 'manifest_sha256': 'b' * 64}))
-            operation = {'id': REQUEST, 'phase': 'bootstrapped', 'before': 1,
+            operation = {'id': REQUEST, 'protocol': PROTOCOL, 'phase': 'bootstrapped', 'before': 1,
                          'target_groups': 2, 'inventory_digest': module.journal_module.digest(OLD),
                          'bootstrap': {'receipts': {p['address']: {'phase': 'bootstrapped'} for p in PAIR}}}
             journal = SimpleNamespace(state={'operation': operation}, directory=directory)
-            pending = {'protocol': module.journal_module.PROTOCOL, 'registered_groups': 1,
+            pending = {'protocol': PROTOCOL, 'registered_groups': 1,
                        'capacity': {'requested': REQUEST, 'requests': {REQUEST: {'registered': False}}}}
-            acknowledged = {'protocol': module.journal_module.PROTOCOL, 'registered_groups': 2,
+            acknowledged = {'protocol': PROTOCOL, 'registered_groups': 2,
                             'capacity': {'requested': None, 'requests': {REQUEST: {'registered': True}}}}
             with (patch.object(module.provisioning, 'StateLock', NoOpLock),
                   patch.object(module.provisioning, 'Terraform', return_value=object()),

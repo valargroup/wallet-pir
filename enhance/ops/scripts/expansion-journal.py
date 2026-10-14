@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import re
 import sys
+import urllib.error
 import urllib.request
 
 # The shared primitives live in the same checkout; this script is never shipped alone.
@@ -21,7 +22,13 @@ if LIB not in sys.path:
     sys.path.insert(0, LIB)
 from wallet_pir_ops import durable  # noqa: E402
 
-PROTOCOL = 'ironwood-enhance-pir-v7'
+# Coordinator revisions this journal understands: the default build and the native
+# build production serves (enhance-pir `PROTOCOL_REVISION`). A pending operation is
+# bound to the revision that requested it.
+PROTOCOLS = frozenset({
+    'ironwood-enhance-pir-v7',
+    'ironwood-enhance-pir-v9-native-two-mask-m29',
+})
 
 # Byte-compatible with journals, digests and evidence written before the extraction.
 digest = durable.digest
@@ -94,12 +101,17 @@ class Journal:
     def observe(self, health, inventory, policy):
         """Adopt one coordinator request; reorgs cannot replace pending demand."""
         count = inventory_count(inventory)
-        if health.get('protocol') != PROTOCOL or type(health.get('registered_groups')) is not int or health['registered_groups'] != count:
+        protocol = health.get('protocol')
+        if protocol not in PROTOCOLS:
+            raise ValueError('coordinator protocol is not supported')
+        if type(health.get('registered_groups')) is not int or health['registered_groups'] != count:
             raise ValueError('coordinator and inventory disagree')
         operation = self.state['operation']
         if operation is not None:
             if operation['inventory_digest'] != digest(inventory) or operation['policy_digest'] != digest(policy):
                 raise ValueError('pending operation inputs changed')
+            if operation['protocol'] != protocol:
+                raise ValueError('coordinator protocol changed during a pending operation')
             return copy.deepcopy(operation)
         capacity = health['capacity']
         request_id = capacity.get('requested')
@@ -116,7 +128,7 @@ class Journal:
         if request_id in self.state['completed']:
             raise ValueError('completed expansion request reappeared')
         operation = {
-            'id': request_id, 'request': copy.deepcopy(request), 'before': count,
+            'id': request_id, 'protocol': protocol, 'request': copy.deepcopy(request), 'before': count,
             'target_groups': target, 'inventory_digest': digest(inventory),
             'policy_digest': digest(policy), 'phase': 'requested', 'resources': {},
             'attempts': [],
@@ -184,7 +196,7 @@ class Journal:
         if operation is None or operation['phase'] != 'bootstrapped':
             raise ValueError('registration requires a bootstrapped operation')
         request = health.get('capacity', {}).get('requests', {}).get(operation['id'], {})
-        if (health.get('protocol') != PROTOCOL
+        if (health.get('protocol') != operation['protocol']
                 or health.get('registered_groups') != operation['target_groups']
                 or request.get('registered') is not True
                 or inventory_count(inventory) != operation['target_groups']
@@ -196,6 +208,32 @@ class Journal:
         self.state['completed'][operation['id']] = result
         self.state['operation'] = None
         self.save()
+
+
+def refusal(error):
+    """Name why observation failed without echoing input contents or paths.
+
+    This module's own ValueErrors carry fixed messages; every other error is
+    reduced to its kind, because its text can quote inventory, policy or health.
+    """
+    def reason(error):
+        return os.strerror(error.errno) if isinstance(error.errno, int) else type(error).__name__
+    if isinstance(error, BlockingIOError):
+        return 'journal lock is held by another writer'
+    if isinstance(error, json.JSONDecodeError):
+        return 'an input or the journal is not valid JSON'
+    if isinstance(error, UnicodeError):
+        return 'an input or the journal is not valid UTF-8'
+    if isinstance(error, urllib.error.HTTPError):
+        return f'coordinator health returned HTTP {error.code}'
+    if isinstance(error, urllib.error.URLError):
+        cause = error.reason if isinstance(error.reason, OSError) else error
+        return 'coordinator unreachable: ' + reason(cause)
+    if isinstance(error, OSError):
+        return 'cannot read an input or the journal: ' + reason(error)
+    if type(error) is ValueError:
+        return str(error)
+    return f'malformed input ({type(error).__name__})'
 
 
 def main():
@@ -220,8 +258,8 @@ def main():
             operation = journal.observe(health, json.loads(args.inventory.read_text()),
                                         json.loads(args.policy.read_text()))
             summary = {'operation': operation['id'], 'phase': operation['phase'], 'target_groups': operation['target_groups']} if operation else {'operation': None}
-    except (ValueError, KeyError, TypeError, OSError):
-        raise SystemExit('expansion observation rejected; inspect private inputs or journal lock') from None
+    except (ValueError, KeyError, TypeError, OSError) as error:
+        raise SystemExit('expansion observation rejected: ' + refusal(error)) from None
     print(json.dumps(summary, sort_keys=True))
 
 

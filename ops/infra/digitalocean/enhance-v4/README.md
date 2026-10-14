@@ -60,6 +60,13 @@ Only operation identity, phase, and target count are printed.
 
 The journal retains the same pending request across coordinator reorgs and
 consumer restarts. Policy and original inventory hashes cannot change mid-flight.
+The journal accepts a coordinator serving either the default build's protocol
+(`ironwood-enhance-pir-v7`) or the native build's
+(`ironwood-enhance-pir-v9-native-two-mask-m29`), records which one requested the
+expansion, and refuses a coordinator that serves the other one before the
+expansion registers. A refusal names its cause (for example a protocol or group
+count mismatch, unreadable input, or a held lock) without printing input contents
+or paths.
 Recorded Droplet IDs cannot be replaced or assigned to another replica slot.
 The adapter API requires established identities and a saved-plan digest before
 persisting apply intent. An interrupted apply stays ambiguous until the adapter

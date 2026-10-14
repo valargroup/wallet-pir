@@ -19,7 +19,7 @@ POLICY = {'region': 'ams3', 'vpc_id': '00000000-0000-4000-8000-000000000002',
 INVENTORY = {'groups': [{'name': 'g1', 'replicas': [
     {'name': f'enhance-pir-v4-g01-r{i + 1}', 'url': f'http://10.0.0.{i + 1}:8291'} for i in range(2)]}]}
 REQUEST = {'id': 'successor-5-pair-2', 'target_groups': 2, 'successor_ordinal': 5, 'registered': False}
-HEALTH = {'protocol': module.journal_module.PROTOCOL, 'registered_groups': 1,
+HEALTH = {'protocol': 'ironwood-enhance-pir-v9-native-two-mask-m29', 'registered_groups': 1,
           'capacity': {'requested': REQUEST['id'], 'requests': {REQUEST['id']: REQUEST}}}
 
 

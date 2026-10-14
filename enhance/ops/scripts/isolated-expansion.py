@@ -93,7 +93,7 @@ def registration(journal, terraform_dir, policy, inventory_path, bootstrap_polic
         current = health(origin)
         registered = current.get('registered_groups') == operation['target_groups']
         request = current.get('capacity', {}).get('requests', {}).get(operation['id'], {})
-        if (current.get('protocol') != journal_module.PROTOCOL
+        if (current.get('protocol') != operation['protocol']
                 or current.get('registered_groups') not in (before, operation['target_groups'])
                 or (registered and request.get('registered') is not True)
                 or (not registered and current.get('capacity', {}).get('requested') != operation['id'])):

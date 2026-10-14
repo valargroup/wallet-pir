@@ -2,6 +2,8 @@
 import copy
 import importlib.util
 import json
+import subprocess
+import sys
 from pathlib import Path
 import tempfile
 import unittest
@@ -16,13 +18,80 @@ INVENTORY = {'groups': [{'name': 'g1', 'replicas': [
 POLICY = {'project_id': 'test-project', 'vpc_id': 'test-vpc'}
 REQUEST = {'id': 'successor-5-pair-2', 'target_groups': 2, 'successor_ordinal': 5,
            'registered': False, 'boundary_records': 5406720, 'requested_at': 100}
-HEALTH = {'protocol': module.PROTOCOL, 'registered_groups': 1,
+# Production serves the native build's revision; the default build's is also accepted.
+NATIVE = 'ironwood-enhance-pir-v9-native-two-mask-m29'
+DEFAULT = 'ironwood-enhance-pir-v7'
+HEALTH = {'protocol': NATIVE, 'registered_groups': 1,
           'capacity': {'requested': REQUEST['id'], 'requests': {REQUEST['id']: REQUEST}}}
 OLD = {f'digitalocean_droplet.worker[{i}]': str(100 + i) for i in range(2)}
 ALL = {f'digitalocean_droplet.worker[{i}]': str(100 + i) for i in range(4)}
 
 
 class ExpansionJournalTests(unittest.TestCase):
+    def test_both_coordinator_builds_are_accepted_and_bound_to_the_operation(self):
+        self.assertEqual(module.PROTOCOLS, {NATIVE, DEFAULT})
+        for protocol in (NATIVE, DEFAULT):
+            other = DEFAULT if protocol == NATIVE else NATIVE
+            with self.subTest(protocol=protocol), tempfile.TemporaryDirectory() as temp:
+                health = dict(HEALTH, protocol=protocol)
+                with module.Journal(temp) as journal:
+                    self.assertEqual(journal.observe(health, INVENTORY, POLICY)['protocol'], protocol)
+                    self.assertEqual(journal.observe(health, INVENTORY, POLICY)['protocol'], protocol)
+                    before = (Path(temp) / 'journal.json').read_bytes()
+                    with self.assertRaisesRegex(ValueError, 'protocol changed during a pending operation'):
+                        journal.observe(dict(health, protocol=other), INVENTORY, POLICY)
+                    self.assertEqual((Path(temp) / 'journal.json').read_bytes(), before)
+                    journal.record_resources(ALL)
+                    journal.state['operation']['phase'] = 'bootstrapped'
+                    updated = {'groups': [*INVENTORY['groups'], {'name': 'g2', 'replicas': [
+                        {'name': 'r3', 'url': 'http://192.0.2.3:8291'},
+                        {'name': 'r4', 'url': 'http://192.0.2.4:8291'}]}]}
+                    acknowledged = copy.deepcopy(health)
+                    acknowledged['registered_groups'] = 2
+                    acknowledged['capacity']['requests'][REQUEST['id']]['registered'] = True
+                    with self.assertRaises(ValueError):
+                        journal.finish_registration(dict(acknowledged, protocol=other), updated)
+                    journal.finish_registration(acknowledged, updated)
+
+    def test_cli_names_the_refusal_without_echoing_private_inputs(self):
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            secret = 'private-project-7f3a'
+            (directory / 'inventory.json').write_text(json.dumps(INVENTORY))
+            (directory / 'policy.json').write_text(json.dumps(dict(POLICY, project_id=secret)))
+
+            def run(health, state='state'):
+                (directory / 'health.json').write_text(health if isinstance(health, str) else json.dumps(health))
+                return subprocess.run(
+                    [sys.executable, '-B', str(SCRIPT), '--state-dir', str(directory / state),
+                     '--health', str(directory / 'health.json'),
+                     '--inventory', str(directory / 'inventory.json'),
+                     '--policy', str(directory / 'policy.json')],
+                    capture_output=True, text=True)
+
+            accepted = run(HEALTH)
+            self.assertEqual(accepted.returncode, 0, accepted.stderr)
+            self.assertEqual(json.loads(accepted.stdout)['operation'], REQUEST['id'])
+            for health, cause in [
+                (dict(HEALTH, protocol='ironwood-enhance-pir-v3'), 'coordinator protocol is not supported'),
+                (dict(HEALTH, registered_groups=2), 'coordinator and inventory disagree'),
+                ({'protocol': NATIVE, 'registered_groups': 1}, 'malformed input (KeyError)'),
+                ('{"protocol": "' + secret, 'an input or the journal is not valid JSON'),
+            ]:
+                with self.subTest(cause=cause):
+                    result = run(health, state='fresh-' + str(abs(hash(cause))))
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertEqual(result.stderr.strip(), 'expansion observation rejected: ' + cause)
+                    self.assertNotIn(secret, result.stderr)
+                    self.assertNotIn(temp, result.stderr)
+            missing = subprocess.run(
+                [sys.executable, '-B', str(SCRIPT), '--state-dir', str(directory / 'state'),
+                 '--health', str(directory / 'absent.json'),
+                 '--inventory', str(directory / 'inventory.json'), '--policy', str(directory / 'policy.json')],
+                capture_output=True, text=True)
+            self.assertEqual(missing.stderr.strip(),
+                             'expansion observation rejected: cannot read an input or the journal: No such file or directory')
+
     def test_restart_preserves_pending_request_across_reorg(self):
         with tempfile.TemporaryDirectory() as temp:
             with module.Journal(temp) as journal:
@@ -149,3 +218,7 @@ class ExpansionJournalTests(unittest.TestCase):
             path.unlink()
             with module.Journal(temp) as journal:
                 journal.observe(HEALTH, INVENTORY, POLICY)
+
+
+if __name__ == '__main__':
+    unittest.main()
