@@ -212,9 +212,10 @@ Not planned with it: other row widths, a two-digit 8-bit key, or any change to `
   - [x] destroy the four droplets with Terraform (2026-10-14, Roman ended the window early),
     remove the coordinator's `/v1` routes, and delete the txid router lineage from the
     display deploy.
-  - [ ] delete the v1 data left on the coordinator (about 72 GB, Roman): `journal-v2x`, the
+  - [x] delete the v1 data left on the coordinator (2026-10-14, Roman): `journal-v2x`, the
     `txid-display-genesis/v2` root, `canonical-load/v11*`, `/opt/transparent-publisher/v11*`
-    and `/opt/transparent-txid-display`;
+    and `/opt/transparent-txid-display`. The retired unit files are kept in
+    `/root/v1-destroy-20261014/retired-units/`;
   - [ ] move the remaining pre-v11 `/v1` paths in `transparent-Caddyfile` and
     `deploy-transparent-shard.sh` to `/v2`, or delete that single-worker deploy path.
 

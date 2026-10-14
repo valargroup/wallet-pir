@@ -154,7 +154,24 @@ restores:
 The workers must then be re-enabled on the four hosts. After the droplets are
 destroyed, there is no rollback.
 
+## v1 state deleted on the coordinator (2026-10-14, about 17:05 UTC)
+
+Before deletion, no open file and no enabled unit used these paths; the v12, `txid-4k8`
+and `/v2` load processes use none of them. Roman deleted:
+- `/srv/txid-display-genesis/journal-v2x` and `/srv/txid-display-genesis/v2` (the
+  `txid-2k` journal and root);
+- `/srv/transparent-activity/canonical-load/v11*` (the v11 load fixtures);
+- `/opt/transparent-publisher/v11*` and `/opt/transparent-txid-display`.
+
+Afterwards the `/srv/txid-display-genesis` volume had 66 GB free and `/` had 44 GB free.
+The eight retired unit files and 18 displaced copies of the v11 scaler and reconciler
+units were moved, not deleted, to `/root/v1-destroy-20261014/retired-units/`. The
+finished one-shot jobs that pointed at the deleted programs were cleared. `/v2` served
+throughout, and the v12 controller kept publishing (3,517,715 at 17:05:54).
+
 ## Not done here
 
-- Destroying the four droplets, deleting v11 state on the coordinator, and deleting
-  the v1-only tooling.
+- Deleting the v1-only tooling: the pre-v11 `/v1` paths in `transparent-Caddyfile` and
+  `deploy-transparent-shard.sh`.
+- The v12 unit still orders itself after the retired `transparent-publish-controller`;
+  the line has no effect.
