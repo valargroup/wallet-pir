@@ -1,7 +1,5 @@
 """Command line for `ops/scripts/wallet-pir-deploy.py`."""
 import argparse
-import asyncio
-import importlib.util
 import json
 import os
 from pathlib import Path
@@ -16,8 +14,8 @@ from .engine import Deployer, DeployError, file_sha256
 from .remote import LockHeld, RemoteError, SSHExecutor
 from .transaction import default_state_dir
 
-ROOT = Path(__file__).resolve().parents[4]
-DESCRIPTORS = ROOT / 'enhance/ops/deploy/deploy.toml'
+from ..paths import ROOT
+DESCRIPTORS = ROOT / 'ops/deploy/services.toml'
 SHA256 = re.compile('^[0-9a-f]{64}$')
 
 USAGE = """\
@@ -99,16 +97,16 @@ Transparent schema recipes run on the pinned coordinator under the same lock.
 
 The inventory (hosts, SSH, lock) is --inventory or WALLET_PIR_DEPLOY_INVENTORY.
 """
-TXID_DISPLAY = ('plan', 'preflight', 'deploy', 'status', 'stop', 'rollback', 'retire', 'ingest-start',
-                'ingest-status', 'ingest-stop', 'bootstrap', 'verify', 'measure-start', 'measure-stop')
-TXID_DISPLAY_PHASES = ('stage', 'workers', 'route', 'controller')
 
 
 def load_release():
-    spec = importlib.util.spec_from_file_location('release', ROOT / 'tools/ci/release.py')
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    from .. import release
+    return release
+
+
+def transparent_cli():
+    from transparent.ops.lib import deploy_cli
+    return deploy_cli
 
 
 def target_binary(args, service, state_dir):
@@ -181,221 +179,34 @@ def artifact_groups(args, service, inventory):
 
 
 def run_release(command, args, service, inventory, executor, deployer, out):
-    """plan, preflight or deploy one artifact group; returns the exit code."""
+    """Execute one artifact group through the shared lifecycle API."""
+    from .lifecycle import Lifecycle
+    sha, binary, source = target_binary(args, service, args.state_dir)
+    lifecycle = Lifecycle(deployer)
     if command == 'deploy':
-        sha, binary, source = target_binary(args, service, args.state_dir)
-        deployer.deploy(sha, binary, source, args.allow_unit_drift, args.retire_historical, args.skip_exact_check)
+        result = lifecycle.deploy(sha, binary, source, allow_drift=args.allow_unit_drift,
+                                  retire_historical=args.retire_historical,
+                                  skip_exact_check=args.skip_exact_check)
     else:
-        sha, binary, _ = target_binary(args, service, args.state_dir)
-        deployer.check_identities([inventory.lock.get('host')])
-        if command == 'preflight' and args.stage:
-            with deployer.lock_factory() as held:
-                deployer.lock = held
-                try:
-                    deployer.schema_fence()
-                    plans, _ = deployer.assess(sha, binary, args.allow_unit_drift, args.retire_historical,
-                                               require_baseline=False)
-                    deployer.stage(list(dict.fromkeys(p.target.host for p in plans if p.action == 'restart')),
-                                   sha, binary)
-                finally:
-                    deployer.lock = None
-        plans, problems = deployer.assess(sha, binary, args.allow_unit_drift, args.retire_historical,
-                                          require_baseline=command == 'preflight')
-        deployer.describe(plans, sha)
-        if command == 'preflight':
-            for host in dict.fromkeys(p.target.host for p in plans if p.action == 'restart'):
-                path = service.release_binary(sha)
-                if executor.sha256(host, path) != sha:
-                    out('%s: release not staged yet; deploy uploads it' % host)
-                    continue
-                code, output = executor.run(host, [path, *service.self_check], 60)
-                if code:
-                    problems.append('%s: staged binary failed its self-check (exit %d): %s' % (host, code, output[-300:]))
-                else:
-                    out('%s: staged release runs' % host)
-        for problem in problems:
-            out('problem: ' + problem)
-        if problems and command == 'preflight':
-            return 1
-        out('%d target(s) to restart, %d unchanged' % (sum(p.action == 'restart' for p in plans),
-                                                       sum(p.action == 'skip' for p in plans)))
-    return 0
+        result = lifecycle.inspect(command, sha, binary, allow_drift=args.allow_unit_drift,
+                                   retire_historical=args.retire_historical,
+                                   stage=command == 'preflight' and args.stage)
+    if args.json:
+        out(json.dumps(result.describe(), sort_keys=True))
+    return 1 if command == 'preflight' and result.problems else 0
 
 
 def parser():
     top = argparse.ArgumentParser(prog='wallet-pir-deploy.py', description=USAGE,
                                   formatter_class=argparse.RawDescriptionHelpFormatter)
+    top.add_argument('--json', action='store_true', help='structured results for role lifecycle commands')
     top.add_argument('--inventory', default=os.environ.get('WALLET_PIR_DEPLOY_INVENTORY'))
     top.add_argument('--descriptors', default=str(DESCRIPTORS))
     top.add_argument('--state-dir', default=str(default_state_dir()))
     top.add_argument('--baseline', help='baseline file (default <state-dir>/baselines/<service>.json)')
     commands = top.add_subparsers(dest='command', required=True)
-    for kind in ('service', 'cutover'):
-        for name in ('plan','preflight','stage','status','reconcile'):
-            command = commands.add_parser('schema-input-'+kind+'-'+name, help='retain reviewed v11 inputs without installation')
-            command.add_argument('--request', required=True)
-            command.add_argument('--request-sha256', required=True)
-            if name == 'stage': command.add_argument('--expect-plan-sha256', required=True)
-    for name in ('plan','preflight','stage','status','reconcile'):
-        command = commands.add_parser('schema-candidate-'+name, help='retain the verified changed-native candidate bundle without installation')
-        command.add_argument('--request', required=True)
-        command.add_argument('--request-sha256', required=True)
-        if name == 'stage': command.add_argument('--expect-plan-sha256', required=True)
-    for name in ('plan','preflight','stage','status','reconcile'):
-        command = commands.add_parser('schema-candidate-upload-'+name, help='transfer the three pinned candidate archives to the coordinator')
-        command.add_argument('--source-sha', required=True)
-        if name in ('status','reconcile'):
-            command.add_argument('--request-sha256', required=True)
-            continue
-        command.add_argument('--attempt', type=int, required=True)
-        for kind in ('transparent-filter','transparent-publisher','supplemental'):
-            command.add_argument('--'+kind, required=True, metavar='ARCHIVE')
-        if name == 'stage': command.add_argument('--expect-plan-sha256', required=True)
-    for name in ('plan','preflight','stage','status','reconcile'):
-        command = commands.add_parser('schema-snapshot-'+name, help='immutable full-journal snapshot for candidate qualification')
-        command.add_argument('--request', required=True)
-        command.add_argument('--request-sha256', required=True)
-        if name == 'stage': command.add_argument('--expect-plan-sha256', required=True)
-    command = commands.add_parser('schema-snapshot-owner', help=argparse.SUPPRESS)
-    command.add_argument('--request-sha256', required=True)
-    for name in ('plan','preflight','stage','status','reconcile'):
-        command = commands.add_parser('schema-candidate-execute-'+name, help='closed candidate native gate execution on the coordinator')
-        command.add_argument('--source-sha', required=True)
-        if name in ('status','reconcile'):
-            command.add_argument('--request-sha256', required=True)
-            continue
-        command.add_argument('--mode', choices=('artifact-verification','native-certificates','independent-chain-oracle'), required=True)
-        command.add_argument('--attempt', type=int, required=True)
-        command.add_argument('--preparation-request-sha256', required=True)
-        command.add_argument('--snapshot-request-sha256')
-        command.add_argument('--snapshot-owner-sha256')
-        command.add_argument('--snapshot-manifest-sha256')
-        if name == 'stage': command.add_argument('--expect-plan-sha256', required=True)
-    command = commands.add_parser('schema-candidate-execute-receive', help=argparse.SUPPRESS)
-    command.add_argument('--action', choices=('plan','preflight','stage','status','reconcile','survey'), required=True)
-    command.add_argument('--request-sha256', required=True)
-    command.add_argument('--expect-plan-sha256')
-    command = commands.add_parser('schema-candidate-receive', help=argparse.SUPPRESS)
-    command.add_argument('--action', choices=('preflight','stage','status','reconcile'), required=True)
-    command.add_argument('--request-sha256', required=True)
-    command = commands.add_parser('schema-candidate-worker-build', help='render candidate worker executables for an already staged publication')
-    command.add_argument('--host', required=True)
-    command.add_argument('--source-sha', required=True)
-    command.add_argument('--publication-request-sha256', required=True)
-    command.add_argument('--attempt', type=int, default=1)
-    for name in ('plan','preflight','run','status','reconcile'):
-        command = commands.add_parser('schema-qualify-'+name, help='deployed candidate load/freshness/capacity/fault qualification')
-        if name in ('plan','preflight','run'):
-            command.add_argument('--request', required=True)
-        command.add_argument('--request-sha256', required=True)
-        if name == 'run': command.add_argument('--expect-plan-sha256', required=True)
-    command = commands.add_parser('schema-qualify-summary', help='read-only capacity decision from reconciled trials')
-    command.add_argument('--transaction', required=True)
-    command = commands.add_parser('schema-qualify-exec', help=argparse.SUPPRESS)
-    command.add_argument('--request-sha256', required=True)
-    command = commands.add_parser('schema-qualify-remote', help=argparse.SUPPRESS)
-    command.add_argument('--action', choices=('probe','act','status','reconcile'), required=True)
-    command.add_argument('--request-sha256', required=True)
-    for name in ('plan','preflight','stage','status','reconcile'):
-        command = commands.add_parser('schema-input-prepare-'+name, help='prepare native assignment and immutable worker units on coordinator')
-        command.add_argument('--request', required=True)
-        command.add_argument('--request-sha256', required=True)
-        if name == 'stage': command.add_argument('--expect-plan-sha256', required=True)
-    for name in ('plan','preflight','stage','status','reconcile'):
-        command = commands.add_parser('schema-input-'+name, help='immutable v11 worker input staging on pinned coordinator')
-        command.add_argument('--request', required=True)
-        command.add_argument('--request-sha256', required=True)
-        command.add_argument('--host', required=True)
-    command = commands.add_parser('schema-input-build', help='render the native-assigned worker input request after full publication')
-    command.add_argument('--host', required=True)
-    command.add_argument('--source-sha', required=True)
-    command.add_argument('--assignment', required=True)
-    command.add_argument('--unit', required=True)
-    command.add_argument('--worker-id', required=True)
-    command.add_argument('--release-result-sha256', required=True)
-    command.add_argument('--cache-bytes', type=int, required=True)
-    command.add_argument('--attempt', type=int, default=1)
-    command = commands.add_parser('schema-input-receive', help=argparse.SUPPRESS)
-    command.add_argument('--action', choices=('preflight','stage','status','reconcile'), required=True)
-    command.add_argument('--request-sha256', required=True)
-    for name in ('plan','preflight','qualify','status','reconcile','relay'):
-        command = commands.add_parser('schema-lock-'+name, help='bounded SSH descendant lock qualification' if name != 'relay' else argparse.SUPPRESS)
-        command.add_argument('--source-sha', required=True)
-        command.add_argument('--host', required=True)
-        command.add_argument('--attempt', type=int, default=1)
-        if name == 'qualify': command.add_argument('--expect-plan-sha256', required=True)
-    command = commands.add_parser('schema-lock-remote', help=argparse.SUPPRESS)
-    command.add_argument('--action', choices=('preflight','parent','child','status','probe','reconcile'), required=True)
-    command.add_argument('--request-sha256', required=True)
-    for name in ('run', 'status', 'reconcile'):
-        command = commands.add_parser('schema-host-'+name, help='pinned remote host owner; invoked by the coordinator schema recipe')
-        command.add_argument('--request-sha256', required=True)
-    for name in ('recipe', 'preflight', 'phase'):
-        command = commands.add_parser('schema-product-'+name, help='complete reviewed product service orchestration')
-        command.add_argument('--spec', required=True)
-        command.add_argument('--spec-sha256', required=True)
-        if name == 'phase':
-            command.add_argument('--phase', required=True)
-            command.add_argument('--transaction', required=True)
-            command.add_argument('--journal', required=True)
-    for name in ('plan', 'preflight', 'start', 'status', 'run'):
-        command = commands.add_parser('schema-publication-'+name,
-            help='fixed full v11 preparation job' if name != 'run' else argparse.SUPPRESS)
-        command.add_argument('--source-sha', required=True)
-        command.add_argument('--release-result-sha256', required=True)
-        if name == 'start':
-            command.add_argument('--expect-plan-sha256', required=True)
-    for name in ('plan', 'preflight', 'stage', 'status','reconcile'):
-        command = commands.add_parser('schema-source-'+name)
-        command.add_argument('--source-sha', required=True)
-        command.add_argument('--attempt',type=int,default=1)
-        command.add_argument('--sha256', required=True)
-        command.add_argument('--host', help='stage another pinned host from the root coordinator under its production lock')
-        command.add_argument('--recovery-transaction', help='inert source repair for this failed transaction only')
-        command.add_argument('--recovery-recipe-sha256')
-        if name == 'preflight':
-            command.add_argument('--private-evidence-file', help='exclusive local private file for exact fleet replies, including refusal')
-        if name not in ('status','reconcile'):
-            command.add_argument('--archive', required=True)
-    for name in ('schema-plan', 'schema-preflight', 'schema-deploy'):
-        command = commands.add_parser(name, help='Transparent multi-component schema transaction')
-        command.add_argument('--recipe', required=True, help='reviewed coordinator-only cutover recipe; no credentials')
-        if name == 'schema-deploy':
-            command.add_argument('--expect-recipe-sha256', required=True)
-    for name in ('schema-rollback', 'schema-status'):
-        command = commands.add_parser(name)
-        command.add_argument('--transaction')
-    command = commands.add_parser('schema-repair-rollback', help='reviewed source repair of a failed product rollback')
-    command.add_argument('--transaction', required=True)
-    command.add_argument('--expect-recipe-sha256', required=True)
-    for name in ('plan','preflight','deploy','resume-plan','resume-preflight','resume-deploy','resume-prepare-plan','resume-prepare-preflight','resume-prepare-deploy','resume-prepare-reconcile'):
-        command = commands.add_parser('schema-reconcile-'+name, help='recover a retained newer v10 activation after an unstaged cutover')
-        command.add_argument('--transaction', required=True)
-        command.add_argument('--expect-recipe-sha256', required=True)
-        command.add_argument('--map-sha256', required=True, help='map digest, or original adoption plan digest for resume')
-        if name in ('deploy','resume-deploy','resume-prepare-deploy'):
-            command.add_argument('--expect-plan-sha256', required=True)
-    for name in TXID_DISPLAY:
-        command = commands.add_parser('txid-display-' + name, help='txid display proof of concept beside history')
-        command.add_argument('--request', required=True)
-        command.add_argument('--request-sha256', required=True)
-        if name in ('deploy', 'ingest-start', 'bootstrap', 'verify', 'measure-start', 'retire'):
-            command.add_argument('--expect-plan-sha256', required=True)
-        if name == 'deploy':
-            command.add_argument('--phase', choices=TXID_DISPLAY_PHASES, required=True)
-            command.add_argument('--archive', help='stage: the CI transparent-txid-display bundle')
-            command.add_argument('--publication-map-sha256', help='workers: the bootstrap candidate map')
-            command.add_argument('--replace-active',
-                                 help='workers: the map of the lineage a fresh one replaces on each worker')
-        elif name == 'plan':
-            command.add_argument('--render-dir', help='also write every rendered file here for review')
-        elif name == 'rollback':
-            command.add_argument('--transaction')
-        elif name == 'ingest-start':
-            command.add_argument('--smoke', action='store_true', help='ten blocks into a separate directory')
-        elif name == 'bootstrap':
-            command.add_argument('--start-height', type=int)
-            command.add_argument('--through-height', type=int)
+    commands.add_parser('fleet', help='read configured hosts and roles; makes no host connections')
+    transparent_cli().register(commands)
     for name in ('plan', 'preflight', 'deploy'):
         command = commands.add_parser(name)
         command.add_argument('service')
@@ -433,275 +244,36 @@ def parser():
 def main(argv=None, executor=None, out=print, **options):
     """`executor` and `options` (passed to `Deployer`) let tests substitute a fake fleet and clock."""
     args = parser().parse_args(argv)
+    def error_result(message, phase='failed'):
+        if args.json:
+            out(json.dumps({'service': getattr(args, 'service', None), 'operation': args.command,
+                            'targets': [], 'problems': [message], 'transaction': None, 'phase': phase}, sort_keys=True))
+        else:
+            out('error: ' + message)
     try:
-        if args.command.startswith('schema-lock-'):
-            spec = importlib.util.spec_from_file_location('activity_lock_qualification', ROOT/'transparent/ops/lib/activity_lock_qualification.py')
-            module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
-            if args.command == 'schema-lock-remote':
-                data = sys.stdin.buffer.read(8193)
-                if len(data) > 8192: raise ValueError('qualification request exceeds bound')
-                request = module.validate(json.loads(data))
-                if module.durable.digest(request) != args.request_sha256: raise ValueError('qualification request checksum differs')
-                result = module.remote_run(request,args.action)
-            else:
-                if not args.inventory: raise ValueError('qualification requires retained coordinator inventory')
-                result = module.Client(descriptors.load_inventory(args.inventory),args.source_sha,args.host,args.attempt,args.inventory).run(
-                    args.command.removeprefix('schema-lock-'),getattr(args,'expect_plan_sha256',None))
-            out(json.dumps(result,sort_keys=True))
-            return 0
-        if args.command == 'schema-input-receive':
-            spec = importlib.util.spec_from_file_location('activity_input_stage', ROOT/'transparent/ops/lib/activity_input_stage.py')
-            module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
-            request = module.read_request(sys.stdin.buffer, args.request_sha256)
-            receiver = module.Receiver(request); receiver.identity()
-            try:
-                result = receiver.stage(sys.stdin.buffer) if args.action == 'stage' else getattr(receiver,args.action)()
-            except BaseException as error:
-                out(json.dumps({'request_sha256':module.digest(request),'status':'interrupted' if isinstance(error,(subprocess.TimeoutExpired,KeyboardInterrupt,SystemExit)) else 'failed'}))
-                return 75 if isinstance(error,(subprocess.TimeoutExpired,KeyboardInterrupt,SystemExit)) else 1
-            out(json.dumps({k:v for k,v in result.items() if k != 'request'}, sort_keys=True))
-            return 0
-        if args.command.startswith('schema-snapshot-'):
-            spec = importlib.util.spec_from_file_location('activity_journal_snapshot', ROOT/'transparent/ops/lib/activity_journal_snapshot.py')
-            module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
-            try:
-                if args.command == 'schema-snapshot-owner':
-                    result = module.owner_main(args.request_sha256)
-                else:
-                    if not args.inventory: raise ValueError('journal snapshot requires the pinned coordinator inventory')
-                    request = module.read_request(args.request, args.request_sha256)
-                    result = module.Snapshot(descriptors.load_inventory(args.inventory), request, args.request_sha256).run(
-                        args.command.removeprefix('schema-snapshot-'), getattr(args,'expect_plan_sha256',None))
-            except (module.Unknown, module.Interrupted) as error:
-                out('error: outcome unknown or interrupted; observe schema-snapshot-status, then reconcile: %s' % error)
-                return 75
-            out(json.dumps(result, sort_keys=True))
-            return 0
-        if args.command == 'schema-candidate-execute-receive':
-            spec = importlib.util.spec_from_file_location('activity_candidate_execution', ROOT/'transparent/ops/lib/activity_candidate_execution.py')
-            module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
-            return module.receive(args.action, args.request_sha256, sys.stdin.fileno(), out, args.expect_plan_sha256)
-        if args.command == 'schema-candidate-receive':
-            spec = importlib.util.spec_from_file_location('activity_candidate_upload', ROOT/'transparent/ops/lib/activity_candidate_upload.py')
-            module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
-            return module.receive(args.action, args.request_sha256, sys.stdin.fileno(), out)
-        if args.command.startswith('schema-qualify-'):
-            spec = importlib.util.spec_from_file_location('activity_deployed_qualification', ROOT/'transparent/ops/lib/activity_deployed_qualification.py')
-            module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
-            if args.command == 'schema-qualify-remote':
-                request = module.read_remote_request(sys.stdin.buffer,args.request_sha256)
-                out(json.dumps(module.remote_run(request, args.action), sort_keys=True))
-                return 0
-            if args.command == 'schema-qualify-summary':
-                out(json.dumps(module.summary_report(args.transaction), sort_keys=True))
-                return 0
-            if not args.inventory: raise ValueError('qualification requires the pinned coordinator inventory')
-            inventory = descriptors.load_inventory(args.inventory)
-            if args.command in ('schema-qualify-plan','schema-qualify-preflight','schema-qualify-run'):
-                with Path(args.request).open('rb') as stream: request = module.read_request(stream, args.request_sha256)
-            else:
-                request = module.retained_request(args.request_sha256)
-            qualification = module.Qualification(inventory, request, args.request_sha256)
-            if args.command == 'schema-qualify-exec':
-                qualification.execute()
-                return 0
-            action = args.command.removeprefix('schema-qualify-')
-            result = qualification.run(action, getattr(args,'expect_plan_sha256',None))
-            out(json.dumps(result, sort_keys=True))
-            if action == 'plan':
-                out('plan sha256: '+module.digest(result))
-            return 0
-        if args.command.startswith('schema-host-'):
-            spec = importlib.util.spec_from_file_location('activity_schema_dispatch', ROOT/'transparent/ops/lib/activity_schema_dispatch.py')
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
-            request = module.read_request(sys.stdin.buffer, args.request_sha256)
-            actor = module.Actor(request)
-            actor.identity()
-            action = args.command.removeprefix('schema-host-')
-            try:
-                result = getattr(actor, action)()
-            except Exception as error:
-                result = actor.status()
-                status = result['status'] if result['status'] != 'absent' else 'failed'
-                out(json.dumps({'request_sha256':module.digest(request), 'status':status, 'result':None}))
-                return 75 if isinstance(error, subprocess.TimeoutExpired) else 1
-            # Private plans/baseline bytes never travel in the printed reply.
-            if action == 'run' and request['action'] in module.READ_ONLY:
-                result = {'status':'passed', 'result':result}
-            out(json.dumps({'request_sha256':module.digest(request), 'status':result['status'], 'result':result.get('result')}))
-            return 0
+        from ..bundle import check_installed
+        product_command = args.command.startswith(('schema-', 'txid-display-'))
+        mutation = (args.command in ('deploy', 'rollback') or getattr(args, 'stage', False)
+                    or product_command and not args.command.endswith(('-plan', '-preflight', '-status', '-summary', '-recipe')))
+        check_installed(mutation=mutation, revision=getattr(args, 'sha', None))
+        if args.command.startswith(('schema-', 'txid-display-')):
+            if args.json:
+                raise DeployError('product recipes already provide their own JSON receipts; omit --json')
+            return transparent_cli().dispatch(args, executor=executor, out=out, **options)
         if not args.inventory:
             raise DeployError('pass --inventory or set WALLET_PIR_DEPLOY_INVENTORY')
-        if args.command.startswith('txid-display-'):
-            spec = importlib.util.spec_from_file_location('txid_display_poc', ROOT/'transparent/ops/lib/txid_display_poc.py')
-            module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
-            return module.main(args, descriptors.load_inventory(args.inventory), out, executor=executor, **options)
-        if args.command.startswith('schema-candidate-execute-'):
-            spec = importlib.util.spec_from_file_location('activity_candidate_execution', ROOT/'transparent/ops/lib/activity_candidate_execution.py')
-            module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
-            action = args.command.removeprefix('schema-candidate-execute-')
-            execution = module.Execution(descriptors.load_inventory(args.inventory), args.source_sha,
-                                         mode=getattr(args,'mode',None), attempt=getattr(args,'attempt',None),
-                                         preparation=getattr(args,'preparation_request_sha256',None),
-                                         request_sha256=getattr(args,'request_sha256',None),
-                                         snapshot={k:getattr(args,'snapshot_'+k,None) for k in
-                                                   ('request_sha256','owner_sha256','manifest_sha256')}
-                                                  if any(getattr(args,'snapshot_'+k,None) for k in
-                                                         ('request_sha256','owner_sha256','manifest_sha256')) else None)
-            try:
-                result = execution.run(action, getattr(args,'expect_plan_sha256',None))
-            except module.Unknown as error:
-                out('error: outcome unknown: %s' % error)
-                return 75
-            out(json.dumps(result,sort_keys=True))
-            if action == 'plan':
-                out('plan sha256: '+result['plan_sha256'])
+        if args.command == 'fleet':
+            from ..fleet import Fleet
+            out(json.dumps(Fleet.load(args.inventory, args.descriptors).describe(), sort_keys=True))
             return 0
-        if args.command.startswith('schema-candidate-upload-'):
-            spec = importlib.util.spec_from_file_location('activity_candidate_upload', ROOT/'transparent/ops/lib/activity_candidate_upload.py')
-            module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
-            action = args.command.removeprefix('schema-candidate-upload-')
-            archives = ({kind:getattr(args, kind.replace('-','_')) for kind in module.ORDER}
-                        if action not in ('status','reconcile') else None)
-            upload = module.Upload(descriptors.load_inventory(args.inventory), args.source_sha,
-                                   attempt=getattr(args,'attempt',None), archives=archives,
-                                   request_sha256=getattr(args,'request_sha256',None))
-            try:
-                result = upload.run(action, getattr(args,'expect_plan_sha256',None))
-            except module.Unknown as error:
-                out('error: outcome unknown: %s' % error)
-                return 75
-            out(json.dumps(result,sort_keys=True))
-            if action == 'plan':
-                out('plan sha256: '+module.digest(result))
-            return 0
-        if args.command.startswith('schema-candidate-'):
-            spec = importlib.util.spec_from_file_location('activity_input_stage', ROOT/'transparent/ops/lib/activity_input_stage.py')
-            module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
-            inventory = descriptors.load_inventory(args.inventory)
-            if args.command == 'schema-candidate-worker-build':
-                result = module.build_candidate(inventory,args.host,args.source_sha,args.publication_request_sha256,args.attempt)
-            else:
-                with Path(args.request).open('rb') as stream: raw=stream.read(module.MAX_REQUEST+1)
-                if len(raw)>module.MAX_REQUEST: raise ValueError('candidate request exceeds bound')
-                request=json.loads(raw,object_pairs_hook=module.unique)
-                result=module.CandidatePreparation(inventory,request,args.request_sha256).run(
-                    args.command.removeprefix('schema-candidate-'),getattr(args,'expect_plan_sha256',None))
-            out(json.dumps(result,sort_keys=True))
-            return 0
-        if args.command.startswith('schema-input-'):
-            spec = importlib.util.spec_from_file_location('activity_input_stage', ROOT/'transparent/ops/lib/activity_input_stage.py')
-            module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
-            inventory = descriptors.load_inventory(args.inventory)
-            if args.command.startswith(('schema-input-prepare-', 'schema-input-service-', 'schema-input-cutover-')):
-                with Path(args.request).open('rb') as stream: raw=stream.read(module.MAX_REQUEST+1)
-                if len(raw)>module.MAX_REQUEST: raise ValueError('preparation request exceeds bound')
-                request=json.loads(raw,object_pairs_hook=module.unique)
-                kind=args.command.split('-')[2]
-                preparation={'prepare':module.Preparation,'service':module.ServicePreparation,'cutover':module.CutoverPreparation}[kind]
-                result=preparation(inventory,request,args.request_sha256).run(
-                    args.command.removeprefix('schema-input-'+kind+'-'),getattr(args,'expect_plan_sha256',None))
-            elif args.command == 'schema-input-build':
-                result = module.build(inventory,args.host,args.source_sha,args.assignment,args.unit,
-                                      args.release_result_sha256,args.cache_bytes,args.attempt,worker_id=args.worker_id)
-            else:
-                with Path(args.request).open('rb') as stream:
-                    request = module.read_request(stream,args.request_sha256)
-                    if stream.read(1): raise ValueError('extra input request bytes')
-                result = module.Client(inventory,args.host,request).run(args.command.removeprefix('schema-input-'))
-            out(json.dumps(result,sort_keys=True))
-            return 0
-        if args.command.startswith('schema-product-'):
-            spec = importlib.util.spec_from_file_location('activity_schema_product', ROOT/'transparent/ops/lib/activity_schema_product.py')
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
-            path = module.checked({'path':args.spec, 'sha256':args.spec_sha256})
-            specification = module.validate(module.H.load(path))
-            product = module.Product(specification, spec_sha256=args.spec_sha256)
-            product.source_identity(ROOT, args.transaction if args.command == 'schema-product-phase' else None,
-                                    args.phase if args.command == 'schema-product-phase' else None,
-                                    args.journal if args.command == 'schema-product-phase' else None)
-            if args.command == 'schema-product-recipe':
-                out(json.dumps(module.recipe(path, args.spec_sha256), sort_keys=True))
-                return 0
-            if args.command == 'schema-product-preflight':
-                result = product.preflight()
-            else:
-                result = asyncio.run(product.phase(args.transaction, args.phase, args.journal))
-            out(json.dumps(result, sort_keys=True))
-            return 0
-        if args.command.startswith('schema-publication-'):
-            spec = importlib.util.spec_from_file_location('activity_publication_job',
-                ROOT/'transparent/ops/lib/activity_publication_job.py')
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
-            job = module.PublicationJob(descriptors.load_inventory(args.inventory), args.source_sha,
-                                        args.release_result_sha256, out)
-            action = args.command.removeprefix('schema-publication-')
-            if action == 'start':
-                job.start(args.expect_plan_sha256)
-            elif action == 'preflight':
-                job.preflight()
-                out('full publication preflight passed')
-            else:
-                getattr(job, action)()
-            return 0
-        if args.command.startswith('schema-source-'):
-            spec = importlib.util.spec_from_file_location('activity_source_stage',
-                ROOT/'transparent/ops/lib/activity_source_stage.py')
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
-            inventory = descriptors.load_inventory(args.inventory)
-            if bool(args.recovery_transaction) != bool(args.recovery_recipe_sha256):
-                raise ValueError('recovery source staging needs both transaction and recipe identity')
-            recovery = ({'transaction':args.recovery_transaction,'recipe_sha256':args.recovery_recipe_sha256}
-                        if args.recovery_transaction else None)
-            try:
-                module.SourceStage(inventory, out, target=args.host, recovery=recovery,attempt=args.attempt,
-                    private_evidence_file=getattr(args,'private_evidence_file',None)).run(args.command.removeprefix('schema-source-'),
-                    args.source_sha, args.sha256, getattr(args, 'archive', None))
-            except module.Unknown as error:
-                out(str(error))
-                return 75
-            return 0
-        if args.command.startswith('schema-'):
-            spec = importlib.util.spec_from_file_location('activity_schema_operation',
-                ROOT/'transparent/ops/lib/activity_schema_operation.py')
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
-            inventory = descriptors.load_inventory(args.inventory)
-            runner = module.Runner(inventory, args.state_dir, out=out)
-            if args.command == 'schema-status':
-                runner.status(args.transaction)
-            elif args.command == 'schema-rollback':
-                runner.rollback(args.transaction)
-            elif args.command == 'schema-repair-rollback':
-                runner.repair_rollback(args.transaction, args.expect_recipe_sha256)
-            elif args.command.startswith('schema-reconcile-'):
-                runner.reconcile(args.command.removeprefix('schema-reconcile-'), args.transaction,
-                                 args.expect_recipe_sha256, args.map_sha256, getattr(args,'expect_plan_sha256',None))
-            else:
-                recipe = module.load_recipe(args.recipe)
-                if args.command == 'schema-plan':
-                    runner.plan(recipe)
-                elif args.command == 'schema-preflight':
-                    runner.preflight(recipe)
-                else:
-                    try:
-                        runner.deploy(recipe, args.expect_recipe_sha256)
-                    finally:
-                        if runner.active_id:
-                            runner.status(runner.active_id)
-                            command = [sys.executable, str(ROOT/'ops/scripts/wallet-pir-deploy.py'),
-                                '--inventory', args.inventory, '--state-dir', args.state_dir,
-                                'schema-rollback', '--transaction', runner.active_id]
-                            out('rollback: '+shlex.join(command))
-            return 0
+        log = (lambda message: None) if args.json else out
         services = descriptors.load_descriptors(args.descriptors)
         if args.service not in services:
             raise DeployError('unknown service %r; known: %s' % (args.service, sorted(services)))
         service = services[args.service]
+        if service.driver != 'binary' and args.command != 'status':
+            raise DeployError('%s uses the %s product recipes; ordinary binary deployment cannot change its publications'
+                              % (service.name, service.driver))
         inventory = descriptors.load_inventory(args.inventory)
         executor = executor or SSHExecutor(inventory)
         if args.command in ('plan', 'preflight', 'deploy'):
@@ -709,26 +281,36 @@ def main(argv=None, executor=None, out=print, **options):
             for group, keys in groups:
                 if len(groups) > 1:
                     label = (group.kind or 'default artifact') if group.archive else 'given binary'
-                    out('== %s: %s' % (label, ', '.join(keys)))
-                deployer = Deployer(service, inventory, executor, args.state_dir, args.baseline, out=out,
+                    log('== %s: %s' % (label, ', '.join(keys)))
+                deployer = Deployer(service, inventory, executor, args.state_dir, args.baseline, out=log,
                                     only=keys, **options)
                 code = run_release(args.command, group, service, inventory, executor, deployer, out)
                 if code:
                     return code
             return 0
-        deployer = Deployer(service, inventory, executor, args.state_dir, args.baseline, out=out,
+        deployer = Deployer(service, inventory, executor, args.state_dir, args.baseline, out=log,
                             only=getattr(args, 'only', None), **options)
         if args.command == 'capture-baseline':
-            deployer.capture_baseline(args.output)
+            baseline = deployer.capture_baseline(args.output)
+            if args.json:
+                out(json.dumps({'service': service.name, 'operation': args.command,
+                                'baseline': str(args.output or deployer.baseline_path),
+                                'targets': sorted(baseline['targets'])}, sort_keys=True))
         elif args.command == 'status':
-            deployer.status()
+            from .lifecycle import Lifecycle
+            result = Lifecycle(deployer).status()
+            if args.json:
+                out(json.dumps(result.describe(), sort_keys=True))
         elif args.command == 'rollback':
-            deployer.rollback(args.transaction, args.force)
+            from .lifecycle import Lifecycle
+            result = Lifecycle(deployer).rollback(args.transaction, args.force)
+            if args.json:
+                out(json.dumps(result.describe(), sort_keys=True))
     except subprocess.TimeoutExpired:
-        out('error: command timed out; reconcile the recorded transaction and inspect its private logs')
+        error_result('command timed out; reconcile the recorded transaction and inspect its private logs', 'unknown')
         return 75 if args.command.startswith('schema-') else 1
     except (DeployError, RemoteError, LockHeld, descriptors.DescriptorError, OSError, ValueError) as error:
-        out('error: %s' % error)
+        error_result(str(error))
         return 1
     return 0
 

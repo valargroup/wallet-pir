@@ -1,5 +1,7 @@
 # Documentation
 
+- [Fleet operator guide](operations.md): architecture, configuration ownership, packaged operations, lifecycle commands and recovery.
+
 - [Enhance PIR](../enhance/docs/README.md): Ironwood integration, architecture, deployment and measured performance.
 - [Transparent PIR](../transparent/docs/README.md): recovery contract, filters, wallet adapter, deployment and acceptance.
 - [Receiver directory](../receiver/README.md): zero-OVK receiver records, publications, filters and witnesses.

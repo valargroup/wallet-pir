@@ -86,7 +86,7 @@ def effective(texts):
                 if not value:
                     items.clear()
                 elif key in WORD_LISTS:
-                    items.extend(value.split())
+                    items.extend(shlex.split(value))
                 else:
                     items.append(value)
             else:

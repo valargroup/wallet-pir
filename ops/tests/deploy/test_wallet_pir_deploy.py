@@ -33,6 +33,8 @@ class ImmutableWrapperSource(unittest.TestCase):
             root = Path(directory)
             shutil.copytree(ROOT / 'ops/lib', root / 'ops/lib',
                             ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
+            shutil.copytree(ROOT / 'transparent/ops/lib', root / 'transparent/ops/lib',
+                            ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
             (root / 'ops/scripts').mkdir(parents=True)
             wrapper = root / 'ops/scripts/wallet-pir-deploy.py'
             shutil.copyfile(ROOT / 'ops/scripts/wallet-pir-deploy.py', wrapper)
@@ -46,7 +48,7 @@ class ImmutableWrapperSource(unittest.TestCase):
 
 
 DEPLOY = ROOT / 'enhance/ops/deploy'
-SERVICES = descriptors.load_descriptors(DEPLOY / 'deploy.toml')
+SERVICES = descriptors.load_descriptors(ROOT / 'ops/deploy/services.toml')
 LOCK = ('coordinator', descriptors.LOCK_PATH)
 
 OLD = b'enhance-pir-server built from 71be21f'
@@ -883,6 +885,8 @@ class UnitTests(unittest.TestCase):
         self.assertTrue(SERVICES['receiver'].roles['server'].owns_unit)
         self.assertFalse(any(role.owns_unit for name in ('enhance', 'status') for role in SERVICES[name].roles.values()))
         text = (DEPLOY / 'deploy.toml').read_text().replace('template = "', 'template = "%s/' % DEPLOY)
+        text += (ROOT / 'receiver/ops/digitalocean/service.toml').read_text().replace(
+            'template = "receiver-pir.service.in"', 'template = "'+str(RECEIVER_TEMPLATE)+'"')
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / 'deploy.toml'
             for old, new in [('\nowns_unit = true\n', '\nowns_unit = "yes"\n'),

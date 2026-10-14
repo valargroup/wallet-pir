@@ -61,6 +61,7 @@ class Service:
     self_check: tuple = ('--help',)
     min_free_bytes: int = 1 << 30
     template_vars: tuple = ()
+    driver: str = 'binary'
 
     def release_dir(self, sha):
         return '%s/releases/%s' % (self.root, sha)
@@ -96,12 +97,21 @@ def placeholders(template):
     return {name for _, name, _, _ in string.Formatter().parse(template or '') if name}
 
 
-def load_descriptors(path):
-    path = Path(path)
+def load_descriptors(path, _parents=()):
+    path = Path(path).resolve()
+    require(path not in _parents, 'cyclic service descriptor include: %s' % path)
     with open(path, 'rb') as handle:
         document = tomllib.load(handle)
     services = {}
+    includes = document.get('include', [])
+    require(isinstance(includes, list) and all(isinstance(p, str) and p for p in includes),
+            'descriptor include must be a list of paths')
+    for included in includes:
+        additions = load_descriptors(path.parent / included, (*_parents, path))
+        require(not services.keys() & additions.keys(), 'duplicate included service descriptor')
+        services.update(additions)
     for name, raw in document.get('services', {}).items():
+        require(name not in services, 'duplicate service descriptor: %s' % name)
         roles = {}
         for role_name, spec in raw.get('roles', {}).items():
             mode = spec.get('mode')
@@ -128,9 +138,11 @@ def load_descriptors(path):
         require(order and sorted(order) == sorted(roles), '%s: order must list every role once' % name)
         require(PLAIN_PATH.match(raw.get('root', '')), '%s: root must be a plain absolute path' % name)
         require(PLAIN_NAME.match(raw.get('binary', '')), '%s: binary must be a plain file name' % name)
+        driver = raw.get('driver', 'binary')
+        require(driver in ('binary', 'transparent-history', 'txid-display'), 'unknown service lifecycle driver')
         services[name] = Service(name, raw['root'], raw['binary'], order, roles,
                                  tuple(raw.get('artifact_kinds', ())), tuple(raw.get('self_check', ('--help',))),
-                                 int(raw.get('min_free_bytes', 1 << 30)), tuple(raw.get('template_vars', ())))
+                                 int(raw.get('min_free_bytes', 1 << 30)), tuple(raw.get('template_vars', ())), driver)
     return services
 
 

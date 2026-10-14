@@ -27,7 +27,7 @@ DIR = ROOT / 'receiver/ops/digitalocean'
 WALLET_ROUTES = {'/v1/receiver/init', '/v1/receiver/query', '/v1/receiver/public/*',
                  '/v1/receiver/rows/*', '/v1/receiver/witness/*', '/v1/receiver/filters/*'}
 PRIVATE_NETWORK = ipaddress.ip_network('10.70.0.0/16')
-DEPLOY = ROOT / 'enhance/ops/deploy/deploy.toml'
+DEPLOY = ROOT / 'receiver/ops/digitalocean/service.toml'
 INVENTORY = ROOT / 'enhance/ops/deploy/deploy-inventory.example.json'
 INFRA = ROOT / 'ops/infra/digitalocean/production'
 PROBE = ['{release_dir}/receiver-directory', 'probe']

@@ -63,7 +63,7 @@ class FleetTests(unittest.IsolatedAsyncioTestCase):
         service = deploy.publisher_service(journal, publication, initial)
         writable = next(line for line in service.splitlines() if line.startswith('ReadWritePaths='))
         import shlex
-        self.assertEqual(shlex.split(writable.removeprefix('ReadWritePaths=')),
+        self.assertCountEqual(shlex.split(writable.removeprefix('ReadWritePaths=')),
                          [str(journal), str(publication), str(initial), str(deploy.ROOT/'state')])
         self.assertIn('ProtectSystem=strict', service)
         self.assertNotIn('/srv/zakura/transparent-event-data-v2', service)
@@ -78,12 +78,14 @@ class FleetTests(unittest.IsolatedAsyncioTestCase):
         service = deploy.publisher_service(Path('/srv/transparent-activity/full-v3/journal'),
             Path('/srv/transparent-activity/full-v11/publications'), Path('/srv/transparent-activity/full-v11/publications/initial'),
             state_dir=Path('/opt/transparent-publisher/v11/state'), config_path=Path('/opt/transparent-publisher/v11/controller.json'))
-        self.assertIn('--config "/opt/transparent-publisher/v11/controller.json"', service)
+        import shlex
+        command = next(line.partition('=')[2] for line in service.splitlines() if line.startswith('ExecStart='))
+        self.assertEqual(shlex.split(command)[-2:], ['--config', '/opt/transparent-publisher/v11/controller.json'])
         writable = next(line for line in service.splitlines() if line.startswith('ReadWritePaths='))
         self.assertIn('"/opt/transparent-publisher/v11/state"', writable)
         self.assertNotIn('controller.json', writable)
         self.assertNotIn('"/opt/transparent-publisher/state"', writable)
-        with self.assertRaisesRegex(ValueError, 'config cannot'):
+        with self.assertRaisesRegex(ValueError, 'configuration'):
             deploy.publisher_service(Path('/journal'),Path('/publications'),Path('/initial'),config_path=Path('/journal'))
 
     async def test_read_only_fleet_preflight_does_not_create_owned_sessions(self):

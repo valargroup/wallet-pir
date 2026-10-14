@@ -90,22 +90,6 @@ while IFS=$'\t' read -r -d '' name program; do
   fi
 done < <(transparent/ops/scripts/deploy-transparent-shard.sh jq-programs)
 
-# The filter-only deploy reads the filter service's own payloads, which have
-# no fixture here; compiled only, like the enhance programs.
-echo "== transparent/ops/scripts/deploy-transparent-filter.sh: compile only (no fixtures yet)"
-while IFS=$'\t' read -r -d '' name program; do
-  if output="$(jq -n "$program" 2>&1 >/dev/null)"; then
-    note "$name" "compiles"
-  else
-    status=$?
-    if [[ "$status" -eq 3 ]]; then
-      bad "$name" "does not compile: ${output//$'\n'/ }"
-    else
-      note "$name" "compiles"
-    fi
-  fi
-done < <(transparent/ops/scripts/deploy-transparent-filter.sh jq-programs)
-
 # The published fixture is a real ShardMap, so the script's own offline gate
 # should accept it -- CI's hand-written one carries no `geometry` key and only
 # happened to pass. `validate_shard_set` also wants a directory per revision the

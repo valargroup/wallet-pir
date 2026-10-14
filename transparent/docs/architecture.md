@@ -3,13 +3,12 @@
 This describes the system as it exists in this repository's source. [Status](status.md)
 records what is published and live, [deployment](deployment.md) owns the accepted
 operating targets, and the [contract](contract.md) defines the completeness, privacy
-and failure requirements all of it serves. Source establishes implementation and
-never establishes a deployment. The compact schema v10 described below was deployed on 2026-09-28;
-[the cutover evidence](../evidence/v10-cutover-2026-09-28/README.md) records its
-actual source, publication, public checks and limits. The
-[compact-layout evidence](../evidence/compact-layout-2026-09-28/README.md) owns the
-storage analysis; [remaining work](remaining-work.md#schema-v10-qualification-and-republication)
-tracks consumer and further performance qualification.
+and failure requirements all of it serves. Source establishes implementation and never establishes a deployment. The source
+history schema is `transparent-shard-v12`; the [October 13 retirement
+record](../evidence/v1-sunset-2026-10-13/README.md) records v2 history/display serving
+and the journal handover. The older v10 [cutover](../evidence/v10-cutover-2026-09-28/README.md)
+and [compact-layout analysis](../evidence/compact-layout-2026-09-28/README.md) are
+historical inputs. Shared operating procedures are in the [fleet guide](../../docs/operations.md).
 
 ## Data and recovery
 

@@ -507,6 +507,14 @@ jobs:
           compression-level: 0
           if-no-files-found: error
           retention-days: 14
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wallet-pir-ops-${{ github.sha }}
+          path: release-bundles/wallet-pir-ops.tar.gz
+          overwrite: true
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 14
 
   release-cuda:
     name: Prepare native CUDA release artifact (Ubuntu 22.04)

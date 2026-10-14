@@ -1,20 +1,8 @@
 #!/usr/bin/env bash
-# Deploys the transparent PIR shard worker.
-#
-# Deliberately separate from the Enhance deploy (formerly deploy-enhance-pir.sh,
-# removed in afdb4b6d) rather than a mode inside it. That deploy carries the one-time legacy rollback branches the repository
-# guidance protects, and a fleet that shares no state with Enhance must not be
-# able to disturb them. Nothing here touches the Enhance coordinator, its units,
-# its Caddyfile, or the filter service.
-#
-# The worker is not published. Its firewall opens 8093 to the coordinator tag
-# alone, because the wallet-facing API is not designed yet and the upstream
-# binary defaults to loopback for exactly that reason. Verification therefore
-# runs from the coordinator over the VPC, not from the internet.
-#
-# Shard bytes reach the worker by rsync from the coordinator, which is also the
-# deploy runner, so the published set is local to it. This stands in for the
-# coordinator push that the multi-worker build will add later.
+# Retained Transparent worker installation and verification helpers.
+# Publication and authority changes use reviewed product recipes under the
+# shared production lock. Inputs name an explicit tested release and shard set;
+# this script never changes Enhance state. See docs/operations.md.
 set -euo pipefail
 
 MODE="${1:-deploy}"

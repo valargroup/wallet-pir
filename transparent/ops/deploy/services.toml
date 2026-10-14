@@ -1,0 +1,38 @@
+# Role discovery and process status use the common inventory. Publication,
+# activation and rollback stay in the named product driver, not the binary engine.
+# Unit names are defaults; the operator inventory names the actual v12/4k8 units.
+[services.transparent-history]
+driver = "transparent-history"
+root = "/opt/transparent-publisher"
+binary = "transparent-shard-server"
+order = ["worker", "controller"]
+
+[services.transparent-history.roles.worker]
+unit = "transparent-shard-server.service"
+mode = "exec-drop-in"
+health = "http://{listen}/v1/health"
+ready = { field = "ready", equals = true }
+ready_url = "http://{listen}/v1/ready"
+
+[services.transparent-history.roles.controller]
+unit = "transparent-v12-publish-controller.service"
+mode = "exec-drop-in"
+health = "http://{listen}/v1/status"
+
+[services.transparent-display]
+driver = "txid-display"
+root = "/opt/transparent-txid-display"
+binary = "transparent-txid-server"
+order = ["worker", "controller"]
+
+[services.transparent-display.roles.worker]
+unit = "transparent-txid-display-worker.service"
+mode = "exec-drop-in"
+health = "http://{listen}/v1/health"
+ready = { field = "ready", equals = true }
+ready_url = "http://{listen}/v1/ready"
+
+[services.transparent-display.roles.controller]
+unit = "transparent-txid-display-controller.service"
+mode = "exec-drop-in"
+health = "http://{listen}/v1/status"

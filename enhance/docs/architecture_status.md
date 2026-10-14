@@ -1,16 +1,17 @@
 # Status PIR architecture
 
-Status: private compact v2 deployment; public production qualification pending.
-
-An isolated [synthetic backend](status_backend.md) implements the index and encrypted HTTP
-path for synthetic fixtures. Its preparation baseline, deployment commands, and
-remaining production boundaries are documented separately. The
-[distributed live topology](status_distributed.md) and
-[v2 production measurements](../evidence/status-compact-v2-2026-09-25/README.md)
-track the current implementation and release blockers.
+Production deployment records include a separate `status-pir` controller, router
+and worker on the native v3 profile; see [deployment](deployment.md) and the
+[October 10 record](../evidence/production-deploy-9d2cbda0-2026-10-10/README.md).
+The [fleet operator guide](../../docs/operations.md) owns shared operating procedures.
+The [synthetic backend](status_backend.md) and
+[v2 measurements](../evidence/status-compact-v2-2026-09-25/README.md) describe their
+recorded modes and cannot qualify the native v3 release. The
+[distributed topology](status_distributed.md) and product qualification gates
+still separate deployment evidence from sustained capacity assurance.
 
 Status PIR privately observes transactions through the Enhance infrastructure.
-It shares the Enhance coordinator and public ingress, with a separate status
+Its controller runs on the coordinator host behind the shared public origin, with a separate status
 index and a dedicated GPU host running both the packing router and evaluation
 worker. The wallet supplies a transaction ID locally and receives `NotFound`,
 `Mempool`, `Mined(height)`, or `Forked`, without disclosing that ID in a network
@@ -41,7 +42,7 @@ are keyed by Ironwood action position and contain no txids.
 
 | Concern | Decision |
 | --- | --- |
-| Coordinator | Shared authority and process, with an independently scheduled status controller |
+| Coordinator | Separate status controller on the shared coordinator host; publisher implementation can also be embedded in Enhance |
 | Chain source | Shared authenticated node connectivity and network identity |
 | Database | Separate status journal, snapshots, sessions, and recovery state |
 | Query domain | One fixed domain of 8,192 rows; no partition selector |

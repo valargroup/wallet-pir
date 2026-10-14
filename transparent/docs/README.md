@@ -1,6 +1,12 @@
 # Transparent PIR documentation
 
-Status updated 2026-09-28 UTC; milestone acceptance remains as recorded below. The accepted target is two small recent replicas, grown elastically under load, and two larger archive workers. M0–M2 are accepted, including the revised six-hour M1 fleet observation. M3 has fixture and native real-wallet evidence; application/lifecycle acceptance, whole-wallet measurements, capacity and release observation remain open. Read [status](status.md) for the current evidence and [remaining work](remaining-work.md) for the next actions.
+Start shared operations with the [fleet operator guide](../../docs/operations.md).
+The [October 13 retirement record](../evidence/v1-sunset-2026-10-13/README.md)
+records `/v2/` schema-v12 history and txid-4k8 as the remaining wallet API, with
+v1 serving stopped and the journal writer handed to v12. Earlier milestone and
+elastic-fleet acceptance records remain historical evidence, not the current
+fleet inventory. Read [status](status.md) for observed deployment records and
+[remaining work](remaining-work.md) for qualification and follow-up.
 
 ## Reading order and authority
 

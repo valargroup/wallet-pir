@@ -35,35 +35,13 @@ from wallet_pir_ops import inherited_lock, transparent_unit  # noqa: E402
 
 
 def publisher_service(data_dir, publication_root, initial_publication, *, state_dir=None, config_path=None):
-    """Grant only the selected journal/publication paths inside the sandbox.
-
-    The initial publication must be writable in the mount namespace too:
-    linking an immutable source through a read-only mount can fail with EROFS.
-    """
-    state_dir = ROOT/'state' if state_dir is None else Path(state_dir)
-    config_path = ROOT/'controller.json' if config_path is None else Path(config_path)
-    paths = []
-    directories = tuple(map(Path, (data_dir, publication_root, initial_publication, state_dir)))
-    if config_path in directories:
-        raise ValueError('publisher config cannot be a writable directory')
-    for path in (*directories, config_path):
-        path = Path(path)
-        value = str(path)
-        if not path.is_absolute() or path == Path('/') or '%' in value or any(ord(c) < 32 for c in value):
-            raise ValueError('publisher paths must be absolute non-root paths without control characters or systemd specifiers')
-        if path != config_path and value not in paths:
-            paths.append(value)
-    template = (SCRIPT.parent/'deploy/transparent-publish-controller.service').read_text()
-    lines = template.splitlines()
-    indices = [i for i, line in enumerate(lines) if line.startswith('ReadWritePaths=')]
-    if len(indices) != 1:
-        raise ValueError('publisher unit must contain exactly one ReadWritePaths setting')
-    lines[indices[0]] = 'ReadWritePaths=' + ' '.join(json.dumps(path, ensure_ascii=False) for path in paths)
-    starts = [i for i, line in enumerate(lines) if line.startswith('ExecStart=')]
-    if len(starts) != 1:
-        raise ValueError('publisher unit must have exactly one ExecStart')
-    lines[starts[0]] = 'ExecStart=/usr/local/bin/transparent-publish-controller --config '+json.dumps(str(config_path), ensure_ascii=False)
-    return '\n'.join(lines) + '\n'
+    """Render the publisher and its sandbox from the same journal/publication paths."""
+    from wallet_pir_ops.paths import ROOT as _resources
+    from transparent.ops.lib.roles import publisher
+    config = dict(data_dir=str(data_dir), publication_root=str(publication_root),
+                  initial_publication=str(initial_publication))
+    return publisher(config, state_dir=ROOT/'state' if state_dir is None else state_dir,
+                     config_path=ROOT/'controller.json' if config_path is None else config_path).unit
 
 
 def argument_values(args, flag):
@@ -194,6 +172,8 @@ def align_filter_origin(initial):
         path.write_text(updated)
         execute(['systemctl','daemon-reload'])
         execute(['systemctl','restart','transparent-filter-server'])
+
+
 
 
 STORAGE_PATH = '/usr/local/lib/transparent-pir/storage-policy.py'
@@ -432,7 +412,10 @@ async def main():
             config['directory_choice']=args.directory_choice
         if args.range_profile!='zcash-transparent-range-v1':
             config['range_profile']=args.range_profile
-        LIVE.atomic_json(ROOT/'controller.json',config)
+        from transparent.ops.lib.roles import publisher
+        rendered = publisher(config, state_dir=ROOT/'state', config_path=ROOT/'controller.json')
+        service = rendered.unit
+        atomic_bytes(ROOT/'controller.json', rendered.files[str(ROOT/'controller.json')].encode())
     fleet=LIVE.Fleet(json.loads((ROOT/'fleet.json').read_text()))
     saved=ROOT/'rollback'/args.source_sha
     if args.mode=='rollback':

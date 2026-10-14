@@ -1605,10 +1605,8 @@ def iso_unix(text):
 
 
 def load_release():
-    spec = importlib.util.spec_from_file_location('txid_display_release', ROOT / 'tools/ci/release.py')
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    from wallet_pir_ops import release
+    return release
 
 
 def rollback_command(args, transaction):

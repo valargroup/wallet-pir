@@ -324,7 +324,11 @@ place until canonical warm service and exact private queries are verified.
 6. Canary real wallet recovery, tail republishing and outage handling, then expand only after workload gates pass. Record actual deployment state and measurement artifacts.
 7. Roll back binary, publication and routing together. Preserve the previously valid revision/coverage relationship; a wallet must explicitly recover from an incompatible or lower anchor rather than silently accept it.
 
-The filter service deploys on its own through `.github/workflows/deploy-transparent-filter.yml`, which asks the staged binary to read the named set (`--check-shard-dir`) before the running service is touched, compares that map digest with the set the fleet serves, and verifies both public origins afterwards. It uses the `enhance-production` concurrency group and the `/opt/enhance-pir/rollback` paths the removed Enhance workflow used, and touches nothing of Enhance. Do not copy a transparent Caddy configuration onto the Enhance coordinator.
+The standalone filter deployment workflow and its installer have been removed.
+They targeted the superseded standalone deployment; current v12 publication and
+filter authority are managed together. Use the [operator guide](../../docs/operations.md)
+and the product's reviewed deployment procedure. Retained source revisions and
+artifacts remain the source for historical rollback; this cleanup changes no host.
 
 ## Runtime persistence and deployment identity
 

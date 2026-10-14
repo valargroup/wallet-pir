@@ -67,7 +67,7 @@ an arm64 host, cross-compile with `--target x86_64-unknown-linux-gnu` in
 
 `receiver-directory` is the `receiver` service of
 [`ops/scripts/wallet-pir-deploy.py`](../../../ops/scripts/wallet-pir-deploy.py),
-described in [`deploy.toml`](../../../enhance/ops/deploy/deploy.toml) with one role,
+described in [the shared registry](../../../ops/deploy/services.toml) and [Receiver descriptor](service.toml) with one role,
 `server`, whose `receiver-pir.service` the tool renders whole from
 [`receiver-pir.service.in`](receiver-pir.service.in) (`template` mode). Install,
 upgrade and roll back the binary, and change the unit, only through the tool, which

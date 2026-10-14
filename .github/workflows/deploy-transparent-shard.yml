@@ -1,16 +1,8 @@
 name: Deploy transparent shard worker
 
-# Stands up the transparent PIR shard retrieval worker.
-#
-# Separate from Deploy Enhance PIR on purpose. The two fleets share no state,
-# and the Enhance deploy script carries the one-time legacy rollback path this
-# repository's guidance protects; a transparent deploy must not be able to
-# disturb it. Nothing here touches the Enhance coordinator, its units, its
-# Caddyfile, or the filter service.
-#
-# The worker is not published. Its firewall opens 8093 to the coordinator tag
-# alone, because the wallet-facing API is not designed yet. Verification runs
-# from the runner, which is the coordinator, over the VPC.
+# Explicit reviewed shard sets only; no historical publication-directory default.
+# The publisher and product cutover recipes remain the authority for publication.
+# This retained worker installer also supplies the tested fleet verification helpers.
 
 on:
   workflow_dispatch:
@@ -25,7 +17,6 @@ on:
           schema this build serves; a set published under another schema is
           refused at load, after the service has already been stopped.
         required: true
-        default: /srv/zakura/transparent-shards-v7
         type: string
       mode:
         description: >-

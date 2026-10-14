@@ -1,8 +1,9 @@
 # Enhance PIR
 
 Enhance PIR retrieves the encrypted Ironwood output data a wallet needs after
-compact scanning. The current implementation serves schema 11 of
-`ironwood-enhance-pir-v7`: 653-byte suffix records, 33 records per row, and
+compact scanning. Source supports schema 11 with profile-specific framing; the latest linked
+[production record](../evidence/production-deploy-eae5641a-2026-10-11/README.md)
+uses the native `ironwood-enhance-pir-v9-native-two-mask-m29` profile: 653-byte suffix records, 33 records per row, and
 private position queries. A wallet retains the compact encryption prefix and
 validates the answer against its own chain context.
 
@@ -14,14 +15,16 @@ validates the answer against its own chain context.
 - [Changelog](../CHANGELOG.md): Enhance PIR release history.
 - [Evidence](../evidence/README.md): retained raw runs and provenance.
 
-The experimental Status PIR service has a separate [architecture](architecture_status.md),
-[synthetic backend runbook](status_backend.md), [qualification gate](status_qualification.md),
-and [APM rollout](status_apm_rollout.md).
-It is not integrated with wallets or live chain ingestion.
+Status PIR has its own controller, router and worker roles in production deployment
+records, with source in the Enhance package. Its [architecture](architecture_status.md),
+[distributed runbook](status_distributed.md), [qualification gate](status_qualification.md)
+and [APM rollout](status_apm_rollout.md) separate implementation, observations and
+remaining qualification. The [synthetic backend](status_backend.md) is a test mode.
+Start shared operations with the [fleet guide](../../docs/operations.md).
 
 The transparent script-history product has its own [documentation](../../transparent/docs/README.md).
 
-Status now uses the incompatible compact `status-pir-v2-q48` contract: 40-byte
-slots, 6,144 u16 columns and a 96 MiB database, with unchanged 20-second freshness
-and 1,572,864-entry ceiling. Source block hashes stay internal; replies are status
-observations, not inclusion proofs. V1 evidence is historical and cannot qualify v2.
+The `status-pir` release artifact selects `status-pir-v3-native-two-mask-m29`.
+The default-feature `status-pir-v2-q48` implementation and its v1/v2 measurements
+remain profile-specific test and historical material. Status replies are
+observations, not inclusion proofs; source block hashes remain internal.

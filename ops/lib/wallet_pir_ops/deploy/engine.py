@@ -561,6 +561,12 @@ class Deployer:
                 self.out('  %s: %s %s' % (record['key'], record['action'], record['phase']))
         else:
             self.out('no %s transaction recorded' % self.service.name)
+        observed = []
         for target in self.targets:
             state = self.ex.probe_unit(target.host, target.unit)
             self.out('%s %s: %s %s' % (target.key, target.unit, state['active_state'], state['exe_sha256']))
+
+            observed.append({'role': target.role.name, 'host': target.host, 'unit': target.unit,
+                             'active_state': state['active_state'], 'binary_sha256': state['exe_sha256']})
+        return {'targets': observed, 'transaction': journal.id if journal else None,
+                'phase': journal.status if journal else None}

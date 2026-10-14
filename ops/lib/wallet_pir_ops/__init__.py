@@ -1,8 +1,8 @@
 """Product-neutral operations primitives shared by Enhance and transparent PIR.
 
 Standard library only. Scripts import this package by adding the checkout's
-`ops/lib` directory, computed from their own path, to `sys.path`. The only
-modules installed on hosts are `control_sessions` and the modules it imports
+`ops/lib` directory, computed from their own path, to `sys.path`. The complete operations bundle is documented in `docs/operations.md`. Older
+standalone control-session installers use `control_sessions` and the modules it imports
 (`control_sessions.SHIPPED_MODULES`), copied into `lib/` beside
 `wallet-pir-control-sessions.py`.
 
@@ -16,6 +16,9 @@ modules installed on hosts are `control_sessions` and the modules it imports
   and the forwarding-only account they log in to.
 - `transparent_unit`: rewriting a serving transparent worker's systemd unit for
   a new worker, and the per-role memory limits it carries.
-- `deploy`: the transactional Enhance and Status deploy CLI
+- `bundle`: exact-revision operations packaging and verification.
+- `role_config`: complete unit/configuration rendering without host effects.
+- `fleet`: configured roles derived from the inventory and shared registry.
+- `deploy`: the transactional role lifecycle API and CLI
   (`ops/scripts/wallet-pir-deploy.py`).
 """

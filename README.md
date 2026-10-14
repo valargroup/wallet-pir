@@ -75,6 +75,9 @@ independently buildable with `make demo-check`.
 
 ## Operations
 
+Start with the [fleet operator guide](docs/operations.md) for the shared topology,
+versioned operations bundle, role configuration and lifecycle interfaces.
+
 Use the [Enhance runbook](enhance/docs/deployment.md) or
 [transparent runbook](transparent/docs/deployment.md) for deployment.
 The [APM dashboard](https://enhance-pir.valargroup.dev/apm/) exposes observed
