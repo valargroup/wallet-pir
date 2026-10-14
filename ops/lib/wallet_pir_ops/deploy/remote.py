@@ -93,7 +93,7 @@ class Executor:
 
     # Operations package (`host_helper.package_*`); none touches a unit.
 
-    def package_observe(self, host, root, fleet, revision, machine_id_path):
+    def package_observe(self, host, root, files, revision, machine_id_path):
         raise NotImplementedError
 
     def package_tree(self, host, path):
@@ -144,9 +144,11 @@ class SSHExecutor(Executor):
             return ['ssh', *config, '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes',
                     '-o', 'ConnectTimeout=10', '-o', 'ForwardAgent=no', entry.get('ssh_alias', host)]
         if host not in self.pinned:
-            self.pinned[host] = pinned_ssh.PinnedSSH(entry['address'], Path(ssh['key']).expanduser(),
-                                                     Path(ssh['known_hosts']).expanduser(),
-                                                     ssh['known_hosts_sha256'], entry.get('user', ssh.get('user', 'root')))
+            # Per-host identity and pin, falling back to the inventory-wide ones.
+            pin = entry if 'known_hosts' in entry else ssh
+            self.pinned[host] = pinned_ssh.PinnedSSH(entry['address'], Path(entry.get('key', ssh['key'])).expanduser(),
+                                                     Path(pin['known_hosts']).expanduser(),
+                                                     pin['known_hosts_sha256'], entry.get('user', ssh.get('user', 'root')))
         client = self.pinned[host]
         client.check_host_keys()
         options = list(client.options)
@@ -237,8 +239,8 @@ class SSHExecutor(Executor):
         reply = self.call(host, 'run', deadline=timeout + 30, argv=list(argv), timeout=timeout)
         return reply['returncode'], reply['output']
 
-    def package_observe(self, host, root, fleet, revision, machine_id_path):
-        return self.call(host, 'package_observe', root=root, fleet=fleet, revision=revision,
+    def package_observe(self, host, root, files, revision, machine_id_path):
+        return self.call(host, 'package_observe', root=root, files=list(files), revision=revision,
                          machine_id_path=machine_id_path)
 
     def package_tree(self, host, path):

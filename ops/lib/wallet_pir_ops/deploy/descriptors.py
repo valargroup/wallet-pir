@@ -6,6 +6,7 @@ readiness is checked. They never name hosts. The inventory is a local JSON file
 outside the repository that says where each role runs and how to reach it;
 `enhance/ops/deploy/deploy-inventory.example.json` shows its shape.
 """
+import dataclasses
 from dataclasses import dataclass, field
 import json
 from pathlib import Path
@@ -103,10 +104,14 @@ class Target:
     # for a GPU worker. None means the binary given to the transaction.
     artifact_kind: str = None
     responsibilities: tuple = ()
+    # Set when one host runs the role more than once (history archive and
+    # recent workers): the key then names the unit too.
+    qualified: bool = False
 
     @property
     def key(self):
-        return '%s@%s' % (self.role.name, self.host)
+        key = '%s@%s' % (self.role.name, self.host)
+        return '%s:%s' % (key, self.unit) if self.qualified else key
 
     def url(self, template):
         return template.format_map(self.vars) if template else None
@@ -211,6 +216,15 @@ def load_inventory(path):
                 'inventory: pinned SSH needs ssh.key, known_hosts, known_hosts_sha256 and an address per host')
     for name, entry in hosts.items():
         require(isinstance(entry, dict), 'inventory: host entry must be an object')
+        # A host reached with its own existing identity names it; the global
+        # ssh.key and known-hosts pin stay the fallback. A known-hosts file is
+        # always pinned by the digest beside it.
+        require(not ({'known_hosts', 'known_hosts_sha256'} & set(entry)) or
+                (isinstance(entry.get('known_hosts'), str) and
+                 re.fullmatch('[0-9a-f]{64}', str(entry.get('known_hosts_sha256')))),
+                'inventory: %s overrides known_hosts only together with its known_hosts_sha256' % name)
+        require(entry.get('key') is None or isinstance(entry['key'], str) and entry['key'],
+                'inventory: %s.key must be a path' % name)
         require(not entry.get('jump') or (entry['jump'] in hosts and entry['jump'] != name
                 and not hosts[entry['jump']].get('jump')), 'inventory: jump must name a direct host')
         require(isinstance(entry.get('sudo', False), bool), 'inventory: sudo must be boolean')
@@ -274,7 +288,9 @@ def targets(service, inventory):
                     % (service.name, role_name, host, list(role.responsibilities)))
             result.append(Target(role, host, unit, values, expected, kind, tuple(duties)))
     require(result, 'inventory lists no %s hosts' % service.name)
-    return result
+    repeated = {(t.role.name, t.host) for t in result
+                if sum((u.role.name, u.host) == (t.role.name, t.host) for u in result) > 1}
+    return [dataclasses.replace(t, qualified=True) if (t.role.name, t.host) in repeated else t for t in result]
 
 
 def template_values(service, inventory, sha):
