@@ -454,6 +454,70 @@ class InstallTests(PackageCase):
             self.package().rollback()
         self.assertEqual(self.host.log, [])
 
+    def test_rollback_refuses_a_corrupted_retained_release_and_keeps_the_current_one(self):
+        def replace_with_link(path):
+            path.unlink()
+            path.symlink_to('/etc/hostname')
+        corruptions = {
+            'content': lambda r: (r / 'ops/deploy/services.toml').write_text('changed'),
+            'missing file': lambda r: (r / 'ops/deploy/services.toml').unlink(),
+            'symlink': lambda r: replace_with_link(r / 'ops/scripts/wallet-pir-deploy.py'),
+            'file mode': lambda r: (r / 'ops/deploy/services.toml').chmod(0o666),
+            'lost executable bit': lambda r: (r / 'ops/scripts/wallet-pir-deploy.py').chmod(0o644),
+            'directory mode': lambda r: (r / 'ops').chmod(0o777),
+            'release replaced by a link': lambda r: (shutil.rmtree(r), r.symlink_to(self.release(B))),
+        }
+        for name, corrupt in corruptions.items():
+            with self.subTest(name):
+                self.setUp()
+                self.install(A)
+                first_fleet = self.fleet.read_bytes()
+                document = json.loads(first_fleet)
+                document['hosts']['worker-02']['address'] = '192.0.2.26'
+                self.fleet.write_text(json.dumps(document, indent=2))
+                upgrade = self.install(B)
+                corrupt(self.release(A))
+                self.host.log.clear()
+                with self.assertRaisesRegex(package.PackageError, 'rollback refused; nothing was changed'):
+                    self.package().rollback(upgrade.id)
+                self.assertEqual(self.host.mutations(), [])
+                self.assertEqual(self.selection(), 'releases/' + B)
+                self.assertEqual(self.fleet_bytes(), self.fleet.read_bytes())
+                final = Path(self.layout.transaction(upgrade.id)) / 'final.json'
+                self.assertEqual(json.loads(final.read_text())['status'], 'committed')
+
+    def test_rollback_refuses_a_retained_release_no_transaction_promoted(self):
+        upgrade = self.install(B)
+        self.release(A).parent.mkdir(parents=True, exist_ok=True)
+        bundle.extract(self.archive(A), self.release(A), A)
+        # A record naming an unpromoted, identical directory as the prior selection is not proof.
+        record_path = Path(self.layout.transaction(upgrade.id)) / 'record.json'
+        record = json.loads(record_path.read_text())
+        record['plan']['prior']['selection'] = 'releases/' + A
+        record['plan_sha256'] = durable.digest(record['plan'])
+        record_path.write_text(json.dumps(record))
+        (self.state / (upgrade.id + '.json')).unlink()
+        self.host.log.clear()
+        with self.assertRaisesRegex(package.PackageError, 'no single recorded package transaction'):
+            self.package().rollback(upgrade.id)
+        self.assertEqual((self.host.mutations(), self.selection()), ([], 'releases/' + B))
+
+    def test_rollback_to_an_intact_retained_release_repeats_and_reinstalls(self):
+        first = self.install(A)
+        upgrade = self.install(B)
+        for _ in range(2):
+            self.assertEqual(self.package().rollback(upgrade.id).status, 'rolled-back')
+            self.assertEqual(self.selection(), 'releases/' + A)
+        self.assertEqual(self.package().status()['integrity'], 'verified')
+        self.package().rollback(first.id)
+        self.assertIsNone(self.selection())
+        # The rolled-back B is reselected as a retained release, then rolled back to A again.
+        again = self.install(A)
+        later = self.install(B)
+        self.package().rollback(later.id)
+        self.assertEqual(self.selection(), 'releases/' + A)
+        self.assertEqual(again.status, 'committed')
+
     def test_rollback_from_another_runner_uses_the_coordinator_record(self):
         journal = self.install()
         other = self.package(state=self.dir / 'other-runner')
@@ -515,7 +579,8 @@ class ProvenanceTests(PackageCase):
     def test_the_artifact_bytes_are_what_installs(self):
         plan, problems, archive = self.plan()
         self.assertEqual(problems, [])
-        self.assertTrue(str(archive).startswith(str(self.state / 'artifacts' / '420')))
+        # The plan resolves the archive path; on macOS the temporary root is a link.
+        self.assertTrue(str(archive).startswith(str((self.state / 'artifacts' / '420').resolve())))
         # A second plan reuses this runner's copy only while it matches GitHub's digest.
         self.plan()
         self.assertEqual(self.github.downloads, 1)
@@ -662,7 +727,12 @@ class RelocatedBundleTests(PackageCase):
         destination = self.dir / 'elsewhere/release'
         destination.parent.mkdir()
         bundle.extract(self.archive(A), destination, A)
-        environment = {**os.environ, 'PYTHONPATH': '', 'PATH': '/usr/bin:/bin'}
+        # The entrypoints' `env python3` finds only this interpreter (the supported
+        # one running the tests, not whatever the system ships) and no checkout path.
+        interpreter = self.dir / 'interpreter'
+        interpreter.mkdir()
+        (interpreter / 'python3').symlink_to(sys.executable)
+        environment = {**os.environ, 'PYTHONPATH': '', 'PATH': '%s:/usr/bin:/bin' % interpreter}
         commands = [
             [str(destination / 'ops/scripts/wallet-pir-bundle.py'), 'self-check', '--sha', A],
             [str(destination / 'ops/scripts/wallet-pir-deploy.py'), 'ops-package-install', '--help'],

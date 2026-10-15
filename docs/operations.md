@@ -135,7 +135,10 @@ where each step's observed state is exactly its recorded before or after state
 (a partial staging copy is discarded and staged again) and refuses anything else.
 A refusal after the first step (for example an altered staged file) selects
 nothing and needs rollback. Rollback refuses if the selection or inventory changed
-outside the transaction; otherwise it restores the previous selection and
+outside the transaction, or if the release it would select again is missing,
+differs in any file, owner or mode from the record of the transaction that
+promoted it, has no such record, or fails its own self-check; a refusal changes
+nothing and the current selection stays. Otherwise it restores the previous selection and
 inventory and pins, or removes them when the transaction installed the first ones.
 It keeps the release directory and every record. An earlier transaction rolls back
 only after every later one has.
