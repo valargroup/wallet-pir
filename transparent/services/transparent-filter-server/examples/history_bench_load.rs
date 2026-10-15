@@ -203,6 +203,12 @@ impl Load {
         })
     }
 
+    /// The published row, read straight from a segment file of the revision.
+    ///
+    /// Revisions are named by digest, so any directory holding one holds the
+    /// same bytes. The publisher collects old candidates while the load runs:
+    /// a directory found earlier may be gone, so a failed read forgets it and
+    /// searches again.
     fn oracle_row(
         &self,
         target: &Target,
@@ -210,37 +216,60 @@ impl Load {
         row: usize,
         row_bytes: usize,
     ) -> Result<Vec<u8>, BoxError> {
-        let dir = {
-            let mut cached = self.oracle_dirs.lock().unwrap();
-            match cached.get(&target.digest) {
-                Some(dir) => dir.clone(),
-                None => {
-                    let mut found = None;
-                    'search: for root in &self.cli.oracle {
-                        if root.join(&target.digest).is_dir() {
-                            found = Some(root.join(&target.digest));
-                            break;
-                        }
-                        for entry in std::fs::read_dir(root)?.filter_map(Result::ok) {
-                            let candidate = entry.path().join(&target.digest);
-                            if candidate.join("manifest.json").is_file() {
-                                found = Some(candidate);
-                                break 'search;
-                            }
-                        }
-                    }
-                    let dir = found.ok_or("no oracle holds the revision")?;
-                    cached.insert(target.digest.clone(), dir.clone());
-                    dir
+        let mut last = None;
+        for _ in 0..3 {
+            let dir = match self.oracle_dir(&target.digest) {
+                Ok(dir) => dir,
+                Err(error) => {
+                    last = Some(error);
+                    continue;
+                }
+            };
+            let read = || -> std::io::Result<Vec<u8>> {
+                let mut file = std::fs::File::open(
+                    dir.join(format!("{}.{segment}.bin", target.table.name())),
+                )?;
+                file.seek(SeekFrom::Start((row * row_bytes) as u64))?;
+                let mut bytes = vec![0u8; row_bytes];
+                file.read_exact(&mut bytes)?;
+                Ok(bytes)
+            };
+            match read() {
+                Ok(bytes) => return Ok(bytes),
+                Err(error) => {
+                    self.oracle_dirs.lock().unwrap().remove(&target.digest);
+                    last = Some(error.into());
                 }
             }
-        };
-        let mut file =
-            std::fs::File::open(dir.join(format!("{}.{segment}.bin", target.table.name())))?;
-        file.seek(SeekFrom::Start((row * row_bytes) as u64))?;
-        let mut bytes = vec![0u8; row_bytes];
-        file.read_exact(&mut bytes)?;
-        Ok(bytes)
+        }
+        Err(last.unwrap_or_else(|| "no oracle holds the revision".into()))
+    }
+
+    fn oracle_dir(&self, digest: &str) -> Result<PathBuf, BoxError> {
+        if let Some(dir) = self.oracle_dirs.lock().unwrap().get(digest) {
+            return Ok(dir.clone());
+        }
+        for root in &self.cli.oracle {
+            if root.join(digest).join("manifest.json").is_file() {
+                let dir = root.join(digest);
+                self.oracle_dirs
+                    .lock()
+                    .unwrap()
+                    .insert(digest.to_string(), dir.clone());
+                return Ok(dir);
+            }
+            for entry in std::fs::read_dir(root)?.filter_map(Result::ok) {
+                let candidate = entry.path().join(digest);
+                if candidate.join("manifest.json").is_file() {
+                    self.oracle_dirs
+                        .lock()
+                        .unwrap()
+                        .insert(digest.to_string(), candidate.clone());
+                    return Ok(candidate);
+                }
+            }
+        }
+        Err("no oracle holds the revision".into())
     }
 
     async fn setup(&self, target: &Target, segment: u32) -> Result<Arc<Vec<u8>>, BoxError> {
