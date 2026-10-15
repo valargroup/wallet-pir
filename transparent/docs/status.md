@@ -6,6 +6,36 @@ M4–M6 are open.** This records observed progress, not a new live fleet health
 check. [Remaining work](remaining-work.md) is the authoritative outstanding
 checklist; [deployment](deployment.md) owns operating targets.
 
+## Prepared history runtimes, implemented, not measured, 2026-10-14
+
+Source only; nothing deployed and `ship_runtimes` stays off everywhere. The
+[design as built](architecture.md#prepared-history-runtimes): the publication controller
+can prepare every history runtime of a candidate on the publisher, link unchanged ones
+from retained candidates, and offer them with the candidate; the fleet adapter ships each
+worker only its shards' files and links what the worker already holds; the worker loads
+and self-checks them through the same cache operation as a restore or build, and falls
+back to building per runtime.
+
+- **Implementation:** done on the task branch (see the commit that adds this entry).
+- **Correctness:** focused `release-fast` tests pass: exact wallet recovery against an
+  independent traversal with no worker build (two page shards per directory shard, and a
+  shard needing two page segments); byte-identical setup and answers against a locally
+  building worker at populated, empty, first, last and block-boundary rows, each decoded
+  to the segment file's row; a file one row off refused by the full database comparison
+  whatever row is sampled; every wrong identity (revision, page shard, digest, geometry,
+  kind, native schema), truncation, corruption and missing file refused once and built;
+  corrupt sources fail; concurrent callers share one load; a refusal counted once across
+  admission retries; cancelled loads keep their reservations until their blocking work
+  ends; restart and reorg fences; assignment-specific inventories; the controller's real
+  path, link reuse, stop on invalidation, refusal of an unverified candidate and reported
+  write failures; the fleet adapter's staging.
+- **Measured benefit:** none yet. The six paired arms need a host-exclusive allocation
+  this task could not obtain on the shared development hub; the
+  [harness and fixture](../evidence/history-prepared-runtimes-2026-10-14/README.md) are
+  ready. Shipping cannot be enabled before they pass.
+- **Production adoption:** not started; it needs the measurement, a reviewed plan and
+  Roman's confirmation. See [remaining work](remaining-work.md#prepared-history-runtimes).
+
 ## Wallet API v1 retired, 2026-10-13
 
 `/v1/*` on `https://transparent-pir.valargroup.dev` answers 410 since 17:13:50 UTC.

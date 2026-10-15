@@ -127,11 +127,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .active_record
         .clone()
         .unwrap_or_else(|| cli.shard_dir.with_extension("active.json"));
+    // The runtimes the active publication was staged with, if any: a
+    // restarted worker is offered them as its prepare was.
+    let mut runtimes = None;
     if cli.control_socket.is_some() && active_record.exists() {
         let active: transparent_shard_server::live::Publication =
             serde_json::from_slice(&std::fs::read(&active_record)?)?;
         cli.shard_dir = active.directory;
         cli.assignment = active.assignment;
+        runtimes = active.runtimes;
     }
     let disk = cli
         .runtime_cache_dir
@@ -229,8 +233,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         return Ok(());
     }
     let map_sha256 = set.map_digest.clone();
-    let state = ServiceState::build_with_disk(set, config, disk)
-        .map_err(|error| -> Box<dyn std::error::Error + Send + Sync> { error.into() })?;
+    let state = ServiceState::build_with_runtimes(
+        set,
+        config,
+        disk,
+        runtimes
+            .clone()
+            .map(transparent_shard_server::runtime::disk::ShippedRuntimes::new),
+    )
+    .map_err(|error| -> Box<dyn std::error::Error + Send + Sync> { error.into() })?;
     let limit = state.max_query_bytes();
     let app = if let Some(socket) = cli.control_socket {
         let live = transparent_shard_server::live::LiveService::new(
@@ -239,6 +250,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 directory: cli.shard_dir,
                 assignment: cli.assignment,
                 map_sha256,
+                runtimes,
             },
             config,
             options,
