@@ -480,5 +480,10 @@ fn a_file_written_just_before_it_was_hashed_is_not_vouched_for() {
     std::fs::write(&pages[0], &bytes).unwrap();
     let second = open(&world.p2, Some(&world.first)).unwrap();
     let third = open(&p3, Some(&second)).unwrap();
-    assert_eq!(third.verification().page_bytes_hashed, bytes.len() as u64);
+    // Replacing the link also changes the original inode's ctime. Both that
+    // retained segment and the freshly written replacement require hashing.
+    assert_eq!(
+        third.verification().page_bytes_hashed,
+        2 * bytes.len() as u64
+    );
 }
