@@ -411,7 +411,8 @@ fn a_replaced_file_is_hashed_and_a_corrupt_one_refused() {
     let second = open(&world.p2, Some(&world.first)).unwrap();
     assert_eq!(
         second.verification().page_bytes_hashed,
-        page_bytes(&second, &world.r1.manifest_digest, 1) + bytes.len() as u64
+        // Removing the old link also changes the retained inode's ctime.
+        page_bytes(&second, &world.r1.manifest_digest, 1) + 2 * bytes.len() as u64
     );
 
     // Same length, one bit off, new inode: refused.
@@ -468,20 +469,22 @@ fn a_missing_file_is_refused_whatever_the_evidence() {
 }
 
 #[test]
-fn a_file_written_just_before_it_was_hashed_is_not_vouched_for() {
+fn a_file_with_unsettled_timestamps_is_not_vouched_for() {
     let world = World::new();
     let p3 = world.p3();
     std::thread::sleep(Duration::from_millis(1100));
-    // Publication two's files are a minute old, but rewrite the sealed page
-    // shard's bytes now and load: the stamp is too fresh to trust later.
+    // Keep the same inode under every publication. A future modification time
+    // makes its stamp uncertain regardless of how long fixture hashing takes.
     let pages = world.sealed_pages(&world.p2);
     let bytes = std::fs::read(&pages[0]).unwrap();
-    std::fs::remove_file(&pages[0]).unwrap();
-    std::fs::write(&pages[0], &bytes).unwrap();
+    let file = OpenOptions::new().write(true).open(&pages[0]).unwrap();
+    file.write_all_at(&bytes[..64], 0).unwrap();
+    file.set_modified(SystemTime::now() + Duration::from_secs(3600))
+        .unwrap();
     let second = open(&world.p2, Some(&world.first)).unwrap();
     let third = open(&p3, Some(&second)).unwrap();
-    // Replacing the link also changes the original inode's ctime. Both that
-    // retained segment and the freshly written replacement require hashing.
+    // Both revisions publish this inode. Neither may inherit its verification
+    // while its timestamp is uncertain.
     assert_eq!(
         third.verification().page_bytes_hashed,
         2 * bytes.len() as u64
