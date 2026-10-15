@@ -200,6 +200,39 @@ Health's `near.reads` gives, for each NEAR feed, when the last read this process
 completed began, or null until one completes, so unlike the report's `feeds` it
 shows that the running process's key works.
 
+### Serving operator-staged publications
+
+`receiver-directory serve-publication --config FILE` serves publications an
+operator stages, from the same binary, without indexing: it opens no index
+database, ingests no blocks and reads no partner key. The JSON configuration
+(unknown fields refused) names `publication_record`, `bind` (loopback or
+private), `state_dir`, `rpc_urls`, and `cookie` or `"no_auth": true`, with the
+optional `poll_seconds`, `witnesses` and `min_rows` of the indexer. The record
+is `{"directory": "/abs/path", "revision": "<64 hex>"}`: stage the complete
+directory a one-shot run writes (`<revision>.json`, `.rows`, `.filters`,
+`.witness`), then replace the record atomically (write beside it, rename over
+it). It is a private local control input; there is no update route.
+
+Each record is verified in full before it can serve: the manifest must digest
+to the expected revision, be mainnet, start at Ironwood activation and hold at
+least `min_rows`, and the rows, filters and witnesses must be the ones it
+commits to, which the server library re-validates record by record while
+preparing PIR. Its anchor must then be canonical on the freshest node. Updates
+are serial: a newer record supersedes one still preparing, a record that does
+not verify is refused while the last valid publication keeps serving, and the
+publication rules above (epochs, monotonic coverage, the predecessor's
+60-second grace) are unchanged. The canonical guard runs independently
+throughout and revokes on a confirmed reorg; an outage keeps serving. A revoked
+but still-recorded publication is verified and confirmed again. A restart
+re-reads the record and verifies everything before serving; the
+`serve-publication.json` status file in `state_dir` is a report, never an input.
+Health's `publication` field reports the assigned, loaded and preparing records
+and the latest refusal, typed as `invalid_source`, `unavailable`,
+`noncanonical` or `superseded`. `--check` runs the same verification of the
+recorded publication and exits without serving. The publisher remains trusted
+for completeness. Operators install it as the `receiver.serve-publication`
+external worker ([operations](../docs/operations.md#external-workers)).
+
 `receiver-directory probe --origin <url> --health-url <private health URL>
 --rpc-url <node> --no-auth [--witnesses]`, or `receiver-probe` with the same
 arguments on the monitor host, is a `pir-monitor` service probe with an embedded
