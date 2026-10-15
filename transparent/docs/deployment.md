@@ -432,7 +432,8 @@ load reports segments and bytes hashed and inherited, row-check bytes, wall and
 thread CPU time; `prepare` replies and the control `status` (`last_preparation`)
 carry it, with the refusal kind (`invalid_source`, `runtime`, `admission`,
 `superseded`) when a prepare fails. The on-disk runtime and publication formats
-are unchanged.
+are unchanged. The [paired benchmark](../evidence/verification-reuse-2026-10-15/README.md)
+measured what this removes from loading a republished tail.
 
 ## Ingest, infrastructure and aging
 
