@@ -443,6 +443,7 @@ class Arm:
         load = self.spawn('load', 'load', [
             self.bin / 'history_bench_load', '--worker', f'http://127.0.0.1:{self.ports["worker"]}',
             '--oracle', self.dir / 'publications', '--oracle', self.dir / 'initial',
+            '--oracle', self.dir / 'worker' / 'publications',
             '--geometry', RECENT, '--rate', a.rate, '--duration-seconds', duration,
             '--seed', a.seed, '--out', self.raw / 'queries.jsonl'])
         sampler.roles['load'] = load.pid
