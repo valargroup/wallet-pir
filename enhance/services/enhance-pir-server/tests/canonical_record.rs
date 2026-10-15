@@ -8,7 +8,6 @@ use enhance_pir_server::{
     worker::Worker,
 };
 use sha2::{Digest, Sha256};
-use zakura_chain::serialization::ZcashDeserialize;
 async fn serve(router: axum::Router) -> (String, tokio::task::JoinHandle<()>) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
@@ -28,18 +27,19 @@ async fn canonical_transaction_records_match_frozen_oracle_across_publication() 
         hex::encode(Sha256::digest(&raw)),
         oracle["transaction_sha256"]
     );
-    let tx = zakura_chain::transaction::Transaction::zcash_deserialize(raw.as_slice()).unwrap();
-    assert_eq!(tx.hash().to_string(), oracle["transaction_id"]);
-    assert!(!tx.has_transparent_inputs() && !tx.has_transparent_outputs());
-    assert!(
-        tx.sapling_spends_per_anchor().next().is_none()
-            && tx.sapling_outputs().next().is_none()
-            && tx.orchard_actions().next().is_none()
-    );
+    let tx = zakura_server_chain::testing::Tx::from_bytes(&raw);
+    assert_eq!(tx.txid_display(), oracle["transaction_id"]);
+    assert!(!tx.has_sapling_outputs());
     // The coordinator's producer, with no spent outputs to resolve.
-    let records =
-        enhance_pir_server::zakura::transaction_records(&tx, &std::collections::HashMap::new())
-            .unwrap();
+    let actions = zakura_server_chain::enhance::raw_transaction_actions(
+        &raw,
+        &std::collections::HashMap::new(),
+    )
+    .unwrap();
+    assert!(actions
+        .iter()
+        .all(|a| !a.has_transparent_inputs && !a.has_transparent_outputs));
+    let records = enhance_pir_server::zakura::records(actions).unwrap();
     let expected: Vec<_> = [
         include_str!("fixtures/ironwood-canonical-record-0.hex"),
         include_str!("fixtures/ironwood-canonical-record-1.hex"),

@@ -21,8 +21,9 @@ the evaluator with the `server` feature. `receiver-pir-server` serves
 publications over HTTP. `receiver-indexer` builds them from a Zakura node; its
 binary is `receiver-directory`. The service shares process identity and
 admission (`pir-control`), metrics (`pir-observability`) and the PIR profile
-(`pir-native`) with the other services, and carries its own small node client
-until a shared one exists.
+(`pir-native`) with the other services, and reads the node through
+wallet-libraries' server-only chain adapters (`zakura-server-chain`), which decode
+blocks, count note positions and recover receivers.
 
 ## Records and publications
 

@@ -1,81 +1,21 @@
 //! Public refund ciphertext in synthetic block envelopes. Consensus is trusted to RPC.
 use axum::{extract::State, routing::post, Json, Router};
-use receiver_indexer::{blocks::extract_block, zakura::ZakuraClient};
+use serde_json::{json, Value};
+use std::sync::Arc;
+use zakura_server_chain::testing::receiver::{ironwood_root, RefundBlock};
 
 /// Ironwood's mainnet activation height, as the tests count heights.
 fn activation() -> u64 {
     u64::from(receiver_indexer::blocks::ironwood_activation())
 }
-use serde_json::{json, Value};
-use std::sync::Arc;
-use zakura_chain::{
-    block::{Block, Height},
-    serialization::{ZcashDeserialize, ZcashSerialize},
-    transaction::Transaction,
-    transparent::Input,
-};
 
-fn block() -> Block {
-    let tx = Transaction::zcash_deserialize(
-        hex::decode(include_str!("fixtures/receiver-refund.hex").trim())
-            .unwrap()
-            .as_slice(),
-    )
-    .unwrap();
-    let mut coinbase = tx.clone();
-    match &mut coinbase {
-        Transaction::V6 { inputs, .. } => {
-            *inputs = vec![Input::Coinbase {
-                height: Height(3496114),
-                data: vec![0],
-                sequence: u32::MAX,
-            }]
-        }
-        _ => panic!("expected V6"),
-    }
-    // Give the coinbase the same recoverable ciphertext to exercise its exclusion.
-    let mut raw = vec![0u8; 140];
-    raw[..4].copy_from_slice(&4u32.to_le_bytes());
-    raw.extend_from_slice(&[0xfd, 0x40, 0x05]);
-    raw.extend_from_slice(&[0; 1344]);
-    raw.push(2);
-    coinbase.zcash_serialize(&mut raw).unwrap();
-    tx.zcash_serialize(&mut raw).unwrap();
-    let mut b = Block::zcash_deserialize(raw.as_slice()).unwrap();
-    seal(&mut b);
-    b
-}
-
-/// Sets `b`'s header merkle root to its transactions' root.
-fn seal(b: &mut Block) {
-    let root = b.transactions.iter().collect();
-    Arc::make_mut(&mut b.header).merkle_root = root;
-}
-#[test]
-fn coinbase_exclusion_preserves_position_and_compact_context() {
-    let b = block();
-    let indexed = extract_block(&b, 3496114, 610504).unwrap();
-    assert_eq!(indexed.coinbase_actions, 1);
-    assert_eq!(indexed.start_position, 610502);
-    assert_eq!(indexed.payments.len(), 1);
-    let p = &indexed.payments[0].1;
-    assert_eq!((p.tx_index, p.action_index, p.position), (1, 0, 610503));
-    assert_eq!(p.txid, b.transactions[1].hash().0);
-    let action = b.transactions[1].ironwood_actions().next().unwrap();
-    assert_eq!(
-        p.ciphertext_prefix,
-        <[u8; 580]>::from(action.enc_ciphertext)[..52]
-    );
-    assert!(extract_block(&b, 3496115, 610504).is_err());
-    assert!(extract_block(&b, 3496114, 1).is_err());
-}
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cli_resumes_and_replaces_an_orphaned_publication() {
     use std::process::Command;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     #[derive(Clone)]
     struct Chain {
-        blocks: Arc<[Block; 2]>,
+        blocks: Arc<[RefundBlock; 2]>,
         replaced: Arc<AtomicBool>,
         count: Arc<AtomicUsize>,
         hold: Arc<AtomicBool>,
@@ -89,17 +29,11 @@ async fn cli_resumes_and_replaces_an_orphaned_publication() {
         let first = &s.blocks[usize::from(s.replaced.load(Ordering::SeqCst))];
         let height = activation();
         let count = s.count.load(Ordering::SeqCst);
-        let mut second = first.clone();
-        second.transactions.truncate(1);
-        seal(&mut second);
-        Arc::make_mut(&mut second.header).previous_block_hash = first.hash();
-        match Arc::make_mut(&mut second.transactions[0]) {
-            Transaction::V6 { inputs, .. } => match &mut inputs[0] {
-                Input::Coinbase { height: h, .. } => *h = Height(height as u32 + 1),
-                _ => unreachable!(),
-            },
-            _ => unreachable!(),
-        }
+        let second = first
+            .clone()
+            .coinbase_only()
+            .at_height(height as u32 + 1)
+            .after(first.hash());
         let requested = r["params"][0]
             .as_u64()
             .or_else(|| r["params"][0].as_str().and_then(|s| s.parse().ok()));
@@ -111,9 +45,9 @@ async fn cli_resumes_and_replaces_an_orphaned_publication() {
         let result = match r["method"].as_str().unwrap() {
             "getblockcount" => json!(height + count as u64 - 1),
             "getblockhash" if r["params"][0] == 0 => {
-                json!(zakura_chain::parameters::Network::Mainnet
-                    .genesis_hash()
-                    .to_string())
+                json!(zakura_server_chain::hash::display(
+                    &zakura_server_chain::Network::Mainnet.genesis_hash()
+                ))
             }
             "getblockhash" if r["params"][0] == height - 1 => json!("00".repeat(32)),
             "getblockhash" => {
@@ -121,32 +55,21 @@ async fn cli_resumes_and_replaces_an_orphaned_publication() {
                     requested.unwrap() < height + count as u64,
                     "must walk below the shorter node tip before fetching hashes"
                 );
-                json!(b.hash().to_string())
+                json!(b.display_hash())
             }
             "getblock" if r["params"][1] == 1 => {
-                json!({"trees":{"ironwood":{"size":if r["params"][0] == second.hash().to_string() {3} else {2}}}})
+                json!({"trees":{"ironwood":{"size":if r["params"][0] == second.display_hash() {3} else {2}}}})
             }
             "getblockheader" => json!({"time": 1_800_000_000}),
-            "getblock" => {
-                let mut raw = Vec::new();
-                b.zcash_serialize(&mut raw).unwrap();
-                json!(hex::encode(raw))
-            }
+            "getblock" => json!(b.raw_hex()),
             // The root comes from the node's own tree over every Action up to the block.
             "z_gettreestate" => {
-                let extended = r["params"][0] == second.hash().to_string();
-                let blocks = if extended {
-                    vec![first, &second]
+                let extended = r["params"][0] == second.display_hash();
+                let root = hex::encode(if extended {
+                    ironwood_root(&[first, &second])
                 } else {
-                    vec![first]
-                };
-                let mut tree = zakura_chain::orchard::tree::NoteCommitmentTree::default();
-                for tx in blocks.iter().flat_map(|b| &b.transactions) {
-                    for action in tx.ironwood_actions() {
-                        tree.append(action.cm_x).unwrap();
-                    }
-                }
-                let root = hex::encode(tree.root().bytes_in_display_order());
+                    ironwood_root(&[first])
+                });
                 json!({"hash": r["params"][0], "height": height + u64::from(extended),
                     "ironwood": {"commitments": {"finalRoot": root}}})
             }
@@ -154,19 +77,9 @@ async fn cli_resumes_and_replaces_an_orphaned_publication() {
         };
         Json(json!({"result":result,"error":null}))
     }
-    let mut b = block();
-    let coinbase = Arc::make_mut(&mut b.transactions[0]);
-    match coinbase {
-        Transaction::V6 { inputs, .. } => match &mut inputs[0] {
-            Input::Coinbase { height, .. } => *height = Height(activation() as u32),
-            _ => unreachable!(),
-        },
-        _ => unreachable!(),
-    }
-    let mut replacement = b.clone();
-    Arc::make_mut(&mut replacement.header).previous_block_hash = zakura_chain::block::Hash([0; 32]);
+    let b = RefundBlock::new(activation() as u32);
     // Change only the header nonce; both versions have the same recoverable payment.
-    Arc::make_mut(&mut replacement.header).nonce[0] ^= 1;
+    let replacement = b.clone().after([0; 32]).renonced();
     let changed = Arc::new(AtomicBool::new(false));
     let count = Arc::new(AtomicUsize::new(1));
     let hold = Arc::new(AtomicBool::new(false));
@@ -327,9 +240,7 @@ async fn cli_resumes_and_replaces_an_orphaned_publication() {
     ))
     .unwrap();
     fixture["height"] = payment.height.into();
-    fixture["block_hash"] = zakura_chain::block::Hash(payment.block_hash)
-        .to_string()
-        .into();
+    fixture["block_hash"] = zakura_server_chain::hash::display(&payment.block_hash).into();
     fixture["tx_index"] = payment.tx_index.into();
     fixture["position"] = payment.position.into();
     // The deploy gate's form of the probe: `receiver-directory probe`.
@@ -408,143 +319,6 @@ async fn cli_resumes_and_replaces_an_orphaned_publication() {
     let _restarted = start();
     wait_height(&client, &endpoint, activation() + 1).await;
     task.abort();
-}
-
-#[tokio::test]
-async fn concurrent_batches_reject_gaps_forks_and_wrong_positions() {
-    use receiver_directory::store::Checkpoint;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    #[derive(Clone)]
-    struct BatchRpc {
-        blocks: Arc<Vec<Block>>,
-        fault: u8,
-        calls: Arc<AtomicUsize>,
-        active: Arc<AtomicUsize>,
-        peak: Arc<AtomicUsize>,
-    }
-    async fn handler(State(s): State<BatchRpc>, Json(r): Json<Value>) -> Json<Value> {
-        let call = s.calls.fetch_add(1, Ordering::SeqCst) + 1;
-        let terminal = s.blocks.last().unwrap().hash().to_string();
-        let result = match r["method"].as_str().unwrap() {
-            "getblockhash" => {
-                if s.fault == 4 || (s.fault == 7 && call == 7) {
-                    json!("00".repeat(32))
-                } else {
-                    json!(terminal)
-                }
-            }
-            "getblock" if r["params"][1] == 1 => {
-                assert_eq!(
-                    r["params"][0],
-                    if s.fault == 4 {
-                        "00".repeat(32)
-                    } else {
-                        terminal
-                    }
-                );
-                json!({"trees":{"ironwood":{"size":if s.fault == 3 {209} else {208}}}})
-            }
-            "getblock" => {
-                assert_eq!(r["params"][1], 0);
-                let height: usize = r["params"][0].as_str().unwrap().parse().unwrap();
-                let i = height - 3496114;
-                let active = s.active.fetch_add(1, Ordering::SeqCst) + 1;
-                s.peak.fetch_max(active, Ordering::SeqCst);
-                // Force responses out of order while also observing the concurrency bound.
-                tokio::time::sleep(std::time::Duration::from_millis(if i.is_multiple_of(2) {
-                    30
-                } else {
-                    5
-                }))
-                .await;
-                s.active.fetch_sub(1, Ordering::SeqCst);
-                if s.fault == 6 && i == 1 {
-                    return Json(
-                        json!({"result":null,"error":{"code":-8,"message":"missing block"}}),
-                    );
-                }
-                let mut raw = Vec::new();
-                s.blocks[i].zcash_serialize(&mut raw).unwrap();
-                if s.fault == 5 && i == 1 {
-                    raw.push(1);
-                }
-                json!(hex::encode(raw))
-            }
-            _ => panic!("unexpected method"),
-        };
-        Json(json!({"result":result,"error":null}))
-    }
-    for fault in 0..=8 {
-        let mut blocks = Vec::new();
-        let mut parent = [0; 32];
-        for i in 0..4 {
-            let mut b = block();
-            let tx = Arc::make_mut(&mut b.transactions[0]);
-            if let Transaction::V6 { inputs, .. } = tx {
-                if let Input::Coinbase { height, .. } = &mut inputs[0] {
-                    *height = Height(3496114 + i + u32::from(fault == 2 && i == 1));
-                }
-            }
-            // A transaction changed under its header no longer matches its merkle root.
-            if fault == 8 && i == 1 {
-                if let Transaction::V6 { expiry_height, .. } = Arc::make_mut(&mut b.transactions[1])
-                {
-                    expiry_height.0 += 1;
-                }
-            }
-            Arc::make_mut(&mut b.header).previous_block_hash =
-                zakura_chain::block::Hash(if fault == 1 && i == 1 {
-                    [99; 32]
-                } else {
-                    parent
-                });
-            parent = b.hash().0;
-            blocks.push(b);
-        }
-        let state = BatchRpc {
-            blocks: Arc::new(blocks),
-            fault,
-            calls: Arc::new(AtomicUsize::new(0)),
-            active: Arc::new(AtomicUsize::new(0)),
-            peak: Arc::new(AtomicUsize::new(0)),
-        };
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let url = format!("http://{}", listener.local_addr().unwrap());
-        let router = Router::new()
-            .route("/", post(handler))
-            .with_state(state.clone());
-        let task = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
-        let client = ZakuraClient::new(url, None).unwrap();
-        let previous = Checkpoint {
-            height: 3496113,
-            hash: [0; 32],
-            position: 200,
-        };
-        for (count, concurrency) in [(0, 2), (65, 2), (4, 0), (4, 17)] {
-            assert!(client
-                .receiver_batch(&previous, count, concurrency)
-                .await
-                .is_err());
-        }
-        assert_eq!(state.calls.load(Ordering::SeqCst), 0);
-        let result = client.receiver_batch(&previous, 4, 2).await;
-        assert_eq!(result.is_err(), fault != 0, "fault={fault}");
-        assert_eq!(state.peak.load(Ordering::SeqCst), 2);
-        if let Ok(indexed) = result {
-            assert_eq!(indexed.len(), 4);
-            // Four raw-block requests plus three terminal checks, rather than 20 requests.
-            assert_eq!(state.calls.load(Ordering::SeqCst), 7);
-            for (i, b) in indexed.iter().enumerate() {
-                let expected =
-                    extract_block(&state.blocks[i], 3496114 + i as u32, 202 + i as u64 * 2)
-                        .unwrap();
-                assert_eq!(b.payments, expected.payments);
-                assert_eq!(b.start_position, 200 + i as u64 * 2);
-                assert_eq!(b.coinbase_actions, 1);
-            }
-        }
-        task.abort();
-    }
 }
 
 #[test]

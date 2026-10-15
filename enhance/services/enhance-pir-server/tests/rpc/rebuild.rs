@@ -252,7 +252,9 @@ async fn rebuild_resumes_and_coordinator_adopts_only_fee_repairs() {
         let prevouts = Prevouts::new(1000);
         let mut journal = EnhanceJournal::open(&data).unwrap();
         for height in H..=H + 3 {
-            let mut block = client.block(height, &prevouts).await.unwrap();
+            let mut block = enhance_pir_server::zakura::block(&client, height, &prevouts)
+                .await
+                .unwrap();
             for record in &mut block.records {
                 let mut bytes = *record.as_bytes();
                 if bytes[RECORD_FLAGS_OFFSET] & FLAG_HAS_TRANSPARENT_INPUTS != 0 {

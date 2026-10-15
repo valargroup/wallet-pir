@@ -56,7 +56,7 @@ async fn live_load(
         .timeout(Duration::from_secs(5))
         .redirect(reqwest::redirect::Policy::none())
         .build()?;
-    let network: zakura_chain::block::Hash = rpc.block_hash(0).await?.parse()?;
+    let network = rpc.block_hash(0).await?;
     let permits = Arc::new(tokio::sync::Semaphore::new(16));
     let cache = Arc::new(tokio::sync::Mutex::new(std::collections::BTreeMap::<
         Hash,
@@ -106,16 +106,16 @@ async fn live_load(
                             let manifest: Manifest = http.get(format!("{origin}/v1/status/init")).send().await?.error_for_status()?.json().await?;
                             manifest.fresh(status::now_ms())?;
                             stage_completions.push(json!({"stage":"init","elapsed_ms":start.elapsed().as_secs_f64()*1000.,"attempt":retry}));
-                            let hash: zakura_chain::block::Hash = rpc.block_hash(u64::from(manifest.anchor_height)).await?.parse()?;
-                            require(manifest.network == network.0 && manifest.anchor_hash == hash.0, "oracle anchor mismatch")?;
+                            let hash = rpc.block_hash(u64::from(manifest.anchor_height)).await?;
+                            require(manifest.network == network && manifest.anchor_hash == hash, "oracle anchor mismatch")?;
                             let txid = {
                                 let mut cache = cache.lock().await;
-                                if let Some(txid) = cache.get(&hash.0) { *txid } else {
-                                    let block = rpc.status_block(u64::from(manifest.anchor_height)).await?;
-                                    require(block.hash == hash.0, "oracle canonical block changed")?;
+                                if let Some(txid) = cache.get(&hash) { *txid } else {
+                                    let block = crate::status::source::status_block(&rpc, u64::from(manifest.anchor_height)).await?;
+                                    require(block.hash == hash, "oracle canonical block changed")?;
                                     let txid = *block.txids.first().ok_or("oracle block empty")?;
                                     if cache.len() >= 4 { cache.clear(); }
-                                    cache.insert(hash.0, txid);
+                                    cache.insert(hash, txid);
                                     txid
                                 }
                             };
@@ -128,7 +128,7 @@ async fn live_load(
                             let cpu_permit = permit.clone();
                             let (client, query) = tokio::task::spawn_blocking(move || {
                                 let _permit = cpu_permit;
-                                let client = Client::new(job_manifest.clone(), &public, &AcceptedAnchor { network: network.0, height: job_manifest.anchor_height, hash: hash.0 })?;
+                                let client = Client::new(job_manifest.clone(), &public, &AcceptedAnchor { network, height: job_manifest.anchor_height, hash })?;
                                 let query = client.prepare(&txid, Some(job_manifest.anchor_height), status::now_ms())?;
                                 Ok::<_, AnyError>((client, query))
                             }).await??;

@@ -48,11 +48,14 @@ tokio = { version = "1", features = ["full"] }
 tokio-stream = "0.1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-zakura-chain = { git = "https://github.com/zakura-core/zakura.git", rev = "83738c07468bee30a7db8a8d678cb27bf60094f4" }
+# Node reads, Enhance extraction, fees and Status chain reads, pinned to an exact
+# wallet-libraries revision.
+zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "5293d937ac8e369d2f75910e68617319b61554ce" }
 
 [dev-dependencies]
+zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "5293d937ac8e369d2f75910e68617319b61554ce", features = ["testing"] }
 # Independent wallet Enhance client, which is native-only.
-zakura-pir-enhance = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "a71ccf63ce0373b253f06c7350f921f0bd83b6f3", default-features = false }
+zakura-pir-enhance = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "5293d937ac8e369d2f75910e68617319b61554ce", default-features = false }
 simplepir-kernel = "=0.1.0-rc.4"
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }

@@ -13,6 +13,29 @@ use std::{
     time::Instant,
 };
 
+/// The canonical block hash at `height`, or `error` when the node's answer is not a
+/// hash.
+async fn hash_at(
+    rpc: &ZakuraClient,
+    height: u64,
+    error: impl FnOnce() -> SourceError,
+) -> Result<Hash, SourceError> {
+    let displayed = rpc.block_hash_display(height).await?;
+    zakura_server_chain::hash::parse_display(&displayed).map_err(|_| error())
+}
+
+/// The canonical block at `height` as a Status index block; see
+/// [`ZakuraClient::status_block`].
+pub(crate) async fn status_block(rpc: &ZakuraClient, height: u64) -> Result<Block, ZakuraError> {
+    let block = rpc.status_block(height).await?;
+    Ok(Block {
+        height: block.height,
+        hash: block.hash,
+        parent: block.parent,
+        txids: block.txids,
+    })
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum SourceError {
     #[error(transparent)]
@@ -236,29 +259,18 @@ impl RollingWindow {
         if tip_height == 0 {
             return Err(SourceError::Window);
         }
-        let anchor: zakura_chain::block::Hash = rpc
-            .block_hash(tip)
-            .await?
-            .parse()
-            .map_err(|_| SourceError::TipChanged)?;
-        let genesis: zakura_chain::block::Hash = rpc
-            .block_hash(0)
-            .await?
-            .parse()
-            .map_err(|_| SourceError::Genesis)?;
-        if self.network.is_some_and(|network| network != genesis.0) {
+        let anchor = hash_at(rpc, tip, || SourceError::TipChanged).await?;
+        let genesis = hash_at(rpc, 0, || SourceError::Genesis).await?;
+        if self.network.is_some_and(|network| network != genesis) {
             return Err(SourceError::Genesis);
         }
 
         let mut keep = 0;
         for (index, block) in self.blocks.iter().enumerate().rev() {
             if block.height <= tip_height {
-                let canonical: zakura_chain::block::Hash = rpc
-                    .block_hash(u64::from(block.height))
-                    .await?
-                    .parse()
-                    .map_err(|_| SourceError::TipChanged)?;
-                if canonical.0 == block.hash {
+                let canonical =
+                    hash_at(rpc, u64::from(block.height), || SourceError::TipChanged).await?;
+                if canonical == block.hash {
                     keep = index + 1;
                     break;
                 }
@@ -291,29 +303,25 @@ impl RollingWindow {
                 |block| block.height + 1,
             );
             for height in next..=tip_height {
-                blocks.push(rpc.status_block(u64::from(height)).await?);
+                blocks.push(status_block(rpc, u64::from(height)).await?);
             }
         }
         if blocks.len() > self.window_blocks as usize {
             blocks.drain(..blocks.len() - self.window_blocks as usize);
         }
         let mempool = rpc.status_mempool().await?;
-        let final_anchor: zakura_chain::block::Hash = rpc
-            .block_hash(tip)
-            .await?
-            .parse()
-            .map_err(|_| SourceError::TipChanged)?;
+        let final_anchor = hash_at(rpc, tip, || SourceError::TipChanged).await?;
         if rpc.tip_height().await? != tip || final_anchor != anchor {
             return Err(SourceError::TipChanged);
         }
         let observed_ms = now_ms();
         let collect_ms = began.elapsed().as_secs_f64() * 1000.;
-        let snapshot = Snapshot::build(genesis.0, self.salt, &blocks, &mempool, &forks)?;
+        let snapshot = Snapshot::build(genesis, self.salt, &blocks, &mempool, &forks)?;
         blocks.retain(|block| block.height >= snapshot.start);
         forks.retain(|fork| fork.height >= snapshot.start);
         let retained_forks = forks.len();
-        self.persist(genesis.0, &blocks, &forks)?;
-        self.network = Some(genesis.0);
+        self.persist(genesis, &blocks, &forks)?;
+        self.network = Some(genesis);
         self.blocks = blocks;
         self.forks = forks;
         Ok(Observation {
@@ -361,7 +369,6 @@ mod tests {
         atomic::{AtomicUsize, Ordering},
         Arc,
     };
-    use zakura_chain::serialization::ZcashSerialize;
 
     #[derive(Clone)]
     struct Mock {
@@ -397,13 +404,11 @@ mod tests {
         move_tip: bool,
         bad_block_hash: bool,
     ) -> (ZakuraClient, tokio::task::JoinHandle<()>) {
-        let block = zakura_chain::block::genesis::regtest_genesis_block();
-        let mut raw = Vec::new();
-        block.zcash_serialize(&mut raw).unwrap();
+        let (block_hex, hash, mempool_id) = zakura_server_chain::testing::status::regtest_genesis();
         let mock = Mock {
-            block_hex: hex::encode(raw),
-            hash: block.hash().to_string(),
-            mempool_id: block.transactions[0].hash().to_string(),
+            block_hex,
+            hash,
+            mempool_id,
             tip_reads: Arc::new(AtomicUsize::new(0)),
             move_tip,
             bad_block_hash,
@@ -469,9 +474,10 @@ mod tests {
     #[tokio::test]
     async fn canonical_observation_indexes_every_transaction_type() {
         let (client, job) = fixture(false, false).await;
-        let expected = zakura_chain::block::genesis::regtest_genesis_block().transactions[0]
-            .hash()
-            .0;
+        let expected = zakura_server_chain::hash::parse_display(
+            &zakura_server_chain::testing::status::regtest_genesis().2,
+        )
+        .unwrap();
         assert_eq!(client.status_mempool().await.unwrap(), vec![expected]);
         let observed = observe(&client, [1; 32], 1).await.unwrap();
         assert_eq!(observed.snapshot.height, 1);

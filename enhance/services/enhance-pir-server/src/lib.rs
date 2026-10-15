@@ -6,7 +6,6 @@ pub mod capacity;
 pub mod control;
 pub mod coordinator;
 pub mod exercise;
-pub mod fee;
 pub mod ingest;
 pub mod internal_auth;
 pub mod ipir;

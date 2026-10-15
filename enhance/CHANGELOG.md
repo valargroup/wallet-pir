@@ -2,6 +2,10 @@
 
 ## 0.0.1 — Unreleased
 
+- Read canonical blocks, fees and Status chain data through wallet-libraries'
+  server-only chain adapters (`zakura-server-chain`); the server no longer
+  depends on the node's crates. Fee rules, spent-output caching and batching, and
+  failure behaviour are unchanged.
 - Introduce the `enhance-pir` client and protocol crate for schema 11,
   `ironwood-enhance-pir-v7`, with 653-byte Ironwood ciphertext-suffix records
   and the `simplepir-p16-q48-v1` query profile.

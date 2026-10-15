@@ -109,18 +109,16 @@ pub async fn probe_live(
         .json()
         .await?;
     manifest.fresh(status::now_ms())?;
-    let network: zakura_chain::block::Hash = rpc.block_hash(0).await?.parse()?;
-    let anchor: zakura_chain::block::Hash = rpc
-        .block_hash(u64::from(manifest.anchor_height))
-        .await?
-        .parse()?;
+    let network = rpc.block_hash(0).await?;
+    let anchor = rpc.block_hash(u64::from(manifest.anchor_height)).await?;
     require(
-        manifest.network == network.0 && manifest.anchor_hash == anchor.0,
+        manifest.network == network && manifest.anchor_hash == anchor,
         "live manifest anchor is not canonical",
     )?;
-    let block = rpc.status_block(u64::from(manifest.anchor_height)).await?;
+    let block =
+        crate::status::source::status_block(&rpc, u64::from(manifest.anchor_height)).await?;
     require(
-        block.hash == anchor.0,
+        block.hash == anchor,
         "raw block hash differs from canonical anchor",
     )?;
     let txid = *block
@@ -133,14 +131,13 @@ pub async fn probe_live(
         let answer = wallet
             .lookup(txid, Some(block.height), |_| {
                 Ok(AcceptedAnchor {
-                    network: network.0,
+                    network,
                     height: block.height,
-                    hash: anchor.0,
+                    hash: anchor,
                 })
             })
             .await?;
-        let current_anchor: zakura_chain::block::Hash =
-            rpc.block_hash(u64::from(block.height)).await?.parse()?;
+        let current_anchor = rpc.block_hash(u64::from(block.height)).await?;
         require(
             current_anchor == anchor,
             "live probe oracle is not canonical after query",

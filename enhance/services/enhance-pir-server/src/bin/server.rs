@@ -72,7 +72,7 @@ enum Command {
         /// Non-empty blocks fetched concurrently.
         #[arg(long, default_value_t = 8)]
         concurrency: usize,
-        #[arg(long, default_value_t = enhance_pir_server::fee::DEFAULT_CACHE_OUTPUTS)]
+        #[arg(long, default_value_t = enhance_pir_server::zakura::DEFAULT_CACHE_OUTPUTS)]
         cache_outputs: usize,
     },
     /// Offline repair of journal-referenced rows from a peer row archive.
@@ -157,7 +157,7 @@ enum Command {
         #[arg(long, default_value_t = 10)]
         poll_seconds: u64,
         /// Transparent outputs retained across blocks to price Ironwood transactions.
-        #[arg(long, default_value_t = enhance_pir_server::fee::DEFAULT_CACHE_OUTPUTS)]
+        #[arg(long, default_value_t = enhance_pir_server::zakura::DEFAULT_CACHE_OUTPUTS)]
         prevout_cache_outputs: usize,
         #[arg(long, default_value_t = 1.0)]
         capacity_fallback_rows_per_second: f64,
@@ -563,7 +563,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                         let mut ancestor = None;
                         for block in journal.records.blocks().iter().rev() {
                             if block.height <= tip
-                                && rpc.block_hash(block.height).await? == block.hash
+                                && rpc.block_hash_display(block.height).await? == block.hash
                             {
                                 ancestor =
                                     Some((block.height, block.first_position + block.action_count));
@@ -580,7 +580,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                             .committed_height()
                             .map_or(enhance_pir::ACTIVATION_HEIGHT, |h| h + 1);
                         for height in next..=tip {
-                            journal.append_block(&rpc.block(height, &prevouts).await?)?;
+                            journal.append_block(
+                                &enhance_pir_server::zakura::block(rpc, height, &prevouts).await?,
+                            )?;
                         }
                         journal
                             .highest_committed()
@@ -637,7 +639,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     coordinator
                         .publish_checked(&journal.records, height, hash, || async {
                             if let Some(rpc) = &rpc {
-                                if rpc.block_hash(height).await.map_err(|e| e.to_string())?
+                                if rpc
+                                    .block_hash_display(height)
+                                    .await
+                                    .map_err(|e| e.to_string())?
                                     != verify_hash
                                 {
                                     return Err(

@@ -29,14 +29,13 @@ async fn revalidate_candidate(
     // A newer mempool observation does not invalidate a complete earlier
     // snapshot. Keep its original timestamp so freshness is never renewed by
     // rows that were not prepared from the newer observation.
-    let canonical: zakura_chain::block::Hash = rpc
+    let canonical = rpc
         .block_hash(u64::from(candidate.manifest.anchor_height))
-        .await?
-        .parse()?;
+        .await?;
     Ok(accept_candidate_observation(
         &mut candidate.manifest,
         verified,
-        canonical.0,
+        canonical,
         status::now_ms(),
     )?)
 }
