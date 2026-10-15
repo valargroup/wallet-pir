@@ -149,10 +149,12 @@ class FleetInventoryTests(unittest.TestCase):
             executor = SSHExecutor(self.fleet(change).inventory)
             router = ' '.join(executor.raw_transport('transparent-router-01'))
             coordinator = ' '.join(executor.raw_transport('coordinator'))
-            self.assertIn('-i %s' % (root / 'product-key'), router)
-            self.assertIn('UserKnownHostsFile=%s' % product, router)
-            self.assertIn('-i %s' % (root / 'fallback'), coordinator)
-            self.assertIn('UserKnownHostsFile=%s' % shared, coordinator)
+            # The executor resolves paths; on macOS the temporary root is a link (/var -> /private/var).
+            resolved = root.resolve()
+            self.assertIn('-i %s' % (resolved / 'product-key'), router)
+            self.assertIn('UserKnownHostsFile=%s' % (resolved / product.name), router)
+            self.assertIn('-i %s' % (resolved / 'fallback'), coordinator)
+            self.assertIn('UserKnownHostsFile=%s' % (resolved / shared.name), coordinator)
             product.write_text('192.0.2.20 ssh-ed25519 CCCC\n')
             with self.assertRaisesRegex(ValueError, 'changed'):
                 executor.raw_transport('transparent-router-01')
