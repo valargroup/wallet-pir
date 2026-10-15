@@ -271,6 +271,8 @@ def main():
                 out.write(f'{group}={str(group in selected["groups"]).lower()}\n')
     if args.select_only:
         return
+    # Workflow steps run scripts by path and no helper target exercises them; always check the paths exist.
+    run(['python3', 'tools/ci/workflow_paths.py'], stage='workflow-paths')
     with local_target(ROOT, enabled=bool(selected['packages'])), ThreadPoolExecutor(max_workers=4) as pool:
         futures = []
         if selected['helpers']:

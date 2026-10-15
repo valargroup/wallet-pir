@@ -45,6 +45,7 @@ def inspect(network=False):
     while not parent.exists():
         parent = parent.parent
     add('target writable', parent.is_dir() and os.access(parent, os.W_OK), 'Choose a writable CARGO_TARGET_DIR owned by this development user')
+    add('red-main pre-push guard', probe(['python3', 'tools/ci/main_health.py', '--installed']), 'make prepare-dev')
     if network:
         add('GitHub authentication', probe(['gh', 'auth', 'status']), 'gh auth login')
         for repo in ['valargroup/ipir-sp', 'valargroup/spiral-rs', 'zakura-core/zakura', 'zakura-core/wallet-libraries']:

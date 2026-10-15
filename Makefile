@@ -31,6 +31,7 @@ doctor:
 
 prepare-dev:
 	cargo fetch --locked
+	python3 tools/ci/main_health.py --install
 
 check-full: check-ops check-docs check-reports check-tools
 	cargo fmt --all --check
@@ -330,6 +331,7 @@ transparent-burst:
 
 .PHONY: check-tools
 check-tools:
+	python3 tools/ci/workflow_paths.py
 	python3 tools/ci/scaler_tests.py
 	python3 tools/ci/full_packages.py
 	python3 tools/ci/enhance_tests.py
