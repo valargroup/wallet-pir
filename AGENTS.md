@@ -55,3 +55,7 @@ Start with `docs/README.md` and the product index. Never infer live deployment
 from source. Keep evidence provenance and immutable retained raw inputs; repair
 links when removing superseded documents. Production protocol defaults, rollout
 floors, qualification durations, and rollback gates are not iteration shortcuts.
+
+## Dependency and release boundary
+
+- Keep release dependencies one-way: wallet-pir may consume wallet-libraries, but wallet-libraries must not depend on packages owned or released by wallet-pir, including normal, optional, build, target-specific and development dependencies.
