@@ -1,0 +1,460 @@
+{
+ "binaries": {
+  "display_fixture": "609f4a96960d8bd35b08e6a1476e293af4e69472b09ecd4502499ac653aef53f",
+  "enhance-pir-server": "9ccd2ba35b5c15ad4a03c814b19e4ec689c985e0d34d25f32576379d9b6b2ff6",
+  "history_fixture": "4ffff8fbf969392dd502d2ec57c87f8971ea20efd5522a4a35611a8736f6755b",
+  "receiver-directory": "34904920da86ba3e264cf4a9f5b65c0bbba1b0ae10b9a16fa348de083ae49013",
+  "rehearsal_fixture": "bc64c7c7b3db20f5a1e560ff007490696907f7134049d6a982f39307bb310615",
+  "shard-control": "498fc5ad59d70124539a1d51ac5963efaefda5d7f3c97b15b994c8e280c2f7b1",
+  "soak-query": "117d0eb2cb912417748ef2c5ffba1de730d9a375ab162fe15f8be2be34b4ba37",
+  "status-pir": "e0484d7e100fd2a7ec5c8dbc82a3172cba7bb375935d348973ba77fb23d87ca3",
+  "transparent-shard-server": "3513bb84033efb86b8f97671183c5fc972dbea0fdef5cefb2c0feaad1ea7c5b8",
+  "transparent-txid-server": "d83b148be34e6c406d9d2513fd3a85059b2375b2c43f65ed334a7c69cdd114ca",
+  "txid-control": "b753184de44355e4cbdd3b3ec9de82801ae2e20651639309cab78595a7eaf6e6"
+ },
+ "executor": "local unprivileged systemd emulation: real files, processes and HTTP; sandbox not enforced",
+ "operations_manifest_revision": "1cfb6bc2c09e9e2d83f175488a65afb3b2ac1202",
+ "operations_package": "/mnt/roman-dev-2-data/ai-dev/workspaces/t-42fdf4ed43904f1d/a1/rehearsal/ops",
+ "roles": [
+  {
+   "result": "pass",
+   "role": "receiver-serve-publication",
+   "steps": [
+    {
+     "seconds": 18.7,
+     "step": "baseline",
+     "target_load_state": "not-found"
+    },
+    {
+     "binary_sha256": "34904920da86ba3e264cf4a9f5b65c0bbba1b0ae10b9a16fa348de083ae49013",
+     "exact_answer": "deploy exact_check passed (fixture lookup of the staged payments)",
+     "seconds": 51.2,
+     "status": "committed",
+     "step": "fresh-install",
+     "transaction": "receiver-20261015T204517Z-34904920da86-12dcd4"
+    },
+    {
+     "expected_session": "b9f61cd2dad8ec99326f50a995fdbbb68e10132f04b12f313310e7f656c13c4c",
+     "seconds": 51.6,
+     "session": "b9f61cd2dad8ec99326f50a995fdbbb68e10132f04b12f313310e7f656c13c4c",
+     "step": "serving"
+    },
+    {
+     "note": "re-verified from the record; exact answer after restart",
+     "seconds": 66.2,
+     "step": "restart"
+    },
+    {
+     "exact_answer": true,
+     "seconds": 100.2,
+     "session": "7e86065449872cb171aadc65a54793dbd6f32c102e872ce50b63a781476e2a28",
+     "step": "publication-update"
+    },
+    {
+     "refusal": {
+      "kind": "invalid_source",
+      "message": "manifest: No such file or directory (os error 2)"
+     },
+     "seconds": 102.4,
+     "step": "failed-publication-update",
+     "still_serving": true
+    },
+    {
+     "report": [
+      {
+       "encrypted_correctness": "unobserved; run the exact-answer check",
+       "executable": {
+        "binary_sha256": "34904920da86ba3e264cf4a9f5b65c0bbba1b0ae10b9a16fa348de083ae49013",
+        "incarnation": "0fe41129c8a3a486ad34f16c05604a07",
+        "matches_process": true
+       },
+       "host": "local",
+       "preparation": {
+        "preparing": {
+         "directory": "/mnt/roman-dev-2-data/ai-dev/workspaces/t-42fdf4ed43904f1d/a1/rehearsal/work/receiver-serve-publication/publications/b",
+         "revision": "deabd03c1a6a4b80776c07f2e702b628f8316526c3a3e6afa0e96dffc72c310c"
+        },
+        "refusal": null
+       },
+       "process": {
+        "active_state": "active",
+        "alive": true,
+        "exe_sha256": "34904920da86ba3e264cf4a9f5b65c0bbba1b0ae10b9a16fa348de083ae49013",
+        "load_state": "loaded"
+       },
+       "publication": {
+        "assigned": {
+         "directory": "/mnt/roman-dev-2-data/ai-dev/workspaces/t-42fdf4ed43904f1d/a1/rehearsal/work/receiver-serve-publication/publications/b",
+         "revision": "deabd03c1a6a4b80776c07f2e702b628f8316526c3a3e6afa0e96dffc72c310c"
+        },
+        "loaded": {
+         "directory": "/mnt/roman-dev-2-data/ai-dev/workspaces/t-42fdf4ed43904f1d/a1/rehearsal/work/receiver-serve-publication/publications/b",
+         "revision": "deabd03c1a6a4b80776c07f2e702b628f8316526c3a3e6afa0e96dffc72c310c"
+        },
+        "serving": "7e86065449872cb171aadc65a54793dbd6f32c102e872ce50b63a781476e2a28"
+       },
+       "readiness": {
+        "authorized": true,
+        "epoch": 0,
+        "ready": true,
+        "verified": true,
+        "warm": true
+       },
+       "role": "serve-publication",
+       "service": "receiver",
+       "unit": "receiver-serve-publication.service"
+      }
+     ],
+     "seconds": 103.0,
+     "step": "report"
+    },
+    {
+     "refused": "serve-publication@local: the product check refused the staged configuration or input (exit 1): Error: InvalidSource(\"publication record: No such file or directory (os error 2)\")\n",
+     "seconds": 105.0,
+     "step": "failed-configuration-update",
+     "still_serving": true
+    },
+    {
+     "seconds": 145.0,
+     "status": "committed",
+     "step": "configuration-update",
+     "transaction": "receiver-20261015T204644Z-34904920da86-cb6795"
+    },
+    {
+     "poll_seconds": 1,
+     "seconds": 165.6,
+     "step": "rollback-update"
+    },
+    {
+     "absent": true,
+     "config_removed": true,
+     "seconds": 166.0,
+     "state_kept": true,
+     "step": "rollback-install"
+    }
+   ]
+  },
+  {
+   "result": "pass",
+   "role": "enhance-external-worker",
+   "steps": [
+    {
+     "binary_sha256": "9ccd2ba35b5c15ad4a03c814b19e4ec689c985e0d34d25f32576379d9b6b2ff6",
+     "seconds": 8.1,
+     "status": "committed",
+     "step": "fresh-install",
+     "transaction": "enhance-20261015T204745Z-9ccd2ba35b5c-dd0ed2",
+     "workers": 2
+    },
+    {
+     "incarnation": "533b72a70a484f77886257be69886c71",
+     "published": [],
+     "seconds": 8.2,
+     "step": "idle"
+    },
+    {
+     "new_incarnation": true,
+     "seconds": 10.5,
+     "step": "restart"
+    },
+    {
+     "exact_answer": true,
+     "output": "",
+     "returncode": 0,
+     "seconds": 347.4,
+     "step": "controller-publications-and-exact-answers",
+     "summary": {
+      "error": null,
+      "exact_boundary_and_retained_probes": 9,
+      "publications": 2,
+      "status": "recorded",
+      "traffic": null
+     }
+    },
+    {
+     "preparation": {
+      "generation": 3,
+      "units": {
+       "built": 0,
+       "restored": 0,
+       "reused": 1
+      }
+     },
+     "published": [
+      1,
+      2,
+      3
+     ],
+     "seconds": 347.6,
+     "step": "published-by-controller"
+    },
+    {
+     "report": [
+      {
+       "encrypted_correctness": "unobserved; run the exact-answer check",
+       "executable": {
+        "binary_sha256": "9ccd2ba35b5c15ad4a03c814b19e4ec689c985e0d34d25f32576379d9b6b2ff6",
+        "incarnation": "983de31d70d99045e5c49bcb8cefb0a8",
+        "matches_process": true
+       },
+       "host": "local",
+       "preparation": {
+        "generation": 3,
+        "units": {
+         "built": 0,
+         "restored": 0,
+         "reused": 1
+        }
+       },
+       "process": {
+        "active_state": "active",
+        "alive": true,
+        "exe_sha256": "9ccd2ba35b5c15ad4a03c814b19e4ec689c985e0d34d25f32576379d9b6b2ff6",
+        "load_state": "loaded"
+       },
+       "publication": {
+        "assigned": null,
+        "generations": [
+         1,
+         2,
+         3
+        ],
+        "loaded": {
+         "1": "cff699be5bd3e802badf1fb3c01b9b53a14367c2762f12405b3f66d886666c47",
+         "2": "23b8cf8c3e9bb0d2f7b06b7f8995a6c0970dd1247239efd4ed9f49e5a297c0ff",
+         "3": "63ac44d195fa0b6c8d48c707100ae715bd8b22d83e48dbc89cb30893fbe0309d"
+        }
+       },
+       "readiness": {
+        "authorized": true,
+        "ready": "unsupported; a packing router must also list it",
+        "verified": true,
+        "warm": true
+       },
+       "role": "external-worker",
+       "service": "enhance",
+       "unit": "enhance-pir-worker-0.service"
+      },
+      {
+       "encrypted_correctness": "unobserved; run the exact-answer check",
+       "executable": {
+        "binary_sha256": "9ccd2ba35b5c15ad4a03c814b19e4ec689c985e0d34d25f32576379d9b6b2ff6",
+        "incarnation": "da19b7a1dc6529857056b699daba13b3",
+        "matches_process": true
+       },
+       "host": "local",
+       "preparation": {
+        "generation": 3,
+        "units": {
+         "built": 0,
+         "restored": 0,
+         "reused": 1
+        }
+       },
+       "process": {
+        "active_state": "active",
+        "alive": true,
+        "exe_sha256": "9ccd2ba35b5c15ad4a03c814b19e4ec689c985e0d34d25f32576379d9b6b2ff6",
+        "load_state": "loaded"
+       },
+       "publication": {
+        "assigned": null,
+        "generations": [
+         1,
+         2,
+         3
+        ],
+        "loaded": {
+         "1": "cff699be5bd3e802badf1fb3c01b9b53a14367c2762f12405b3f66d886666c47",
+         "2": "23b8cf8c3e9bb0d2f7b06b7f8995a6c0970dd1247239efd4ed9f49e5a297c0ff",
+         "3": "63ac44d195fa0b6c8d48c707100ae715bd8b22d83e48dbc89cb30893fbe0309d"
+        }
+       },
+       "readiness": {
+        "authorized": true,
+        "ready": "unsupported; a packing router must also list it",
+        "verified": true,
+        "warm": true
+       },
+       "role": "external-worker",
+       "service": "enhance",
+       "unit": "enhance-pir-worker-1.service"
+      }
+     ],
+     "seconds": 348.2,
+     "step": "report"
+    },
+    {
+     "absent": true,
+     "seconds": 348.7,
+     "step": "rollback-install"
+    }
+   ]
+  },
+  {
+   "error": "/mnt/roman-dev-2-data/ai-dev/workspaces/t-42fdf4ed43904f1d/a1/rehearsal/bin/soak-query failed (1): {\"error\":\"the service has no free cache capacity\",\"event\":\"retry\"}\n{\"event\":\"result\",\"passed\":false,\"queries\":0,\"retries\":1,\"seconds\":31.244705795}\nError: \"no queries completed\"\n",
+   "result": "fail",
+   "role": "history",
+   "trace": "Traceback (most recent call last):\n  File \"/mnt/roman-dev-2-data/ai-dev/workspaces/t-42fdf4ed43904f1d/a1/rehearsal/harness/rehearse.py\", line 480, in main\n    results['roles'].append({**ROLES[name](), 'result': 'pass'})\n                               ^^^^^^^^^^^^^\n  File \"/mnt/roman-dev-2-data/ai-dev/workspaces/t-42fdf4ed43904f1d/a1/rehearsal/harness/rehearse.py\", line 356, in history\n    r.run(*exact)\n  File \"/mnt/roman-dev-2-data/ai-dev/workspaces/t-42fdf4ed43904f1d/a1/rehearsal/harness/rehearse.py\", line 154, in run\n    raise RuntimeError('%s failed (%d): %s' % (argv[0], result.returncode, (result.stdout + result.stderr)[-2000:]))\nRuntimeError: /mnt/roman-dev-2-data/ai-dev/workspaces/t-42fdf4ed43904f1d/a1/rehearsal/bin/soak-query failed (1): {\"error\":\"the service has no free cache capacity\",\"event\":\"retry\"}\n{\"event\":\"result\",\"passed\":false,\"queries\":0,\"retries\":1,\"seconds\":31.244705795}\nError: \"no queries completed\"\n\n"
+  },
+  {
+   "result": "pass",
+   "role": "status-external-worker",
+   "steps": [
+    {
+     "identity_matches": true,
+     "seconds": 4.0,
+     "status": "committed",
+     "step": "fresh-install",
+     "transaction": "status-20261015T205549Z-e0484d7e100f-c927a2"
+    },
+    {
+     "new_incarnation": true,
+     "seconds": 5.0,
+     "step": "restart"
+    },
+    {
+     "exact_answer": false,
+     "output": "Error: reqwest::Error { kind: Request, url: \"http://127.0.0.1:45371/control/prepare\", source: TimedOut }\n",
+     "returncode": 1,
+     "scope": "the same released status-pir worker role, started by validate-distributed, not the installed unit",
+     "seconds": 27.2,
+     "step": "worker-role-exact-answers"
+    },
+    {
+     "report": [
+      {
+       "encrypted_correctness": "unobserved; run the exact-answer check",
+       "executable": {
+        "binary_sha256": "e0484d7e100fd2a7ec5c8dbc82a3172cba7bb375935d348973ba77fb23d87ca3",
+        "incarnation": "1802760e2cc9ca8306a9384e890dc0d136331636068f0c6684d7985b67ed23e1",
+        "matches_process": true
+       },
+       "host": "local",
+       "preparation": "unsupported",
+       "process": {
+        "active_state": "active",
+        "alive": true,
+        "exe_sha256": "e0484d7e100fd2a7ec5c8dbc82a3172cba7bb375935d348973ba77fb23d87ca3",
+        "load_state": "loaded"
+       },
+       "publication": "unsupported",
+       "readiness": {
+        "authorized": "unsupported",
+        "ready": "unsupported",
+        "verified": "unsupported",
+        "warm": "unsupported"
+       },
+       "role": "external-worker",
+       "service": "status",
+       "unit": "status-pir-worker.service"
+      }
+     ],
+     "seconds": 27.5,
+     "step": "report"
+    },
+    {
+     "absent": true,
+     "seconds": 27.6,
+     "step": "rollback-install"
+    }
+   ]
+  },
+  {
+   "result": "pass",
+   "role": "transparent-display-external-worker",
+   "steps": [
+    {
+     "phase": "waiting for a publication",
+     "seconds": 1.7,
+     "status": "committed",
+     "step": "fresh-install",
+     "transaction": "transparent-display-20261015T205617Z-d83b148be34e-a0a786"
+    },
+    {
+     "exact_answer": {
+      "exact": true,
+      "lookups": 13
+     },
+     "returncode": 0,
+     "seconds": 77.9,
+     "step": "controller-activation"
+    },
+    {
+     "exact_answer": {
+      "exact": true,
+      "lookups": 13
+     },
+     "note": "the active record restored the publication",
+     "seconds": 133.8,
+     "step": "restart"
+    },
+    {
+     "exact_answer": {
+      "exact": true,
+      "lookups": 13
+     },
+     "returncode": 0,
+     "seconds": 150.4,
+     "step": "publication-update"
+    },
+    {
+     "exact_answer": {
+      "exact": true,
+      "lookups": 13
+     },
+     "last_preparation": {
+      "error": "reading /mnt/roman-dev-2-data/ai-dev/workspaces/t-42fdf4ed43904f1d/a1/rehearsal/work/transparent-display-external-worker/publications/missing/txid-shards.json: No such file or directory (os error 2)",
+      "finished_unix": 1792097927,
+      "map_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "outcome": "invalid_source"
+     },
+     "reply": "{\"error\":\"reading /mnt/roman-dev-2-data/ai-dev/workspaces/t-42fdf4ed43904f1d/a1/rehearsal/work/transparent-display-external-worker/publications/missing/txid-shards.json: No such file or directory (os error 2)\",\"ok\":false}",
+     "returncode": 1,
+     "seconds": 151.3,
+     "step": "failed-publication-update"
+    },
+    {
+     "report": [
+      {
+       "encrypted_correctness": "unobserved; run the exact-answer check",
+       "executable": {
+        "binary_sha256": "d83b148be34e6c406d9d2513fd3a85059b2375b2c43f65ed334a7c69cdd114ca",
+        "incarnation": "3223b2a4a66d327de92df42ea3e1700f",
+        "matches_process": true
+       },
+       "host": "local",
+       "preparation": "unsupported",
+       "process": {
+        "active_state": "active",
+        "alive": true,
+        "exe_sha256": "d83b148be34e6c406d9d2513fd3a85059b2375b2c43f65ed334a7c69cdd114ca",
+        "load_state": "loaded"
+       },
+       "publication": {
+        "assigned": "unsupported",
+        "loaded": "4ccb23b3912266d08019b0482abc6dbcad80af384e5e7277b6fcfffb3cae6186"
+       },
+       "readiness": {
+        "authorized": "unsupported",
+        "ready": null,
+        "verified": true,
+        "warm": true
+       },
+       "role": "external-worker",
+       "service": "transparent-display",
+       "unit": "transparent-display-worker.service"
+      }
+     ],
+     "seconds": 151.4,
+     "step": "report"
+    },
+    {
+     "absent": true,
+     "seconds": 151.5,
+     "step": "rollback-install"
+    }
+   ]
+  }
+ ]
+}

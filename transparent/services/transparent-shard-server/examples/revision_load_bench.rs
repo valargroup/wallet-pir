@@ -212,6 +212,8 @@ fn sample() -> (u64, u64, u64) {
 }
 
 fn measure<T>(f: impl FnOnce() -> T) -> (T, serde_json::Value) {
+    // Reset the peak RSS mark, so it reports this load rather than the fixture.
+    let _ = std::fs::write("/proc/self/clear_refs", "5");
     let (cpu, rchar, _) = sample();
     let started = Instant::now();
     let value = f();
