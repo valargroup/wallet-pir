@@ -624,8 +624,8 @@ async fn artifact(
 }
 
 async fn canonical_hash(rpc: &ZakuraClient, height: u32) -> Result<Hash, Failure> {
-    let hash: zakura_chain::block::Hash = rpc.block_hash(u64::from(height)).await?.parse()?;
-    Ok(hash.0)
+    let hash = rpc.block_hash(u64::from(height)).await?;
+    Ok(hash)
 }
 
 #[cfg(test)]

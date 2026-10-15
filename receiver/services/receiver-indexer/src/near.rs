@@ -534,8 +534,8 @@ fn completions(
         swap.destination_chain_tx_hashes
             .iter()
             .flatten()
-            .filter_map(|hash| hash.parse::<zakura_chain::transaction::Hash>().ok())
-            .map(|txid| (receiver, txid.0)),
+            .filter_map(|hash| zakura_server_chain::hash::parse_display(hash).ok())
+            .map(|txid| (receiver, txid)),
     );
     if out.len() == before {
         let address = swap.deposit_address.as_bytes();

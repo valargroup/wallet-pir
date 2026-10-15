@@ -19,7 +19,6 @@
 use crate::{
     near::{unix_now, Feed},
     read_limited,
-    zakura::{ZakuraClient, ZakuraError},
 };
 use clap::Parser;
 use receiver_directory::{
@@ -35,8 +34,8 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{path::PathBuf, time::Duration};
-use zakura_chain::parameters::Network;
 use zakura_receiver_crypto::{recovery::Action, witness::WitnessSnapshot, Receiver};
+use zakura_server_chain::{hash, Network, NodeClient, NodeError};
 
 /// The production fixture: a mainnet refund to a zero-OVK receiver (see `Fixture`).
 const MAINNET_FIXTURE: &[u8] = include_bytes!("../fixtures/mainnet-probe.json");
@@ -65,7 +64,7 @@ pub struct Args {
     fixture: Option<PathBuf>,
     /// An independent node's RPC endpoint. Repeat it for fallbacks: the nodes that
     /// reached the publication check it one at a time, ranked as
-    /// [`ZakuraClient::ranked`] does, until one completes the checks.
+    /// [`NodeClient::ranked`] does, until one completes the checks.
     #[arg(long, required = true)]
     rpc_url: Vec<String>,
     #[arg(long, required_unless_present = "no_auth", conflicts_with = "no_auth")]
@@ -175,12 +174,8 @@ async fn probe(args: Args, lookup: &mut Option<(u32, bool)>) -> Result<Option<Fa
             out_ciphertext: bytes(&a.out_ciphertext)?,
         })
     })();
-    let txid: Option<Hash> = fixture
-        .txid
-        .parse::<zakura_chain::transaction::Hash>()
-        .ok()
-        .map(|t| t.0);
-    let block_hash = parse_hash(&fixture.block_hash).ok();
+    let txid: Option<Hash> = hash::parse_display(&fixture.txid).ok();
+    let block_hash = hash::parse_display(&fixture.block_hash).ok();
     let (Some(action), Some(txid), Some(block_hash)) = (action, txid, block_hash) else {
         return Ok(Some(("oracle_invalid", json!({"fixture": "malformed"}))));
     };
@@ -223,11 +218,11 @@ async fn probe(args: Args, lookup: &mut Option<(u32, bool)>) -> Result<Option<Fa
     let directory = &manifest.directory;
     // Another network's publication is wrong whatever the nodes or the fixture say.
     let genesis = Network::Mainnet.genesis_hash();
-    if directory.genesis != genesis.0 {
-        let served = zakura_chain::block::Hash(directory.genesis).to_string();
+    if directory.genesis != genesis {
+        let served = hash::display(&directory.genesis);
         return Ok(Some((
             "answer_mismatch",
-            json!({"expected_genesis": genesis.to_string(), "served_genesis": served}),
+            json!({"expected_genesis": hash::display(&genesis), "served_genesis": served}),
         )));
     }
     // A start after the fixture is truncated history, which the activation check below
@@ -241,7 +236,7 @@ async fn probe(args: Args, lookup: &mut Option<(u32, bool)>) -> Result<Option<Fa
     let nodes = args
         .rpc_url
         .iter()
-        .map(|url| ZakuraClient::new(url.clone(), args.cookie.as_deref()))
+        .map(|url| NodeClient::new(url.clone(), args.cookie.as_deref()))
         .collect::<std::result::Result<Vec<_>, _>>()?;
     let pinned = (fixture.height, block_hash);
     // A session displaced during a slow ranking fails this run; the next starts from /init.
@@ -259,7 +254,7 @@ async fn probe(args: Args, lookup: &mut Option<(u32, bool)>) -> Result<Option<Fa
     // Wallets require history from Ironwood activation, independently of what the
     // manifest claims.
     let accepted = AcceptedCoverage {
-        genesis: genesis.0,
+        genesis,
         required_start: crate::blocks::ironwood_activation(),
         height: directory.end_height,
         hash: directory.end_hash,
@@ -338,7 +333,7 @@ async fn probe(args: Args, lookup: &mut Option<(u32, bool)>) -> Result<Option<Fa
     }
     // The node's checks hold for the whole lookup only if the terminal block is still
     // its own.
-    if parse_hash(&rpc.block_hash(u64::from(directory.end_height)).await?)? != directory.end_hash {
+    if rpc.block_hash(u64::from(directory.end_height)).await? != directory.end_hash {
         return Err("chain changed during the probe".into());
     }
     let now = std::time::SystemTime::now()
@@ -426,17 +421,17 @@ async fn await_feed_reads(
 }
 
 /// Checks the publication's anchor against `rpc`: its hash and the tree size after it
-/// (read by that hash, see [`ZakuraClient::receiver_boundary`]), which is the coverage
+/// (read by that hash, see [`NodeClient::receiver_boundary`]), which is the coverage
 /// the manifest claims. A read that fails, a chain that changes during it, or a node
-/// not on mainnet ([`ZakuraError::OtherNetwork`]) is an error, which proves nothing
+/// not on mainnet ([`NodeError::OtherNetwork`]) is an error, which proves nothing
 /// against the publication.
 async fn check_anchor(
-    rpc: &ZakuraClient,
+    rpc: &NodeClient,
     directory: &receiver_directory::snapshot::Manifest,
-) -> std::result::Result<Option<Failure>, ZakuraError> {
+) -> std::result::Result<Option<Failure>, NodeError> {
     rpc.check_network(Network::Mainnet.genesis_hash()).await?;
     let height = directory.end_height;
-    let boundary = rpc.receiver_boundary(height).await?;
+    let boundary = crate::blocks::boundary(rpc, height).await?;
     if boundary.hash != directory.end_hash {
         return Ok(Some((
             "answer_mismatch",
@@ -450,14 +445,6 @@ async fn check_anchor(
         )));
     }
     Ok(None)
-}
-
-/// A displayed block hash in protocol byte order.
-fn parse_hash(displayed: &str) -> std::result::Result<Hash, ZakuraError> {
-    displayed
-        .parse::<zakura_chain::block::Hash>()
-        .map(|hash| hash.0)
-        .map_err(|e| ZakuraError::Block(e.to_string()))
 }
 
 /// Whether the publication trails `tip`, the highest any node reported, by more than
@@ -485,7 +472,7 @@ enum Verdict {
     Failed(Failure),
     /// The node could not complete the checks, or is on another network, so the next
     /// one tries.
-    Unavailable(ZakuraError),
+    Unavailable(NodeError),
 }
 
 /// Checks the publication against one node: the anchor ([`check_anchor`]), then the
@@ -494,7 +481,7 @@ enum Verdict {
 /// block, read by its hash. Reads by hash or of deep history need no recheck; the
 /// probe rechecks the terminal block once its lookup ends.
 async fn verify(
-    rpc: &ZakuraClient,
+    rpc: &NodeClient,
     directory: &receiver_directory::snapshot::Manifest,
     pinned: (u32, Hash),
     witnesses: bool,
@@ -503,7 +490,7 @@ async fn verify(
         if let Some(failure) = check_anchor(rpc, directory).await? {
             return Ok(Err(failure));
         }
-        if parse_hash(&rpc.block_hash(u64::from(pinned.0)).await?)? != pinned.1 {
+        if rpc.block_hash(u64::from(pinned.0)).await? != pinned.1 {
             return Ok(Err(("oracle_invalid", json!({"fixture": "block hash"}))));
         }
         let root = if witnesses {
@@ -633,7 +620,7 @@ async fn indexer_report(
 }
 
 /// Checks the publication with [`verify`] on the nodes that have reached it, one at a
-/// time in [`ZakuraClient::ranked`] order. The first node to complete the checks
+/// time in [`NodeClient::ranked`] order. The first node to complete the checks
 /// decides, and the first valid evidence against the publication is final rather than
 /// retried on a friendlier node; only a node that could not complete them hands over
 /// to the next. Nodes not on mainnet are left out of the ranking. Returns the node
@@ -641,14 +628,14 @@ async fn indexer_report(
 /// which lag is measured whichever node verified. With no node completing the checks
 /// it is `oracle_unavailable`, with each attempt's tip and error.
 async fn oracle(
-    nodes: &[ZakuraClient],
+    nodes: &[NodeClient],
     directory: &receiver_directory::snapshot::Manifest,
     pinned: (u32, Hash),
     witnesses: bool,
-) -> std::result::Result<(ZakuraClient, Option<Hash>, u64), Failure> {
+) -> std::result::Result<(NodeClient, Option<Hash>, u64), Failure> {
     let height = u64::from(directory.end_height);
     let unavailable = |detail: Value| ("oracle_unavailable", detail);
-    let ranked = ZakuraClient::ranked(nodes, Network::Mainnet.genesis_hash())
+    let ranked = NodeClient::ranked(nodes, Network::Mainnet.genesis_hash())
         .await
         .map_err(|error| unavailable(json!({"end_height": height, "error": error.to_string()})))?;
     let top = ranked[0].0;
@@ -707,16 +694,16 @@ mod tests {
     /// `[hash; 32]`, reporting Ironwood tree size `size`, and mainnet's genesis. With
     /// `reorg`, every second hash it gives is `[9; 32]`, as when the chain changes
     /// between two reads. Returns a client.
-    async fn chain(tip: u64, hash: u8, size: Option<u64>, reorg: bool) -> ZakuraClient {
+    async fn chain(tip: u64, hash: u8, size: Option<u64>, reorg: bool) -> NodeClient {
         let asked = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let app = Router::new().route(
             "/",
             routing::post(move |Json(request): Json<Value>| async move {
-                let display = |byte| zakura_chain::block::Hash([byte; 32]).to_string();
+                let display = |byte| hash::display(&[byte; 32]);
                 let result = match request["method"].as_str().unwrap() {
                     "getblockcount" => json!(tip),
                     "getblockhash" if request["params"][0] == 0 => {
-                        json!(Network::Mainnet.genesis_hash().to_string())
+                        json!(hash::display(&Network::Mainnet.genesis_hash()))
                     }
                     "getblockhash" => {
                         let second = asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst) % 2;
@@ -734,14 +721,14 @@ mod tests {
         let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", socket.local_addr().unwrap());
         tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
-        ZakuraClient::new(url, None).unwrap()
+        NodeClient::new(url, None).unwrap()
     }
 
     /// [`super::common::manifest`] on mainnet, ending at Ironwood activation, where a
     /// node reports tree sizes.
     fn anchored() -> receiver_directory::snapshot::Manifest {
         let mut directory = super::common::manifest(receiver_pir::MIN_ROWS);
-        directory.genesis = Network::Mainnet.genesis_hash().0;
+        directory.genesis = Network::Mainnet.genesis_hash();
         directory.end_height = crate::blocks::ironwood_activation();
         directory
     }
@@ -753,7 +740,7 @@ mod tests {
     async fn the_anchor_must_match_the_nodes_hash_and_tree_size() {
         let directory = anchored();
         let tip = u64::from(directory.end_height);
-        let check = |rpc: ZakuraClient| {
+        let check = |rpc: NodeClient| {
             let directory = directory.clone();
             async move {
                 match check_anchor(&rpc, &directory).await {
@@ -799,7 +786,7 @@ mod tests {
     fn good(tip: u64) -> Node {
         Node {
             tip,
-            genesis: Network::Mainnet.genesis_hash().0,
+            genesis: Network::Mainnet.genesis_hash(),
             end: u64::from(anchored().end_height),
             anchor: 3,
             fixture: 5,
@@ -819,7 +806,7 @@ mod tests {
             routing::post(move |Json(request): Json<Value>| {
                 let reads = reads.clone();
                 async move {
-                    let display = |byte| zakura_chain::block::Hash([byte; 32]).to_string();
+                    let display = |byte| hash::display(&[byte; 32]);
                     let (method, params) =
                         (request["method"].as_str().unwrap(), &request["params"]);
                     if node.fails == method && params[0] != 0 {
@@ -829,7 +816,7 @@ mod tests {
                     let result = match (method, params[0].as_u64()) {
                         ("getblockcount", _) => json!(node.tip),
                         ("getblockhash", Some(0)) => {
-                            json!(zakura_chain::block::Hash(node.genesis).to_string())
+                            json!(hash::display(&node.genesis))
                         }
                         ("getblockhash", Some(height)) if height == end => {
                             let read = reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -878,7 +865,7 @@ mod tests {
     ) -> std::result::Result<(u64, Option<Hash>), Failure> {
         let mut clients = Vec::new();
         for node in nodes {
-            clients.push(ZakuraClient::new(serve_node(*node).await, None).unwrap());
+            clients.push(NodeClient::new(serve_node(*node).await, None).unwrap());
         }
         let directory = anchored();
         let pinned = (directory.end_height - 1, [5; 32]);
@@ -1052,7 +1039,7 @@ mod tests {
         let path = dir.path().join("fixture.json");
         let mut fixture: Value = serde_json::from_slice(MAINNET_FIXTURE).unwrap();
         fixture["height"] = (end - 1).into();
-        fixture["block_hash"] = zakura_chain::block::Hash([5; 32]).to_string().into();
+        fixture["block_hash"] = hash::display(&[5; 32]).into();
         std::fs::write(&path, fixture.to_string()).unwrap();
         let other = Node {
             genesis: [2; 32],
@@ -1063,8 +1050,8 @@ mod tests {
         let unreachable = format!("http://{}", closed.local_addr().unwrap());
         drop(closed);
         let expected = json!({
-            "expected_genesis": Network::Mainnet.genesis_hash().to_string(),
-            "served_genesis": zakura_chain::block::Hash([2; 32]).to_string(),
+            "expected_genesis": hash::display(&Network::Mainnet.genesis_hash()),
+            "served_genesis": hash::display(&[2; 32]),
         });
         for rpc in [
             serve_node(good(end)).await,
@@ -1092,7 +1079,7 @@ mod tests {
         let path = dir.path().join("fixture.json");
         let mut fixture: Value = serde_json::from_slice(MAINNET_FIXTURE).unwrap();
         fixture["height"] = (activation + 1).into();
-        fixture["block_hash"] = zakura_chain::block::Hash([5; 32]).to_string().into();
+        fixture["block_hash"] = hash::display(&[5; 32]).into();
         std::fs::write(&path, fixture.to_string()).unwrap();
         for (start, end, reaches_lookup) in [
             (activation + 1, activation + 2, false),
@@ -1122,21 +1109,17 @@ mod tests {
     /// `Root::bytes_in_display_order`, the root `WitnessSnapshot` builds, not its reverse.
     #[test]
     fn the_node_and_the_witness_file_encode_roots_alike() {
-        use zakura_chain::serialization::ZcashDeserialize;
+        use zakura_server_chain::testing::{ironwood_root_of, Tx};
         let raw = hex::decode(include_str!("../tests/fixtures/receiver-refund.hex").trim());
-        let refund =
-            zakura_chain::transaction::Transaction::zcash_deserialize(raw.unwrap().as_slice())
-                .unwrap();
-        let cmx = refund.ironwood_actions().next().unwrap().cm_x;
-        let mut tree = zakura_chain::orchard::tree::NoteCommitmentTree::default();
-        tree.append(cmx).unwrap();
-        let node_root = tree.root().bytes_in_display_order();
+        let refund = Tx::from_bytes(&raw.unwrap());
+        let cmx = refund.ironwood_commitments()[0];
+        let node_root = ironwood_root_of(&[refund]);
         let mut manifest = super::common::manifest(receiver_pir::MIN_ROWS);
         (manifest.start_position, manifest.end_position) = (0, 1);
         let positions = Default::default();
         let file = WitnessSnapshot::build(
             &crate::verify::publication(&manifest).unwrap(),
-            &[cmx.into()],
+            &[cmx],
             &positions,
         )
         .unwrap();

@@ -92,7 +92,10 @@ Storage ownership, query coordinates and serving placement are separate:
 
 ## Record metadata and fees
 
-The coordinator derives each record's metadata from the canonical block. Every
+The coordinator derives each record's metadata from the canonical block, which it
+reads through wallet-libraries' server-only chain adapters (`zakura-server-chain`):
+they decode blocks and transactions, resolve spent outputs and compute fees, and the
+coordinator maps their results onto records. Every
 Ironwood action of a transaction carries the same expiry, transparent input and
 output flags, and fee. The fee is the whole transaction's: the remaining value of
 its transaction value pool, that is transparent inputs minus transparent outputs
