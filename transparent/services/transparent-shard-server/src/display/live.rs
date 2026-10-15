@@ -21,8 +21,10 @@ use super::service::{self, json, DisplayRuntime, DisplayState};
 use super::set::{DisplayRevision, DisplaySet, MAP_FILE};
 use super::{serves, DisplayRole};
 use crate::control::persist;
+use crate::live::{PreparationOutcome, Refusal};
 use crate::metrics::Snapshot;
 use crate::runtime::RuntimeHandle;
+use crate::shardset::VerificationReport;
 use axum::extract::{Request, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
@@ -138,6 +140,7 @@ struct Inner {
     retired: RwLock<Vec<Active>>,
     candidate: tokio::sync::Mutex<Option<Candidate>>,
     preparing: RwLock<Option<Preparing>>,
+    last_preparation: RwLock<Option<PreparationOutcome>>,
     staged: Mutex<BTreeMap<String, Staged>>,
     /// Serializes staging apart from `operations`, so a seal's builds never
     /// hold up the per-block cycle. Collection never waits for it either.
@@ -190,6 +193,7 @@ impl DisplayLive {
             retired: RwLock::new(Vec::new()),
             candidate: tokio::sync::Mutex::new(None),
             preparing: RwLock::new(None),
+            last_preparation: RwLock::new(None),
             staged: Mutex::new(BTreeMap::new()),
             staging: tokio::sync::Mutex::new(()),
             in_stage: Mutex::new(None),
@@ -235,7 +239,14 @@ impl DisplayLive {
             DisplayCommand::Prepare {
                 expected,
                 publication,
-            } => self.prepare(expected, publication).await,
+            } => {
+                let digest = publication.map_sha256.clone();
+                let mut verification = None;
+                let outcome = self.prepare(expected, publication, &mut verification).await;
+                *self.0.last_preparation.write().unwrap() =
+                    Some(PreparationOutcome::new(digest, &outcome, verification));
+                outcome.map_err(String::from)
+            }
             DisplayCommand::Activate {
                 expected,
                 map_sha256,
@@ -281,6 +292,7 @@ impl DisplayLive {
             "binary_sha256": pir_control::binary_sha256(),
             "candidate": candidate,
             "preparing": preparing,
+            "last_preparation": self.0.last_preparation.read().unwrap().clone(),
             "retired_snapshots": self.0.retired.read().unwrap().len(),
             "revoked_revisions": self.0.invalid.read().unwrap().len(),
         }))
@@ -363,7 +375,8 @@ impl DisplayLive {
         &self,
         expected: String,
         publication: DisplayPublication,
-    ) -> Result<Reply, String> {
+        verification: &mut Option<VerificationReport>,
+    ) -> Result<Reply, Refusal> {
         let _operation = self.0.operations.clone().lock_owned().await;
         let started = std::time::Instant::now();
         let epoch = self.0.epoch.load(Ordering::Acquire);
@@ -397,7 +410,7 @@ impl DisplayLive {
                 .map(|a| a.publication.map_sha256.as_str())
                 .unwrap_or_default();
             if current != expected {
-                return Err("active predecessor changed".into());
+                return Err(Refusal::Superseded("active predecessor changed".into()));
             }
             active.as_ref().map(|a| a.state.clone())
         };
@@ -428,7 +441,7 @@ impl DisplayLive {
         let (role, retain) = (self.0.role, self.0.retain);
         let directory = publication.directory.clone();
         let map_sha256 = publication.map_sha256.clone();
-        let next = tokio::task::spawn_blocking(move || {
+        let (next, report) = tokio::task::spawn_blocking(move || {
             // Idle retired runtimes give way to the candidate's builds;
             // active, staged and in-flight runtimes are pinned.
             runtime.cache.evict_unpinned();
@@ -440,31 +453,54 @@ impl DisplayLive {
                 &staged,
                 role,
             )
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| Refusal::InvalidSource(e.to_string()))?;
+            let report = set.verification().clone();
+            tracing::info!(
+                map = %map_sha256,
+                segments_hashed = report.segments_hashed,
+                segments_reused = report.segments_reused,
+                bytes_hashed = report.bytes_hashed,
+                bytes_reused = report.bytes_reused,
+                bytes_row_checked = report.bytes_row_checked,
+                verify_cpu_micros = report.cpu_micros,
+                verify_wall_micros = report.wall_micros,
+                "display publication verification"
+            );
             if set.map_digest != map_sha256 {
-                return Err("candidate map digest mismatch".to_string());
+                return Err(Refusal::InvalidSource(
+                    "candidate map digest mismatch".into(),
+                ));
             }
             if let Some(old) = previous.as_ref().map(DisplayState::set) {
                 if set.map.network != old.map.network
                     || set.map.genesis_hash != old.map.genesis_hash
                     || set.map.seal != old.map.seal
                 {
-                    return Err("candidate changes publication identity".to_string());
+                    return Err(Refusal::InvalidSource(
+                        "candidate changes publication identity".into(),
+                    ));
                 }
             }
             DisplayState::build(set, &runtime)
+                .map(|state| (state, report))
+                .map_err(|e| Refusal::Runtime(e.to_string()))
         })
         .await
-        .map_err(|e| e.to_string())??;
+        .map_err(|e| Refusal::Runtime(e.to_string()))??;
+        *verification = Some(report);
         if let Some(preparing) = self.0.preparing.write().unwrap().as_mut() {
             preparing.phase = "warming";
         }
-        next.spawn_prewarm().await.map_err(|e| e.to_string())?;
+        next.spawn_prewarm()
+            .await
+            .map_err(|e| Refusal::Runtime(e.to_string()))?;
         if self.0.epoch.load(Ordering::Acquire) != epoch {
-            return Err("reorg invalidated preparation".into());
+            return Err(Refusal::Superseded("reorg invalidated preparation".into()));
         }
         if !next.is_warm() {
-            return Err("candidate did not become completely warm within the shared budget".into());
+            return Err(Refusal::Admission(
+                "candidate did not become completely warm within the shared budget".into(),
+            ));
         }
         let built = next.built();
         let result = prepared(&next, built);

@@ -26,6 +26,22 @@ pub fn process_rss_bytes() -> Option<u64> {
     }
 }
 
+/// CPU time the calling thread has run, in nanoseconds.
+///
+/// From the scheduler's own accounting, so a verification pass can report
+/// what it cost in CPU separately from how long it waited on the disk.
+pub fn thread_cpu_nanos() -> Option<u64> {
+    #[cfg(target_os = "linux")]
+    {
+        let schedstat = std::fs::read_to_string("/proc/thread-self/schedstat").ok()?;
+        schedstat.split_whitespace().next()?.parse().ok()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        None
+    }
+}
+
 #[cfg(target_os = "linux")]
 fn unsafe_page_size() -> u64 {
     // `sysconf(_SC_PAGESIZE)` without a libc dependency: the kernel reports it
