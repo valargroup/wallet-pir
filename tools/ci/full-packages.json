@@ -1,7 +1,8 @@
 {
   "shared": [
     "pir-control",
-    "pir-observability"
+    "pir-observability",
+    "node-rpc"
   ],
   "enhance": [
     "enhance-pir",
