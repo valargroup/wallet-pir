@@ -26,6 +26,11 @@ from wallet_pir_ops.deploy.remote import Executor, LockHeld
 MAPPED = ('/etc/systemd/', '/run/', '/opt/')
 
 
+def values(config, key):
+    value = config.get(key, [])
+    return value if isinstance(value, list) else [value]
+
+
 class Lock:
     def verify(self):
         pass
@@ -34,6 +39,10 @@ class Lock:
 class LocalSystemd(Executor):
     def __init__(self, root, logs):
         self.root = root
+        # /run is short on a real host and Unix socket paths are bounded, so it
+        # is mapped to a short private directory rather than under the root.
+        import tempfile
+        self.run_root = tempfile.mkdtemp(prefix='r-', dir='/tmp')
         self.logs = logs
         os.makedirs(logs, exist_ok=True)
         self.units = {}
@@ -41,6 +50,8 @@ class LocalSystemd(Executor):
         self.log = []
 
     def path(self, path):
+        if path.startswith('/run/'):
+            return self.run_root + path[len('/run'):]
         return self.root + path if path.startswith(MAPPED) else path
 
     def argv(self, argv):
@@ -194,7 +205,7 @@ class LocalSystemd(Executor):
         config = units.effective(text for _, text in state['loaded'])['Service']
         argv = self.argv(shlex.split(units.exec_start(units.effective(t for _, t in state['loaded']))))
         environment = {'PATH': '/usr/bin:/bin'}
-        for path in config.get('EnvironmentFile', []):
+        for path in values(config, 'EnvironmentFile'):
             optional = path.startswith('-')
             path = path.lstrip('-')
             if not os.path.exists(path):
@@ -206,11 +217,8 @@ class LocalSystemd(Executor):
                 if '=' in line and not line.startswith('#'):
                     key, value = line.split('=', 1)
                     environment[key.strip()] = value.strip()
-        for entry in config.get('Environment', []):
-            for item in shlex.split(entry):
-                key, value = item.split('=', 1)
-                environment[key] = value
-        for name in config.get('RuntimeDirectory', []):
+        environment.update(config.get('Environment', {}))
+        for name in values(config, 'RuntimeDirectory'):
             for item in name.split():
                 os.makedirs(self.path('/run/' + item), mode=0o700, exist_ok=True)
         log = open(os.path.join(self.logs, unit + '.log'), 'ab')
