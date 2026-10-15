@@ -232,6 +232,83 @@ Other binary roles retain their captured complete effective units during this
 pass. The shared renderer is available when an owning product adopts complete
 configuration rendering; it does not silently replace captured production units.
 
+## External workers
+
+Every product registers one optional external worker role that an operator can
+add on a host of their own: `enhance.external-worker`, `status.external-worker`,
+`transparent-history.external-worker`, `transparent-display.external-worker`
+and `receiver.serve-publication`. Its whole unit and configuration are rendered
+by the product's adapter (`enhance/ops/lib/roles.py`,
+`transparent/ops/lib/roles.py`, `receiver/ops/lib/roles.py`) from the
+inventory entry's `settings`; the template beside it owns the sandbox. The
+inventory owns hosts, paths, listeners, budgets (`limits`: `MemoryMax`,
+`MemoryHigh`, `MemorySwapMax`, `CPUQuota`, `CPUWeight`, `IOWeight`, `Nice`,
+`User`, `Group`) and credential file references (`credentials`: installed
+`EnvironmentFile` paths whose contents are never read). Templates carry no
+fleet address and no optional provider credential; the standalone Receiver
+never carries a partner key. Inputs (publications, assignments, records,
+configuration, credentials) are read-only and may not overlap the writable
+state and cache directories, which an install creates.
+
+```json
+{"host": "edge-01", "install": true, "vars": {"listen": "127.0.0.1:18390"},
+ "settings": {"config_path": "/etc/receiver-serve/config.json",
+              "publication_record": "/etc/receiver-serve/record/publication.json",
+              "publication_root": "/srv/receiver-serve/publications",
+              "state_dir": "/var/lib/receiver-serve", "bind": "127.0.0.1:18390",
+              "rpc_urls": ["http://10.0.0.5:8232"], "cookie": "/run/zakura/.cookie"}}
+```
+
+Review a rendering before any host is touched:
+
+```sh
+python3 <release>/ops/scripts/wallet-pir-roles.py --service receiver --role serve-publication \
+  --settings settings.json --release /opt/receiver-pir/releases/<sha256>
+```
+
+The existing `plan`/`preflight`/`deploy`/`rollback` install, update and remove
+them with the usual exact artifact identity, pinned hosts, lock and journal:
+
+1. `capture-baseline SERVICE --only ROLE` records the unit as absent.
+2. `plan`/`preflight` show the action `install` and every file written. A unit
+   is installed only where the entry says `"install": true`; a fresh install
+   refuses to overwrite a configuration file it did not render.
+3. `deploy` stages the release, then runs the product's own check on the
+   staged release against a staged copy of the configuration before any unit
+   changes: `receiver-directory serve-publication --check`,
+   `transparent-shard-server … --verify-only` and, when an initial publication
+   is named, `transparent-txid-server … --verify-only`. Enhance and Status
+   workers have no staged inputs, so no check is manufactured for them. The
+   unit is then written, enabled, started and verified: active, the release's
+   digest running, health answering with that `binary_sha256`, and the role's
+   own readiness where it has one.
+4. A failure, or `rollback`, returns a fresh install to absence: the unit is
+   stopped, disabled and removed with the configuration it wrote. State
+   directories stay; they hold no authority.
+
+Transparent services keep their product recipes for every other role; the
+shared engine admits them only when `--only` selects external workers (and a
+rollback only of such a transaction). Verification proves the process and its
+identity, never serving authority:
+
+| Role | Controller and dependencies | Ready when |
+|---|---|---|
+| Enhance worker | the coordinator reserves, uploads rows, prepares, activates and commits over `/internal/*` with `ENHANCE_INTERNAL_TOKEN`; a packing router must list it | `published` is nonempty, after the coordinator activates it |
+| Status worker | the Status controller fences, prepares, activates and heartbeats over loopback control routes (SSH forwarding); artifacts come from the router's artifact origin | control health `ready`, under a fresh heartbeat |
+| Transparent history worker | the publication controller prepares and activates over the root-only control socket; the staged set or active record loads at start | `/v1/ready` once its runtimes are warm |
+| Transparent display worker | the display controller stages, prepares and activates over its control socket; starts empty | `/v1/ready` after its first activation |
+| Receiver `serve-publication` | the operator's publication record; a node for canonical checks; the publisher remains trusted for completeness | `serving` set, once the record verifies and its anchor is canonical |
+
+`worker-report SERVICE [--only ROLE]` reads only existing private endpoints and
+reports each worker on separate axes: process (systemd state, running digest),
+executable (reported digest and incarnation, and whether they match), assigned
+and loaded publication, latest preparation or refusal, and readiness split into
+`verified`, `warm`, `authorized` and `ready`. What a product does not expose is
+`unsupported` (Status control health is a closed schema; Transparent assignment
+and preparation live on the root-only socket); encrypted correctness is never
+inferred and needs an exact-answer check. CUDA workers keep their artifact kinds
+and need separate hardware qualification; the CPU rehearsal qualifies no GPU.
+
 ## Qualification and retirement
 
 Qualification, candidate-build, census and benchmark tooling is advanced product

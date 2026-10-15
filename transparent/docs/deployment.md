@@ -411,6 +411,29 @@ regression. Record peak RSS/cgroup memory, disk use, errors and warm/cold filesy
 cache state alongside phase timings. See [remaining work](remaining-work.md) for
 open rollout gates and [evidence](../evidence/README.md) for recorded measurements.
 
+### Verification carried across revisions
+
+Workers and the publisher each verify the tables they hold; a restart
+verifies everything again. Within a running process, a candidate publication
+inherits verification from the publication it replaces, per table segment:
+only when the candidate's segment is the same committed segment (runtime
+identity — the revision digest for a directory, the chained child identity
+for a page shard — table kind, index, digest and geometry) and resolves to the
+very file the process hashed, by device, inode, length and modification time
+sampled before and after hashing, with the last write older than the read by
+more than a timestamp tick. The publisher hard-links unchanged sealed page
+shards into each republished tail, so they are not hashed again, and the
+candidate's sources name its own links, so collecting the old publication
+breaks no read. A replaced file, an in-place write, a missing file or a file
+written just before it was hashed is verified in full; cold builds and cache
+restores still re-check their sources. Display revisions inherit whole, by
+digest, and skip their row checks only when every segment is inherited. Each
+load reports segments and bytes hashed and inherited, row-check bytes, wall and
+thread CPU time; `prepare` replies and the control `status` (`last_preparation`)
+carry it, with the refusal kind (`invalid_source`, `runtime`, `admission`,
+`superseded`) when a prepare fails. The on-disk runtime and publication formats
+are unchanged.
+
 ## Ingest, infrastructure and aging
 
 The journal's start height is persistent identity, not a resume cursor. Read metadata before starting ingestion; a genesis journal requires `start_height=0`. A mismatched start can set the old journal aside. Keep the workflow mismatch guard and resume from committed next height. Publication uses the read-only journal-opening path.

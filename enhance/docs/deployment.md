@@ -58,6 +58,19 @@ all roles together, or on none: a worker with the token and a coordinator
 without it stops publication. Unset keeps the previous behaviour. Provide the
 value through the unit's environment file, never on the command line.
 
+### Worker preparation outcomes and refusals
+
+A worker's preparation reports how it produced each unit's runtime: reused
+live, restored from its verified artifact, or rebuilt from staged rows bound to
+the committed digest. Its private `/internal/health` carries the latest
+`preparation` (generation, unit counts, or the refusal), in memory only.
+Control refusals are classified once, as invalid source, runtime, memory,
+admission or superseded, and reach the coordinator with the same statuses and
+text as before: 507 for a reservation that does not fit, 503 otherwise. An
+operator-added worker is the `enhance.external-worker` role
+([operations](../../docs/operations.md#external-workers)); it serves only after
+the coordinator activates it and a packing router lists it.
+
 ### Query ingress uploads
 
 The ingress (`query-ingress`, loopback 8082) now buffers each complete request
