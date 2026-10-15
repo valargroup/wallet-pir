@@ -29,7 +29,10 @@ observes the host. Reconcile continues only where each step's observed state
 is exactly its recorded before or after state; anything else is refused.
 Rollback restores the previous selection and managed files, including their
 absence on a first install, and keeps the release directory and the
-transaction's records. A later plan may select that retained release again:
+transaction's records. Before it changes anything, the release it selects
+again must be exactly the files, owners and modes recorded by the transaction
+that promoted it, and must pass its own self-check where it is; a missing,
+changed or unproven release refuses and the current selection stays. A later plan may select that retained release again:
 a release directory is reused only when a recorded package transaction
 promoted it and its files still match, and is never overwritten.
 """
@@ -311,18 +314,55 @@ class Package:
         text = self.ex.read(self.host, self.layout.transaction(identifier) + '/final.json')
         return None if text is None else json.loads(text)
 
-    def promoted_by(self, revision, manifest_sha256):
-        """The recorded package transaction that promoted this exact release, or None."""
+    def promoters(self, revision):
+        """`[(transaction, plan)]` of the recorded package transactions that promoted `revision`."""
         tree = self.ex.package_tree(self.host, self.layout.transactions)
+        result = []
         for name in sorted(tree['entries']):
             parts = name.split('/')
             if (len(parts) == 3 and parts[1] == 'steps' and TRANSACTION.fullmatch(parts[0])
                     and re.fullmatch(r'[0-9]{2}-promote\.done\.json', parts[2])):
-                record = self.remote_record(parts[0])
-                package = (record or {}).get('plan', {}).get('package', {})
-                if package.get('revision') == revision and package.get('manifest_sha256') == manifest_sha256:
-                    return parts[0]
-        return None
+                record = self.remote_record(parts[0]) or {}
+                plan = record.get('plan', {})
+                if (plan.get('package', {}).get('revision') == revision and record.get('schema') == RECORD_SCHEMA
+                        and durable.digest(plan) == record.get('plan_sha256')):
+                    result.append((parts[0], plan))
+        return result
+
+    def promoted_by(self, revision, manifest_sha256):
+        """The recorded package transaction that promoted this exact release, or None."""
+        return next((identifier for identifier, plan in self.promoters(revision)
+                     if plan['package']['manifest_sha256'] == manifest_sha256), None)
+
+    def path_problems(self, observed):
+        """The package root and the managed files' directories must be root's alone."""
+        return ['%s must be a directory owned by uid %d and writable only by it' % (path, self.layout.owner_uid)
+                for path, state in observed['paths'].items()
+                if state is not None and (state['kind'] != 'dir' or state['uid'] != self.layout.owner_uid
+                                          or state['mode'] & 0o022)]
+
+    def release_problems(self, selection):
+        """Why the release `selection` names is not exactly, and working as, what a recorded transaction promoted.
+
+        A rollback selects that release again, so it must still be the files,
+        owners and modes in the record of the transaction that promoted it,
+        and its entrypoints must check themselves from where they are.
+        """
+        revision = selection.split('/')[1]
+        owners = self.promoters(revision)
+        if len({durable.digest(plan['package']['files']) for _, plan in owners}) != 1:
+            return ['%s has no single recorded package transaction that promoted it' % selection]
+        plan = owners[0][1]
+        path = '%s/%s' % (self.layout.root, selection)
+        problems = tree_problems(self.ex.package_tree(self.host, path), plan['package']['files'],
+                                 self.layout.owner_uid)
+        if problems:
+            return ['%s is not the package %s promoted: %s' % (path, owners[0][0], '; '.join(problems[:5]))]
+        try:
+            self.verify_entrypoints(path, plan)
+        except PackageError as error:
+            return [str(error)]
+        return []
 
     def build_plan(self, revision, fleet, run_id=None, archive=None, known_hosts=None):
         """`(plan, problems, archive path)`; reads GitHub, the inputs and the coordinator, changing none."""
@@ -356,12 +396,7 @@ class Package:
                                 self.inventory.lock.get('machine_id')) if v]
         if any(v != machine_id for v in expected):
             problems.append('%s answers as machine %s, not the inventory\'s %s' % (self.host, machine_id, expected))
-        for path, state in observed['paths'].items():
-            if state is None:
-                continue
-            if state['kind'] != 'dir' or state['uid'] != layout.owner_uid or state['mode'] & 0o022:
-                problems.append('%s must be a directory owned by uid %d and writable only by it'
-                                % (path, layout.owner_uid))
+        problems += self.path_problems(observed)
         current = observed['current']
         prior_selection = None
         if current is not None:
@@ -794,6 +829,10 @@ class Package:
             for step, path, _ in layout.managed():
                 if current[step] not in (plan['prior']['files'][step], plan['target']['files'][step]):
                     conflicts.append('%s is %s, changed outside this transaction' % (path, current[step]))
+            # The release rollback selects again is proven before anything changes.
+            conflicts += self.path_problems(observed)
+            if plan['prior']['selection'] is not None:
+                conflicts += self.release_problems(plan['prior']['selection'])
             if conflicts:
                 journal.event('rollback refused', conflicts=conflicts)
                 raise PackageError('rollback refused; nothing was changed:\n  ' + '\n  '.join(conflicts))
