@@ -14,7 +14,8 @@ import re
 import string
 import tomllib
 
-MODES = ('exec-drop-in', 'template')
+MODES = ('exec-drop-in', 'template', 'role')
+RENDERER = re.compile(r'^[a-z_][a-z0-9_.]*:[a-z_][a-z0-9_]*$')
 UNIT = re.compile(r'^[A-Za-z0-9@._-]+\.service$')
 PLAIN_PATH = re.compile(r'^/[A-Za-z0-9._/-]+$')
 PLAIN_NAME = re.compile(r'^[A-Za-z0-9._-]+$')
@@ -64,6 +65,19 @@ class Role:
     # such as the journal writer on a publication controller. They are
     # attributes of that instance, never a unit of their own.
     responsibilities: tuple = ()
+    # A `role` role's product adapter, `module:function`: renders the whole
+    # unit, its configuration files and its preflight check from the
+    # inventory's settings for one instance.
+    renderer: str = None
+    # Not required in a complete fleet: an external worker an operator may add.
+    optional: bool = False
+
+    def render(self, settings, release):
+        """The product adapter's `RenderedRole` for one instance."""
+        import importlib
+        module, function = self.renderer.split(':')
+        return getattr(importlib.import_module(module), function)(
+            settings, release=release, template=self.template.read_text())
 
 
 @dataclass(frozen=True)
@@ -107,6 +121,12 @@ class Target:
     # Set when one host runs the role more than once (history archive and
     # recent workers): the key then names the unit too.
     qualified: bool = False
+    # A `role` role's inventory settings: paths, addresses, budgets and
+    # credential file references for this instance.
+    settings: dict = field(default_factory=dict)
+    # Whether a deploy may install this role where its unit is absent. Off by
+    # default, so a mistyped host never receives a new service.
+    install: bool = False
 
     @property
     def key(self):
@@ -146,7 +166,7 @@ def load_descriptors(path, _parents=()):
             template = None
             # Required to render a template role; an exec-drop-in role may name
             # the template its base unit was installed from.
-            if mode == 'template' or spec.get('template'):
+            if mode in ('template', 'role') or spec.get('template'):
                 template = path.parent / spec.get('template', '')
                 require(spec.get('template') and template.is_file(), '%s.%s: template file missing' % (name, role_name))
             ready = spec.get('ready')
@@ -158,9 +178,16 @@ def load_descriptors(path, _parents=()):
             duties = spec.get('responsibilities', [])
             require(isinstance(duties, list) and all(d in RESPONSIBILITIES for d in duties),
                     '%s.%s: responsibilities are among %s' % (name, role_name, RESPONSIBILITIES))
+            renderer = spec.get('renderer')
+            require((mode == 'role') == (renderer is not None) and (renderer is None or RENDERER.match(renderer)),
+                    '%s.%s: a role-mode role, and only one, names its renderer as module:function' % (name, role_name))
+            optional = spec.get('optional', False)
+            require(isinstance(optional, bool) and (not optional or mode == 'role'),
+                    '%s.%s: only a role-mode role may be optional' % (name, role_name))
             roles[role_name] = Role(role_name, spec['unit'], mode, spec['health'], template, ready,
                                     spec.get('ready_url'), int(spec.get('ready_timeout', 180)),
-                                    tuple(spec.get('adoptable_drop_ins', ())), owns_unit, tuple(duties))
+                                    tuple(spec.get('adoptable_drop_ins', ())), owns_unit or mode == 'role',
+                                    tuple(duties), renderer, optional)
         order = tuple(raw.get('order', ()))
         require(order and sorted(order) == sorted(roles), '%s: order must list every role once' % name)
         require(PLAIN_PATH.match(raw.get('root', '')), '%s: root must be a plain absolute path' % name)
@@ -286,7 +313,14 @@ def targets(service, inventory):
             require(isinstance(duties, list) and set(duties) <= set(role.responsibilities),
                     '%s.%s@%s: responsibilities must be among %s'
                     % (service.name, role_name, host, list(role.responsibilities)))
-            result.append(Target(role, host, unit, values, expected, kind, tuple(duties)))
+            settings = entry.get('settings', {})
+            require(isinstance(settings, dict) and (not settings or role.mode == 'role'),
+                    '%s.%s@%s: settings belong to role-mode roles' % (service.name, role_name, host))
+            install = entry.get('install', False)
+            require(isinstance(install, bool) and (not install or role.mode == 'role'),
+                    '%s.%s@%s: install is a boolean, true only for a role-mode role' % (service.name, role_name, host))
+            result.append(Target(role, host, unit, values, expected, kind, tuple(duties),
+                                 settings=settings, install=install))
     require(result, 'inventory lists no %s hosts' % service.name)
     repeated = {(t.role.name, t.host) for t in result
                 if sum((u.role.name, u.host) == (t.role.name, t.host) for u in result) > 1}

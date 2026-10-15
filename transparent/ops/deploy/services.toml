@@ -7,7 +7,7 @@
 driver = "transparent-history"
 root = "/opt/transparent-publisher"
 binary = "transparent-shard-server"
-order = ["worker", "controller"]
+order = ["worker", "external-worker", "controller"]
 ancillary = ["routing"]
 
 [services.transparent-history.roles.worker]
@@ -16,6 +16,21 @@ mode = "exec-drop-in"
 health = "http://{listen}/v1/health"
 ready = { field = "ready", equals = true }
 ready_url = "http://{listen}/v1/ready"
+
+# An external worker: rendered by transparent/ops/lib/roles.py from the
+# inventory entry's settings and installed only where the entry says
+# `"install": true`. The shared engine installs, verifies and rolls back the
+# unit; publications, assignments and activation stay with the controller.
+[services.transparent-history.roles.external-worker]
+unit = "transparent-history-worker.service"
+mode = "role"
+template = "transparent-history-worker.role.service"
+renderer = "transparent.ops.lib.roles:history_worker"
+optional = true
+health = "http://{listen}/v1/health"
+ready = { field = "ready", equals = true }
+ready_url = "http://{listen}/v1/ready"
+ready_timeout = 900
 
 [services.transparent-history.roles.controller]
 unit = "transparent-v12-publish-controller.service"
@@ -27,7 +42,7 @@ responsibilities = ["journal-writer"]
 driver = "txid-display"
 root = "/opt/transparent-txid-display"
 binary = "transparent-txid-server"
-order = ["worker", "controller"]
+order = ["worker", "external-worker", "controller"]
 ancillary = ["routing"]
 
 [services.transparent-display.roles.worker]
@@ -36,6 +51,16 @@ mode = "exec-drop-in"
 health = "http://{listen}/v1/health"
 ready = { field = "ready", equals = true }
 ready_url = "http://{listen}/v1/ready"
+
+# Starts with no publication; the display controller stages and activates.
+[services.transparent-display.roles.external-worker]
+unit = "transparent-display-worker.service"
+mode = "role"
+template = "transparent-display-worker.role.service"
+renderer = "transparent.ops.lib.roles:display_worker"
+optional = true
+health = "http://{listen}/v1/health"
+ready_timeout = 300
 
 [services.transparent-display.roles.controller]
 unit = "transparent-txid-display-controller.service"
