@@ -1,5 +1,4 @@
 use enhance_pir::{EnhanceRecord, EnhanceRecordParts};
-use reqwest::StatusCode;
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde_json::json;
@@ -47,6 +46,22 @@ pub enum ZakuraError {
     PrevoutIndex { outpoint: String, outputs: usize },
     #[error("fee of transaction {0} is unavailable: {1}")]
     Fee(String, FeeError),
+    #[error("RPC response: {0}")]
+    Response(node_rpc::Error),
+}
+
+impl From<node_rpc::Error> for ZakuraError {
+    fn from(error: node_rpc::Error) -> Self {
+        match error {
+            node_rpc::Error::Http(error) => Self::Http(error),
+            node_rpc::Error::Cookie(error) => Self::Cookie(error),
+            node_rpc::Error::InvalidCookie => Self::InvalidCookie,
+            node_rpc::Error::Rpc(code, message) => Self::Rpc(code, message),
+            node_rpc::Error::MissingResult => Self::MissingResult,
+            node_rpc::Error::Batch(message) => Self::Batch(message),
+            other => Self::Response(other),
+        }
+    }
 }
 
 /// Spent-output resolution shared across blocks: a bounded cache and counters.
@@ -91,12 +106,11 @@ impl Prevouts {
     }
 }
 
+/// The node's JSON-RPC endpoint, over the shared transport under its
+/// cookie-at-construction policy.
 #[derive(Clone)]
 pub struct ZakuraClient {
-    http: reqwest::Client,
-    rpc_url: String,
-    username: String,
-    password: String,
+    rpc: node_rpc::Client,
 }
 
 #[derive(Debug)]
@@ -105,18 +119,6 @@ pub struct CanonicalBlock {
     pub hash: String,
     pub records: Vec<EnhanceRecord>,
     pub tree_size: u64,
-}
-
-#[derive(Deserialize)]
-struct RpcResponse<T> {
-    result: Option<T>,
-    error: Option<RpcError>,
-}
-
-#[derive(Deserialize)]
-struct RpcError {
-    code: i64,
-    message: String,
 }
 
 #[derive(Deserialize)]
@@ -139,21 +141,13 @@ impl ZakuraClient {
         rpc_url: impl Into<String>,
         cookie_path: impl AsRef<Path>,
     ) -> Result<Self, ZakuraError> {
-        let cookie = std::fs::read_to_string(cookie_path)?;
-        let (username, password) = cookie
-            .trim()
-            .split_once(':')
-            .ok_or(ZakuraError::InvalidCookie)?;
-        if username.is_empty() || password.is_empty() {
-            return Err(ZakuraError::InvalidCookie);
-        }
         Ok(Self {
-            http: reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(120))
-                .build()?,
-            rpc_url: rpc_url.into(),
-            username: username.to_string(),
-            password: password.to_string(),
+            rpc: node_rpc::Client::new(
+                rpc_url,
+                Some(cookie_path.as_ref()),
+                "enhance-pir",
+                node_rpc::Policy::cookie_at_construction(),
+            )?,
         })
     }
 
@@ -345,93 +339,22 @@ impl ZakuraClient {
             .collect()
     }
 
-    /// One JSON-RPC 2.0 batch, results placed by their echoed id.
-    ///
-    /// The node rejects 1.0 batches, so batches use 2.0 while single calls
-    /// stay on 1.0. Per-entry RPC errors are returned to the caller; a
-    /// malformed batch response is an error for the whole batch.
+    /// One JSON-RPC 2.0 batch of `method` calls, results in request order.
+    /// Per-entry RPC errors are returned to the caller; a malformed batch
+    /// response is an error for the whole batch.
     async fn batch<T: DeserializeOwned>(
         &self,
         method: &str,
         params: Vec<serde_json::Value>,
     ) -> Result<Vec<Result<T, (i64, String)>>, ZakuraError> {
-        if params.is_empty() {
-            return Ok(Vec::new());
-        }
-        let requests: Vec<_> = params
-            .into_iter()
-            .enumerate()
-            .map(|(id, params)| json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params}))
-            .collect();
-        let response = self
-            .http
-            .post(&self.rpc_url)
-            .basic_auth(&self.username, Some(&self.password))
-            .json(&requests)
-            .send()
-            .await?;
-        if response.status() == StatusCode::UNAUTHORIZED {
-            return Err(ZakuraError::InvalidCookie);
-        }
-        let entries = match response
-            .error_for_status()?
-            .json::<serde_json::Value>()
+        let calls: Vec<(&str, serde_json::Value)> =
+            params.into_iter().map(|params| (method, params)).collect();
+        Ok(self
+            .rpc
+            .batch::<T>(&calls)
             .await?
-        {
-            serde_json::Value::Array(entries) => entries,
-            other => {
-                // A node refusing the whole batch answers with one error object.
-                return Err(
-                    match other.pointer("/error/code").and_then(|c| c.as_i64()) {
-                        Some(code) => ZakuraError::Rpc(
-                            code,
-                            other
-                                .pointer("/error/message")
-                                .and_then(|m| m.as_str())
-                                .unwrap_or_default()
-                                .to_string(),
-                        ),
-                        None => ZakuraError::Batch("batch response is not an array".into()),
-                    },
-                );
-            }
-        };
-        if entries.len() != requests.len() {
-            return Err(ZakuraError::Batch(format!(
-                "asked for {} results, got {}",
-                requests.len(),
-                entries.len()
-            )));
-        }
-        let mut placed: Vec<Option<Result<T, (i64, String)>>> =
-            (0..requests.len()).map(|_| None).collect();
-        for entry in entries {
-            let id = entry
-                .get("id")
-                .and_then(|id| id.as_u64())
-                .and_then(|id| usize::try_from(id).ok())
-                .filter(|id| *id < placed.len())
-                .ok_or_else(|| {
-                    ZakuraError::Batch("batch entry id is missing or out of range".into())
-                })?;
-            if placed[id].is_some() {
-                return Err(ZakuraError::Batch(format!("batch id {id} appeared twice")));
-            }
-            let response: RpcResponse<T> = serde_json::from_value(entry)
-                .map_err(|error| ZakuraError::Batch(format!("batch entry {id}: {error}")))?;
-            placed[id] = Some(match (response.error, response.result) {
-                (Some(error), _) => Err((error.code, error.message)),
-                (None, Some(result)) => Ok(result),
-                (None, None) => {
-                    return Err(ZakuraError::Batch(format!(
-                        "batch entry {id} has no result"
-                    )))
-                }
-            });
-        }
-        Ok(placed
             .into_iter()
-            .map(|entry| entry.expect("every id placed"))
+            .map(|entry| entry.map_err(|error| (error.code, error.message)))
             .collect())
     }
 
@@ -484,23 +407,7 @@ impl ZakuraClient {
         method: &str,
         params: serde_json::Value,
     ) -> Result<T, ZakuraError> {
-        let response = self
-            .http
-            .post(&self.rpc_url)
-            .basic_auth(&self.username, Some(&self.password))
-            .json(
-                &json!({"jsonrpc": "1.0", "id": "enhance-pir", "method": method, "params": params}),
-            )
-            .send()
-            .await?;
-        if response.status() == StatusCode::UNAUTHORIZED {
-            return Err(ZakuraError::InvalidCookie);
-        }
-        let response: RpcResponse<T> = response.error_for_status()?.json().await?;
-        if let Some(error) = response.error {
-            return Err(ZakuraError::Rpc(error.code, error.message));
-        }
-        response.result.ok_or(ZakuraError::MissingResult)
+        Ok(self.rpc.call(method, params).await?)
     }
 }
 

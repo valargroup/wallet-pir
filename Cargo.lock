@@ -1051,6 +1051,7 @@ dependencies = [
  "ipir-sp",
  "libc",
  "memmap2",
+ "node-rpc",
  "pir-control",
  "pir-native",
  "prometheus",
