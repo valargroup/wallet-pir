@@ -123,9 +123,12 @@ enum Credentials {
     File(PathBuf),
 }
 
-/// One node's JSON-RPC endpoint under a [`Policy`].
+/// One node's JSON-RPC endpoint under a [`Policy`]. Cheap to clone: clones
+/// share one connection pool.
 #[derive(Clone)]
-pub struct Client {
+pub struct Client(std::sync::Arc<Inner>);
+
+struct Inner {
     http: reqwest::Client,
     url: String,
     id: &'static str,
@@ -175,26 +178,26 @@ impl Client {
         if let Some(connect) = policy.connect {
             http = http.connect_timeout(connect);
         }
-        Ok(Self {
+        Ok(Self(std::sync::Arc::new(Inner {
             http: http.build()?,
             url: url.into(),
             id,
             credentials,
             policy,
-        })
+        })))
     }
 
     pub fn url(&self) -> &str {
-        &self.url
+        &self.0.url
     }
 
     pub fn policy(&self) -> Policy {
-        self.policy
+        self.0.policy
     }
 
     /// One JSON-RPC 1.0 call, its result decoded as `T`.
     pub async fn call<T: DeserializeOwned>(&self, method: &str, params: Value) -> Result<T, Error> {
-        let body = json!({"jsonrpc": "1.0", "id": self.id, "method": method, "params": params});
+        let body = json!({"jsonrpc": "1.0", "id": self.0.id, "method": method, "params": params});
         let response: Response =
             serde_json::from_slice(&self.post(&body).await?).map_err(Error::Decode)?;
         if let Some(error) = response.error {
@@ -291,8 +294,8 @@ impl Client {
     /// Posts `body` and returns the response body, read within the policy's
     /// deadline and bound whether or not the response declares its length.
     async fn post(&self, body: &Value) -> Result<Vec<u8>, Error> {
-        let mut request = self.http.post(&self.url).json(body);
-        match &self.credentials {
+        let mut request = self.0.http.post(&self.0.url).json(body);
+        match &self.0.credentials {
             Credentials::None => {}
             Credentials::Fixed(user, password) => {
                 request = request.basic_auth(user, Some(password))
@@ -304,12 +307,12 @@ impl Client {
         }
         let mut response = request.send().await?;
         if response.status() == reqwest::StatusCode::UNAUTHORIZED
-            && self.policy.unauthorized == Unauthorized::InvalidCookie
+            && self.0.policy.unauthorized == Unauthorized::InvalidCookie
         {
             return Err(Error::InvalidCookie);
         }
         response = response.error_for_status()?;
-        let limit = self.policy.response_bytes;
+        let limit = self.0.policy.response_bytes;
         if response
             .content_length()
             .is_some_and(|length| length > limit as u64)
