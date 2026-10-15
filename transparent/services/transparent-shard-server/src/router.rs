@@ -488,6 +488,21 @@ pub fn files_for(
     assignment: &Assignment,
     worker_id: &str,
 ) -> Result<Vec<String>, PlanError> {
+    files_with_runtimes(set_dir, map, assignment, worker_id, false)
+}
+
+/// [`files_for`], and with `runtimes` also every runtime file the set's
+/// publisher prepared beside it for a revision of an assigned shard: those
+/// keyed by the revision's digest or by one of its page shards' identities
+/// (see [`crate::runtime::disk::ShippedRuntimes`]). Runtimes of shards
+/// assigned elsewhere are not this worker's to receive.
+pub fn files_with_runtimes(
+    set_dir: &std::path::Path,
+    map: &ShardMap,
+    assignment: &Assignment,
+    worker_id: &str,
+    runtimes: bool,
+) -> Result<Vec<String>, PlanError> {
     let scope = assignment
         .scope_for(worker_id)
         .map_err(|error| PlanError::Invalid(error.to_string()))?;
@@ -498,11 +513,19 @@ pub fn files_for(
         .map(|e| e.manifest_digest.as_str())
         .collect();
     let mut by_shard: BTreeMap<u64, Vec<String>> = BTreeMap::new();
+    // Runtime file name prefixes of each shard's revisions: the SHA-256 of
+    // every identity its runtimes are keyed by.
+    let mut identities: BTreeMap<u64, Vec<String>> = BTreeMap::new();
+    let mut prepared = Vec::new();
     for entry in std::fs::read_dir(set_dir)
         .map_err(|error| PlanError::Invalid(format!("{}: {error}", set_dir.display())))?
     {
         let entry = entry.map_err(|error| PlanError::Invalid(error.to_string()))?;
         if !entry.path().is_dir() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if runtimes && crate::runtime::disk::ShippedRuntimes::is_entry(&name) {
+                prepared.push(name);
+            }
             continue;
         }
         let name = entry.file_name().to_string_lossy().into_owned();
@@ -518,13 +541,28 @@ pub fn files_for(
             files.push(format!("{name}/manifest.json"));
             files.push(format!("{name}/filter.bin"));
         }
+        if runtimes {
+            use sha2::{Digest, Sha256};
+            let children = manifest.child_digests();
+            let keyed = std::iter::once(name.clone()).chain(children.iter().map(hex::encode));
+            identities
+                .entry(manifest.shard_id)
+                .or_default()
+                .extend(keyed.map(|identity| hex::encode(Sha256::digest(identity.as_bytes()))));
+        }
         by_shard.entry(manifest.shard_id).or_default().push(name);
     }
+    let mut wanted = std::collections::BTreeSet::new();
     for id in &scope.assigned {
         for name in by_shard.get(id).into_iter().flatten() {
             files.push(format!("{name}/"));
         }
+        wanted.extend(identities.get(id).into_iter().flatten());
     }
+    files.extend(prepared.into_iter().filter(|name| {
+        name.split_once('-')
+            .is_some_and(|(prefix, _)| wanted.contains(&prefix.to_string()))
+    }));
     files.sort();
     files.dedup();
     Ok(files)

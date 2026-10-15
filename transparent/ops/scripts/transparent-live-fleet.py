@@ -161,6 +161,12 @@ async def run(args, data=None, timeout=25, file_output=False):
     return out
 
 
+def transfer_bytes(stats):
+    """Bytes an rsync `--stats` run sent, or None when it did not say."""
+    match = re.search(rb'^Total bytes sent: ([0-9,.]+)', stats or b'', re.MULTILINE)
+    return int(re.sub(rb'[,.]', b'', match.group(1))) if match else None
+
+
 class Fleet:
     def __init__(self, config, *, read_only=False):
         self.read_only = read_only
@@ -588,9 +594,15 @@ class Fleet:
                 await self.control(worker, {'operation':'collect'})
             if worker['id'] in self.managed_ids():
                 self.job(worker, req, 'transferring')
+            # Runtimes the publisher prepared beside the publication, when
+            # it offers them: only those of this worker's shards are listed.
+            runtimes = bool(req.get('runtimes'))
+            if runtimes and Path(req['runtimes']).resolve(strict=True) != source:
+                raise ValueError('prepared runtimes must be files of the publication directory')
             async with self.stage_timing(worker, req, 'inventory'):
                 files = (await run([self.c['assign_binary'], 'files', '--shard-dir', source,
-                                    '--assignment', assignment, '--worker-id', worker['id']])).decode().splitlines()
+                                    '--assignment', assignment, '--worker-id', worker['id']]
+                                   + (['--runtimes'] if runtimes else []))).decode().splitlines()
             # Only hard-link the digest directories this worker is assigned.
             # This also preserves inode identity for worker verification reuse.
             directories = sorted({f.split('/')[0] for f in files if '/' in f})
@@ -603,14 +615,26 @@ class Fleet:
                 # directory, so the other may create it first; rsync below
                 # completes whatever a concurrent link left unfinished.
                 commands.append(f'if [ ! -e {shlex.quote(new)} ] && [ -d {shlex.quote(old)} ]; then cp -al {shlex.quote(old)} {shlex.quote(new)} 2>/dev/null || [ -d {shlex.quote(new)} ]; fi')
+            # A runtime file is named by its identity and never rewritten, so
+            # one the active publication already holds is that file: link it
+            # rather than transfer it again. A sealed shard's runtimes then
+            # cross the network once, not at every publication.
+            for f in files:
+                if '/' in f or not f.endswith('.runtime'):
+                    continue
+                if not re.fullmatch('[0-9a-f]{64}-[0-9a-f]{64}[.]runtime', f):
+                    raise ValueError('unexpected runtime path')
+                old, new = str(Path(before['directory']) / f), remote_dir + '/' + f
+                commands.append(f'if [ ! -e {shlex.quote(new)} ] && [ -f {shlex.quote(old)} ]; then ln {shlex.quote(old)} {shlex.quote(new)} 2>/dev/null || [ -f {shlex.quote(new)} ]; fi')
             async with self.stage_timing(worker, req, 'hardlink'):
                 await self.ssh(worker['ssh_host'], 'sh -s', ('\n'.join(commands)+'\n').encode())
             with tempfile.NamedTemporaryFile(mode='w') as listing:
                 listing.write('\n'.join(files)+'\n'); listing.flush()
                 async with self.stage_timing(worker, req, 'transfer'):
-                    await run(['rsync', '-a', '--ignore-existing', '--files-from', listing.name,
-                               '-e', shlex.join(self.transfer_ssh_args(worker['ssh_host'])), str(source)+'/',
-                               'root@'+worker['ssh_host']+':'+remote_dir+'/'], file_output=True)
+                    transfer = await run(['rsync', '-a', '--ignore-existing', '--stats', '--files-from', listing.name,
+                                          '-e', shlex.join(self.transfer_ssh_args(worker['ssh_host'])), str(source)+'/',
+                                          'root@'+worker['ssh_host']+':'+remote_dir+'/'], file_output=True)
+            transferred = transfer_bytes(transfer)
             # One assignment per publication, written once. A worker's durable
             # active record points at this file, so replacing it would change
             # what a later restart loads without any prepare observing it.
@@ -621,11 +645,19 @@ class Fleet:
             async with self.stage_timing(worker, req, 'assignment'):
                 await self.ssh(worker['ssh_host'], write_once, assignment.read_bytes())
             publication = {'directory': remote_dir, 'assignment': remote_assignment, 'map_sha256': digest}
+            if runtimes:
+                publication['runtimes'] = remote_dir
             if worker['id'] in self.managed_ids():
                 self.job(worker, req, 'warming')
             async with self.stage_timing(worker, req, 'prepare'):
-                await self.control(worker, {'operation':'prepare','expected':before['map_sha256'],'publication':publication})
-            return {'expected':before['map_sha256'], 'publication':publication}
+                reply = await self.control(worker, {'operation':'prepare','expected':before['map_sha256'],'publication':publication})
+            # What this worker's preparation cost: bytes this transfer
+            # actually sent, and how its runtimes were produced.
+            print(json.dumps({'event':'worker_prepared','worker':worker['id'],'map_sha256':digest,
+                              'transferred_bytes':transferred,
+                              'runtimes':(reply or {}).get('runtimes')}), file=sys.stderr)
+            return {'expected':before['map_sha256'], 'publication':publication,
+                    'transferred_bytes':transferred, 'runtimes':(reply or {}).get('runtimes')}
 
     async def prepare(self, req):
         digest = req['map_sha256']

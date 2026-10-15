@@ -527,6 +527,55 @@ Public routing uses set identity, shard, revision and table; selected script, ro
 locator never determine a plaintext route. Public immutable filters/setup belong on an
 artifact origin; map discovery has refreshable cache semantics.
 
+### Prepared history runtimes
+
+Source only, off by default (`ship_runtimes` in the publication controller's JSON config);
+not measured on an exclusive allocation and not deployed. See
+[status](status.md#prepared-history-runtimes-implemented-not-measured-2026-10-14) and
+[remaining work](remaining-work.md#prepared-history-runtimes).
+
+With `ship_runtimes` on, the controller prepares every runtime of each candidate on the
+publisher, after the candidate is written and before the fleet is asked to prepare it. It
+reads the candidate as a worker would (`ShardSet::open_reusing`, reusing only tables that
+are the same files as the last verified candidate's), takes every revision it holds and
+every table with rows, each runtime once by its key (the revision digest for a directory,
+the page shard's own identity for a page shard), and holds each as a plain
+`<sha256(identity)>-<identity hash>.runtime` file of the candidate directory, beside the
+revision directories and outside every closed manifest (`transparent_shard_server::prebuild`).
+The map, manifests, setup bytes, journal and the publication authority are unchanged. A
+file of the same identity that the active publication or a retained candidate holds is
+hard-linked when it is complete (a renamed entry, never a `.partial`, with a valid length
+and its own identity in its header); anything else is built on the runtime build pool and
+written through a `.partial` and a rename (`runtime::prepare`, shared with Display's
+recent prebuild). A sealed directory shard and a sealed page shard keep their identity
+across publications, so their files carry over; the open directory shard and changed page
+shards are built. A table that fails verification fails the publication; a runtime that
+cannot be built or written is reported in the cycle record and left to the workers. An
+invalidation is checked before each segment, and a candidate whose preparation it stops
+is never offered.
+
+The prepare request names the candidate directory as `runtimes`. The fleet adapter lists
+only the runtime files of the worker's assigned shards (`shard-assign files --runtimes`),
+hard-links every file the worker's active publication already holds, so a sealed shard's
+runtimes are copied once, and passes `runtimes` in the worker's publication. The worker
+records it in its durable active record, so a restart is offered the same files. Absent,
+everything is as before.
+
+The worker's prewarm and its requests both call `RuntimeCache::get_from` with the shipped
+directory, so one production operation per key loads, restores or builds a runtime under
+the cache's existing reservations, slots, pins and cancellation ownership. A shipped file is
+loaded read-only (identity, length, checksum, mask binding), the segment is read and
+verified, and `TableRuntime::self_check` compares the whole database with the segment and
+decodes a sampled row through the client path before the runtime is used. A missing or
+refused file falls back to a verified restore or build, counted once per production
+operation even across admission retries; a segment that fails verification fails the
+request as a build would. A shipped runtime is never saved to the worker's disk cache. The
+prepare reply reports how the prewarm produced its runtimes (`shipped`,
+`shipped_fallbacks`, `restored`, `built`, self-check seconds); the fleet adapter reports
+the bytes each staging sent; the controller's cycle record holds the publisher's
+preparation (`built`, `linked`, bytes, seconds, failures) and the publication, preparation
+and activation times.
+
 Prepare and verify artifacts at owners before publishing routing/map state. `/v1/ready`
 reports assignment and revision identity and, in warm mode, requires every current assigned
 runtime to finish warming. The explicit loaded-only pilot mode has a weaker readiness
