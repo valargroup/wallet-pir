@@ -3679,6 +3679,7 @@ dependencies = [
  "clap",
  "hex",
  "libc",
+ "node-rpc",
  "pir-observability",
  "prometheus",
  "reqwest",
