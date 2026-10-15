@@ -39,7 +39,7 @@ the fixture's `enc_ciphertext` suffix, `cv_net`, `out_ciphertext`, expiry and bo
 transparent flags; they are decoded with `EnhanceRecord::from_bytes`.
 
 The Sapling bundle is a public mainnet V5 transaction copied from the zakura test
-vectors at the pinned revision (see `tests/fixtures/sapling-v5-1687106.md`); only
+vectors at the pinned revision (see the retained [Sapling fixture provenance](../../services/enhance-pir-server/tests/fixtures/sapling-v5-1687106.md)); only
 its bundle and a hand-set value balance enter the synthetic V6 transaction.
 
 The existing canonical CLI test now serves a block with the public transaction plus

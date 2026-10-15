@@ -76,14 +76,17 @@ fn answer(state: &Rpc, request: &Value) -> Value {
             assert_eq!(request["params"], json!([ACTIVATION_HEIGHT]));
             json!(hash)
         }
-        "getblock" => {
-            assert_eq!(request["params"][0], ACTIVATION_HEIGHT.to_string());
-            match request["params"][1].as_u64().unwrap() {
-                0 => json!(raw),
-                2 => json!({"trees":{"ironwood":{"size":state.tree_size.load(Ordering::SeqCst)}}}),
-                _ => panic!("unexpected verbosity"),
+        "getblock" => match request["params"][1].as_u64().unwrap() {
+            0 => {
+                assert_eq!(request["params"][0], ACTIVATION_HEIGHT.to_string());
+                json!(raw)
             }
-        }
+            2 => {
+                assert_eq!(request["params"][0], *hash);
+                json!({"trees":{"ironwood":{"size":state.tree_size.load(Ordering::SeqCst)}}})
+            }
+            _ => panic!("unexpected verbosity"),
+        },
         "getrawtransaction" => match state
             .transactions
             .get(request["params"][0].as_str().unwrap())
