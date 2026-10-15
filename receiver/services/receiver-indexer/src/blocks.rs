@@ -1,10 +1,7 @@
 //! The canonical chain, read through wallet-libraries' server chain adapters, as the
 //! directory store's blocks. The adapters own the node client, block decoding,
 //! note positions and zero-OVK recovery; this module maps their results.
-use receiver_directory::{
-    store::{Checkpoint, IndexedBlock},
-    Payment,
-};
+use receiver_directory::store::{Checkpoint, IndexedBlock};
 use zakura_server_chain::{receiver, Network, NodeClient, NodeError};
 
 pub use zakura_server_chain::receiver::{MAX_RECEIVER_BATCH_BLOCKS, MAX_RECEIVER_CONCURRENCY};
@@ -56,27 +53,7 @@ fn indexed(block: receiver::ReceiverBlock) -> IndexedBlock {
         start_position: block.start_position,
         end_position: block.end_position,
         coinbase_actions: block.coinbase_actions,
-        payments: block
-            .payments
-            .into_iter()
-            .map(|(receiver, p)| {
-                (
-                    receiver,
-                    Payment {
-                        height: p.height,
-                        block_hash: p.block_hash,
-                        txid: p.txid,
-                        tx_index: p.tx_index,
-                        action_index: p.action_index,
-                        position: p.position,
-                        action_nullifier: p.action_nullifier,
-                        cmx: p.cmx,
-                        ephemeral_key: p.ephemeral_key,
-                        ciphertext_prefix: p.ciphertext_prefix,
-                    },
-                )
-            })
-            .collect(),
+        payments: block.payments,
         commitments: block.commitments,
     }
 }
