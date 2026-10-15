@@ -1553,6 +1553,7 @@ mod tests {
 
     #[test]
     fn restoring_modification_time_does_not_hide_a_changed_source() {
+        use std::fs::File;
         use std::os::unix::fs::FileExt;
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("source.bin");
