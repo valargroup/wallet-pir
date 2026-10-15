@@ -2645,6 +2645,7 @@ dependencies = [
  "axum",
  "clap",
  "hex",
+ "node-rpc",
  "receiver-directory",
  "receiver-pir",
  "receiver-pir-server",
