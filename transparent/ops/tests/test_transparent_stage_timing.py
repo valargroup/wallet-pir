@@ -228,4 +228,3 @@ class RuntimeStagingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(M.transfer_bytes(STATS), 41234)
         self.assertIsNone(M.transfer_bytes(b''))
         self.assertIsNone(M.transfer_bytes(None))
-
