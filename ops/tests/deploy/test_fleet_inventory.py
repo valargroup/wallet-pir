@@ -36,7 +36,9 @@ class FleetInventoryTests(unittest.TestCase):
         self.assertEqual(view['view'], 'configured')
         self.assertEqual({r['service'] for r in view['roles']}, set(SERVICES))
         for name, service in SERVICES.items():
-            self.assertEqual({r['role'] for r in view['roles'] if r['service'] == name}, set(service.order))
+            # Optional external workers are additions a complete fleet need not have.
+            self.assertEqual({r['role'] for r in view['roles'] if r['service'] == name},
+                             {r for r in service.order if not service.roles[r].optional})
         writers = [(r['service'], r['role']) for r in view['roles'] if 'journal-writer' in r['responsibilities']]
         self.assertEqual(sorted(writers), [('transparent-display', 'controller'), ('transparent-history', 'controller')])
         kinds = {(a['kind'], c) for a in view['ancillary'] for c in a['consumers']}

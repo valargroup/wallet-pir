@@ -36,7 +36,7 @@ binary = "enhance-pir-server"
 artifact_kinds = ["enhance-pir", "enhance-pir-native", "enhance-pir-native-cuda"]
 self_check = ["--help"]
 min_free_bytes = 1073741824
-order = ["worker", "packing-router", "query-ingress", "coordinator"]
+order = ["worker", "external-worker", "packing-router", "query-ingress", "coordinator"]
 # The coordinator's public edge, listed once in the inventory's `ancillary`.
 ancillary = ["routing"]
 
@@ -48,6 +48,23 @@ health = "http://{listen}/internal/health"
 ready = { field = "published", nonempty = true }
 ready_timeout = 300
 adoptable_drop_ins = ["90-v7.conf", "zz-cleanup-*.conf"]
+
+# An external worker an operator adds: the whole unit and its configuration are
+# rendered by the product adapter from the inventory entry's `settings`, and a
+# deploy may install it where it is absent only when that entry says
+# `"install": true`. Verification proves the process and its identity; serving
+# authority still comes from the product's controller, never from the deploy.
+[services.enhance.roles.external-worker]
+unit = "enhance-pir-worker.service"
+mode = "role"
+template = "enhance-pir-worker.role.service"
+renderer = "enhance.ops.lib.roles:worker"
+optional = true
+# Settings: listen, data_dir, sealed_shards?, matvec_backend?, cuda_device?,
+# limits?, credentials (the ENHANCE_INTERNAL_TOKEN environment file).
+# Published only after the coordinator activates it; health proves identity.
+health = "http://{listen}/internal/health"
+ready_timeout = 300
 
 [services.enhance.roles.packing-router]
 unit = "enhance-pir-packing-router.service"
@@ -80,7 +97,7 @@ binary = "status-pir"
 artifact_kinds = ["status-pir"]
 self_check = ["--help"]
 min_free_bytes = 1073741824
-order = ["worker", "router", "controller"]
+order = ["worker", "external-worker", "router", "controller"]
 # The supervised control sessions that carry the controller's forwards.
 ancillary = ["supervision"]
 # Supplied by the inventory's services.status.template_vars.
@@ -93,6 +110,18 @@ template = "status-worker.service.in"
 # Ready needs a fresh controller heartbeat and manifest.
 health = "http://127.0.0.1:8481/control/health"
 ready = { field = "ready", equals = true }
+ready_timeout = 180
+
+[services.status.roles.external-worker]
+unit = "status-pir-worker.service"
+mode = "role"
+template = "status-worker.role.service"
+renderer = "enhance.ops.lib.roles:status_worker"
+optional = true
+# Settings: network_hex, listen, artifact_origin, state_dir, cuda?, limits?.
+# Identity carries binary_sha256; readiness needs the controller's fence,
+# activation and heartbeat, which the deploy never manufactures.
+health = "http://{listen}/control/identity"
 ready_timeout = 180
 
 [services.status.roles.router]

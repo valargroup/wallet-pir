@@ -1,0 +1,25 @@
+# External Status CPU worker, rendered by enhance/ops/lib/roles.py. It pulls
+# each generation's artifact from the router's artifact origin and is fenced,
+# prepared and activated by the Status controller over its loopback control
+# routes (reached through authenticated SSH forwarding). ExecStart and paths
+# are rendered.
+[Unit]
+Description=Status PIR evaluation worker (external)
+After=network-online.target
+
+[Service]
+ExecStart=/bin/false
+Environment=RAYON_NUM_THREADS=4
+Environment=STATUS_PREPARATION_THREADS=6
+Environment=RUST_LOG=info
+Restart=on-failure
+RestartSec=3
+MemoryMax=12G
+MemorySwapMax=0
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,20 @@
+"""One inventory-style settings object per external worker role, shared by tests."""
+SETTINGS = {
+    ('enhance', 'external-worker'): {
+        'listen': '127.0.0.1:8091', 'data_dir': '/srv/enhance-worker',
+        'credentials': ['/etc/enhance-worker/internal-token.env'], 'limits': {'MemoryMax': '7G'}},
+    ('status', 'external-worker'): {
+        'network_hex': 'ab' * 32, 'listen': '127.0.0.1:8481', 'artifact_origin': 'http://127.0.0.1:8495',
+        'state_dir': '/var/lib/status-worker'},
+    ('transparent-history', 'external-worker'): {
+        'listen': '127.0.0.1:8093', 'shard_dir': '/srv/history/set', 'state_dir': '/var/lib/history-worker',
+        'assignment': '/srv/history/assignment.json', 'worker_id': 'external-1', 'cache_bytes': 8 << 30},
+    ('transparent-display', 'external-worker'): {
+        'listen': '127.0.0.1:8095', 'role': 'combined', 'state_dir': '/var/lib/display-worker',
+        'publication_root': '/srv/display/publications'},
+    ('receiver', 'serve-publication'): {
+        'config_path': '/etc/receiver-serve/config.json',
+        'publication_record': '/etc/receiver-serve/record/publication.json',
+        'publication_root': '/srv/receiver-serve/publications', 'state_dir': '/var/lib/receiver-serve',
+        'bind': '127.0.0.1:18390', 'rpc_urls': ['http://127.0.0.1:8232'], 'no_auth': True},
+}

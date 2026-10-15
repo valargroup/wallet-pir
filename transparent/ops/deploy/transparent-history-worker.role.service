@@ -1,0 +1,27 @@
+# External Transparent history worker, rendered by transparent/ops/lib/roles.py.
+# It loads the staged shard set (or the active record on restart) and takes
+# prepare/activate/invalidate from the publication controller on its root-only
+# control socket. ExecStart and paths are rendered; budgets come from the
+# inventory.
+[Unit]
+Description=Transparent PIR history worker (external)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/bin/false
+Restart=on-failure
+RestartSec=10
+LimitNOFILE=1048576
+Environment=RUST_LOG=info
+RuntimeDirectory=transparent-history-worker
+RuntimeDirectoryMode=0700
+MemoryMax=12G
+MemorySwapMax=0
+NoNewPrivileges=true
+ProtectSystem=strict
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

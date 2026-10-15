@@ -16,7 +16,7 @@ from .paths import ROOT
 
 # Fields a role entry may carry. Anything else (shard assignments, members,
 # publication revisions) belongs to the product controller, not the inventory.
-ROLE_FIELDS = {'host', 'unit', 'vars', 'health_equals', 'artifact_kind', 'responsibilities'}
+ROLE_FIELDS = {'host', 'unit', 'vars', 'health_equals', 'artifact_kind', 'responsibilities', 'settings', 'install'}
 ANCILLARY_FIELDS = {'host', 'unit', 'kind', 'consumers', 'operations', 'note'}
 SERVICE_FIELDS = {'roles', 'vars', 'template_vars', 'exact_check'}
 
@@ -85,7 +85,7 @@ class Fleet:
                                     'matvec.matvec_backend = "cuda"' % target.key)
             if complete:
                 present = {t.role.name for t in targets}
-                missing = [r for r in service.order if r not in present]
+                missing = [r for r in service.order if r not in present and not service.roles[r].optional]
                 if missing:
                     problems.append('%s: required roles missing: %s' % (name, missing))
                 for role in service.roles.values():
