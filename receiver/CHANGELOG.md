@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Read the node through wallet-libraries' server-only chain adapters
+  (`zakura-server-chain`) instead of the indexer's own node client and block
+  decoding. Batch limits, response bounds and cookie handling are unchanged.
 - Move receiver cryptography to wallet-libraries' `zakura-receiver-crypto`: address
   and record field checks, zero-OVK recovery and witness files. The receiver PIR
   packages now parse structure only and expose explicitly unchecked record and

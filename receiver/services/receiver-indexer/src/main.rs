@@ -11,7 +11,6 @@ use receiver_indexer::{
     blocks::{MAX_RECEIVER_BATCH_BLOCKS, MAX_RECEIVER_CONCURRENCY},
     near::{Explorer, Reads},
     verify,
-    zakura::ZakuraClient,
 };
 use receiver_pir_server::Publications;
 use std::{
@@ -22,8 +21,8 @@ use std::{
 };
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
-use zakura_chain::{block::Hash, parameters::Network};
 use zakura_receiver_crypto::witness::WitnessCache;
+use zakura_server_chain::{Network, NodeClient};
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
@@ -47,7 +46,7 @@ struct Args {
     #[arg(long, default_value_t = 1 << 24)]
     max_witness_commitments: u64,
     /// A node's RPC endpoint. Repeat it for more nodes: each pass runs on the mainnet
-    /// one with the highest tip (see [`ZakuraClient::ranked`]).
+    /// one with the highest tip (see [`NodeClient::ranked`]).
     #[arg(long, required = true)]
     rpc_url: Vec<String>,
     #[arg(long, required_unless_present = "no_auth", conflicts_with = "no_auth")]
@@ -131,7 +130,7 @@ async fn main() -> Result<()> {
     let nodes = args
         .rpc_url
         .iter()
-        .map(|url| ZakuraClient::new(url.clone(), args.cookie.as_deref()))
+        .map(|url| NodeClient::new(url.clone(), args.cookie.as_deref()))
         .collect::<std::result::Result<Vec<_>, _>>()?;
     // This indexer currently requires mainnet; fail now if no node is on it.
     let genesis = Network::Mainnet.genesis_hash();
@@ -238,9 +237,9 @@ async fn shutdown() {
 }
 
 /// The node on `genesis`'s network with the highest tip, which runs a whole pass, and
-/// its tip (see [`ZakuraClient::ranked`]).
-async fn freshest(nodes: &[ZakuraClient], genesis: Hash) -> Result<(u64, ZakuraClient)> {
-    Ok(ZakuraClient::ranked(nodes, genesis).await?.swap_remove(0))
+/// its tip (see [`NodeClient::ranked`]).
+async fn freshest(nodes: &[NodeClient], genesis: [u8; 32]) -> Result<(u64, NodeClient)> {
+    Ok(NodeClient::ranked(nodes, genesis).await?.swap_remove(0))
 }
 
 /// Revokes every session once `rpc`, a node at tip `tip`, shows a served anchor is off
@@ -250,8 +249,8 @@ async fn freshest(nodes: &[ZakuraClient], genesis: Hash) -> Result<(u64, ZakuraC
 /// serving.
 async fn check_serving(
     publications: &Publications,
-    rpc: &ZakuraClient,
-    genesis: Hash,
+    rpc: &NodeClient,
+    genesis: [u8; 32],
     tip: u64,
 ) -> Result<()> {
     let (epoch, anchors) = publications.serving();
@@ -289,8 +288,8 @@ struct Active {
 /// built once the previous revision's grace ends.
 async fn refresh(
     args: &Args,
-    nodes: &[ZakuraClient],
-    genesis: Hash,
+    nodes: &[NodeClient],
+    genesis: [u8; 32],
     serving: Option<&Publications>,
     active: &mut Option<Active>,
     witness_cache: &mut WitnessCache,
@@ -301,12 +300,12 @@ async fn refresh(
     if let Some(serving) = serving {
         check_serving(serving, rpc, genesis, node_tip).await?;
     }
-    let boundary = rpc.receiver_boundary(args.start_height - 1).await?;
+    let boundary = receiver_indexer::blocks::boundary(rpc, args.start_height - 1).await?;
     std::fs::create_dir_all(&args.data_dir)?;
     let mut store = Store::open(
         args.data_dir.join("directory.sqlite"),
         Config {
-            genesis: genesis.0,
+            genesis,
             start_height: args.start_height,
             start_parent: boundary.hash,
             start_position: boundary.position,
@@ -375,13 +374,13 @@ async fn refresh(
         "backfill"
     );
     while tip.height < end {
-        let batch = rpc
-            .receiver_batch(
-                &tip,
-                (end - tip.height).min(args.batch_size),
-                args.concurrency,
-            )
-            .await?;
+        let batch = receiver_indexer::blocks::batch(
+            rpc,
+            &tip,
+            (end - tip.height).min(args.batch_size),
+            args.concurrency,
+        )
+        .await?;
         for block in batch {
             verify::append(&mut store, &block)?;
         }
@@ -580,8 +579,8 @@ fn unix_now() -> i64 {
 }
 
 /// Whether `hash` is the node's canonical block at `height`.
-async fn is_canonical(rpc: &ZakuraClient, height: u32, hash: [u8; 32]) -> Result<bool> {
-    Ok(rpc.block_hash(u64::from(height)).await?.parse::<Hash>()?.0 == hash)
+async fn is_canonical(rpc: &NodeClient, height: u32, hash: [u8; 32]) -> Result<bool> {
+    Ok(rpc.block_hash(u64::from(height)).await? == hash)
 }
 
 #[cfg(test)]
@@ -616,7 +615,7 @@ mod tests {
     }
 
     /// Serves `node` over JSON-RPC and returns a client for it.
-    async fn serve_node(node: Node) -> ZakuraClient {
+    async fn serve_node(node: Node) -> NodeClient {
         async fn handler(State(node): State<Node>, Json(r): Json<Value>) -> Json<Value> {
             let result = match r["method"].as_str().unwrap() {
                 "getblockcount" => json!(*node.tip.lock().unwrap()),
@@ -640,7 +639,7 @@ mod tests {
                         Some(None) => hashes.remove(&0),
                         None => None,
                     };
-                    json!(Hash(hash).to_string())
+                    json!(zakura_server_chain::hash::display(&hash))
                 }
                 "getblockheader" => json!({"time": *node.time.lock().unwrap()}),
                 method => panic!("unexpected {method}"),
@@ -651,7 +650,7 @@ mod tests {
         let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", socket.local_addr().unwrap());
         tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
-        ZakuraClient::new(url, None).unwrap()
+        NodeClient::new(url, None).unwrap()
     }
 
     /// An empty publication ending at block `[hash; 32]`, height 101.
@@ -677,7 +676,7 @@ mod tests {
         node.hashes
             .lock()
             .unwrap()
-            .extend([(0, mainnet.0), (101, [2; 32])]);
+            .extend([(0, mainnet), (101, [2; 32])]);
         let rpc = serve_node(node.clone()).await;
         let publications = Publications::default();
         assert!(publications.publish(publication(1), 0));
@@ -716,7 +715,7 @@ mod tests {
     struct Paused {
         dir: tempfile::TempDir,
         args: Args,
-        rpc: ZakuraClient,
+        rpc: NodeClient,
         /// The node `rpc` serves, its block headers dated [`NOW`] at first.
         node: Node,
         publications: Publications,
@@ -740,7 +739,7 @@ mod tests {
             };
             *node.tip.lock().unwrap() = height;
             node.hashes.lock().unwrap().extend([
-                (0, Network::Mainnet.genesis_hash().0),
+                (0, Network::Mainnet.genesis_hash()),
                 (height - 1, [2; 32]),
                 (height, [3; 32]),
             ]);
@@ -749,7 +748,7 @@ mod tests {
             let mut store = Store::open(
                 dir.path().join("directory.sqlite"),
                 Config {
-                    genesis: Network::Mainnet.genesis_hash().0,
+                    genesis: Network::Mainnet.genesis_hash(),
                     start_height: height as u32,
                     start_parent: [2; 32],
                     start_position: 0,
@@ -904,7 +903,7 @@ mod tests {
             let written = paused.dir.path().join("publications").exists();
             assert_eq!(written, repoint.is_none());
             *paused.node.repoint.lock().unwrap() = repoint;
-            paused.node.hashes.lock().unwrap().insert(0, mainnet.0);
+            paused.node.hashes.lock().unwrap().insert(0, mainnet);
             assert_eq!(paused.refresh().await.is_ok(), repoint.is_none());
             let serving = !paused.publications.anchors().is_empty();
             assert_eq!(serving, repoint.is_none());

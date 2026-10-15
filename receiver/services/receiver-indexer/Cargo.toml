@@ -31,7 +31,10 @@ thiserror = "2"
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-zakura-chain = { git = "https://github.com/zakura-core/zakura.git", rev = "83738c07468bee30a7db8a8d678cb27bf60094f4" }
-# Receiver address, record, recovery and proof checks, pinned to an exact revision.
-zakura-receiver-crypto = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "b9c4c1a73184aa9f536223fa89d502b56e90b7bc" }
+# Receiver address, record, recovery and proof checks, and the node reads and block
+# interpretation, from one exact wallet-libraries revision.
+zakura-receiver-crypto = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "869d88800d8c4be4aa87132c510785f0c1054faa" }
+zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "869d88800d8c4be4aa87132c510785f0c1054faa" }
 
+[dev-dependencies]
+zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "869d88800d8c4be4aa87132c510785f0c1054faa", features = ["testing"] }

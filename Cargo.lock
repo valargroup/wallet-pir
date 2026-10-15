@@ -936,10 +936,10 @@ dependencies = [
  "tower",
  "tracing",
  "tracing-subscriber",
- "zakura-chain",
  "zakura-note-encryption",
  "zakura-orchard",
  "zakura-pir-enhance",
+ "zakura-server-chain",
 ]
 
 [[package]]
@@ -2618,8 +2618,8 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
- "zakura-chain",
  "zakura-receiver-crypto",
+ "zakura-server-chain",
 ]
 
 [[package]]
@@ -4911,7 +4911,7 @@ dependencies = [
 [[package]]
 name = "zakura-receiver-crypto"
 version = "0.0.1-rc0"
-source = "git+https://github.com/zakura-core/wallet-libraries.git?rev=b9c4c1a73184aa9f536223fa89d502b56e90b7bc#b9c4c1a73184aa9f536223fa89d502b56e90b7bc"
+source = "git+https://github.com/zakura-core/wallet-libraries.git?rev=869d88800d8c4be4aa87132c510785f0c1054faa#869d88800d8c4be4aa87132c510785f0c1054faa"
 dependencies = [
  "incrementalmerkletree",
  "receiver-wire",
@@ -4978,6 +4978,22 @@ dependencies = [
  "zakura-redjubjub",
  "zcash_spec",
  "zip32",
+]
+
+[[package]]
+name = "zakura-server-chain"
+version = "0.0.1-rc0"
+source = "git+https://github.com/zakura-core/wallet-libraries.git?rev=869d88800d8c4be4aa87132c510785f0c1054faa#869d88800d8c4be4aa87132c510785f0c1054faa"
+dependencies = [
+ "axum",
+ "hex",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "zakura-chain",
+ "zakura-receiver-crypto",
 ]
 
 [[package]]

@@ -2,9 +2,8 @@
 //! The public transaction is real; the block envelope and the mixed
 //! transactions built from its actions are synthetic, not consensus-valid.
 mod support;
-// Producer fee derivation and the offline journal repair share the RPC double.
-#[path = "rpc/mixed_fee.rs"]
-mod mixed_fee;
+// The offline journal repair shares the RPC double; producer fee derivation is
+// tested with the producer in wallet-libraries' server chain adapters.
 #[path = "rpc/rebuild.rs"]
 mod rebuild;
 
@@ -27,7 +26,6 @@ use std::{
     },
     time::Duration,
 };
-use zakura_chain::serialization::ZcashDeserialize;
 
 struct Process(Child);
 impl Drop for Process {
@@ -210,27 +208,20 @@ async fn canonical_cli_ingests_rpc_rewinds_reorg_and_restarts_without_duplicatio
         )
         .build(),
     ];
-    let mut tail = Vec::new();
-    for transaction in [&same_block, &mixed[0], &mixed[1]] {
-        tail.extend(
-            zakura_chain::serialization::ZcashSerialize::zcash_serialize_to_vec(transaction)
-                .unwrap(),
-        );
-    }
     let mut blocks = Vec::new();
     for nonce in [0, 1, 2] {
-        // Serialized Zcash header: version, roots, time/bits, nonce, Equihash
-        // solution. The parser accepts this envelope; consensus is trusted to RPC.
-        let mut raw = vec![0u8; 140];
-        raw[..4].copy_from_slice(&4u32.to_le_bytes());
-        raw[108] = nonce;
-        raw.extend_from_slice(&[0xfd, 0x40, 0x05]);
-        raw.extend_from_slice(&[0; 1344]);
-        raw.push(4); // the public transaction, then the synthetic ones
-        raw.extend_from_slice(&tx);
-        raw.extend_from_slice(&tail);
-        let parsed = zakura_chain::block::Block::zcash_deserialize(raw.as_slice()).unwrap();
-        blocks.push((hex::encode(raw), parsed.hash().to_string()));
+        // The public transaction, then the synthetic ones, in an envelope the parser
+        // accepts; consensus is trusted to RPC.
+        let transactions = [
+            tx.clone(),
+            same_block.bytes(),
+            mixed[0].bytes(),
+            mixed[1].bytes(),
+        ];
+        blocks.push(zakura_server_chain::testing::block_from_raw(
+            &transactions,
+            nonce,
+        ));
     }
     let expected = [
         include_str!("fixtures/ironwood-canonical-record-0.hex"),
@@ -242,7 +233,7 @@ async fn canonical_cli_ingests_rpc_rewinds_reorg_and_restarts_without_duplicatio
         blocks: Arc::new(blocks),
         // Only the earlier transaction is outside the served block.
         transactions: Arc::new(HashMap::from([(
-            earlier.hash().to_string(),
+            earlier.txid_display(),
             support::raw(&earlier),
         )])),
         selected: Arc::new(AtomicUsize::new(0)),

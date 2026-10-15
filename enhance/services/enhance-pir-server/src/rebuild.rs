@@ -239,10 +239,13 @@ pub async fn rebuild_journal(
         ));
     }
     let heights: Vec<u64> = blocks.iter().map(|b| b.height).collect();
-    let hashes = rpc
+    let hashes: Vec<String> = rpc
         .block_hashes(&heights)
         .await
-        .map_err(|e| RebuildError::Zakura(height, e))?;
+        .map_err(|e| RebuildError::Zakura(height, e))?
+        .iter()
+        .map(zakura_server_chain::hash::display)
+        .collect();
     if let Some((block, hash)) = blocks.iter().zip(&hashes).find(|(b, h)| b.hash != **h) {
         return Err(RebuildError::Refused(format!(
             "source block {} is {}, chain has {hash}",
@@ -265,7 +268,7 @@ pub async fn rebuild_journal(
             let (rpc, prevouts, h) = (rpc.clone(), prevouts.clone(), entry.height);
             fetches.push_back((
                 h,
-                tokio::spawn(async move { rpc.block_records(h, &prevouts).await }),
+                tokio::spawn(async move { crate::zakura::block_records(&rpc, h, &prevouts).await }),
             ));
         }
         let mut records = Vec::new();
