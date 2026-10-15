@@ -374,7 +374,8 @@ def status_worker():
     sha = sha256(binary)
     port = free_port()
     listen = '127.0.0.1:%d' % port
-    settings = {'network_hex': 'ab' * 32, 'listen': listen, 'artifact_origin': 'http://127.0.0.1:%d' % free_port(),
+    artifact_port = free_port()
+    settings = {'network_hex': '31' * 32, 'listen': listen, 'artifact_origin': 'http://127.0.0.1:%d' % artifact_port,
                 'state_dir': str(r.work / 'worker-state')}
     inventory = r.inventory('status', 'external-worker', settings, listen)
     deployer = r.deployer('status', inventory)
@@ -385,13 +386,20 @@ def status_worker():
     r.executor.systemctl('local', 'restart', 'status-pir-worker.service')
     again = r.wait('restart', lambda: r.health('http://%s/control/identity' % listen))
     r.step('restart', new_incarnation=again['incarnation'] != identity['incarnation'])
-    # The release's own distributed validation runs its worker role against a
-    # synthetic controller and router with exact answers.
-    validation = r.run(binary, 'validate-distributed', '--entries', '32', '--state-dir', r.work / 'validation',
-                       timeout=1800, check=False)
-    r.step('worker-role-exact-answers', returncode=validation.returncode, exact_answer=validation.returncode == 0,
-           scope='the same released status-pir worker role, started by validate-distributed, not the installed unit',
-           output=(validation.stdout + validation.stderr)[-600:])
+    # Exercise the installed unit, including a new publication after restart.
+    for phase in ('first-publication', 'publication-after-restart'):
+        if phase == 'publication-after-restart':
+            r.executor.systemctl('local', 'restart', 'status-pir-worker.service')
+            r.wait('second restart', lambda: r.health('http://%s/control/identity' % listen))
+        validation = r.run(binary, 'validate-distributed', '--entries', '32',
+                           '--state-dir', r.work / phase, '--existing-worker', 'http://%s' % listen,
+                           '--artifact-listen', '127.0.0.1:%d' % artifact_port,
+                           '--request-timeout-seconds', '120', timeout=1800, check=False)
+        r.step(phase, returncode=validation.returncode, exact_answer=validation.returncode == 0,
+               scope='the installed external worker, with fixture controller and router',
+               output=(validation.stdout + validation.stderr)[-600:])
+        if validation.returncode:
+            raise RuntimeError('installed Status worker failed exact encrypted validation: %s' % phase)
     report = r.report('status', inventory)
     r.step('report', report=report)
     r.deployer('status', inventory).rollback(journal.id)

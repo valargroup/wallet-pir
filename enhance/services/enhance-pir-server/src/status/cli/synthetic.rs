@@ -672,6 +672,9 @@ pub async fn validate_distributed(
     entries: usize,
     cuda: bool,
     state_dir: PathBuf,
+    existing_worker: Option<String>,
+    artifact_listen: SocketAddr,
+    request_timeout_seconds: u64,
 ) -> Result<(), AnyError> {
     use status::distributed::{Activate, Binding, Health, Prepare, Ready};
     struct Children(Vec<std::process::Child>);
@@ -686,7 +689,31 @@ pub async fn validate_distributed(
     let snapshot = fixture::snapshot(entries, false)?;
     let rows = Arc::new(snapshot.rows.clone());
     let digest = snapshot.digest;
-    let artifact_listener = TcpListener::bind("127.0.0.1:0").await?;
+    require(
+        artifact_listen.ip().is_loopback(),
+        "fixture artifacts require loopback",
+    )?;
+    if let Some(origin) = &existing_worker {
+        let url = reqwest::Url::parse(origin)?;
+        require(
+            url.scheme() == "http"
+                && url
+                    .host_str()
+                    .and_then(|h| h.parse::<std::net::IpAddr>().ok())
+                    .is_some_and(|ip| ip.is_loopback())
+                && url.path() == "/"
+                && url.query().is_none()
+                && url.fragment().is_none()
+                && url.username().is_empty()
+                && url.password().is_none(),
+            "an existing fixture worker must be an HTTP loopback origin",
+        )?;
+    }
+    require(
+        (1..=900).contains(&request_timeout_seconds),
+        "invalid diagnostic request timeout",
+    )?;
+    let artifact_listener = TcpListener::bind(artifact_listen).await?;
     let artifact_origin = format!("http://{}", artifact_listener.local_addr()?);
     let artifacts = axum::Router::new().route(
         "/artifact/:id",
@@ -710,13 +737,17 @@ pub async fn validate_distributed(
     let ra = r.local_addr()?;
     drop(w);
     drop(r);
-    let worker = format!("http://{wa}");
+    let external_worker = existing_worker.is_some();
+    let worker = existing_worker.unwrap_or_else(|| format!("http://{wa}"));
     let router = format!("http://{ra}");
     let mut children = Children(Vec::new());
     for (role, addr, origin) in [
         ("worker", wa, artifact_origin),
         ("router", ra, worker.clone()),
     ] {
+        if role == "worker" && external_worker {
+            continue;
+        }
         let mut command = std::process::Command::new(std::env::current_exe()?);
         command
             .args([
@@ -740,7 +771,7 @@ pub async fn validate_distributed(
         children.0.push(command.spawn()?);
     }
     let http = reqwest::Client::builder()
-        .timeout(Duration::from_secs(20))
+        .timeout(Duration::from_secs(request_timeout_seconds))
         .build()?;
     let mut bindings = Vec::new();
     let mut healths = Vec::new();
@@ -866,6 +897,23 @@ pub async fn validate_distributed(
         hash: snapshot.anchor,
     };
     let client = Client::new(r.manifest.clone(), &public, &anchor)?;
+    // A missing artifact must not replace the active publication. Verify exact
+    // answers below after that failed update, against the original fixture.
+    let mut invalid = m.clone();
+    invalid.generation += 1;
+    let refused = http
+        .post(format!("{worker}/control/prepare"))
+        .json(&Prepare {
+            binding: bindings[0].clone(),
+            manifest: invalid,
+            artifact_digest: [0xff; 32],
+        })
+        .send()
+        .await?;
+    require(
+        !refused.status().is_success(),
+        "missing fixture artifact was accepted",
+    )?;
     for (txid, expected) in fixture::cases(entries, false) {
         let actual = lookup(&http, &router, &client, txid, Some(snapshot.height)).await?;
         require(actual == expected, "distributed encrypted oracle mismatch")?;
@@ -889,10 +937,11 @@ pub async fn validate_distributed(
     require(response.status() == 503, "fenced router still serves")?;
     heartbeat.abort();
     artifact_job.abort();
+    let _ = artifact_job.await;
     println!(
         "{}",
-        json!({"phase":"distributed_validation","passed":true,"processes":3,"cuda":cuda,
-        "entries":entries,"cases":["mined","mempool","forked","not_found","remote_fence"],"protocol":PROTOCOL,"rows":ROWS,"slots":SLOTS,"slot_bytes":SLOT_BYTES,"columns":ROW_BYTES/2,"row_bytes":ROW_BYTES,"database_bytes":ROWS*ROW_BYTES,"production_qualified":false})
+        json!({"phase":"distributed_validation","passed":true,"processes":3,"external_worker":external_worker,"cuda":cuda,
+        "entries":entries,"cases":["mined","mempool","forked","not_found","refused_update","remote_fence"],"protocol":PROTOCOL,"rows":ROWS,"slots":SLOTS,"slot_bytes":SLOT_BYTES,"columns":ROW_BYTES/2,"row_bytes":ROW_BYTES,"database_bytes":ROWS*ROW_BYTES,"production_qualified":false})
     );
     Ok(())
 }
