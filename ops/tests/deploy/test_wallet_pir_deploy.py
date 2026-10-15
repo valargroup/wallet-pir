@@ -692,8 +692,8 @@ class ReceiverTests(Fleet):
         template = self.dir / 'receiver-pir.service.in'
         template.write_text(RECEIVER_TEMPLATE.read_text().replace('--concurrency 12', '--concurrency 16'))
         service = SERVICES['receiver']
-        changed = dataclasses.replace(service, roles={'server': dataclasses.replace(service.roles['server'],
-                                                                                    template=template)})
+        changed = dataclasses.replace(service, roles={**service.roles, 'server': dataclasses.replace(
+            service.roles['server'], template=template)})
         deployer = self.deployer('receiver', service=changed)
         self.fake.log.clear()
         # The same, already staged binary: only the arguments change, and the
@@ -873,9 +873,12 @@ class UnitTests(unittest.TestCase):
         for name, service in SERVICES.items():
             keys = [t.key for t in descriptors.targets(service, inventory)]
             self.assertEqual(len(keys), len(set(keys)))
-        self.assertEqual(SERVICES['enhance'].order, ('worker', 'packing-router', 'query-ingress', 'coordinator'))
-        self.assertEqual(SERVICES['status'].order, ('worker', 'router', 'controller'))
-        self.assertEqual(SERVICES['receiver'].order, ('server',))
+        self.assertEqual(SERVICES['enhance'].order,
+                         ('worker', 'external-worker', 'packing-router', 'query-ingress', 'coordinator'))
+        self.assertEqual(SERVICES['status'].order, ('worker', 'external-worker', 'router', 'controller'))
+        self.assertEqual(SERVICES['receiver'].order, ('server', 'serve-publication'))
+        # External workers are optional additions, rendered whole by their product.
+        self.assertTrue(all(r.optional == (r.mode == 'role') for s in SERVICES.values() for r in s.roles.values()))
         self.assertEqual(SERVICES['receiver'].artifact_kinds, ('receiver-pir',))
         self.assertIn('receiver-directory', cli.load_release().BINARIES['receiver-pir'])
         (server,) = descriptors.targets(SERVICES['receiver'], inventory)
@@ -883,7 +886,8 @@ class UnitTests(unittest.TestCase):
 
     def test_only_a_template_role_can_own_its_unit(self):
         self.assertTrue(SERVICES['receiver'].roles['server'].owns_unit)
-        self.assertFalse(any(role.owns_unit for name in ('enhance', 'status') for role in SERVICES[name].roles.values()))
+        self.assertFalse(any(role.owns_unit for name in ('enhance', 'status') for role in SERVICES[name].roles.values()
+                             if role.mode != 'role'))
         text = (DEPLOY / 'deploy.toml').read_text().replace('template = "', 'template = "%s/' % DEPLOY)
         text += (ROOT / 'receiver/ops/digitalocean/service.toml').read_text().replace(
             'template = "receiver-pir.service.in"', 'template = "'+str(RECEIVER_TEMPLATE)+'"')

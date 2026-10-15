@@ -5,7 +5,7 @@ product publication state machines or change their authority and rollback rules.
 """
 from dataclasses import asdict, dataclass
 
-from .engine import Deployer
+from .engine import CHANGING, Deployer
 
 
 @dataclass(frozen=True)
@@ -40,14 +40,14 @@ class Lifecycle:
                     # A staging preflight must honor refusals before any upload.
                     if problems:
                         return self._inspection(operation, plans, problems, sha)
-                    d.stage(list(dict.fromkeys(p.target.host for p in plans if p.action == 'restart')), sha, binary)
+                    d.stage(list(dict.fromkeys(p.target.host for p in plans if p.action in CHANGING)), sha, binary)
                 finally:
                     d.lock = None
         plans, problems = d.assess(sha, binary, allow_drift, retire_historical,
                                    require_baseline=operation == 'preflight')
         d.describe(plans, sha)
         if operation == 'preflight':
-            for host in dict.fromkeys(p.target.host for p in plans if p.action == 'restart'):
+            for host in dict.fromkeys(p.target.host for p in plans if p.action in CHANGING):
                 path = d.service.release_binary(sha)
                 if d.ex.sha256(host, path) != sha:
                     d.out('%s: release not staged yet; deploy uploads it' % host)
@@ -57,9 +57,27 @@ class Lifecycle:
                     problems.append('%s: staged binary failed its self-check (exit %d): %s' % (host, code, output[-300:]))
                 else:
                     d.out('%s: staged release runs' % host)
+            for plan in plans:
+                # The product's own loader, over configuration already in place;
+                # rendered configuration not yet installed is checked by deploy,
+                # from a staged copy, before any unit changes.
+                if plan.action not in CHANGING or not plan.check:
+                    continue
+                pending = [c['path'] for c in plan.changes
+                           if c['op'] == 'write' and not c['path'].startswith('/etc/systemd/')]
+                release = d.service.release_binary(sha)
+                if pending or d.ex.sha256(plan.target.host, release) != sha:
+                    d.out('%s: product check runs at deploy, against staged configuration' % plan.target.key)
+                    continue
+                code, output = d.ex.run(plan.target.host, [release, *plan.check], 900)
+                if code:
+                    problems.append('%s: product check refused its input (exit %d): %s'
+                                    % (plan.target.key, code, output[-300:]))
+                else:
+                    d.out('%s: product check passed' % plan.target.key)
         for problem in problems:
             d.out('problem: ' + problem)
-        d.out('%d target(s) to restart, %d unchanged' % (sum(p.action == 'restart' for p in plans),
+        d.out('%d target(s) to restart or install, %d unchanged' % (sum(p.action in CHANGING for p in plans),
                                                        sum(p.action == 'skip' for p in plans)))
         return self._inspection(operation, plans, problems, sha)
 

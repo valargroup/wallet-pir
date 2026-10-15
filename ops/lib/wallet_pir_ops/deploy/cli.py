@@ -95,6 +95,9 @@ Transparent schema recipes run on the pinned coordinator under the same lock.
       Every mutation holds the production lock, journals prior bytes and prints the
       rollback command.
 
+  worker-report SERVICE [--only ROLE[@HOST]]
+      Read-only private report from existing endpoints: process, executable,
+      assigned and loaded publication, preparation, readiness axes.
   fleet [--complete]
       Configured roles and ancillary units; --complete also requires the whole fleet.
   ancillary-status NAME
@@ -213,6 +216,24 @@ def run_release(command, args, service, inventory, executor, deployer, out):
     return 1 if command == 'preflight' and result.problems else 0
 
 
+def external_workers(args, service, inventory):
+    """Whether a command touches only a product's role-mode external workers.
+
+    Product services keep their recipes for publications and every other role;
+    the shared engine may install, verify and roll back an external worker's
+    rendered unit, which never carries publication authority.
+    """
+    from .transaction import Journal
+    if args.command == 'rollback':
+        journal = Journal.load(args.state_dir, service.name, args.transaction)
+        return journal is not None and all(service.roles[r['role']].mode == 'role' for r in journal.hosts)
+    only = getattr(args, 'only', None)
+    if not only:
+        return False
+    selected = descriptors.select(descriptors.targets(service, inventory), only)
+    return all(t.role.mode == 'role' for t in selected)
+
+
 def parser():
     top = argparse.ArgumentParser(prog='wallet-pir-deploy.py', description=USAGE,
                                   formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -274,14 +295,16 @@ def parser():
     command.add_argument('service')
     command.add_argument('--transaction')
     command.add_argument('--force', action='store_true', help='restore even if unit files changed after the transaction')
+    command = commands.add_parser('worker-report', help='read-only private report of workers from their endpoints')
+    command.add_argument('service')
+    command.add_argument('--only', action='append', metavar='ROLE[@HOST]')
     for name in ('status', 'capture-baseline'):
         command = commands.add_parser(name)
         command.add_argument('service')
         if name == 'capture-baseline':
             command.add_argument('--output')
-        else:
-            command.add_argument('--only', action='append', metavar='ROLE[@HOST]',
-                                 help='read only these targets (repeatable)')
+        command.add_argument('--only', action='append', metavar='ROLE[@HOST]',
+                             help='only these targets (repeatable)')
     return top
 
 
@@ -395,10 +418,17 @@ def main(argv=None, executor=None, out=print, package_layout=None, package_githu
         if args.service not in services:
             raise DeployError('unknown service %r; known: %s' % (args.service, sorted(services)))
         service = services[args.service]
-        if service.driver != 'binary' and args.command != 'status':
+        inventory = descriptors.load_inventory(args.inventory)
+        if args.command == 'worker-report':
+            from .. import worker_report
+            executor = executor or SSHExecutor(inventory)
+            selected = descriptors.select(descriptors.targets(service, inventory), args.only)
+            out(json.dumps({'service': service.name, 'workers': worker_report.collect(service, selected, executor)},
+                           sort_keys=True))
+            return 0
+        if service.driver != 'binary' and args.command != 'status' and not external_workers(args, service, inventory):
             raise DeployError('%s uses the %s product recipes; ordinary binary deployment cannot change its publications'
                               % (service.name, service.driver))
-        inventory = descriptors.load_inventory(args.inventory)
         executor = executor or SSHExecutor(inventory)
         if args.command in ('plan', 'preflight', 'deploy'):
             groups = artifact_groups(args, service, inventory)

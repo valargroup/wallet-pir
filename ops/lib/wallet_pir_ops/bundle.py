@@ -17,10 +17,13 @@ from .paths import ROOT
 
 SCHEMA = 'wallet-pir-operations-v1'
 PREFIXES = ('ops/lib/', 'ops/scripts/', 'ops/deploy/', 'ops/infra/',
-            'enhance/ops/deploy/', 'enhance/ops/scripts/',
+            'enhance/ops/deploy/', 'enhance/ops/scripts/', 'enhance/ops/lib/',
             'transparent/ops/lib/', 'transparent/ops/scripts/', 'transparent/ops/deploy/',
-            'transparent/ops/scaler/', 'transparent/ops/systemd/', 'receiver/ops/digitalocean/')
+            'transparent/ops/scaler/', 'transparent/ops/systemd/', 'receiver/ops/digitalocean/',
+            'receiver/ops/lib/', 'receiver/ops/deploy/')
 EXACT = {'transparent/__init__.py', 'transparent/ops/__init__.py',
+         'enhance/__init__.py', 'enhance/ops/__init__.py',
+         'receiver/__init__.py', 'receiver/ops/__init__.py',
          'tools/ci/release.py', 'docs/operations.md'}
 EXTENSIONS = {'.py', '.sh', '.toml', '.service', '.timer', '.in', '.caddy', '.tf', '.tftpl', '.yaml'}
 MAX_BYTES = 32 * 1024 * 1024
@@ -28,7 +31,8 @@ REQUIRED = {'ops/scripts/wallet-pir-deploy.py', 'ops/scripts/wallet-pir-roles.py
             'ops/scripts/wallet-pir-bundle.py', 'ops/deploy/services.toml',
             'ops/lib/wallet_pir_ops/__init__.py', 'ops/lib/wallet_pir_ops/deploy/host_helper.py',
             'ops/lib/wallet_pir_ops/release.py', 'transparent/ops/lib/deploy_cli.py',
-            'transparent/ops/lib/roles.py', 'receiver/ops/digitalocean/service.toml'}
+            'transparent/ops/lib/roles.py', 'receiver/ops/digitalocean/service.toml',
+            'enhance/ops/lib/roles.py', 'receiver/ops/lib/roles.py'}
 
 
 def mode(name):
