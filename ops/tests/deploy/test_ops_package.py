@@ -679,6 +679,12 @@ class RehearsalTests(PackageCase):
     def test_an_identical_directory_without_a_recorded_owner_is_not_reused(self):
         self.release(A).parent.mkdir(parents=True)
         bundle.extract(self.archive(A), self.release(A), A)
+        # Make the unowned tree otherwise valid, regardless of the caller's umask.
+        # This case must reach the transaction-ownership check, not a mode refusal.
+        for directory in [self.release(A).parent.parent, self.release(A).parent,
+                          self.release(A), *self.release(A).rglob('*')]:
+            if directory.is_dir():
+                directory.chmod(0o755)
         _, problems, _ = self.plan()
         self.assertTrue(any('no recorded package transaction created it' in p for p in problems), problems)
 
