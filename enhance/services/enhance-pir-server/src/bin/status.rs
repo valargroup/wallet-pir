@@ -49,6 +49,15 @@ enum Command {
         cuda: bool,
         #[arg(long)]
         state_dir: PathBuf,
+        /// Validate an already installed synthetic-fixture worker instead of spawning one.
+        #[arg(long)]
+        existing_worker: Option<String>,
+        /// Fixture artifact listener; must match an existing worker's artifact origin.
+        #[arg(long, default_value = "127.0.0.1:0")]
+        artifact_listen: SocketAddr,
+        /// Diagnostic request deadline, separate from production transport policy.
+        #[arg(long, default_value_t = 20, value_parser = clap::value_parser!(u64).range(1..=900))]
+        request_timeout_seconds: u64,
     },
     /// Independent private role. Loopback endpoints require authenticated SSH forwarding.
     Role {
@@ -202,7 +211,20 @@ async fn main() -> Result<(), cli::AnyError> {
             entries,
             cuda,
             state_dir,
-        } => cli::validate_distributed(entries, cuda, state_dir).await?,
+            existing_worker,
+            artifact_listen,
+            request_timeout_seconds,
+        } => {
+            cli::validate_distributed(
+                entries,
+                cuda,
+                state_dir,
+                existing_worker,
+                artifact_listen,
+                request_timeout_seconds,
+            )
+            .await?
+        }
         Command::Role {
             role,
             network_hex,
