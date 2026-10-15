@@ -37,6 +37,12 @@ exclude = [
     "enhance/crates/transparent-spend-pir",
 ]
 
+# wallet-libraries pins this repository's dependency-free receiver record codec by
+# revision. Resolve that pin to the in-repository package, so the workspace builds
+# one copy of the codec and `-p receiver-wire` names one package.
+[patch."https://github.com/valargroup/wallet-pir"]
+receiver-wire = { path = "receiver/crates/receiver-wire" }
+
 # spiral-rs's Barrett reduction is intentionally wrapping: `barrett_raw_u128`
 # computes `zy * cr1 + tmp3 + carry` and relies on it wrapping modulo 2^64. That
 # is correct, but it panics under debug overflow checks whenever the input

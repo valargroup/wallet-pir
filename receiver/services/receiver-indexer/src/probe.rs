@@ -23,20 +23,20 @@ use crate::{
 };
 use clap::Parser;
 use receiver_directory::{
-    extract::Action,
     filter::{Filters, MAX_FILTERS_BYTES, PAID},
-    witness::{WitnessSnapshot, MAX_WITNESS_BYTES},
-    Hash, Payment, Receiver,
+    Hash, Payment, ReceiverBytes,
 };
 use receiver_pir::{
-    public_bytes, response_bytes, transport::MAX_PIR_PAGES, AcceptedCoverage, Client, Manifest,
-    MAX_MANIFEST_BYTES,
+    public_bytes, response_bytes,
+    transport::{MAX_PIR_PAGES, MAX_WITNESS_BYTES},
+    AcceptedCoverage, Client, Manifest, MAX_MANIFEST_BYTES,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{path::PathBuf, time::Duration};
 use zakura_chain::parameters::Network;
+use zakura_receiver_crypto::{recovery::Action, witness::WitnessSnapshot, Receiver};
 
 /// The production fixture: a mainnet refund to a zero-OVK receiver (see `Fixture`).
 const MAINNET_FIXTURE: &[u8] = include_bytes!("../fixtures/mainnet-probe.json");
@@ -197,6 +197,7 @@ async fn probe(args: Args, lookup: &mut Option<(u32, bool)>) -> Result<Option<Fa
         }
         _ => return Ok(Some(("oracle_invalid", json!({"fixture": "not zero-OVK"})))),
     }
+    let receiver = *receiver.as_bytes();
     let http = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(20))
         .redirect(reqwest::redirect::Policy::none())
@@ -537,7 +538,8 @@ async fn check_witnesses(
 ) -> Result<Option<Failure>> {
     let request = http.get(format!("{origin}/v1/receiver/witness/{id}"));
     let proof = fetch(request, MAX_WITNESS_BYTES, "witnesses", |bytes| {
-        WitnessSnapshot::decode(bytes, directory)
+        let publication = crate::verify::publication(directory).map_err(|e| e.to_string())?;
+        WitnessSnapshot::decode(bytes, &publication).map_err(|e| e.to_string())
     });
     let proof = match proof.await? {
         Ok(proof) => proof,
@@ -568,7 +570,7 @@ async fn check_filters(
     origin: &str,
     id: &str,
     directory: &receiver_directory::snapshot::Manifest,
-    receiver: &Receiver,
+    receiver: &ReceiverBytes,
 ) -> Result<Option<Failure>> {
     let request = http.get(format!("{origin}/v1/receiver/filters/{id}"));
     let filters = fetch(request, MAX_FILTERS_BYTES, "filters", |bytes| {
@@ -694,7 +696,7 @@ async fn fetch<T, E: std::fmt::Display>(
 
 #[cfg(test)]
 #[path = "../../../crates/receiver-directory/tests/common/mod.rs"]
-mod common;
+pub(crate) mod common;
 
 #[cfg(test)]
 mod tests {
@@ -1017,9 +1019,8 @@ mod tests {
         rpc: &str,
     ) -> Args {
         let snapshot = receiver_directory::snapshot::Snapshot::build(directory, &[], &[]).unwrap();
-        let server = receiver_pir::server::Server::new(snapshot).unwrap();
         let publications = receiver_pir_server::Publications::default();
-        let publication = receiver_pir_server::Publication::new(server, None).unwrap();
+        let publication = crate::verify::prepare(snapshot, None).unwrap();
         assert!(publications.publish(publication, 0));
         let app = receiver_pir_server::router_with_publications(publications);
         let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1133,7 +1134,12 @@ mod tests {
         let mut manifest = super::common::manifest(receiver_pir::MIN_ROWS);
         (manifest.start_position, manifest.end_position) = (0, 1);
         let positions = Default::default();
-        let file = WitnessSnapshot::build(&manifest, &[cmx.into()], &positions).unwrap();
+        let file = WitnessSnapshot::build(
+            &crate::verify::publication(&manifest).unwrap(),
+            &[cmx.into()],
+            &positions,
+        )
+        .unwrap();
         assert_eq!(file.root(), node_root);
         let mut reversed = node_root;
         reversed.reverse();
@@ -1162,7 +1168,12 @@ mod tests {
         let snapshot =
             receiver_directory::snapshot::Snapshot::build(manifest, &records, &[]).unwrap();
         let positions = [0, 5].into_iter().collect();
-        let proof = WitnessSnapshot::build(&snapshot.manifest, served, &positions).unwrap();
+        let proof = WitnessSnapshot::build(
+            &crate::verify::publication(&snapshot.manifest).unwrap(),
+            served,
+            &positions,
+        )
+        .unwrap();
         (
             snapshot.manifest,
             proof.encode(),
@@ -1176,7 +1187,10 @@ mod tests {
     async fn the_witness_file_must_prove_the_fixture_under_the_nodes_root() {
         let tree: Vec<Hash> = (1..=8).map(|i| [i; 32]).collect();
         let (directory, proof, payment) = witnessed(&tree, &tree);
-        let root = WitnessSnapshot::decode(&proof, &directory).unwrap().root();
+        let root =
+            WitnessSnapshot::decode(&proof, &crate::verify::publication(&directory).unwrap())
+                .unwrap()
+                .root();
         let serve = |status: u16, bytes: Vec<u8>| async move {
             let status = axum::http::StatusCode::from_u16(status).unwrap();
             let app = Router::new().route(
@@ -1208,7 +1222,11 @@ mod tests {
         // Another revision's file, for the same tree under another salt.
         let mut other = directory.clone();
         other.salt[0] ^= 1;
-        let stale = WitnessSnapshot::build(&other, &tree, &[0, 5].into_iter().collect());
+        let stale = WitnessSnapshot::build(
+            &crate::verify::publication(&other).unwrap(),
+            &tree,
+            &[0, 5].into_iter().collect(),
+        );
         let detail = check(serve(200, stale.unwrap().encode()).await, payment.clone()).await;
         assert!(detail.unwrap().unwrap()["witnesses"].is_string());
         let mut wrong = payment.clone();
@@ -1331,7 +1349,7 @@ mod tests {
     /// receiver in its paid set.
     #[tokio::test]
     async fn the_filter_file_must_match_its_manifest() {
-        let build = |records: &[receiver_directory::Record]| {
+        let build = |records: &[receiver_directory::RawRecord]| {
             let manifest = super::common::manifest(receiver_pir::MIN_ROWS);
             receiver_directory::snapshot::Snapshot::build(manifest, records, &[]).unwrap()
         };
@@ -1674,11 +1692,7 @@ mod tests {
         };
         let fixture: Value = serde_json::from_slice(MAINNET_FIXTURE).unwrap();
         assert_eq!(fixture["receiver"], super::common::RECEIVER_HEX);
-        let other = {
-            use orchard::keys::{FullViewingKey, Scope, SpendingKey};
-            let fvk = FullViewingKey::from(&SpendingKey::from_bytes([3; 32]).unwrap());
-            hex::encode(fvk.address_at(0u32, Scope::External).to_raw_address_bytes())
-        };
+        let other = hex::encode(super::common::seeded_receiver(3));
         for (pin, detail) in [
             (None, "malformed"),
             (Some("zz".to_owned()), "receiver"),

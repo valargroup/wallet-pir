@@ -7,8 +7,13 @@ outgoing viewing key (OVK). Coinbase recipients are excluded. Every Ironwood
 Action still counts toward note positions, including coinbase and unrecoverable
 outputs.
 
-`receiver-directory` holds zero-OVK extraction, records, publications, common
-witnesses and, with the `store` feature, the indexer's SQLite store.
+`receiver-wire` is the fixed record codec. `receiver-directory` holds records,
+publications and, with the `store` feature, the indexer's SQLite store; it parses
+structure only. Cryptography is wallet-owned: `zakura-receiver-crypto` in
+wallet-libraries checks receivers, unified addresses and record fields, recovers
+receivers with the zero OVK, and builds and checks witness files. The indexer
+calls it before storing a payment and before serving a publication, and a wallet
+calls it before crediting a payment. No receiver PIR package depends on it.
 `receiver-pir` holds the PIR client and the wallet `Transport` interface, plus
 the evaluator with the `server` feature. `receiver-pir-server` serves
 publications over HTTP. `receiver-indexer` builds them from a Zakura node; its
@@ -45,8 +50,8 @@ domain-separated SHA-256 of every field at fixed width, as Enhance and Status
 hash their manifests, and a manifest with a field this version does not know is
 refused.
 
-`Snapshot::validate` checks a supplied publication whole, before a server prepares
-it: the row and filter digests, the declared filter sets and a paid set of exactly
+`Snapshot::validate` checks a supplied publication's structure whole, before a
+server prepares it: the row and filter digests, the declared filter sets and a paid set of exactly
 the records' receivers, every slot and row padding, each record's coverage and
 bucket, the exact record count, every receiver's pages, each continuing the last
 in chain order as `snapshot::check_next` requires, and that no two records share an
@@ -91,8 +96,8 @@ rows.
 The `IWPROOF1` witness file has a 152-byte header binding the genesis, revision,
 terminal height and hash, tree size and root. Sorted 37-byte nodes (level,
 index, hash) follow, with every sibling of each payment position. It is capped
-at 64 MiB. A server publishes a file only once it has checked a path to that
-root for every record in the rows. Building the file reads every commitment
+at 64 MiB. The indexer serves a file only once it has checked a path to that root
+for every record in the rows. Building the file reads every commitment
 since the empty tree, so the store refuses a history longer than the caller's
 limit, the indexer's `--max-witness-commitments`, before reading it.
 
@@ -227,14 +232,18 @@ payments, but never which receivers were looked up.
 
 ## Tests
 
-`cargo test -p receiver-directory --features store` covers recovery of a public
-mainnet refund, records, publications, store restart and rollback, and witnesses
-against an independent tree. `cargo test -p receiver-pir-server` runs encrypted
+`cargo test -p receiver-directory --features store` covers records,
+publications, and store restart and rollback, including the commitment history a
+witness file is built from. Recovery of a public mainnet refund, record and
+address checks, and witnesses against an independent tree are tested in
+`zakura-receiver-crypto`. `cargo test -p receiver-pir-server` runs encrypted
 round trips at every geometry and the HTTP service. `cargo test -p receiver-pir
 --features server --test golden` pins the protocol's seeds, framing and row
 placement against digests from a request built outside `Client`. `cargo test -p
-receiver-indexer` covers indexing with synthetic blocks, serving from memory and
-the probe's encrypted lookup. Recovery follows
+receiver-indexer` covers indexing with synthetic blocks, refusal of invalid
+records and witness files before storing or serving, witness files fetched over
+HTTP and checked with the library, serving from memory and the probe's encrypted
+lookup. Recovery follows
 `zcash/zips@afa086bd976e316612a5c06fb139429958d07d84`, NU6.3 proposal, section
 4.19.3 (`decryptovk`).
 

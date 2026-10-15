@@ -5,7 +5,7 @@ use crate::{
 };
 use receiver_directory::{
     snapshot::{lookup_row, row_for, ROW_BYTES},
-    Payment, Receiver,
+    Payment, RawRecord, ReceiverBytes,
 };
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
@@ -45,6 +45,9 @@ enum DiscoverySession {
     Pir(Client),
     File { manifest: Manifest, rows: Vec<u8> },
 }
+
+/// The largest common proof file a client downloads.
+pub const MAX_WITNESS_BYTES: usize = 64 * 1024 * 1024;
 
 /// Pages one lookup reads over PIR; a receiver with more loads the row file instead.
 /// Each page is one sequential request, and a publication is served for only about a
@@ -168,19 +171,17 @@ impl<T: Transport> DirectoryClient<T> {
         }
     }
 
-    /// Download identical proof bytes for all wallets. This never contains a receiver in the request.
-    pub async fn witnesses(&self) -> Result<receiver_directory::witness::WitnessSnapshot, Error> {
-        let bytes = self
-            .http
+    /// Download the common proof file, identical for all wallets, of at most
+    /// [`MAX_WITNESS_BYTES`]. The request never contains a receiver. The bytes are
+    /// unchecked: the wallet verifies them against this session's manifest and its own
+    /// chain before trusting any path.
+    pub async fn witnesses(&self) -> Result<Vec<u8>, Error> {
+        self.http
             .get(
                 &format!("{}/v1/receiver/witness/{}", self.origin, self.id),
-                receiver_directory::witness::MAX_WITNESS_BYTES,
+                MAX_WITNESS_BYTES,
             )
-            .await?;
-        Ok(receiver_directory::witness::WitnessSnapshot::decode(
-            &bytes,
-            &self.manifest().directory,
-        )?)
+            .await
     }
 
     /// Return every payment to `receiver` in one publication, or an error. No partial
@@ -188,13 +189,15 @@ impl<T: Transport> DirectoryClient<T> {
     /// over PIR and otherwise loads the file once and reads every page locally. Neither
     /// hides from the directory that a receiver has several payments. Revalidate the
     /// anchor before crediting results if the wallet's chain changes while awaiting I/O.
+    /// Payments are checked structurally only: the wallet validates their Action fields
+    /// cryptographically before use.
     pub async fn lookup(
         &mut self,
-        receiver: Receiver,
+        receiver: ReceiverBytes,
         accepted: AcceptedCoverage,
     ) -> Result<Vec<Payment>, Error> {
         accepted.check(&self.manifest().directory)?;
-        let mut records: Vec<receiver_directory::Record> = Vec::new();
+        let mut records: Vec<RawRecord> = Vec::new();
         let mut outputs = BTreeSet::new();
         loop {
             let page = records.len() as u32;

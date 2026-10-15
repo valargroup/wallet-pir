@@ -1,36 +1,13 @@
 mod common;
-use common::{action, manifest, receiver, record, RECEIVER_HEX};
+use common::{manifest, receiver, record};
 use receiver_directory::{
     snapshot::{lookup_row, row_for, Snapshot, MAX_ROWS, MIN_ROWS, ROW_BYTES, SLOTS},
-    Error, Receiver, Record, RECORD_BYTES,
+    Error, RawRecord, ReceiverBytes, RECORD_BYTES,
 };
 
-fn row<'a>(s: &'a Snapshot, r: &Receiver, page: u32) -> &'a [u8] {
+fn row<'a>(s: &'a Snapshot, r: &ReceiverBytes, page: u32) -> &'a [u8] {
     let n = row_for(&s.manifest, r, page).unwrap();
     &s.data[n * ROW_BYTES..(n + 1) * ROW_BYTES]
-}
-
-#[test]
-fn public_refund_requires_authenticated_recovery() {
-    // Recovery must yield exactly the independently decoded receiver, which the
-    // fixture also carries for the probe.
-    let fixture: serde_json::Value =
-        serde_json::from_str(include_str!("fixtures/zero-ovk-action.json")).unwrap();
-    assert_eq!(fixture["receiver"], RECEIVER_HEX);
-    let recovered = action().recover_receiver().unwrap().unwrap();
-    assert_eq!(
-        recovered.as_bytes().as_slice(),
-        hex::decode(RECEIVER_HEX).unwrap()
-    );
-    let mut a = action();
-    a.out_ciphertext[0] ^= 1;
-    assert!(a.recover_receiver().unwrap().is_none());
-    let mut a = action();
-    a.enc_ciphertext[579] ^= 1;
-    assert!(a.recover_receiver().unwrap().is_none());
-    let mut a = action();
-    a.cmx = [255; 32];
-    assert!(a.recover_receiver().is_err());
 }
 
 #[test]
@@ -39,29 +16,29 @@ fn wire_layout_and_strict_empty_slots() {
     let b = r.encode().unwrap();
     assert_eq!(b.len(), 285);
     assert_eq!(&b[129..137], &200u64.to_le_bytes());
-    assert_eq!(Record::decode(&b).unwrap(), Some(r));
-    assert!(Record::decode(&[0; RECORD_BYTES]).unwrap().is_none());
+    assert_eq!(RawRecord::decode(&b).unwrap(), Some(r));
+    assert!(RawRecord::decode(&[0; RECORD_BYTES]).unwrap().is_none());
     let mut corrupt = [0; RECORD_BYTES];
     corrupt[284] = 1;
-    assert!(Record::decode(&corrupt).is_err());
-    assert!(Record::decode(&b[..284]).is_err());
+    assert!(RawRecord::decode(&corrupt).is_err());
+    assert!(RawRecord::decode(&b[..284]).is_err());
 }
 
-/// Structural decoding never makes invalid cryptographic fields acceptable to
-/// the existing validating API, including when a caller used the raw encoder.
+/// The directory parses structure only. Cryptographically invalid receiver and
+/// Action bytes pass through a build, a lookup and a supplied publication unchanged:
+/// the publisher refuses them before storing, and every wallet before crediting.
 #[test]
-fn structurally_valid_records_still_require_cryptographic_checks() {
-    let valid = record(0, 1).encode().unwrap();
-    for field in [1..44, 137..169, 169..201, 201..233] {
-        let mut bytes = valid;
-        bytes[field.clone()].fill(255);
-        let raw = receiver_wire::RawRecord::decode(&bytes).unwrap().unwrap();
-        assert_eq!(raw.encode().unwrap(), bytes);
-        assert!(
-            matches!(Record::decode(&bytes), Err(Error::Malformed)),
-            "invalid cryptographic bytes at {field:?}"
-        );
-    }
+fn records_are_carried_without_cryptographic_checks() {
+    let mut r = record(0, 1);
+    r.receiver = [255; 43];
+    let p = &mut r.payment;
+    (p.action_nullifier, p.cmx, p.ephemeral_key) = ([255; 32], [255; 32], [255; 32]);
+    let s = Snapshot::build(manifest(8), &[r.clone()], &[]).unwrap();
+    s.validate().unwrap();
+    assert_eq!(
+        lookup_row(&s.manifest, &r.receiver, 0, row(&s, &r.receiver, 0)).unwrap(),
+        Some(r)
+    );
 }
 
 /// A manifest with a field this version does not know is refused, and the revision
@@ -130,12 +107,31 @@ fn pages_share_one_revision_and_build_order_is_stable() {
     assert!(Snapshot::build(manifest(8), &[record(0, 1), record(0, 1)], &[]).is_err());
 }
 
+/// Valid Ironwood receivers, pinned in `fixtures/receivers.json` (see
+/// [`common::seeded_receiver`]): `other` and `third` from spending keys of bytes 3 and
+/// 4 at external index zero, and `spread` from the spending key of bytes 5 at external
+/// indices 0 to 15.
+fn pinned(key: &str) -> Vec<ReceiverBytes> {
+    let fixture: serde_json::Value =
+        serde_json::from_str(include_str!("fixtures/receivers.json")).unwrap();
+    let values = match &fixture[key] {
+        serde_json::Value::Array(values) => values.clone(),
+        value => vec![value.clone()],
+    };
+    values
+        .iter()
+        .map(|v| {
+            hex::decode(v.as_str().unwrap())
+                .unwrap()
+                .try_into()
+                .unwrap()
+        })
+        .collect()
+}
+
 /// A valid receiver other than [`receiver`].
-fn other_receiver() -> Receiver {
-    let sk = orchard::keys::SpendingKey::from_bytes([3; 32]).unwrap();
-    let fvk = orchard::keys::FullViewingKey::from(&sk);
-    let address = fvk.address_at(0u32, orchard::keys::Scope::External);
-    Receiver::from_bytes(address.to_raw_address_bytes()).unwrap()
+fn other_receiver() -> ReceiverBytes {
+    pinned("other")[0]
 }
 
 #[test]
@@ -460,7 +456,7 @@ fn a_total_beyond_the_record_count_is_malformed() {
         .unwrap();
     // The total pages field follows the version, receiver and page.
     b[slot * RECORD_BYTES + 48..slot * RECORD_BYTES + 52].copy_from_slice(&2u32.to_le_bytes());
-    assert!(Record::decode(&b[slot * RECORD_BYTES..(slot + 1) * RECORD_BYTES]).is_ok());
+    assert!(RawRecord::decode(&b[slot * RECORD_BYTES..(slot + 1) * RECORD_BYTES]).is_ok());
     assert!(matches!(
         lookup_row(&s.manifest, &r, 0, &b),
         Err(Error::Malformed)
@@ -665,7 +661,7 @@ fn unsnapshottable_payments_are_refused() {
         start_position: 200,
     };
     let mut store = Store::open(dir.path().join("directory.sqlite"), config).unwrap();
-    let block = |payments: Vec<Record>| IndexedBlock {
+    let block = |payments: Vec<RawRecord>| IndexedBlock {
         height: 100,
         hash: [3; 32],
         parent: [2; 32],
@@ -809,70 +805,15 @@ fn crowded_buckets_retry_the_salt_before_growing() {
     );
 }
 
-#[test]
-fn common_witnesses_bind_positions_and_reject_corrupt_or_stale_data() {
-    use incrementalmerkletree::{frontier::CommitmentTree, witness::IncrementalWitness};
-    use orchard::{note::ExtractedNoteCommitment, tree::MerkleHashOrchard};
-    use receiver_directory::witness::WitnessSnapshot;
-    let commitments: Vec<[u8; 32]> = (1..=20u8).map(|i| [i; 32]).collect();
-    let mut manifest = manifest(8);
-    manifest.start_position = 0;
-    manifest.end_position = 20;
-    manifest.records = 5;
-    let positions = [0, 5, 6, 18, 19].into_iter().collect();
-    let snapshot = WitnessSnapshot::build(&manifest, &commitments, &positions).unwrap();
-    let encoded = snapshot.encode();
-    let restored = WitnessSnapshot::decode(&encoded, &manifest).unwrap();
-    for position in positions {
-        let mut tree = CommitmentTree::<MerkleHashOrchard, 32>::empty();
-        let mut witness = None;
-        for (index, cmx) in commitments.iter().enumerate() {
-            let hash =
-                MerkleHashOrchard::from_cmx(&ExtractedNoteCommitment::from_bytes(cmx).unwrap());
-            tree.append(hash).unwrap();
-            if index == position as usize {
-                witness = IncrementalWitness::from_tree(tree.clone());
-            } else if let Some(w) = &mut witness {
-                w.append(hash).unwrap();
-            }
-        }
-        let expected = witness.unwrap().path().unwrap();
-        assert_eq!(
-            restored
-                .path(position, commitments[position as usize])
-                .unwrap()
-                .as_slice(),
-            expected
-                .path_elems()
-                .iter()
-                .map(|h| h.to_bytes())
-                .collect::<Vec<_>>()
-        );
-        assert!(restored.path(position, [31; 32]).is_err());
-    }
-    let mut stale = manifest.clone();
-    stale.end_hash[0] ^= 1;
-    assert!(WitnessSnapshot::decode(&encoded, &stale).is_err());
-    assert!(WitnessSnapshot::decode(&encoded[..encoded.len() - 1], &manifest).is_err());
-    let mut corrupt = encoded.clone();
-    corrupt[152] = 32;
-    assert!(WitnessSnapshot::decode(&corrupt, &manifest).is_err());
-    let mut corrupt = encoded.clone();
-    corrupt[116] ^= 1;
-    assert!(WitnessSnapshot::decode(&corrupt, &manifest)
-        .unwrap()
-        .path(0, commitments[0])
-        .is_err());
-    assert_eq!(encoded, restored.encode());
-}
-
+/// A publication's commitments and payment positions come from one database view and
+/// follow appends, rewinds, reopening and replacement blocks; the caller's commitment
+/// limit admits exactly the history's length.
 #[cfg(feature = "store")]
 #[test]
-fn cached_store_proofs_follow_rewinds_reopen_and_replacement_blocks() {
+fn store_witness_inputs_follow_rewinds_reopen_and_replacement_blocks() {
     use receiver_directory::{
         snapshot::TREE_SIZE,
-        store::{Config, IndexedBlock, Store},
-        witness::WitnessCache,
+        store::{Config, IndexedBlock, Store, WitnessInputs},
     };
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("directory.sqlite");
@@ -899,29 +840,19 @@ fn cached_store_proofs_follow_rewinds_reopen_and_replacement_blocks() {
     };
     store.append(&block).unwrap();
     let first = store.snapshot(8, &[]).unwrap();
-    let mut cache = WitnessCache::default();
-    // A fresh cache builds from scratch; the reused one must match it byte for byte.
-    let full = |store: &Store, m| {
-        store
-            .witnesses(m, &mut WitnessCache::default(), TREE_SIZE)
-            .unwrap()
-            .encode()
+    let expected = WitnessInputs {
+        commitments: vec![[1; 32], [2; 32], payment.cmx],
+        positions: [2].into_iter().collect(),
     };
-    let expected = full(&store, &first.manifest);
-    // The caller's commitment limit admits exactly the history's length.
     let len = first.manifest.end_position;
-    store.witnesses(&first.manifest, &mut cache, len).unwrap();
-    assert!(matches!(
-        store.witnesses(&first.manifest, &mut cache, len - 1),
-        Err(Error::Capacity)
-    ));
     assert_eq!(
-        store
-            .witnesses(&first.manifest, &mut cache, TREE_SIZE)
-            .unwrap()
-            .encode(),
+        store.witness_inputs(&first.manifest, len).unwrap(),
         expected
     );
+    assert!(matches!(
+        store.witness_inputs(&first.manifest, len - 1),
+        Err(Error::Capacity)
+    ));
     block.height = 101;
     block.hash = [4; 32];
     block.parent = [3; 32];
@@ -931,22 +862,21 @@ fn cached_store_proofs_follow_rewinds_reopen_and_replacement_blocks() {
     block.payments.clear();
     store.append(&block).unwrap();
     let second = store.snapshot(8, &[]).unwrap();
+    let mut longer = expected.clone();
+    longer.commitments.extend([[3; 32], [4; 32]]);
     assert_eq!(
-        store
-            .witnesses(&second.manifest, &mut cache, TREE_SIZE)
-            .unwrap()
-            .encode(),
-        full(&store, &second.manifest)
+        store.witness_inputs(&second.manifest, TREE_SIZE).unwrap(),
+        longer
+    );
+    // The earlier publication still reads only its own history.
+    assert_eq!(
+        store.witness_inputs(&first.manifest, TREE_SIZE).unwrap(),
+        expected
     );
     store.rewind(100, [3; 32]).unwrap();
-    assert!(store
-        .witnesses(&second.manifest, &mut cache, TREE_SIZE)
-        .is_err());
+    assert!(store.witness_inputs(&second.manifest, TREE_SIZE).is_err());
     assert_eq!(
-        store
-            .witnesses(&first.manifest, &mut cache, TREE_SIZE)
-            .unwrap()
-            .encode(),
+        store.witness_inputs(&first.manifest, TREE_SIZE).unwrap(),
         expected
     );
     drop(store);
@@ -955,30 +885,28 @@ fn cached_store_proofs_follow_rewinds_reopen_and_replacement_blocks() {
     block.commitments[0] = [9; 32];
     store.append(&block).unwrap();
     let replacement = store.snapshot(8, &[]).unwrap();
+    let mut replaced = expected.clone();
+    replaced.commitments.extend([[9; 32], [4; 32]]);
     assert_eq!(
         store
-            .witnesses(&replacement.manifest, &mut cache, TREE_SIZE)
-            .unwrap()
-            .encode(),
-        full(&store, &replacement.manifest)
+            .witness_inputs(&replacement.manifest, TREE_SIZE)
+            .unwrap(),
+        replaced
     );
+    assert!(store.witness_inputs(&second.manifest, TREE_SIZE).is_err());
     let mut wrong = replacement.manifest;
     wrong.end_position -= 1;
-    assert!(store.witnesses(&wrong, &mut cache, TREE_SIZE).is_err());
+    assert!(store.witness_inputs(&wrong, TREE_SIZE).is_err());
 }
 
-/// Indexed blocks before the first commitment publish a header-only proof file
-/// against the empty tree's root, and the same cache follows a commitment and a
-/// rewind back.
+/// Indexed blocks before the first commitment give an empty history, and the inputs
+/// follow a commitment and a rewind back.
 #[cfg(feature = "store")]
 #[test]
-fn store_proofs_cover_empty_indexed_blocks() {
-    use incrementalmerkletree::Hashable;
-    use orchard::tree::MerkleHashOrchard;
+fn store_witness_inputs_cover_empty_indexed_blocks() {
     use receiver_directory::{
         snapshot::TREE_SIZE,
         store::{Config, IndexedBlock, Store},
-        witness::WitnessCache,
     };
     let dir = tempfile::tempdir().unwrap();
     let config = Config {
@@ -1003,38 +931,18 @@ fn store_proofs_cover_empty_indexed_blocks() {
     store.append(&block).unwrap();
     let empty = store.snapshot(8, &[]).unwrap().manifest;
     assert_eq!((empty.records, empty.end_position), (0, 0));
-    let mut cache = WitnessCache::default();
-    let proof = store
-        .witnesses(&empty, &mut cache, TREE_SIZE)
-        .unwrap()
-        .encode();
-    assert_eq!(proof.len(), 152);
-    assert_eq!(
-        &proof[116..148],
-        MerkleHashOrchard::empty_root(32.into()).to_bytes()
-    );
+    let inputs = store.witness_inputs(&empty, TREE_SIZE).unwrap();
+    assert!(inputs.commitments.is_empty() && inputs.positions.is_empty());
     (block.height, block.hash, block.parent) = (102, [5; 32], [4; 32]);
     (block.end_position, block.commitments) = (1, vec![[1; 32]]);
     store.append(&block).unwrap();
     let one = store.snapshot(8, &[]).unwrap().manifest;
     assert_eq!(
-        store
-            .witnesses(&one, &mut cache, TREE_SIZE)
-            .unwrap()
-            .encode(),
-        store
-            .witnesses(&one, &mut WitnessCache::default(), TREE_SIZE)
-            .unwrap()
-            .encode()
+        store.witness_inputs(&one, TREE_SIZE).unwrap().commitments,
+        [[1; 32]]
     );
     store.rewind(101, [4; 32]).unwrap();
-    assert_eq!(
-        store
-            .witnesses(&empty, &mut cache, TREE_SIZE)
-            .unwrap()
-            .encode(),
-        proof
-    );
+    assert_eq!(store.witness_inputs(&empty, TREE_SIZE).unwrap(), inputs);
 }
 
 /// A history with more payments than the table has slots fails with
@@ -1087,7 +995,7 @@ fn rehash(s: &mut Snapshot) {
 }
 
 /// The byte offset of `r`'s slot in `s`'s rows.
-fn slot_of(s: &Snapshot, r: &Record) -> usize {
+fn slot_of(s: &Snapshot, r: &RawRecord) -> usize {
     let encoded = r.encode().unwrap();
     (0..s.manifest.rows as usize)
         .flat_map(|row| (0..SLOTS).map(move |slot| row * ROW_BYTES + slot * RECORD_BYTES))
@@ -1096,7 +1004,7 @@ fn slot_of(s: &Snapshot, r: &Record) -> usize {
 }
 
 /// Writes `r` into the slot at `offset`, or empties it.
-fn put(s: &mut Snapshot, offset: usize, r: Option<&Record>) {
+fn put(s: &mut Snapshot, offset: usize, r: Option<&RawRecord>) {
     let bytes = r.map_or([0; RECORD_BYTES], |r| r.encode().unwrap());
     s.data[offset..offset + RECORD_BYTES].copy_from_slice(&bytes);
 }
@@ -1133,39 +1041,6 @@ fn records_share_no_output_or_position() {
         rehash(&mut s);
         assert!(matches!(s.validate(), Err(Error::Malformed)));
     }
-}
-
-/// A note commitment, Action nullifier or ephemeral key that is not a canonical
-/// encoding is refused by encoding, and one such field by decoding, a build and a
-/// supplied publication.
-#[test]
-fn records_refuse_noncanonical_fields() {
-    let a = action();
-    let mut real = record(0, 1);
-    (
-        real.payment.action_nullifier,
-        real.payment.cmx,
-        real.payment.ephemeral_key,
-    ) = (a.nullifier, a.cmx, a.ephemeral_key);
-    assert_eq!(Record::decode(&real.encode().unwrap()).unwrap(), Some(real));
-    for field in 0..3 {
-        let mut r = record(0, 1);
-        let p = &mut r.payment;
-        *[&mut p.action_nullifier, &mut p.cmx, &mut p.ephemeral_key][field] = [255; 32];
-        assert!(matches!(r.encode(), Err(Error::Malformed)));
-    }
-    // The ephemeral key, at byte offset 201.
-    let mut r = record(0, 1);
-    r.payment.ephemeral_key = [255; 32];
-    assert!(Snapshot::build(manifest(8), &[r], &[]).is_err());
-    let mut bytes = record(0, 1).encode().unwrap();
-    bytes[201..233].fill(255);
-    assert!(matches!(Record::decode(&bytes), Err(Error::Malformed)));
-    let mut s = Snapshot::build(manifest(8), &[record(0, 1)], &[]).unwrap();
-    let slot = slot_of(&s, &record(0, 1));
-    s.data[slot + 201..slot + 233].fill(255);
-    rehash(&mut s);
-    assert!(matches!(s.validate(), Err(Error::Malformed)));
 }
 
 /// A supplied publication is checked as a whole: digests, placement, count, pages,
@@ -1239,32 +1114,20 @@ fn supplied_publications_are_validated_record_by_record() {
     // A paid set of the declared size but other receivers.
     refused(&|s| {
         use receiver_directory::filter::{Filter, Filters};
-        let third = {
-            let sk = orchard::keys::SpendingKey::from_bytes([4; 32]).unwrap();
-            let fvk = orchard::keys::FullViewingKey::from(&sk);
-            let address = fvk.address_at(0u32, orchard::keys::Scope::External);
-            Receiver::from_bytes(address.to_raw_address_bytes()).unwrap()
-        };
+        let third = pinned("third")[0];
         let paid = Filter::build(&s.manifest.salt, &[receiver(), third]);
         s.filters = Filters::new(paid, []).unwrap().encode().unwrap();
     });
 }
 
-/// `n` distinct valid receivers.
-fn receivers(n: u32) -> Vec<Receiver> {
-    let sk = orchard::keys::SpendingKey::from_bytes([5; 32]).unwrap();
-    let fvk = orchard::keys::FullViewingKey::from(&sk);
-    (0..n)
-        .map(|i| {
-            let address = fvk.address_at(i, orchard::keys::Scope::External);
-            Receiver::from_bytes(address.to_raw_address_bytes()).unwrap()
-        })
-        .collect()
+/// `n` distinct valid receivers, at most 16.
+fn receivers(n: u32) -> Vec<ReceiverBytes> {
+    pinned("spread")[..n as usize].to_vec()
 }
 
 /// `pages` payments to each of `receivers`, interleaved in [`manifest`]'s last block,
 /// one transaction each, at successive positions from 200.
-fn spread(receivers: &[Receiver], pages: u32) -> Vec<Record> {
+fn spread(receivers: &[ReceiverBytes], pages: u32) -> Vec<RawRecord> {
     let n = receivers.len() as u32;
     (0..pages)
         .flat_map(|page| {

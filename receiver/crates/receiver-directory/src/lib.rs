@@ -1,13 +1,15 @@
 //! Receiver discovery records. A match is a candidate, never proof of ownership or spendability.
-pub mod extract;
+//!
+//! This crate places, stores and parses records structurally; it checks no
+//! cryptography. Callers validate receivers, Action fields and inclusion proofs at
+//! their trust boundaries.
 pub mod filter;
 pub mod record;
 pub mod snapshot;
 #[cfg(feature = "store")]
 pub mod store;
-pub mod witness;
 
-pub use record::{Payment, Receiver, Record, RECORD_BYTES};
+pub use record::{Payment, RawRecord, ReceiverBytes, RECORD_BYTES};
 /// A 32-byte hash in protocol byte order.
 pub type Hash = [u8; 32];
 
@@ -18,7 +20,7 @@ pub enum Error {
     Malformed,
     #[error("receiver directory coverage is incomplete or uses a different anchor")]
     Coverage,
-    #[error("receiver directory table or witness limit exceeded")]
+    #[error("receiver directory table or commitment history limit exceeded")]
     Capacity,
     #[error("missing continuation page")]
     MissingPage,
