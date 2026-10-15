@@ -73,7 +73,7 @@ pub fn prepare_segment(
     source: &SegmentSource,
     label: String,
 ) -> Result<Prepared, SegmentError> {
-    let path = out.path(key, shared, &source.sha256);
+    let path = out.path(key, shared, source.sha256());
     let name = path
         .file_name()
         .expect("an entry path has a name")
@@ -89,14 +89,14 @@ pub fn prepare_segment(
         write_seconds,
     };
     let started = Instant::now();
-    if let Ok(bytes) = out.completed(key, shared, &source.sha256) {
+    if let Ok(bytes) = out.completed(key, shared, source.sha256()) {
         return Ok(record(bytes, true, 0.0, started.elapsed().as_secs_f64()));
     }
     for from in retained {
         if from.directory() == out.directory() {
             continue;
         }
-        if let Some(bytes) = link(from, out, key, shared, &source.sha256) {
+        if let Some(bytes) = link(from, out, key, shared, source.sha256()) {
             return Ok(record(bytes, true, 0.0, started.elapsed().as_secs_f64()));
         }
     }
@@ -111,7 +111,7 @@ pub fn prepare_segment(
     drop(rows);
     let started = Instant::now();
     let bytes = out
-        .write(key, shared, &source.sha256, &runtime)
+        .write(key, shared, source.sha256(), &runtime)
         .map_err(|error| SegmentError::Runtime(format!("writing the {label} runtime: {error}")))?;
     Ok(record(
         bytes,
@@ -168,13 +168,13 @@ mod tests {
         }
         let path = dir.join(format!("pages-{seed}.bin"));
         fs::write(&path, &rows).unwrap();
-        let source = SegmentSource {
+        let source = SegmentSource::published(
             path,
-            rows: profile.rows as u64,
-            row_bytes: profile.row_bytes as u32,
-            sha256: hex::encode(Sha256::digest(&rows)),
-            zero_from_row: profile.rows as u64,
-        };
+            profile.rows as u64,
+            profile.row_bytes as u32,
+            hex::encode(Sha256::digest(&rows)),
+            profile.rows as u64,
+        );
         (shared, source)
     }
 
@@ -213,21 +213,21 @@ mod tests {
         assert!(linked.linked);
         assert_eq!(linked.bytes, built.bytes);
         let (a, b) = (
-            fs::metadata(first.path(&key, &shared, &source.sha256)).unwrap(),
-            fs::metadata(second.path(&key, &shared, &source.sha256)).unwrap(),
+            fs::metadata(first.path(&key, &shared, source.sha256())).unwrap(),
+            fs::metadata(second.path(&key, &shared, source.sha256())).unwrap(),
         );
         assert_eq!((a.dev(), a.ino()), (b.dev(), b.ino()));
 
         // A truncated retained file is not linked; the new one is built.
         let truncated = publication(dir.path(), "truncated");
         fs::copy(
-            first.path(&key, &shared, &source.sha256),
-            truncated.path(&key, &shared, &source.sha256),
+            first.path(&key, &shared, source.sha256()),
+            truncated.path(&key, &shared, source.sha256()),
         )
         .unwrap();
         fs::OpenOptions::new()
             .write(true)
-            .open(truncated.path(&key, &shared, &source.sha256))
+            .open(truncated.path(&key, &shared, source.sha256()))
             .unwrap()
             .set_len(built.bytes / 2)
             .unwrap();
@@ -249,16 +249,16 @@ mod tests {
         let other = ("cd".repeat(32), Table::Pages, 0);
         prepare_segment(&foreign, &[], &other, &shared, &source, "pages".into()).unwrap();
         fs::rename(
-            foreign.path(&other, &shared, &source.sha256),
-            foreign.path(&key, &shared, &source.sha256),
+            foreign.path(&other, &shared, source.sha256()),
+            foreign.path(&key, &shared, source.sha256()),
         )
         .unwrap();
         // Only an interrupted write's partial file in another.
         let interrupted = publication(dir.path(), "interrupted");
         fs::copy(
-            first.path(&key, &shared, &source.sha256),
+            first.path(&key, &shared, source.sha256()),
             interrupted
-                .path(&key, &shared, &source.sha256)
+                .path(&key, &shared, source.sha256())
                 .with_extension("partial"),
         )
         .unwrap();
@@ -274,7 +274,7 @@ mod tests {
         .unwrap();
         assert!(!rebuilt.linked);
         // An invalid file already in the publication is replaced.
-        fs::write(fourth.path(&key, &shared, &source.sha256), b"invalid").unwrap();
+        fs::write(fourth.path(&key, &shared, source.sha256()), b"invalid").unwrap();
         let replaced = prepare_segment(
             &fourth,
             std::slice::from_ref(&first),
@@ -286,7 +286,7 @@ mod tests {
         .unwrap();
         assert!(replaced.linked);
         assert_eq!(
-            fs::metadata(fourth.path(&key, &shared, &source.sha256))
+            fs::metadata(fourth.path(&key, &shared, source.sha256()))
                 .unwrap()
                 .ino(),
             a.ino()
@@ -294,7 +294,7 @@ mod tests {
 
         // A source that no longer matches its digest is the publication's
         // fault, not an optional runtime's.
-        fs::write(&source.path, b"corrupt").unwrap();
+        fs::write(source.path(), b"corrupt").unwrap();
         let fifth = publication(dir.path(), "fifth");
         assert!(matches!(
             prepare_segment(&fifth, &[], &key, &shared, &source, "pages".into()),

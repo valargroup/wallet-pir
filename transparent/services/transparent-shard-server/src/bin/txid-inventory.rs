@@ -233,7 +233,7 @@ impl Rows {
             let source = revision.segment(table, segment).ok_or("table not held")?;
             files.insert(
                 (table, segment as usize),
-                std::fs::File::open(&source.path)?,
+                std::fs::File::open(source.path())?,
             );
         }
         Ok(Self {

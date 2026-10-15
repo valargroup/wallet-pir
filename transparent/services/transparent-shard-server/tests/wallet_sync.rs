@@ -3881,7 +3881,7 @@ async fn prepared_and_built_runtimes_answer_identically_at_populated_empty_and_b
                 // runtime.
                 let files: Vec<Vec<u8>> = (0..segments)
                     .map(|segment| {
-                        std::fs::read(&shard.segment(table, segment).unwrap().path).unwrap()
+                        std::fs::read(&shard.segment(table, segment).unwrap().path()).unwrap()
                     })
                     .collect();
                 let populated = files
@@ -3975,7 +3975,7 @@ async fn a_prepared_runtime_one_row_off_is_refused_and_the_sync_stays_exact() {
     )
     .unwrap();
     let source = shard.segment(TableRef::Directory, 0).unwrap();
-    let rows = std::fs::read(&source.path).unwrap();
+    let rows = std::fs::read(source.path()).unwrap();
     let row_bytes = shared.profile.row_bytes;
     let changed = rows
         .chunks(row_bytes)
@@ -3997,7 +3997,7 @@ async fn a_prepared_runtime_one_row_off_is_refused_and_the_sync_stays_exact() {
         0,
     );
     ShippedRuntimes::new(dir.path().to_path_buf())
-        .write(&key, &shared, &source.sha256, &forged)
+        .write(&key, &shared, source.sha256(), &forged)
         .unwrap();
     let (base, state) = serve_prepared(dir.path(), true).await;
     let wallet = vec![script(1), script(2), script(3), script(999)];

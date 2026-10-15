@@ -254,23 +254,181 @@ pub fn setup_seed(geometry: &Geometry, table: Table) -> u64 {
 /// them, and it re-checks both length and digest, so a file replaced or
 /// truncated after startup fails the build rather than being packed into a
 /// runtime and served.
+///
+/// A verified input record: only the loaders construct one, from a manifest
+/// they have checked, and its fields are read-only. Naming a path and a digest
+/// is not enough to obtain one, so nothing outside the loader can present an
+/// arbitrary file as a verified segment.
 #[derive(Clone, Debug)]
 pub struct SegmentSource {
-    pub path: PathBuf,
-    pub rows: u64,
-    pub row_bytes: u32,
+    path: PathBuf,
+    rows: u64,
+    row_bytes: u32,
     /// SHA-256 of the file, in hex, as the manifest publishes it.
-    pub sha256: String,
+    sha256: String,
     /// The first row a query may omit, from which every byte must be zero:
     /// a page shard's [`query_rows`], or `rows` when queries select every
     /// row. Checked wherever the digest is, so no runtime is built or
     /// restored from a segment whose omitted rows hold data.
     ///
     /// [`query_rows`]: transparent_shard::manifest::PageChild::query_rows
-    pub zero_from_row: u64,
+    zero_from_row: u64,
+    /// What this process observed of the file the last time it hashed it,
+    /// when that observation is certain enough to vouch for the file later;
+    /// see [`FileStamp`]. In memory only, so a restart verifies everything.
+    evidence: Option<FileStamp>,
+}
+
+/// The identity and change metadata of a file this process hashed.
+///
+/// Sampled from the open file before and after the bytes were read, and from
+/// the path once they had been: all three must agree, or the file changed
+/// while it was verified and is refused. A later revision whose segment
+/// resolves to a file with the same stamp is the same inode, unmodified since
+/// it was hashed, and inherits the verification without re-reading it.
+///
+/// The change time is not part of the stamp: creating a hard link updates it,
+/// and hard links are exactly how an unchanged table reaches a new revision.
+/// The modification time is, and it is only trusted when it predates the read
+/// by more than any timestamp granularity, so a write in the same tick as the
+/// file's last modification cannot leave the stamp unchanged.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FileStamp {
+    dev: u64,
+    ino: u64,
+    len: u64,
+    mtime_sec: i64,
+    mtime_nsec: i64,
+}
+
+impl FileStamp {
+    fn of(meta: &std::fs::Metadata) -> Option<Self> {
+        use std::os::unix::fs::MetadataExt;
+        meta.is_file().then(|| Self {
+            dev: meta.dev(),
+            ino: meta.ino(),
+            len: meta.len(),
+            mtime_sec: meta.mtime(),
+            mtime_nsec: meta.mtime_nsec(),
+        })
+    }
+
+    /// Whether the last modification predates `instant` by more than the
+    /// coarsest timestamp granularity a host filesystem uses.
+    fn settled_before(&self, instant: std::time::SystemTime) -> bool {
+        let Ok(since) = instant.duration_since(std::time::UNIX_EPOCH) else {
+            return false;
+        };
+        let modified = i128::from(self.mtime_sec) * 1_000_000_000 + i128::from(self.mtime_nsec);
+        modified + i128::from(EVIDENCE_SETTLE_NANOS) < since.as_nanos() as i128
+    }
+}
+
+/// How long before a read a file must last have been modified for its stamp
+/// to vouch for it later: one second, the coarsest mtime granularity in use.
+const EVIDENCE_SETTLE_NANOS: i64 = 1_000_000_000;
+
+/// What one load spent proving its tables, and what it took over instead.
+///
+/// `bytes_hashed` counts table bytes streamed through SHA-256 while loading,
+/// including the directory re-read that checks a choice table; runtime builds
+/// and cache restores re-check their sources separately and are not counted.
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct VerificationReport {
+    pub segments_hashed: u64,
+    pub segments_reused: u64,
+    pub bytes_hashed: u64,
+    /// The part of `bytes_hashed` that was page shard tables.
+    pub page_bytes_hashed: u64,
+    /// Table bytes inherited from earlier verification without re-reading.
+    pub bytes_reused: u64,
+    /// Rows read back for content checks beyond the digest (display rows).
+    pub bytes_row_checked: u64,
+    pub wall_micros: u64,
+    /// CPU time of the loading thread, where the host reports it.
+    pub cpu_micros: Option<u64>,
+}
+
+impl VerificationReport {
+    fn hashed(&mut self, source: &SegmentSource, page: bool) {
+        self.segments_hashed += 1;
+        self.bytes_hashed += source.bytes() as u64;
+        if page {
+            self.page_bytes_hashed += source.bytes() as u64;
+        }
+    }
+
+    fn reused(&mut self, source: &SegmentSource) {
+        self.segments_reused += 1;
+        self.bytes_reused += source.bytes() as u64;
+    }
+
+    /// Records the wall and thread CPU time since `started`.
+    pub(crate) fn finish(&mut self, started: &VerificationClock) {
+        self.wall_micros = started.wall.elapsed().as_micros() as u64;
+        self.cpu_micros = started
+            .cpu
+            .zip(crate::procmem::thread_cpu_nanos())
+            .map(|(before, after)| after.saturating_sub(before) / 1_000);
+    }
+}
+
+/// When a load began, by the wall clock and the loading thread's CPU clock.
+pub(crate) struct VerificationClock {
+    wall: std::time::Instant,
+    cpu: Option<u64>,
+}
+
+impl VerificationClock {
+    pub(crate) fn start() -> Self {
+        Self {
+            wall: std::time::Instant::now(),
+            cpu: crate::procmem::thread_cpu_nanos(),
+        }
+    }
 }
 
 impl SegmentSource {
+    /// A segment as a checked manifest publishes it, not yet verified.
+    /// Loader-only: the loaders construct one and then verify or reuse it.
+    pub(crate) fn published(
+        path: PathBuf,
+        rows: u64,
+        row_bytes: u32,
+        sha256: String,
+        zero_from_row: u64,
+    ) -> Self {
+        Self {
+            path,
+            rows,
+            row_bytes,
+            sha256,
+            zero_from_row,
+            evidence: None,
+        }
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub fn rows(&self) -> u64 {
+        self.rows
+    }
+
+    pub fn row_bytes(&self) -> u32 {
+        self.row_bytes
+    }
+
+    /// SHA-256 of the file, in hex, as the manifest publishes it.
+    pub fn sha256(&self) -> &str {
+        &self.sha256
+    }
+
+    pub fn zero_from_row(&self) -> u64 {
+        self.zero_from_row
+    }
+
     /// Bytes this segment occupies on disk, and transiently in memory while a
     /// runtime is built from it.
     ///
@@ -286,20 +444,26 @@ impl SegmentSource {
     /// every shard at startup and a fleet-sized set would otherwise need its
     /// whole plaintext resident to prove it is intact.
     pub fn verify(&self) -> Result<(), LoadError> {
-        let mut file = std::fs::File::open(&self.path).map_err(|source| LoadError::Io {
+        self.verify_stamped().map(drop)
+    }
+
+    /// Verifies the segment and returns what was observed of its file, when
+    /// that is settled enough to serve as evidence later.
+    fn verify_stamped(&self) -> Result<Option<FileStamp>, LoadError> {
+        let io = |source| LoadError::Io {
             path: self.path.clone(),
             source,
-        })?;
+        };
+        let started = std::time::SystemTime::now();
+        let mut file = std::fs::File::open(&self.path).map_err(io)?;
+        let before = file.metadata().map_err(io)?;
         let mut hasher = Sha256::new();
         let mut buffer = vec![0u8; 1 << 20];
         let mut total = 0usize;
         let zero_from = self.zero_from();
         let mut tail_data = false;
         loop {
-            let read = file.read(&mut buffer).map_err(|source| LoadError::Io {
-                path: self.path.clone(),
-                source,
-            })?;
+            let read = file.read(&mut buffer).map_err(io)?;
             if read == 0 {
                 break;
             }
@@ -312,7 +476,69 @@ impl SegmentSource {
         }
         crate::filecache::consumed(&file);
         self.check(total, hasher.finalize().as_slice())?;
-        self.check_zero_tail(tail_data)
+        self.check_zero_tail(tail_data)?;
+        let after = file.metadata().map_err(io)?;
+        let named = std::fs::metadata(&self.path).map_err(io)?;
+        let stamp = FileStamp::of(&before);
+        if stamp.is_none() || stamp != FileStamp::of(&after) || stamp != FileStamp::of(&named) {
+            return Err(LoadError::Invalid(format!(
+                "{} changed while it was verified",
+                self.path.display()
+            )));
+        }
+        Ok(stamp.filter(|stamp| stamp.settled_before(started)))
+    }
+
+    /// Verifies the segment and keeps the evidence for later revisions.
+    fn verify_into(
+        mut self,
+        report: &mut VerificationReport,
+        page: bool,
+    ) -> Result<Self, LoadError> {
+        self.evidence = self.verify_stamped()?;
+        report.hashed(&self, page);
+        Ok(self)
+    }
+
+    /// This segment's verification, carried to `candidate`: the same
+    /// committed segment published at another path. Only when this process
+    /// holds evidence for the file and `candidate` resolves to that very
+    /// file, unmodified since; otherwise `None` and the caller verifies.
+    fn rebind(&self, candidate: &SegmentSource) -> Option<Self> {
+        let evidence = self.evidence?;
+        if self.sha256 != candidate.sha256
+            || self.rows != candidate.rows
+            || self.row_bytes != candidate.row_bytes
+            || self.zero_from_row != candidate.zero_from_row
+        {
+            return None;
+        }
+        let meta = std::fs::metadata(&candidate.path).ok()?;
+        (FileStamp::of(&meta)? == evidence).then(|| Self {
+            path: candidate.path.clone(),
+            evidence: Some(evidence),
+            ..self.clone()
+        })
+    }
+
+    /// Takes over earlier verification of the same committed segment, or
+    /// verifies it. Used by every loader so no table has a second policy.
+    pub(crate) fn verify_or_reuse<'a>(
+        self,
+        earlier: impl IntoIterator<Item = &'a SegmentSource>,
+        report: &mut VerificationReport,
+        page: bool,
+    ) -> Result<Self, LoadError> {
+        match earlier
+            .into_iter()
+            .find_map(|earlier| earlier.rebind(&self))
+        {
+            Some(reused) => {
+                report.reused(&reused);
+                Ok(reused)
+            }
+            None => self.verify_into(report, page),
+        }
     }
 
     /// Reads and verifies the segment, for building a runtime from.
@@ -596,6 +822,24 @@ impl LoadedShard {
 
     /// Verifies every table segment of a revision and produces the loaded shard.
     pub fn verify_tables(dir: &Path, meta: RevisionMeta) -> Result<Self, LoadError> {
+        Self::verify_tables_reusing(
+            dir,
+            meta,
+            &Evidence::default(),
+            &mut VerificationReport::default(),
+        )
+    }
+
+    /// Verifies a revision's tables, taking over any segment `evidence`
+    /// already proved: the same committed table segment — runtime identity,
+    /// kind, index, digest and geometry — published as the very file this
+    /// process hashed, unmodified since. Everything else is hashed.
+    fn verify_tables_reusing(
+        dir: &Path,
+        meta: RevisionMeta,
+        evidence: &Evidence<'_>,
+        report: &mut VerificationReport,
+    ) -> Result<Self, LoadError> {
         let RevisionMeta {
             manifest,
             digest,
@@ -607,9 +851,11 @@ impl LoadedShard {
         // segment with its own widths would silently need its own parameters,
         // and sharing one set per geometry is the whole point of naming it.
         let source = |table: TableRef,
+                      identity: &str,
                       index: usize,
                       published: &transparent_shard::manifest::TableGeometry,
-                      zero_from_row: u64|
+                      zero_from_row: u64,
+                      report: &mut VerificationReport|
          -> Result<SegmentSource, LoadError> {
             let kind = table.kind();
             if published.rows != kind.rows(geometry)
@@ -626,15 +872,18 @@ impl LoadedShard {
                     kind.row_bytes(geometry),
                 )));
             }
-            let source = SegmentSource {
-                path: dir.join(format!("{}.{index}.bin", table.name())),
-                rows: published.rows,
-                row_bytes: published.row_bytes,
-                sha256: published.sha256.clone(),
+            SegmentSource::published(
+                dir.join(format!("{}.{index}.bin", table.name())),
+                published.rows,
+                published.row_bytes,
+                published.sha256.clone(),
                 zero_from_row,
-            };
-            source.verify()?;
-            Ok(source)
+            )
+            .verify_or_reuse(
+                evidence.get(identity, kind, index as u32).iter().copied(),
+                report,
+                kind == Table::Pages,
+            )
         };
         if manifest.directory_segments.is_empty() {
             return Err(LoadError::Invalid(format!(
@@ -642,31 +891,54 @@ impl LoadedShard {
                 manifest.shard_id
             )));
         }
+        let hashed_before = report.segments_hashed;
         let directory = manifest
             .directory_segments
             .iter()
             .enumerate()
-            .map(|(index, published)| source(TableRef::Directory, index, published, published.rows))
+            .map(|(index, published)| {
+                source(
+                    TableRef::Directory,
+                    &digest,
+                    index,
+                    published,
+                    published.rows,
+                    report,
+                )
+            })
             .collect::<Result<Vec<_>, _>>()?;
+        // A directory taken over whole was proved under this very manifest,
+        // choice table included, so its routes were checked then.
+        let directory_reused = report.segments_hashed == hashed_before && evidence.holds(&digest);
         let identities = manifest.child_digests();
         let mut children = Vec::with_capacity(manifest.page_children.len());
         for (child, identity) in manifest.page_children.iter().zip(&identities) {
             let query_rows = child.query_rows();
+            let identity = hex::encode(identity);
             let segments = child
                 .page_segments
                 .iter()
                 .enumerate()
                 .map(|(index, published)| {
-                    source(TableRef::Pages(child.index), index, published, query_rows)
+                    source(
+                        TableRef::Pages(child.index),
+                        &identity,
+                        index,
+                        published,
+                        query_rows,
+                        report,
+                    )
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             children.push(LoadedChild {
-                identity: hex::encode(identity),
+                identity,
                 query_rows,
                 segments,
             });
         }
-        verify_choice_routes(&manifest, geometry, &directory)?;
+        if !directory_reused {
+            verify_choice_routes(&manifest, geometry, &directory, report)?;
+        }
 
         Ok(Self {
             manifest,
@@ -680,6 +952,51 @@ impl LoadedShard {
     }
 }
 
+/// Verification this process already holds, indexed by committed segment.
+///
+/// Borrowed from the publication the candidate replaces, so it lives exactly
+/// as long as the held publication that proved it and is bounded by what
+/// that publication retains. Nothing of it is persisted: a restarted process
+/// has none and verifies every table.
+#[derive(Default)]
+pub(crate) struct Evidence<'a> {
+    /// Every held source of each committed segment: a sealed page shard is
+    /// held once per revision that publishes it, possibly as different files.
+    segments: std::collections::HashMap<(String, Table, u32), Vec<&'a SegmentSource>>,
+    revisions: std::collections::HashSet<&'a str>,
+}
+
+impl<'a> Evidence<'a> {
+    fn of(set: Option<&'a ShardSet>) -> Self {
+        let mut evidence = Self::default();
+        for shard in set.into_iter().flat_map(|set| set.revisions.iter()) {
+            evidence.revisions.insert(&shard.digest);
+            for table in shard.tables() {
+                let identity = shard.runtime_identity(table);
+                let sources = shard.sources(table);
+                for (index, source) in sources.iter().enumerate() {
+                    evidence
+                        .segments
+                        .entry((identity.to_string(), table.kind(), index as u32))
+                        .or_default()
+                        .push(source);
+                }
+            }
+        }
+        evidence
+    }
+
+    fn get(&self, identity: &str, kind: Table, index: u32) -> &[&'a SegmentSource] {
+        self.segments
+            .get(&(identity.to_string(), kind, index))
+            .map_or(&[], Vec::as_slice)
+    }
+
+    fn holds(&self, digest: &str) -> bool {
+        self.revisions.contains(digest)
+    }
+}
+
 /// Checks that a published choice table names the row holding every entry.
 ///
 /// A wrong bit fails silently at the wallet: it queries the other candidate
@@ -690,6 +1007,7 @@ fn verify_choice_routes(
     manifest: &ShardManifest,
     geometry: &Geometry,
     directory: &[SegmentSource],
+    report: &mut VerificationReport,
 ) -> Result<(), LoadError> {
     let invalid = |why: String| LoadError::Invalid(format!("shard {}: {why}", manifest.shard_id));
     let Some(table) = manifest
@@ -702,6 +1020,7 @@ fn verify_choice_routes(
     let mut tags = std::collections::HashSet::new();
     for (segment, source) in directory.iter().enumerate() {
         let bytes = source.load()?;
+        report.bytes_hashed += bytes.len() as u64;
         for (within, raw) in bytes.chunks(geometry.directory_row_bytes).enumerate() {
             let row = segment as u64 * geometry.directory_rows + within as u64;
             let decoded = transparent_shard::records::decode_directory_row(
@@ -761,6 +1080,8 @@ pub struct ShardSet {
     scope: Option<WorkerScope>,
     /// Superseded revisions past the retention bound, when pruning is allowed.
     prunable: Vec<PrunableRevision>,
+    /// What loading this set spent on verification.
+    verification: VerificationReport,
 }
 
 impl ShardSet {
@@ -785,13 +1106,21 @@ impl ShardSet {
         Self::open_reusing(dir, options, None)
     }
 
-    /// Reuse verified table bytes only when the candidate hard-links the same
-    /// files. Merely claiming the same digest never skips verification.
+    /// Loads the set, taking over verification `previous` holds for any
+    /// table segment the candidate publishes unchanged as the same file.
+    ///
+    /// Per segment, not per revision: a republished tail is a new revision
+    /// whose sealed page shards are byte-identical and hard-linked from the
+    /// one before, and those are not hashed again. Merely claiming the same
+    /// digest never skips verification; see [`FileStamp`].
     pub fn open_reusing(
         dir: &Path,
         options: &LoadOptions,
         previous: Option<&Self>,
     ) -> Result<Self, LoadError> {
+        let clock = VerificationClock::start();
+        let evidence = Evidence::of(previous);
+        let mut verification = VerificationReport::default();
         let raw = read(&dir.join("shards.json"))?;
         let map: ShardMap = serde_json::from_slice(&raw).map_err(|source| LoadError::Json {
             path: dir.join("shards.json"),
@@ -911,13 +1240,8 @@ impl ShardSet {
             parent_digest = meta.digest.clone();
             current_revision.insert(entry.shard_id, (manifest.revision, manifest.sealed));
             if assigned(entry.shard_id) {
-                let shard = match previous
-                    .and_then(|set| set.revision(&meta.digest))
-                    .and_then(|old| reuse_linked(old, &path))
-                {
-                    Some(shard) => shard,
-                    None => LoadedShard::verify_tables(&path, meta)?,
-                };
+                let shard =
+                    LoadedShard::verify_tables_reusing(&path, meta, &evidence, &mut verification)?;
                 metadata.insert(
                     shard.digest.clone(),
                     RevisionMeta {
@@ -1009,13 +1333,12 @@ impl ShardSet {
                 if within {
                     kept += 1;
                     kept_bytes += bytes;
-                    let shard = match previous
-                        .and_then(|set| set.revision(&meta.digest))
-                        .and_then(|old| reuse_linked(old, &path))
-                    {
-                        Some(shard) => shard,
-                        None => LoadedShard::verify_tables(&path, meta)?,
-                    };
+                    let shard = LoadedShard::verify_tables_reusing(
+                        &path,
+                        meta,
+                        &evidence,
+                        &mut verification,
+                    )?;
                     revisions.push(shard);
                 } else if options.prune_excess {
                     prunable.push(PrunableRevision {
@@ -1041,6 +1364,7 @@ impl ShardSet {
             .map(|(index, shard)| (shard.digest.clone(), index))
             .collect();
 
+        verification.finish(&clock);
         Ok(Self {
             map,
             map_json,
@@ -1051,6 +1375,7 @@ impl ShardSet {
             metadata,
             scope,
             prunable,
+            verification,
         })
     }
 
@@ -1133,6 +1458,12 @@ impl ShardSet {
         self.scope.as_ref()
     }
 
+    /// What loading this set spent proving its tables, and what it took
+    /// over from the publication it replaced.
+    pub fn verification(&self) -> &VerificationReport {
+        &self.verification
+    }
+
     /// Superseded revisions the retention bound does not cover.
     pub fn prunable(&self) -> &[PrunableRevision] {
         &self.prunable
@@ -1210,25 +1541,36 @@ impl ShardSet {
     }
 }
 
-/// New paths keep publication directories independently collectable; sharing
-/// an inode with verified immutable input is the only verification shortcut.
-fn reuse_linked(old: &LoadedShard, dir: &Path) -> Option<LoadedShard> {
-    use std::os::unix::fs::MetadataExt;
-    let mut shard = old.clone();
-    // Every table, display included: a source left pointing into the old
-    // directory fails its next cold build once that directory is collected.
-    let pages = shard
-        .children
-        .iter_mut()
-        .flat_map(|child| child.segments.iter_mut());
-    for source in shard.directory.iter_mut().chain(pages) {
-        let next = dir.join(source.path.file_name()?);
-        let a = std::fs::metadata(&source.path).ok()?;
-        let b = std::fs::metadata(&next).ok()?;
-        if a.dev() != b.dev() || a.ino() != b.ino() || a.len() != b.len() {
-            return None;
-        }
-        source.path = next;
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A segment whose rows past the ones its queries select hold data is refused
+    /// on verification and on load, so no runtime is built or restored from it.
+    #[test]
+    fn a_segment_with_data_past_its_selected_rows_is_refused() {
+        use sha2::Digest;
+        let dir = tempfile::tempdir().unwrap();
+        let (rows, row_bytes) = (2 * transparent_native::D as u64, 16u32);
+        let mut bytes = vec![0u8; rows as usize * row_bytes as usize];
+        bytes[7] = 1;
+        let source = |bytes: &[u8], zero_from_row| {
+            let path = dir.path().join("pages.0.bin");
+            std::fs::write(&path, bytes).unwrap();
+            SegmentSource::published(
+                path,
+                rows,
+                row_bytes,
+                hex::encode(sha2::Sha256::digest(bytes)),
+                zero_from_row,
+            )
+        };
+        let half = transparent_native::D as u64;
+        assert!(source(&bytes, half).verify().is_ok());
+        assert!(source(&bytes, half).load().is_ok());
+        bytes[half as usize * row_bytes as usize] = 1;
+        assert!(source(&bytes, half).verify().is_err());
+        assert!(source(&bytes, half).load().is_err());
+        assert!(source(&bytes, rows).verify().is_ok());
     }
-    Some(shard)
 }
