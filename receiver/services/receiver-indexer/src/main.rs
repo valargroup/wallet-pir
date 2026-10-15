@@ -5,16 +5,15 @@ use clap::Parser;
 use receiver_directory::{
     snapshot::{Snapshot, MAX_ROWS},
     store::{Config, ProviderStore, Store},
-    witness::WitnessCache,
     Error,
 };
 use receiver_indexer::{
     blocks::{MAX_RECEIVER_BATCH_BLOCKS, MAX_RECEIVER_CONCURRENCY},
     near::{Explorer, Reads},
+    verify,
     zakura::ZakuraClient,
 };
-use receiver_pir::server::Server;
-use receiver_pir_server::{Publication, Publications};
+use receiver_pir_server::Publications;
 use std::{
     io::Write,
     net::{IpAddr, SocketAddr},
@@ -24,6 +23,7 @@ use std::{
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 use zakura_chain::{block::Hash, parameters::Network};
+use zakura_receiver_crypto::witness::WitnessCache;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
@@ -383,7 +383,7 @@ async fn refresh(
             )
             .await?;
         for block in batch {
-            store.append(&block)?;
+            verify::append(&mut store, &block)?;
         }
         tip = store.tip()?;
         let (records, coinbase) = store.counts()?;
@@ -441,7 +441,8 @@ async fn refresh(
     let witnesses = if args.witnesses {
         let started = std::time::Instant::now();
         // Blocks only the main future, not a worker: the HTTP server and guard are spawned tasks.
-        let proof = match store.witnesses(
+        let proof = match verify::build_witnesses(
+            &store,
             &snapshot.manifest,
             witness_cache,
             args.max_witness_commitments,
@@ -454,7 +455,7 @@ async fn refresh(
                 )
                 .into())
             }
-            proof => proof?.encode(),
+            proof => proof?,
         };
         log_stage("witness_prepare", started);
         info!(witness_bytes = proof.len(), "witnesses prepared");
@@ -491,8 +492,7 @@ async fn refresh(
     let started = std::time::Instant::now();
     let end_height = snapshot.manifest.end_height;
     let publication =
-        tokio::task::spawn_blocking(move || Publication::new(Server::new(snapshot)?, witnesses))
-            .await??;
+        tokio::task::spawn_blocking(move || verify::prepare(snapshot, witnesses)).await??;
     log_stage("pir_prepare", started);
     let started = std::time::Instant::now();
     let anchor = publication.manifest();
@@ -531,8 +531,9 @@ fn log_stage(stage: &str, started: std::time::Instant) {
 
 /// Durably write a revision's row and filter files and any witness file, then its
 /// manifest. A manifest over [`receiver_pir::MAX_MANIFEST_BYTES`], which clients read
-/// no more of, writes nothing.
+/// no more of, or invalid records or witnesses, writes nothing.
 fn write_publication(root: &Path, snapshot: &Snapshot, witnesses: Option<Vec<u8>>) -> Result<()> {
+    verify::check_publication(snapshot, witnesses.as_deref())?;
     let manifest = serde_json::to_vec_pretty(&snapshot.manifest)?;
     if manifest.len() > receiver_pir::MAX_MANIFEST_BYTES {
         return Err("publication manifest exceeds its size bound; nothing written".into());
@@ -592,6 +593,7 @@ mod common;
 mod tests {
     use super::*;
     use axum::{extract::State, routing::post, Json, Router};
+    use receiver_pir_server::Publication;
     use serde_json::{json, Value};
     use std::{
         collections::HashMap,
@@ -658,7 +660,7 @@ mod tests {
         let mut manifest = super::common::manifest(receiver_pir::MIN_ROWS);
         manifest.end_hash = [hash; 32];
         let snapshot = Snapshot::build(manifest, &[], &[]).unwrap();
-        Publication::new(Server::new(snapshot).unwrap(), None).unwrap()
+        verify::prepare(snapshot, None).unwrap()
     }
 
     /// A check that finds an anchor off the chain after a revocation and a new
@@ -1015,6 +1017,35 @@ mod tests {
         // Reads committed after the capture, during preparation.
         let latest = paused.provider().read("near-payouts").unwrap().unwrap();
         assert!(latest > until.as_i64().unwrap());
+    }
+
+    /// One-shot output validates persisted records and proofs before creating files.
+    #[test]
+    fn one_shot_output_refuses_invalid_records_and_proofs_before_writing() {
+        let mut manifest = super::common::manifest(receiver_pir::MIN_ROWS);
+        manifest.end_position = 300;
+        let valid = Snapshot::build(manifest.clone(), &[super::common::record(0, 1)], &[]).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        write_publication(&dir.path().join("valid"), &valid, None).unwrap();
+        for field in 0..4 {
+            let mut record = super::common::record(0, 1);
+            match field {
+                0 => record.receiver = [255; 43],
+                1 => record.payment.cmx = [255; 32],
+                2 => record.payment.action_nullifier = [255; 32],
+                _ => record.payment.ephemeral_key = [255; 32],
+            }
+            let snapshot = Snapshot::build(manifest.clone(), &[record], &[]).unwrap();
+            let root = dir.path().join(format!("invalid-{field}"));
+            assert!(
+                write_publication(&root, &snapshot, None).is_err(),
+                "field {field}"
+            );
+            assert!(!root.exists());
+        }
+        let root = dir.path().join("invalid-proof");
+        assert!(write_publication(&root, &valid, Some(vec![0; 152])).is_err());
+        assert!(!root.exists());
     }
 
     /// A one-shot run writes nothing for a manifest over the size clients read.

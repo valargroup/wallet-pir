@@ -2,7 +2,7 @@
 #[path = "../../../crates/receiver-directory/tests/common/mod.rs"]
 mod common;
 use common::{manifest, receiver, record};
-use receiver_directory::{snapshot::Snapshot, Record};
+use receiver_directory::{snapshot::Snapshot, RawRecord};
 use receiver_pir::{
     server::Server,
     transport::{DirectoryClient, Transport},
@@ -44,7 +44,7 @@ impl Drop for Running {
     }
 }
 async fn serve(snapshot: Snapshot) -> Running {
-    serve_publication(Publication::new(Server::new(snapshot).unwrap(), None).unwrap()).await
+    serve_publication(Publication::verified(Server::new(snapshot).unwrap(), None)).await
 }
 /// Serve one prepared publication through the production router.
 async fn serve_publication(publication: Publication) -> Running {
@@ -63,7 +63,7 @@ async fn serve_router(app: axum::Router) -> Running {
 async fn rotate_canonical_sessions_and_revoke_orphaned_work() {
     let publications = Publications::default();
     assert!(publications.publish(
-        Publication::new(Server::new(snapshot(2)).unwrap(), None).unwrap(),
+        Publication::verified(Server::new(snapshot(2)).unwrap(), None),
         0
     ));
     let server = serve_router(receiver_pir_server::router_with_publications(
@@ -79,7 +79,7 @@ async fn rotate_canonical_sessions_and_revoke_orphaned_work() {
     next.manifest.end_hash = [9; 32];
     // Empty canonical extension: old payments remain unchanged.
     assert!(publications.publish(
-        Publication::new(Server::new(next.clone()).unwrap(), None).unwrap(),
+        Publication::verified(Server::new(next.clone()).unwrap(), None),
         0
     ));
     let public = http()
@@ -104,7 +104,7 @@ async fn rotate_canonical_sessions_and_revoke_orphaned_work() {
 
     // Preparation started before the canonical guard detected the fork.
     let preparing_epoch = publications.epoch();
-    let prepared = Publication::new(Server::new(next).unwrap(), None).unwrap();
+    let prepared = Publication::verified(Server::new(next).unwrap(), None);
     publications.revoke();
     assert!(!publications.publish(prepared, preparing_epoch));
     assert_eq!(
@@ -136,7 +136,7 @@ async fn rotate_canonical_sessions_and_revoke_orphaned_work() {
     replacement.manifest.end_height = 102;
     replacement.manifest.end_hash = [10; 32];
     assert!(publications.publish(
-        Publication::new(Server::new(replacement).unwrap(), None).unwrap(),
+        Publication::verified(Server::new(replacement).unwrap(), None),
         publications.epoch()
     ));
     anchor.hash = [10; 32];
@@ -166,7 +166,7 @@ async fn refusals_are_not_cached_and_a_republished_session_serves_again() {
     let pir = Server::new(snapshot.clone()).unwrap();
     let id = hex::encode(pir.id());
     let publications = Publications::default();
-    assert!(publications.publish(Publication::new(pir, None).unwrap(), 0));
+    assert!(publications.publish(Publication::verified(pir, None), 0));
     let server = serve_router(receiver_pir_server::router_with_publications(
         publications.clone(),
     ))
@@ -183,7 +183,7 @@ async fn refusals_are_not_cached_and_a_republished_session_serves_again() {
         let mut m = manifest(MIN_ROWS);
         m.salt[0] = salt;
         let other = Server::new(Snapshot::build(m, &[], &[]).unwrap()).unwrap();
-        assert!(publications.publish(Publication::new(other, None).unwrap(), publications.epoch()));
+        assert!(publications.publish(Publication::verified(other, None), publications.epoch()));
         publications.revoke();
     }
     let public = format!("/v1/receiver/public/{id}");
@@ -194,7 +194,7 @@ async fn refusals_are_not_cached_and_a_republished_session_serves_again() {
     // The identical publication has the same session id and serves the same URL.
     let pir = Server::new(snapshot).unwrap();
     let expected = pir.public().to_vec();
-    assert!(publications.publish(Publication::new(pir, None).unwrap(), publications.epoch()));
+    assert!(publications.publish(Publication::verified(pir, None), publications.epoch()));
     let restored = get(public).await.unwrap();
     assert!(restored.status().is_success() && no_store(&restored));
     assert_eq!(restored.bytes().await.unwrap(), expected);
@@ -205,8 +205,7 @@ async fn refusals_are_not_cached_and_a_republished_session_serves_again() {
 async fn health_serves_the_owners_report() {
     let publications = Publications::default();
     assert!(publications.publish(
-        Publication::new(Server::new(snapshot(0)).unwrap(), None)
-            .unwrap()
+        Publication::verified(Server::new(snapshot(0)).unwrap(), None)
             .with_report(serde_json::json!({"missing_payouts": 0})),
         0
     ));
@@ -231,8 +230,7 @@ async fn health_serves_the_owners_report() {
     let server_next = Server::new(next).unwrap();
     let id = hex::encode(server_next.manifest().id().unwrap());
     assert!(publications.publish(
-        Publication::new(server_next, None)
-            .unwrap()
+        Publication::verified(server_next, None)
             .with_report(serde_json::json!({"missing_payouts": 3})),
         0
     ));
@@ -287,10 +285,7 @@ fn rotation_waits_for_the_previous_revisions_grace() {
         let mut paid = record(0, 1);
         paid.payment.height = 100;
         let next = Snapshot::build(m, &[paid], &[]).unwrap();
-        publications.publish(
-            Publication::new(Server::new(next).unwrap(), None).unwrap(),
-            0,
-        )
+        publications.publish(Publication::verified(Server::new(next).unwrap(), None), 0)
     };
     assert!(publish(101));
     assert!(publications.ready_at().is_none());
@@ -608,7 +603,7 @@ async fn reject_incomplete_or_inconsistent_pagination() {
     // a missing page, a repeated position and an earlier block. Each fault edits the two
     // pages in place, or empties a slot when it returns false. `Server::new` refuses
     // them all (see the directory's tests); a wallet must too.
-    let faults: [fn(&mut Record) -> bool; 3] = [
+    let faults: [fn(&mut RawRecord) -> bool; 3] = [
         |r| r.page != 1,
         |r| {
             if r.page == 1 {
@@ -631,7 +626,7 @@ async fn reject_incomplete_or_inconsistent_pagination() {
                 .0
                 .iter_mut()
             {
-                if let Some(mut r) = Record::decode(slot).unwrap() {
+                if let Some(mut r) = RawRecord::decode(slot).unwrap() {
                     if edit(&mut r) {
                         slot.copy_from_slice(&r.encode().unwrap());
                     } else {
@@ -657,29 +652,26 @@ async fn reject_incomplete_or_inconsistent_pagination() {
     }
 }
 
+/// The common witness file is served byte for byte under the session's own route;
+/// this crate never interprets it, and a wallet verifies it.
 #[tokio::test]
 async fn common_witness_file_uses_the_same_publication() {
-    use receiver_directory::witness::WitnessSnapshot;
-    let mut manifest = snapshot(0).manifest;
-    manifest.start_position = 0;
-    manifest.end_position = 1;
-    // One served record at position 0, so the file must prove its commitment.
-    let mut paid = record(0, 1);
-    paid.payment.position = 0;
-    paid.payment.cmx = [1; 32];
-    let snapshot = Snapshot::build(manifest, &[paid], &[]).unwrap();
-    let proof = WitnessSnapshot::build(&snapshot.manifest, &[[1; 32]], &[0].into_iter().collect())
-        .unwrap()
-        .encode();
-    let server =
-        serve_publication(Publication::new(Server::new(snapshot).unwrap(), Some(proof)).unwrap())
-            .await;
+    let proof = b"IWPROOF1 opaque to the server".to_vec();
+    let server = serve_publication(Publication::verified(
+        Server::new(snapshot(0)).unwrap(),
+        Some(proof.clone()),
+    ))
+    .await;
     let client = connect(&server.origin, Http(http()), accepted(), 0)
         .await
         .unwrap();
-    let proof = client.witnesses().await.unwrap();
-    proof.path(0, [1; 32]).unwrap();
-    assert!(proof.path(0, [2; 32]).is_err());
+    assert_eq!(client.witnesses().await.unwrap(), proof);
+    // A publication without a witness file serves none.
+    let server = serve(snapshot(0)).await;
+    let client = connect(&server.origin, Http(http()), accepted(), 0)
+        .await
+        .unwrap();
+    assert!(client.witnesses().await.is_err());
 }
 
 #[tokio::test]

@@ -280,7 +280,7 @@ mod tests {
         )
         .unwrap();
         let publication =
-            Publication::new(receiver_pir::server::Server::new(snapshot).unwrap(), None).unwrap();
+            Publication::verified(receiver_pir::server::Server::new(snapshot).unwrap(), None);
         let mut header = MAGIC.to_vec();
         header.extend(publication.id);
         let exact = query_bytes(receiver_pir::MIN_ROWS).unwrap();
@@ -379,7 +379,7 @@ mod tests {
         };
         let client = Client::new(server.manifest().clone(), server.public(), accepted).unwrap();
         let publications = Publications::default();
-        assert!(publications.publish(Publication::new(server, None).unwrap(), 0));
+        assert!(publications.publish(Publication::verified(server, None), 0));
         let queue = Arc::new(Queue::new(EVALUATING, WAITING, WAIT, true));
         let (url, task) = serve(publications.clone(), queue.clone()).await;
 
@@ -388,7 +388,7 @@ mod tests {
             let mut next = common::manifest(MIN_ROWS);
             (next.end_height, next.end_hash) = (102, [9; 32]);
             let next = Server::new(Snapshot::build(next, &[], &[]).unwrap()).unwrap();
-            assert!(publications.publish(Publication::new(next, None).unwrap(), 0));
+            assert!(publications.publish(Publication::verified(next, None), 0));
         })
         .await;
         assert_eq!(rotated.status(), StatusCode::OK);

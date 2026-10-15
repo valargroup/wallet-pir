@@ -8,7 +8,7 @@ use receiver_directory::{
     filter::{RECENT, SEEN},
     snapshot::ProviderSet,
     store::{ProviderStore, Store},
-    Receiver,
+    ReceiverBytes,
 };
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -20,11 +20,7 @@ use std::{
     },
     time::Duration,
 };
-use zcash_address::{
-    unified::{self, Container},
-    ConversionError, TryFromAddress, ZcashAddress,
-};
-use zcash_protocol::consensus::NetworkType;
+use zakura_receiver_crypto::{Network, Receiver};
 
 const ENDPOINT: &str = "https://explorer.near-intents.org/api/v0/transactions";
 /// Every status the explorer's `statuses` filter accepts (its OpenAPI spec). The 1Click
@@ -70,10 +66,12 @@ fn uncheckable(txid: &receiver_directory::Hash) -> bool {
 
 /// The receiver of every uncheckable payout record: a fixed valid address (zero
 /// diversifier, transmission key with x-coordinate 1) that never enters a filter set.
-fn uncheckable_receiver() -> Receiver {
+fn uncheckable_receiver() -> ReceiverBytes {
     let mut bytes = [0; 43];
     bytes[11] = 1;
-    Receiver::from_bytes(bytes).expect("a valid address")
+    *Receiver::from_bytes(bytes)
+        .expect("a valid address")
+        .as_bytes()
 }
 
 /// The NEAR filter sets, `near-intents/recent` and `near-intents/seen`, once both feeds
@@ -135,7 +133,7 @@ pub fn digest(sets: &[ProviderSet]) -> [u8; 32] {
         }));
         h.update(set.since_unix.to_le_bytes());
         h.update(set.until_unix.to_le_bytes());
-        let mut receivers: Vec<_> = set.receivers.iter().map(Receiver::as_bytes).collect();
+        let mut receivers: Vec<_> = set.receivers.iter().collect();
         receivers.sort_unstable();
         h.update((receivers.len() as u64).to_le_bytes());
         receivers.into_iter().for_each(|r| h.update(r));
@@ -152,7 +150,7 @@ pub struct Capture {
     feeds: serde_json::Map<String, serde_json::Value>,
     /// Checkable payouts first seen complete more than [`COMPLETION_GRACE_SECS`]
     /// before the terminal block's time.
-    payouts: Vec<(Receiver, receiver_directory::Hash)>,
+    payouts: Vec<(ReceiverBytes, receiver_directory::Hash)>,
     /// Uncheckable payouts first seen in that span but within [`RECENT_SECS`].
     uncheckable: usize,
 }
@@ -515,37 +513,18 @@ impl Explorer {
 }
 
 /// The Orchard receiver of a mainnet unified address, the only kind a per-swap key has.
-fn orchard_receiver(address: &str) -> Option<Receiver> {
-    struct Orchard([u8; 43]);
-    impl TryFromAddress for Orchard {
-        type Error = ();
-        fn try_from_unified(
-            _: NetworkType,
-            address: unified::Address,
-        ) -> std::result::Result<Self, ConversionError<()>> {
-            address
-                .items()
-                .into_iter()
-                .find_map(|item| match item {
-                    unified::Receiver::Orchard(bytes) => Some(Self(bytes)),
-                    _ => None,
-                })
-                .ok_or(ConversionError::User(()))
-        }
-    }
-    let Orchard(bytes) = ZcashAddress::try_from_encoded(address)
-        .ok()?
-        .convert_if_network(NetworkType::Main)
-        .ok()?;
-    Receiver::from_bytes(bytes).ok()
+fn orchard_receiver(address: &str) -> Option<ReceiverBytes> {
+    Receiver::from_unified_address(address, Network::Main)
+        .ok()
+        .map(|receiver| *receiver.as_bytes())
 }
 
 /// Adds the payouts of `swap` to `receiver` if it succeeded: one per parsable reported
 /// transaction, or else one uncheckable record (see [`UNCHECKABLE_ZEROS`]).
 fn completions(
     swap: &Swap,
-    receiver: Receiver,
-    out: &mut Vec<(Receiver, receiver_directory::Hash)>,
+    receiver: ReceiverBytes,
+    out: &mut Vec<(ReceiverBytes, receiver_directory::Hash)>,
 ) {
     if swap.status.as_deref() != Some(SUCCESS) {
         return;
@@ -585,7 +564,7 @@ mod tests {
         // A Vizor swap address from 2026-10-07.
         let swap = "u14nnj43rj7dpf7qh6gu24fuyu8vld9fgatxd32xre27yqgu6p0yq0sf0t3uxnwts4968hf7d8nvyh4wfzqtmcdt6xzk7el6pn0ufx6pdg";
         assert_eq!(
-            &orchard_receiver(swap).unwrap().as_bytes()[..4],
+            &orchard_receiver(swap).unwrap()[..4],
             &[0x15, 0x5f, 0x51, 0xfe]
         );
         assert!(orchard_receiver("t1KfwsnwJeNRVjQGBDZhwKskpQbih2qx5Ua").is_none());
@@ -628,7 +607,7 @@ mod tests {
         for set in &sets {
             assert_eq!((set.since_unix, set.until_unix), (2_000, until));
         }
-        let sorted = |mut receivers: Vec<Receiver>| {
+        let sorted = |mut receivers: Vec<ReceiverBytes>| {
             receivers.sort();
             receivers
         };
@@ -875,7 +854,6 @@ mod tests {
             collections::HashMap,
             sync::{Arc, Mutex},
         };
-        use zcash_address::unified::Encoding;
         /// The `statuses` of every request, and the pages served for all statuses and
         /// for successes, `None` failing.
         #[derive(Clone, Default)]
@@ -905,11 +883,9 @@ mod tests {
         tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
         // A swap to `receiver(seed)` paid in transaction `[seed; 32]` when it succeeded.
         let swap = |seed: u8, created: i64, status: &str| {
-            let address = unified::Address::try_from_items(vec![unified::Receiver::Orchard(
-                *receiver(seed).as_bytes(),
-            )])
-            .unwrap()
-            .encode(&NetworkType::Main);
+            let address = Receiver::from_bytes(receiver(seed))
+                .unwrap()
+                .to_unified_address(Network::Main);
             json!({"recipient": address, "createdAtTimestamp": created,
                 "depositAddress": seed.to_string(), "status": status,
                 "destinationChainTxHashes": [format!("{seed:02x}").repeat(32)]})
@@ -1029,31 +1005,22 @@ mod tests {
     #[tokio::test]
     async fn uncheckable_payouts_are_one_record_per_swap() {
         use axum::{routing::get, Router};
-        use zcash_address::{unified::Encoding, ToAddress};
         let swap = "u14nnj43rj7dpf7qh6gu24fuyu8vld9fgatxd32xre27yqgu6p0yq0sf0t3uxnwts4968hf7d8nvyh4wfzqtmcdt6xzk7el6pn0ufx6pdg";
         let orchard = orchard_receiver(swap).unwrap();
-        let unified = |items, network| {
-            unified::Address::try_from_items(items)
-                .unwrap()
-                .encode(&network)
-        };
         let excluded = [
             None,
             Some("not an address".to_owned()),
-            Some(unified(
-                vec![unified::Receiver::Orchard(*orchard.as_bytes())],
-                NetworkType::Test,
-            )),
+            Some(
+                Receiver::from_bytes(orchard)
+                    .unwrap()
+                    .to_unified_address(Network::Test),
+            ),
             Some("t1KfwsnwJeNRVjQGBDZhwKskpQbih2qx5Ua".to_owned()),
-            Some(ZcashAddress::from_transparent_p2sh(NetworkType::Main, [1; 20]).encode()),
-            Some(ZcashAddress::from_sapling(NetworkType::Main, [1; 43]).encode()),
-            Some(unified(
-                vec![
-                    unified::Receiver::Sapling([1; 43]),
-                    unified::Receiver::P2pkh([1; 20]),
-                ],
-                NetworkType::Main,
-            )),
+            // Mainnet P2SH and Sapling addresses of all-one bytes, and a unified address of
+            // those Sapling and P2PKH receivers, encoded with zakura-address 3.0.0.
+            Some("t3JevopkKaLy85HNJG8bqunxoPsQ5o8GRya".to_owned()),
+            Some("zs1qyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszvsj7ke".to_owned()),
+            Some("u1cux9lm2ndc6034mtnny5m0ussphqtgc3ept4979nq82mqsrjgda3r7s6gcvl7jy0056nkcmxr7r50x7kvcw5he63rs8mf0t0963j2r7ygcnunx9nxpnvcwzn3ng5gcwdg87gy9yyq9s".to_owned()),
         ];
         let record =
             |recipient: Option<&str>, address: &str, memo: Option<&str>, txids: &[&str]| {
@@ -1124,11 +1091,8 @@ mod tests {
     }
 
     /// A receiver from the spending key with every byte `seed`.
-    fn receiver(seed: u8) -> Receiver {
-        let sk = orchard::keys::SpendingKey::from_bytes([seed; 32]).unwrap();
-        let fvk = orchard::keys::FullViewingKey::from(&sk);
-        let address = fvk.address_at(0u32, orchard::keys::Scope::External);
-        Receiver::from_bytes(address.to_raw_address_bytes()).unwrap()
+    fn receiver(seed: u8) -> ReceiverBytes {
+        crate::probe::common::seeded_receiver(seed)
     }
 
     /// An index from height 100 whose first block pays `receiver(1)` in transaction

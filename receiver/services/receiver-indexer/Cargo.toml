@@ -32,8 +32,6 @@ tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 zakura-chain = { git = "https://github.com/zakura-core/zakura.git", rev = "83738c07468bee30a7db8a8d678cb27bf60094f4" }
-zcash_address = "0.13"
-zcash_protocol = "0.10"
+# Receiver address, record, recovery and proof checks, pinned to an exact revision.
+zakura-receiver-crypto = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "3990335d8e8821f31d2f2fd3686ffa8d13ddcfa9", default-features = false, features = ["crypto"] }
 
-[dev-dependencies]
-orchard = { package = "zakura-orchard", version = "=3.0.0", default-features = false, features = ["zip32-addresses"] }

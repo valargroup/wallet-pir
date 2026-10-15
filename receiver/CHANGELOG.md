@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Validate records and witness proofs before writing one-shot publication files,
+  including when reading an existing database; refuse invalid output before any
+  files are created.
+
+- Consume the canonical record codec from wallet-libraries with cryptography
+  disabled for directory framing; remove the local codec package. The indexer
+  explicitly enables validated receiver, record, recovery and witness APIs.
+
+- Move receiver cryptography to wallet-libraries' `zakura-receiver-crypto`: address
+  and record field checks, zero-OVK recovery and witness files. The receiver PIR
+  packages now parse structure only and expose explicitly unchecked record and
+  receiver bytes, and witness files as bytes; the indexer checks every payment
+  before storing it and every publication before serving it.
 - Add the receiver directory: authenticated zero-OVK receiver extraction,
   paginated fixed-width records, deterministic publications from 8192 to 65536
   rows that retry up to 16 salts before doubling, `IWFLT1` files of labeled BIP 158

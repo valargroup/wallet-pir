@@ -829,15 +829,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "document-features"
-version = "0.2.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d4b8a88685455ed29a21542a33abd9cb6510b6b129abadabdcef0f4c55bc8f61"
-dependencies = [
- "litrs",
-]
-
-[[package]]
 name = "dyn-clone"
 version = "1.0.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -988,15 +979,6 @@ checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "f4jumble"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0d42773cb15447644d170be20231a3268600e0c4cea8987d013b93ac973d3cf7"
-dependencies = [
- "blake2b_simd",
 ]
 
 [[package]]
@@ -1893,12 +1875,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "92daf443525c4cce67b150400bc2316076100ce0b3686209eb8cf3c31612e6f0"
 
 [[package]]
-name = "litrs"
-version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "11d3d7f243d5c5a8b9bb5d6dd2b1602c0cb0b9db1621bafc7ed66e35ff9fe092"
-
-[[package]]
 name = "lock_api"
 version = "0.4.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2614,16 +2590,13 @@ version = "0.0.1"
 dependencies = [
  "bitcoin",
  "hex",
- "incrementalmerkletree",
- "receiver-wire",
  "rusqlite",
  "serde",
  "serde_json",
  "sha2 0.10.9",
  "tempfile",
  "thiserror 2.0.18",
- "zakura-note-encryption",
- "zakura-orchard",
+ "zakura-receiver-crypto",
 ]
 
 [[package]]
@@ -2646,9 +2619,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "zakura-chain",
- "zakura-orchard",
- "zcash_address",
- "zcash_protocol",
+ "zakura-receiver-crypto",
 ]
 
 [[package]]
@@ -2682,10 +2653,6 @@ dependencies = [
  "sha2 0.10.9",
  "tokio",
 ]
-
-[[package]]
-name = "receiver-wire"
-version = "0.0.1"
 
 [[package]]
 name = "redox_syscall"
@@ -4938,6 +4905,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "zakura-receiver-crypto"
+version = "0.0.1-rc0"
+source = "git+https://github.com/zakura-core/wallet-libraries.git?rev=3990335d8e8821f31d2f2fd3686ffa8d13ddcfa9#3990335d8e8821f31d2f2fd3686ffa8d13ddcfa9"
+dependencies = [
+ "incrementalmerkletree",
+ "thiserror 2.0.18",
+ "zakura-address",
+ "zakura-note-encryption",
+ "zakura-orchard",
+ "zakura-protocol",
+]
+
+[[package]]
 name = "zakura-reddsa"
 version = "3.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5062,44 +5042,6 @@ dependencies = [
  "zcash_script",
  "zcash_spec",
  "zip32",
-]
-
-[[package]]
-name = "zcash_address"
-version = "0.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5a854b28c07dba372f4410ea8ad62b4bf7d5c2bf8be32fc4b31bc0db6521a975"
-dependencies = [
- "bech32",
- "bs58",
- "corez",
- "f4jumble",
- "zcash_encoding",
- "zcash_protocol",
-]
-
-[[package]]
-name = "zcash_encoding"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1440921903cdb86133fb9e2fe800be488015db2939a30bedb413078a1acb0306"
-dependencies = [
- "corez",
- "hex",
- "nonempty",
-]
-
-[[package]]
-name = "zcash_protocol"
-version = "0.10.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "314329b91ec4bbb517441840e47d0b2029bf0b946f086980c96c889c2d92dc5d"
-dependencies = [
- "corez",
- "document-features",
- "hex",
- "memuse",
- "zcash_encoding",
 ]
 
 [[package]]

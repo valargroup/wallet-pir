@@ -7,8 +7,15 @@ outgoing viewing key (OVK). Coinbase recipients are excluded. Every Ironwood
 Action still counts toward note positions, including coinbase and unrecoverable
 outputs.
 
-`receiver-directory` holds zero-OVK extraction, records, publications, common
-witnesses and, with the `store` feature, the indexer's SQLite store.
+The canonical fixed record codec is `zakura-receiver-crypto::wire` in
+wallet-libraries. `receiver-directory` uses it with cryptography disabled to hold
+records, publications and, with the `store` feature, the indexer's SQLite store;
+it parses structure only. The same library's `crypto` feature checks receivers,
+unified addresses and record fields, recovers receivers with the zero OVK, and
+builds and checks witness files. The indexer enables these checks before storing
+a payment and before serving a publication, and a wallet checks a retrieved
+payment before crediting it. Dependencies run one way from wallet-pir to
+wallet-libraries; wallet-libraries never consumes wallet-pir packages.
 `receiver-pir` holds the PIR client and the wallet `Transport` interface, plus
 the evaluator with the `server` feature. `receiver-pir-server` serves
 publications over HTTP. `receiver-indexer` builds them from a Zakura node; its
@@ -24,10 +31,10 @@ A 285-byte record holds version (1 byte), receiver (43), page (4), total pages
 (4), Action index (4), note position (8), Action input nullifier (32), note
 commitment (32), ephemeral key (32) and ciphertext prefix (52). Integers are
 little endian and hashes use protocol byte order. The Action input nullifier is
-decryption context, not the received note's spend nullifier. Encoding and
-decoding refuse a note commitment or Action input nullifier that is not a
-canonical field element, or an ephemeral key that is not a valid Ironwood
-ephemeral public key. A receiver's payments are ordered by note position, one per
+decryption context, not the received note's spend nullifier. Structural encoding and decoding check lengths, tags and page ranges. The
+indexer and wallet additionally refuse a note commitment or Action input
+nullifier that is not a canonical field element, or an ephemeral key that is not
+a valid Ironwood ephemeral public key. A receiver's payments are ordered by note position, one per
 page from zero, and every page repeats the total.
 
 Rows are 4096 bytes and hold 14 records plus zero padding. A domain-separated
@@ -45,8 +52,8 @@ domain-separated SHA-256 of every field at fixed width, as Enhance and Status
 hash their manifests, and a manifest with a field this version does not know is
 refused.
 
-`Snapshot::validate` checks a supplied publication whole, before a server prepares
-it: the row and filter digests, the declared filter sets and a paid set of exactly
+`Snapshot::validate` checks a supplied publication's structure whole, before a
+server prepares it: the row and filter digests, the declared filter sets and a paid set of exactly
 the records' receivers, every slot and row padding, each record's coverage and
 bucket, the exact record count, every receiver's pages, each continuing the last
 in chain order as `snapshot::check_next` requires, and that no two records share an
@@ -91,8 +98,8 @@ rows.
 The `IWPROOF1` witness file has a 152-byte header binding the genesis, revision,
 terminal height and hash, tree size and root. Sorted 37-byte nodes (level,
 index, hash) follow, with every sibling of each payment position. It is capped
-at 64 MiB. A server publishes a file only once it has checked a path to that
-root for every record in the rows. Building the file reads every commitment
+at 64 MiB. The indexer serves a file only once it has checked a path to that root
+for every record in the rows. Building the file reads every commitment
 since the empty tree, so the store refuses a history longer than the caller's
 limit, the indexer's `--max-witness-commitments`, before reading it.
 
@@ -227,14 +234,18 @@ payments, but never which receivers were looked up.
 
 ## Tests
 
-`cargo test -p receiver-directory --features store` covers recovery of a public
-mainnet refund, records, publications, store restart and rollback, and witnesses
-against an independent tree. `cargo test -p receiver-pir-server` runs encrypted
+`cargo test -p receiver-directory --features store` covers records,
+publications, and store restart and rollback, including the commitment history a
+witness file is built from. Recovery of a public mainnet refund, record and
+address checks, and witnesses against an independent tree are tested in
+`zakura-receiver-crypto`. `cargo test -p receiver-pir-server` runs encrypted
 round trips at every geometry and the HTTP service. `cargo test -p receiver-pir
 --features server --test golden` pins the protocol's seeds, framing and row
 placement against digests from a request built outside `Client`. `cargo test -p
-receiver-indexer` covers indexing with synthetic blocks, serving from memory and
-the probe's encrypted lookup. Recovery follows
+receiver-indexer` covers indexing with synthetic blocks, refusal of invalid
+records and witness files before storing or serving, witness files fetched over
+HTTP and checked with the library, serving from memory and the probe's encrypted
+lookup. Recovery follows
 `zcash/zips@afa086bd976e316612a5c06fb139429958d07d84`, NU6.3 proposal, section
 4.19.3 (`decryptovk`).
 
