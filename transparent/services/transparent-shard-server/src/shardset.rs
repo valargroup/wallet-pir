@@ -287,9 +287,10 @@ pub struct SegmentSource {
 /// resolves to a file with the same stamp is the same inode, unmodified since
 /// it was hashed, and inherits the verification without re-reading it.
 ///
-/// The change time is not part of the stamp: creating a hard link updates it,
-/// and hard links are exactly how an unchanged table reaches a new revision.
-/// The modification time is, and it is only trusted when it predates the read
+/// Both modification and change time are part of the stamp: restoring the
+/// modification time after writing cannot preserve the change time. Creating
+/// or removing a hard link also changes it and conservatively requires another
+/// hash. The modification time is only trusted when it predates the read
 /// by more than any timestamp granularity, so a write in the same tick as the
 /// file's last modification cannot leave the stamp unchanged.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -299,6 +300,8 @@ pub struct FileStamp {
     len: u64,
     mtime_sec: i64,
     mtime_nsec: i64,
+    ctime_sec: i64,
+    ctime_nsec: i64,
 }
 
 impl FileStamp {
@@ -310,6 +313,8 @@ impl FileStamp {
             len: meta.len(),
             mtime_sec: meta.mtime(),
             mtime_nsec: meta.mtime_nsec(),
+            ctime_sec: meta.ctime(),
+            ctime_nsec: meta.ctime_nsec(),
         })
     }
 
@@ -320,7 +325,8 @@ impl FileStamp {
             return false;
         };
         let modified = i128::from(self.mtime_sec) * 1_000_000_000 + i128::from(self.mtime_nsec);
-        modified + i128::from(EVIDENCE_SETTLE_NANOS) < since.as_nanos() as i128
+        let changed = i128::from(self.ctime_sec) * 1_000_000_000 + i128::from(self.ctime_nsec);
+        modified.max(changed) + i128::from(EVIDENCE_SETTLE_NANOS) < since.as_nanos() as i128
     }
 }
 
@@ -1544,6 +1550,30 @@ impl ShardSet {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn restoring_modification_time_does_not_hide_a_changed_source() {
+        use std::os::unix::fs::FileExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("source.bin");
+        let bytes = vec![0u8; 32];
+        std::fs::write(&path, &bytes).unwrap();
+        let file = File::options().write(true).open(&path).unwrap();
+        let modified = std::time::SystemTime::now() - std::time::Duration::from_secs(60);
+        file.set_modified(modified).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        let source =
+            SegmentSource::published(path.clone(), 2, 16, hex::encode(Sha256::digest(&bytes)), 2)
+                .verify_into(&mut VerificationReport::default(), true)
+                .unwrap();
+        assert!(source.evidence.is_some());
+        file.write_all_at(&[1], 0).unwrap();
+        file.set_modified(modified).unwrap();
+        let candidate = SegmentSource::published(path, 2, 16, source.sha256.clone(), 2);
+        assert!(candidate.verify_or_reuse(
+            Some(&source), &mut VerificationReport::default(), true,
+        ).is_err(), "a changed source must be hashed and rejected even if its modification time was restored");
+    }
 
     /// A segment whose rows past the ones its queries select hold data is refused
     /// on verification and on load, so no runtime is built or restored from it.

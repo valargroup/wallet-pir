@@ -27,7 +27,16 @@ fn mainnet() -> Hash {
 
 /// The node: its tip and the hash it reports at each height.
 #[derive(Clone, Default)]
-struct Node(Arc<Mutex<(u64, HashMap<u64, Hash>)>>);
+struct Node(
+    Arc<Mutex<(u64, HashMap<u64, Hash>)>>,
+    Arc<Mutex<Option<RecordReplacement>>>,
+);
+
+struct RecordReplacement {
+    height: u64,
+    path: PathBuf,
+    value: Value,
+}
 
 impl Node {
     fn set(&self, height: u32, hash: Hash) {
@@ -46,6 +55,11 @@ async fn rpc(State(node): State<Node>, Json(request): Json<Value>) -> Json<Value
             if height == 0 {
                 json!(zakura_server_chain::hash::display(&mainnet()))
             } else {
+                let mut replacement = node.1.lock().unwrap();
+                if replacement.as_ref().is_some_and(|r| r.height == height) {
+                    let replacement = replacement.take().unwrap();
+                    point(&replacement.path, replacement.value);
+                }
                 let hash = hashes.get(&height).copied().unwrap_or([0xee; 32]);
                 json!(zakura_server_chain::hash::display(&hash))
             }
@@ -315,6 +329,39 @@ fn refusal(health: &Value) -> (&str, &str) {
         refusal["kind"].as_str().unwrap_or(""),
         refusal["message"].as_str().unwrap_or(""),
     )
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn replacing_the_record_during_the_canonical_rpc_prevents_activation() {
+    let world = World::new().await;
+    let (snapshot, witness) = publication(1, [0xa1; 32]);
+    world.node.set(activation() + 1, [0xa1; 32]);
+    let (dir, revision) = stage(world.root.path(), "candidate", &snapshot, Some(&witness));
+    world.assign(&dir, &revision);
+    *world.node.1.lock().unwrap() = Some(RecordReplacement {
+        height: u64::from(activation() + 1),
+        path: world.record.clone(),
+        value: json!({"directory": dir, "revision": "invalid"}),
+    });
+    let _worker = world.start();
+    let mut served = Vec::new();
+    let health = world
+        .until("replacement refused", &mut served, |h| {
+            refusal(h).0 == "invalid_source"
+        })
+        .await;
+    assert!(
+        world.node.1.lock().unwrap().is_none(),
+        "the record changed inside the canonical RPC"
+    );
+    assert!(
+        health["serving"].is_null(),
+        "the superseded publication must never activate"
+    );
+    assert!(
+        served.is_empty(),
+        "the superseded publication must never be observed serving"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
