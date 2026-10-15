@@ -288,6 +288,9 @@ impl World {
             );
         }
         write_map(&p2, &r1);
+        // Link operations also change ctime; evidence is retained only once
+        // both filesystem clocks predate verification by a full timestamp tick.
+        std::thread::sleep(Duration::from_millis(1100));
         let first = open(&p1, None).unwrap();
         Self {
             _root: root,
@@ -387,17 +390,14 @@ fn unchanged_sealed_pages_are_not_hashed_again_in_a_new_revision_and_directory()
         }
     }
 
-    // And the evidence carries on: a third publication of the same
-    // revisions hashes no table at all, directories included.
+    // Adding hard links changes ctime. The next load conservatively hashes
+    // them again, then unchanged files carry their new verification forward.
     let p3 = world.p3();
+    std::thread::sleep(Duration::from_millis(1100));
     let third = open(&p3, Some(&second)).unwrap();
-    assert_eq!(
-        third.verification().bytes_hashed,
-        0,
-        "{:?}",
-        third.verification()
-    );
-    assert_eq!(third.verification().segments_hashed, 0);
+    assert!(third.verification().bytes_hashed > 0);
+    let fourth = open(&p3, Some(&third)).unwrap();
+    assert_eq!(fourth.verification().bytes_hashed, 0);
 }
 
 #[test]
@@ -430,8 +430,9 @@ fn a_replaced_file_is_hashed_and_a_corrupt_one_refused() {
 #[test]
 fn an_in_place_write_voids_the_evidence() {
     let world = World::new();
-    let second = open(&world.p2, Some(&world.first)).unwrap();
     let p3 = world.p3();
+    std::thread::sleep(Duration::from_millis(1100));
+    let second = open(&world.p2, Some(&world.first)).unwrap();
     let pages = world.sealed_pages(&p3);
     // Rewrite the same bytes in place: same inode and length, new mtime.
     // Every link sees it — both revisions publish this page shard as the
@@ -469,6 +470,8 @@ fn a_missing_file_is_refused_whatever_the_evidence() {
 #[test]
 fn a_file_written_just_before_it_was_hashed_is_not_vouched_for() {
     let world = World::new();
+    let p3 = world.p3();
+    std::thread::sleep(Duration::from_millis(1100));
     // Publication two's files are a minute old, but rewrite the sealed page
     // shard's bytes now and load: the stamp is too fresh to trust later.
     let pages = world.sealed_pages(&world.p2);
@@ -476,7 +479,6 @@ fn a_file_written_just_before_it_was_hashed_is_not_vouched_for() {
     std::fs::remove_file(&pages[0]).unwrap();
     std::fs::write(&pages[0], &bytes).unwrap();
     let second = open(&world.p2, Some(&world.first)).unwrap();
-    let p3 = world.p3();
     let third = open(&p3, Some(&second)).unwrap();
     assert_eq!(third.verification().page_bytes_hashed, bytes.len() as u64);
 }

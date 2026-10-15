@@ -649,6 +649,8 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let (dir, shards) = publication(root.path());
         age(root.path());
+        let (next, _) = synth::write_candidate(root.path(), &params(), &shards, "c1").unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(1100));
         let first = DisplaySet::open(&dir, 3, DisplayRole::Combined).unwrap();
         let report = first.verification();
         assert_eq!(report.segments_reused, 0);
@@ -657,7 +659,6 @@ mod tests {
 
         // The same files under a new candidate: nothing is read again, rows
         // included, and the sources name the candidate.
-        let (next, _) = synth::write_candidate(root.path(), &params(), &shards, "c1").unwrap();
         let second =
             DisplaySet::open_reusing(&next, 3, Some(&first), &[], DisplayRole::Combined).unwrap();
         let report = second.verification();
@@ -672,6 +673,11 @@ mod tests {
                 source.load().unwrap();
             }
         }
+        // Collection changes link counts and ctime; refresh verification before
+        // checking the separate in-place-write case below.
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        let second =
+            DisplaySet::open_reusing(&next, 3, Some(&second), &[], DisplayRole::Combined).unwrap();
 
         // An in-place write voids the evidence: the archive is hashed and its
         // rows checked again, and a changed byte is refused.

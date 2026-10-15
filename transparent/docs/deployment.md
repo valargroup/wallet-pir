@@ -419,10 +419,12 @@ inherits verification from the publication it replaces, per table segment:
 only when the candidate's segment is the same committed segment (runtime
 identity — the revision digest for a directory, the chained child identity
 for a page shard — table kind, index, digest and geometry) and resolves to the
-very file the process hashed, by device, inode, length and modification time
-sampled before and after hashing, with the last write older than the read by
-more than a timestamp tick. The publisher hard-links unchanged sealed page
-shards into each republished tail, so they are not hashed again, and the
+very file the process hashed, by device, inode, length, modification time and
+change time sampled before and after hashing, with both filesystem clocks older
+than the read by more than a timestamp tick. Creating or removing hard links
+changes change time and conservatively requires hashing again; a restored
+modification time cannot hide an in-place write. Files already linked before
+verification can carry their verification into another revision. The
 candidate's sources name its own links, so collecting the old publication
 breaks no read. A replaced file, an in-place write, a missing file or a file
 written just before it was hashed is verified in full; cold builds and cache
