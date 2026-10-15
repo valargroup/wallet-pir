@@ -793,6 +793,7 @@ async fn revision_churn_bounds_runtimes_and_collects_idle_snapshots() {
             directory: a,
             assignment: None,
             map_sha256: expected.clone(),
+            runtimes: None,
         },
         config,
         LoadOptions::whole(3),
@@ -812,6 +813,7 @@ async fn revision_churn_bounds_runtimes_and_collects_idle_snapshots() {
                 directory,
                 assignment: None,
                 map_sha256: map_sha256.clone(),
+                runtimes: None,
             },
         })
         .await
@@ -901,6 +903,7 @@ async fn blocked_collection_keeps_status_and_readiness_responsive() {
             directory,
             assignment: None,
             map_sha256,
+            runtimes: None,
         },
         config,
         LoadOptions::whole(3),
@@ -995,6 +998,7 @@ async fn blocked_publication_write(invalidate: bool) {
             directory: a,
             assignment: None,
             map_sha256: old_map.clone(),
+            runtimes: None,
         },
         config,
         LoadOptions::whole(3),
@@ -1017,6 +1021,7 @@ async fn blocked_publication_write(invalidate: bool) {
                 directory: b,
                 assignment: None,
                 map_sha256: map_sha256.clone(),
+                runtimes: None,
             },
         })
         .await
@@ -1140,6 +1145,7 @@ async fn live_prepare_activate_and_invalidate() {
             directory: a.clone(),
             assignment: None,
             map_sha256: old_map.clone(),
+            runtimes: None,
         },
         config,
         LoadOptions::whole(3),
@@ -1162,6 +1168,7 @@ async fn live_prepare_activate_and_invalidate() {
             directory: b.clone(),
             assignment: None,
             map_sha256: new_map.clone(),
+            runtimes: None,
         },
     })
     .await
@@ -1203,6 +1210,7 @@ async fn live_prepare_activate_and_invalidate() {
             directory: b,
             assignment: None,
             map_sha256: new_map.clone(),
+            runtimes: None,
         },
     })
     .await
@@ -1321,3 +1329,194 @@ async fn live_prepare_activate_and_invalidate() {
 mod burst;
 #[path = "../examples/support/query.rs"]
 mod burst_query;
+
+/// A worker offered the runtimes its publisher prepared loads them at
+/// startup, at every preparation and again after a restart, building
+/// nothing, and the offer is carried in the durable active record a
+/// restart reads. A reorg between preparation and activation still fences
+/// the candidate.
+#[tokio::test(flavor = "multi_thread")]
+async fn prepared_runtimes_serve_preparation_and_restart_within_reorg_fences() {
+    use std::path::PathBuf;
+    use transparent_shard_server::live::{Command, LiveService, Publication};
+    use transparent_shard_server::prebuild::prepare_publication;
+    use transparent_shard_server::service::ReadinessMode;
+    use transparent_shard_server::shardset::LoadOptions;
+    let prepare = |dir: &Path, retained: &[PathBuf]| {
+        let prepared =
+            prepare_publication(&ShardSet::open(dir, 3).unwrap(), dir, retained, &|| false)
+                .unwrap();
+        assert!(prepared.failures.is_empty(), "{:?}", prepared.failures);
+        prepared
+    };
+    let root = tempfile::tempdir().unwrap();
+    let initial = root.path().join("initial");
+    std::fs::create_dir(&initial).unwrap();
+    let (_, mut previous) = two_revisions(&initial);
+    let first = prepare(&initial, &[]);
+    assert_eq!(first.linked(), 0);
+    let pair = one_runtime(Table::Directory) + one_runtime(Table::Pages);
+    let config = ServiceConfig {
+        cache_bytes: pair * 8,
+        readiness: ReadinessMode::Warm,
+        ..ServiceConfig::default()
+    };
+    let set = ShardSet::open(&initial, 3).unwrap();
+    let mut expected = set.map_digest.clone();
+    let publication = Publication {
+        directory: initial.clone(),
+        assignment: None,
+        map_sha256: expected.clone(),
+        runtimes: Some(initial.clone()),
+    };
+    let state =
+        ServiceState::build_with_runtimes(set, config, None, publication.shipped()).unwrap();
+    state.spawn_prewarm().await.unwrap();
+    let metrics = state.metrics().clone();
+    assert_eq!(
+        metrics.builds.load(Ordering::Relaxed),
+        0,
+        "cold load builds nothing"
+    );
+    assert_eq!(metrics.shipped_loads.load(Ordering::Relaxed), 2);
+    let record = root.path().join("active.json");
+    let live = LiveService::new(
+        state,
+        publication,
+        config,
+        LoadOptions::whole(3),
+        record.clone(),
+    )
+    .unwrap();
+    let mut previous_dir = initial;
+    for revision in 2..5 {
+        let directory = root.path().join(format!("generation-{revision}"));
+        std::fs::create_dir(&directory).unwrap();
+        let height = FIRST + 80 + revision as u64;
+        let (digest, scripts) = write_revision(&directory, height, revision, &previous);
+        write_map(&directory, &digest, height, revision, scripts);
+        prepare(&directory, std::slice::from_ref(&previous_dir));
+        let map_sha256 = ShardSet::open(&directory, 3).unwrap().map_digest;
+        let reply = live
+            .command(Command::Prepare {
+                expected: expected.clone(),
+                publication: Publication {
+                    directory: directory.clone(),
+                    assignment: None,
+                    map_sha256: map_sha256.clone(),
+                    runtimes: Some(directory.clone()),
+                },
+            })
+            .await
+            .unwrap();
+        let produced = &reply["runtimes"];
+        assert_eq!(produced["runtimes_offered"], true, "{reply}");
+        assert_eq!(produced["built"], 0, "{reply}");
+        assert_eq!(produced["restored"], 0, "{reply}");
+        assert_eq!(produced["shipped_fallbacks"], 0, "{reply}");
+        assert!(produced["shipped"].as_u64().unwrap() > 0, "{reply}");
+        live.command(Command::Activate {
+            expected,
+            map_sha256: map_sha256.clone(),
+        })
+        .await
+        .unwrap();
+        live.command(Command::Collect).await.unwrap();
+        expected = map_sha256;
+        previous = digest;
+        previous_dir = directory;
+    }
+    assert_eq!(metrics.builds.load(Ordering::Relaxed), 0);
+    assert_eq!(metrics.shipped_fallbacks.load(Ordering::Relaxed), 0);
+
+    // A restart reads the active record, which names the runtimes, and a
+    // fresh process with an empty cache loads them rather than building.
+    let active: Publication = serde_json::from_slice(&std::fs::read(&record).unwrap()).unwrap();
+    assert_eq!(active.runtimes.as_deref(), Some(previous_dir.as_path()));
+    let restarted = ServiceState::build_with_runtimes(
+        ShardSet::open(&active.directory, 3).unwrap(),
+        config,
+        None,
+        active.shipped(),
+    )
+    .unwrap();
+    restarted.spawn_prewarm().await.unwrap();
+    let restart = restarted.metrics();
+    assert_eq!(
+        restart.builds.load(Ordering::Relaxed),
+        0,
+        "restart builds nothing"
+    );
+    assert_eq!(restart.shipped_loads.load(Ordering::Relaxed), 2);
+    drop(restarted);
+
+    // A reorg between preparation and activation fences the prepared
+    // candidate whatever runtimes it was offered.
+    let directory = root.path().join("orphan");
+    std::fs::create_dir(&directory).unwrap();
+    let height = FIRST + 90;
+    let (digest, scripts) = write_revision(&directory, height, 5, &previous);
+    write_map(&directory, &digest, height, 5, scripts);
+    prepare(&directory, std::slice::from_ref(&previous_dir));
+    let map_sha256 = ShardSet::open(&directory, 3).unwrap().map_digest;
+    live.command(Command::Prepare {
+        expected: expected.clone(),
+        publication: Publication {
+            directory: directory.clone(),
+            assignment: None,
+            map_sha256: map_sha256.clone(),
+            runtimes: Some(directory),
+        },
+    })
+    .await
+    .unwrap();
+    live.command(Command::Invalidate {
+        expected: expected.clone(),
+        from_height: height,
+        keep_digests: Default::default(),
+    })
+    .await
+    .unwrap();
+    let refused = live
+        .command(Command::Activate {
+            expected,
+            map_sha256,
+        })
+        .await
+        .unwrap_err();
+    assert!(refused.contains("reorg invalidated"), "{refused}");
+}
+
+/// A publication invalidated while its runtimes are prepared stops between
+/// segments and reports it, so it is never offered; what it finished stays
+/// a complete file a later publication may link, never a partial one.
+#[test]
+fn an_invalidated_preparation_stops_between_segments() {
+    use std::sync::atomic::AtomicUsize;
+    use transparent_shard_server::prebuild::{prepare_publication, PrepareError};
+    let dir = tempfile::tempdir().unwrap();
+    two_revisions(dir.path());
+    let set = ShardSet::open(dir.path(), 3).unwrap();
+    let targets = set.warm_targets().len();
+    assert!(targets > 2, "several segments to stop between");
+    let asked = AtomicUsize::new(0);
+    // Invalidated once the first segment is done.
+    let superseded = || asked.fetch_add(1, Ordering::SeqCst) >= 1;
+    assert!(matches!(
+        prepare_publication(&set, dir.path(), &[], &superseded),
+        Err(PrepareError::Superseded)
+    ));
+    let files: Vec<String> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.ends_with(".runtime") || name.ends_with(".partial"))
+        .collect();
+    assert_eq!(files.len(), 1, "{files:?}");
+    assert!(files[0].ends_with(".runtime"));
+    // Prepared again, the finished file is kept and the rest built.
+    let prepared = prepare_publication(&set, dir.path(), &[], &|| false).unwrap();
+    assert_eq!(prepared.files.len(), targets);
+    assert_eq!(prepared.linked(), 1);
+    assert_eq!(prepared.built(), targets - 1);
+}

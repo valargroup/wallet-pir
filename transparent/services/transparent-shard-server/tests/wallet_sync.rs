@@ -3745,3 +3745,268 @@ async fn a_malformed_shard_map_still_stops_the_sync() {
     );
     assert!(log.sent.is_empty(), "nothing is read");
 }
+
+/// The runtimes a publisher prepares beside the publication in `dir`, all
+/// built: nothing is retained to link from.
+fn prepare_runtimes(dir: &Path) -> transparent_shard_server::prebuild::HistoryPrepared {
+    let set = ShardSet::open(dir, DEFAULT_RETAIN_REVISIONS).expect("load");
+    let prepared =
+        transparent_shard_server::prebuild::prepare_publication(&set, dir, &[], &|| false)
+            .expect("prepare");
+    assert!(prepared.failures.is_empty(), "{:?}", prepared.failures);
+    assert_eq!(prepared.built(), prepared.files.len());
+    assert_eq!(prepared.files.len(), set.warm_targets().len());
+    prepared
+}
+
+/// Starts the service on an ephemeral port, offered the runtimes prepared
+/// beside the publication or, with `offered` false, none; returns its base
+/// URL and its serving state, whose counters the tests read.
+async fn serve_prepared(dir: &Path, offered: bool) -> (String, ServiceState) {
+    let set = ShardSet::open(dir, DEFAULT_RETAIN_REVISIONS).expect("load");
+    let shipped = offered
+        .then(|| transparent_shard_server::runtime::disk::ShippedRuntimes::new(dir.to_path_buf()));
+    let state = ServiceState::build_with_runtimes(set, ServiceConfig::default(), None, shipped)
+        .expect("state");
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let serving = state.clone();
+    tokio::spawn(async move {
+        axum::serve(listener, router(serving)).await.unwrap();
+    });
+    (format!("http://{addr}"), state)
+}
+
+fn counter(
+    state: &ServiceState,
+    pick: fn(&transparent_shard_server::metrics::Metrics) -> &std::sync::atomic::AtomicU64,
+) -> u64 {
+    transparent_shard_server::metrics::Metrics::get(pick(state.metrics()))
+}
+
+/// A wallet syncing against a worker offered the publisher's runtimes
+/// recovers exactly what an independent traversal of the events does, and
+/// the worker builds nothing: every runtime the sync touched was loaded
+/// from a prepared file and self-checked. Two page shards per directory
+/// shard, a history spanning pages, and a shard whose pages need two
+/// segments.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_wallet_syncs_exactly_from_prepared_runtimes_with_no_worker_build() {
+    for (fixture, per_shard, wallet) in [
+        (
+            "four shards",
+            chain(),
+            vec![script(1), script(2), script(3), script(999)],
+        ),
+        ("two page segments", oversized_chain(), oversized_wallet()),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let map = publish(dir.path(), &per_shard);
+        let prepared = prepare_runtimes(dir.path());
+        assert!(
+            prepared.files.iter().any(|f| f.table.contains("pages-1"))
+                || prepared
+                    .files
+                    .iter()
+                    .filter(|f| f.table.contains("pages"))
+                    .count()
+                    > 1,
+            "{fixture}: page shards are prepared"
+        );
+        let (base, state) = serve_prepared(dir.path(), true).await;
+        let outcome = run_sync(dir.path(), base, wallet.clone(), FIRST, map).await;
+        compare(&outcome.ledger, &traverse(&per_shard, &wallet, 0));
+        assert!(outcome.ledger.unresolved().is_empty(), "{fixture}");
+        assert!(counter(&state, |m| &m.shipped_loads) > 0, "{fixture}");
+        assert_eq!(counter(&state, |m| &m.shipped_fallbacks), 0, "{fixture}");
+        assert_eq!(
+            counter(&state, |m| &m.builds),
+            0,
+            "{fixture}: no worker build"
+        );
+    }
+}
+
+/// The same queries, sent to a worker loading prepared runtimes and to one
+/// building its own, get byte-identical setup and answers, and each answer
+/// decodes to the row read straight from the segment file: populated rows,
+/// empty rows after them, the first and last rows, and the rows either side
+/// of a native block boundary, for every directory and page segment.
+#[tokio::test(flavor = "multi_thread")]
+async fn prepared_and_built_runtimes_answer_identically_at_populated_empty_and_boundary_rows() {
+    use base64::Engine as _;
+    use transparent_shard_server::runtime::SharedParams;
+    for per_shard in [chain(), oversized_chain()] {
+        let dir = tempfile::tempdir().unwrap();
+        publish(dir.path(), &per_shard);
+        prepare_runtimes(dir.path());
+        let (shipped_base, shipped) = serve_prepared(dir.path(), true).await;
+        let (built_base, built) = serve_prepared(dir.path(), false).await;
+        let set = ShardSet::open(dir.path(), DEFAULT_RETAIN_REVISIONS).unwrap();
+        let client = reqwest::Client::new();
+        let mut checked = 0;
+        for shard in set.current() {
+            for table in shard.tables() {
+                let shared = SharedParams::build(shard.geometry, table.kind()).unwrap();
+                let profile = &shared.profile;
+                let query_rows = shard.query_rows(table, profile.rows);
+                let segments = shard.segments(table);
+                let mut public = Vec::new();
+                for segment in 0..segments {
+                    let mut setups = Vec::new();
+                    for base in [&shipped_base, &built_base] {
+                        let setup: serde_json::Value = client
+                            .get(format!(
+                                "{base}/v2/shards/{}/revisions/{}/setup/{}/{segment}",
+                                shard.manifest.shard_id,
+                                shard.digest,
+                                table.name()
+                            ))
+                            .send()
+                            .await
+                            .unwrap()
+                            .json()
+                            .await
+                            .unwrap();
+                        setups.push(setup);
+                    }
+                    assert_eq!(setups[0], setups[1], "setup of {}", table.name());
+                    public.push(
+                        base64::engine::general_purpose::STANDARD
+                            .decode(setups[0]["public_params"].as_str().unwrap())
+                            .unwrap(),
+                    );
+                }
+                // The rows each segment holds, read independently of any
+                // runtime.
+                let files: Vec<Vec<u8>> = (0..segments)
+                    .map(|segment| {
+                        std::fs::read(&shard.segment(table, segment).unwrap().path).unwrap()
+                    })
+                    .collect();
+                let populated = files
+                    .iter()
+                    .map(|rows| {
+                        rows.chunks(profile.row_bytes)
+                            .rposition(|row| row.iter().any(|b| *b != 0))
+                            .unwrap_or(0)
+                    })
+                    .max()
+                    .unwrap();
+                let block = transparent_native::D;
+                let mut rows: Vec<usize> = vec![
+                    0,
+                    populated,
+                    populated + 1,
+                    query_rows - 1,
+                    block - 1,
+                    block,
+                ];
+                rows.retain(|row| *row < query_rows);
+                rows.sort_unstable();
+                rows.dedup();
+                for row in rows {
+                    let (secret, upload) = profile.prepare(row).unwrap();
+                    let mut body =
+                        transparent_shard::manifest::query_binding(&shard.digest, &table.name())
+                            .to_vec();
+                    body.extend(upload);
+                    let mut answers = Vec::new();
+                    for base in [&shipped_base, &built_base] {
+                        let response = client
+                            .post(format!(
+                                "{base}/v2/shards/{}/revisions/{}/query/{}",
+                                shard.manifest.shard_id,
+                                shard.digest,
+                                table.name()
+                            ))
+                            .body(body.clone())
+                            .send()
+                            .await
+                            .unwrap();
+                        assert!(response.status().is_success(), "{}", response.status());
+                        answers.push(response.bytes().await.unwrap().to_vec());
+                    }
+                    assert_eq!(answers[0], answers[1], "{} row {row}", table.name());
+                    let each = shared.response_bytes();
+                    assert_eq!(answers[0].len(), each * segments as usize);
+                    for (segment, answer) in answers[0].chunks(each).enumerate() {
+                        let decoded = profile
+                            .decode(&secret, &public[segment], &answer[16..])
+                            .unwrap();
+                        let at = row * profile.row_bytes;
+                        assert_eq!(
+                            decoded,
+                            &files[segment][at..at + profile.row_bytes],
+                            "{} segment {segment} row {row}",
+                            table.name()
+                        );
+                    }
+                    checked += 1;
+                }
+            }
+        }
+        assert!(checked >= 5, "{checked} rows checked");
+        assert_eq!(counter(&shipped, |m| &m.builds), 0);
+        assert_eq!(counter(&shipped, |m| &m.shipped_fallbacks), 0);
+        assert!(counter(&built, |m| &m.builds) > 0);
+    }
+}
+
+/// A prepared file whose database differs from its segment in a single row
+/// is refused by the full database comparison, whichever row the
+/// self-check's query happens to sample, and the worker builds that one
+/// runtime itself: the wallet still recovers exactly.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_prepared_runtime_one_row_off_is_refused_and_the_sync_stays_exact() {
+    use transparent_shard_server::runtime::disk::ShippedRuntimes;
+    use transparent_shard_server::runtime::{SharedParams, TableRuntime};
+    use transparent_shard_server::shardset::TableRef;
+    let dir = tempfile::tempdir().unwrap();
+    let per_shard = chain();
+    let map = publish(dir.path(), &per_shard);
+    prepare_runtimes(dir.path());
+    let set = ShardSet::open(dir.path(), DEFAULT_RETAIN_REVISIONS).unwrap();
+    // The first shard's directory, which the sync below queries.
+    let shard = set.get(0).unwrap();
+    let shared = SharedParams::build(
+        shard.geometry,
+        transparent_shard_server::shardset::Table::Directory,
+    )
+    .unwrap();
+    let source = shard.segment(TableRef::Directory, 0).unwrap();
+    let rows = std::fs::read(&source.path).unwrap();
+    let row_bytes = shared.profile.row_bytes;
+    let changed = rows
+        .chunks(row_bytes)
+        .position(|row| row.iter().any(|b| *b != 0))
+        .unwrap();
+    let mut one_off = rows.clone();
+    one_off[changed * row_bytes + 3] ^= 0x10;
+    let forged = TableRuntime::build(&shared, &one_off).unwrap();
+    // Its own rows decode under it: only comparing the whole database with
+    // the segment can tell, and it does at every sampled row.
+    forged.self_check(&shared, &one_off).unwrap();
+    for _ in 0..16 {
+        let refused = forged.self_check(&shared, &rows).unwrap_err();
+        assert!(refused.contains("differs from the segment"), "{refused}");
+    }
+    let key = (
+        shard.digest.clone(),
+        transparent_shard_server::shardset::Table::Directory,
+        0,
+    );
+    ShippedRuntimes::new(dir.path().to_path_buf())
+        .write(&key, &shared, &source.sha256, &forged)
+        .unwrap();
+    let (base, state) = serve_prepared(dir.path(), true).await;
+    let wallet = vec![script(1), script(2), script(3), script(999)];
+    let outcome = run_sync(dir.path(), base, wallet.clone(), FIRST, map).await;
+    compare(&outcome.ledger, &traverse(&per_shard, &wallet, 0));
+    assert_eq!(counter(&state, |m| &m.shipped_fallbacks), 1);
+    assert_eq!(
+        counter(&state, |m| &m.builds),
+        1,
+        "only the refused runtime is built"
+    );
+}

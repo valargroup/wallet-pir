@@ -14,6 +14,7 @@ pub mod display;
 mod filecache;
 pub mod memory;
 pub mod metrics;
+pub mod prebuild;
 mod prewarm;
 pub mod procmem;
 mod request;

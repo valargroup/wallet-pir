@@ -55,6 +55,7 @@ async fn publication_burst_under_exact_load() {
                 directory: base.join(item["directory"].as_str().unwrap()),
                 assignment: Some(base.join(item["assignment"].as_str().unwrap())),
                 map_sha256: item["map_sha256"].as_str().unwrap().to_owned(),
+                runtimes: None,
             });
         }
         assert_eq!(publications.len(), 3);
@@ -98,6 +99,7 @@ async fn publication_burst_under_exact_load() {
                 directory,
                 assignment: None,
                 map_sha256,
+                runtimes: None,
             });
         }
         (

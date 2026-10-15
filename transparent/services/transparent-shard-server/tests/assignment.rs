@@ -658,6 +658,7 @@ async fn a_publication_held_under_another_assignment_row_is_refused() {
         directory: dir.path().to_path_buf(),
         assignment: Some(path.to_path_buf()),
         map_sha256: digest.clone(),
+        runtimes: None,
     };
     let live = LiveService::new(
         state,
@@ -808,4 +809,97 @@ async fn expected_query_length(app: &axum::Router, path: &str) -> usize {
         .and_then(|rest| rest.split([' ', ',']).next())
         .and_then(|n| n.parse().ok())
         .unwrap_or_else(|| panic!("no length in {error:?}"))
+}
+
+/// With prepared runtimes beside a publication, each worker's transfer
+/// inventory lists exactly the runtimes of its own shards, and a worker
+/// staged from it loads every assigned runtime from them without building.
+#[tokio::test(flavor = "multi_thread")]
+async fn each_worker_receives_only_the_prepared_runtimes_of_its_shards() {
+    use std::sync::atomic::Ordering;
+    use transparent_shard_server::prebuild::prepare_publication;
+    use transparent_shard_server::router::files_with_runtimes;
+    use transparent_shard_server::runtime::disk::ShippedRuntimes;
+    let dir = tempfile::tempdir().unwrap();
+    let map = publish(dir.path());
+    let assignment = planned(&map);
+    let set = ShardSet::open(dir.path(), 3).unwrap();
+    let prepared = prepare_publication(&set, dir.path(), &[], &|| false).unwrap();
+    assert!(prepared.failures.is_empty());
+    let runtimes = |files: &[String]| -> std::collections::BTreeSet<String> {
+        files
+            .iter()
+            .filter(|f| f.ends_with(".runtime"))
+            .cloned()
+            .collect()
+    };
+    // Without the flag nothing changes.
+    let plain = files_for(dir.path(), &map, &assignment, "recent-01").unwrap();
+    assert!(runtimes(&plain).is_empty());
+    assert_eq!(
+        plain,
+        files_with_runtimes(dir.path(), &map, &assignment, "recent-01", false).unwrap()
+    );
+    let mut every = std::collections::BTreeSet::new();
+    for worker in ["archive-01", "archive-02", "recent-01", "recent-02"] {
+        let files = files_with_runtimes(dir.path(), &map, &assignment, worker, true).unwrap();
+        let mine = runtimes(&files);
+        let scope = assignment.scope_for(worker).unwrap();
+        // Exactly the files of this worker's shards' runtimes.
+        let expected: std::collections::BTreeSet<String> = set
+            .revisions()
+            .iter()
+            .filter(|shard| scope.assigned.contains(&shard.manifest.shard_id))
+            .flat_map(|shard| shard.runtime_identities())
+            .flat_map(|identity| {
+                let prefix =
+                    hex::encode(<sha2::Sha256 as sha2::Digest>::digest(identity.as_bytes()));
+                prepared
+                    .files
+                    .iter()
+                    .filter(move |file| file.name.starts_with(&format!("{prefix}-")))
+                    .map(|file| file.name.clone())
+            })
+            .collect();
+        assert_eq!(mine, expected, "{worker}");
+        assert!(!mine.is_empty(), "{worker}");
+        every.extend(mine.iter().cloned());
+        // Staged from its inventory, it loads every assigned runtime from them.
+        let staged = tempfile::tempdir().unwrap();
+        for file in &files {
+            let from = dir.path().join(file.trim_end_matches('/'));
+            let to = staged.path().join(file.trim_end_matches('/'));
+            if from.is_dir() {
+                copy_dir(&from, &to);
+            } else {
+                std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+                std::fs::copy(&from, &to).unwrap();
+            }
+        }
+        let loaded = load_as(staged.path(), &assignment, worker, LoadOptions::whole(3));
+        let state = ServiceState::build_with_runtimes(
+            loaded,
+            warm_config(),
+            None,
+            Some(ShippedRuntimes::new(staged.path().to_path_buf())),
+        )
+        .unwrap();
+        state.spawn_prewarm().await.unwrap();
+        let metrics = state.metrics();
+        assert_eq!(metrics.builds.load(Ordering::Relaxed), 0, "{worker}");
+        assert_eq!(
+            metrics.shipped_fallbacks.load(Ordering::Relaxed),
+            0,
+            "{worker}"
+        );
+        assert!(
+            metrics.shipped_loads.load(Ordering::Relaxed) > 0,
+            "{worker}"
+        );
+    }
+    assert_eq!(
+        every.len(),
+        prepared.files.len(),
+        "every runtime has an owner"
+    );
 }
