@@ -7,13 +7,15 @@ outgoing viewing key (OVK). Coinbase recipients are excluded. Every Ironwood
 Action still counts toward note positions, including coinbase and unrecoverable
 outputs.
 
-`receiver-wire` is the fixed record codec. `receiver-directory` holds records,
-publications and, with the `store` feature, the indexer's SQLite store; it parses
-structure only. Cryptography is wallet-owned: `zakura-receiver-crypto` in
-wallet-libraries checks receivers, unified addresses and record fields, recovers
-receivers with the zero OVK, and builds and checks witness files. The indexer
-calls it before storing a payment and before serving a publication, and a wallet
-calls it before crediting a payment. No receiver PIR package depends on it.
+The canonical fixed record codec is `zakura-receiver-crypto::wire` in
+wallet-libraries. `receiver-directory` uses it with cryptography disabled to hold
+records, publications and, with the `store` feature, the indexer's SQLite store;
+it parses structure only. The same library's `crypto` feature checks receivers,
+unified addresses and record fields, recovers receivers with the zero OVK, and
+builds and checks witness files. The indexer enables these checks before storing
+a payment and before serving a publication, and a wallet checks a retrieved
+payment before crediting it. Dependencies run one way from wallet-pir to
+wallet-libraries; wallet-libraries never consumes wallet-pir packages.
 `receiver-pir` holds the PIR client and the wallet `Transport` interface, plus
 the evaluator with the `server` feature. `receiver-pir-server` serves
 publications over HTTP. `receiver-indexer` builds them from a Zakura node; its
@@ -29,10 +31,10 @@ A 285-byte record holds version (1 byte), receiver (43), page (4), total pages
 (4), Action index (4), note position (8), Action input nullifier (32), note
 commitment (32), ephemeral key (32) and ciphertext prefix (52). Integers are
 little endian and hashes use protocol byte order. The Action input nullifier is
-decryption context, not the received note's spend nullifier. Encoding and
-decoding refuse a note commitment or Action input nullifier that is not a
-canonical field element, or an ephemeral key that is not a valid Ironwood
-ephemeral public key. A receiver's payments are ordered by note position, one per
+decryption context, not the received note's spend nullifier. Structural encoding and decoding check lengths, tags and page ranges. The
+indexer and wallet additionally refuse a note commitment or Action input
+nullifier that is not a canonical field element, or an ephemeral key that is not
+a valid Ironwood ephemeral public key. A receiver's payments are ordered by note position, one per
 page from zero, and every page repeats the total.
 
 Rows are 4096 bytes and hold 14 records plus zero padding. A domain-separated

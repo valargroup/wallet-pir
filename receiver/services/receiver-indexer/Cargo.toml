@@ -33,5 +33,5 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 zakura-chain = { git = "https://github.com/zakura-core/zakura.git", rev = "83738c07468bee30a7db8a8d678cb27bf60094f4" }
 # Receiver address, record, recovery and proof checks, pinned to an exact revision.
-zakura-receiver-crypto = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "b9c4c1a73184aa9f536223fa89d502b56e90b7bc" }
+zakura-receiver-crypto = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "3990335d8e8821f31d2f2fd3686ffa8d13ddcfa9", default-features = false, features = ["crypto"] }
 

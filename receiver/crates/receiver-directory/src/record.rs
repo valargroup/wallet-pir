@@ -5,7 +5,7 @@
 //! it, and a wallet validates every record it retrieves, for example with
 //! `zakura-receiver-crypto`, which reads the same encoding.
 use crate::Error;
-pub use receiver_wire::{Payment, RawRecord, RECORD_BYTES};
+pub use zakura_receiver_crypto::wire::{Payment, RawRecord, RECORD_BYTES};
 
 /// A receiver's 43 raw address bytes, not checked to be a valid address.
 pub type ReceiverBytes = [u8; 43];

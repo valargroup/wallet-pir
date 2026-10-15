@@ -12,7 +12,6 @@
     "pir-monitor"
   ],
   "receiver": [
-    "receiver-wire",
     "receiver-directory",
     "receiver-indexer",
     "receiver-pir",

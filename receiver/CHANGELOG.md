@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Consume the canonical record codec from wallet-libraries with cryptography
+  disabled for directory framing; remove the local codec package. The indexer
+  explicitly enables validated receiver, record, recovery and witness APIs.
+
 - Move receiver cryptography to wallet-libraries' `zakura-receiver-crypto`: address
   and record field checks, zero-OVK recovery and witness files. The receiver PIR
   packages now parse structure only and expose explicitly unchecked record and

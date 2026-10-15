@@ -44,12 +44,6 @@ class SelectionTests(unittest.TestCase):
     def setUp(self):
         self.packages = [package('core'), package('client', ['core']), package('server', ['client']), package('other')]
 
-    def test_receiver_wire_has_no_dependency_edges(self):
-        # This codec is consumed by both services and wallet crypto adapters.
-        # Include optional, target, development and build edges in the boundary.
-        wire = next(p for p in fast.workspace_packages() if p['name'] == 'receiver-wire')
-        self.assertEqual(wire['dependencies'], [])
-
     def test_transitive_reverse_dependencies(self):
         self.assertEqual(fast.select(self.packages, ['crates/core/src/lib.rs']), {'core', 'client', 'server'})
         self.assertEqual(fast.select(self.packages, ['crates/server/src/lib.rs']), {'server'})
@@ -79,7 +73,7 @@ class BoundaryTests(unittest.TestCase):
 
     def test_the_receiver_packages_declare_no_common_or_node_edges(self):
         packages = {p['name']: p for p in boundary.manifests()}
-        for name in ['receiver-wire', 'receiver-directory', 'receiver-pir', 'receiver-pir-server']:
+        for name in ['receiver-directory', 'receiver-pir', 'receiver-pir-server']:
             names = {d['name'] for d in packages[name]['dependencies']}
             self.assertFalse(names & (boundary.COMMON | boundary.NODE), name)
 
@@ -99,12 +93,49 @@ class BoundaryTests(unittest.TestCase):
             self.edge('sha2'), self.edge('rand')]}]
         self.assertEqual(boundary.violations(packages, []), [])
 
-    def test_pure_packages_never_reach_wallet_libraries(self):
-        for kind in ['dependencies', 'dev-dependencies']:
-            packages = [{'name': 'receiver-pir', 'manifest': 'receiver-pir/Cargo.toml',
-                         'dependencies': [self.edge('zakura-receiver-crypto', kind,
-                                                    'https://github.com/zakura-core/wallet-libraries')]}]
-            self.assertEqual(len(boundary.violations(packages, [])), 1, kind)
+    def test_only_directory_framing_can_use_the_featureless_codec(self):
+        edge = self.edge('zakura-receiver-crypto', git='https://github.com/zakura-core/wallet-libraries')
+        edge.update({'default-features': False, 'features': []})
+        package = {'name': 'receiver-directory', 'manifest': 'directory/Cargo.toml',
+                   'dependencies': [edge]}
+        self.assertEqual(boundary.violations([package], []), [])
+        for change in [{'default-features': True}, {'features': ['crypto']},
+                       {'kind': 'dev-dependencies'}, {'kind': 'build-dependencies'},
+                       {'kind': 'target.cfg(unix).dependencies'}, {'name': 'zakura-wallet-lib'}]:
+            changed = {**package, 'dependencies': [{**edge, **change}]}
+            self.assertEqual(len(boundary.violations([changed], [])), 1, change)
+        for name in ['receiver-pir', 'enhance-pir', 'transparent-wallet']:
+            self.assertEqual(len(boundary.violations([{**package, 'name': name}], [])), 1, name)
+
+    def test_receiver_framing_uses_the_library_codec_with_crypto_disabled(self):
+        directory = next(p for p in boundary.manifests() if p['name'] == 'receiver-directory')
+        edge = next(d for d in directory['dependencies'] if d['name'] == boundary.CODEC)
+        self.assertFalse(edge['default-features'])
+        self.assertEqual(edge['features'], [])
+
+    def test_workspace_crypto_unification_does_not_excuse_standalone_crypto_or_nodes(self):
+        def node(name, deps=()):
+            return {'id': name, 'deps': [{'pkg': d, 'dep_kinds': [{'kind': None}]} for d in deps]}
+        metadata = {
+            'packages': [
+                {'id': 'pir', 'name': 'receiver-pir', 'source': None},
+                {'id': 'codec', 'name': boundary.CODEC,
+                 'source': 'git+https://github.com/zakura-core/wallet-libraries'},
+                {'id': 'orchard', 'name': 'zakura-orchard', 'source': 'registry'},
+                {'id': 'chain', 'name': 'zakura-chain', 'source': 'registry'},
+            ],
+            'resolve': {'nodes': [node('pir', ['codec']), node('codec', ['orchard']),
+                                  node('orchard'), node('chain')]},
+        }
+        self.assertEqual(boundary.resolved_violations(metadata, workspace_unified=True), [])
+        self.assertEqual(boundary.resolved_violations(metadata),
+                         ['receiver-pir: resolves zakura-orchard'])
+        metadata['resolve']['nodes'][1] = node('codec', ['orchard', 'chain'])
+        self.assertEqual(boundary.resolved_violations(metadata, workspace_unified=True),
+                         ['receiver-pir: resolves zakura-chain'])
+        metadata['resolve']['nodes'][0] = node('pir', ['orchard'])
+        self.assertEqual(boundary.resolved_violations(metadata, workspace_unified=True),
+                         ['receiver-pir: resolves zakura-orchard'])
 
     def test_a_removed_edge_must_leave_the_allowlist(self):
         problems = boundary.violations([], ['svc -> zakura-chain'])
