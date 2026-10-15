@@ -39,7 +39,8 @@
 use crate::admission::{Admission, AdmissionConfig, Admitted};
 use crate::metrics::{Metrics, Snapshot};
 use crate::request::{answer_query, json, within, Query, RequestError, Worker};
-use crate::runtime::{warm_bytes, RuntimeCache, RuntimeHandle, SharedParams};
+use crate::runtime::disk::{DiskCache, ShippedRuntimes};
+use crate::runtime::{warm_bytes, Produced, RuntimeCache, RuntimeHandle, SharedParams};
 use crate::shardset::{LoadedShard, ShardSet, Table, TableRef};
 use axum::extract::{Path as AxumPath, Request, State};
 use axum::http::StatusCode;
@@ -127,6 +128,36 @@ struct WarmState {
     cancelled: AtomicBool,
     count: std::sync::atomic::AtomicU64,
     pins: std::sync::Mutex<Vec<(String, RuntimeHandle)>>,
+    /// How this snapshot's prewarm came by the targets it found not
+    /// resident; see [`ServiceState::preparation`].
+    produced: PrewarmProduced,
+}
+
+/// Counts of how one prewarm produced its targets.
+#[derive(Default)]
+struct PrewarmProduced {
+    shipped: std::sync::atomic::AtomicU64,
+    shipped_fallbacks: std::sync::atomic::AtomicU64,
+    restored: std::sync::atomic::AtomicU64,
+    built: std::sync::atomic::AtomicU64,
+    self_check_micros: std::sync::atomic::AtomicU64,
+}
+
+impl PrewarmProduced {
+    fn record(&self, produced: Produced) {
+        let counter = match produced {
+            Produced::Joined => return,
+            Produced::Shipped { check_micros } => {
+                self.self_check_micros
+                    .fetch_add(check_micros, Ordering::Relaxed);
+                &self.shipped
+            }
+            Produced::Fallback => &self.shipped_fallbacks,
+            Produced::Restored => &self.restored,
+            Produced::Built => &self.built,
+        };
+        counter.fetch_add(1, Ordering::Relaxed);
+    }
 }
 
 impl ServiceConfig {
@@ -155,6 +186,11 @@ pub struct Inner {
     warm: WarmState,
     /// Prewarm jobs; the cache separately bounds cold builds and disk restores.
     prewarm_slots: usize,
+    /// Runtimes the publisher prepared beside this publication, tried before
+    /// a restore or build by the prewarm and by requests alike. `None` when
+    /// the publication was staged without them: the worker then produces
+    /// every runtime itself, as it always has.
+    shipped: Option<ShippedRuntimes>,
 }
 
 #[derive(Clone)]
@@ -240,16 +276,28 @@ impl ServiceState {
     pub fn build_with_disk(
         set: ShardSet,
         config: ServiceConfig,
-        disk: Option<crate::runtime::disk::DiskCache>,
+        disk: Option<DiskCache>,
     ) -> Result<Self, String> {
-        Self::build_reusing(set, config, disk, None)
+        Self::build_reusing(set, config, disk, None, None)
+    }
+
+    /// [`Self::build_with_disk`] for a publication staged with the runtimes
+    /// its publisher prepared, in `shipped`.
+    pub fn build_with_runtimes(
+        set: ShardSet,
+        config: ServiceConfig,
+        disk: Option<DiskCache>,
+        shipped: Option<ShippedRuntimes>,
+    ) -> Result<Self, String> {
+        Self::build_reusing(set, config, disk, None, shipped)
     }
 
     pub(crate) fn build_reusing(
         set: ShardSet,
         config: ServiceConfig,
-        disk: Option<crate::runtime::disk::DiskCache>,
+        disk: Option<DiskCache>,
         previous: Option<&Self>,
+        shipped: Option<ShippedRuntimes>,
     ) -> Result<Self, String> {
         let _ = pir_control::Identity::process();
         let metrics = previous
@@ -329,8 +377,10 @@ impl ServiceState {
                     cancelled: AtomicBool::new(false),
                     count: std::sync::atomic::AtomicU64::new(0),
                     pins: std::sync::Mutex::new(Vec::new()),
+                    produced: PrewarmProduced::default(),
                 },
                 prewarm_slots,
+                shipped,
             }),
         })
     }
@@ -388,11 +438,12 @@ impl ServiceState {
                         match crate::prewarm::retry(
                             &inner.warm.cancelled,
                             std::time::Duration::from_secs(30),
-                            || inner.cache.get(key.clone(), shared.clone(), source.clone()),
+                            || inner.cache.get_from(key.clone(), shared.clone(), source.clone(), inner.shipped.clone()),
                         ).await
                         {
-                            Ok(handle) => {
+                            Ok((handle, produced)) => {
                                 if inner.warm.cancelled.load(Ordering::Acquire) {break;}
+                                inner.warm.produced.record(produced);
                                 if current.contains(&digest) {
                                     inner.warm.count.fetch_add(1, Ordering::Release);
                                     if inner.warm.mode == ReadinessMode::Warm {
@@ -430,6 +481,24 @@ impl ServiceState {
     pub(crate) fn has_other_holders(&self) -> bool {
         Arc::strong_count(&self.inner) > 1
     }
+    /// How this snapshot's prewarm came by its targets: of those it found
+    /// not resident, loaded from shipped files, shipped ones refused and
+    /// produced here instead, restored from this worker's disk cache and
+    /// built here with none offered; and the shipped self-checks' summed
+    /// time. Healthy shipping builds nothing here.
+    pub(crate) fn preparation(&self) -> serde_json::Value {
+        let produced = &self.inner.warm.produced;
+        let get = |counter: &std::sync::atomic::AtomicU64| counter.load(Ordering::Relaxed);
+        serde_json::json!({
+            "runtimes_offered": self.inner.shipped.is_some(),
+            "shipped": get(&produced.shipped),
+            "shipped_fallbacks": get(&produced.shipped_fallbacks),
+            "restored": get(&produced.restored),
+            "built": get(&produced.built),
+            "self_check_seconds": get(&produced.self_check_micros) as f64 / 1e6,
+        })
+    }
+
     pub(crate) fn release_pins(&self) {
         self.inner.warm.pins.lock().unwrap().clear();
     }
@@ -618,8 +687,14 @@ impl ServiceState {
         );
         self.inner
             .cache
-            .get(key, self.shared(shard, table.kind()), source)
+            .get_from(
+                key,
+                self.shared(shard, table.kind()),
+                source,
+                self.inner.shipped.clone(),
+            )
             .await
+            .map(|(handle, _)| handle)
             .map_err(RequestError::from)
     }
 }

@@ -30,6 +30,21 @@ pub struct Publication {
     pub directory: PathBuf,
     pub assignment: Option<PathBuf>,
     pub map_sha256: String,
+    /// Where the runtimes its publisher prepared were staged, when they were:
+    /// plain files beside the revision directories, tried before a restore
+    /// or build. Absent, the worker produces every runtime itself. Recorded
+    /// with the active publication, so a restart is offered them too.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtimes: Option<PathBuf>,
+}
+
+impl Publication {
+    /// The prepared runtimes this publication offers, if any.
+    pub fn shipped(&self) -> Option<crate::runtime::disk::ShippedRuntimes> {
+        self.runtimes
+            .clone()
+            .map(crate::runtime::disk::ShippedRuntimes::new)
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -186,7 +201,7 @@ impl LiveService {
             .map_err(|e| e.to_string())?;
         }
         if matches!(command, Command::Status) {
-            let candidate = self.0.candidate.try_lock().ok().and_then(|c| c.as_ref().map(|c| serde_json::json!({"map_sha256":c.publication.map_sha256,"age_seconds":c.prepared_at.elapsed().as_secs_f64(),"epoch":c.epoch,"warm":c.state.is_warm() && c.epoch == self.0.epoch.load(std::sync::atomic::Ordering::Acquire)})));
+            let candidate = self.0.candidate.try_lock().ok().and_then(|c| c.as_ref().map(|c| serde_json::json!({"map_sha256":c.publication.map_sha256,"age_seconds":c.prepared_at.elapsed().as_secs_f64(),"epoch":c.epoch,"warm":c.state.is_warm() && c.epoch == self.0.epoch.load(std::sync::atomic::Ordering::Acquire),"runtimes":c.state.preparation()})));
             let preparing = self.0.preparing.read().unwrap().as_ref().map(|p| serde_json::json!({"map_sha256":p.digest,"age_seconds":p.started.elapsed().as_secs_f64(),"phase":p.phase}));
             let active = self.0.active.read().unwrap();
             let retired = self.0.retired.read().unwrap();
@@ -268,6 +283,7 @@ impl LiveService {
                 }
                 let directory = publication.directory.clone();
                 let digest = publication.map_sha256.clone();
+                let shipped = publication.shipped();
                 let config = self.0.config;
                 let loading_started = std::time::Instant::now();
                 let next = tokio::task::spawn_blocking(move || {
@@ -289,7 +305,7 @@ impl LiveService {
                         return Err("candidate changes publication identity".into());
                     }
                     let build_started = std::time::Instant::now();
-                    let state = ServiceState::build_reusing(set, config, None, Some(&old));
+                    let state = ServiceState::build_reusing(set, config, None, Some(&old), shipped);
                     tracing::info!(map = %digest, seconds = build_started.elapsed().as_secs_f64(), succeeded = state.is_ok(), "publication service construction finished");
                     state
                 })
@@ -313,6 +329,8 @@ impl LiveService {
                 loading.observe(std::time::Duration::from_secs_f64(loading_seconds));
                 warming.observe(std::time::Duration::from_secs_f64(warming_seconds));
                 total.observe(prepare_started.elapsed());
+                let preparation = next.preparation();
+                tracing::info!(map = %publication.map_sha256, %preparation, "publication runtimes produced");
                 *self.0.candidate.lock().await = Some(Candidate {
                     prepared_at: std::time::Instant::now(),
                     state: next,
@@ -320,7 +338,7 @@ impl LiveService {
                     epoch,
                 });
                 Ok(
-                    serde_json::json!({"prepared":publication.map_sha256,"loading_seconds":loading_seconds,"warming_seconds":warming_seconds}),
+                    serde_json::json!({"prepared":publication.map_sha256,"loading_seconds":loading_seconds,"warming_seconds":warming_seconds,"runtimes":preparation}),
                 )
             }
             Command::Activate {

@@ -17,7 +17,9 @@ use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 use transparent_filter::ShardMap;
 use transparent_shard_server::assignment::{Assignment, GeneratedBy};
-use transparent_shard_server::router::{files_for, plan, render_caddyfile_with, RosterEntry};
+use transparent_shard_server::router::{
+    files_with_runtimes, plan, render_caddyfile_with, RosterEntry,
+};
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
@@ -83,6 +85,10 @@ enum Command {
         assignment: PathBuf,
         #[arg(long)]
         worker_id: String,
+        /// Also list the runtime files the publisher prepared for the
+        /// worker's shards.
+        #[arg(long)]
+        runtimes: bool,
     },
     /// Render the router's Caddyfile from an assignment.
     Caddyfile {
@@ -200,11 +206,12 @@ fn main() -> Result<(), BoxError> {
             shard_dir,
             assignment,
             worker_id,
+            runtimes,
         } => {
             let (map, map_sha256) = read_map(&shard_dir)?;
             let assignment = Assignment::load(&assignment)?;
             assignment.check_against(&map, &map_sha256)?;
-            for file in files_for(&shard_dir, &map, &assignment, &worker_id)? {
+            for file in files_with_runtimes(&shard_dir, &map, &assignment, &worker_id, runtimes)? {
                 println!("{file}");
             }
         }
