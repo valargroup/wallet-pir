@@ -1158,19 +1158,18 @@ by default; v2 does not enable it.
 ## Prepared history runtimes
 
 Implemented and correctness-tested, off by default; see
-[status](status.md#prepared-history-runtimes-implemented-not-measured-2026-10-14) and the
+[status](status.md#prepared-history-runtimes-measured-not-accepted-2026-10-14) and the
 [design as built](architecture.md#prepared-history-runtimes).
 
-- [ ] Run the six paired arms on a host-exclusive allocation with the
-  [harness](../evidence/history-prepared-runtimes-2026-10-14/README.md), one pinned binary
-  set, in the order off/on, on/off, off/on: each arm 300 blocks at 4 s under open-loop
-  20 queries/s, publisher and worker two CPUs and two build threads each, one worker build
-  slot and two query slots, separate CPU groups, warm-fit budgets fixed before the first
-  pair with at least 20% host memory and disk headroom. Accept only if worker CPU falls in
-  every pair, every answer is exact, shipping shows no fallback and no worker build, no
-  query fails or goes unstarted, freshness, readiness and memory gates pass, and the worst
-  shipped query and activation-delay quantiles are no worse than the worst baseline ones.
-  Retain every attempt, including failed or contaminated ones.
+- [x] Run the six paired arms with the
+  [harness](../evidence/history-prepared-runtimes-2026-10-14/README.md) (2026-10-14, shared
+  development hub): worker CPU −51% to −55% every pair, all answers exact, no refused or
+  built runtime with shipping; **not accepted** on latency, activation delay, freshness
+  and contamination.
+- [ ] Before measuring again, take the publisher's preparation off the publication's
+  critical path (offer the candidate as soon as its tail runtimes are ready, or prepare
+  while the fleet stages) and rerun the same six arms, ideally where the measured CPU
+  groups see no other work. Accept only on the original criteria.
 - [ ] Only after an accepted measurement: a reviewed adoption plan through the locked
   deploy tool (`plan`/`preflight`), Roman's confirmation, then the fleet adapter on the
   coordinator before `ship_runtimes`. Measure the real network transfer then; the local
