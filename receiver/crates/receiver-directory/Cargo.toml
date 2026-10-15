@@ -9,6 +9,7 @@ description = "Publicly recoverable Ironwood receiver directory and private look
 store = ["dep:rusqlite"]
 
 [dependencies]
+receiver-wire = { version = "=0.0.1", path = "../receiver-wire" }
 # Pinned exactly, as in `transparent-filter`: the filter bytes are what every wallet
 # tests, so the encoder may not move without revalidation.
 bitcoin = { version = "=0.32.102", default-features = false, features = ["std"] }
