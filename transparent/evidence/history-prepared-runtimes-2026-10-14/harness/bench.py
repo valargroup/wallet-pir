@@ -187,9 +187,7 @@ def proc_rss(pid):
     return 0
 
 
-def descendants(pid):
-    """A process and every descendant, for groups that spawn helpers."""
-    found, frontier = {pid}, [pid]
+def children_map():
     children = {}
     for entry in os.listdir('/proc'):
         if entry.isdigit():
@@ -199,6 +197,12 @@ def descendants(pid):
                 children.setdefault(ppid, []).append(int(entry))
             except (FileNotFoundError, ProcessLookupError, ValueError):
                 pass
+    return children
+
+
+def descendants(pid, children):
+    """A process and every descendant, for roles that spawn helpers."""
+    found, frontier = {pid}, [pid]
     while frontier:
         for child in children.get(frontier.pop(), []):
             if child not in found:
@@ -220,27 +224,39 @@ class Sampler(threading.Thread):
     def run(self):
         with open(self.path, 'a') as stream:
             while not self.stop_event.is_set():
-                sample = {'unix': time.time(), 'cpu_busy': read_cpu_jiffies(), 'roles': {}}
-                for role, pid in self.roles.items():
-                    try:
-                        ticks, rss = 0, 0
-                        for member in descendants(pid):
-                            total, threads = proc_cpu(member)
-                            ticks += total
-                            rss += proc_rss(member)
-                            if role == 'worker' and member == pid:
-                                sample['worker_threads'] = threads
-                        sample['roles'][role] = {'ticks': ticks, 'rss': rss}
-                    except (FileNotFoundError, ProcessLookupError):
-                        sample['roles'][role] = None
-                with open('/proc/meminfo') as meminfo:
-                    for line in meminfo:
-                        if line.startswith(('MemTotal:', 'MemAvailable:')):
-                            sample[line.split(':')[0]] = int(line.split()[1]) * 1024
-                sample['ready'] = http_status(self.ready_url, timeout=0.5)
+                try:
+                    sample = self.sample()
+                except Exception as error:  # a gap is recorded, never fatal
+                    sample = {'unix': time.time(), 'error': repr(error)}
                 stream.write(json.dumps(sample) + '\n')
                 stream.flush()
                 self.stop_event.wait(0.25)
+
+    def sample(self):
+        sample = {'unix': time.time(), 'cpu_busy': read_cpu_jiffies(), 'roles': {}}
+        children = children_map()
+        for role, pid in list(self.roles.items()):
+            try:
+                ticks, rss = 0, 0
+                for member in descendants(pid, children):
+                    try:
+                        total, threads = proc_cpu(member)
+                        ticks += total
+                        rss += proc_rss(member)
+                    except (FileNotFoundError, ProcessLookupError):
+                        continue
+                    if role == 'worker' and member == pid:
+                        sample['worker_threads'] = threads
+                sample['roles'][role] = {'ticks': ticks, 'rss': rss}
+            except (FileNotFoundError, ProcessLookupError):
+                sample['roles'][role] = None
+        with open('/proc/meminfo') as meminfo:
+            for line in meminfo:
+                if line.startswith(('MemTotal:', 'MemAvailable:')):
+                    sample[line.split(':')[0]] = int(line.split()[1]) * 1024
+        sample['disk_free_bytes'] = shutil.disk_usage(self.path).free
+        sample['ready'] = http_status(self.ready_url, timeout=0.5)
+        return sample
 
     def stop(self):
         self.stop_event.set()
@@ -423,7 +439,6 @@ class Arm:
         sampler = Sampler(self.raw / 'samples.jsonl', {
             'publisher': self.processes['controller'].pid, 'worker': self.processes['worker'].pid,
             'chain': self.processes['chain'].pid}, f'http://127.0.0.1:{self.ports["worker"]}/v1/ready')
-        sampler.start()
         duration = a.steady_blocks * a.interval_ms // 1000
         load = self.spawn('load', 'load', [
             self.bin / 'history_bench_load', '--worker', f'http://127.0.0.1:{self.ports["worker"]}',
@@ -431,6 +446,7 @@ class Arm:
             '--geometry', RECENT, '--rate', a.rate, '--duration-seconds', duration,
             '--seed', a.seed, '--out', self.raw / 'queries.jsonl'])
         sampler.roles['load'] = load.pid
+        sampler.start()
         self.event('steady_start', blocks=a.steady_blocks, interval_ms=a.interval_ms, rate=a.rate)
         self.driver(f'run {a.steady_blocks} {a.interval_ms}', duration + 120)
         self.event('steady_blocks_appended')
@@ -468,6 +484,9 @@ class Arm:
 
 
 def arm(args):
+    # The orchestrator, its sampler and the adapter it starts stay on the
+    # auxiliary CPUs, off every measured group.
+    os.sched_setaffinity(0, cpus(GROUPS['aux']))
     runner = Arm(args)
     try:
         runner.run()
@@ -478,12 +497,43 @@ def arm(args):
         runner.close()
 
 
+def progress(summary):
+    """Hub job progress, when run as one."""
+    path = os.environ.get('AI_DEV_JOB_STATUS')
+    if path:
+        Path(path).write_text(json.dumps({'summary': summary, 'at': time.time()}))
+
+
 def pairs(args):
-    for name, ship in PAIRS:
-        if (Path(args.work) / 'arms' / name).exists():
+    work = Path(args.work)
+    budget = work / 'budget.json'
+    if not budget.exists():
+        # Fixed before the first pair and held for all six arms.
+        memory = {line.split(':')[0]: int(line.split()[1]) * 1024
+                  for line in open('/proc/meminfo') if line.startswith(('MemTotal:', 'MemAvailable:'))}
+        disk = shutil.disk_usage(work)
+        record = {'cache_bytes': args.cache_bytes, 'runtime_disk_cache_bytes': 2 * args.cache_bytes,
+                  'host_memory_total': memory['MemTotal'], 'host_memory_available': memory['MemAvailable'],
+                  'disk_total': disk.total, 'disk_free': disk.free, 'groups': GROUPS,
+                  'steady_blocks': args.steady_blocks, 'interval_ms': args.interval_ms, 'rate': args.rate,
+                  'seed': args.seed, 'unix': time.time()}
+        if memory['MemAvailable'] - 3 * args.cache_bytes < 0.2 * memory['MemTotal']:
+            raise SystemExit(f'the cache budget leaves under 20% host memory: {record}')
+        if disk.free < 0.2 * disk.total:
+            raise SystemExit(f'under 20% disk headroom: {record}')
+        budget.write_text(json.dumps(record, indent=1) + '\n')
+    for index, (name, ship) in enumerate(PAIRS):
+        if (work / 'arms' / name).exists():
             print(json.dumps({'event': 'arm_exists', 'name': name}), flush=True)
             continue
-        arm(argparse.Namespace(**{**vars(args), 'name': name, 'ship': ship}))
+        progress(f'arm {index + 1}/6 {name} running')
+        try:
+            arm(argparse.Namespace(**{**vars(args), 'name': name, 'ship': ship}))
+        except Exception as error:
+            # A failed arm is retained as recorded; the sequence continues.
+            print(json.dumps({'event': 'arm_error', 'name': name, 'error': repr(error)}), flush=True)
+        progress(f'arm {index + 1}/6 {name} finished')
+    progress('all six arms finished')
 
 
 def main():
