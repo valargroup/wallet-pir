@@ -43,6 +43,12 @@ class SelectionTests(unittest.TestCase):
     def setUp(self):
         self.packages = [package('core'), package('client', ['core']), package('server', ['client']), package('other')]
 
+    def test_receiver_wire_has_no_dependency_edges(self):
+        # This codec is consumed by both services and wallet crypto adapters.
+        # Include optional, target, development and build edges in the boundary.
+        wire = next(p for p in fast.workspace_packages() if p['name'] == 'receiver-wire')
+        self.assertEqual(wire['dependencies'], [])
+
     def test_transitive_reverse_dependencies(self):
         self.assertEqual(fast.select(self.packages, ['crates/core/src/lib.rs']), {'core', 'client', 'server'})
         self.assertEqual(fast.select(self.packages, ['crates/server/src/lib.rs']), {'server'})

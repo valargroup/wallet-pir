@@ -47,6 +47,23 @@ fn wire_layout_and_strict_empty_slots() {
     assert!(Record::decode(&b[..284]).is_err());
 }
 
+/// Structural decoding never makes invalid cryptographic fields acceptable to
+/// the existing validating API, including when a caller used the raw encoder.
+#[test]
+fn structurally_valid_records_still_require_cryptographic_checks() {
+    let valid = record(0, 1).encode().unwrap();
+    for field in [1..44, 137..169, 169..201, 201..233] {
+        let mut bytes = valid;
+        bytes[field.clone()].fill(255);
+        let raw = receiver_wire::RawRecord::decode(&bytes).unwrap().unwrap();
+        assert_eq!(raw.encode().unwrap(), bytes);
+        assert!(
+            matches!(Record::decode(&bytes), Err(Error::Malformed)),
+            "invalid cryptographic bytes at {field:?}"
+        );
+    }
+}
+
 /// A manifest with a field this version does not know is refused, and the revision
 /// binds every field, including each set's optional ones.
 #[test]

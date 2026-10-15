@@ -2615,6 +2615,7 @@ dependencies = [
  "bitcoin",
  "hex",
  "incrementalmerkletree",
+ "receiver-wire",
  "rusqlite",
  "serde",
  "serde_json",
@@ -2681,6 +2682,10 @@ dependencies = [
  "sha2 0.10.9",
  "tokio",
 ]
+
+[[package]]
+name = "receiver-wire"
+version = "0.0.1"
 
 [[package]]
 name = "redox_syscall"

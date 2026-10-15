@@ -1,0 +1,8 @@
+[package]
+name = "receiver-wire"
+version = "0.0.1"
+edition = "2021"
+license = "MIT"
+description = "Structural receiver record encoding without chain or cryptography dependencies"
+repository = "https://github.com/valargroup/wallet-pir"
+readme = "README.md"
