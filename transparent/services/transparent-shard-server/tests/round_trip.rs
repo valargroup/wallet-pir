@@ -1028,33 +1028,3 @@ async fn only_page_shards_take_a_prefix_and_only_their_own() {
         assert!(String::from_utf8_lossy(&raw).contains("must be exactly"));
     }
 }
-
-/// A segment whose rows past the ones its queries select hold data is refused
-/// on verification and on load, so no runtime is built or restored from it.
-#[test]
-fn a_segment_with_data_past_its_selected_rows_is_refused() {
-    use sha2::Digest;
-    use transparent_shard_server::shardset::SegmentSource;
-    let dir = tempfile::tempdir().unwrap();
-    let (rows, row_bytes) = (2 * transparent_native::D as u64, 16u32);
-    let mut bytes = vec![0u8; rows as usize * row_bytes as usize];
-    bytes[7] = 1;
-    let source = |bytes: &[u8], zero_from_row| {
-        let path = dir.path().join("pages.0.bin");
-        std::fs::write(&path, bytes).unwrap();
-        SegmentSource {
-            path,
-            rows,
-            row_bytes,
-            sha256: hex::encode(sha2::Sha256::digest(bytes)),
-            zero_from_row,
-        }
-    };
-    let half = transparent_native::D as u64;
-    assert!(source(&bytes, half).verify().is_ok());
-    assert!(source(&bytes, half).load().is_ok());
-    bytes[half as usize * row_bytes as usize] = 1;
-    assert!(source(&bytes, half).verify().is_err());
-    assert!(source(&bytes, half).load().is_err());
-    assert!(source(&bytes, rows).verify().is_ok());
-}

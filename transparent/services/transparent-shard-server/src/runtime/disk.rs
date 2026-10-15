@@ -391,7 +391,7 @@ impl DiskCache {
                         segment,
                     );
                     let present = self
-                        .path(&key, shared, &source.sha256)
+                        .path(&key, shared, source.sha256())
                         .metadata()
                         .map(|m| m.len())
                         .unwrap_or(0);
@@ -943,14 +943,14 @@ mod cache_integration_tests {
                 * Table::Directory.row_bytes(&DECOUPLED_2K_8K) as u64)
                 as usize
         ];
-        let source = SegmentSource {
-            path: dir.path().join("table.bin"),
-            rows: Table::Directory.rows(&DECOUPLED_2K_8K),
-            row_bytes: Table::Directory.row_bytes(&DECOUPLED_2K_8K),
-            sha256: hex::encode(Sha256::digest(&rows)),
-            zero_from_row: Table::Directory.rows(&DECOUPLED_2K_8K),
-        };
-        fs::write(&source.path, &rows).unwrap();
+        let source = SegmentSource::published(
+            dir.path().join("table.bin"),
+            Table::Directory.rows(&DECOUPLED_2K_8K),
+            Table::Directory.row_bytes(&DECOUPLED_2K_8K),
+            hex::encode(Sha256::digest(&rows)),
+            Table::Directory.rows(&DECOUPLED_2K_8K),
+        );
+        fs::write(source.path(), &rows).unwrap();
         drop(rows);
         let disk = DiskCache::new(dir.path().join("cache"), shared.reserved_bytes() * 2).unwrap();
         let lock = OpenOptions::new()
@@ -1011,7 +1011,7 @@ mod cache_integration_tests {
         .await
         .unwrap();
         assert_eq!(Metrics::get(&metrics.builds), 1);
-        assert!(disk.load(&key, &shared, &source.sha256).is_ok());
+        assert!(disk.load(&key, &shared, source.sha256()).is_ok());
     }
 
     #[tokio::test]
@@ -1024,14 +1024,14 @@ mod cache_integration_tests {
                 * Table::Directory.row_bytes(&DECOUPLED_2K_8K) as u64)
                 as usize
         ];
-        let source = SegmentSource {
-            path: dir.path().join("table.bin"),
-            rows: Table::Directory.rows(&DECOUPLED_2K_8K),
-            row_bytes: Table::Directory.row_bytes(&DECOUPLED_2K_8K),
-            sha256: hex::encode(Sha256::digest(&rows)),
-            zero_from_row: Table::Directory.rows(&DECOUPLED_2K_8K),
-        };
-        fs::write(&source.path, &rows).unwrap();
+        let source = SegmentSource::published(
+            dir.path().join("table.bin"),
+            Table::Directory.rows(&DECOUPLED_2K_8K),
+            Table::Directory.row_bytes(&DECOUPLED_2K_8K),
+            hex::encode(Sha256::digest(&rows)),
+            Table::Directory.rows(&DECOUPLED_2K_8K),
+        );
+        fs::write(source.path(), &rows).unwrap();
         drop(rows);
         let disk = DiskCache::new(dir.path().join("cache"), shared.reserved_bytes() * 2).unwrap();
         let key = ("ab".repeat(32), Table::Directory, 0);
@@ -1074,7 +1074,7 @@ mod cache_integration_tests {
         drop(cache);
         #[cfg(unix)]
         cancelled_restore_keeps_its_reservation(&disk, &key, &shared, &source).await;
-        fs::write(disk.path(&key, &shared, &source.sha256), b"corrupt").unwrap();
+        fs::write(disk.path(&key, &shared, source.sha256()), b"corrupt").unwrap();
         let metrics = Arc::new(Metrics::default());
         let cache = RuntimeCache::new(shared.reserved_bytes(), 1, metrics.clone())
             .with_disk(Some(disk.clone()));
@@ -1109,7 +1109,7 @@ mod cache_integration_tests {
         assert_eq!(Metrics::get(&metrics.builds), 1);
         drop(cache);
         // A valid cache must not conceal plaintext corruption after startup.
-        fs::write(&source.path, b"corrupt source").unwrap();
+        fs::write(source.path(), b"corrupt source").unwrap();
         let cache = RuntimeCache::new(shared.reserved_bytes(), 1, Arc::new(Metrics::default()))
             .with_disk(Some(disk));
         assert!(cache.get(key, shared, source).await.is_err());
@@ -1127,16 +1127,16 @@ mod cache_integration_tests {
         // A FIFO holds source verification after the cached runtime has been
         // allocated. Cancelling its caller must not release the slot or its
         // reservation while this blocking verification is still alive.
-        let rows = fs::read(&source.path).unwrap();
-        fs::remove_file(&source.path).unwrap();
+        let rows = fs::read(source.path()).unwrap();
+        fs::remove_file(source.path()).unwrap();
         assert!(std::process::Command::new("mkfifo")
-            .arg(&source.path)
+            .arg(source.path())
             .status()
             .unwrap()
             .success());
         let (opened_tx, opened_rx) = tokio::sync::oneshot::channel();
         let (release_tx, release_rx) = std::sync::mpsc::channel();
-        let path = source.path.clone();
+        let path = source.path().to_path_buf();
         let writer = std::thread::spawn(move || {
             let mut file = File::create(path).unwrap();
             let _ = opened_tx.send(());
@@ -1182,8 +1182,8 @@ mod cache_integration_tests {
             .acquire_many(disk.restore_slots as u32)
             .await
             .unwrap();
-        fs::remove_file(&source.path).unwrap();
-        fs::write(&source.path, rows).unwrap();
+        fs::remove_file(source.path()).unwrap();
+        fs::write(source.path(), rows).unwrap();
     }
 }
 #[cfg(test)]
@@ -1213,13 +1213,13 @@ mod shipped_tests {
         }
         let path = dir.join(format!("{}-{seed}.bin", table.as_str()));
         fs::write(&path, &rows).unwrap();
-        let source = SegmentSource {
+        let source = SegmentSource::published(
             path,
-            rows: profile.rows as u64,
-            row_bytes: profile.row_bytes as u32,
-            sha256: hex::encode(Sha256::digest(&rows)),
-            zero_from_row: profile.rows as u64,
-        };
+            profile.rows as u64,
+            profile.row_bytes as u32,
+            hex::encode(Sha256::digest(&rows)),
+            profile.rows as u64,
+        );
         Segment {
             shared,
             rows,
@@ -1246,7 +1246,7 @@ mod shipped_tests {
             let local = TableRuntime::build(&s.shared, &s.rows).unwrap();
             let shipped = candidate(dir.path(), "candidate");
             let bytes = shipped
-                .write(&s.key, &s.shared, &s.source.sha256, &local)
+                .write(&s.key, &s.shared, s.source.sha256(), &local)
                 .unwrap();
             assert!(DiskCache::entry_bytes_range(&s.shared).contains(&bytes));
             let disk =
@@ -1318,9 +1318,9 @@ mod shipped_tests {
             (
                 "truncated",
                 Box::new(|shipped| {
-                    let path = shipped.path(&s.key, &s.shared, &s.source.sha256);
+                    let path = shipped.path(&s.key, &s.shared, s.source.sha256());
                     let length = shipped
-                        .write(&s.key, &s.shared, &s.source.sha256, &local)
+                        .write(&s.key, &s.shared, s.source.sha256(), &local)
                         .unwrap();
                     let file = OpenOptions::new().write(true).open(path).unwrap();
                     file.set_len(length / 2).unwrap();
@@ -1329,9 +1329,9 @@ mod shipped_tests {
             (
                 "corrupted",
                 Box::new(|shipped| {
-                    let path = shipped.path(&s.key, &s.shared, &s.source.sha256);
+                    let path = shipped.path(&s.key, &s.shared, s.source.sha256());
                     shipped
-                        .write(&s.key, &s.shared, &s.source.sha256, &local)
+                        .write(&s.key, &s.shared, s.source.sha256(), &local)
                         .unwrap();
                     let mut bytes = fs::read(&path).unwrap();
                     let middle = bytes.len() / 2;
@@ -1343,11 +1343,11 @@ mod shipped_tests {
                 "another revision",
                 Box::new(|shipped| {
                     shipped
-                        .write(&other_revision, &s.shared, &s.source.sha256, &local)
+                        .write(&other_revision, &s.shared, s.source.sha256(), &local)
                         .unwrap();
                     fs::rename(
-                        shipped.path(&other_revision, &s.shared, &s.source.sha256),
-                        shipped.path(&s.key, &s.shared, &s.source.sha256),
+                        shipped.path(&other_revision, &s.shared, s.source.sha256()),
+                        shipped.path(&s.key, &s.shared, s.source.sha256()),
                     )
                     .unwrap();
                 }),
@@ -1356,11 +1356,11 @@ mod shipped_tests {
                 "another table",
                 Box::new(|shipped| {
                     shipped
-                        .write(&other_bucket, &s.shared, &s.source.sha256, &local)
+                        .write(&other_bucket, &s.shared, s.source.sha256(), &local)
                         .unwrap();
                     fs::rename(
-                        shipped.path(&other_bucket, &s.shared, &s.source.sha256),
-                        shipped.path(&s.key, &s.shared, &s.source.sha256),
+                        shipped.path(&other_bucket, &s.shared, s.source.sha256()),
+                        shipped.path(&s.key, &s.shared, s.source.sha256()),
                     )
                     .unwrap();
                 }),
@@ -1419,9 +1419,9 @@ mod shipped_tests {
         {
             let shipped = candidate(dir.path(), name);
             shipped
-                .write(&a.key, &a.shared, &a.source.sha256, runtime)
+                .write(&a.key, &a.shared, a.source.sha256(), runtime)
                 .unwrap();
-            let loaded = shipped.load(&a.key, &a.shared, &a.source.sha256).unwrap();
+            let loaded = shipped.load(&a.key, &a.shared, a.source.sha256()).unwrap();
             let refused = loaded.self_check(&a.shared, &a.rows).unwrap_err();
             assert_eq!(
                 refused.contains("differs from the segment"),
@@ -1461,13 +1461,13 @@ mod shipped_tests {
         }
         let path = dir.join(format!("history-{}-{seed}.bin", table.as_str()));
         fs::write(&path, &rows).unwrap();
-        let source = SegmentSource {
+        let source = SegmentSource::published(
             path,
-            rows: profile.rows as u64,
-            row_bytes: profile.row_bytes as u32,
-            sha256: hex::encode(Sha256::digest(&rows)),
-            zero_from_row: profile.rows as u64,
-        };
+            profile.rows as u64,
+            profile.row_bytes as u32,
+            hex::encode(Sha256::digest(&rows)),
+            profile.rows as u64,
+        );
         Segment {
             shared,
             rows,
@@ -1504,7 +1504,7 @@ mod shipped_tests {
                     "another identity",
                     other_identity,
                     &s.shared,
-                    s.source.sha256.clone(),
+                    s.source.sha256().to_string(),
                 ),
                 (
                     "another source digest",
@@ -1516,33 +1516,38 @@ mod shipped_tests {
                     "another geometry",
                     s.key.clone(),
                     &wide,
-                    s.source.sha256.clone(),
+                    s.source.sha256().to_string(),
                 ),
-                ("another kind", kind_key, &s.shared, s.source.sha256.clone()),
+                (
+                    "another kind",
+                    kind_key,
+                    &s.shared,
+                    s.source.sha256().to_string(),
+                ),
                 (
                     "another native schema",
                     s.key.clone(),
                     &display,
-                    s.source.sha256.clone(),
+                    s.source.sha256().to_string(),
                 ),
             ];
             for (name, key, shared, sha) in cases {
                 assert_ne!(
                     DiskCache::identity(&key, shared, &sha),
-                    DiskCache::identity(&s.key, &s.shared, &s.source.sha256),
+                    DiskCache::identity(&s.key, &s.shared, s.source.sha256()),
                     "{name}"
                 );
                 let shipped = candidate(dir.path(), &format!("{}-{name}", table.as_str()));
                 // Header and body as the publisher of that identity would
                 // write them, at the length that identity's layout gives.
-                let file = shipped.path(&s.key, &s.shared, &s.source.sha256);
+                let file = shipped.path(&s.key, &s.shared, s.source.sha256());
                 let mut bytes = fs::read({
                     let staged = ShippedRuntimes::new(dir.path().join("staged"));
                     fs::create_dir_all(staged.directory()).unwrap();
                     staged
-                        .write(&s.key, &s.shared, &s.source.sha256, &local)
+                        .write(&s.key, &s.shared, s.source.sha256(), &local)
                         .unwrap();
-                    staged.path(&s.key, &s.shared, &s.source.sha256)
+                    staged.path(&s.key, &s.shared, s.source.sha256())
                 })
                 .unwrap();
                 bytes[..32].copy_from_slice(&DiskCache::identity(&key, shared, &sha));
@@ -1583,13 +1588,13 @@ mod shipped_tests {
             .write(
                 &s.key,
                 &s.shared,
-                &s.source.sha256,
+                s.source.sha256(),
                 &TableRuntime::build(&s.shared, &s.rows).unwrap(),
             )
             .unwrap();
         let mut corrupt = s.rows.clone();
         corrupt[17] ^= 1;
-        fs::write(&s.source.path, &corrupt).unwrap();
+        fs::write(s.source.path(), &corrupt).unwrap();
         let metrics = Arc::new(Metrics::default());
         let cache = RuntimeCache::new(s.shared.reserved_bytes() * 2, 1, metrics.clone());
         let result = cache
@@ -1617,7 +1622,7 @@ mod shipped_tests {
             .write(
                 &s.key,
                 &s.shared,
-                &s.source.sha256,
+                s.source.sha256(),
                 &TableRuntime::build(&s.shared, &s.rows).unwrap(),
             )
             .unwrap();
@@ -1670,7 +1675,7 @@ mod shipped_tests {
         std::sync::mpsc::Sender<()>,
         std::thread::JoinHandle<()>,
     ) {
-        let path = source.path.clone();
+        let path = source.path().to_path_buf();
         fs::remove_file(&path).unwrap();
         assert!(std::process::Command::new("mkfifo")
             .arg(&path)
@@ -1711,7 +1716,7 @@ mod shipped_tests {
             .write(
                 &s.key,
                 &s.shared,
-                &s.source.sha256,
+                s.source.sha256(),
                 &TableRuntime::build(&other.shared, &other.rows).unwrap(),
             )
             .unwrap();
@@ -1807,7 +1812,7 @@ mod shipped_tests {
         cache.evict_unpinned();
         let _ = cache.prune_disk(&Default::default());
         shipped
-            .write(&s.key, &s.shared, &s.source.sha256, &expected)
+            .write(&s.key, &s.shared, s.source.sha256(), &expected)
             .unwrap();
         let (_, produced) = cache
             .get_from(
@@ -1836,7 +1841,7 @@ mod shipped_tests {
             .write(
                 &s.key,
                 &s.shared,
-                &s.source.sha256,
+                s.source.sha256(),
                 &TableRuntime::build(&s.shared, &s.rows).unwrap(),
             )
             .unwrap();

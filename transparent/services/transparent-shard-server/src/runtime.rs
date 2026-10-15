@@ -1100,7 +1100,7 @@ impl RuntimeCache {
                     let _permit = permit;
                     let _pin = restore_pin;
                     let started = std::time::Instant::now();
-                    let restored = disk.load(&restore_key, &restore_shared, &restore_source.sha256);
+                    let restored = disk.load(&restore_key, &restore_shared, restore_source.sha256());
                     tracing::debug!(key = ?restore_key, seconds = started.elapsed().as_secs_f64(), hit = restored.is_ok(), stage = "disk_restore", "runtime stage");
                     match restored {
                         Ok(runtime) => {
@@ -1185,7 +1185,7 @@ impl RuntimeCache {
                 let work = (runtime.clone(), pin, memory, PendingSave(metrics.clone()));
                 tokio::task::spawn_blocking(move || {
                     let save_started = std::time::Instant::now();
-                    if let Err(error) = disk.save(&key, &shared, &source.sha256, &work.0) {
+                    if let Err(error) = disk.save(&key, &shared, source.sha256(), &work.0) {
                         Metrics::incr(&metrics.disk_write_failures);
                         tracing::warn!(%error, "runtime cache write failed; runtime remains servable");
                     }
@@ -1232,7 +1232,7 @@ impl RuntimeCache {
             let _memory = memory;
             let _pin = pin;
             let started = std::time::Instant::now();
-            let runtime = match shipped.load(&key, &shared, &source.sha256) {
+            let runtime = match shipped.load(&key, &shared, source.sha256()) {
                 Ok(runtime) => runtime,
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                     return Ok(Err(format!(
@@ -1641,22 +1641,22 @@ pub(crate) mod tests {
         let built = TableRuntime::build(&shared, &rows).unwrap().held_bytes();
         let bound = shared.reserved_bytes();
         assert!(built < bound, "an empty table is built below its bound");
-        let source = SegmentSource {
-            path: dir.path().join("table.bin"),
-            rows: table.rows(geometry),
-            row_bytes: table.row_bytes(geometry),
-            sha256: hex::encode(Sha256::digest(&rows)),
-            zero_from_row: table.rows(geometry),
-        };
+        let source = SegmentSource::published(
+            dir.path().join("table.bin"),
+            table.rows(geometry),
+            table.row_bytes(geometry),
+            hex::encode(Sha256::digest(&rows)),
+            table.rows(geometry),
+        );
         assert!(std::process::Command::new("mkfifo")
-            .arg(&source.path)
+            .arg(source.path())
             .status()
             .unwrap()
             .success());
         let (opened_tx, opened_rx) = tokio::sync::oneshot::channel();
         let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
         let writer = {
-            let (path, rows) = (source.path.clone(), rows.clone());
+            let (path, rows) = (source.path().to_path_buf(), rows.clone());
             std::thread::spawn(move || {
                 let mut file = std::fs::File::create(path).unwrap();
                 let _ = opened_tx.send(());
@@ -1689,8 +1689,8 @@ pub(crate) mod tests {
         assert_eq!(held, built);
         assert_eq!(cache.resident_bytes(), held);
         assert_eq!(Metrics::get(&metrics.resident_bytes), held);
-        std::fs::remove_file(&source.path).unwrap();
-        std::fs::write(&source.path, &rows).unwrap();
+        std::fs::remove_file(source.path()).unwrap();
+        std::fs::write(source.path(), &rows).unwrap();
         let second = cache.get(key(1), shared.clone(), source).await.unwrap();
         assert_eq!(cache.resident_bytes(), held + second.get().held_bytes());
         assert!(cache.resident_bytes() <= cache.budget());
