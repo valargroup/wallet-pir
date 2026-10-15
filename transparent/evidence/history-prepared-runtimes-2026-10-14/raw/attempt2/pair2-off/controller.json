@@ -1,0 +1,17 @@
+{
+ "data_dir": "work/arms/pair2-off/journal",
+ "publication_root": "work/arms/pair2-off/publications",
+ "initial_publication": "work/arms/pair2-off/initial",
+ "recent_from": 2000,
+ "recent_geometry": "decoupled-2k-8k",
+ "archive_geometry": "decoupled-32k-32k",
+ "rpc_url": "http://127.0.0.1:18400",
+ "rpc_cookie": "work/arms/pair2-off/cookie",
+ "fleet_command": "/mnt/roman-dev-2-data/ai-dev/workspaces/t-fc1922969ea44065/a1/repos/wallet-pir/transparent/evidence/history-prepared-runtimes-2026-10-14/harness/fleet.py",
+ "fleet_config": "work/arms/pair2-off/fleet.json",
+ "listen": "127.0.0.1:18402",
+ "source_sha": "bench",
+ "directory_choice": "all",
+ "follow_journal": true,
+ "ship_runtimes": false
+}

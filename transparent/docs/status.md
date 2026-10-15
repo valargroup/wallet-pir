@@ -6,7 +6,7 @@ M4–M6 are open.** This records observed progress, not a new live fleet health
 check. [Remaining work](remaining-work.md) is the authoritative outstanding
 checklist; [deployment](deployment.md) owns operating targets.
 
-## Prepared history runtimes, implemented, not measured, 2026-10-14
+## Prepared history runtimes measured, not accepted, 2026-10-14
 
 Source only; nothing deployed and `ship_runtimes` stays off everywhere. The
 [design as built](architecture.md#prepared-history-runtimes): the publication controller
@@ -29,10 +29,15 @@ back to building per runtime.
   ends; restart and reorg fences; assignment-specific inventories; the controller's real
   path, link reuse, stop on invalidation, refusal of an unverified candidate and reported
   write failures; the fleet adapter's staging.
-- **Measured benefit:** none yet. The six paired arms need a host-exclusive allocation
-  this task could not obtain on the shared development hub; the
-  [harness and fixture](../evidence/history-prepared-runtimes-2026-10-14/README.md) are
-  ready. Shipping cannot be enabled before they pass.
+- **Measured benefit:** [six paired arms](../evidence/history-prepared-runtimes-2026-10-14/README.md)
+  on the shared development hub, by Roman's direction, without an exclusive allocation.
+  Worker CPU fell 51–55% in every pair (build pool −94%), 144,000 of 144,000 answers were
+  exact, and shipping refused nothing and built nothing on the worker. **Not accepted**:
+  the worst shipped query p95/p99 (96.9/162.8 ms against 90.7/115.4 ms) and activation-delay
+  quantiles (p99 41.2 s against 36.6 s) are worse, every arm of both modes breaks the 30 s
+  freshness bound, and every arm is contaminated by other work on the host. The
+  publisher's preparation sits on the publication's critical path. `ship_runtimes`
+  stays off.
 - **Production adoption:** not started; it needs the measurement, a reviewed plan and
   Roman's confirmation. See [remaining work](remaining-work.md#prepared-history-runtimes).
 

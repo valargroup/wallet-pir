@@ -530,8 +530,8 @@ artifact origin; map discovery has refreshable cache semantics.
 ### Prepared history runtimes
 
 Source only, off by default (`ship_runtimes` in the publication controller's JSON config);
-not measured on an exclusive allocation and not deployed. See
-[status](status.md#prepared-history-runtimes-implemented-not-measured-2026-10-14) and
+measured on the shared development hub and not accepted, not deployed. See
+[status](status.md#prepared-history-runtimes-measured-not-accepted-2026-10-14) and
 [remaining work](remaining-work.md#prepared-history-runtimes).
 
 With `ship_runtimes` on, the controller prepares every runtime of each candidate on the
