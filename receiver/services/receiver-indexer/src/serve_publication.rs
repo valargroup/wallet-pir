@@ -560,6 +560,22 @@ impl Updater {
                 )));
             }
         }
+        // Canonical RPC can take seconds. The operator may replace the record
+        // while it is in flight, after the preparation-time check above.
+        if PublicationRecord::read(&self.config.publication_record)
+            .ok()
+            .as_ref()
+            != Some(&record)
+        {
+            self.reporter.update(|status| {
+                status.preparing = None;
+                status.refusal = Some(Refusal::Superseded(format!(
+                    "revision {} was superseded during its canonical check",
+                    record.revision
+                )));
+            });
+            return;
+        }
         let verified = pending.verified;
         if self.publications.publish(verified.publication, epoch) {
             info!(revision = %record.revision, height, "publication activated");
