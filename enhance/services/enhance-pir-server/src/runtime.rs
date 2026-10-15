@@ -163,12 +163,69 @@ pub fn unit_rows(
     Ok(rows)
 }
 
+/// A plan's verified, prepared runtimes: the input a worker evaluates.
+///
+/// Only [`Engine::prepare`] constructs one, after the plan validates and every
+/// unit's rows are bound to its committed digest, so a plan and a digest alone
+/// are never enough to obtain one.
 pub struct Evaluation {
-    pub plan: DomainPlan,
-    pub units: Vec<Arc<CachedShard>>,
+    plan: DomainPlan,
+    units: Vec<Arc<CachedShard>>,
+}
+
+/// Why [`Engine::prepare`] produced no evaluation, by what the caller must do.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PrepareError {
+    /// The plan or its staged rows do not verify; the same input cannot succeed.
+    InvalidSource(String),
+    /// Restoring or building a runtime failed; the input verified.
+    Runtime(String),
+    /// The worker's resident budget cannot hold another unit.
+    Admission(String),
+}
+
+impl std::fmt::Display for PrepareError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let (Self::InvalidSource(message) | Self::Runtime(message) | Self::Admission(message)) =
+            self;
+        f.write_str(message)
+    }
+}
+
+impl From<PrepareError> for String {
+    fn from(error: PrepareError) -> Self {
+        error.to_string()
+    }
+}
+
+/// How [`Engine::prepare`] produced each unit's runtime.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize)]
+pub struct PrepareOutcome {
+    /// Held live by another evaluation, so shared without any work.
+    pub reused: usize,
+    /// Restored from the verified on-disk artifact.
+    pub restored: usize,
+    /// Rebuilt from staged rows bound to the committed digest.
+    pub built: usize,
+}
+
+impl PrepareOutcome {
+    pub fn add(&mut self, other: Self) {
+        self.reused += other.reused;
+        self.restored += other.restored;
+        self.built += other.built;
+    }
 }
 
 impl Evaluation {
+    pub fn plan(&self) -> &DomainPlan {
+        &self.plan
+    }
+
+    pub fn units(&self) -> &[Arc<CachedShard>] {
+        &self.units
+    }
+
     pub fn evaluate(&self, coefficients: &[u64]) -> Result<Vec<u64>, EvaluationError> {
         let params =
             parameters(self.plan.shard.logical_rows).map_err(EvaluationError::Unavailable)?;
@@ -491,25 +548,29 @@ impl Engine {
         Ok(())
     }
 
+    /// Restores, reuses or builds every unit of `plan` from verified input and
+    /// reports which it did. `read` supplies staged source rows, which are bound
+    /// to the unit's committed digest before anything is built from them.
     pub fn prepare(
         &mut self,
         plan: DomainPlan,
         mut read: impl FnMut(u64, usize) -> Result<Vec<u8>, String>,
-    ) -> Result<Arc<Evaluation>, String> {
-        plan.validate()?;
+    ) -> Result<(Arc<Evaluation>, PrepareOutcome), PrepareError> {
+        plan.validate().map_err(PrepareError::InvalidSource)?;
+        let mut outcome = PrepareOutcome::default();
         let mut units = Vec::new();
         // A full-size setup keeps unchanged unit setup slices stable through logical growth.
         #[cfg(feature = "native-reinspiring")]
         let masks = enhance_pir::native::query_masks(plan.shard.id);
         #[cfg(not(feature = "native-reinspiring"))]
         let masks = {
-            let params = parameters(32768)?;
+            let params = parameters(32768).map_err(PrepareError::Runtime)?;
             let client = ipir_sp::IPIRClient::from_profile(
                 params.num_items,
                 params.item_size_bits,
                 ipir_sp::SimplePirProfile::P16Q48,
             )
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| PrepareError::Runtime(e.to_string()))?;
             let setup =
                 client.generate_public_query_setup_simplepir_from_seed(setup_seed(plan.shard.id));
             setup.polys().to_vec()
@@ -518,6 +579,7 @@ impl Engine {
             let id = identity.digest();
             if let Some(unit) = self.units.get(&id).and_then(Weak::upgrade) {
                 units.push(unit);
+                outcome.reused += 1;
                 continue;
             }
             let bytes = identity.allocated_rows * 12288 * 2;
@@ -527,7 +589,9 @@ impl Engine {
                 .and_then(|n| n.checked_add(super::control::OVERHEAD))
                 .is_none_or(|n| n > super::control::RESIDENT_LIMIT)
             {
-                return Err("worker resident admission refused".into());
+                return Err(PrepareError::Admission(
+                    "worker resident admission refused".into(),
+                ));
             }
             let layout = DatabaseLayout {
                 shard_rows: identity.allocated_rows as usize,
@@ -544,13 +608,22 @@ impl Engine {
                 rlwe(),
                 self.backend,
             ) {
-                Ok(unit) => unit,
-                Err(LoadError::Backend(error)) => return Err(error.to_string()),
+                Ok(unit) => {
+                    outcome.restored += 1;
+                    unit
+                }
+                Err(LoadError::Backend(error)) => {
+                    return Err(PrepareError::Runtime(error.to_string()))
+                }
                 Err(LoadError::Artifact(_)) => {
-                    let rows = unit_rows(&plan.shard, spec, &mut read)?;
+                    let rows = unit_rows(&plan.shard, spec, &mut read)
+                        .map_err(PrepareError::InvalidSource)?;
                     if hex::encode(Sha256::digest(&rows)) != identity.content_sha256 {
-                        return Err("canonical rows changed during preparation".into());
+                        return Err(PrepareError::InvalidSource(
+                            "canonical rows changed during preparation".into(),
+                        ));
                     }
+                    outcome.built += 1;
                     let unit = PreparedShard::build_with_backend(
                         &layout,
                         plan.shard.id,
@@ -561,7 +634,7 @@ impl Engine {
                         &masks,
                         self.backend,
                     )
-                    .map_err(|e| e.to_string())?;
+                    .map_err(|e| PrepareError::Runtime(e.to_string()))?;
                     drop(rows);
                     unit.persist(
                         &crate::ipir::shard_artifact_dir(&root, DatabaseId::Enhance, plan.shard.id),
@@ -569,7 +642,7 @@ impl Engine {
                         &layout,
                         rlwe(),
                     )
-                    .map_err(|e| e.to_string())?
+                    .map_err(|e| PrepareError::Runtime(e.to_string()))?
                 }
             };
             let unit = Arc::new(unit);
@@ -577,7 +650,7 @@ impl Engine {
             units.push(unit);
         }
         self.units.retain(|_, w| w.strong_count() > 0);
-        Ok(Arc::new(Evaluation { plan, units }))
+        Ok((Arc::new(Evaluation { plan, units }), outcome))
     }
 }
 
@@ -640,7 +713,9 @@ mod tests {
             .unwrap();
         let plan = plan(coverage.shards[0].clone(), records).unwrap();
         let mut engine = Engine::with_backend(dir.path(), backend);
-        let eval = engine.prepare(plan.clone(), records).unwrap();
+        let (eval, outcome) = engine.prepare(plan.clone(), records).unwrap();
+        assert_eq!(outcome.built, eval.units.len());
+        assert_eq!((outcome.reused, outcome.restored), (0, 0));
         let pack = Packing::new(
             4096,
             &eval.hint().unwrap(),
@@ -717,27 +792,30 @@ mod tests {
                 records(position, 1).unwrap()
             );
         }
-        let again = engine
+        let (again, outcome) = engine
             .prepare(plan.clone(), |_, _| {
                 panic!("cached data must not be reread")
             })
             .unwrap();
         assert!(Arc::ptr_eq(&eval.units[0], &again.units[0]));
+        assert_eq!(outcome.reused, again.units.len());
         drop(again);
         drop(eval);
         let mut restarted = Engine::with_backend(dir.path(), backend);
-        restarted
+        let (restored, outcome) = restarted
             .prepare(plan.clone(), |_, _| {
                 Err("canonical history unavailable".into())
             })
             .unwrap();
+        assert_eq!(outcome.restored, restored.units.len());
+        drop(restored);
         // CPU can reopen a GPU-created artifact, and CUDA can open the same CPU-readable bytes.
         let mut cpu = Engine::new(dir.path());
-        let cpu_eval = cpu
+        let (cpu_eval, _) = cpu
             .prepare(plan.clone(), |_, _| panic!("artifact must be reusable"))
             .unwrap();
         let mut selected = Engine::with_backend(dir.path(), backend);
-        let selected_eval = selected
+        let (selected_eval, _) = selected
             .prepare(plan, |_, _| panic!("artifact must be reusable"))
             .unwrap();
         let query = vec![modulus() - 1; 4096];
@@ -768,7 +846,7 @@ mod tests {
             .unwrap();
         let plan = plan(coverage.shards[0].clone(), records).unwrap();
         let mut cpu = Engine::new(root.path());
-        let published = cpu.prepare(plan.clone(), records).unwrap();
+        let (published, _) = cpu.prepare(plan.clone(), records).unwrap();
         let query = vec![1; 4096];
         let before = published.evaluate(&query).unwrap();
         let mut failed = Engine::with_backend(
@@ -778,9 +856,10 @@ mod tests {
                 cuda_device: Some(usize::MAX),
             },
         );
-        assert!(failed
-            .prepare(plan, |_, _| panic!("device failure must not rebuild"))
-            .is_err());
+        assert!(matches!(
+            failed.prepare(plan, |_, _| panic!("device failure must not rebuild")),
+            Err(PrepareError::Runtime(_))
+        ));
         assert_eq!(failed.live_bytes(), 0);
         assert_eq!(published.evaluate(&query).unwrap(), before);
     }
@@ -827,7 +906,9 @@ mod tests {
             assert!(candidate.units.iter().all(|u| !old_plan.units.contains(u)));
             let mut engine = Engine::with_backend(root.path(), backend);
             let faults = Arc::new(Faults::default());
-            let published = scoped(&faults, || engine.prepare(old_plan, records)).unwrap();
+            let published = scoped(&faults, || engine.prepare(old_plan, records))
+                .unwrap()
+                .0;
             let query = vec![1; published.plan.shard.logical_rows as usize];
             let before = published.evaluate(&query).unwrap();
             let published_sizes = engine.live_sizes();
@@ -872,11 +953,13 @@ mod tests {
                     records(start, count)
                 })
             })
-            .unwrap();
+            .unwrap()
+            .0;
             let oracle_root = tempfile::tempdir().unwrap();
             let oracle = Engine::new(oracle_root.path())
                 .prepare(candidate, records)
-                .unwrap();
+                .unwrap()
+                .0;
             let candidate_query = vec![1; retry.plan.shard.logical_rows as usize];
             assert_eq!(
                 retry.evaluate(&candidate_query).unwrap(),
@@ -910,7 +993,7 @@ mod tests {
             [8192, 2048]
         );
         let mut engine = Engine::new(directory.path());
-        let evaluation = engine.prepare(domain, records).unwrap();
+        let evaluation = engine.prepare(domain, records).unwrap().0;
         let mut rows = records(0, shard.records as usize).unwrap();
         rows.resize(16384 * ENHANCE_LAYOUT.row_bytes(), 0);
         // Native masks are expanded once at full size for every logical size.
@@ -991,10 +1074,12 @@ mod tests {
         let tail_root = directory.path().join("tail");
         let plain = Engine::new(&plain_root)
             .prepare(b_plan.clone(), records)
-            .unwrap();
+            .unwrap()
+            .0;
         let b_in_tail = Engine::new(&tail_root)
             .prepare(b_plan.clone(), records)
-            .unwrap();
+            .unwrap()
+            .0;
         assert_eq!(plain.plan.units, b_in_tail.plan.units);
         for identity in &b_plan.units {
             let relative = PathBuf::from("artifacts-9")
