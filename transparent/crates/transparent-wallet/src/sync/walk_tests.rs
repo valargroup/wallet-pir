@@ -955,6 +955,70 @@ fn a_bad_link_is_padded(rewrite: impl Fn(RunLink) -> RunLink) {
     }
 }
 
+/// A script whose only run is in page shard 0 has no earlier run. A bad
+/// link on that head fails the walk, and the next round must not grow:
+/// page shard 0 has nothing to link to, so the honest walk sends no head
+/// after it. One extra query would tell the service this row was read.
+#[test]
+fn a_bad_link_on_the_only_run_in_page_shard_zero_owes_no_query() {
+    let blocks = vec![(
+        1_000,
+        (0..8)
+            .map(|nonce| (ScriptBytes::new(script(1)), receive(1_000, nonce)))
+            .collect(),
+    )];
+    let directories = build(&blocks);
+    assert_eq!(directories.len(), 1);
+    let directory = &directories[0];
+    let manifest = manifest_of(directory);
+    assert_eq!(
+        manifest.page_children.len(),
+        1,
+        "the run sits in page shard 0"
+    );
+    let victim = script(1);
+    let runs = runs_of(directory, &victim);
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0].0, 0);
+    let honest_head = run_head(directory, &victim, runs[0]);
+    assert_eq!(honest_head.link.previous(), None);
+    let ((child, row), _, bytes) = rewritten_head(directory, &victim, |entry| {
+        entry
+            .with_link(RunLink {
+                prev_child: 0,
+                prev_row: 1,
+                older_runs: 1,
+            })
+            .unwrap()
+    });
+    assert_eq!(child, 0);
+
+    let scripts = [victim.clone()];
+    let mut honest_store = MemoryStore::new();
+    let owed = directory_phase(&mut honest_store, directory, &manifest, &scripts);
+    let mut honest = Direct::new(directory);
+    walk(&mut honest_store, &manifest, &owed, &mut honest).unwrap();
+    assert!(honest.requests.iter().all(|request| request.child == 0));
+    assert_eq!(
+        honest.requests.len(),
+        honest_head.fragment_count as usize,
+        "the honest walk reads this run and no link"
+    );
+
+    let mut store = MemoryStore::new();
+    let owed = directory_phase(&mut store, directory, &manifest, &scripts);
+    let mut bad = Direct::new(directory);
+    bad.rewritten
+        .insert((u32::from(child), u64::from(row)), vec![bytes]);
+    let failed = walk_failing(&mut store, &manifest, &owed, &mut bad);
+    assert_eq!(failed.len(), 1);
+    assert_eq!(failed[0].script, victim);
+    let sent = |sizes: &[usize]| sizes.iter().copied().filter(|n| *n > 0).collect::<Vec<_>>();
+    assert_eq!(sent(&bad.round_sizes), sent(&honest.round_sizes));
+    assert_eq!(bad.requests.len(), honest.requests.len());
+    assert!(bad.requests.iter().all(|request| request.child == 0));
+}
+
 /// A bad link on the oldest run, which its chain promised no older run:
 /// the honest walk sends the rest of that run and no head after it, so
 /// the failed walk owes only the rest, as dummies.
