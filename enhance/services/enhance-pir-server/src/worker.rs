@@ -1,6 +1,6 @@
 //! Private worker API. A candidate never evicts a published assignment.
 use super::control::{PlacementPolicy, MIB, OVERHEAD, RESIDENT_LIMIT};
-use super::runtime::{DomainPlan, Engine, Evaluation};
+use super::runtime::{DomainPlan, Engine, Evaluation, PrepareError, PrepareOutcome};
 use crate::matvec::MatvecConfig;
 use axum::{
     body::{to_bytes, Body},
@@ -196,7 +196,20 @@ struct Inner {
     candidate: BTreeMap<u64, Arc<Evaluation>>,
     published: BTreeMap<u64, BTreeMap<u64, Arc<Evaluation>>>,
     root: PathBuf,
+    /// How the latest preparation ended, for the private health report. In
+    /// memory only: startup re-prepares and reports afresh.
+    preparation: Option<Preparation>,
     _lock: File,
+}
+
+/// The outcome of the latest prepare command or startup re-preparation.
+#[derive(Clone, Debug, Serialize)]
+struct Preparation {
+    generation: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    units: Option<PrepareOutcome>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    refusal: Option<Refusal>,
 }
 
 #[derive(Clone)]
@@ -216,11 +229,45 @@ fn unavailable(e: impl ToString) -> (StatusCode, String) {
 
 const MEMORY_REFUSAL: &str = "full growth/transition reservation does not fit";
 
-fn admission_error(error: String) -> (StatusCode, String) {
-    if error == MEMORY_REFUSAL {
-        (StatusCode::INSUFFICIENT_STORAGE, error)
-    } else {
-        unavailable(error)
+/// Why a control command was refused, by what the controller must do about it.
+///
+/// Mapped once, at the HTTP boundary, to the status and text the controller
+/// has always received: 507 for a reservation that does not fit, so it can
+/// ask for capacity, and 503 for everything else.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", content = "message", rename_all = "snake_case")]
+enum Refusal {
+    /// The candidate or its rows do not verify.
+    InvalidSource(String),
+    /// Restoring or building a runtime failed on verified input.
+    Runtime(String),
+    /// The candidate's full growth and transition reservation does not fit.
+    Memory,
+    /// Refused under the worker's current budget or role limits.
+    Admission(String),
+    /// A newer epoch, attempt, revision or candidate overtook the command.
+    Superseded(String),
+}
+
+impl From<Refusal> for (StatusCode, String) {
+    fn from(refusal: Refusal) -> Self {
+        match refusal {
+            Refusal::Memory => (StatusCode::INSUFFICIENT_STORAGE, MEMORY_REFUSAL.into()),
+            Refusal::InvalidSource(message)
+            | Refusal::Runtime(message)
+            | Refusal::Admission(message)
+            | Refusal::Superseded(message) => unavailable(message),
+        }
+    }
+}
+
+impl From<PrepareError> for Refusal {
+    fn from(error: PrepareError) -> Self {
+        match error {
+            PrepareError::InvalidSource(message) => Self::InvalidSource(message),
+            PrepareError::Runtime(message) => Self::Runtime(message),
+            PrepareError::Admission(message) => Self::Admission(message),
+        }
     }
 }
 
@@ -240,7 +287,7 @@ impl Inner {
             .published
             .values()
             .flat_map(|s| s.values())
-            .map(|e| digest(&e.plan))
+            .map(|e| digest(e.plan()))
             .collect();
         for (directory, retained) in [
             ("rows", units.keys().cloned().collect::<BTreeSet<_>>()),
@@ -273,10 +320,12 @@ impl Inner {
         Ok(())
     }
 
-    fn admission(&self, plans: &[DomainPlan]) -> Result<(), String> {
-        let budget = self.budget(plans, &self.engine.lock().unwrap().live_sizes())?;
+    fn admission(&self, plans: &[DomainPlan]) -> Result<(), Refusal> {
+        let budget = self
+            .budget(plans, &self.engine.lock().unwrap().live_sizes())
+            .map_err(Refusal::Admission)?;
         if budget.total_bytes > RESIDENT_LIMIT {
-            return Err(MEMORY_REFUSAL.into());
+            return Err(Refusal::Memory);
         }
         Ok(())
     }
@@ -304,7 +353,7 @@ impl Inner {
         let current: u64 = runtimes.values().sum();
         for snapshot in self.published.values() {
             for evaluation in snapshot.values() {
-                for unit in &evaluation.plan.units {
+                for unit in &evaluation.plan().units {
                     runtimes.insert(unit.digest(), unit.allocated_rows * 24576);
                 }
             }
@@ -498,12 +547,10 @@ impl Worker {
                 {
                     continue;
                 }
-                assignments.insert(
-                    plan.shard.id,
-                    engine.prepare(plan.clone(), |start, count| {
-                        staged_records(root, plan, start, count)
-                    })?,
-                );
+                let (evaluation, _) = engine.prepare(plan.clone(), |start, count| {
+                    staged_records(root, plan, start, count)
+                })?;
+                assignments.insert(plan.shard.id, evaluation);
             }
             published.insert(*generation, assignments);
         }
@@ -523,6 +570,7 @@ impl Worker {
                 candidate: BTreeMap::new(),
                 published,
                 root: root.into(),
+                preparation: None,
                 _lock: lock,
             })),
             preparation: Arc::new(Semaphore::new(1)),
@@ -562,7 +610,9 @@ async fn admit(
     if inner.disk.candidate.is_some() {
         return Err(unavailable("candidate already reserved"));
     }
-    inner.admission(&plans).map_err(admission_error)?;
+    inner
+        .admission(&plans)
+        .map_err(<(StatusCode, String)>::from)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -614,7 +664,7 @@ async fn metrics(
             .published
             .values()
             .flat_map(|snapshot| snapshot.values())
-            .flat_map(|e| e.plan.units.iter().map(|u| u.digest()))
+            .flat_map(|e| e.plan().units.iter().map(|u| u.digest()))
             .collect();
         let candidate_plans = inner.disk.candidate.as_ref().map(|c| c.plans.as_slice());
         let candidate_ids = ids(candidate_plans.unwrap_or_default());
@@ -706,7 +756,7 @@ async fn health(State(w): State<Worker>) -> Json<serde_json::Value> {
         serde_json::json!({"matvec": w.backend, "protocol":PROTOCOL_REVISION,"placement_policy":inner.disk.placement_policy,"incarnation":w.incarnation,"binary_sha256":pir_control::binary_sha256(),"epoch":inner.disk.epoch,"revision":inner.disk.revision,
         "resident_database_bytes":inner.engine.try_lock().ok().map(|e| e.live_bytes()),"published":inner.disk.published.keys().collect::<Vec<_>>(),
         "published_manifest_digests":inner.disk.published.iter().map(|(g,(m,_))| (g.to_string(), digest(m))).collect::<BTreeMap<_,_>>(),
-        "candidate":inner.disk.candidate}),
+        "candidate":inner.disk.candidate,"preparation":inner.preparation}),
     )
 }
 
@@ -781,23 +831,24 @@ async fn reserve(
         .map_err(unavailable)?;
     let mut i = w.inner.lock().unwrap();
     if candidate.placement_policy != i.disk.placement_policy {
-        return Err(unavailable("worker placement policy mismatch"));
+        return Err(Refusal::InvalidSource("worker placement policy mismatch".into()).into());
     }
     if candidate.epoch < i.disk.epoch || candidate.expected_revision != i.disk.revision {
-        return Err(unavailable("stale epoch or placement revision"));
+        return Err(Refusal::Superseded("stale epoch or placement revision".into()).into());
     }
     if let Some(existing) = &i.disk.candidate {
         if existing != &candidate {
-            return Err(unavailable(
-                "candidate already reserved; explicit recovery required",
-            ));
+            return Err(Refusal::Admission(
+                "candidate already reserved; explicit recovery required".into(),
+            )
+            .into());
         }
     } else if i
         .disk
         .last_attempt
         .is_some_and(|last| (candidate.epoch, candidate.attempt) <= last)
     {
-        return Err(unavailable("retired operation attempt"));
+        return Err(Refusal::Superseded("retired operation attempt".into()).into());
     }
     if candidate.generation == 0
         || i.disk
@@ -806,9 +857,10 @@ async fn reserve(
             .next_back()
             .is_some_and(|g| *g >= candidate.generation)
     {
-        return Err(unavailable("nonmonotonic candidate generation"));
+        return Err(Refusal::Superseded("nonmonotonic candidate generation".into()).into());
     }
-    i.admission(&candidate.plans).map_err(admission_error)?;
+    i.admission(&candidate.plans)
+        .map_err(<(StatusCode, String)>::from)?;
     let mut disk = i.disk.clone();
     disk.epoch = candidate.epoch;
     disk.last_attempt = Some((candidate.epoch, candidate.attempt));
@@ -898,30 +950,47 @@ async fn prepare(
         .clone()
         .try_acquire_owned()
         .map_err(unavailable)?;
-    tokio::task::spawn_blocking(move || {
+    let generation = candidate.generation;
+    let worker = w.clone();
+    let outcome = tokio::task::spawn_blocking(move || {
         let _permit = permit;
         let (engine, root) = {
             let i = w.inner.lock().unwrap();
             if i.disk.candidate.as_ref() != Some(&candidate) {
-                return Err("conflicting prepare command".into());
+                return Err(Refusal::Superseded("conflicting prepare command".into()));
             }
             (i.engine.clone(), i.root.clone())
         };
         let mut prepared = BTreeMap::new();
+        let mut outcome = PrepareOutcome::default();
         let mut engine = engine.lock().unwrap();
         for plan in &candidate.plans {
-            let eval = engine.prepare(plan.clone(), |start, count| {
+            let (eval, units) = engine.prepare(plan.clone(), |start, count| {
                 staged_records(&root, plan, start, count)
             })?;
+            outcome.add(units);
             prepared.insert(plan.shard.id, eval);
         }
         drop(engine);
         w.inner.lock().unwrap().candidate = prepared;
-        Ok::<_, String>(())
+        Ok::<_, Refusal>(outcome)
     })
     .await
-    .map_err(unavailable)?
     .map_err(unavailable)?;
+    let report = match &outcome {
+        Ok(units) => Preparation {
+            generation,
+            units: Some(*units),
+            refusal: None,
+        },
+        Err(refusal) => Preparation {
+            generation,
+            units: None,
+            refusal: Some(refusal.clone()),
+        },
+    };
+    worker.inner.lock().unwrap().preparation = Some(report);
+    outcome.map_err(<(StatusCode, String)>::from)?;
     Ok(StatusCode::OK)
 }
 
@@ -944,7 +1013,7 @@ async fn hint(State(w): State<Worker>, Path(shard): Path<u64>) -> ApiResult<Resp
     let artifact = tokio::task::spawn_blocking(move || {
         let _permit = permit;
         let blocks = eval.hint()?;
-        let name = digest(&eval.plan);
+        let name = digest(eval.plan());
         let hash = crate::artifact::write_atomic_cold(&root, &name, |f| {
             crate::wire::write_crs_blocks(f, &blocks)
         })
@@ -1271,7 +1340,8 @@ mod tests {
                 .unwrap()
                 .prepare(plan.clone(), source)
         })
-        .unwrap();
+        .unwrap()
+        .0;
         let packing = Packing::new(
             4096,
             &eval.hint().unwrap(),
@@ -1440,7 +1510,8 @@ mod tests {
             .lock()
             .unwrap()
             .prepare(plan.clone(), source)
-            .unwrap();
+            .unwrap()
+            .0;
         let packing = Packing::new(
             4096,
             &eval.hint().unwrap(),
