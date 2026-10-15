@@ -5,7 +5,7 @@ binary = "receiver-directory"
 artifact_kinds = ["receiver-pir"]
 self_check = ["--help"]
 min_free_bytes = 1073741824
-order = ["server"]
+order = ["server", "serve-publication"]
 # The receiver host's own Caddy edge.
 ancillary = ["routing"]
 # The id of the installed NEAR key file, /etc/receiver-pir/near-<id>.env.
@@ -22,3 +22,16 @@ health = "http://{listen}/v1/receiver/health"
 # Health answers at once; `serving` stays null until the first publication.
 ready = { field = "serving", nonempty = true }
 ready_timeout = 300
+
+[services.receiver.roles.serve-publication]
+unit = "receiver-serve-publication.service"
+mode = "role"
+template = "../deploy/receiver-serve-publication.service"
+renderer = "receiver.ops.lib.roles:serve_publication"
+optional = true
+# Settings: config_path, publication_record, publication_root, state_dir, bind,
+# rpc_urls, cookie | no_auth, poll_seconds?, witnesses?, min_rows?, limits?.
+# Serves once the recorded publication verifies and its anchor is canonical.
+health = "http://{listen}/v1/receiver/health"
+ready = { field = "serving", nonempty = true }
+ready_timeout = 600

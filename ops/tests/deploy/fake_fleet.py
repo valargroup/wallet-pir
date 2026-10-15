@@ -54,6 +54,7 @@ class FakeFleet(Executor):
         self.exact_result = (0, 'exact answers ok')  # or an exception the transport raises
         self.endpoints = {}
         self.held = set()
+        self.product_check = None     # f(host, argv) -> (code, output) for a release's own check
 
     # ------------------------------------------------------------- set-up
 
@@ -97,7 +98,17 @@ class FakeFleet(Executor):
         return [(path, self.host(host).files[path].decode()) for path in self.unit_paths(host, unit)]
 
     def _reload(self, host):
-        for unit, state in self.host(host).units.items():
+        h = self.host(host)
+        # A unit file written since the last reload is loaded, inactive; one
+        # removed while stopped is forgotten, as systemd does.
+        for path in list(h.files):
+            name = os.path.basename(path)
+            if os.path.dirname(path) == '/etc/systemd/system' and name.endswith('.service'):
+                h.units.setdefault(name, {'active': 'inactive', 'pid': 0, 'exe': None, 'loaded': []})
+        for unit, state in list(h.units.items()):
+            if '/etc/systemd/system/' + unit not in h.files and state['active'] != 'active':
+                del h.units[unit]
+                continue
             state['loaded'] = self._disk(host, unit)
 
     def _start(self, host, unit):
@@ -191,6 +202,10 @@ class FakeFleet(Executor):
             self._reload(host)
         elif args[0] == 'restart':
             self._start(host, args[1])
+        elif args[0] in ('enable', 'disable'):
+            self.host(host).units[args[1]]['enabled'] = args[0] == 'enable'
+        elif args[0] == 'stop':
+            self.host(host).units[args[1]].update(active='inactive', pid=0, exe=None, exec_start=None)
         else:
             raise AssertionError('unexpected systemctl %s' % (args,))
 
@@ -212,6 +227,8 @@ class FakeFleet(Executor):
         # A staged binary's self-check; any other command is an exact check.
         if data is not None and argv[1:] == ['--help']:
             return (1, 'illegal instruction') if sha256(data) in self.self_check_fails else (0, 'Usage: ...')
+        if data is not None and self.product_check is not None:
+            return self.product_check(host, list(argv))
         if isinstance(self.exact_result, BaseException):
             raise self.exact_result
         return self.exact_result

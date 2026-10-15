@@ -24,6 +24,10 @@ from .transaction import FINAL, Journal
 
 SYSTEM = '/etc/systemd/system'
 SELF_CHECK_SECONDS = 60
+PRODUCT_CHECK_SECONDS = 900
+# Plan actions that change a target: an installed unit restarted on the
+# release, or a role-mode unit installed where it was absent.
+CHANGING = ('restart', 'install')
 
 
 class DeployError(RuntimeError):
@@ -73,6 +77,9 @@ class TargetPlan:
     refusals: list = field(default_factory=list)
     exec_start: str = None
     exec_binary: str = None
+    # A role-mode target's writable directories and product check arguments.
+    directories: tuple = ()
+    check: tuple = ()
 
 
 class Deployer:
@@ -109,7 +116,12 @@ class Deployer:
         plan = TargetPlan(target, state)
         role = target.role
         if state['load_state'] != 'loaded':
-            plan.refusals.append('unit is %s; the CLI changes installed units only' % (state['load_state'] or 'unknown'))
+            if role.mode == 'role' and target.install and state['load_state'] == 'not-found':
+                return self.plan_install(plan, sha)
+            hint = ('; set "install": true on its inventory entry to install it'
+                    if role.mode == 'role' and state['load_state'] == 'not-found' else '')
+            plan.refusals.append('unit is %s; the CLI changes installed units only%s'
+                                 % (state['load_state'] or 'unknown', hint))
             return plan
         if state['active_state'] != 'active' or not state['main_pid'] or not state['exe_sha256']:
             plan.refusals.append('unit is %s, not running; start or reconcile it by hand first' % state['active_state'])
@@ -175,21 +187,66 @@ class Deployer:
                 path = '%s/%s' % (SYSTEM, target.unit)
                 if state['fragment_path'] != path:
                     plan.refusals.append('template roles replace %s, but systemd loads %s' % (path, state['fragment_path']))
-                fragment = units.render(role.template.read_text(),
-                                        descriptors.template_values(self.service, self.inventory, sha))
+                if role.mode == 'role':
+                    rendered = role.render(target.settings, self.service.release_dir(sha))
+                    fragment = rendered.unit
+                    plan.directories, plan.check = rendered.directories, rendered.check
+                    plan.changes += self.file_changes(plan, rendered.files, fresh=False)
+                else:
+                    fragment = units.render(role.template.read_text(),
+                                            descriptors.template_values(self.service, self.inventory, sha))
                 if fragment != state['fragment_text']:
                     plan.changes.insert(0, {'op': 'write', 'path': path, 'previous': state['fragment_text'], 'new': fragment})
             desired = units.effective([fragment] + [kept[name] for name in sorted(kept)])
             if units.split_exec(units.exec_start(desired))[1] != release:
                 plan.refusals.append('the new unit would not run %s' % release)
             plan.drift = units.differences(units.normalized(current), units.normalized(desired))
-        except (units.UnitError, descriptors.DescriptorError) as error:
+        except (units.UnitError, descriptors.DescriptorError, ValueError) as error:
             plan.refusals.append(str(error))
             return plan
-        unchanged = state['exe_sha256'] == sha and not plan.drift
+        # A role's configuration files change what it serves without changing the unit.
+        configured = any(not c['path'].startswith(SYSTEM + '/') for c in plan.changes if c['op'] == 'write')
+        unchanged = state['exe_sha256'] == sha and not plan.drift and not configured
         plan.action = 'skip' if unchanged else 'restart'
         if unchanged:
             plan.changes = []
+        return plan
+
+    def file_changes(self, plan, files, fresh):
+        """Writes of a role's rendered configuration files.
+
+        A fresh install never overwrites a file it did not render: an existing
+        file with other bytes is the operator's and is refused.
+        """
+        changes = []
+        for path, text in sorted(files.items()):
+            current = self.ex.read(plan.target.host, path)
+            if current == text:
+                continue
+            if fresh and current is not None:
+                plan.refusals.append('%s already exists with other contents; a fresh install does not '
+                                     'overwrite it' % path)
+                continue
+            changes.append({'op': 'write', 'path': path, 'previous': current, 'new': text})
+        return changes
+
+    def plan_install(self, plan, sha):
+        """A role-mode unit where none is installed: render it whole, from the inventory's settings."""
+        target = plan.target
+        path = '%s/%s' % (SYSTEM, target.unit)
+        try:
+            rendered = target.role.render(target.settings, self.service.release_dir(sha))
+            if units.split_exec(units.exec_start(units.effective([rendered.unit])))[1] != self.service.release_binary(sha):
+                plan.refusals.append('the new unit would not run %s' % self.service.release_binary(sha))
+        except (units.UnitError, descriptors.DescriptorError, ValueError) as error:
+            plan.refusals.append(str(error))
+            return plan
+        if self.ex.read(target.host, path) is not None:
+            plan.refusals.append('%s exists but systemd has not loaded it; reconcile it first' % path)
+        plan.changes = [{'op': 'write', 'path': path, 'previous': None, 'new': rendered.unit},
+                        *self.file_changes(plan, rendered.files, fresh=True)]
+        plan.directories, plan.check = rendered.directories, rendered.check
+        plan.action = 'install'
         return plan
 
     def assess(self, sha, binary=None, allow_drift=False, retire_historical=False, require_baseline=True):
@@ -207,7 +264,7 @@ class Deployer:
                 problems.append('%s: historical ExecStart drop-ins would be retired into the transaction '
                                 'directory; pass --retire-historical to accept' % key)
         size = os.path.getsize(binary) if binary else 0
-        for host in dict.fromkeys(p.target.host for p in plans if p.action == 'restart'):
+        for host in dict.fromkeys(p.target.host for p in plans if p.action in CHANGING):
             if self.ex.sha256(host, self.service.release_binary(sha)) == sha:
                 continue
             if not binary:
@@ -358,6 +415,7 @@ class Deployer:
             'verify': {'health': target.url(target.role.health), 'ready': target.role.ready,
                        'ready_url': target.url(target.role.ready_url), 'timeout': target.role.ready_timeout,
                        'health_equals': target.health_equals},
+            'directories': list(plan.directories), 'check': list(plan.check),
         }
 
     def stage(self, hosts, sha, binary, journal=None):
@@ -400,6 +458,8 @@ class Deployer:
                               change['previous'].encode(), 0o600)
         self.ex.write(host, directory + '/record.json', json.dumps(record, indent=2, sort_keys=True).encode(), 0o600)
         journal.set_phase(index, 'installing')
+        for path in record.get('directories', []):
+            self.ex.mkdir(host, path, 0o750)
         for change in record['changes']:
             if change['op'] == 'write':
                 self.ex.mkdir(host, os.path.dirname(change['path']), 0o755)
@@ -408,6 +468,8 @@ class Deployer:
                 self.ex.mkdir(host, directory + '/retired', 0o700)
                 self.ex.rename(host, change['path'], '%s/retired/%s' % (directory, os.path.basename(change['path'])))
         self.ex.systemctl(host, 'daemon-reload')
+        if record['action'] == 'install':
+            self.ex.systemctl(host, 'enable', unit)
         record['restart_issued'] = True
         journal.set_phase(index, 'restarting')
         self.ex.systemctl(host, 'restart', unit)
@@ -415,6 +477,37 @@ class Deployer:
         self.wait_verified(record, sha)
         journal.set_phase(index, 'verified')
         self.out('%s: running %s and ready' % (record['key'], sha))
+
+    def product_checks(self, journal, sha):
+        """Run each changing role's product check against the staged release and staged configuration.
+
+        The check is the service's own loader, exiting without serving. Rendered
+        configuration is staged in the host transaction directory first and the
+        check reads that copy, so a refused configuration or input is found
+        before any unit is replaced.
+        """
+        for record in journal.hosts:
+            if record['action'] not in CHANGING or not record.get('check'):
+                continue
+            host = record['host']
+            self.lock.verify()
+            staged = '%s/%s/check' % (self.service.transaction_dir(journal.id), record['unit'])
+            argv = [self.service.release_binary(sha), *record['check']]
+            renamed = {}
+            for number, change in enumerate(record['changes']):
+                if change['op'] == 'write' and not change['path'].startswith(SYSTEM + '/'):
+                    copy = '%s/%d-%s' % (staged, number, os.path.basename(change['path']))
+                    self.ex.mkdir(host, staged, 0o700)
+                    self.ex.write(host, copy, change['new'].encode(), 0o600)
+                    renamed[change['path']] = copy
+            argv = [renamed.get(argument, argument) for argument in argv]
+            journal.event('product check', host=host, unit=record['unit'], argv=argv)
+            code, output = self.ex.run(host, argv, PRODUCT_CHECK_SECONDS)
+            journal.event('product check finished', host=host, returncode=code, output=output[-2000:])
+            if code:
+                raise DeployError('%s: the product check refused the staged configuration or input (exit %d): %s'
+                                  % (record['key'], code, output[-1000:]))
+            self.out('%s: product check passed' % record['key'])
 
     def run_exact_check(self, check, journal, sha):
         argv = [argument.replace('{release_dir}', self.service.release_dir(sha)).replace('{transaction}', journal.id)
@@ -452,7 +545,7 @@ class Deployer:
         self.describe(plans, sha)
         if problems:
             raise DeployError('refused before any change:\n  ' + '\n  '.join(problems))
-        restart = [plan for plan in plans if plan.action == 'restart']
+        restart = [plan for plan in plans if plan.action in CHANGING]
         if not restart and not verify_noop:
             self.out('no-op: every target already runs %s with the same effective unit' % sha)
             return None
@@ -462,15 +555,16 @@ class Deployer:
         self.out('transaction %s (%s)' % (journal.id, journal.path))
         try:
             self.stage(list(dict.fromkeys(p.target.host for p in restart)), sha, binary, journal)
+            self.product_checks(journal, sha)
             journal.set_status('activating')
             for index, record in enumerate(journal.hosts):
-                if record['action'] == 'restart':
+                if record['action'] in CHANGING:
                     self.activate(journal, index, sha)
             # Later roles can disturb earlier ones (a restarted coordinator
             # re-fences routers), so every changed target is checked again.
             journal.set_status('verifying')
             for record in journal.hosts:
-                if record['action'] == 'restart':
+                if record['action'] in CHANGING:
                     self.wait_verified(record, sha)
             if check:
                 self.run_exact_check(check, journal, sha)
@@ -506,6 +600,8 @@ class Deployer:
         host, unit = record['host'], record['unit']
         self.lock.verify()
         journal.set_phase(index, 'restoring')
+        if record['action'] == 'install':
+            return self.uninstall(journal, index)
         for change in reversed(record['changes']):
             if change['previous'] is None:
                 self.ex.remove(host, change['path'])
@@ -520,6 +616,29 @@ class Deployer:
         self.wait_verified(record, expected)
         journal.set_phase(index, 'restored')
         self.out('%s: restored %s' % (record['key'], expected))
+
+    def uninstall(self, journal, index):
+        """Roll a fresh install back to absence: stop, disable and remove what it wrote.
+
+        Created state directories stay: they hold no authority, and a restart
+        verifies everything from its inputs again.
+        """
+        record = journal.hosts[index]
+        host, unit = record['host'], record['unit']
+        if record.get('restart_issued'):
+            self.ex.systemctl(host, 'stop', unit)
+            self.ex.systemctl(host, 'disable', unit)
+        for change in reversed(record['changes']):
+            if change['previous'] is None:
+                self.ex.remove(host, change['path'])
+            else:
+                self.ex.write(host, change['path'], change['previous'].encode(), 0o644)
+        self.ex.systemctl(host, 'daemon-reload')
+        state = self.ex.probe_unit(host, unit)
+        if state['load_state'] == 'loaded' or state['active_state'] == 'active':
+            raise DeployError('%s: still %s %s after removal' % (record['key'], state['load_state'], state['active_state']))
+        journal.set_phase(index, 'restored')
+        self.out('%s: removed; the role is absent again' % record['key'])
 
     def rollback_journal(self, journal, force=False):
         pending = [index for index in reversed(journal.touched()) if journal.hosts[index]['phase'] != 'restored']

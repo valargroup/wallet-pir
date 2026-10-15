@@ -219,7 +219,7 @@ template's other service settings and credential-file restrictions.
 Render both for review without writing files or contacting a host:
 
 ```sh
-python3 <release>/ops/scripts/wallet-pir-roles.py --config /path/to/controller.json --config-path /etc/transparent-pir/controller.json --state-dir /srv/transparent-publisher-state
+python3 <release>/ops/scripts/wallet-pir-roles.py --service transparent-history --role publisher --config /path/to/controller.json --config-path /etc/transparent-pir/controller.json --state-dir /srv/transparent-publisher-state
 ```
 
 Configuration must live outside the role's writable directories. Invalid paths,
