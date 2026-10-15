@@ -324,13 +324,15 @@ impl Walker<'_> {
 
     /// Whether the honest walk would query a head after the run at `cursor`.
     ///
-    /// It would not when the chain already promised this run was the oldest,
-    /// nor when this script's previous run is cached: a catch-up stops there
-    /// and sends nothing for it. When the link still names an earlier,
-    /// declared page shard (only its row or its older-run count is bad), that
-    /// is the page shard the honest walk would look up in the cache. Otherwise
-    /// the previous run is taken to be in the page shard just below. Either
-    /// way a bad link must not add a query the honest walk omits.
+    /// It would not when this run is in page shard 0: that shard has no
+    /// earlier one, so an honest run there never links backward. Nor when the
+    /// chain already promised this run was the oldest, nor when this script's
+    /// previous run is cached: a catch-up stops there and sends nothing for
+    /// it. When the link still names an earlier, declared page shard (only its
+    /// row or its older-run count is bad), that is the page shard the honest
+    /// walk would look up in the cache. Otherwise the previous run is taken to
+    /// be in the page shard just below. Either way a bad link must not add a
+    /// query the honest walk omits.
     fn owed_link_query<S: WalletStore>(
         &self,
         store: &S,
@@ -345,7 +347,9 @@ impl Walker<'_> {
             Some((child, _)) if child < cursor.child && self.child(child).is_ok() => child,
             _ => match cursor.child.checked_sub(1) {
                 Some(below) => below,
-                None => return Ok(1),
+                // No page shard is earlier than 0. Owing a query here would
+                // tell the service that this row was read.
+                None => return Ok(0),
             },
         };
         Ok(u32::from(self.cached(store, script, previous)?.is_none()))

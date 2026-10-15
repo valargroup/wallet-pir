@@ -236,8 +236,9 @@ a failed entry sends no pages. A failed page walk keeps its pending item while t
 other walks finish, and still sends, as dummy queries to its current run's page
 shard, the fragments a validated head had committed it to and one query in place of
 any bad link (an undeclared or later page shard, a broken older-run count, a row
-outside the table). It sends no link query when the chain promised no older run, or
-when the previous run is already cached, because the honest walk sends none either.
+outside the table). It sends no link query when the run is in page shard 0, when the
+chain promised no older run, or when the previous run is already cached, because the
+honest walk sends none either. A run in page shard 0 has no earlier shard to link to.
 The previous run is the one in the page shard the link names when that page shard is
 declared and earlier, and otherwise the one in the page shard just below. Nothing that depends on the bad reply is sent. A reply whose
 length, revision binding or parameter epoch does not verify was made without
