@@ -531,8 +531,9 @@ fn log_stage(stage: &str, started: std::time::Instant) {
 
 /// Durably write a revision's row and filter files and any witness file, then its
 /// manifest. A manifest over [`receiver_pir::MAX_MANIFEST_BYTES`], which clients read
-/// no more of, writes nothing.
+/// no more of, or invalid records or witnesses, writes nothing.
 fn write_publication(root: &Path, snapshot: &Snapshot, witnesses: Option<Vec<u8>>) -> Result<()> {
+    verify::check_publication(snapshot, witnesses.as_deref())?;
     let manifest = serde_json::to_vec_pretty(&snapshot.manifest)?;
     if manifest.len() > receiver_pir::MAX_MANIFEST_BYTES {
         return Err("publication manifest exceeds its size bound; nothing written".into());
@@ -1016,6 +1017,35 @@ mod tests {
         // Reads committed after the capture, during preparation.
         let latest = paused.provider().read("near-payouts").unwrap().unwrap();
         assert!(latest > until.as_i64().unwrap());
+    }
+
+    /// One-shot output validates persisted records and proofs before creating files.
+    #[test]
+    fn one_shot_output_refuses_invalid_records_and_proofs_before_writing() {
+        let mut manifest = super::common::manifest(receiver_pir::MIN_ROWS);
+        manifest.end_position = 300;
+        let valid = Snapshot::build(manifest.clone(), &[super::common::record(0, 1)], &[]).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        write_publication(&dir.path().join("valid"), &valid, None).unwrap();
+        for field in 0..4 {
+            let mut record = super::common::record(0, 1);
+            match field {
+                0 => record.receiver = [255; 43],
+                1 => record.payment.cmx = [255; 32],
+                2 => record.payment.action_nullifier = [255; 32],
+                _ => record.payment.ephemeral_key = [255; 32],
+            }
+            let snapshot = Snapshot::build(manifest.clone(), &[record], &[]).unwrap();
+            let root = dir.path().join(format!("invalid-{field}"));
+            assert!(
+                write_publication(&root, &snapshot, None).is_err(),
+                "field {field}"
+            );
+            assert!(!root.exists());
+        }
+        let root = dir.path().join("invalid-proof");
+        assert!(write_publication(&root, &valid, Some(vec![0; 152])).is_err());
+        assert!(!root.exists());
     }
 
     /// A one-shot run writes nothing for a manifest over the size clients read.

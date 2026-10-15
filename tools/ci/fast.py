@@ -279,7 +279,9 @@ def main():
     with local_target(ROOT, enabled=bool(selected['packages'])), ThreadPoolExecutor(max_workers=4) as pool:
         futures = []
         if selected['helpers']:
-            futures.append(pool.submit(run, ['make', '-j4', *selected['helpers']], stage='helpers'))
+            helper_env = dict(os.environ, OFFLINE='1') if args.offline else os.environ.copy()
+            futures.append(pool.submit(run, ['make', '-j4', *selected['helpers']],
+                                       env=helper_env, stage='helpers'))
         futures.append(pool.submit(rust_checks, selected['packages'], features=args.features, test=args.test, test_target=args.test_target, offline=args.offline))
         errors = []
         for future in futures:

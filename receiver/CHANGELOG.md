@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Validate records and witness proofs before writing one-shot publication files,
+  including when reading an existing database; refuse invalid output before any
+  files are created.
+
 - Consume the canonical record codec from wallet-libraries with cryptography
   disabled for directory framing; remove the local codec package. The indexer
   explicitly enables validated receiver, record, recovery and witness APIs.

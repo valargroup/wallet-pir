@@ -182,12 +182,15 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument('--resolved', action='store_true',
                         help='also check pure packages against cargo metadata')
+    parser.add_argument('--offline', action='store_true',
+                        help='resolve only already-fetched dependencies without network access')
     args = parser.parse_args(argv)
     allowed = json.loads(ALLOWLIST.read_text())['edges']
     problems = violations(manifests(), allowed)
     if args.resolved:
         metadata = json.loads(subprocess.check_output(
-            ['cargo', 'metadata', '--locked', '--format-version', '1'], cwd=ROOT))
+            ['cargo', 'metadata', '--locked', '--format-version', '1',
+             *(['--offline'] if args.offline else [])], cwd=ROOT))
         problems += resolved_violations(metadata, workspace_unified=True)
         problems += resolved_violations(standalone_receiver_metadata())
     for problem in problems:

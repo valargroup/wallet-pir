@@ -137,6 +137,25 @@ class BoundaryTests(unittest.TestCase):
         self.assertEqual(boundary.resolved_violations(metadata, workspace_unified=True),
                          ['receiver-pir: resolves zakura-orchard'])
 
+    def test_offline_mode_reaches_workspace_metadata_and_helper_targets(self):
+        metadata = {'packages': [], 'resolve': {'nodes': []}}
+        with patch.object(boundary.subprocess, 'check_output', return_value=json.dumps(metadata)), \
+             patch.object(boundary, 'standalone_receiver_metadata', return_value=metadata):
+            self.assertEqual(boundary.main(['--resolved', '--offline']), 0)
+            self.assertIn('--offline', boundary.subprocess.check_output.call_args.args[0])
+        commands = subprocess.check_output(['make', '-n', 'check-tools', 'OFFLINE=1'],
+                                           cwd=ROOT, text=True)
+        self.assertIn('boundary.py --resolved --offline', commands)
+        calls = []
+        with patch.object(fast.sys, 'argv', ['fast.py', '--offline']), \
+             patch.object(fast, 'changed_paths', return_value=[]), \
+             patch.object(fast, 'plan', return_value={'packages': [], 'helpers': ['check-tools'],
+                                                    'groups': [], 'reasons': []}), \
+             patch.object(fast, 'run', side_effect=lambda command, **kw: calls.append((command, kw))):
+            fast.main()
+        helper = next(kw for command, kw in calls if command[0] == 'make')
+        self.assertEqual(helper['env']['OFFLINE'], '1')
+
     def test_a_removed_edge_must_leave_the_allowlist(self):
         problems = boundary.violations([], ['svc -> zakura-chain'])
         self.assertEqual(len(problems), 1)
