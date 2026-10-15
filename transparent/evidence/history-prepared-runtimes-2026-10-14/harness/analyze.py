@@ -80,7 +80,9 @@ def arm(directory, tps):
         return {'name': directory.name, 'complete': False,
                 'failure': events.get('arm_failed', {}).get('error')}
     start, end = events['steady_start']['unix'], events['steady_end']['unix']
-    samples = window(lines(raw / 'samples.jsonl'), start, end)
+    samples = [s for s in window(lines(raw / 'samples.jsonl'), start, end) if 'error' not in s]
+    if len(samples) < 2:
+        return {'name': directory.name, 'complete': False, 'failure': 'no process samples in the window'}
     first, last = samples[0], samples[-1]
     seconds = last['unix'] - first['unix']
     cpu = {}
