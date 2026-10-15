@@ -1,10 +1,6 @@
 //! Immutable prepared publications and atomic, reorg-fenced serving state.
 use axum::{body::Bytes, http::StatusCode};
-use receiver_directory::{
-    snapshot::{Manifest, ROW_BYTES, SLOTS},
-    witness::WitnessSnapshot,
-    Hash, Record, RECORD_BYTES,
-};
+use receiver_directory::{snapshot::Manifest, Hash};
 use receiver_pir::server::Server;
 use std::{
     sync::{Arc, RwLock},
@@ -21,31 +17,18 @@ pub struct Publication {
 }
 
 impl Publication {
-    /// Prepare a complete immutable revision. The caller must separately accept its chain anchor.
-    /// A witness file must bind to the publication and hold a path to its root for every
-    /// record in the rows.
-    pub fn new(server: Server, witnesses: Option<Vec<u8>>) -> Result<Self, receiver_pir::Error> {
-        if let Some(proof) = &witnesses {
-            let proof = WitnessSnapshot::decode(proof, &server.manifest().directory)?;
-            let rows = server.rows();
-            let mut leaves = Vec::new();
-            for row in rows.as_chunks::<ROW_BYTES>().0 {
-                // Bytes after the last slot are row padding, not a record.
-                for slot in row[..SLOTS * RECORD_BYTES].as_chunks::<RECORD_BYTES>().0 {
-                    if let Some(record) = Record::decode(slot)? {
-                        // `Server::new` validated every record, so positions are in the tree.
-                        leaves.push((record.payment.position as u32, record.payment.cmx));
-                    }
-                }
-            }
-            proof.check_paths(leaves)?;
-        }
-        Ok(Self {
+    /// Prepare a complete immutable revision whose records and witness file the caller
+    /// has already verified cryptographically: every record's receiver and Action
+    /// fields, and that the witness file binds to this publication and proves every
+    /// record. This crate checks structure only. The caller must separately accept the
+    /// publication's chain anchor.
+    pub fn verified(server: Server, witnesses: Option<Vec<u8>>) -> Self {
+        Self {
             id: server.id(),
             server,
             witnesses: witnesses.map(Into::into),
             report: None,
-        })
+        }
     }
 
     /// Attaches the owner's report, such as feed freshness, which health serves with
@@ -255,7 +238,7 @@ mod tests {
         manifest.salt[0] = salt;
         manifest.end_hash = [hash; 32];
         let snapshot = receiver_directory::snapshot::Snapshot::build(manifest, &[], &[]).unwrap();
-        Publication::new(Server::new(snapshot).unwrap(), None).unwrap()
+        Publication::verified(Server::new(snapshot).unwrap(), None)
     }
 
     /// A check that found an anchor off the chain revokes only while its epoch is
@@ -298,7 +281,7 @@ mod tests {
         let mut newer = crate::common::manifest(receiver_pir::MIN_ROWS);
         (newer.end_height, newer.end_hash) = (102, [2; 32]);
         let snapshot = receiver_directory::snapshot::Snapshot::build(newer, &[], &[]).unwrap();
-        let newer = Publication::new(Server::new(snapshot).unwrap(), None).unwrap();
+        let newer = Publication::verified(Server::new(snapshot).unwrap(), None);
         assert!(publications.publish(newer, 0));
         let ended = Instant::now()
             .checked_sub(Duration::from_millis(1))
@@ -358,67 +341,5 @@ mod tests {
         assert!(publications.publish(publication(2), 0));
         assert_eq!(publications.ready_at(), Some(ready));
         assert_eq!(publications.anchors().len(), 2);
-    }
-
-    /// A publication with records at positions 0 and 5 of an 8-leaf tree, and the
-    /// witness file built from `tree` for those positions.
-    fn witnessed(tree: &[Hash]) -> (receiver_directory::snapshot::Snapshot, Vec<u8>) {
-        let mut manifest = crate::common::manifest(receiver_pir::MIN_ROWS);
-        manifest.start_position = 0;
-        manifest.end_position = 8;
-        let records: Vec<_> = [0u8, 5]
-            .into_iter()
-            .enumerate()
-            .map(|(page, position)| {
-                let mut record = crate::common::record(page as u32, 2);
-                record.payment.position = position.into();
-                record.payment.cmx = [position + 1; 32];
-                record
-            })
-            .collect();
-        let snapshot =
-            receiver_directory::snapshot::Snapshot::build(manifest, &records, &[]).unwrap();
-        let positions = [0, 5].into_iter().collect();
-        let proof = WitnessSnapshot::build(&snapshot.manifest, tree, &positions)
-            .unwrap()
-            .encode();
-        (snapshot, proof)
-    }
-
-    /// A file that binds to the publication but lacks a sibling a record needs, or
-    /// whose tree holds another commitment at a record's position, is refused.
-    #[test]
-    fn witnesses_must_prove_every_served_record() {
-        use receiver_directory::Error::{Coverage, Malformed};
-        use receiver_pir::Error::Directory;
-        let tree: Vec<Hash> = (1..=8).map(|i| [i; 32]).collect();
-        let publish =
-            |snapshot, proof| Publication::new(Server::new(snapshot).unwrap(), Some(proof));
-        let (snapshot, proof) = witnessed(&tree);
-        publish(snapshot.clone(), proof.clone()).unwrap();
-        // Drop position 5's level-0 sibling, (0, 4), which position 0 does not use, and
-        // correct the node count, without going through the builder.
-        let mut incomplete = proof;
-        let node = incomplete[152..]
-            .chunks_exact(37)
-            .position(|n| n[0] == 0 && n[1..5] == 4u32.to_le_bytes())
-            .unwrap();
-        incomplete.drain(152 + node * 37..152 + (node + 1) * 37);
-        let count = u32::from_le_bytes(incomplete[148..152].try_into().unwrap()) - 1;
-        incomplete[148..152].copy_from_slice(&count.to_le_bytes());
-        let decoded = WitnessSnapshot::decode(&incomplete, &snapshot.manifest).unwrap();
-        decoded.path(0, tree[0]).unwrap();
-        assert!(decoded.path(5, tree[5]).is_err());
-        assert!(matches!(
-            publish(snapshot, incomplete),
-            Err(Directory(Coverage))
-        ));
-        let mut other = tree;
-        other[5] = [9; 32];
-        let (snapshot, proof) = witnessed(&other);
-        assert!(matches!(
-            publish(snapshot, proof),
-            Err(Directory(Malformed))
-        ));
     }
 }

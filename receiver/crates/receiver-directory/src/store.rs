@@ -1,7 +1,8 @@
 //! Atomic contiguous coverage with explicit rewind. Empty blocks are retained too.
 use crate::{
+    record,
     snapshot::{self, Manifest, ProviderSet, Snapshot, PROFILE, TREE_SIZE},
-    Error, Hash, Payment, Receiver, Record,
+    Error, Hash, Payment, RawRecord, ReceiverBytes,
 };
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
@@ -36,8 +37,18 @@ pub struct IndexedBlock {
     pub start_position: u64,
     pub end_position: u64,
     pub coinbase_actions: u64,
-    pub payments: Vec<(Receiver, Payment)>,
+    pub payments: Vec<(ReceiverBytes, Payment)>,
     pub commitments: Vec<Hash>,
+}
+
+/// One publication's commitment history and payment positions; see
+/// [`Store::witness_inputs`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WitnessInputs {
+    /// Every commitment from position zero, in position order.
+    pub commitments: Vec<Hash>,
+    /// The positions of the publication's payments.
+    pub positions: std::collections::BTreeSet<u32>,
 }
 
 /// The indexer's SQLite database of contiguous public coverage.
@@ -82,15 +93,17 @@ impl Store {
         Ok(Self { db, config })
     }
 
-    /// Build the publication's common proofs, reusing unchanged subtrees from `cache`.
-    /// A history of more than `max_commitments` commitments is [`Error::Capacity`],
-    /// before any is read; building peaks at about 200 bytes per commitment.
-    pub fn witnesses(
+    /// Every note commitment from the pool's empty tree to `manifest`'s end, and the
+    /// note position of every stored payment up to its end height, read from one
+    /// database view so the two always describe the same chain. These are what the
+    /// publication's common inclusion proofs are built from; this crate does not hash
+    /// them. A history of more than `max_commitments` commitments is
+    /// [`Error::Capacity`], before any is read.
+    pub fn witness_inputs(
         &self,
         manifest: &Manifest,
-        cache: &mut crate::witness::WitnessCache,
         max_commitments: u64,
-    ) -> Result<crate::witness::WitnessSnapshot, Error> {
+    ) -> Result<WitnessInputs, Error> {
         manifest.validate()?;
         if manifest.end_position > max_commitments {
             return Err(Error::Capacity);
@@ -125,7 +138,10 @@ impl Store {
             .collect::<Result<std::collections::BTreeSet<_>, _>>()?;
         drop(query);
         tx.commit()?;
-        cache.build(manifest, &commitments, &positions)
+        Ok(WitnessInputs {
+            commitments,
+            positions,
+        })
     }
 
     /// The last stored block, or the configured boundary when none is stored.
@@ -198,18 +214,17 @@ impl Store {
             }
             last = Some(p);
             // Stored as a lone page; a snapshot numbers the pages.
-            let record = Record {
+            let record = record::encode(&RawRecord {
                 receiver: *receiver,
                 page: 0,
                 total: 1,
                 payment: p.clone(),
-            }
-            .encode()?;
+            })?;
             tx.execute(
                 "INSERT INTO payments VALUES (?1,?2,?3,?4,?5,?6)",
                 params![
                     block.height,
-                    receiver.as_bytes().as_slice(),
+                    receiver.as_slice(),
                     p.position,
                     p.txid.as_slice(),
                     p.action_index,
@@ -278,7 +293,7 @@ impl Store {
                     return Err(Error::Capacity);
                 }
                 let bytes: Vec<u8> = row.get(0)?;
-                records.push(Record::decode(&bytes)?.ok_or(Error::Malformed)?);
+                records.push(record::decode(&bytes)?.ok_or(Error::Malformed)?);
             }
         }
         let mut start = 0;
@@ -335,10 +350,10 @@ impl Store {
     }
 
     /// Whether the index holds a payment to `receiver` in transaction `txid`.
-    pub fn paid_in(&self, receiver: &Receiver, txid: &Hash) -> Result<bool, Error> {
+    pub fn paid_in(&self, receiver: &ReceiverBytes, txid: &Hash) -> Result<bool, Error> {
         Ok(self.db.query_row(
             "SELECT EXISTS(SELECT 1 FROM payments WHERE receiver=?1 AND txid=?2)",
-            params![receiver.as_bytes(), txid.as_slice()],
+            params![receiver.as_slice(), txid.as_slice()],
             |r| r.get(0),
         )?)
     }
@@ -383,8 +398,8 @@ impl ProviderStore {
         &mut self,
         feed: &str,
         initial_since: Option<i64>,
-        receivers: &[(Receiver, bool, i64)],
-        completions: &[(Receiver, Hash, i64)],
+        receivers: &[(ReceiverBytes, bool, i64)],
+        completions: &[(ReceiverBytes, Hash, i64)],
         cursor: i64,
         read_at: i64,
     ) -> Result<(), Error> {
@@ -393,7 +408,7 @@ impl ProviderStore {
             tx.execute(
                 "INSERT INTO receivers VALUES (?1,?2,?3) ON CONFLICT(receiver,payout)
                  DO UPDATE SET seen_at=MAX(seen_at,excluded.seen_at)",
-                params![receiver.as_bytes(), payout, seen_at],
+                params![receiver.as_slice(), payout, seen_at],
             )?;
         }
         tx.execute(
@@ -406,7 +421,7 @@ impl ProviderStore {
             tx.execute(
                 "INSERT INTO payouts VALUES (?1,?2,?3) ON CONFLICT(receiver,txid)
                  DO UPDATE SET seen_at=MIN(seen_at,excluded.seen_at)",
-                params![receiver.as_bytes(), txid.as_slice(), seen_at],
+                params![receiver.as_slice(), txid.as_slice(), seen_at],
             )?;
         }
         tx.commit()?;
@@ -426,7 +441,7 @@ impl ProviderStore {
     }
 
     /// Every payout first seen complete by `until`, however old; see [`Self::record`].
-    pub fn payouts(&self, until: i64) -> Result<Vec<(Receiver, Hash)>, Error> {
+    pub fn payouts(&self, until: i64) -> Result<Vec<(ReceiverBytes, Hash)>, Error> {
         let mut query = self
             .db
             .prepare("SELECT receiver,txid FROM payouts WHERE seen_at <= ?1")?;
@@ -436,7 +451,7 @@ impl ProviderStore {
         rows.map(|row| {
             let (receiver, txid) = row?;
             Ok((
-                Receiver::from_bytes(receiver.try_into().map_err(|_| Error::Malformed)?)?,
+                receiver.try_into().map_err(|_| Error::Malformed)?,
                 txid.try_into().map_err(|_| Error::Malformed)?,
             ))
         })
@@ -473,12 +488,12 @@ impl ProviderStore {
 
     /// The receivers seen at or after `since`, and every receiver seen at all, payout or
     /// refund.
-    pub fn sets(&self, since: i64) -> Result<(Vec<Receiver>, Vec<Receiver>), Error> {
-        let read = |sql: &str, args: &[i64]| -> Result<Vec<Receiver>, Error> {
+    pub fn sets(&self, since: i64) -> Result<(Vec<ReceiverBytes>, Vec<ReceiverBytes>), Error> {
+        let read = |sql: &str, args: &[i64]| -> Result<Vec<ReceiverBytes>, Error> {
             let mut query = self.db.prepare(sql)?;
             let rows =
                 query.query_map(rusqlite::params_from_iter(args), |r| r.get::<_, Vec<u8>>(0))?;
-            rows.map(|bytes| Receiver::from_bytes(bytes?.try_into().map_err(|_| Error::Malformed)?))
+            rows.map(|bytes| bytes?.try_into().map_err(|_| Error::Malformed))
                 .collect()
         };
         Ok((

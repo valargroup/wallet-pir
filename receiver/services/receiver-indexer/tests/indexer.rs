@@ -319,7 +319,7 @@ async fn cli_resumes_and_replaces_an_orphaned_publication() {
             row[..receiver_directory::snapshot::SLOTS * receiver_directory::RECORD_BYTES]
                 .chunks(receiver_directory::RECORD_BYTES)
         })
-        .find_map(|slot| receiver_directory::Record::decode(slot).unwrap())
+        .find_map(|slot| zakura_receiver_crypto::Record::decode(slot).unwrap())
         .unwrap()
         .payment;
     let mut fixture: Value = serde_json::from_str(include_str!(
@@ -365,11 +365,12 @@ async fn cli_resumes_and_replaces_an_orphaned_publication() {
     // The fixture carries its receiver's independent decoding; a pin that recovery
     // does not reproduce is refused before any lookup.
     let mut repinned = fixture.clone();
-    repinned["receiver"] = {
-        use orchard::keys::{FullViewingKey, Scope, SpendingKey};
-        let fvk = FullViewingKey::from(&SpendingKey::from_bytes([3; 32]).unwrap());
-        hex::encode(fvk.address_at(0u32, Scope::External).to_raw_address_bytes()).into()
-    };
+    // The receiver at external index zero of the spending key of all-three bytes.
+    let other: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../crates/receiver-directory/tests/fixtures/receivers.json"
+    ))
+    .unwrap();
+    repinned["receiver"] = other["seeds"]["3"].clone();
     let result = probe(&repinned);
     assert_eq!(result["category"], "oracle_invalid", "{result}");
     assert!(result["phase"].is_null(), "{result}");

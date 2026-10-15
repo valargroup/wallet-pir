@@ -5,16 +5,15 @@ use clap::Parser;
 use receiver_directory::{
     snapshot::{Snapshot, MAX_ROWS},
     store::{Config, ProviderStore, Store},
-    witness::WitnessCache,
     Error,
 };
 use receiver_indexer::{
     blocks::{MAX_RECEIVER_BATCH_BLOCKS, MAX_RECEIVER_CONCURRENCY},
     near::{Explorer, Reads},
+    verify,
     zakura::ZakuraClient,
 };
-use receiver_pir::server::Server;
-use receiver_pir_server::{Publication, Publications};
+use receiver_pir_server::Publications;
 use std::{
     io::Write,
     net::{IpAddr, SocketAddr},
@@ -24,6 +23,7 @@ use std::{
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 use zakura_chain::{block::Hash, parameters::Network};
+use zakura_receiver_crypto::witness::WitnessCache;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
@@ -383,7 +383,7 @@ async fn refresh(
             )
             .await?;
         for block in batch {
-            store.append(&block)?;
+            verify::append(&mut store, &block)?;
         }
         tip = store.tip()?;
         let (records, coinbase) = store.counts()?;
@@ -441,7 +441,8 @@ async fn refresh(
     let witnesses = if args.witnesses {
         let started = std::time::Instant::now();
         // Blocks only the main future, not a worker: the HTTP server and guard are spawned tasks.
-        let proof = match store.witnesses(
+        let proof = match verify::build_witnesses(
+            &store,
             &snapshot.manifest,
             witness_cache,
             args.max_witness_commitments,
@@ -454,7 +455,7 @@ async fn refresh(
                 )
                 .into())
             }
-            proof => proof?.encode(),
+            proof => proof?,
         };
         log_stage("witness_prepare", started);
         info!(witness_bytes = proof.len(), "witnesses prepared");
@@ -491,8 +492,7 @@ async fn refresh(
     let started = std::time::Instant::now();
     let end_height = snapshot.manifest.end_height;
     let publication =
-        tokio::task::spawn_blocking(move || Publication::new(Server::new(snapshot)?, witnesses))
-            .await??;
+        tokio::task::spawn_blocking(move || verify::prepare(snapshot, witnesses)).await??;
     log_stage("pir_prepare", started);
     let started = std::time::Instant::now();
     let anchor = publication.manifest();
@@ -592,6 +592,7 @@ mod common;
 mod tests {
     use super::*;
     use axum::{extract::State, routing::post, Json, Router};
+    use receiver_pir_server::Publication;
     use serde_json::{json, Value};
     use std::{
         collections::HashMap,
@@ -658,7 +659,7 @@ mod tests {
         let mut manifest = super::common::manifest(receiver_pir::MIN_ROWS);
         manifest.end_hash = [hash; 32];
         let snapshot = Snapshot::build(manifest, &[], &[]).unwrap();
-        Publication::new(Server::new(snapshot).unwrap(), None).unwrap()
+        verify::prepare(snapshot, None).unwrap()
     }
 
     /// A check that finds an anchor off the chain after a revocation and a new

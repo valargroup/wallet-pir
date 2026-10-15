@@ -146,6 +146,9 @@ def plan(packages, paths, *, all_checks=False):
     for path in paths:
         package = owner(packages, path)
         routed = route(path)
+        if path.endswith('Cargo.toml') or path == 'Cargo.lock':
+            # Every manifest is inside the dependency boundary (tools/ci/boundary.py).
+            helpers.add('check-tools'); groups.add('ops')
         if package:
             if path.endswith('.md'):
                 helpers.add('check-docs'); groups.add('ops')

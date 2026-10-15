@@ -1,7 +1,7 @@
 //! Immutable publications: manifests, row placement and row decoding.
 use crate::{
     filter::{self, Filter, Filters},
-    Error, Hash, Receiver, Record, RECORD_BYTES,
+    record, Error, Hash, RawRecord, ReceiverBytes, RECORD_BYTES,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -83,7 +83,7 @@ pub struct ProviderSet {
     pub since_unix: i64,
     /// See [`FilterSet::until_unix`].
     pub until_unix: i64,
-    pub receivers: Vec<Receiver>,
+    pub receivers: Vec<ReceiverBytes>,
 }
 
 impl Manifest {
@@ -193,16 +193,16 @@ impl Manifest {
 }
 
 /// Stable receiver identity; derivation index and purpose never leave the wallet.
-fn receiver_tag(genesis: &Hash, receiver: &Receiver) -> Hash {
+fn receiver_tag(genesis: &Hash, receiver: &ReceiverBytes) -> Hash {
     let mut h = Sha256::new();
     h.update(b"ironwood-receiver/v1/tag\0");
     h.update(genesis);
-    h.update(receiver.as_bytes());
+    h.update(receiver);
     h.finalize().into()
 }
 
 /// This row number must be selected inside PIR, never in a public HTTP route.
-pub fn row_for(manifest: &Manifest, receiver: &Receiver, page: u32) -> Result<usize, Error> {
+pub fn row_for(manifest: &Manifest, receiver: &ReceiverBytes, page: u32) -> Result<usize, Error> {
     Ok(Placement::new(manifest)?.row(receiver, page))
 }
 
@@ -226,7 +226,7 @@ impl Placement {
     }
 
     /// The row holding `receiver`'s page `page`; see [`row_for`].
-    fn row(&self, receiver: &Receiver, page: u32) -> usize {
+    fn row(&self, receiver: &ReceiverBytes, page: u32) -> usize {
         let mut h = Sha256::new();
         h.update(b"ironwood-receiver/v1/bucket\0");
         h.update(self.salt);
@@ -254,7 +254,7 @@ impl Snapshot {
     /// provider feeds (see [`crate::filter`]).
     pub fn build(
         mut manifest: Manifest,
-        records: &[Record],
+        records: &[RawRecord],
         provider: &[ProviderSet],
     ) -> Result<Self, Error> {
         manifest.records = records.len() as u64;
@@ -296,7 +296,7 @@ impl Snapshot {
                 return Err(Error::Capacity);
             }
             let offset = row * ROW_BYTES + counts[row] * RECORD_BYTES;
-            data[offset..offset + RECORD_BYTES].copy_from_slice(&record.encode()?);
+            data[offset..offset + RECORD_BYTES].copy_from_slice(&record::encode(record)?);
             counts[row] += 1;
         }
         manifest.data_sha256 = Sha256::digest(&data).into();
@@ -343,11 +343,11 @@ impl Snapshot {
     }
 }
 
-/// The fields of a [`Record`] that [`check_pages`] reads, so validating a publication
+/// The fields of a [`RawRecord`] that [`check_pages`] reads, so validating a publication
 /// need not hold its records whole.
 #[derive(Clone, Copy)]
 struct PageMeta {
-    receiver: Receiver,
+    receiver: ReceiverBytes,
     page: u32,
     total: u32,
     position: u64,
@@ -358,9 +358,9 @@ struct PageMeta {
     block_hash: Hash,
 }
 
-impl From<&Record> for PageMeta {
+impl From<&RawRecord> for PageMeta {
     /// Projects `r` onto the fields page checks read.
-    fn from(r: &Record) -> Self {
+    fn from(r: &RawRecord) -> Self {
         Self {
             receiver: r.receiver,
             page: r.page,
@@ -394,7 +394,7 @@ impl PageMeta {
 /// same receiver and total, the next page number, a later note position, a later
 /// output by height, transaction index and action index, the same block hash at the
 /// same height, and the same txid in the same transaction.
-pub fn check_next(previous: &Record, next: &Record) -> Result<(), Error> {
+pub fn check_next(previous: &RawRecord, next: &RawRecord) -> Result<(), Error> {
     if !PageMeta::from(previous).continues(&PageMeta::from(next)) {
         return Err(Error::Malformed);
     }
@@ -437,7 +437,7 @@ fn check_pages(sorted: impl IntoIterator<Item = PageMeta>) -> Result<(), Error> 
 
 /// Rejects a record whose payment lies outside the manifest's blocks or positions, or
 /// in a coinbase transaction, which the directory excludes.
-fn validate_location(m: &Manifest, r: &Record) -> Result<(), Error> {
+fn validate_location(m: &Manifest, r: &RawRecord) -> Result<(), Error> {
     let p = &r.payment;
     if p.tx_index == 0
         || p.height < m.start_height
@@ -455,10 +455,10 @@ fn validate_location(m: &Manifest, r: &Record) -> Result<(), Error> {
 /// Subsequent pages must also repeat page zero's total before recovery can complete.
 pub fn lookup_row(
     m: &Manifest,
-    receiver: &Receiver,
+    receiver: &ReceiverBytes,
     page: u32,
     bytes: &[u8],
-) -> Result<Option<Record>, Error> {
+) -> Result<Option<RawRecord>, Error> {
     let placement = Placement::new(m)?;
     let mut found = None;
     for record in row_records(m, &placement, placement.row(receiver, page), bytes)? {
@@ -483,13 +483,13 @@ fn row_records(
     placement: &Placement,
     row: usize,
     bytes: &[u8],
-) -> Result<Vec<Record>, Error> {
+) -> Result<Vec<RawRecord>, Error> {
     if bytes.len() != ROW_BYTES || bytes[SLOTS * RECORD_BYTES..].iter().any(|b| *b != 0) {
         return Err(Error::Malformed);
     }
     let mut records = Vec::new();
     for slot in bytes[..SLOTS * RECORD_BYTES].as_chunks::<RECORD_BYTES>().0 {
-        if let Some(record) = Record::decode(slot)? {
+        if let Some(record) = record::decode(slot)? {
             validate_location(m, &record)?;
             // A receiver cannot have more pages than the publication has records.
             if u64::from(record.total) > m.records

@@ -1,4 +1,6 @@
-//! Encrypted row retrieval. Results are candidates for wallet validation, not chain proofs.
+//! Encrypted row retrieval. Results are candidates for wallet validation, not chain proofs:
+//! records and witness files are returned as untrusted bytes, which the wallet checks
+//! cryptographically before use.
 mod client;
 #[cfg(feature = "server")]
 pub mod server;
@@ -6,7 +8,7 @@ pub mod transport;
 
 pub use client::{Client, Query};
 use pir_native::{NativeSetup, D};
-use receiver_directory::Record;
+use receiver_directory::RawRecord;
 use receiver_directory::{snapshot, Hash};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -167,6 +169,6 @@ pub fn response_bytes(rows: u32) -> Result<usize, Error> {
 /// Reject inconsistent continuation pages before exposing a complete history to a
 /// wallet, by the rule publications are built and validated with
 /// ([`snapshot::check_next`]).
-fn check_next(previous: &Record, next: &Record) -> Result<(), Error> {
+fn check_next(previous: &RawRecord, next: &RawRecord) -> Result<(), Error> {
     snapshot::check_next(previous, next).map_err(|_| Error::Malformed)
 }

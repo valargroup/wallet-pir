@@ -13,7 +13,7 @@
 //!
 //! Decoding reads every value and checks the padding before any match, because the
 //! upstream reader's `match_any` stops at the first match and never checks the tail.
-use crate::{Error, Hash, Receiver};
+use crate::{Error, Hash, ReceiverBytes};
 use bitcoin::{
     bip158::{BitStreamReader, GcsFilterWriter},
     consensus::{encode::VarInt, Decodable},
@@ -79,12 +79,12 @@ pub struct Filter {
 
 impl Filter {
     /// Encodes the distinct `receivers` under `key`.
-    pub fn build<'a>(key: &Hash, receivers: impl IntoIterator<Item = &'a Receiver>) -> Self {
+    pub fn build<'a>(key: &Hash, receivers: impl IntoIterator<Item = &'a ReceiverBytes>) -> Self {
         let (k0, k1) = keys(key);
         let mut bytes = Vec::new();
         let mut writer = GcsFilterWriter::new(&mut bytes, k0, k1, M, P);
         for receiver in receivers {
-            writer.add_element(receiver.as_bytes());
+            writer.add_element(receiver);
         }
         writer.finish().expect("in-memory filter");
         Self::decode(&bytes).expect("filter the writer encoded")
@@ -96,13 +96,13 @@ impl Filter {
     }
 
     /// Which of `receivers` may be in the set, in the same order.
-    pub fn matches(&self, key: &Hash, receivers: &[Receiver]) -> Vec<bool> {
+    pub fn matches(&self, key: &Hash, receivers: &[ReceiverBytes]) -> Vec<bool> {
         let (k0, k1) = keys(key);
         let range = self.values.len() as u64 * M;
         receivers
             .iter()
             .map(|r| {
-                let hash = siphash24::Hash::hash_to_u64_with_keys(k0, k1, r.as_bytes());
+                let hash = siphash24::Hash::hash_to_u64_with_keys(k0, k1, r);
                 let value = ((u128::from(hash) * u128::from(range)) >> 64) as u64;
                 self.values.binary_search(&value).is_ok()
             })
@@ -252,13 +252,15 @@ impl Filters {
 mod tests {
     use super::*;
 
-    fn receivers(n: u32, seed: u8) -> Vec<Receiver> {
+    /// `n` distinct pseudorandom receivers; filters hash bytes and never parse them.
+    fn receivers(n: u32, seed: u8) -> Vec<ReceiverBytes> {
+        use sha2::{Digest, Sha512};
         (0..n)
             .map(|i| {
-                let sk = orchard::keys::SpendingKey::from_bytes([seed; 32]).unwrap();
-                let fvk = orchard::keys::FullViewingKey::from(&sk);
-                let address = fvk.address_at(i, orchard::keys::Scope::External);
-                Receiver::from_bytes(address.to_raw_address_bytes()).unwrap()
+                let digest = Sha512::new()
+                    .chain_update([seed])
+                    .chain_update(i.to_le_bytes());
+                digest.finalize()[..43].try_into().unwrap()
             })
             .collect()
     }
@@ -315,7 +317,7 @@ mod tests {
         assert!(reader
             .match_all(
                 &mut filter.bytes.as_slice(),
-                members.iter().map(|r| r.as_bytes().as_slice())
+                members.iter().map(|r| r.as_slice())
             )
             .unwrap());
         assert_eq!(filter.count(), 100);

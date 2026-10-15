@@ -4,7 +4,7 @@ use crate::{
 };
 use pir_native::NativeSecret;
 use rand::{rngs::OsRng, Rng};
-use receiver_directory::{snapshot, Hash, Receiver, Record};
+use receiver_directory::{snapshot, Hash, RawRecord, ReceiverBytes};
 use sha2::{Digest, Sha256};
 
 /// A PIR session for one manifest, accepted against the caller's chain anchor.
@@ -19,7 +19,7 @@ pub struct Client {
 pub struct Query {
     body: Vec<u8>,
     secret: NativeSecret,
-    receiver: Receiver,
+    receiver: ReceiverBytes,
     page: u32,
 }
 
@@ -58,7 +58,7 @@ impl Client {
     }
 
     /// Receiver and page influence only the encrypted row selection, never a public header.
-    pub fn prepare(&self, receiver: Receiver, page: u32) -> Result<Query, Error> {
+    pub fn prepare(&self, receiver: ReceiverBytes, page: u32) -> Result<Query, Error> {
         let row = snapshot::row_for(&self.manifest.directory, &receiver, page)?;
         let (secret, request) = pir_native::prepare_with(
             &self.profile.setup,
@@ -80,7 +80,9 @@ impl Client {
     }
 
     /// Decode the answer to `query`, rejecting another request's or revision's response.
-    pub fn decode(&self, query: Query, response: &[u8]) -> Result<Option<Record>, Error> {
+    /// The record is checked structurally against the manifest; its receiver and Action
+    /// fields are not cryptographically checked.
+    pub fn decode(&self, query: Query, response: &[u8]) -> Result<Option<RawRecord>, Error> {
         if query.body[4..36] != self.id {
             return Err(Error::Revision);
         }

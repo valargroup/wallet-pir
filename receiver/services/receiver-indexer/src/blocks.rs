@@ -1,7 +1,6 @@
 //! Canonical RPC adapter. The shared crate owns recovery, storage and row encoding.
 use crate::zakura::{Treestate, VerboseBlock, ZakuraClient, ZakuraError};
 use receiver_directory::{
-    extract::Action,
     store::{Checkpoint, IndexedBlock},
     Payment,
 };
@@ -11,6 +10,7 @@ use zakura_chain::{
     parameters::{Network, NetworkUpgrade},
     serialization::ZcashDeserialize,
 };
+use zakura_receiver_crypto::recovery::Action;
 
 /// Ironwood's mainnet activation height; earlier blocks have no Ironwood tree.
 pub fn ironwood_activation() -> u32 {
@@ -245,7 +245,7 @@ pub fn extract_block(
                     .map_err(|e| ZakuraError::Block(e.to_string()))?
                 {
                     indexed.payments.push((
-                        receiver,
+                        *receiver.as_bytes(),
                         Payment {
                             height,
                             block_hash: indexed.hash,
