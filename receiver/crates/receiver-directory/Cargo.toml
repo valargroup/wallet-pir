@@ -9,7 +9,7 @@ description = "Receiver directory publications: record placement, storage and st
 store = ["dep:rusqlite"]
 
 [dependencies]
-zakura-receiver-crypto = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "20af90e99a1746fc003bbe671daafca83b25d125", default-features = false }
+zakura-receiver-crypto = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "5293d937ac8e369d2f75910e68617319b61554ce", default-features = false }
 # Pinned exactly, as in `transparent-filter`: the filter bytes are what every wallet
 # tests, so the encoder may not move without revalidation.
 bitcoin = { version = "=0.32.102", default-features = false, features = ["std"] }
