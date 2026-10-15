@@ -353,7 +353,10 @@ def history():
     code, refused = control({'operation': 'prepare', 'expected': second['map_sha256'],
                              'publication': {'directory': str(r.work / 'publications/missing'), 'assignment': None,
                                              'map_sha256': '00' * 32}})
-    r.run(*exact)
+    # A prepare evicts the active publication's unpinned runtimes before it
+    # loads (foundation behavior), so a loaded-only worker rebuilds them on
+    # the next query: the oracle gets a window that covers a rebuild.
+    r.run(*exact[:-1], '60')
     status_code, status = control({'operation': 'status'})
     r.step('failed-publication-update', returncode=code, reply=refused[-300:],
            last_preparation=last_preparation(status),
