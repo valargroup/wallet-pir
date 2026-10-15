@@ -27,9 +27,10 @@ mode = "role"
 template = "transparent-history-worker.role.service"
 renderer = "transparent.ops.lib.roles:history_worker"
 optional = true
-health = "http://{listen}/v1/health"
+# /v1/ready carries identity and `ready`, and answers 503 until the loaded set
+# is warm; /v1/health carries no readiness.
+health = "http://{listen}/v1/ready"
 ready = { field = "ready", equals = true }
-ready_url = "http://{listen}/v1/ready"
 ready_timeout = 900
 
 [services.transparent-history.roles.controller]

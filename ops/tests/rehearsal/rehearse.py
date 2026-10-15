@@ -85,6 +85,15 @@ class Node:
         self.tip = max(self.tip, height + 5)
 
 
+def last_preparation(status):
+    """The worker's last preparation from a control status reply, flat (display) or wrapped (history)."""
+    try:
+        reply = json.loads(status)
+    except ValueError:
+        return status
+    return reply.get('last_preparation', reply.get('result', {}).get('last_preparation'))
+
+
 def free_port():
     import socket
     with socket.socket() as s:
@@ -113,10 +122,12 @@ class Rehearsal:
         print('[%s] %s %s' % (self.name, name, json.dumps({k: v for k, v in detail.items() if k != 'step'})),
               flush=True)
 
-    def inventory(self, service, role, settings, listen, exact_check=None):
-        entry = {'host': 'local', 'install': True, 'vars': {'listen': listen}, 'settings': settings}
+    def inventory(self, service, role, settings, listen, exact_check=None, instances=None):
+        entries = [{'host': 'local', 'install': True, 'vars': {'listen': l}, 'settings': s,
+                    **({'unit': u} if u else {})}
+                   for s, l, u in (instances or [(settings, listen, None)])]
         document = {'lock': {'type': 'remote', 'host': 'local'}, 'ssh': {'mode': 'config'}, 'hosts': {'local': {}},
-                    'services': {service: {'roles': {role: [entry]}}}}
+                    'services': {service: {'roles': {role: entries}}}}
         if exact_check:
             document['services'][service]['exact_check'] = {'host': 'local', 'argv': exact_check, 'timeout': 900}
         path = self.work / 'inventory.json'
@@ -255,39 +266,43 @@ def enhance():
     r = Rehearsal('enhance-external-worker')
     binary = r.binary('enhance-pir-server')
     sha = sha256(binary)
-    port = free_port()
-    listen = '127.0.0.1:%d' % port
-    settings = {'listen': listen, 'data_dir': str(r.work / 'worker-data')}
-    inventory = r.inventory('enhance', 'external-worker', settings, listen)
+    # The synthetic coordinator needs a replicated group: two external workers.
+    listens = ['127.0.0.1:%d' % free_port() for _ in range(2)]
+    instances = [({'listen': l, 'data_dir': str(r.work / ('worker-data-%d' % i))}, l, 'enhance-pir-worker-%d.service' % i)
+                 for i, l in enumerate(listens)]
+    inventory = r.inventory('enhance', 'external-worker', None, None, instances=instances)
     deployer = r.deployer('enhance', inventory)
     deployer.capture_baseline()
     journal = deployer.deploy(sha, binary, skip_exact_check=True)
-    r.step('fresh-install', transaction=journal.id, status=journal.status, binary_sha256=sha)
-    health = r.health('http://%s/internal/health' % listen)
+    r.step('fresh-install', transaction=journal.id, status=journal.status, binary_sha256=sha, workers=2)
+    health = r.health('http://%s/internal/health' % listens[0])
     r.step('idle', published=health['published'], incarnation=health['incarnation'])
-    r.executor.systemctl('local', 'restart', 'enhance-pir-worker.service')
-    restarted = r.wait('restart', lambda: r.health('http://%s/internal/health' % listen))
+    r.executor.systemctl('local', 'restart', 'enhance-pir-worker-0.service')
+    restarted = r.wait('restart', lambda: r.health('http://%s/internal/health' % listens[0]))
     r.step('restart', new_incarnation=restarted['incarnation'] != health['incarnation'])
     # The fixture controller: the release's own isolated synthetic coordinator
-    # reserves, uploads, prepares, activates and checks exact answers.
+    # reserves, uploads, prepares, activates, commits and checks exact answers.
     groups = r.work / 'workers.json'
-    groups.write_text(json.dumps({'groups': [{'name': 'g0', 'replicas': [{'name': 'w0', 'url': 'http://' + listen}]}]}))
+    groups.write_text(json.dumps({'groups': [{'name': 'g0', 'replicas': [
+        {'name': 'w%d' % i, 'url': 'http://' + l} for i, l in enumerate(listens)]}]}))
     exercise = r.run(binary, 'exercise', '--isolated-workers', '--profile', 'smoke', '--data-dir', r.work / 'controller',
-                     '--worker-config', groups, '--listen', '127.0.0.1:%d' % free_port(), '--seconds', '90',
+                     '--worker-config', groups, '--listen', '127.0.0.1:%d' % free_port(), '--seconds', '120',
                      '--min-publications', '2', '--publication-interval', '20', '--concurrency', '1',
                      timeout=1800, check=False)
-    summary = None
-    for name in ('summary.json', 'report.json', 'workload.json'):
-        path = r.work / 'controller' / name
-        if path.exists():
-            summary = json.loads(path.read_text())
+    summary = {}
+    if (r.work / 'controller/exercise.json').exists():
+        summary = json.loads((r.work / 'controller/exercise.json').read_text())
     r.step('controller-publications-and-exact-answers', returncode=exercise.returncode,
-           summary={k: (summary or {}).get(k) for k in ('status', 'publications', 'error', 'exact_boundary_and_retained_probes')},
+           exact_answer=exercise.returncode == 0,
+           summary={k: summary.get(k) for k in ('status', 'publications', 'error', 'traffic',
+                                                 'exact_boundary_and_retained_probes')},
            output=(exercise.stdout + exercise.stderr)[-600:])
+    published = r.health('http://%s/internal/health' % listens[0])
+    r.step('published-by-controller', published=published.get('published'), preparation=published.get('preparation'))
     report = r.report('enhance', inventory)
     r.step('report', report=report)
     r.deployer('enhance', inventory).rollback(journal.id)
-    r.step('rollback-install', absent=r.absent('enhance-pir-worker.service'))
+    r.step('rollback-install', absent=all(r.absent('enhance-pir-worker-%d.service' % i) for i in range(2)))
     return r.finish()
 
 
@@ -302,8 +317,10 @@ def history():
     listen = '127.0.0.1:%d' % port
     url = 'http://' + listen
     settings = {'listen': listen, 'shard_dir': str(p1), 'state_dir': str(r.work / 'worker-state'),
-                'cache_bytes': 2 << 30}
-    exact = [r.binary('soak-query'), '--url', url, '--publications', str(p1), '--shard', '0', '--seconds', '3']
+                'cache_bytes': 6 << 30}
+    # soak-query reads the expected rows from the publication files under this root.
+    exact = [r.binary('soak-query'), '--url', url, '--publications', str(r.work / 'publications'), '--shard', '0',
+             '--seconds', '3']
     inventory = r.inventory('transparent-history', 'external-worker', settings, listen, exact)
     deployer = r.deployer('transparent-history', inventory)
     deployer.capture_baseline()
@@ -331,15 +348,15 @@ def history():
     r.step('prepare', returncode=code, reply=json.loads(prepared) if prepared.startswith('{') else prepared)
     code, activated = control({'operation': 'activate', 'expected': first['map_sha256'],
                                'map_sha256': second['map_sha256']})
-    r.run(r.binary('soak-query'), '--url', url, '--publications', p2, '--shard', '0', '--seconds', '3')
+    r.run(*exact)
     r.step('publication-update', returncode=code, exact_answer=True)
     code, refused = control({'operation': 'prepare', 'expected': second['map_sha256'],
                              'publication': {'directory': str(r.work / 'publications/missing'), 'assignment': None,
                                              'map_sha256': '00' * 32}})
-    r.run(r.binary('soak-query'), '--url', url, '--publications', p2, '--shard', '0', '--seconds', '3')
+    r.run(*exact)
     status_code, status = control({'operation': 'status'})
     r.step('failed-publication-update', returncode=code, reply=refused[-300:],
-           last_preparation=json.loads(status).get('last_preparation') if status.startswith('{') else status,
+           last_preparation=last_preparation(status),
            still_exact=True)
     report = r.report('transparent-history', inventory)
     r.step('report', report=report)
@@ -369,7 +386,7 @@ def status_worker():
     # synthetic controller and router with exact answers.
     validation = r.run(binary, 'validate-distributed', '--entries', '32', '--state-dir', r.work / 'validation',
                        timeout=1800, check=False)
-    r.step('worker-role-exact-answers', returncode=validation.returncode,
+    r.step('worker-role-exact-answers', returncode=validation.returncode, exact_answer=validation.returncode == 0,
            scope='the same released status-pir worker role, started by validate-distributed, not the installed unit',
            output=(validation.stdout + validation.stderr)[-600:])
     report = r.report('status', inventory)
@@ -382,21 +399,51 @@ def status_worker():
 def display():
     r = Rehearsal('transparent-display-external-worker')
     binary = r.binary('transparent-txid-server')
+    fixture = r.binary('display_fixture')
     sha = sha256(binary)
     port = free_port()
     listen = '127.0.0.1:%d' % port
-    (r.work / 'publications').mkdir()
+    url = 'http://' + listen
+    root = r.work / 'publications'
+    root.mkdir()
     settings = {'listen': listen, 'role': 'combined', 'state_dir': str(r.work / 'worker-state'),
-                'publication_root': str(r.work / 'publications')}
+                'publication_root': str(root), 'cache_bytes': 2 << 30}
     inventory = r.inventory('transparent-display', 'external-worker', settings, listen)
     deployer = r.deployer('transparent-display', inventory)
     deployer.capture_baseline()
     journal = deployer.deploy(sha, binary, skip_exact_check=True)
-    health = r.health('http://%s/v1/health' % listen)
-    r.step('fresh-install', transaction=journal.id, status=journal.status, health=health)
+    health = r.health(url + '/v1/health')
+    r.step('fresh-install', transaction=journal.id, status=journal.status, phase=health.get('phase'))
+    socket = r.executor.path('/run/transparent-display-worker/control.sock')
+    def control(command):
+        result = subprocess.run([r.binary('txid-control'), socket], input=json.dumps(command), capture_output=True,
+                                text=True, timeout=900)
+        return result.returncode, result.stdout.strip()
+    def publish(expected, candidate):
+        code, prepared = control({'operation': 'prepare', 'expected': expected,
+                                  'publication': {'directory': candidate['directory'],
+                                                  'map_sha256': candidate['map_sha256']}})
+        if code:
+            return code, prepared
+        return control({'operation': 'activate', 'expected': expected, 'map_sha256': candidate['map_sha256']})
+    # The fixture controller: stage a candidate and prepare/activate it over the
+    # root-only control socket, as the display controller does.
+    p0 = json.loads(r.run(fixture, 'stage', root, 'p0', 0).stdout)
+    code, reply = publish('', p0)
+    exact = json.loads(r.run(fixture, 'lookup', url, 0).stdout)
+    r.step('controller-activation', returncode=code, exact_answer=exact)
     r.executor.systemctl('local', 'restart', 'transparent-display-worker.service')
-    r.wait('restart', lambda: r.health('http://%s/v1/health' % listen))
-    r.step('restart')
+    r.wait('ready after restart', lambda: r.executor.http_get('local', url + '/v1/ready')[0] == 200, 600)
+    r.step('restart', exact_answer=json.loads(r.run(fixture, 'lookup', url, 0).stdout),
+           note='the active record restored the publication')
+    p1 = json.loads(r.run(fixture, 'stage', root, 'p1', 1).stdout)
+    code, reply = publish(p0['map_sha256'], p1)
+    r.step('publication-update', returncode=code, exact_answer=json.loads(r.run(fixture, 'lookup', url, 1).stdout))
+    code, refused = publish(p1['map_sha256'], {'directory': str(root / 'missing'), 'map_sha256': '00' * 32})
+    _, status = control({'operation': 'status'})
+    r.step('failed-publication-update', returncode=code, reply=refused[-300:],
+           last_preparation=last_preparation(status),
+           exact_answer=json.loads(r.run(fixture, 'lookup', url, 1).stdout))
     report = r.report('transparent-display', inventory)
     r.step('report', report=report)
     r.deployer('transparent-display', inventory).rollback(journal.id)
