@@ -1,11 +1,13 @@
 //! A minimal JSON-RPC client for a Zakura node: what the indexer reads.
 //!
-//! It copies the parts of `enhance-pir-server`'s client the indexer needs, so the two
-//! services stay independent until a shared node client exists.
+//! Transport is the shared `node-rpc` client under Receiver's policy: the cookie is
+//! re-read on every request, a request has 120 s and 20 s to connect, and a response
+//! is bounded by [`RPC_RESPONSE_BYTES`]. What the indexer asks and how it reads the
+//! answers stay here.
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde_json::json;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use zakura_chain::block::Hash;
 
 /// A failed node request.
@@ -35,6 +37,23 @@ pub enum ZakuraError {
     Decode(serde_json::Error),
     #[error("node is on another network")]
     OtherNetwork,
+    #[error("invalid JSON-RPC batch response: {0}")]
+    Batch(String),
+}
+
+impl From<node_rpc::Error> for ZakuraError {
+    fn from(error: node_rpc::Error) -> Self {
+        match error {
+            node_rpc::Error::Http(error) => Self::Http(error),
+            node_rpc::Error::Cookie(error) => Self::Cookie(error),
+            node_rpc::Error::InvalidCookie => Self::InvalidCookie,
+            node_rpc::Error::Rpc(code, message) => Self::Rpc(code, message),
+            node_rpc::Error::MissingResult => Self::MissingResult,
+            node_rpc::Error::Oversized(limit) => Self::Body(crate::BodyError::Oversized(limit)),
+            node_rpc::Error::Decode(error) => Self::Decode(error),
+            node_rpc::Error::Batch(message) => Self::Batch(message),
+        }
+    }
 }
 
 /// Bound on every node RPC response. The largest the indexer reads is a verbose
@@ -51,36 +70,11 @@ const RPC_RESPONSE_BYTES: usize = (zakura_chain::block::MAX_BLOCK_BYTES
 const _: () =
     assert!(RPC_RESPONSE_BYTES > 2 * zakura_chain::block::MAX_BLOCK_BYTES as usize + 64 * 1024);
 
-/// One node's JSON-RPC endpoint and the path of its `user:password` cookie file, if
+/// One node's JSON-RPC endpoint, with the path of its `user:password` cookie file if
 /// it requires one.
 #[derive(Clone)]
 pub struct ZakuraClient {
-    http: reqwest::Client,
-    url: String,
-    cookie: Option<PathBuf>,
-}
-
-/// The `user` and `password` of a cookie file.
-fn read_cookie(path: &Path) -> Result<(String, String), ZakuraError> {
-    let cookie = std::fs::read_to_string(path)?;
-    match cookie.trim().split_once(':') {
-        Some((username, password)) if !username.is_empty() && !password.is_empty() => {
-            Ok((username.to_owned(), password.to_owned()))
-        }
-        _ => Err(ZakuraError::InvalidCookie),
-    }
-}
-
-#[derive(Deserialize)]
-struct RpcResponse<T> {
-    result: Option<T>,
-    error: Option<RpcError>,
-}
-
-#[derive(Deserialize)]
-struct RpcError {
-    code: i64,
-    message: String,
+    rpc: node_rpc::Client,
 }
 
 /// The tree sizes from a verbose `getblock` response.
@@ -131,13 +125,18 @@ impl ZakuraClient {
     /// sends no credentials for `None`, for a node whose RPC disables authentication.
     pub fn new(url: String, cookie: Option<&Path>) -> Result<Self, ZakuraError> {
         Ok(Self {
-            http: reqwest::Client::builder()
-                .connect_timeout(std::time::Duration::from_secs(5))
-                .timeout(std::time::Duration::from_secs(120))
-                .build()?,
-            url,
-            cookie: cookie.map(Path::to_owned),
+            rpc: node_rpc::Client::new(
+                url,
+                cookie,
+                "receiver-indexer",
+                node_rpc::Policy::cookie_every_request(RPC_RESPONSE_BYTES),
+            )?,
         })
+    }
+
+    /// The node's JSON-RPC URL.
+    pub fn url(&self) -> &str {
+        self.rpc.url()
     }
 
     /// The `nodes` whose genesis block is `genesis` (see [`Self::check_network`]), each
@@ -207,21 +206,7 @@ impl ZakuraClient {
         method: &str,
         params: serde_json::Value,
     ) -> Result<T, ZakuraError> {
-        let body =
-            json!({"jsonrpc": "1.0", "id": "receiver-indexer", "method": method, "params": params});
-        let mut request = self.http.post(&self.url);
-        if let Some(path) = &self.cookie {
-            let (username, password) = read_cookie(path)?;
-            request = request.basic_auth(username, Some(password));
-        }
-        let response = request.json(&body).send().await?.error_for_status()?;
-        let body = crate::read_limited(response, RPC_RESPONSE_BYTES).await?;
-        let response: RpcResponse<T> =
-            serde_json::from_slice(&body).map_err(ZakuraError::Decode)?;
-        if let Some(error) = response.error {
-            return Err(ZakuraError::Rpc(error.code, error.message));
-        }
-        response.result.ok_or(ZakuraError::MissingResult)
+        Ok(self.rpc.call(method, params).await?)
     }
 }
 
@@ -311,6 +296,20 @@ mod tests {
         assert_eq!(rpc.tip_height().await.unwrap(), 7);
     }
 
+    /// Production deadlines: 20 s to connect, 120 s for a whole request, the
+    /// chain-derived response bound, the cookie re-read per request and a 401 left as
+    /// the HTTP status error.
+    #[test]
+    fn production_transport_policy() {
+        let node = ZakuraClient::new("http://127.0.0.1:1".into(), None).unwrap();
+        let policy = node.rpc.policy();
+        assert_eq!(policy.connect, Some(std::time::Duration::from_secs(20)));
+        assert_eq!(policy.total, std::time::Duration::from_secs(120));
+        assert_eq!(policy.response_bytes, RPC_RESPONSE_BYTES);
+        assert_eq!(policy.cookie, node_rpc::CookieReading::EveryRequest);
+        assert_eq!(policy.unauthorized, node_rpc::Unauthorized::HttpStatus);
+    }
+
     /// Nodes rank by tip, highest first and in configured order among equal tips,
     /// leaving out a node that does not answer or, checked again on every ranking, is
     /// on another network, however high its tip; with none left ranking fails.
@@ -333,10 +332,10 @@ mod tests {
         let order = |ranked: Vec<(u64, ZakuraClient)>| -> Vec<_> {
             ranked
                 .into_iter()
-                .map(|(tip, node)| (tip, node.url))
+                .map(|(tip, node)| (tip, node.url().to_string()))
                 .collect()
         };
-        let urls: Vec<_> = nodes.iter().map(|node| node.url.clone()).collect();
+        let urls: Vec<_> = nodes.iter().map(|node| node.url().to_string()).collect();
         let ranked = ZakuraClient::ranked(&nodes, ours).await.unwrap();
         let mut expected = vec![
             (150, urls[5].clone()),
