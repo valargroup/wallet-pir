@@ -1141,9 +1141,35 @@ by default; v2 does not enable it.
   at lower priority, and keep rsync's receiver work off the query threads.
 - [ ] Pin the self-check's any-row claim with a test where rows B differ from
   rows A in one row only; use `rand::rng` for the sampled row and say why it must
-  be unpredictable to the publisher.
-- [ ] Count a refused shipped file once per slot on an `Overloaded` retry.
+  be unpredictable to the publisher. The one-row test now exists for history
+  runtimes (`a_prepared_runtime_one_row_off_is_refused_and_the_sync_stays_exact`),
+  through the same `TableRuntime::self_check`; the sampled row's randomness is
+  unchanged.
+- [x] Count a refused shipped file once per slot on an `Overloaded` retry: the
+  cache now remembers a refusal until its production operation ends
+  (`a_refusal_is_counted_once_across_admission_retries`).
 - [ ] Document in `txid-display.md` that the prebuild runs before
   `deliver_invalidations` (a reorg's stale window grows by `prebuild_ms`) and that
   archive owners receive the recent runtimes at seal boundaries; correct the bench
   README's 48 loads to run 2's 50.
+
+## Prepared history runtimes
+
+Implemented and correctness-tested, off by default; see
+[status](status.md#prepared-history-runtimes-implemented-not-measured-2026-10-14) and the
+[design as built](architecture.md#prepared-history-runtimes).
+
+- [ ] Run the six paired arms on a host-exclusive allocation with the
+  [harness](../evidence/history-prepared-runtimes-2026-10-14/README.md), one pinned binary
+  set, in the order off/on, on/off, off/on: each arm 300 blocks at 4 s under open-loop
+  20 queries/s, publisher and worker two CPUs and two build threads each, one worker build
+  slot and two query slots, separate CPU groups, warm-fit budgets fixed before the first
+  pair with at least 20% host memory and disk headroom. Accept only if worker CPU falls in
+  every pair, every answer is exact, shipping shows no fallback and no worker build, no
+  query fails or goes unstarted, freshness, readiness and memory gates pass, and the worst
+  shipped query and activation-delay quantiles are no worse than the worst baseline ones.
+  Retain every attempt, including failed or contaminated ones.
+- [ ] Only after an accepted measurement: a reviewed adoption plan through the locked
+  deploy tool (`plan`/`preflight`), Roman's confirmation, then the fleet adapter on the
+  coordinator before `ship_runtimes`. Measure the real network transfer then; the local
+  benchmark makes no claim about it.

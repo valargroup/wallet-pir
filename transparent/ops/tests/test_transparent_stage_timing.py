@@ -1,10 +1,12 @@
-"""Staging diagnostics preserve concurrent attribution and cancellation semantics."""
+"""Staging diagnostics preserve concurrent attribution and cancellation semantics,
+and staging carries the runtimes a publisher prepared."""
 import asyncio
 from contextlib import redirect_stderr
 import importlib.util
 import io
 import json
 from pathlib import Path
+import tempfile
 import unittest
 from unittest.mock import AsyncMock, patch
 
@@ -108,3 +110,122 @@ class StageTimingTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(run.await_count, 1)
         fleet.c['control_sessions'] = False
         self.assertEqual(fleet.transfer_ssh_args('worker'), fleet.ssh_args)
+
+
+# Staging a publication with the runtimes its publisher prepared: the worker
+# is asked for only its own shards' runtimes, links any the active
+# publication already holds instead of receiving them again, and is told
+# where they are; without an offer, staging is unchanged.
+REVISION = 'ab' * 32
+RUNTIME = 'cd' * 32 + '-' + 'ef' * 32 + '.runtime'
+STATS = b'''Number of files: 3
+Total transferred file size: 40,000 bytes
+Total bytes sent: 41,234
+Total bytes received: 210
+'''
+
+
+class RuntimeStagingTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.worker = dict(id='recent', role='recent-replica', ssh_host='host', upstream='host:8093')
+        (self.root / 'roster').write_text(json.dumps([self.worker]))
+        self.fleet = M.Fleet(dict(roster=str(self.root / 'roster'), state_dir=str(self.root / 'state'),
+                                  known_hosts='unused', ssh_key='unused', assign_binary='shard-assign'))
+        self.source = self.root / 'candidate'
+        self.source.mkdir()
+        (self.source / 'shards.json').write_text('{"shards":[]}')
+        self.assignment = self.root / 'assignment.json'
+        self.assignment.write_text('{}')
+        self.controls = []
+        self.scripts = []
+        self.commands = []
+
+        async def control(worker, value):
+            self.controls.append(value)
+            if value['operation'] == 'status':
+                return {'active': {'map_sha256': '11' * 32, 'directory': '/srv/old'}}
+            if value['operation'] == 'prepare':
+                return {'prepared': value['publication']['map_sha256'],
+                        'runtimes': {'shipped': 2, 'shipped_fallbacks': 0, 'built': 0}}
+            return {}
+
+        async def ssh(host, command, data=None, **kwargs):
+            self.scripts.append((data or b'').decode())
+            return b''
+
+        async def run(args, data=None, timeout=25, file_output=False):
+            args = [str(a) for a in args]
+            self.commands.append(args)
+            if args[1] == 'files':
+                listed = ['shards.json', REVISION + '/']
+                if '--runtimes' in args:
+                    listed.append(RUNTIME)
+                return ('\n'.join(listed) + '\n').encode()
+            return STATS
+
+        self.fleet.control = AsyncMock(side_effect=control)
+        self.fleet.revoke_orphans = AsyncMock()
+        self.fleet.ssh = AsyncMock(side_effect=ssh)
+        self.patch = patch.object(M, 'run', side_effect=run)
+        self.patch.start()
+        self.addCleanup(self.patch.stop)
+
+    def request(self, runtimes):
+        req = {'map_sha256': '22' * 32, 'directory': str(self.source)}
+        if runtimes:
+            req['runtimes'] = str(self.source)
+        return req
+
+    async def test_offered_runtimes_are_listed_linked_and_named_to_the_worker(self):
+        staged = await self.fleet.stage(self.worker, self.request(True), self.assignment)
+        inventory = next(c for c in self.commands if c[1] == 'files')
+        self.assertIn('--runtimes', inventory)
+        # The runtime file the active publication holds is linked, never
+        # copied over the network again; revision directories as before.
+        script = self.scripts[0]
+        self.assertIn(f'ln /srv/old/{RUNTIME} ', script)
+        self.assertIn(f'cp -al /srv/old/{REVISION} ', script)
+        rsync = next(c for c in self.commands if c[0] == 'rsync')
+        self.assertIn('--ignore-existing', rsync)
+        self.assertIn('--stats', rsync)
+        prepare = next(c for c in self.controls if c['operation'] == 'prepare')
+        remote = prepare['publication']['directory']
+        self.assertEqual(prepare['publication']['runtimes'], remote)
+        self.assertEqual(staged['transferred_bytes'], 41234)
+        self.assertEqual(staged['runtimes']['shipped'], 2)
+        self.assertEqual(staged['publication']['runtimes'], remote)
+
+    async def test_without_an_offer_staging_is_unchanged(self):
+        staged = await self.fleet.stage(self.worker, self.request(False), self.assignment)
+        inventory = next(c for c in self.commands if c[1] == 'files')
+        self.assertNotIn('--runtimes', inventory)
+        self.assertNotIn('.runtime', self.scripts[0])
+        prepare = next(c for c in self.controls if c['operation'] == 'prepare')
+        self.assertNotIn('runtimes', prepare['publication'])
+        self.assertNotIn('runtimes', staged['publication'])
+
+    async def test_runtimes_elsewhere_than_the_publication_are_refused(self):
+        req = self.request(True)
+        other = self.root / 'other'
+        other.mkdir()
+        req['runtimes'] = str(other)
+        with self.assertRaises(ValueError):
+            await self.fleet.stage(self.worker, req, self.assignment)
+        self.assertFalse(any(c['operation'] == 'prepare' for c in self.controls))
+
+    async def test_an_unexpected_runtime_name_is_refused_before_anything_is_run(self):
+        async def run(args, data=None, timeout=25, file_output=False):
+            return b'shards.json\n../escape.runtime\n'
+        with patch.object(M, 'run', side_effect=run):
+            with self.assertRaises(ValueError):
+                await self.fleet.stage(self.worker, self.request(True), self.assignment)
+        self.assertEqual(self.scripts, [])
+
+    def test_transfer_bytes_reads_rsync_stats(self):
+        self.assertEqual(M.transfer_bytes(STATS), 41234)
+        self.assertIsNone(M.transfer_bytes(b''))
+        self.assertIsNone(M.transfer_bytes(None))
+
