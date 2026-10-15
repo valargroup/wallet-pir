@@ -2,7 +2,8 @@
   "shared": [
     "pir-control",
     "pir-observability",
-    "pir-native"
+    "pir-native",
+    "node-rpc"
   ],
   "enhance": [
     "enhance-pir",
