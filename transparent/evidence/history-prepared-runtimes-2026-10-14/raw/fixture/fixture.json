@@ -1,0 +1,102 @@
+{
+ "chain": {
+  "blocks": 90000,
+  "events": 2104127,
+  "first": 3262749,
+  "genesis": "0000000000b300ab318a0589588cbfd3fa889c38b3dc68c67519f5d05151e8d9",
+  "source": "/mnt/roman-dev-2-data/ai-dev/evidence/decoupled-pages-journal/recent",
+  "source_covered_through": 3473686,
+  "source_start_height": 3262749
+ },
+ "recent_from": 2000,
+ "base": 66637,
+ "warmup_blocks": 1,
+ "steady_blocks": 300,
+ "steady_heights": [
+  66639,
+  66938
+ ],
+ "seal_in_window": 66789,
+ "recent_seals": [
+  33186,
+  66789,
+  80938
+ ],
+ "probe_shards": [
+  {
+   "shard_id": 0,
+   "geometry": "decoupled-32k-32k",
+   "start_height": 0,
+   "end_height": 1999,
+   "sealed": true,
+   "directory_segments": 1,
+   "page_segments": 1
+  },
+  {
+   "shard_id": 1,
+   "geometry": "decoupled-2k-8k",
+   "start_height": 2000,
+   "end_height": 33186,
+   "sealed": true,
+   "directory_segments": 1,
+   "page_segments": 2
+  },
+  {
+   "shard_id": 2,
+   "geometry": "decoupled-2k-8k",
+   "start_height": 33187,
+   "end_height": 66789,
+   "sealed": true,
+   "directory_segments": 1,
+   "page_segments": 2
+  },
+  {
+   "shard_id": 3,
+   "geometry": "decoupled-2k-8k",
+   "start_height": 66790,
+   "end_height": 80938,
+   "sealed": true,
+   "directory_segments": 1,
+   "page_segments": 1
+  },
+  {
+   "shard_id": 4,
+   "geometry": "decoupled-2k-8k",
+   "start_height": 80939,
+   "end_height": 89999,
+   "sealed": false,
+   "directory_segments": 1,
+   "page_segments": 1
+  }
+ ],
+ "initial_shards": [
+  {
+   "shard_id": 0,
+   "geometry": "decoupled-32k-32k",
+   "start_height": 0,
+   "end_height": 1999,
+   "sealed": true,
+   "manifest_digest": "072b50e0b813a8b7065f22d2a045a7638161c7ab4f8f77f5c8286a871e8d8a25"
+  },
+  {
+   "shard_id": 1,
+   "geometry": "decoupled-2k-8k",
+   "start_height": 2000,
+   "end_height": 33186,
+   "sealed": true,
+   "manifest_digest": "03c596f61fdf36e1a8f7e35a66a1f8b0902ac26f135844001fe17f92f599e6a2"
+  },
+  {
+   "shard_id": 2,
+   "geometry": "decoupled-2k-8k",
+   "start_height": 33187,
+   "end_height": 66637,
+   "sealed": false,
+   "manifest_digest": "678e76c1aa04769776c970054c7e527e499ada96b816a6c10c7bb07415c5d2df"
+  }
+ ],
+ "publish_seconds": {
+  "probe": 20.687047634273767,
+  "initial": 15.255905414000154
+ }
+}

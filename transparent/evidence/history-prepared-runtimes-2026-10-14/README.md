@@ -1,12 +1,57 @@
-# Prepared history runtimes: paired benchmark harness, 2026-10-14
+# Prepared history runtimes: paired benchmark, 2026-10-14
 
-The harness and fixture for the six-arm paired benchmark of
+The six-arm paired benchmark of
 [prepared history runtimes](../../docs/architecture.md#prepared-history-runtimes)
-(`ship_runtimes` off against on). **The six arms have not been run**: the benchmark
-requires a host-exclusive allocation with no competing builds on the measured CPU
-groups, and the shared development hub could not provide one to this task (see
-[status](../../docs/status.md#prepared-history-runtimes-implemented-not-measured-2026-10-14)).
-No result here measures a benefit, and nothing was deployed or touched production.
+(`ship_runtimes` off against on), run on the shared development hub (roman-dev-2) by
+Roman's direction, without an exclusive allocation. Development host only: nothing
+deployed, no production host touched.
+
+## Result: not accepted
+
+Shipping halved the worker's CPU in every pair, answered every query exactly and needed
+no worker build, but **acceptance fails**: the worst shipped query p95 and p99 and every
+activation-delay quantile are worse than the worst baseline ones, every arm (both modes)
+breaks the 30 s freshness bound, and every arm is contaminated by other work on the host
+(foreign CPU on the measured groups 5–70%, bound 2%). `ship_runtimes` stays off.
+
+| Arm | Shipping | Worker CPU-s | Worker build pool CPU-s | Publisher CPU-s | Queries / exact | Query ms p50 / p95 / p99 | Activation delay s p50 / p95 / p99 / max | Worker shipped / refused / built | Staged GiB | Peak RSS MiB worker / publisher | Foreign CPU % publisher / worker / load |
+|---|---|---:|---:|---:|---|---|---|---|---:|---|---|
+| pair1-off | off | 1824 | 1031 | 289 | 24000 / 24000 | 21.9 / 58.5 / 91.6 | 16.8 / 27.9 / 29.7 / 36.6 | 0 / 0 / 228 | 5.8 | 1265 / 301 | 35 / 5 / 19 |
+| pair1-on | on | 826 | 61 | 1224 | 24000 / 24000 | 23.6 / 78.7 / 130.3 | 20.4 / 32.7 / 35.7 / 40.5 | 182 / 0 / 0 | 18.8 | 980 / 734 | 27 / 25 / 31 |
+| pair2-off | off | 1600 | 839 | 248 | 24000 / 24000 | 38.7 / 90.7 / 115.4 | 20.9 / 33.2 / 36.6 / 41.0 | 0 / 0 / 182 | 4.7 | 1304 / 301 | 53 / 24 / 45 |
+| pair2-on | on | 819 | 54 | 1122 | 24000 / 24000 | 34.2 / 96.9 / 162.8 | 23.0 / 37.9 / 41.2 / 47.5 | 162 / 0 / 0 | 16.7 | 1002 / 921 | 34 / 37 / 70 |
+| pair3-off | off | 1725 | 939 | 275 | 24000 / 24000 | 27.5 / 83.2 / 110.0 | 18.4 / 28.5 / 32.1 / 36.0 | 0 / 0 / 206 | 5.3 | 1281 / 304 | 44 / 11 / 24 |
+| pair3-on | on | 846 | 60 | 1222 | 24000 / 24000 | 25.3 / 84.9 / 130.1 | 21.6 / 36.5 / 40.2 / 44.0 | 178 / 0 / 0 | 18.3 | 993 / 725 | 27 / 29 / 34 |
+
+Over the 300 measured blocks of each arm:
+
+- **Worker CPU fell in every pair**: 1,824 → 826, 1,600 → 819, 1,725 → 846 CPU-s (−51% to
+  −55%); its build pool, where builds and shipped self-checks run, 1,031 → 61, 839 → 54,
+  939 → 60. The publisher took the work instead: 248–289 → 1,122–1,224 CPU-s.
+- **Exact and healthy**: 144,000 of 144,000 answers decoded to the row read from the
+  published segment file; no query failed or went unstarted; readiness held for every
+  probe; shipping arms loaded 162–182 runtimes with 0 refused and 0 built; the publisher
+  linked 1,046–1,178 unchanged files and built only the changing tail runtimes. The
+  tail's directory shard sealed inside every window.
+- **Latency and freshness worse**: worst query p95/p99 90.7/115.4 ms off against
+  96.9/162.8 ms on; worst activation delay p50/p95/p99 20.9/33.2/36.6 s off against
+  23.0/37.9/41.2 s on. The publisher's preparation runs on the publication's critical
+  path, as Display's did ([2026-10-07 bench](../txid-display-shipped-runtimes-bench-2026-10-07/README.md)),
+  and the larger staged copy (16.7–18.8 GiB against 4.7–5.8 GiB, local disk) adds to it.
+  Freshness fails in the baseline too: this host's contention dominates both.
+- **Memory**: host available memory never fell below 66.5% (gate 20%); the 4 GiB worker
+  cache was fixed before the first pair ([budget.json](raw/attempt2/budget.json)).
+- **Restart** (outside the window): with shipping the worker reloaded 8 runtimes and built
+  none (7.0–8.4 s to ready); without, it restored 7 from its disk cache and built 1.
+- The staged bytes are a local copy, not a network measurement: no claim about
+  production transfer or fleet capacity follows.
+
+Attempt 1 (raw/attempt1) is retained as failed: its load generator cached a
+publication directory the publisher later collected, so 10,997 of 24,000 answers in
+`pair1-off` (all HTTP 200) were never checked; it was stopped during `pair1-on`. Attempt 2
+used the fixed load generator (commit `e68a6a93`) and service binaries unchanged from
+`c46c75ac` (hashes in [raw/attempt2/binaries.sha256](raw/attempt2/binaries.sha256) and
+[raw/attempt1/binaries.sha256](raw/attempt1/binaries.sha256)).
 
 ## What the arms measure
 
@@ -59,7 +104,19 @@ The fixture is built on the hub under the task workspace (`bench/work/fixture`),
 `initial.SHA256SUMS` and `journal-full.SHA256SUMS`; they record the exact bytes every arm
 starts from, which the command above regenerates from the source.
 
-## Harness validation
+## Files
 
-Short runs that only check the harness works end to end are not measurements and are
-not retained as results.
+- [summary.json](summary.json): `analyze.py` over attempt 2 (all six arms and the
+  acceptance), computed from the uncompressed records; `gunzip` the `.gz` files in a copy of
+  an arm directory to recompute it.
+- `raw/attempt2/<arm>/`: arm events, appended blocks, every query, 0.25 s process and
+  CPU samples, controller and worker logs, fleet stagings, worker and controller metrics,
+  and the arm's controller, fleet and roster configs; `raw/attempt2/budget.json`,
+  `binaries.sha256`, `revision` (the harness commit), `pairs.log`.
+- `raw/attempt1/`: the failed attempt as recorded.
+- `raw/fixture/`: the fixture record and the checksums of the bootstrap publication and
+  fixture journal every arm copied.
+- [SHA256SUMS](SHA256SUMS) covers `raw/` and `summary.json`.
+
+Short harness validation runs before the measurement (5 blocks each) were not
+measurements and are not retained.
