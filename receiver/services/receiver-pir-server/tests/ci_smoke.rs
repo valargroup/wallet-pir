@@ -1,5 +1,5 @@
 //! Bounded wallet retrieval and refusal checks through a real HTTP listener.
-#[path = "../../../crates/receiver-directory/tests/common/mod.rs"]
+#[path = "../../../crates/receiver-store/tests/common/mod.rs"]
 mod common;
 use common::{manifest, receiver, record};
 use receiver_directory::snapshot::Snapshot;
