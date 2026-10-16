@@ -54,7 +54,7 @@ SCOPES = {
     ('fast', 'affected'): ('release-fast', 'selected packages with classified features'),
     ('full-lint', 'transparent'): ('dev', 'clippy all-targets all-features'),
     ('full-lint', 'enhance'): ('dev', 'clippy all-targets all-features'),
-    ('full-test', 'transparent'): ('release-fast', 'transparent-filter/cli'),
+    ('full-test', 'transparent'): ('release-fast', 'workspace consumers'),
     ('full-test', 'enhance'): ('release-fast', 'enhance-pir/cli; native-reinspiring; cuda checks'),
     ('full-test', 'shared'): ('dev,release-fast', 'clippy all-features; pir-control/admission'),
     ('full-test', 'receiver'): ('dev,release-fast', 'clippy all-features'),

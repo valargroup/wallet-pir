@@ -328,3 +328,14 @@ The initial warm targets are under one minute of queueing, three minutes for
 operations qualification and five minutes for Receiver. These are acceptance
 targets, not measured guarantees. Enhance and Transparent need separate measured
 fixture improvements to reduce their existing roughly 25-minute test runtimes.
+
+### Canonical library integration tests
+
+The service integration registry names workspace-owned executables only. Native
+primitive, receiver-directory/PIR oracle, filter, txid-client, recovery-engine and
+SQLite-store tests run in wallet-libraries CI for the exact revision pinned by
+the service. They are not selected as Git dependency packages from this workspace.
+The service retains its production-router smoke and HTTP suites, including the
+independent library receiver client, plus the indexer's receiver-store tests.
+Moving a package removes only its registry ownership here; its library assertions
+and the service interoperability suites remain separate qualification requirements.

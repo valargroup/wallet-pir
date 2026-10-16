@@ -238,13 +238,20 @@ class PlannerTests(unittest.TestCase):
         registry = {'http::slow': {'reason': 'A gated fixture test.', 'features': ['reqwest']}}
         listing = ''.join(name + ': test\n' for name in registry)
         calls = []
-        with patch.object(Path, 'read_text', return_value=json.dumps({'fixture-client': registry})), \
+        actual_read_text = Path.read_text
+
+        def read_registry(path, *args, **kwargs):
+            if path == ROOT / 'tools/ci/slow-tests.json':
+                return json.dumps({'fixture-client': registry})
+            return actual_read_text(path, *args, **kwargs)
+
+        with patch.object(Path, 'read_text', autospec=True, side_effect=read_registry), \
              patch.object(fast.subprocess, 'check_output', side_effect=[json.dumps(metadata).encode(), listing]), \
              patch.object(fast, 'run', side_effect=lambda command, **kw: calls.append(command)):
             fast.rust_checks(['fixture-client'])
         self.assertIn('reqwest', calls[-1])
         self.assertIn('--skip', calls[-1])
-        with patch.object(Path, 'read_text', return_value=json.dumps({'fixture-client': registry})), \
+        with patch.object(Path, 'read_text', autospec=True, side_effect=read_registry), \
              patch.object(fast.subprocess, 'check_output', side_effect=[json.dumps(metadata).encode(), 'renamed: test\n']), \
              patch.object(fast, 'run'):
             with self.assertRaisesRegex(ValueError, 'stale'):
