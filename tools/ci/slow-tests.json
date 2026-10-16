@@ -8,20 +8,6 @@
     "runtime::disk::shipped_tests::refused_shipped_files_fall_back_to_a_counted_local_build": "Measured about 25s in warm CI: repeatedly rebuilds full runtimes for malformed shipped files. Full qualification retains the refusal matrix; fast HTTP smoke checks cold, restored and corrupt-cache recovery.",
     "runtime::disk::shipped_tests::the_self_check_refuses_a_database_its_preprocessing_was_not_built_from": "Measured about 21s in warm CI: builds independent full runtimes to reject a mismatched shipped database. Full qualification retains the mismatch oracle; fast HTTP checks verify decoded nonzero source bytes and corrupt-cache fallback."
   },
-  "transparent-wallet": {
-    "http::observation_tests::opt_in_retries_are_bounded_and_account_for_every_response": {
-      "reason": "Exercises real HTTP retry/backoff waits across multiple responses.",
-      "features": [
-        "reqwest"
-      ]
-    },
-    "http::observation_tests::retries_established_connection_failures_with_bounded_attempts": {
-      "reason": "Exercises real connection failures and bounded retry/backoff waits.",
-      "features": [
-        "reqwest"
-      ]
-    }
-  },
   "transparent-filter-server": {
     "controller::tests::rpc_follow_publishes_empty_blocks_and_recovers_a_sealed_reorg": "Runs RPC follow, real publication/fleet subprocesses and reorg cancellation end to end.",
     "txid_display::controller::tests::incremental_stepping_reproduces_bootstrap": "Measured 7.7s locally: about 40 full 2,048-row display shard builds (16 MiB each) across three bootstraps and two stepped runs; full CI retains the equivalence check.",

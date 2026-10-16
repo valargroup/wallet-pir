@@ -24,7 +24,7 @@ cuda = ["ipir-sp/cuda", "dep:simplepir-kernel"]
 pir-control = { path = "../../../shared/pir-control", features = ["admission"] }
 rayon="1"
 reinspiring = { version = "=0.1.3-rc.1", optional = true }
-pir-native = { path = "../../../shared/pir-native", optional = true }
+pir-native = { package = "zakura-pir-native", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "0c110882ad6d36c9d3ad811903abdf37b13d35d5", optional = true }
 simplepir-kernel = { version = "=0.1.0-rc.4", optional = true, features = ["cuda"] }
 axum = "0.7"
 base64 = "0.22"
@@ -50,17 +50,16 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Node reads, Enhance extraction, fees and Status chain reads, pinned to an exact
 # wallet-libraries revision.
-zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "aac3d7ade1dca69bcb8f4d5d9352855efc3642f5" }
+zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "0c110882ad6d36c9d3ad811903abdf37b13d35d5" }
 
 [dev-dependencies]
-zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "aac3d7ade1dca69bcb8f4d5d9352855efc3642f5", features = ["testing"] }
-# Independent wallet Enhance client, which is native-only.
-zakura-pir-enhance = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "aac3d7ade1dca69bcb8f4d5d9352855efc3642f5", default-features = false }
+zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "0c110882ad6d36c9d3ad811903abdf37b13d35d5", features = ["testing"] }
+# Independent wallet Enhance client, which is native-only, and the synthetic
+# Ironwood output fixture that authenticates PIR-returned records.
+zakura-pir-enhance = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "0c110882ad6d36c9d3ad811903abdf37b13d35d5", default-features = false, features = ["testing"] }
 simplepir-kernel = "=0.1.0-rc.4"
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
-orchard = { package = "zakura-orchard", version = "=3.0.0", default-features = false, features = ["zip32-addresses"] }
-zcash_note_encryption = { package = "zakura-note-encryption", version = "=3.0.0" }
 
 [[example]]
 name = "cuda_domain"

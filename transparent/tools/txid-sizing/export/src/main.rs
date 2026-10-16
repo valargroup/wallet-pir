@@ -1,6 +1,7 @@
 //! Offline analysis only. Compile the existing canonical extractor without its
 //! service/RocksDB stack. No fee implementation is copied into this tool.
-#[allow(dead_code)]
+// The service re-exports adapter items this tool does not use.
+#[allow(dead_code, unused_imports)]
 #[path = "../../../../services/transparent-filter-server/src/extract.rs"]
 mod extract;
 use serde_json::{json, Value};
@@ -32,11 +33,21 @@ mod display_journal;
 #[allow(dead_code)]
 #[path = "../../../../services/transparent-filter-server/src/events.rs"]
 mod events;
+#[allow(dead_code)]
+mod historical_v1;
 mod journal_census;
 mod shape;
+mod source_info;
 mod stream;
 fn main() -> Result<(), AnyError> {
     let args: Vec<_> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("--source-info") {
+        if args.len() != 2 {
+            return Err("usage: txid-sizing-export --source-info".into());
+        }
+        println!("{}", source_info::Executing::capture()?.into_identity());
+        return Ok(());
+    }
     if args.get(1).map(String::as_str) == Some("--shape-stream") {
         return shape::run();
     }
@@ -106,11 +117,14 @@ fn main() -> Result<(), AnyError> {
                 .and_then(|read| extract::index(&[read], height, true))
             {
                 Ok(result) => {
+                    // Historical v1 analysis: the v1 record the extracted
+                    // v2x source record carries, never its v2x encoding.
                     let record = result
                         .display
                         .into_iter()
                         .next()
-                        .ok_or("missing eligible display record")?;
+                        .ok_or("missing eligible display record")?
+                        .record;
                     let payload = record.encode()?;
                     let fee = match record.metadata.fee {
                         FeeState::Exact(v) => json!(v),
@@ -138,8 +152,8 @@ fn main() -> Result<(), AnyError> {
         inventory.push(pin);
     }
     let built =
-        transparent_shard::txid::build(0, &transparent_shard::DECOUPLED_2K_8K, &canonical_records)?;
-    transparent_shard::txid::verify(
+        crate::historical_v1::build(0, &transparent_shard::DECOUPLED_2K_8K, &canonical_records)?;
+    crate::historical_v1::verify(
         0,
         &transparent_shard::DECOUPLED_2K_8K,
         &built.directory,

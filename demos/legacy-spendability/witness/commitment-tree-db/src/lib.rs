@@ -2,7 +2,7 @@
 //!
 //! Maintains an append-only leaf store with per-block rollback support.
 //! Computes shard roots, sub-shard roots, and serializes PIR database rows
-//! using protocol-correct Sinsemilla hashing via [`MerkleHashOrchard`].
+//! using protocol-correct Sinsemilla hashing via wallet-libraries.
 //!
 //! # Windowed mode
 //!
@@ -24,9 +24,8 @@
 
 pub mod snapshot;
 
-use incrementalmerkletree::{Hashable, Level};
-use orchard::tree::MerkleHashOrchard;
 use witness_types::*;
+use zakura_receiver_crypto::witness;
 
 /// Per-block record tracking how many commitments each block contributed.
 /// Used for rollback support: removing a block removes its leaves from the end.
@@ -49,7 +48,7 @@ pub enum TreeError {
 /// In-memory Orchard note commitment tree.
 ///
 /// Stores leaf commitments within the PIR window and per-block metadata for
-/// rollback. Hash computations use [`MerkleHashOrchard`] (Sinsemilla) with
+/// rollback. Hash computations use wallet-libraries (Sinsemilla) with
 /// level-dependent empty-subtree sentinels from the Orchard protocol.
 ///
 /// In windowed mode (`leaf_offset > 0`), leaves before the window are not
@@ -236,7 +235,7 @@ impl CommitmentTreeDb {
     ///
     /// The shard must be within the local window (`>= window_start_shard`).
     /// Positions beyond the tree's current frontier are filled with
-    /// `MerkleHashOrchard::empty_root(Level::from(0))` (the empty leaf
+    /// `witness::empty_root(0)` (the empty leaf
     /// sentinel), **not** zero bytes.
     pub fn subshard_leaves(&self, shard_idx: u32, subshard_idx: u8) -> Vec<Hash> {
         let global_start =
@@ -498,27 +497,18 @@ impl Default for CommitmentTreeDb {
 /// Precompute empty subtree roots for levels `0..=TREE_DEPTH`.
 fn precompute_empty_roots() -> Vec<Hash> {
     let mut roots = Vec::with_capacity(TREE_DEPTH + 1);
-    let empty_leaf = MerkleHashOrchard::empty_leaf();
-    roots.push(empty_leaf.to_bytes());
-
-    let mut current = empty_leaf;
+    let mut current = witness::empty_root(0).expect("valid empty subtree height");
+    roots.push(current);
     for level in 0..TREE_DEPTH {
-        current =
-            <MerkleHashOrchard as Hashable>::combine(Level::from(level as u8), &current, &current);
-        roots.push(current.to_bytes());
+        current = hash_combine(level as u8, &current, &current);
+        roots.push(current);
     }
     roots
 }
 
-/// Combine two hashes at a given level using Sinsemilla (MerkleHashOrchard).
+/// Combine two hashes at a given level using library-owned Sinsemilla hashing.
 pub fn hash_combine(level: u8, left: &Hash, right: &Hash) -> Hash {
-    let l = bytes_to_mho(left);
-    let r = bytes_to_mho(right);
-    <MerkleHashOrchard as Hashable>::combine(Level::from(level), &l, &r).to_bytes()
-}
-
-fn bytes_to_mho(hash: &Hash) -> MerkleHashOrchard {
-    Option::from(MerkleHashOrchard::from_bytes(hash)).expect("invalid MerkleHashOrchard bytes")
+    witness::combine(level, left, right).expect("invalid MerkleHashOrchard bytes")
 }
 
 // ── Tests ────────────────────────────────────────────────────────────
@@ -526,6 +516,12 @@ fn bytes_to_mho(hash: &Hash) -> MerkleHashOrchard {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[should_panic(expected = "invalid MerkleHashOrchard bytes")]
+    fn malformed_node_keeps_the_demo_panic_boundary() {
+        hash_combine(0, &[0xff; 32], &[0; 32]);
+    }
 
     fn make_leaf(byte: u8) -> Hash {
         let mut h = [0u8; 32];
@@ -539,8 +535,8 @@ mod tests {
         let root = tree.tree_root();
         assert_eq!(root, tree.empty_roots[TREE_DEPTH]);
 
-        let expected = <MerkleHashOrchard as Hashable>::empty_root(Level::from(TREE_DEPTH as u8));
-        assert_eq!(root, expected.to_bytes());
+        let expected = witness::empty_root(TREE_DEPTH as u8).unwrap();
+        assert_eq!(root, expected);
     }
 
     #[test]
@@ -786,8 +782,7 @@ mod tests {
     fn empty_roots_are_consistent() {
         let tree = CommitmentTreeDb::new();
         for level in 0..=TREE_DEPTH {
-            let expected =
-                <MerkleHashOrchard as Hashable>::empty_root(Level::from(level as u8)).to_bytes();
+            let expected = witness::empty_root(level as u8).unwrap();
             assert_eq!(
                 tree.empty_roots[level], expected,
                 "empty_roots[{level}] mismatch"

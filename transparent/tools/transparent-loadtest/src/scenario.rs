@@ -14,14 +14,16 @@ use clap::Parser;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use transparent_wallet::http::{HttpFilterSource, HttpObserver, HttpOptions, HttpShardTransport};
-use transparent_wallet::store::{
+use zakura_pir_transparent::engine::http::{
+    HttpFilterSource, HttpObserver, HttpOptions, HttpShardTransport,
+};
+use zakura_pir_transparent::engine::store::{
     ScriptEntry, ScriptOrigin, SetIdentity, ShardCommit, StoredEvent, WalletStore,
 };
-use transparent_wallet::{
+use zakura_pir_transparent::engine::{
     sync_into, Anchor, Completion, MemoryStore, StaticChain, StaticScripts, WorkLimits,
 };
-use transparent_wallet_store::SqliteStore;
+use zakura_pir_transparent::engine_store::SqliteStore;
 
 use crate::simulation_report::{self, Report};
 use crate::{Sample, SampleClient};
@@ -61,6 +63,7 @@ struct Cli {
     /// Any other failure still stops preparation.
     #[arg(long)]
     preparation_wallet_attempts: Option<usize>,
+    /// Attempts per public HTTP call (1–3); private setup/query calls attempt once.
     #[arg(long)]
     measured_http_attempts: Option<usize>,
 }
@@ -170,7 +173,7 @@ fn preparation_concurrency() -> usize {
     2
 }
 fn shard_concurrency() -> usize {
-    transparent_wallet::http::SHARD_REQUEST_CONCURRENCY
+    zakura_pir_transparent::engine::http::SHARD_REQUEST_CONCURRENCY
 }
 
 fn one_attempt() -> usize {
@@ -331,7 +334,7 @@ pub fn now() -> f64 {
 fn digest(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
 }
-fn io_error(error: transparent_wallet::transport::BoxError) -> anyhow::Error {
+fn io_error(error: zakura_pir_transparent::engine::transport::BoxError) -> anyhow::Error {
     anyhow::Error::from_boxed(error)
 }
 
@@ -693,11 +696,13 @@ fn recover(job: &Job) -> Result<Value> {
             .events()?
             .into_iter()
             .filter(|e| u64::from(e.event.height()) < job.wallet.required_from)
-            .map(|e| SeedEvent {
-                script: hex::encode(e.script),
-                event: hex::encode(e.event.to_bytes()),
+            .map(|e| {
+                Ok(SeedEvent {
+                    script: hex::encode(e.script),
+                    event: hex::encode(e.event.to_bytes()?),
+                })
             })
-            .collect();
+            .collect::<Result<_>>()?;
         fs::write(
             &job.seed_path,
             serde_json::to_vec(&Seed {
@@ -1758,8 +1763,12 @@ fn block_preflight(
     let manifest = if let Some(path) = &config.block_dataset {
         Manifest::load(path, true)?
     } else {
-        let client = transparent_wallet::http::HttpResourceClient::new(&config.options(), None, 3)
-            .map_err(io_error)?;
+        let client = zakura_pir_transparent::engine::http::HttpResourceClient::new(
+            &config.options(),
+            None,
+            3,
+        )
+        .map_err(io_error)?;
         serde_json::from_slice(
             &client
                 .get(
@@ -1851,7 +1860,7 @@ fn recover_blocks(job: &Job, observer: HttpObserver) -> Result<Value> {
         dataset::{decode, Manifest},
         scan::Scanner,
     };
-    use transparent_wallet::http::HttpResourceClient;
+    use zakura_pir_transparent::engine::http::HttpResourceClient;
     let base = job
         .config
         .block_url

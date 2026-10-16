@@ -12,6 +12,60 @@ import tomllib
 import time
 
 
+ARTIFACTS = (
+    'transparent-event-ingest', 'shard-publish', 'event-spotcheck',
+    'shard-verify', 'script-sample', 'transparent-publish-controller',
+    'shard-cutoff', 'journal-inventory', 'shard-census', 'shard-assign', 'shard-control',
+    'transparent-shard-server', 'transparent-filter-server',
+    'transparent-loadtest', 'transparent-measure',
+    'examples/rate-query', 'examples/native_certificate', 'examples/activity-reopen',
+)
+
+
+def build_commands(profile):
+    """Build service-owned artifacts and qualify their canonical-library consumers.
+
+    Library-internal primitive, engine and store tests run in wallet-libraries CI
+    for the exact dependency revision, where their dev dependencies are available.
+    This workspace exercises those libraries through its own recovery/HTTP tests.
+    """
+    commands = [
+        ['cargo', 'build', '--locked', '--profile', profile,
+         '-p', 'transparent-filter-server', '-p', 'transparent-shard-server',
+         '-p', 'transparent-loadtest', '-p', 'transparent-measure',
+         '-p', 'transparent-regression', '--bins'],
+        ['cargo', 'build', '--locked', '--profile', profile,
+         '-p', 'transparent-shard-server', '--example', 'rate-query', '--example', 'native_certificate'],
+        ['cargo', 'build', '--locked', '--profile', profile,
+         '-p', 'transparent-regression', '--example', 'activity-reopen'],
+    ]
+    if profile == 'release':
+        # Focused tests have their own release-fast owner; this lane retains
+        # the same fat-LTO production artifacts without duplicating qualification.
+        return commands
+    commands.extend([
+        ['cargo', 'test', '--locked', '--profile', profile,
+         '-p', 'transparent-blocks', '--test', 'recovery'],
+        ['cargo', 'test', '--locked', '--profile', profile,
+         '-p', 'transparent-shard-server', '--test', 'wallet_anchor',
+         '--test', 'wallet_continuation', '--test', 'wallet_recut', '--test', 'wallet_sync'],
+        ['cargo', 'test', '--locked', '--profile', profile,
+         '-p', 'transparent-regression', '--tests'],
+        ['cargo', 'test', '--locked', '--profile', profile,
+         '-p', 'transparent-filter-server', '--lib', 'extract::'],
+        ['cargo', 'test', '--locked', '--profile', profile,
+         '-p', 'transparent-filter-server', '--lib', 'events::'],
+        ['cargo', 'test', '--locked', '--profile', profile,
+         '-p', 'transparent-filter-server', '--lib', 'publication::'],
+        ['cargo', 'test', '--locked', '--profile', profile,
+         '-p', 'transparent-filter-server', '--bin', 'event-spotcheck'],
+        ['cargo', 'test', '--locked', '--profile', profile,
+         '-p', 'transparent-filter-server', '--bin', 'journal-convert-v1'],
+        ['cargo', 'test', '--locked', '--profile', profile, '-p', 'pir-apm', '--lib'],
+    ])
+    return commands
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--source', type=Path, required=True)
@@ -40,44 +94,7 @@ def main():
                  log=str(args.evidence / 'build.log'), result=str(result), started_at=time.time())
     (args.evidence / 'owner.json').write_text(json.dumps(owner, indent=2) + '\n')
     env = dict(os.environ, CARGO_TARGET_DIR=str(args.target), CARGO_BUILD_JOBS='4')
-    commands = [
-        ['cargo', 'build', '--locked', '--profile', args.profile,
-         '-p', 'transparent-filter-server', '-p', 'transparent-shard-server',
-         '-p', 'transparent-loadtest', '-p', 'transparent-measure',
-         '-p', 'transparent-regression', '--bins'],
-        ['cargo', 'build', '--locked', '--profile', args.profile,
-         '-p', 'transparent-shard-server', '--example', 'rate-query', '--example', 'native_certificate'],
-        ['cargo', 'test', '--locked', '--profile', args.profile,
-         '-p', 'transparent-events', '--lib'],
-        ['cargo', 'test', '--locked', '--profile', args.profile,
-         '-p', 'transparent-shard', '--lib', 'compact'],
-        ['cargo', 'test', '--locked', '--profile', args.profile,
-         '-p', 'transparent-wallet-store', '--lib'],
-        ['cargo', 'test', '--locked', '--profile', args.profile,
-         '-p', 'transparent-wallet-store', '--test', 'store_semantics', 'metadata'],
-        ['cargo', 'build', '--locked', '--profile', args.profile,
-         '-p', 'transparent-wallet-store', '--example', 'activity-reopen'],
-        ['cargo', 'test', '--locked', '--profile', args.profile,
-         '-p', 'transparent-filter-server', '--lib', 'extract::'],
-        ['cargo', 'test', '--locked', '--profile', args.profile,
-         '-p', 'transparent-filter-server', '--lib', 'events::'],
-        ['cargo', 'test', '--locked', '--profile', args.profile,
-         '-p', 'transparent-filter-server', '--lib', 'publication::'],
-        ['cargo', 'test', '--locked', '--profile', args.profile,
-         '-p', 'transparent-filter-server', '--bin', 'event-spotcheck'],
-    ]
-    commands.extend([
-        ['cargo', 'test', '--locked', '--profile', args.profile, '-p', 'transparent-filter-server', '--bin', 'journal-convert-v1'],
-        ['cargo', 'test', '--locked', '--profile', args.profile, '-p', 'transparent-wallet', '--features', 'reqwest', '--lib', 'http::'],
-        ['cargo', 'test', '--locked', '--profile', args.profile, '-p', 'pir-apm', '--lib'],
-    ])
-    if args.profile == 'release':
-        # Focused tests have their own release-fast owner; do not duplicate them
-        # or start sustained qualification inside this production artifact build.
-        commands = commands[:2] + [
-            ['cargo', 'build', '--locked', '--profile', args.profile,
-             '-p', 'transparent-wallet-store', '--example', 'activity-reopen'],
-        ]
+    commands = build_commands(args.profile)
     stages = []
     failure = None
     with (args.evidence / 'build.log').open('x') as log:
@@ -91,12 +108,7 @@ def main():
                 break
     binaries = {}
     if failure is None:
-        for name in ['transparent-event-ingest', 'shard-publish', 'event-spotcheck',
-                     'shard-verify', 'script-sample', 'transparent-publish-controller',
-                     'shard-cutoff', 'journal-inventory', 'shard-census', 'shard-assign', 'shard-control',
-                     'transparent-shard-server',
-                     'transparent-filter-server', 'transparent-loadtest', 'transparent-measure',
-                     'examples/rate-query', 'examples/native_certificate', 'examples/activity-reopen']:
+        for name in ARTIFACTS:
             path = args.target / args.profile / name
             retained = args.evidence / 'artifacts' / name
             retained.parent.mkdir(parents=True, exist_ok=True)

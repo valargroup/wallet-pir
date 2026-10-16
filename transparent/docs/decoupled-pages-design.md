@@ -28,7 +28,7 @@ Prototype-phase constraints (superseded by the staging deployment above):
 ## Why: what is known today
 
 - A shard closes on whichever fills first: distinct addresses, directory bytes,
-  or page rows (`transparent/crates/transparent-shard/src/seal.rs`). Targets are
+  or page rows (`wallet-libraries/zakura/transparent-shard/src/seal.rs`). Targets are
   capacity minus 1/7 for addresses and directory bytes, minus 1/32 for pages.
 - On the 2026-09-08 census (older schema), pages filled first almost everywhere:
   159 of 160 archive shards and 13 of 13 recent shards sealed on page rows.
@@ -209,9 +209,14 @@ heights ≥ h, so sealed children ending before h are reproduced exactly. An emp
 force-sealed child is published with zero segments. The `pages_query_rows` prefix
 may apply to any single-segment child, sealed or open.
 
-## Changes by crate (wallet-pir, paths under `transparent/`)
+## Changes by component
 
-- `crates/transparent-shard`
+The prototype changes below now belong to the listed owners. Service paths are
+under wallet-pir’s `transparent/`; wallet and format packages are owned by
+wallet-libraries. The schema-6 store change describes the prototype; the current
+persistence contract is [schema 7](wallet-adapter.md#persistence-compatibility).
+
+- `wallet-libraries/zakura/transparent-shard`
   - `records.rs`: v12 entry with `flags_child` and `head_row`; drop `inline_count`.
   - `page_row.rs`: 40-byte header with `prev_child`, `prev_row`, `older_runs` and
     their rules; everything that derives packing from the header width follows.
@@ -233,23 +238,23 @@ may apply to any single-segment child, sealed or open.
   - `shardset.rs`: `LoadedShard.children`, `Table::Pages(j)`, reference-counted
     pruning.
   - `service.rs`: parse `pages-<j>`; query binding (D digest, `pages-j`).
-- `crates/transparent-wallet`
+- `wallet-libraries/zakura/pir-transparent/src/engine`
   - `sync.rs`: child checks in `verify_manifest`, the chain walk and its checks,
     the run cache.
   - `transport.rs`: no signature change.
-- `crates/transparent-wallet-store`: schema 6 — `pending_work` gains the cursor
+- `wallet-libraries/zakura/pir-transparent/src/engine_store`: schema 6 — `pending_work` gains the cursor
   carried events and saved partial fragments; add a run cache table. Keep existing table names
   (wallet-libraries resets them by name).
 - Tests: update hand-built manifests in
   `services/transparent-shard-server/tests/common/mod.rs` and
   `tests/wallet_sync.rs`.
 
-wallet-libraries (`zakura/pir-transparent`): repin all eight wallet-pir git
-dependencies to the wallet-pir draft head SHA; update
-`src/catalog/store_tables.rs` for store schema 6; update `testing/service.rs` and
-the fixture for the new manifest and table names; add a decoupled case to
-`tests/private_recovery.rs` (a history spanning two page children plus tip
-catch-up).
+Wallet integration in wallet-libraries (`zakura/pir-transparent`) covers
+`src/catalog/store_tables.rs`, `testing/service.rs`, fixtures for the manifest
+and table names, and `tests/private_recovery.rs` (a history spanning two page
+children plus tip catch-up). The PIR packages and wallet engine are owned by
+wallet-libraries; wallet-pir consumes them at a pinned library revision. A
+wallet-libraries release does not require a wallet-pir source pin or tag.
 
 ## Sequence and gate
 

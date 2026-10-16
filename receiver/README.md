@@ -235,18 +235,19 @@ payments, but never which receivers were looked up.
 
 ## Tests
 
-`cargo test -p receiver-directory --features store` covers records,
-publications, and store restart and rollback, including the commitment history a
-witness file is built from. Recovery of a public mainnet refund, record and
-address checks, and witnesses against an independent tree are tested in
-`zakura-receiver-crypto`. `cargo test -p receiver-pir-server` runs encrypted
-round trips at every geometry and the HTTP service. `cargo test -p receiver-pir
---features server --test golden` pins the protocol's seeds, framing and row
-placement against digests from a request built outside `Client`. `cargo test -p
-receiver-indexer` covers indexing with synthetic blocks, refusal of invalid
-records and witness files before storing or serving, witness files fetched over
-HTTP and checked with the library, serving from memory and the probe's encrypted
-lookup. Recovery follows
+`cargo test -p receiver-store` covers publications and store restart and
+rollback, including the commitment history a witness file is built from.
+`cargo test -p receiver-pir-server` tests the HTTP service with the canonical
+library client. `cargo test -p receiver-indexer` covers indexing with synthetic
+blocks, refusal of invalid records and witness files before storing or serving,
+witness files fetched over HTTP and checked with the library, serving from
+memory and the probe's encrypted lookup.
+
+The [receiver packages in wallet-libraries](https://github.com/zakura-core/wallet-libraries/tree/ai-dev/t-3f9434686275499b/a1/l4-ownership/zakura)
+own record and address validation, public mainnet refund recovery, independent
+tree witnesses, encrypted round trips at every geometry, and fixed protocol
+seeds, framing and row placement. Run those tests in that repository with its
+`pir-receiver` and `receiver-pir-server` development configurations. Recovery follows
 `zcash/zips@afa086bd976e316612a5c06fb139429958d07d84`, NU6.3 proposal, section
 4.19.3 (`decryptovk`).
 

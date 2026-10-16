@@ -155,7 +155,7 @@ fn expected_digest(
     scripts: &[Vec<u8>],
     from: u64,
     through: u64,
-) -> (String, u64) {
+) -> Result<(String, u64), BoxError> {
     let mut events: Vec<TransparentEvent> = Vec::new();
     for script in scripts {
         if let Some(seen) = activity.get(script) {
@@ -174,9 +174,9 @@ fn expected_digest(
     events.dedup();
     let mut hasher = Sha256::new();
     for event in &events {
-        hasher.update(event.to_bytes());
+        hasher.update(event.to_bytes()?);
     }
-    (hex::encode(hasher.finalize()), events.len() as u64)
+    Ok((hex::encode(hasher.finalize()), events.len() as u64))
 }
 
 fn main() -> Result<(), BoxError> {
@@ -276,11 +276,11 @@ fn main() -> Result<(), BoxError> {
     let first_of = |s: &Vec<u8>| activity.get(s).and_then(|a| a.first);
 
     let mut clients: Vec<serde_json::Value> = Vec::new();
-    let mut push = |class: &str, scripts: Vec<Vec<u8>>, from: u64| {
+    let mut push = |class: &str, scripts: Vec<Vec<u8>>, from: u64| -> Result<(), BoxError> {
         if scripts.is_empty() {
-            return;
+            return Ok(());
         }
-        let (digest, events) = expected_digest(&activity, &scripts, from, anchor);
+        let (digest, events) = expected_digest(&activity, &scripts, from, anchor)?;
         clients.push(serde_json::json!({
             "class": class,
             "scripts": scripts.iter().map(hex::encode).collect::<Vec<_>>(),
@@ -289,12 +289,13 @@ fn main() -> Result<(), BoxError> {
             "expected_digest": digest,
             "journal_events": events,
         }));
+        Ok(())
     };
 
     // Unused: verified absent by the pass.
     let confirmed_unused: Vec<Vec<u8>> = unused.iter().filter(|s| !active(s)).cloned().collect();
     for chunk in confirmed_unused.chunks(4).take(n) {
-        push("unused", chunk.to_vec(), start);
+        push("unused", chunk.to_vec(), start)?;
     }
     // Small active: a few events, drawn from the recent reservoir.
     let small: Vec<Vec<u8>> = recent
@@ -311,7 +312,7 @@ fn main() -> Result<(), BoxError> {
             "small-active",
             vec![script.clone()],
             first_of(script).unwrap_or(start),
-        );
+        )?;
     }
     // Catch-ups: a synced wallet resuming k blocks below the anchor. Two
     // active scripts from the window plus two unused, as a wallet's gap
@@ -327,7 +328,7 @@ fn main() -> Result<(), BoxError> {
             scripts.push(unused_iter.next().cloned().unwrap_or_default());
             scripts.push(unused_iter.next().cloned().unwrap_or_default());
             scripts.retain(|s| !s.is_empty());
-            push(class, scripts, anchor - k + 1);
+            push(class, scripts, anchor - k + 1)?;
         }
     }
     // Six-month restore: activity entirely at or above the cutoff.
@@ -343,7 +344,7 @@ fn main() -> Result<(), BoxError> {
                 scripts.push(u.clone());
             }
         }
-        push("restore-6m", scripts, cutoff);
+        push("restore-6m", scripts, cutoff)?;
     }
     // Old birthday: activity below the cutoff, restored from the start.
     let old: Vec<Vec<u8>> = archive_lo
@@ -353,7 +354,7 @@ fn main() -> Result<(), BoxError> {
         .cloned()
         .collect();
     for group in old.chunks(3).take(n) {
-        push("restore-old", group.to_vec(), start);
+        push("restore-old", group.to_vec(), start)?;
     }
     // Multi-script: many active recent scripts in one wallet.
     let multi_pool: Vec<Vec<u8>> = recent.iter().filter(|s| active(s)).cloned().collect();
@@ -361,7 +362,7 @@ fn main() -> Result<(), BoxError> {
         if group.len() < cli.multi_scripts / 2 {
             break;
         }
-        push("multi-script", group.to_vec(), cutoff);
+        push("multi-script", group.to_vec(), cutoff)?;
     }
     // Reused tail: the busiest scripts of the last shards, one each.
     for (script, _) in reused.iter().take(n) {
@@ -369,7 +370,7 @@ fn main() -> Result<(), BoxError> {
             "reused-tail",
             vec![script.clone()],
             first_of(script).unwrap_or(cutoff),
-        );
+        )?;
     }
 
     let mut by_class: BTreeMap<&str, usize> = BTreeMap::new();

@@ -88,14 +88,14 @@ and local evidence only.
 
 | Component | Source | Responsibility |
 |---|---|---|
-| Events | `transparent/crates/transparent-events` | Canonical 87-byte chain event record |
-| Filters | `transparent/crates/transparent-filter` | Range filter profiles, keying, encoding and validation |
-| Shard protocol | `transparent/crates/transparent-shard` | Geometry registry, script tags, placement, deterministic packing, choice tables, manifests and sealing |
-| Native PIR profile | `transparent/crates/transparent-native` over `shared/pir-native` | Transparent's seeds and scheme identity over the two-mask ReinspiRING helpers all three products share |
+| Events | `wallet-libraries/zakura/transparent-events` | Canonical 87-byte chain event record |
+| Filters | `wallet-libraries/zakura/transparent-filter` | Range filter profiles, keying, encoding and validation |
+| Shard protocol | `wallet-libraries/zakura/transparent-shard` | Geometry registry, script tags, placement, deterministic packing, choice tables, manifests and sealing |
+| Native PIR profile | `wallet-libraries/zakura/transparent-native` over `wallet-libraries/zakura/pir-native` | Transparent's seeds and scheme identity over the two-mask ReinspiRING helpers all three products share |
 | Ingest, census, publish | `transparent/services/transparent-filter-server` | Resolve events, persist journal, seal and build shards, serve filters |
 | Retrieval service | `transparent/services/transparent-shard-server` | Verify publication, bound runtime cache, revision-addressed setup/query |
-| Wallet | `transparent/crates/transparent-wallet` | Local matching, private retrieval, validation, ledger replay |
-| Wallet store | `transparent/crates/transparent-wallet-store` | Reference durable store on SQLite |
+| Wallet | `wallet-libraries/zakura/pir-transparent/src/engine` | Local matching, private retrieval, validation, ledger replay |
+| Wallet store | `wallet-libraries/zakura/pir-transparent/src/engine_store.rs` | Reference durable store on SQLite |
 | Comparison baseline | `transparent/crates/transparent-blocks`, `transparent/services/transparent-block-server` | Pinned compact-block datasets for benchmark comparison; not a lightwalletd implementation |
 | Deployment | `ops/` and `.github/workflows/` | Build, distribute, preflight and activate artifacts |
 
@@ -359,10 +359,10 @@ display row of 8,192 bytes four. The 16-bit m29 profile that Enhance and Status 
 (p = 2^16, a two-digit key with 19-bit digits, 29-bit masks, 44-bit dithered or 49-bit
 nearest queries, 22-bit responses) serves no table built from `main`; `/v1/` releases
 still serve it.
-The helpers are the root `shared/pir-native` crate, which Enhance and Status use too; it
-defines both profiles (`P8`, `P16`) and its golden test pins the 16-bit bytes. It has no
-Cargo features, so depending on it cannot switch the q48 Enhance binaries, which only
-`enhance-pir/native-reinspiring` does. `transparent/crates/transparent-native` re-exports
+The helpers are wallet-libraries' `zakura/pir-native` crate (`zakura-pir-native`), which Enhance and Status use too; it
+defines both profiles (`P8`, `P16`) and its golden test pins the 16-bit bytes. Its one
+Cargo feature, `test-server`, adds a test fixture only, so depending on it cannot switch the q48 Enhance binaries, which only
+`enhance-pir/native-reinspiring` does. `wallet-libraries/zakura/transparent-native` re-exports
 it and adds Transparent's per-geometry seeds, `NativeScheme`, `TableProfile` and
 `profile_for`, which picks the profile from the table name.
 
@@ -431,7 +431,7 @@ because which pages a script needs is known only after its directory entry decod
 Concurrency 1 is the sequential walk. Requests sent ahead for shards the walk does not
 reach, because it stopped or refreshed the map first, are sent but unused. No query is
 skipped because an unrelated response happened to mention a watched script. Source:
-`transparent/crates/transparent-wallet/src/sync/ahead.rs`.
+`wallet-libraries/zakura/pir-transparent/src/engine/sync/ahead.rs`.
 
 ## Serving and publication
 
@@ -569,7 +569,7 @@ bits, and a map may declare at most 65,536 superseded entries across all its re-
 (`MAX_SUPERSEDED`), far above any real publication, so a hostile map cannot make wallets
 store or scan an unbounded list. The checks themselves cannot overflow on hostile values.
 
-A wallet (`transparent-wallet` `sync/manifest.rs`) keeps its history across a declared re-cut:
+A wallet (`zakura-pir-transparent::engine`, `engine/sync/manifest.rs`) keeps its history across a declared re-cut:
 
 - Stored sealed coverage is looked up by the height it starts at, not by shard id. It stays
   good while the map publishes that revision there, or declares exactly that revision

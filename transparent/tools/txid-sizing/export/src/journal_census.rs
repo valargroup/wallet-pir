@@ -1,6 +1,7 @@
 //! Offline census of immutable, checkpoint-referenced display sidecars.
 //! No RPC, parents, UTXO reconstruction, service dependency or journal writes.
 use super::{display_journal, events::EventStore, AnyError};
+use crate::historical_v1::{candidate_rows, CODEC};
 use rusqlite::{params, Connection};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -12,7 +13,7 @@ use std::{
     time::Instant,
 };
 use transparent_events::{encode_varint, FeeState, MAX_MONEY};
-use transparent_shard::txid::{candidate_rows, TransparentDisplayRecord, CODEC};
+use transparent_shard::txid_v1::TransparentDisplayRecord;
 use transparent_shard::txid_v2x::{DisplayInput, CODEC as CODEC_V2X};
 
 const THRESHOLDS: [usize; 7] = [128, 192, 256, 384, 512, 768, 1024];
@@ -657,6 +658,11 @@ pub fn collect(args: &[String]) -> Result<Value, AnyError> {
     let dir = Path::new(&args[0]);
     let end: u64 = args[1].parse()?;
     let derive_anchor = args[2] == "--anchor-from-journal";
+    // Identify the executing reader before locking or reading the journal;
+    // every identity in the output is this one capture.
+    crate::source_info::test_barrier("before-capture")?;
+    let reader = crate::source_info::Executing::capture()?;
+    crate::source_info::test_barrier("after-capture")?;
     // Hold a shared lock throughout. Never race an ingest, truncate or create a
     // source file; the existing writer holds its exclusive lock until stopped.
     let lock = File::open(dir.join("writer.lock"))?;
@@ -727,13 +733,15 @@ pub fn collect(args: &[String]) -> Result<Value, AnyError> {
         source_bytes += std::fs::metadata(&path)?.len();
         // Use the existing checksum/extent/duplicate/canonical-codec reader.
         // Do not load events.bin; event replay adds no display sizing facts.
+        // v1 reads the historical v1 sidecar records, never the published v2
+        // entries `display_journal::read` derives from v2x source records.
         let records: Vec<(TransparentDisplayRecord, Option<Vec<DisplayInput>>)> = if v2x {
-            display_journal::read_inputs(dir, block.block_hash)?
+            display_journal::read_sources(dir, block.block_hash)?
                 .into_iter()
                 .map(|r| (r.record, Some(r.inputs)))
                 .collect()
         } else {
-            display_journal::read(dir, block.block_hash)?
+            crate::historical_v1::read_sidecar(dir, block.block_hash)?
                 .into_iter()
                 .map(|r| (r, None))
                 .collect()
@@ -835,36 +843,26 @@ pub fn collect(args: &[String]) -> Result<Value, AnyError> {
             include_bytes!("../../../../services/transparent-filter-server/src/display_journal.rs")
                 .as_slice(),
         ),
-        (
-            "codec",
-            include_bytes!("../../../../crates/transparent-shard/src/txid.rs").as_slice(),
-        ),
-        (
-            "codec_v2x",
-            include_bytes!("../../../../crates/transparent-shard/src/txid_v2x.rs").as_slice(),
-        ),
-        (
-            "metadata",
-            include_bytes!("../../../../crates/transparent-events/src/lib.rs").as_slice(),
-        ),
-        (
-            "native_budget_reference",
-            include_bytes!("../../../../../shared/pir-native/src/lib.rs").as_slice(),
-        ),
+        // The codecs, event metadata and native budget reference are
+        // wallet-libraries' zakura-transparent-{shard,events} and
+        // zakura-pir-native, pinned by the exact revision in `lock` below.
         ("census", include_bytes!("journal_census.rs").as_slice()),
         ("lock", include_bytes!("../Cargo.lock").as_slice()),
     ]
     .into_iter()
     .map(|(name, bytes)| (name, hex::encode(Sha256::digest(bytes))))
     .collect();
+    let reader_identity = reader.identity();
     let source = json!({"start_height":0,"anchor_height":end,"anchor_hash_display":expected,"anchor_hash_external_expectation":!derive_anchor,"journal_version":store.version(),
             "journal_covered_through":store.covered_through(),"era_boundaries":ERAS,"checkpoint_hex":hex::encode(checkpoint),
             "block_membership_sha256":hex::encode(digest.finalize()),
             "sidecar_content_digest_chain_sha256":hex::encode(sidecar_digest.finalize()),"sidecar_bytes_read":source_bytes,
             "sidecar_validation":"existing reader checks SHA256, hash envelope, unique block txids and canonical display encoding",
-            "chain_consensus_independently_validated":false,"parser_git_pin":"af944f5194ef2e9921bc96af017629450375013c",
+            "chain_consensus_independently_validated":false,"parser_git_pin":reader_identity["node_parser"]["git_revision"],
+            "compiled_reader_identity":reader_identity,
+            "journal_ingest_parser_identity":Value::Null,
             "compiled_source_file_sha256":pins,
-            "binary_sha256":hex::encode(Sha256::digest(std::fs::read(std::env::current_exe()?)?)),"ingest_executable_and_source_pin":Value::Null});
+            "binary_sha256":reader.binary_sha256(),"ingest_executable_and_source_pin":Value::Null});
     let measurement = json!({"elapsed_seconds":start.elapsed().as_secs_f64(),"partial_archive_records":partial_archive_records,"distinct_display_records":n,"committed_blocks":end+1,
             "total_chain_transactions":Value::Null,"shielded_only_exclusions":Value::Null,
             "inventory_limit":"Display sidecars cannot reveal excluded shielded-only transactions. Attach the ingest's independent canonical transaction/exclusion receipt; no exclusion count is inferred from events or empty sidecars."});
@@ -968,9 +966,13 @@ mod tests {
         coinbase.coinbase = true;
         coinbase.metadata.transparent_input_count = 0;
         coinbase.metadata.fee = FeeState::NotApplicable;
-        store
-            .append_block_with_display(0, hash, &[], &[coinbase.clone(), record(2)])
-            .unwrap();
+        crate::historical_v1::append_sidecar_block(
+            &mut store,
+            0,
+            hash,
+            &[coinbase.clone(), record(2)],
+        )
+        .unwrap();
         store.commit().unwrap();
         drop(store);
         let args = vec![
@@ -994,9 +996,7 @@ mod tests {
         let mut store =
             EventStore::open(dir.path(), transparent_filter::MAINNET_GENESIS_DISPLAY, 0).unwrap();
         let hash2 = transparent_filter::BlockHash::from_internal_bytes([3; 32]);
-        store
-            .append_block_with_display(1, hash2, &[], &[coinbase])
-            .unwrap();
+        crate::historical_v1::append_sidecar_block(&mut store, 1, hash2, &[coinbase]).unwrap();
         store.commit().unwrap();
         drop(store);
         let args = vec![
@@ -1046,7 +1046,7 @@ mod tests {
         let mut store =
             EventStore::open(dir.path(), transparent_filter::MAINNET_GENESIS_DISPLAY, 0).unwrap();
         store
-            .append_block_with_display_inputs(0, hash, &[], &records)
+            .append_block_with_display(0, hash, &[], &records)
             .unwrap();
         store.commit().unwrap();
         drop(store);
@@ -1122,8 +1122,7 @@ mod tests {
             0,
         )
         .unwrap();
-        store
-            .append_block_with_display(0, hash, &[], &[coinbase, spend])
+        crate::historical_v1::append_sidecar_block(&mut store, 0, hash, &[coinbase, spend])
             .unwrap();
         store.commit().unwrap();
         drop(store);
@@ -1155,9 +1154,7 @@ mod tests {
                 cb.metadata.fee = FeeState::NotApplicable;
                 records.push(cb);
             }
-            store
-                .append_block_with_display(0, hash, &[], &records)
-                .unwrap();
+            crate::historical_v1::append_sidecar_block(&mut store, 0, hash, &records).unwrap();
             store.commit().unwrap();
             drop(store);
             let args = vec![
@@ -1185,9 +1182,8 @@ mod tests {
             .collect();
         shapes.sort_unstable_by_key(|s| s.id);
         let tables =
-            transparent_shard::txid::build(0, &transparent_shard::DECOUPLED_2K_8K, &records)
-                .unwrap();
-        transparent_shard::txid::verify(
+            crate::historical_v1::build(0, &transparent_shard::DECOUPLED_2K_8K, &records).unwrap();
+        crate::historical_v1::verify(
             0,
             &transparent_shard::DECOUPLED_2K_8K,
             &tables.directory,
@@ -1411,9 +1407,7 @@ mod tests {
         let hash = transparent_filter::BlockHash::from_internal_bytes([2; 32]);
         let mut store =
             EventStore::open(dir.path(), transparent_filter::MAINNET_GENESIS_DISPLAY, 0).unwrap();
-        store
-            .append_block_with_display(0, hash, &[], &[record(1)])
-            .unwrap();
+        crate::historical_v1::append_sidecar_block(&mut store, 0, hash, &[record(1)]).unwrap();
         store.commit().unwrap();
         let read_lock = File::open(dir.path().join("writer.lock")).unwrap();
         assert!(read_lock.try_lock_shared().is_err());
@@ -1421,12 +1415,12 @@ mod tests {
         read_lock.try_lock_shared().unwrap();
         let reader = EventStore::open_existing(dir.path()).unwrap();
         assert_eq!(
-            display_journal::read(dir.path(), reader.block_at(0).unwrap().block_hash)
+            crate::historical_v1::read_sidecar(dir.path(), reader.block_at(0).unwrap().block_hash)
                 .unwrap()
                 .len(),
             1
         );
-        display_journal::write(
+        crate::historical_v1::write_sidecar(
             dir.path(),
             transparent_filter::BlockHash::from_internal_bytes([3; 32]),
             &[record(4)],
@@ -1440,8 +1434,8 @@ mod tests {
         let mut bytes = std::fs::read(&path).unwrap();
         bytes[50] ^= 1;
         std::fs::write(&path, bytes).unwrap();
-        assert!(display_journal::read(dir.path(), hash).is_err());
+        assert!(crate::historical_v1::read_sidecar(dir.path(), hash).is_err());
         std::fs::remove_file(path).unwrap();
-        assert!(display_journal::read(dir.path(), hash).is_err());
+        assert!(crate::historical_v1::read_sidecar(dir.path(), hash).is_err());
     }
 }

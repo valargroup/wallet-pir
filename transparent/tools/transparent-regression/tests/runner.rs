@@ -5,7 +5,7 @@ use common::*;
 use sha2::{Digest, Sha256};
 use transparent_regression::{reference, Case, Checkpoint, EventRecord, Fixture, SCHEMA};
 use transparent_shard::layout::DECOUPLED_2K_8K;
-use transparent_wallet::Anchor;
+use zakura_pir_transparent::engine::Anchor;
 #[tokio::test(flavor = "multi_thread")]
 async fn executable_checks_frozen_checkpoints_and_reports_publication_drift() {
     let all = chain();
@@ -17,7 +17,7 @@ async fn executable_checks_frozen_checkpoints_and_reports_publication_drift() {
         .iter()
         .flatten()
         .filter(|(s, _)| *s == script(3))
-        .map(|(s, e)| EventRecord::new(s.as_slice(), e))
+        .map(|(s, e)| EventRecord::new(s.as_slice(), e).unwrap())
         .collect::<Vec<_>>();
     let heights = [FIRST + SPAN + 10, FIRST + SPAN + 35, FIRST + SPAN + 90];
     let headers = (FIRST - 1..=map.shards.last().unwrap().end_height)
@@ -215,11 +215,18 @@ async fn executable_checks_frozen_checkpoints_and_reports_publication_drift() {
         ),
         (
             "lineage",
-            Box::new(|f: &mut Fixture| f.map.range_envelope_version += 1),
+            Box::new(|f: &mut Fixture| {
+                // A supported map with changed seal thresholds is another lineage.
+                // An unknown envelope version is rejected before a run opens.
+                f.map.seal.values_mut().next().unwrap().max_scripts -= 1;
+            }),
         ),
     ] {
         let mut changed = fixture.clone();
         break_it(&mut changed);
+        transparent_regression::validate(&changed).unwrap_or_else(|error| {
+            panic!("{label}: drift fixture must remain supported: {error}")
+        });
         std::fs::write(&input, serde_json::to_vec_pretty(&changed).unwrap()).unwrap();
         let drift = temp.path().join(format!("drift-{label}"));
         let mut command = make(&drift, &base);
@@ -227,24 +234,56 @@ async fn executable_checks_frozen_checkpoints_and_reports_publication_drift() {
             .await
             .unwrap();
         assert!(!result.status.success(), "{label} should have failed");
-        let report: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(drift.join("report.json")).unwrap()).unwrap();
+        let report: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(drift.join("report.json")).unwrap_or_else(|error| {
+                panic!(
+                    "{label}: missing drift report: {error}; stderr: {}",
+                    String::from_utf8_lossy(&result.stderr)
+                )
+            }),
+        )
+        .unwrap();
         assert_eq!(report["passed"], false, "{label}");
         assert_eq!(report["cases"].as_array().unwrap().len(), 1, "{label}");
     }
-    // A tail that names another parent cannot be expressed as a well formed
-    // map at all: `check_shape` refuses the fixture before a request is sent,
-    // so there is no evidence directory to preserve.
-    let mut reparented = fixture.clone();
-    reparented.map.shards.last_mut().unwrap().parent_block_hash = "11".repeat(32);
-    std::fs::write(&input, serde_json::to_vec_pretty(&reparented).unwrap()).unwrap();
-    let refused = temp.path().join("refused");
-    let mut command = make(&refused, &base);
-    let result = tokio::task::spawn_blocking(move || command.output().unwrap())
-        .await
-        .unwrap();
-    assert!(!result.status.success());
-    assert!(!refused.exists(), "a malformed fixture must not open a run");
+    // Unsupported formats and a tail on another parent are refused before a
+    // run opens or any network request is sent.
+    for (label, break_it) in [
+        (
+            "parent",
+            Box::new(|f: &mut Fixture| {
+                f.map.shards.last_mut().unwrap().parent_block_hash = "11".repeat(32);
+            }) as Box<dyn Fn(&mut Fixture)>,
+        ),
+        (
+            "envelope",
+            Box::new(|f: &mut Fixture| f.map.range_envelope_version += 1),
+        ),
+    ] {
+        let mut invalid = fixture.clone();
+        break_it(&mut invalid);
+        assert!(
+            transparent_regression::validate(&invalid).is_err(),
+            "{label}"
+        );
+        std::fs::write(&input, serde_json::to_vec_pretty(&invalid).unwrap()).unwrap();
+        let refused = temp.path().join(format!("refused-{label}"));
+        let before = requests.lock().unwrap().len();
+        let mut command = make(&refused, &base);
+        let result = tokio::task::spawn_blocking(move || command.output().unwrap())
+            .await
+            .unwrap();
+        assert!(!result.status.success(), "{label}");
+        assert!(
+            !refused.exists(),
+            "{label}: an invalid fixture must not open a run"
+        );
+        assert_eq!(
+            requests.lock().unwrap().len(),
+            before,
+            "{label}: no network request before fixture validation"
+        );
+    }
     let requests = requests.lock().unwrap();
     assert!(requests.iter().any(|r| r.contains("/query/pages")));
     for request in requests.iter() {

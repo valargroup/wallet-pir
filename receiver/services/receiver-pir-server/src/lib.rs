@@ -1,6 +1,6 @@
 //! Receiver PIR serving with immutable publications and atomic session revocation.
 #[cfg(test)]
-#[path = "../../../crates/receiver-directory/tests/common/mod.rs"]
+#[path = "../../../crates/receiver-store/tests/common/mod.rs"]
 mod common;
 #[cfg(test)]
 extern crate self as receiver_pir_server;

@@ -10,9 +10,8 @@
 //!    `broadcast.cap.shard_roots`, padded with empty roots.
 
 use crate::{Result, WitnessClientError};
-use incrementalmerkletree::{Hashable, Level};
-use orchard::tree::MerkleHashOrchard;
 use witness_types::*;
+use zakura_receiver_crypto::witness;
 
 /// Reconstruct a full `PirWitness` from the decoded PIR row and broadcast data.
 ///
@@ -117,17 +116,11 @@ fn compute_root_from_path(position: u64, leaf: &Hash, siblings: &[Hash; TREE_DEP
 }
 
 fn hash_combine(level: u8, left: &Hash, right: &Hash) -> Hash {
-    let l = bytes_to_mho(left);
-    let r = bytes_to_mho(right);
-    <MerkleHashOrchard as Hashable>::combine(Level::from(level), &l, &r).to_bytes()
-}
-
-fn bytes_to_mho(hash: &Hash) -> MerkleHashOrchard {
-    Option::from(MerkleHashOrchard::from_bytes(hash)).expect("invalid MerkleHashOrchard bytes")
+    witness::combine(level, left, right).expect("invalid MerkleHashOrchard bytes")
 }
 
 fn empty_root(level: u8) -> Hash {
-    <MerkleHashOrchard as Hashable>::empty_root(Level::from(level)).to_bytes()
+    witness::empty_root(level).expect("valid empty subtree height")
 }
 
 /// Parse the decoded PIR row bytes into 256 leaf hashes (32 bytes each).
@@ -155,6 +148,12 @@ mod tests {
     use super::*;
 
     #[test]
+    #[should_panic(expected = "invalid MerkleHashOrchard bytes")]
+    fn malformed_node_keeps_the_demo_panic_boundary() {
+        hash_combine(0, &[0xff; 32], &[0; 32]);
+    }
+
+    #[test]
     fn parse_leaves_correct_count() {
         let row = vec![0u8; SUBSHARD_ROW_BYTES];
         let leaves = parse_leaves(&row).unwrap();
@@ -170,14 +169,15 @@ mod tests {
     #[test]
     fn empty_root_level_0_is_empty_leaf() {
         let root = empty_root(0);
-        let expected = MerkleHashOrchard::empty_leaf().to_bytes();
+        let mut expected = [0; 32];
+        expected[0] = 2;
         assert_eq!(root, expected);
     }
 
     #[test]
     fn hash_combine_matches_protocol() {
-        let a = MerkleHashOrchard::empty_leaf().to_bytes();
-        let b = MerkleHashOrchard::empty_leaf().to_bytes();
+        let a = empty_root(0);
+        let b = empty_root(0);
         let combined = hash_combine(0, &a, &b);
         let expected = empty_root(1);
         assert_eq!(

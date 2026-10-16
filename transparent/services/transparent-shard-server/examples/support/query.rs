@@ -6,7 +6,7 @@ use std::{
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
-use transparent_wallet::{
+use zakura_pir_transparent::engine::{
     client::{Table, TableClient},
     http::{HttpFilterSource, HttpOptions, HttpShardTransport},
     transport::{BoxError, FilterSource, ShardTransport},
@@ -54,7 +54,7 @@ fn once_at(
     let mut transport = HttpShardTransport::new(url, &options)?;
     let (bytes, _) = filters.shard_map()?;
     let map: transparent_filter::ShardMap = serde_json::from_slice(&bytes)?;
-    map.check_shape().map_err(|e| format!("map: {e}"))?;
+    map.validate_supported().map_err(|e| format!("map: {e}"))?;
     let entry = map.shards.get(shard).ok_or("shard absent")?;
     let geometry = transport.geometry()?;
     let g = geometry

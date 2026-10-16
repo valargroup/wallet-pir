@@ -1,23 +1,14 @@
 [workspace]
 resolver = "2"
 members = [
-    "receiver/crates/receiver-directory",
-    "receiver/crates/receiver-pir",
+    "receiver/crates/receiver-store",
     "receiver/services/receiver-indexer",
     "receiver/services/receiver-pir-server",
     "shared/pir-observability",
-    "shared/pir-native",
     "shared/pir-control",
     # Protocol libraries, clients and stores.
     "enhance/crates/enhance-pir",
-    "transparent/crates/transparent-events",
     "transparent/crates/transparent-blocks",
-    "transparent/crates/transparent-filter",
-    "transparent/crates/transparent-native",
-    "transparent/crates/transparent-shard",
-    "transparent/crates/transparent-txid-client",
-    "transparent/crates/transparent-wallet",
-    "transparent/crates/transparent-wallet-store",
     # Services and operational dashboard.
     "enhance/services/enhance-pir-server",
     "enhance/services/pir-apm",

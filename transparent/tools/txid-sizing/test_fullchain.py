@@ -5,6 +5,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 from types import SimpleNamespace
 import fullchain
@@ -87,5 +88,17 @@ class AggregateTests(unittest.TestCase):
             self.assertEqual(aggregate.db.execute('SELECT count(*) FROM blocks').fetchone()[0],1)
             self.assertEqual(aggregate.report()['totals']['eligible'],10)
             aggregate.close()
+
+class ParserRevisionTests(unittest.TestCase):
+    def test_parser_revision_is_from_the_binary_node_not_the_adapter(self):
+        identity={"node_parser":{"git_revision":"a"*40},"server_adapter":{"git_revision":"b"*40}}
+        with patch.object(fullchain.source_info,"read",return_value=identity) as read:
+            self.assertEqual(fullchain.parser_revision(Path("compiled-export")),"a"*40)
+            read.assert_called_once_with(Path("compiled-export"))
+
+    def test_parser_revision_refuses_a_binary_without_compiled_identity(self):
+        with patch.object(fullchain.source_info,"read",side_effect=ValueError("missing compiled identity")):
+            with self.assertRaisesRegex(ValueError,"compiled identity"):
+                fullchain.parser_revision(Path("old-export"))
 
 if __name__=='__main__':unittest.main()

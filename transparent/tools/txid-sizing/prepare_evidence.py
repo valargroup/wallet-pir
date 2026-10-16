@@ -10,6 +10,7 @@ import census
 import geometry
 import survey
 import verify_stream
+import source_info
 
 ROOT=Path(__file__).resolve().parents[3]
 
@@ -37,6 +38,7 @@ def sample_packing(checkpoint,binary,analysis):
 
 
 def publish(checkpoint,binary,output):
+    identity=source_info.read(binary)
     checkpoint=Path(checkpoint);output=Path(output)
     receipt=json.loads((checkpoint/"receipt.json").read_text())
     replay=json.loads((checkpoint/"final-replay.json").read_text())
@@ -47,8 +49,14 @@ def publish(checkpoint,binary,output):
     analysis["input_sha256"]=census.digest(summary_path)
     census.atomic_json(output/"archive-survey-analysis.json",analysis)
     census.atomic_json(output/"archive-survey-geometry.json",geometry.survey_projection(analysis))
-    census.atomic_json(output/"stream-conformance.json",verify_stream.verify(checkpoint,binary))
-    census.atomic_json(output/"archive-sample-packing.json",sample_packing(checkpoint,binary,analysis))
+    source_info.require_same(binary,identity)
+    conformance=verify_stream.verify(checkpoint,binary)
+    source_info.require_same(binary,identity)
+    census.atomic_json(output/"stream-conformance.json",conformance)
+    source_info.require_same(binary,identity)
+    packing=sample_packing(checkpoint,binary,analysis)
+    source_info.require_same(binary,identity)
+    census.atomic_json(output/"archive-sample-packing.json",packing)
     source_files={}
     for path in sorted((ROOT/"transparent/tools/txid-sizing").rglob("*")):
         if path.is_file() and path.suffix in (".py",".rs",".toml") or path.is_file() and path.name=="Cargo.lock":
@@ -60,8 +68,8 @@ def publish(checkpoint,binary,output):
         acquisition_completed_at_utc=datetime.fromtimestamp((checkpoint/"receipt.json").stat().st_mtime,timezone.utc).isoformat(),
         source=receipt["source"],base_source_sha="7d46f7618b94f2a889dcfebd5b3dc9229bd98b5a",
         analysis_tools_sha=subprocess.check_output(["git","rev-parse","HEAD"],cwd=ROOT,text=True).strip(),
-        parser_revision="af944f5194ef2e9921bc96af017629450375013c",
-        metadata_dependency="3cfbc4848b92b1385b9215174251f8e51fbfa804",
+        parser_revision=identity["node_parser"]["git_revision"],
+        metadata_dependency=identity["event_codec"]["git_revision"],compiled_reader_identity=identity,
         node_chain=node.get("chain"),node_pruned=node.get("pruned"),node_reported_upgrades=node.get("upgrades"),node_build_version="unavailable from allowed RPC methods; not inferred from source",
         anchor_height=census.ANCHOR_HEIGHT,anchor_hash=census.ANCHOR_HASH,
         complete_census=False,selected_blocks=len(receipt["blocks"]),selection=receipt["design"],blocks=receipt["blocks"],
@@ -70,9 +78,11 @@ def publish(checkpoint,binary,output):
         raw_retention=dict(location=str(checkpoint/"blocks"),format="read-only per-block JSON with raw block and complete external-parent raw bytes plus decoded RPC oracle fields",receipt="per-frame and raw-block SHA256 in this artifact; canonical record checkpoints retained outside repository"),
         node_info_sha256=receipt["node_info_sha256"],acquisition_seconds=receipt["acquisition_seconds"],payload_rpc_calls=receipt["new_rpc_calls"],pin_recheck_rpc_calls=len(receipt["blocks"])+1,initial_anchor_and_info_rpc_calls=2,
         final_replay=replay,source_files=source_files)
+    source_info.require_same(binary,identity)
     census.atomic_json(output/"archive-survey-sources.json",source)
     sums=[]
     for path in sorted(output.glob("*.json")):sums.append(census.digest(path)+"  "+path.name)
+    source_info.require_same(binary,identity)
     (output/"SHA256SUMS").write_text("\n".join(sums)+"\n")
     return analysis
 

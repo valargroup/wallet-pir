@@ -1,78 +1,10 @@
 {
-  "receiver-directory": {
-    "fast": [],
-    "full": [
-      "directory"
-    ]
-  },
-  "receiver-pir": {
-    "fast": [
-      "golden"
-    ],
-    "full": []
-  },
-  "receiver-indexer": {
-    "fast": [],
-    "full": [
-      "indexer"
-    ]
-  },
-  "receiver-pir-server": {
-    "fast": [
-      "ci_smoke"
-    ],
-    "full": [
-      "http"
-    ]
-  },
-  "pir-native": {
-    "fast": [],
-    "full": [
-      "dithered",
-      "golden",
-      "p8"
-    ]
-  },
   "enhance-pir": {
     "fast": [],
     "full": [
       "routing_contract",
       "v7_contract"
     ]
-  },
-  "transparent-blocks": {
-    "fast": [],
-    "full": [
-      "recovery"
-    ]
-  },
-  "transparent-filter": {
-    "fast": [
-      "bip158_vectors",
-      "golden_envelope"
-    ],
-    "full": [
-      "independent_crosscheck"
-    ]
-  },
-  "transparent-txid-client": {
-    "fast": [],
-    "full": [
-      "map_bytes"
-    ]
-  },
-  "transparent-wallet": {
-    "fast": [],
-    "full": [
-      "birthday_to_balance"
-    ]
-  },
-  "transparent-wallet-store": {
-    "fast": [
-      "schema_upgrade",
-      "store_semantics"
-    ],
-    "full": []
   },
   "enhance-pir-server": {
     "fast": [
@@ -92,12 +24,54 @@
       "status_wallet"
     ]
   },
+  "receiver-indexer": {
+    "fast": [],
+    "full": [
+      "indexer"
+    ]
+  },
+  "receiver-pir-server": {
+    "fast": [
+      "ci_smoke"
+    ],
+    "full": [
+      "http",
+      "library_client"
+    ]
+  },
+  "receiver-store": {
+    "fast": [],
+    "full": [
+      "store"
+    ]
+  },
+  "transparent-blocks": {
+    "fast": [],
+    "full": [
+      "recovery"
+    ]
+  },
   "transparent-filter-server": {
     "fast": [],
     "full": [
       "compact",
+      "event_codec_bounds",
       "service_round_trip",
       "shard_filters"
+    ]
+  },
+  "transparent-loadtest": {
+    "fast": [],
+    "full": [
+      "service_tools",
+      "simulation"
+    ]
+  },
+  "transparent-regression": {
+    "fast": [],
+    "full": [
+      "parent_filters",
+      "runner"
     ]
   },
   "transparent-shard-server": {
@@ -117,19 +91,6 @@
       "wallet_continuation",
       "wallet_recut",
       "wallet_sync"
-    ]
-  },
-  "transparent-loadtest": {
-    "fast": [],
-    "full": [
-      "simulation"
-    ]
-  },
-  "transparent-regression": {
-    "fast": [],
-    "full": [
-      "parent_filters",
-      "runner"
     ]
   }
 }

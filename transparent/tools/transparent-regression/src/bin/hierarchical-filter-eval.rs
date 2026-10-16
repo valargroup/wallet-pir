@@ -106,7 +106,7 @@ fn scripts(path: impl AsRef<Path>) -> Result<BTreeSet<Vec<u8>>> {
 fn extract(data_dir: &Path, publication: &Path, sample_path: &Path, out: &Path) -> Result<()> {
     ensure!(!out.exists(), "output already exists");
     let map: ShardMap = read_json(publication.join("shards.json"))?;
-    map.check_shape().map_err(anyhow::Error::msg)?;
+    map.validate_supported().map_err(anyhow::Error::msg)?;
     let raw_sample = fs::read(sample_path)?;
     let sample: Sample = serde_json::from_slice(&raw_sample)?;
     let journal = EventStore::open_existing(data_dir)?;
@@ -241,6 +241,7 @@ fn sweep(dataset: &Path, out: &Path, absent_count: usize) -> Result<()> {
     let provenance: Value = read_json(dataset.join("provenance.json"))?;
     ensure!(provenance["complete"] == true, "incomplete extraction");
     let map: ShardMap = read_json(dataset.join("map.json"))?;
+    map.validate_supported().map_err(anyhow::Error::msg)?;
     let mut sample: Sample = read_json(dataset.join("sample.json"))?;
     ensure!(
         parent::sha(&serde_json::to_vec(&map)?) == provenance["map_sha256"],
@@ -541,7 +542,7 @@ fn export_seeds(data_dir: &Path, map_path: &Path, sample_path: &Path, out: &Path
     let value: Value = serde_json::from_slice(&raw)?;
     let clients: Vec<Client> = serde_json::from_value(value["clients"].clone())?;
     let map: ShardMap = read_json(map_path)?;
-    map.check_shape().map_err(anyhow::Error::msg)?;
+    map.validate_supported().map_err(anyhow::Error::msg)?;
     let through = value["anchor_height"].as_u64().context("missing anchor")?;
     let anchor = json!({"height":through,"hash":value["anchor_hash"]});
     let journal = EventStore::open_existing(data_dir)?;
@@ -601,7 +602,7 @@ fn export_seeds(data_dir: &Path, map_path: &Path, sample_path: &Path, out: &Path
                 if u64::from(e.height()) < w.required_from {
                     prior.push(EventRecord {
                         script: script.clone(),
-                        event: hex::encode(e.to_bytes()),
+                        event: hex::encode(e.to_bytes()?),
                     });
                 } else {
                     window.push(*e);
@@ -612,7 +613,7 @@ fn export_seeds(data_dir: &Path, map_path: &Path, sample_path: &Path, out: &Path
         window.dedup();
         let mut digest = Sha256::new();
         for e in &window {
-            digest.update(e.to_bytes());
+            digest.update(e.to_bytes()?);
         }
         ensure!(
             hex::encode(digest.finalize()) == w.expected_digest
@@ -672,7 +673,7 @@ mod seed_tests {
             blocks.extend(1u64.to_le_bytes());
             events.extend(1u16.to_le_bytes());
             events.extend(&script);
-            events.extend(event.to_bytes());
+            events.extend(event.to_bytes().unwrap());
         }
         fs::write(journal.join("events.bin"), &events).unwrap();
         fs::write(journal.join("blocks.bin"), &blocks).unwrap();
@@ -722,7 +723,7 @@ mod seed_tests {
         let map_path = dir.path().join("map.json");
         write_json(&map_path, &map).unwrap();
         let sample = dir.path().join("sample.json");
-        let mut value = json!({"genesis_hash":genesis,"anchor_height":1,"anchor_hash":end,"clients":[{"scripts":["51"],"required_from":1,"expected_digest":parent::sha(&spend.to_bytes()),"journal_events":1}]});
+        let mut value = json!({"genesis_hash":genesis,"anchor_height":1,"anchor_hash":end,"clients":[{"scripts":["51"],"required_from":1,"expected_digest":parent::sha(&spend.to_bytes().unwrap()),"journal_events":1}]});
         write_json(&sample, &value).unwrap();
         let out = dir.path().join("seeds");
         export_seeds(&journal, &map_path, &sample, &out).unwrap();
@@ -730,7 +731,7 @@ mod seed_tests {
         assert_eq!(seed["seed"]["events"].as_array().unwrap().len(), 1);
         assert_eq!(
             seed["seed"]["events"][0]["event"],
-            hex::encode(receive.to_bytes())
+            hex::encode(receive.to_bytes().unwrap())
         );
         value["clients"][0]["expected_digest"] = json!("bad");
         write_json(&sample, &value).unwrap();

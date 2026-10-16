@@ -2041,8 +2041,11 @@ class Wrapper(unittest.TestCase):
         self.assertIn('const BLOCK_RECORD_BYTES: usize = 32 + 8 + 8;', source)
         self.assertIn('lock.try_lock()', source)
         self.assertIn('.open(dir.join("writer.lock"))', source)
-        events = (HERE.parents[2]/'transparent/crates/transparent-events/src/lib.rs').read_text()
-        self.assertIn('pub const EVENT_BYTES: usize = %d;' % S.EVENT_BYTES, events)
+        # Fixed byte-boundary fixtures. Agreement of both bounds with the pinned
+        # zakura-transparent-events codec runs in the filter server's registered
+        # event_codec_bounds integration test, as well as the exporter's test.
+        self.assertEqual(S.EVENT_BYTES, 87)
+        self.assertEqual(S.MAX_EVENT_BYTES, 103)
 
 
 if __name__ == '__main__':

@@ -22,14 +22,14 @@ use std::sync::{Arc, Mutex};
 use transparent_events::{ReceiveEvent, SpendEvent, TransparentEvent};
 use transparent_filter::{Recut, ScriptBytes, ShardMap, ShardMapEntry, SupersededShard};
 use transparent_shard::layout::{DECOUPLED_2K_8K, DECOUPLED_32K_32K};
-use transparent_wallet::client::Table;
-use transparent_wallet::http::{HttpOptions, HttpShardTransport};
-use transparent_wallet::transport::{BoxError, FilterSource, ShardTransport};
-use transparent_wallet::{
+use zakura_pir_transparent::engine::client::Table;
+use zakura_pir_transparent::engine::http::{HttpOptions, HttpShardTransport};
+use zakura_pir_transparent::engine::transport::{BoxError, FilterSource, ShardTransport};
+use zakura_pir_transparent::engine::{
     Anchor, Completion, IncompleteReason, Ledger, ScriptEntry, ScriptOrigin, StaticChain,
     StaticScripts, SyncError, SyncReport, WalletStore, WorkLimits,
 };
-use transparent_wallet_store::SqliteStore;
+use zakura_pir_transparent::engine_store::SqliteStore;
 
 /// Where both tails start: the five sealed shards end just below.
 const TAIL: u64 = FIRST + 5 * SPAN;
@@ -326,7 +326,7 @@ async fn run_on(
         };
         let geometry = transport.inner.geometry().unwrap();
         let (mut filters, mut scripts) = (filters, scripts);
-        transparent_wallet::sync_into(
+        zakura_pir_transparent::engine::sync_into(
             &mut store,
             &map,
             0,
@@ -564,7 +564,7 @@ async fn held_with_merged_pages(
     path: &Path,
     base: &str,
     sets: &Publications,
-) -> Vec<transparent_wallet::StoredEvent> {
+) -> Vec<zakura_pir_transparent::engine::StoredEvent> {
     let filters = || PublishedFilters::load(sets.before_dir.path(), &sets.before);
     let (report, _) = run(
         path,

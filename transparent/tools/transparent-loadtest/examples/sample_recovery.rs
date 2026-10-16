@@ -15,10 +15,10 @@ use sha2::{Digest, Sha256};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use transparent_filter::ShardMap;
-use transparent_wallet::http::{HttpFilterSource, HttpOptions, HttpShardTransport};
-use transparent_wallet::store::{ScriptEntry, ScriptOrigin, WalletStore};
-use transparent_wallet::transport::{FilterSource, ShardTransport};
-use transparent_wallet::{
+use zakura_pir_transparent::engine::http::{HttpFilterSource, HttpOptions, HttpShardTransport};
+use zakura_pir_transparent::engine::store::{ScriptEntry, ScriptOrigin, WalletStore};
+use zakura_pir_transparent::engine::transport::{FilterSource, ShardTransport};
+use zakura_pir_transparent::engine::{
     parse_init, sync_into, Anchor, MemoryStore, StaticChain, StaticScripts, TableCharges,
     WorkLimits,
 };
@@ -39,7 +39,7 @@ struct Sample {
     clients: Vec<Client>,
 }
 
-fn digest(store: &MemoryStore, from: u64, through: u64) -> (String, u64) {
+fn digest(store: &MemoryStore, from: u64, through: u64) -> anyhow::Result<(String, u64)> {
     let mut events: Vec<_> = store
         .events()
         .expect("events")
@@ -51,9 +51,9 @@ fn digest(store: &MemoryStore, from: u64, through: u64) -> (String, u64) {
     events.dedup();
     let mut hasher = Sha256::new();
     for event in &events {
-        hasher.update(event.to_bytes());
+        hasher.update(event.to_bytes()?);
     }
-    (hex::encode(hasher.finalize()), events.len() as u64)
+    Ok((hex::encode(hasher.finalize()), events.len() as u64))
 }
 
 fn table(charges: &TableCharges) -> serde_json::Value {
@@ -127,10 +127,12 @@ fn main() {
                     &mut transport,
                     &WorkLimits::UNLIMITED,
                     &anchor,
-                );
+                ).map_err(anyhow::Error::from).and_then(|report| {
+                    let digest = digest(&store, client.required_from, anchor.height)?;
+                    Ok((report, digest))
+                });
                 let line = match result {
-                    Ok(report) => {
-                        let (actual, events) = digest(&store, client.required_from, anchor.height);
+                    Ok((report, (actual, events))) => {
                         let charges = report.charges;
                         serde_json::json!({
                             "index": index,

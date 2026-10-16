@@ -12,18 +12,18 @@ use std::path::Path;
 use transparent_events::{ReceiveEvent, TransparentEvent};
 use transparent_filter::{ScriptBytes, ShardMap};
 use transparent_shard::layout::{DECOUPLED_2K_8K, DECOUPLED_32K_32K};
-use transparent_wallet::client::Table;
-use transparent_wallet::http::{HttpOptions, HttpShardTransport};
-use transparent_wallet::store::{
+use zakura_pir_transparent::engine::client::Table;
+use zakura_pir_transparent::engine::http::{HttpOptions, HttpShardTransport};
+use zakura_pir_transparent::engine::store::{
     Anchor, CoverageRange, PendingPages, ScriptEntry, ScriptOrigin, SetIdentity, SetupBlob,
     SetupKey, ShardCommit, StoreError, StoredEvent, WalletStore,
 };
-use transparent_wallet::transport::{refusal, BoxError, ShardTransport};
-use transparent_wallet::{
+use zakura_pir_transparent::engine::transport::{refusal, BoxError, ShardTransport};
+use zakura_pir_transparent::engine::{
     sync_into, Completion, IncompleteReason, ScriptProvider, StaticChain, StaticScripts, SyncError,
     SyncReport, WorkLimits,
 };
-use transparent_wallet_store::SqliteStore;
+use zakura_pir_transparent::engine_store::SqliteStore;
 
 fn entry(tag: u32, required_from: u64) -> ScriptEntry {
     ScriptEntry {
@@ -72,7 +72,7 @@ where
             &mut filters,
             &mut transport,
             &limits,
-            &transparent_wallet::Anchor {
+            &zakura_pir_transparent::engine::Anchor {
                 height: map.shards.last().unwrap().end_height,
                 hash: map.shards.last().unwrap().terminal_block_hash.clone(),
             },
@@ -84,13 +84,13 @@ where
 }
 
 trait GeometryOf {
-    fn geometry(&mut self) -> Result<transparent_wallet::ServiceGeometry, BoxError>;
+    fn geometry(&mut self) -> Result<zakura_pir_transparent::engine::ServiceGeometry, BoxError>;
 }
 
 impl<T: ShardTransport> GeometryOf for T {
-    fn geometry(&mut self) -> Result<transparent_wallet::ServiceGeometry, BoxError> {
+    fn geometry(&mut self) -> Result<zakura_pir_transparent::engine::ServiceGeometry, BoxError> {
         let (raw, _) = self.init()?;
-        transparent_wallet::parse_init(&raw)
+        zakura_pir_transparent::engine::parse_init(&raw)
     }
 }
 
@@ -518,7 +518,7 @@ impl<S: WalletStore> WalletStore for CrashAt<S> {
         &self,
         child_digest: &str,
         script: &[u8],
-    ) -> Result<Option<transparent_wallet::store::CachedRun>, StoreError> {
+    ) -> Result<Option<zakura_pir_transparent::engine::store::CachedRun>, StoreError> {
         self.inner.cached_run(child_digest, script)
     }
     fn setup(&self, key: &SetupKey) -> Result<Option<SetupBlob>, StoreError> {
@@ -545,8 +545,13 @@ impl<S: WalletStore> WalletStore for CrashAt<S> {
     fn last_commit(&self) -> Result<u64, StoreError> {
         self.inner.last_commit()
     }
-    fn entry_failures(&self, shard_id: u64, script: &[u8]) -> Result<u32, StoreError> {
-        self.inner.entry_failures(shard_id, script)
+    fn entry_failures(
+        &self,
+        shard_id: u64,
+        revision: &str,
+        script: &[u8],
+    ) -> Result<u32, StoreError> {
+        self.inner.entry_failures(shard_id, revision, script)
     }
 }
 

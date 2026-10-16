@@ -1,13 +1,13 @@
 # Historical v6 wallet/server q48 interoperability
 
-This standalone harness pins wallet-libraries commit
-`9b190657d129d08e964623d0ecc1d8e4ffb31b1d`, which implements protocol v6.
-It is preserved historical tooling, outside the active workspace. Its old `v4`
-module imports and SDK pin are incompatible with the current v7 server; do not
-use this directory on current main to qualify wallet interoperability.
+The harness pinned wallet-libraries commit
+`9b190657d129d08e964623d0ecc1d8e4ffb31b1d`, which implements protocol v6. Its
+`v4` module imports and SDK pin cannot build against the current v7 server, so
+its sources are no longer kept here; only these instructions remain. Do not use
+it on current main to qualify wallet interoperability.
 
-For the matching v6 server and harness, use repository revision
-`f26595aca5684e2e1dc6c941a194b64905bff1f5` in a separate checkout:
+The harness and the matching v6 server are at repository revision
+`f26595aca5684e2e1dc6c941a194b64905bff1f5`; run them from a separate checkout:
 
 ```sh
 git worktree add --detach ../wallet-pir-q48-v6 f26595aca5684e2e1dc6c941a194b64905bff1f5
@@ -23,7 +23,10 @@ for byte. Its twelve cases cover unit allocations across 4K, 8K, 16K and 32K
 query domains, partial final rows, and both sides of unit boundaries.
 
 Current server HTTP integration coverage lives in
-[`packing_http.rs`](../../services/enhance-pir-server/tests/packing_http.rs).
-That test uses the repository's native client; it does not replace independent
-wallet SDK interoperability or hardware qualification. See the current
+[`packing_http.rs`](../../services/enhance-pir-server/tests/packing_http.rs),
+which uses the repository's native client, and
+[`enhance_wallet_native.rs`](../../services/enhance-pir-server/tests/enhance_wallet_native.rs)
+(feature `native-reinspiring`), which drives the current wallet library client
+(`zakura-pir-enhance`) through the production distributed serving path over
+HTTP. Neither replaces hardware qualification. See the current
 [qualification record](../../docs/qualification.md) for dated wallet evidence.

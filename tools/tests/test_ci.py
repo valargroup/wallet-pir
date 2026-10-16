@@ -86,7 +86,7 @@ class BoundaryTests(unittest.TestCase):
 
     def test_the_receiver_packages_declare_no_common_or_node_edges(self):
         packages = {p['name']: p for p in boundary.manifests()}
-        for name in ['receiver-directory', 'receiver-pir', 'receiver-pir-server']:
+        for name in ['receiver-store', 'receiver-pir-server']:
             names = {d['name'] for d in packages[name]['dependencies']}
             self.assertFalse(names & (boundary.COMMON | boundary.NODE), name)
 
@@ -99,6 +99,25 @@ class BoundaryTests(unittest.TestCase):
                 self.assertEqual(len(boundary.violations(packages, [])), 1, (kind, name))
                 self.assertEqual(boundary.violations(packages, [f'svc -> {name}']), [])
 
+    def test_preserved_demo_workspaces_are_checked_for_direct_edges(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'Cargo.toml').write_text('[workspace]\nmembers = []\n')
+            demo = root / 'demos/legacy'
+            (demo / 'tree').mkdir(parents=True)
+            (demo / 'Cargo.toml').write_text(
+                '[workspace]\nmembers = ["tree"]\n[workspace.dependencies]\n'
+                'orchard = { package = "zakura-orchard", version = "3" }\n')
+            (demo / 'tree/Cargo.toml').write_text(
+                '[package]\nname = "tree"\nversion = "0.1.0"\n'
+                '[dev-dependencies]\norchard = { workspace = true }\n')
+            packages = boundary.manifests(root)
+            self.assertEqual([p['preserved'] for p in packages], [True])
+            problems = boundary.violations(packages, [])
+            self.assertEqual(len(problems), 1)
+            self.assertIn('demos/legacy/tree/Cargo.toml: dev-dependencies on Common package zakura-orchard',
+                          problems[0])
+
     def test_library_adapters_and_pir_cryptography_are_not_common(self):
         packages = [{'name': 'svc', 'manifest': 'svc/Cargo.toml', 'dependencies': [
             self.edge('zakura-receiver-crypto', git='https://github.com/zakura-core/wallet-libraries.git'),
@@ -106,32 +125,22 @@ class BoundaryTests(unittest.TestCase):
             self.edge('sha2'), self.edge('rand')]}]
         self.assertEqual(boundary.violations(packages, []), [])
 
-    def test_only_directory_framing_can_use_the_featureless_codec(self):
-        edge = self.edge('zakura-receiver-crypto', git='https://github.com/zakura-core/wallet-libraries')
-        edge.update({'default-features': False, 'features': []})
-        package = {'name': 'receiver-directory', 'manifest': 'directory/Cargo.toml',
-                   'dependencies': [edge]}
+    def test_pure_packages_use_only_canonical_library_packages(self):
+        library = 'https://github.com/zakura-core/wallet-libraries'
+        package = {'name': 'receiver-pir-server', 'manifest': 'server/Cargo.toml',
+                   'dependencies': [self.edge(name, git=library) for name in sorted(boundary.CANONICAL)]}
         self.assertEqual(boundary.violations([package], []), [])
-        for change in [{'default-features': True}, {'features': ['crypto']},
-                       {'kind': 'dev-dependencies'}, {'kind': 'build-dependencies'},
-                       {'kind': 'target.cfg(unix).dependencies'}, {'name': 'zakura-wallet-lib'}]:
-            changed = {**package, 'dependencies': [{**edge, **change}]}
-            self.assertEqual(len(boundary.violations([changed], [])), 1, change)
-        for name in ['receiver-pir', 'enhance-pir', 'transparent-wallet']:
-            self.assertEqual(len(boundary.violations([{**package, 'name': name}], [])), 1, name)
-
-    def test_receiver_framing_uses_the_library_codec_with_crypto_disabled(self):
-        directory = next(p for p in boundary.manifests() if p['name'] == 'receiver-directory')
-        edge = next(d for d in directory['dependencies'] if d['name'] == boundary.CODEC)
-        self.assertFalse(edge['default-features'])
-        self.assertEqual(edge['features'], [])
+        for name in [boundary.CODEC, 'zakura-wallet-lib', 'zakura-server-chain']:
+            changed = {**package, 'dependencies': [self.edge(name, git=library)]}
+            self.assertEqual(len(boundary.violations([changed], [])), 1, name)
+        self.assertEqual(boundary.violations([{**changed, 'name': 'receiver-indexer'}], []), [])
 
     def test_workspace_crypto_unification_does_not_excuse_standalone_crypto_or_nodes(self):
         def node(name, deps=()):
             return {'id': name, 'deps': [{'pkg': d, 'dep_kinds': [{'kind': None}]} for d in deps]}
         metadata = {
             'packages': [
-                {'id': 'pir', 'name': 'receiver-pir', 'source': None},
+                {'id': 'pir', 'name': 'receiver-pir-server', 'source': None},
                 {'id': 'codec', 'name': boundary.CODEC,
                  'source': 'git+https://github.com/zakura-core/wallet-libraries'},
                 {'id': 'orchard', 'name': 'zakura-orchard', 'source': 'registry'},
@@ -142,13 +151,13 @@ class BoundaryTests(unittest.TestCase):
         }
         self.assertEqual(boundary.resolved_violations(metadata, workspace_unified=True), [])
         self.assertEqual(boundary.resolved_violations(metadata),
-                         ['receiver-pir: resolves zakura-orchard'])
+                         ['receiver-pir-server: resolves zakura-orchard'])
         metadata['resolve']['nodes'][1] = node('codec', ['orchard', 'chain'])
         self.assertEqual(boundary.resolved_violations(metadata, workspace_unified=True),
-                         ['receiver-pir: resolves zakura-chain'])
+                         ['receiver-pir-server: resolves zakura-chain'])
         metadata['resolve']['nodes'][0] = node('pir', ['orchard'])
         self.assertEqual(boundary.resolved_violations(metadata, workspace_unified=True),
-                         ['receiver-pir: resolves zakura-orchard'])
+                         ['receiver-pir-server: resolves zakura-orchard'])
 
     def test_offline_mode_reaches_workspace_metadata_and_helper_targets(self):
         metadata = {'packages': [], 'resolve': {'nodes': []}}
@@ -179,7 +188,7 @@ class BoundaryTests(unittest.TestCase):
             return {'id': id, 'deps': [{'pkg': d, 'dep_kinds': [{'kind': k}]} for d, k in deps]}
         metadata = {
             'packages': [
-                {'id': 'pir', 'name': 'receiver-pir', 'source': None},
+                {'id': 'pir', 'name': 'receiver-pir-server', 'source': None},
                 {'id': 'mid', 'name': 'helper', 'source': 'registry'},
                 {'id': 'orchard', 'name': 'zakura-orchard', 'source': 'registry'},
                 {'id': 'chain', 'name': 'zakura-chain', 'source': 'git+https://github.com/zakura-core/zakura'},
@@ -193,7 +202,7 @@ class BoundaryTests(unittest.TestCase):
             ]},
         }
         self.assertEqual(boundary.resolved_violations(metadata),
-                         ['receiver-pir: resolves zakura-orchard'])
+                         ['receiver-pir-server: resolves zakura-orchard'])
 
 
 class ReleaseTests(unittest.TestCase):
@@ -865,8 +874,29 @@ class CacheWorkflowTests(unittest.TestCase):
             ran, primed = full.commands(group, groups), full.commands(group, groups, compile_only=True)
             self.assertEqual(ran[0][2:], primed[0][3:])
             self.assertEqual(primed[0][:3], ['cargo', 'test', '--no-run'])
-            for command in primed[1:]:
-                self.assertIn('--compile-only', command)
+            for ran_command, primed_command in zip(ran[1:], primed[1:], strict=True):
+                if primed_command[:3] == ['cargo', 'test', '--no-run']:
+                    self.assertEqual(primed_command[:3], ['cargo', 'test', '--no-run'])
+                    self.assertEqual(ran_command[2:], primed_command[3:])
+                else:
+                    self.assertIn('--compile-only', primed_command)
+
+    def test_transparent_full_checks_include_the_standalone_exporter(self):
+        full = load_full()
+        groups = {'transparent': ['transparent-filter-server'], 'shared': ['pir-control']}
+        manifest = 'transparent/tools/txid-sizing/export/Cargo.toml'
+        self.assertEqual(full.commands('transparent', groups)[0], [
+            'bash', 'tools/ci/full-test.sh', '--locked', '--profile', 'release-fast',
+            '--manifest-path', manifest,
+        ])
+        self.assertEqual(full.commands('transparent', groups, compile_only=True)[0], [
+            'cargo', 'test', '--no-run', '--locked', '--profile', 'release-fast',
+            '--manifest-path', manifest,
+        ])
+        self.assertEqual(len(full.commands('transparent', groups)), 2)
+        self.assertIn('transparent-filter-server', full.commands('transparent', groups)[1])
+        self.assertEqual(len(full.commands('shared', groups)), 1)
+        self.assertEqual(len(full.commands('transparent', groups, lint=True)), 1)
 
 
 def load_full():

@@ -1,5 +1,6 @@
 //! Authenticated synthetic Ironwood records through real HTTP PIR.
-//! Fixed inputs are public test material, never wallet credentials.
+//! Fixed inputs are public test material, never wallet credentials; the
+//! library-owned fixture holds the Orchard and note-encryption cryptography.
 use enhance_pir::{
     client::EnhancePirClient, EnhanceRecord, EnhanceRecordParts, EnhanceTransactionMetadata,
     RECORD_BYTES,
@@ -11,34 +12,27 @@ use enhance_pir_server::{
     types::{DatabaseId, ENHANCE_LAYOUT},
     worker::Worker,
 };
-use orchard::{
-    keys::{FullViewingKey, PreparedIncomingViewingKey, Scope, SpendingKey},
-    note::{ExtractedNoteCommitment, NoteVersion, Nullifier, RandomSeed, Rho},
-    note_encryption::{CompactAction, IronwoodDomain, IronwoodNoteEncryption, OrchardDomain},
-    value::{NoteValue, ValueCommitTrapdoor, ValueCommitment},
-    Note,
-};
-use zcash_note_encryption::{
-    try_note_decryption, try_output_recovery_with_ovk, Domain, EphemeralKeyBytes, ShieldedOutput,
+use zakura_pir_enhance::testing::{
+    decrypt_incoming, recover_outgoing, FixtureKey, IronwoodOutputFixture, NoteDomain, OutputBytes,
+    RecoveredNote, FIXTURE_MEMO, FIXTURE_VALUE,
 };
 
-struct Output {
-    record: EnhanceRecord,
-    cmx: [u8; 32],
-    ephemeral_key: [u8; 32],
-    enc_ciphertext: [u8; 580],
+/// Incoming decryption with the recipient's own key in the Ironwood domain.
+fn own_ivk(output: &OutputBytes) -> Option<RecoveredNote> {
+    decrypt_incoming(NoteDomain::Ironwood, FixtureKey::Own, output)
 }
-impl<D: Domain<ExtractedCommitmentBytes = [u8; 32]>> ShieldedOutput<D, 580> for Output {
-    fn ephemeral_key(&self) -> EphemeralKeyBytes {
-        EphemeralKeyBytes(self.ephemeral_key)
-    }
-    fn cmstar_bytes(&self) -> [u8; 32] {
-        self.cmx
-    }
-    fn enc_ciphertext(&self) -> &[u8; 580] {
-        &self.enc_ciphertext
-    }
+
+/// Outgoing recovery with `key`, using the returned `cv_net` and the
+/// `out_ciphertext` of `record`.
+fn ovk(
+    key: FixtureKey,
+    output: &OutputBytes,
+    cv_net: &[u8; 32],
+    record: &EnhanceRecord,
+) -> Option<RecoveredNote> {
+    recover_outgoing(key, output, cv_net, record.out_ciphertext())
 }
+
 async fn serve(router: axum::Router) -> (String, tokio::task::JoinHandle<()>) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
@@ -52,44 +46,21 @@ async fn serve(router: axum::Router) -> (String, tokio::task::JoinHandle<()>) {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn incoming_and_outgoing_recovery_authenticate_pir_returned_record() {
-    let sk = SpendingKey::from_bytes([7; 32]).unwrap();
-    let fvk = FullViewingKey::from(&sk);
-    let recipient = fvk.address_at(0u32, Scope::External);
-    let ivk = PreparedIncomingViewingKey::new(&fvk.to_ivk(Scope::External));
-    let ovk = fvk.to_ovk(Scope::External);
-    let rho = Rho::from_bytes(&[0; 32]).unwrap();
-    let note = Note::from_parts(
-        recipient,
-        NoteValue::from_raw(5),
-        rho,
-        RandomSeed::from_bytes([9; 32], &rho).unwrap(),
-        NoteVersion::V3,
-    )
-    .unwrap();
-    let memo = [42; 512];
-    let cv = ValueCommitment::derive(
-        NoteValue::from_raw(5) - NoteValue::from_raw(0),
-        ValueCommitTrapdoor::from_bytes([0; 32]).unwrap(),
-    );
-    let cmx = ExtractedNoteCommitment::from(note.commitment());
-    let encryptor = IronwoodNoteEncryption::new(Some(ovk.clone()), note, memo);
-    let ephemeral_key = IronwoodDomain::epk_bytes(encryptor.epk()).0;
-    let enc_ciphertext = encryptor.encrypt_note_plaintext();
+    let fixture = IronwoodOutputFixture::new();
+    let expected = Some(RecoveredNote {
+        value: FIXTURE_VALUE,
+        recipient_matches: true,
+        note_matches: true,
+        memo: FIXTURE_MEMO,
+    });
     let record = EnhanceRecord::from_parts(EnhanceRecordParts {
-        enc_ciphertext_suffix: enc_ciphertext[52..].try_into().unwrap(),
-        cv_net: cv.to_bytes(),
-        out_ciphertext: encryptor.encrypt_outgoing_plaintext(&cv, &cmx, &mut rand::thread_rng()),
+        enc_ciphertext_suffix: fixture.output.enc_ciphertext_suffix(),
+        cv_net: fixture.cv_net,
+        out_ciphertext: fixture.out_ciphertext,
         has_transparent_inputs: false,
         has_transparent_outputs: false,
         metadata: EnhanceTransactionMetadata::new(3428144, None).unwrap(),
     });
-    let compact = CompactAction::from_parts(
-        Nullifier::from_bytes(&[0; 32]).unwrap(),
-        cmx,
-        EphemeralKeyBytes(ephemeral_key),
-        enc_ciphertext[..52].try_into().unwrap(),
-    );
-    let domain = IronwoodDomain::for_compact_action(&compact);
     let root = tempfile::tempdir().unwrap();
     let mut tasks = Vec::new();
     let mut replicas = Vec::new();
@@ -138,91 +109,56 @@ async fn incoming_and_outgoing_recovery_authenticate_pir_returned_record() {
     let bytes = client.query_position_with_timing(32).await.unwrap().0;
     assert_eq!(bytes.as_ref(), record.as_bytes());
     let returned = EnhanceRecord::from_bytes(*bytes.as_bytes()).unwrap();
-    let mut reconstructed = [0; 580];
-    reconstructed[..52].copy_from_slice(&enc_ciphertext[..52]);
-    reconstructed[52..].copy_from_slice(returned.enc_ciphertext_suffix());
-    let mut output = Output {
-        record: EnhanceRecord::from_bytes(bytes.as_ref().try_into().unwrap()).unwrap(),
-        cmx: cmx.to_bytes(),
-        ephemeral_key,
-        enc_ciphertext: reconstructed,
-    };
+    // The compact block supplies the nullifier, cmx, ephemeral key and the
+    // ciphertext prefix; the PIR-returned record supplies the rest.
+    let compact = &fixture.output;
+    let output = compact.with_enc_ciphertext_suffix(returned.enc_ciphertext_suffix());
+    let returned_cv = *returned.cv_net();
+    assert_eq!(own_ivk(&output), expected);
     assert_eq!(
-        try_note_decryption(&domain, &ivk, &output),
-        Some((note, recipient, memo))
+        ovk(FixtureKey::Own, &output, &returned_cv, &returned),
+        expected
     );
-    let returned_cv = ValueCommitment::from_bytes(output.record.cv_net()).unwrap();
-    assert_eq!(
-        try_output_recovery_with_ovk(
-            &domain,
-            &ovk,
-            &output,
-            &returned_cv,
-            output.record.out_ciphertext()
-        ),
-        Some((note, recipient, memo))
-    );
-    assert!(
-        try_note_decryption(&OrchardDomain::for_compact_action(&compact), &ivk, &output).is_none()
-    );
-    let other_fvk = FullViewingKey::from(&SpendingKey::from_bytes([8; 32]).unwrap());
-    let other_ivk = PreparedIncomingViewingKey::new(&other_fvk.to_ivk(Scope::External));
-    assert!(try_note_decryption(&domain, &other_ivk, &output).is_none());
-    assert!(try_output_recovery_with_ovk(
-        &domain,
-        &other_fvk.to_ovk(Scope::External),
-        &output,
-        &returned_cv,
-        output.record.out_ciphertext()
-    )
-    .is_none());
+    assert!(decrypt_incoming(NoteDomain::Orchard, FixtureKey::Own, &output).is_none());
+    assert!(decrypt_incoming(NoteDomain::Ironwood, FixtureKey::Other, &output).is_none());
+    assert!(ovk(FixtureKey::Other, &output, &returned_cv, &returned).is_none());
     let mut out_corrupt = *record.as_bytes();
     out_corrupt[enhance_pir::types::RECORD_OUT_CIPHERTEXT_OFFSET] ^= 1;
-    output.record = EnhanceRecord::from_bytes(out_corrupt).unwrap();
-    assert!(try_output_recovery_with_ovk(
-        &domain,
-        &ovk,
-        &output,
+    let out_corrupt = EnhanceRecord::from_bytes(out_corrupt).unwrap();
+    let out_corrupt_output =
+        compact.with_enc_ciphertext_suffix(out_corrupt.enc_ciphertext_suffix());
+    assert!(ovk(
+        FixtureKey::Own,
+        &out_corrupt_output,
         &returned_cv,
-        output.record.out_ciphertext()
+        &out_corrupt
     )
     .is_none());
-    assert_eq!(
-        try_note_decryption(&domain, &ivk, &output),
-        Some((note, recipient, memo))
-    );
+    assert_eq!(own_ivk(&out_corrupt_output), expected);
     // Expiry/fee and transaction-shape flags are indexer metadata, outside note
     // authentication. Do not claim that decrypting the note authenticates them.
     let mut metadata_changed = *record.as_bytes();
     metadata_changed[enhance_pir::types::RECORD_EXPIRY_HEIGHT_OFFSET] ^= 1;
-    output.record = EnhanceRecord::from_bytes(metadata_changed).unwrap();
+    let metadata_changed = EnhanceRecord::from_bytes(metadata_changed).unwrap();
     assert_eq!(
-        try_note_decryption(&domain, &ivk, &output),
-        Some((note, recipient, memo))
+        own_ivk(&compact.with_enc_ciphertext_suffix(metadata_changed.enc_ciphertext_suffix())),
+        expected
     );
-    output.record = record.clone();
-    output.cmx[0] ^= 1;
-    assert!(try_note_decryption(&domain, &ivk, &output).is_none());
-    output.cmx = cmx.to_bytes();
+    let mut cmx_tampered = output.clone();
+    cmx_tampered.cmx[0] ^= 1;
+    assert!(own_ivk(&cmx_tampered).is_none());
     let mut corrupted = *record.as_bytes();
     corrupted[100] ^= 1;
-    output.record = EnhanceRecord::from_bytes(corrupted).unwrap();
-    output.enc_ciphertext[52..].copy_from_slice(output.record.enc_ciphertext_suffix());
-    assert!(try_note_decryption(&domain, &ivk, &output).is_none());
-    assert!(try_output_recovery_with_ovk(
-        &domain,
-        &ovk,
-        &output,
-        &returned_cv,
-        output.record.out_ciphertext()
-    )
-    .is_none());
-    output.enc_ciphertext = reconstructed;
-    output.enc_ciphertext[0] ^= 1;
-    assert!(try_note_decryption(&domain, &ivk, &output).is_none());
-    output.enc_ciphertext = reconstructed;
-    output.ephemeral_key[0] ^= 1;
-    assert!(try_note_decryption(&domain, &ivk, &output).is_none());
+    let corrupted = EnhanceRecord::from_bytes(corrupted).unwrap();
+    let corrupted_output = compact.with_enc_ciphertext_suffix(corrupted.enc_ciphertext_suffix());
+    assert!(own_ivk(&corrupted_output).is_none());
+    assert!(ovk(FixtureKey::Own, &corrupted_output, &returned_cv, &corrupted).is_none());
+    let mut prefix_corrupt = output.clone();
+    prefix_corrupt.enc_ciphertext[0] ^= 1;
+    assert!(own_ivk(&prefix_corrupt).is_none());
+    let mut epk_tampered = output.clone();
+    epk_tampered.ephemeral_key[0] ^= 1;
+    assert!(own_ivk(&epk_tampered).is_none());
     server.abort();
     for task in tasks {
         task.abort();

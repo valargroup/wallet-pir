@@ -16,11 +16,11 @@ use transparent_filter::{
     experimental_parent::{self as p, Manifest, Parent},
     ShardMap,
 };
-use transparent_wallet::{
+use zakura_pir_transparent::engine::{
     http::{HttpFilterSource, HttpOptions, HttpShardTransport},
     Anchor, Completion, ScriptEntry, StaticChain, StaticScripts, WorkLimits,
 };
-use transparent_wallet_store::SqliteStore;
+use zakura_pir_transparent::engine_store::SqliteStore;
 
 #[derive(Clone)]
 struct Origin {
@@ -58,7 +58,7 @@ async fn recover(
     enabled: bool,
 ) -> (
     transparent_regression::Snapshot,
-    transparent_wallet::SyncReport,
+    zakura_pir_transparent::engine::SyncReport,
 ) {
     let height = map.shards.last().unwrap().end_height;
     recover_at(db, map, pir, origin, tags, enabled, height).await
@@ -74,7 +74,7 @@ async fn recover_at(
     height: u64,
 ) -> (
     transparent_regression::Snapshot,
-    transparent_wallet::SyncReport,
+    zakura_pir_transparent::engine::SyncReport,
 ) {
     tokio::task::spawn_blocking(move || {
         let mut store = SqliteStore::open(db).unwrap();
@@ -97,7 +97,7 @@ async fn recover_at(
                 .map(|tag| ScriptEntry {
                     script: script(tag).as_slice().to_vec(),
                     required_from: FIRST,
-                    origin: transparent_wallet::store::ScriptOrigin::Derived,
+                    origin: zakura_pir_transparent::engine::store::ScriptOrigin::Derived,
                 })
                 .collect(),
         );
@@ -105,7 +105,7 @@ async fn recover_at(
             height,
             hash: hash_at(height).to_display_hex(),
         };
-        let report = transparent_wallet::sync_into(
+        let report = zakura_pir_transparent::engine::sync_into(
             &mut store,
             &map,
             0,
@@ -119,7 +119,7 @@ async fn recover_at(
         )
         .unwrap();
         assert_eq!(report.completion, Completion::Complete);
-        use transparent_wallet::WalletStore;
+        use zakura_pir_transparent::engine::WalletStore;
         for s in store.scripts().unwrap() {
             assert!(store
                 .coverage(&s.script)
@@ -219,7 +219,7 @@ async fn parent_negatives_restart_import_and_corrupt_fallback_recover_exactly() 
         "advancing within a cached parent must not fetch metadata or children"
     );
     {
-        use transparent_wallet::WalletStore;
+        use zakura_pir_transparent::engine::WalletStore;
         let mut store = SqliteStore::open(&partial).unwrap();
         store
             .rollback_above(
@@ -280,7 +280,7 @@ async fn parent_negatives_restart_import_and_corrupt_fallback_recover_exactly() 
         &all.iter()
             .flatten()
             .filter(|(s, _)| (1..=3).any(|t| script(t) == *s))
-            .map(|(s, e)| transparent_regression::EventRecord::new(s.as_slice(), e))
+            .map(|(s, e)| transparent_regression::EventRecord::new(s.as_slice(), e).unwrap())
             .collect::<Vec<_>>(),
         map.shards.last().unwrap().end_height,
     )

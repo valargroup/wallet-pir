@@ -68,7 +68,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         owned.dedup();
         let mut hash = Sha256::new();
         for event in &owned {
-            hash.update(event.to_bytes());
+            hash.update(event.to_bytes()?);
         }
         client["required_from"] = json!(0);
         client["journal_events"] = json!(owned.len());

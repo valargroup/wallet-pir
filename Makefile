@@ -90,6 +90,7 @@ check-ops-regression-fixtures:
 
 check-ops-observation:
 	python3 transparent/ops/tests/test_observation_audit.py
+	python3 transparent/ops/tests/test_activity_prototype_build.py
 
 check-ops-stage-timing:
 	python3 -m unittest discover -s transparent/ops/tests -p 'test_transparent_stage_timing.py'

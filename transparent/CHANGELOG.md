@@ -2,12 +2,16 @@
 
 Covers the crates a wallet uses to recover transparent history over PIR:
 `transparent-events`, `transparent-filter`, `transparent-native`,
-`transparent-shard`, `transparent-wallet`, `transparent-wallet-store`, and the
+`transparent-shard`, the canonical `zakura-pir-transparent` recovery engine and store, and the
 `transparent-shard-server`, `transparent-filter-server` and
 `transparent-block-server` services. Txid display lookups have their own
 [changelog](CHANGELOG-txid.md). Both are released under one tag.
 
 ## Unreleased
+
+- Service tests and tools consume wallet-libraries’ canonical recovery engine
+  and SQLite store. The duplicated wallet crates have been removed; production
+  router HTTP interoperability tests remain in this repository.
 
 - **One request path for history and txid display queries.** The shard
   server's history and txid display workers now share their query

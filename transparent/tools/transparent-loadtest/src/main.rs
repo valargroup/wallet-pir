@@ -26,17 +26,17 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use transparent_filter::ShardMap;
-use transparent_wallet::client::Table;
-use transparent_wallet::http::{HttpFilterSource, HttpOptions, HttpShardTransport};
-use transparent_wallet::store::{ScriptEntry, ScriptOrigin, WalletStore};
-use transparent_wallet::transport::{
+use zakura_pir_transparent::engine::client::Table;
+use zakura_pir_transparent::engine::http::{HttpFilterSource, HttpOptions, HttpShardTransport};
+use zakura_pir_transparent::engine::store::{ScriptEntry, ScriptOrigin, WalletStore};
+use zakura_pir_transparent::engine::transport::{
     BoxError, FilterSource, ShardReply, ShardRequest, ShardTransport,
 };
-use transparent_wallet::{
+use zakura_pir_transparent::engine::{
     sync_into, Completion, IncompleteReason, MemoryStore, ServiceGeometry, StaticChain,
     StaticScripts, WorkLimits,
 };
-use transparent_wallet_store::SqliteStore;
+use zakura_pir_transparent::engine_store::SqliteStore;
 
 #[derive(Parser, Debug, Clone)]
 #[command(
@@ -78,8 +78,8 @@ struct Args {
     /// million events then holds a step for hours.
     #[arg(long)]
     max_queries: Option<u64>,
-    /// Attempts per HTTP call for transient gateway, upload and connection
-    /// failures (1–3), as the wallet's transport offers. One keeps runs
+    /// Attempts per public HTTP call for transient gateway and connection
+    /// failures (1–3). Private setup/query calls make one physical attempt. One keeps runs
     /// comparable with earlier evidence; overload refusals keep the wallet's
     /// own policy either way.
     #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u8).range(1..=3))]
@@ -87,7 +87,7 @@ struct Args {
     /// Shard service requests one sync keeps in flight across matched shards;
     /// 1 walks every request in sequence. A sync with --max-queries always
     /// walks in sequence.
-    #[arg(long, default_value_t = transparent_wallet::http::SHARD_REQUEST_CONCURRENCY)]
+    #[arg(long, default_value_t = zakura_pir_transparent::engine::http::SHARD_REQUEST_CONCURRENCY)]
     shard_concurrency: usize,
     /// Only these classes, comma separated.
     #[arg(long, value_delimiter = ',')]
@@ -181,9 +181,9 @@ impl<T> Counting<T> {
             Ok(down) => entry.down += down,
             Err(error) => {
                 let text = error.to_string();
-                if transparent_wallet::StaleRevision::found_in(error).is_some() {
+                if zakura_pir_transparent::engine::StaleRevision::found_in(error).is_some() {
                     entry.http_409 += 1;
-                } else if transparent_wallet::Overloaded::found_in(error).is_some()
+                } else if zakura_pir_transparent::engine::Overloaded::found_in(error).is_some()
                     || text.contains("503")
                 {
                     entry.http_503 += 1;
@@ -353,7 +353,7 @@ impl Outcome {
 /// refusing: 128 clients recorded about 28,000 failed syncs in ten minutes,
 /// each one more request against a pool that had none to spare.
 fn resubmit_backoff(failures: u32) -> Duration {
-    transparent_wallet::backoff::exponential(
+    zakura_pir_transparent::engine::backoff::exponential(
         Duration::from_millis(500),
         failures,
         Duration::from_secs(16),
@@ -382,7 +382,7 @@ fn store_digest<S: WalletStore>(
     events.dedup();
     let mut hasher = Sha256::new();
     for event in &events {
-        hasher.update(event.to_bytes());
+        hasher.update(event.to_bytes()?);
     }
     Ok((hex::encode(hasher.finalize()), events.len() as u64))
 }
@@ -393,7 +393,7 @@ fn run_client(
     map: &ShardMap,
     map_bytes: u64,
     geometry: &ServiceGeometry,
-    target: &transparent_wallet::Anchor,
+    target: &zakura_pir_transparent::engine::Anchor,
     index: usize,
 ) -> Outcome {
     let started = Instant::now();
@@ -741,7 +741,7 @@ async fn legacy_main() -> anyhow::Result<()> {
         bail!("no clients selected");
     }
     let target = if pinned {
-        transparent_wallet::Anchor {
+        zakura_pir_transparent::engine::Anchor {
             height: sample.anchor_height,
             hash: sample
                 .anchor_hash
@@ -749,7 +749,7 @@ async fn legacy_main() -> anyhow::Result<()> {
                 .expect("pinned requires the anchor hash"),
         }
     } else {
-        transparent_wallet::Anchor {
+        zakura_pir_transparent::engine::Anchor {
             height: tip.end_height,
             hash: tip.terminal_block_hash.clone(),
         }

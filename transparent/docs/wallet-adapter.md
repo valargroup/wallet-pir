@@ -1,8 +1,10 @@
 # Wallet adapter contract
 
 Status: the boundary a wallet integrates through, 2026-09-08. The reference
-implementation is `transparent/crates/transparent-wallet` (core, pure Rust) with
-`transparent/crates/transparent-wallet-store` (SQLite persistence). Vizor is the first
+implementation is owned by wallet-libraries' `zakura-pir-transparent` package
+(`zakura/pir-transparent`, at the revision this repository's `Cargo.lock` pins):
+its `engine` module (feature `engine`, pure Rust) with `engine_store::SqliteStore`
+(feature `engine-store`, SQLite persistence). Vizor is the first
 integration target; this document is what its adapter must supply and what it
 may rely on. No Vizor repository change is part of this repository.
 
@@ -19,16 +21,17 @@ boundary as a callback, so a binding generator can take the facade as it is.
 | Chain view | accepted headers `(height, hash)` | A height listed with another hash is a reorg and coverage above it is rolled back; a height not listed is unknown and the sync stops short rather than guessing. |
 | Transport | `ShardTransport`, `FilterSource` | The reference HTTP adapters live behind the `reqwest` feature; a wallet with its own HTTP stack implements the two traits. |
 
-The facade `TransparentSync` in `transparent/crates/transparent-wallet/src/facade.rs` binds
+The facade `zakura_pir_transparent::engine::TransparentSync` (`src/engine/facade.rs`) binds
 these: `refresh_map` fetches the map and the service parameters and returns
 the tip for the wallet to validate; `sync_once(SyncRequest)` performs one
 bounded sync and returns `SyncStatus`; `status`, `snapshot` and
 `rollback_to(Anchor)` read or adjust the store without network work. The caller supplies an accepted common ancestor for rollback, including inside a shard.
 
 A wallet that brings its own store proves it with the contract suite:
-`transparent_wallet::testing::suite` (feature `testing`) is the same suite the
-two reference stores pass. The init document is parsed by
-`transparent_wallet::parse_init` whichever transport fetched it.
+`zakura_pir_transparent::engine::testing::suite` (feature `engine-conformance`) is
+the same suite the two reference stores, `engine::MemoryStore` and
+`engine_store::SqliteStore`, pass. The init document is parsed by
+`zakura_pir_transparent::engine::parse_init` whichever transport fetched it.
 
 ## What the wallet gets back
 
@@ -37,8 +40,8 @@ two reference stores pass. The init document is parsed by
 `chain-unknown:<height>`, `publication-behind:<height>`, `unresolved-spends`,
 `discovery-unbounded`, `content-failed`. `content-failed` means some directory
 entries' rows failed to decode or check out; `failed_entries` lists each
-with its failure count, everything else was read, and an entry at three failures
-is no longer queried. `unresolved-spends` is reported once every script in
+with its shard revision and failure count, everything else was read, and an
+entry at three failures of the same revision is no longer queried. `unresolved-spends` is reported once every script in
 scope is covered to the target and a spend's receive lies below the wallet's
 floor; the anchor does not commit for it, so every later run re-verifies
 against the target. A wallet may add words of its own for states the library
@@ -84,16 +87,22 @@ reports the same split for the reference adapters.
 
 ## Persistence compatibility
 
-SQLite schema 3 retains schema 2's separation of source-publication identity
-from covered endpoints and adds the last committed page's logical event and
-encoded byte count. A custom store must persist this `PendingPages.boundary`
-atomically with events and `next_ordinal`; resumed v10 downloads use it to reject
-underfilled or reordered fragment boundaries. Store the logical event with its
-full outpoint, independently of compact row references.
+`engine_store::SCHEMA_VERSION` is 7: it holds schema-v12 chain walks, saved run
+fragments, the run cache and per-entry content failures. A custom store must
+persist the last committed fragment's `PendingPages.boundary` atomically with
+events and `next_ordinal`; resumed downloads use it to reject underfilled or
+reordered fragment boundaries. Store the logical event with its full outpoint,
+independently of compact row references.
 
-Migration from schema 2 preserves events, scripts and coverage and adds an empty
-boundary field. Migration from schema 1 still clears unbound legacy coverage,
-pending work and completion metadata. Changing shard schema and seal thresholds
+Content failures count per shard id, shard revision and script, committed with
+the shard that observed them. `WalletStore::entry_failures(shard_id, revision,
+script)` answers only for the revision the counts are bound to; a reused shard id
+with another revision starts afresh, and counts without a proven revision binding
+apply to none.
+
+Schema 6 upgrades in place, adding only the empty failure-count table; the
+creation and version update commit together. Other schema versions are refused,
+not migrated. Changing shard schema and seal thresholds
 requires a separate publication lineage and consumer migration; a database
 schema migration does not authorize reuse of old shard identifiers. A lower target requires an
 explicit accepted-anchor rollback. See [testing](testing.md) for regression checks.

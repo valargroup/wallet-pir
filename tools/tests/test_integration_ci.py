@@ -1,8 +1,10 @@
 """Fast selection must not silently omit a new integration executable."""
 import json
+import re
 from pathlib import Path
 import sys
 import tempfile
+import tomllib
 import unittest
 from unittest.mock import patch
 
@@ -17,6 +19,33 @@ class IntegrationTests(unittest.TestCase):
         for package in ['receiver-pir-server', 'transparent-shard-server', 'enhance-pir-server']:
             self.assertIn('ci_smoke', registry[package]['fast'])
 
+    def test_workspace_rust_literal_module_and_fixture_paths_exist(self):
+        checked = set()
+        for package in tests.workspace_packages():
+            directory = Path(package['manifest_path']).parent
+            for source in directory.rglob('*.rs'):
+                if source in checked:
+                    continue
+                checked.add(source)
+                text = source.read_text()
+                paths = re.findall(r'#\[path\s*=\s*"([^"]+)"\]', text)
+                paths += re.findall(r'include_(?:bytes|str)!\(\s*"([^"]+)"', text)
+                for relative in paths:
+                    self.assertTrue((source.parent / relative).is_file(),
+                                    f'{source.relative_to(ROOT)}: missing {relative}')
+
+    def test_operational_filter_and_txid_canary_targets_are_service_owned(self):
+        directory = ROOT / 'transparent/tools/transparent-loadtest'
+        manifest = tomllib.loads((directory / 'Cargo.toml').read_text())
+        self.assertEqual(manifest['package']['name'], 'transparent-loadtest')
+        for binary in ['transparent-filter-cli', 'txid-quality-canary']:
+            self.assertTrue((directory / 'src/bin' / (binary + '.rs')).is_file(), binary)
+        self.assertIn('client', manifest['dependencies']['transparent-filter']['features'])
+        self.assertEqual(manifest['dependencies']['transparent-txid-client']['package'],
+                         'zakura-transparent-txid-client')
+        registry = json.loads((ROOT / 'tools/ci/integration-tests.json').read_text())
+        self.assertIn('service_tools', registry['transparent-loadtest']['full'])
+
     def test_missing_stale_duplicate_and_malformed_assignments_fail(self):
         for registry in [{}, {'p': {'fast': [], 'full': []}},
                          {'p': {'fast': ['smoke'], 'full': ['smoke']}},
@@ -26,9 +55,32 @@ class IntegrationTests(unittest.TestCase):
             with self.subTest(registry=registry), self.assertRaises(ValueError):
                 tests.validate({'p': {'smoke'}}, registry)
 
-    def test_the_receiver_oracle_enables_its_declared_server_feature(self):
-        self.assertEqual(tests.target_features('receiver-pir', ['golden']), ['--features', 'server'])
+    def test_selected_targets_enable_only_their_declared_features(self):
+        # The receiver oracle now belongs to wallet-libraries. Keep the driver
+        # regression independent of any particular service package's features.
+        with tempfile.TemporaryDirectory() as directory:
+            manifest = Path(directory) / 'Cargo.toml'
+            manifest.write_text('[package]\nname = "fixture"\nversion = "0.0.0"\n'
+                                '[[test]]\nname = "golden"\nrequired-features = ["server"]\n'
+                                '[[test]]\nname = "plain"\n')
+            with patch.object(tests, 'workspace_packages', return_value=[
+                    {'name': 'fixture', 'manifest_path': str(manifest)}]):
+                self.assertEqual(tests.target_features('fixture', ['golden']), ['--features', 'server'])
+                self.assertEqual(tests.target_features('fixture', ['plain']), [])
         self.assertEqual(tests.target_features('enhance-pir-server', ['ci_smoke']), [])
+
+    def test_each_integration_command_selects_a_service_workspace_package_and_targets(self):
+        packages = {package['name'] for package in tests.workspace_packages()}
+        discovered = tests.targets()
+        for package, tiers in tests.inventory().items():
+            self.assertIn(package, packages)
+            for tier in ['fast', 'full']:
+                command = tests.cargo_args(package, tiers, tier) + tests.target_features(
+                    package, tiers['fast'] if tier == 'fast' else tiers['fast'] + tiers['full'])
+                self.assertEqual(command[command.index('-p') + 1], package)
+                selected = {command[index + 1] for index, word in enumerate(command[:-1])
+                            if word == '--test'}
+                self.assertFalse(selected - discovered[package])
 
     def test_fast_never_compiles_the_campaign_target(self):
         tiers = {'fast': ['smoke'], 'full': ['campaign']}

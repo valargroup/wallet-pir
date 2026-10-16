@@ -5,7 +5,7 @@ use crate::{
 use anyhow::{ensure, Result};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use transparent_events::{ReceiveEvent, SpendEvent, TransparentEvent, Txid};
-use transparent_wallet::store::{
+use zakura_pir_transparent::engine::store::{
     Anchor, ScriptEntry, SetIdentity, ShardCommit, StoredEvent, WalletStore,
 };
 

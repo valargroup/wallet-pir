@@ -7,9 +7,9 @@
 use receiver_directory::{
     filter::{RECENT, SEEN},
     snapshot::ProviderSet,
-    store::{ProviderStore, Store},
     ReceiverBytes,
 };
+use receiver_store::{ProviderStore, Store};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::{
@@ -1097,11 +1097,9 @@ mod tests {
 
     /// An index from height 100 whose first block pays `receiver(1)` in transaction
     /// `[7; 32]`, and that block.
-    fn paid_index(path: &std::path::Path) -> (Store, receiver_directory::store::IndexedBlock) {
-        use receiver_directory::{
-            store::{Config, IndexedBlock},
-            Payment,
-        };
+    fn paid_index(path: &std::path::Path) -> (Store, receiver_store::IndexedBlock) {
+        use receiver_directory::Payment;
+        use receiver_store::{Config, IndexedBlock};
         let index = Store::open(
             path,
             Config {

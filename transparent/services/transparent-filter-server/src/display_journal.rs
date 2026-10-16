@@ -25,12 +25,14 @@ type IndexedEvents = Vec<(ScriptBytes, TransparentEvent)>;
 
 /// One sidecar family: its directory, envelope magic and block size bound.
 /// v1 is read only for oversized history events; v2x is written and read.
-struct Envelope {
+/// Crate-visible for the excluded txid-sizing exporter, which compiles this
+/// module to read historical v1 records with the same envelope checks.
+pub(crate) struct Envelope {
     dir: &'static str,
     magic: &'static [u8; 8],
     max_bytes: usize,
 }
-const V1: Envelope = Envelope {
+pub(crate) const V1: Envelope = Envelope {
     dir: "display-v1",
     magic: b"TPIRTX01",
     max_bytes: MAX_BLOCK_DISPLAY_BYTES,
@@ -65,7 +67,7 @@ pub fn write_with_events(
     let payloads = records.iter().map(|r| (r.record.txid, r.encode()));
     write_envelope(&V2X, dir, hash, payloads, oversized)
 }
-fn write_envelope(
+pub(crate) fn write_envelope(
     envelope: &Envelope,
     dir: &Path,
     hash: BlockHash,
@@ -97,7 +99,7 @@ fn write_envelope(
         event.validate_metadata()?;
         encode_varint(script.as_slice().len() as u64, &mut bytes);
         bytes.extend(script.as_slice());
-        let event = event.to_bytes();
+        let event = event.to_bytes()?;
         encode_varint(event.len() as u64, &mut bytes);
         bytes.extend(event);
         if bytes.len() > envelope.max_bytes {
@@ -146,7 +148,7 @@ pub fn read_sources(
 ) -> Result<Vec<TransparentDisplayRecordV2x>, EventStoreError> {
     Ok(read_envelope(&V2X, dir, hash, TransparentDisplayRecordV2x::decode)?.0)
 }
-fn read_envelope<R>(
+pub(crate) fn read_envelope<R>(
     envelope: &Envelope,
     dir: &Path,
     hash: BlockHash,
@@ -438,6 +440,55 @@ mod tests {
         ]
     }
     #[test]
+    fn contradictory_transactions_leave_no_sidecar_or_journal_changes() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut store = crate::events::EventStore::open(
+            temp.path(),
+            transparent_filter::MAINNET_GENESIS_DISPLAY,
+            1,
+        )
+        .unwrap();
+        store.commit().unwrap();
+        let record = source(vec![0x51]);
+        let mut block = events(&record);
+        if let TransparentEvent::Spend(spend) = &mut block[1].1 {
+            spend.transaction_index = 1;
+        }
+        // Record matching alone permits these events; they contradict each other.
+        validate_events(std::slice::from_ref(&record), &block).unwrap();
+        let names = ["events.bin", "blocks.bin", "checkpoint.bin"];
+        let before: Vec<_> = names
+            .iter()
+            .map(|name| std::fs::read(temp.path().join(name)).unwrap())
+            .collect();
+        assert!(store
+            .append_block_with_display(
+                1,
+                BlockHash::from_internal_bytes([2; 32]),
+                &block,
+                std::slice::from_ref(&record)
+            )
+            .is_err());
+        assert!(!temp.path().join(V2X_DIR).exists());
+        assert_eq!(store.covered_through(), None);
+        assert_eq!(store.events_stored(), 0);
+        for (name, bytes) in names.iter().zip(before) {
+            assert_eq!(std::fs::read(temp.path().join(name)).unwrap(), bytes);
+        }
+        let valid = events(&record);
+        store
+            .append_block_with_display(
+                1,
+                BlockHash::from_internal_bytes([2; 32]),
+                &valid,
+                std::slice::from_ref(&record),
+            )
+            .unwrap();
+        store.commit().unwrap();
+        assert_eq!(store.events_at(1).unwrap(), Some(valid));
+    }
+
+    #[test]
     fn immutable_identity_reload_and_malformed() {
         let temp = tempfile::tempdir().unwrap();
         let hash = BlockHash::from_internal_bytes([2; 32]);
@@ -566,7 +617,7 @@ mod tests {
         encode_varint(1, &mut bytes);
         encode_varint(script.len() as u64, &mut bytes);
         bytes.extend(&script);
-        let raw = event.to_bytes();
+        let raw = event.to_bytes().unwrap();
         encode_varint(raw.len() as u64, &mut bytes);
         bytes.extend(raw);
         bytes.extend(Sha256::digest(&bytes));

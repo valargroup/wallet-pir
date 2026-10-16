@@ -42,7 +42,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/transparent-fleet-state.sh"
 # serve the same document.
 
 # shards.json, the published map. Serialized by ShardMap in
-# transparent/crates/transparent-filter/src/wire.rs.
+# wallet-libraries' zakura/transparent-filter/src/wire.rs.
 readonly JQ_MAP_SHARD_COUNT='.shards | length'
 readonly JQ_MAP_DIGESTS='.shards[].manifest_digest'
 readonly JQ_MAP_FIRST_DIGEST='.shards[0].manifest_digest'

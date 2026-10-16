@@ -1,6 +1,5 @@
 //! Analysis-only sequential disk UTXO census, using the production extractor.
 use super::*;
-use crate::extract::PreviousOutputs;
 use rusqlite::{params, Connection, OptionalExtension};
 use std::io::{self, BufRead, Write};
 
@@ -50,7 +49,7 @@ fn script_size(raw: &[u8]) -> (usize, &'static str) {
     }
 }
 fn stats(
-    record: &transparent_shard::txid::TransparentDisplayRecord,
+    record: &transparent_shard::txid_v1::TransparentDisplayRecord,
     missing: usize,
 ) -> Result<Value, AnyError> {
     let display = record.encode()?;
@@ -181,10 +180,11 @@ pub fn run(path: &str) -> Result<(), AnyError> {
                         .into_iter()
                         .next()
                         .ok_or("missing eligible record")?
+                        .record
                 } else {
                     // Extraction refuses partial filters. Census preserves eligibility
                     // with the shared explicitly unknown fee state; no invented fee.
-                    transparent_shard::txid::TransparentDisplayRecord {
+                    transparent_shard::txid_v1::TransparentDisplayRecord {
                         txid: transparent_events::Txid(txid),
                         coinbase,
                         metadata: transparent_events::TransactionMetadata {
@@ -249,7 +249,8 @@ mod tests {
     use super::*;
     #[test]
     fn compact_size_oracle_preserves_raw_scripts_and_count_escapes() {
-        use transparent_shard::txid::{DisplayOutput, TransparentDisplayRecord};
+        use transparent_shard::txid::DisplayOutput;
+        use transparent_shard::txid_v1::TransparentDisplayRecord;
         for ni in [0, 14, 15, 128] {
             for no in [0, 1, 14, 15, 128] {
                 let record = TransparentDisplayRecord {

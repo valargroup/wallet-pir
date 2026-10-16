@@ -3,7 +3,7 @@ use std::{
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
-use transparent_wallet::{
+use zakura_pir_transparent::engine::{
     client::Table,
     transport::{BoxError, FilterSource, ShardReply, ShardRequest, ShardTransport},
 };
@@ -78,9 +78,9 @@ impl<T> Counting<T> {
             Ok(down) => entry.down += down,
             Err(error) => {
                 let text = error.to_string();
-                if transparent_wallet::StaleRevision::found_in(error).is_some() {
+                if zakura_pir_transparent::engine::StaleRevision::found_in(error).is_some() {
                     entry.http_409 += 1;
-                } else if transparent_wallet::Overloaded::found_in(error).is_some()
+                } else if zakura_pir_transparent::engine::Overloaded::found_in(error).is_some()
                     || text.contains("503")
                 {
                     entry.http_503 += 1;

@@ -81,9 +81,9 @@ class PlannerTests(unittest.TestCase):
         self.assertIn('check-docs', result['helpers'])
 
     def test_receiver_packages_have_their_own_full_group(self):
-        result = fast.plan(self.packages, ['receiver/crates/receiver-directory/src/filter.rs'])
+        result = fast.plan(self.packages, ['receiver/crates/receiver-store/src/lib.rs'])
         self.assertEqual(result['groups'], ['receiver'])
-        self.assertIn('receiver-directory/store', full.commands('receiver', full.inventory())[0])
+        self.assertIn('receiver-store', full.commands('receiver', full.inventory())[0])
 
     def test_receiver_ops_config_changes_run_their_contract_suite(self):
         makefile = (ROOT / 'Makefile').read_text()
@@ -139,7 +139,7 @@ class PlannerTests(unittest.TestCase):
         groups = full.inventory()
         for group in groups:
             self.assertIn('--group ' + group, workflow)
-        for name in ['pir-control', 'pir-observability', 'pir-monitor', 'transparent-native']:
+        for name in ['pir-control', 'pir-observability', 'pir-monitor', 'transparent-blocks']:
             command = next(command for group in groups for command in full.commands(group, groups) if '-p' in command and name in command)
             self.assertIn('tools/ci/full-test.sh', command)
         self.assertIn('needs: [complete]', workflow)
@@ -196,6 +196,21 @@ class PlannerTests(unittest.TestCase):
             helpers.targets(['check-docs; unsafe'])
 
 
+    def test_full_commands_only_select_workspace_packages_and_feature_owners(self):
+        workspace = {package['name'] for package in self.packages}
+        groups = full.inventory()
+        for group in groups:
+            for lint, compile_only in [(False, False), (False, True), (True, False)]:
+                for command in full.commands(group, groups, lint=lint, compile_only=compile_only):
+                    selected = {command[index + 1] for index, word in enumerate(command[:-1]) if word == '-p'}
+                    self.assertFalse(selected - workspace, (group, command))
+                    for index, word in enumerate(command[:-1]):
+                        if word == '--features':
+                            for feature in command[index + 1].split(','):
+                                if '/' in feature:
+                                    owner, _ = feature.split('/', 1)
+                                    self.assertIn(owner, selected, (group, command))
+
     def test_required_cli_binary_tests_are_enabled_without_changing_protocol(self):
         metadata = {'packages': [{'name': 'example', 'targets': [
             {'name': 'client', 'kind': ['bin'], 'required-features': ['cli']}]}]}
@@ -207,7 +222,7 @@ class PlannerTests(unittest.TestCase):
         self.assertNotIn('native-reinspiring', calls[-1])
         groups = full.inventory()
         self.assertIn('enhance-pir/cli', full.commands('enhance', groups)[0])
-        self.assertIn('transparent-filter/cli', full.commands('transparent', groups)[0])
+        self.assertNotIn('--features', full.commands('transparent', groups)[0])
 
 
     def test_explicit_disabled_integration_target_cannot_pass_with_zero_tests(self):
@@ -219,19 +234,28 @@ class PlannerTests(unittest.TestCase):
 
 
     def test_feature_gated_classifications_enable_discovery_and_reject_renames(self):
-        metadata = {'packages': [{'name': 'transparent-wallet', 'targets': [{'kind': ['lib']}]}]}
-        registry = json.loads((ROOT/'tools/ci/slow-tests.json').read_text())['transparent-wallet']
+        metadata = {'packages': [{'name': 'fixture-client', 'targets': [{'kind': ['lib']}]}]}
+        registry = {'http::slow': {'reason': 'A gated fixture test.', 'features': ['reqwest']}}
         listing = ''.join(name + ': test\n' for name in registry)
         calls = []
-        with patch.object(fast.subprocess, 'check_output', side_effect=[json.dumps(metadata).encode(), listing]), \
+        actual_read_text = Path.read_text
+
+        def read_registry(path, *args, **kwargs):
+            if path == ROOT / 'tools/ci/slow-tests.json':
+                return json.dumps({'fixture-client': registry})
+            return actual_read_text(path, *args, **kwargs)
+
+        with patch.object(Path, 'read_text', autospec=True, side_effect=read_registry), \
+             patch.object(fast.subprocess, 'check_output', side_effect=[json.dumps(metadata).encode(), listing]), \
              patch.object(fast, 'run', side_effect=lambda command, **kw: calls.append(command)):
-            fast.rust_checks(['transparent-wallet'])
+            fast.rust_checks(['fixture-client'])
         self.assertIn('reqwest', calls[-1])
         self.assertIn('--skip', calls[-1])
-        with patch.object(fast.subprocess, 'check_output', side_effect=[json.dumps(metadata).encode(), 'renamed: test\n']), \
+        with patch.object(Path, 'read_text', autospec=True, side_effect=read_registry), \
+             patch.object(fast.subprocess, 'check_output', side_effect=[json.dumps(metadata).encode(), 'renamed: test\n']), \
              patch.object(fast, 'run'):
             with self.assertRaisesRegex(ValueError, 'stale'):
-                fast.rust_checks(['transparent-wallet'])
+                fast.rust_checks(['fixture-client'])
 
 
 

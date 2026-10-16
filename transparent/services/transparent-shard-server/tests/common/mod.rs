@@ -19,8 +19,8 @@ use transparent_shard::manifest::{
 };
 use transparent_shard_server::service::router;
 use transparent_shard_server::shardset::{ShardSet, DEFAULT_RETAIN_REVISIONS};
-use transparent_wallet::ledger::Ledger;
-use transparent_wallet::transport::{BoxError, FilterSource};
+use zakura_pir_transparent::engine::ledger::Ledger;
+use zakura_pir_transparent::engine::transport::{BoxError, FilterSource};
 
 pub const GENESIS: &str = transparent_filter::MAINNET_GENESIS_DISPLAY;
 pub const FIRST: u64 = 3_428_143;
