@@ -1,0 +1,1642 @@
+{
+  "status": "passed",
+  "gate": "native-certificates",
+  "native_source_sha": "12ce12918446eaa56e2d766ec2f43d82c531abb9",
+  "publication_sha256": "34e3ebe3510206617460cebc87528e56f01949b971797e6f17cc8ca958f23f5d",
+  "operations_source_sha": "801d7a62ae14fc3eb99f0672227b14484b01d197",
+  "owner": "ccc08a720745492abfcf21b1f0228c72",
+  "duration_seconds": 1274.969962958945,
+  "segments": 180,
+  "result_sha256": "9f6cc3e260e738b19ff536fb7f03d2183732c547eb3e97c581263d0daaec3068",
+  "binary_sha256": "b13eaffc2a990596ab12003af2f7487bb21996fe1a835f68404cdd90f5af4b0e",
+  "certifier_sha256": "8fcffe86ce1cc631439026f9cce65cd503440637bea2f4ea7e8fff8d13a8a4f7",
+  "ipir_source_sha": "1f2aec654d42d8c180373036eb1f6d30ff4ad30c",
+  "floors": {
+    "archive-wide-pages": 83,
+    "otherwise": 128
+  },
+  "minimum_measured_failure_bits": 95,
+  "limitation": "Actual immutable segment certificates; installed setup/public hashes still require agreement during warm service verification. Not query, wallet, lifecycle or freshness qualification.",
+  "setup_bindings": [
+    {
+      "shard_id": 0,
+      "manifest_digest": "38c53bd3037b5576bff30cac6bfc2f28d70f00938777ebd2da62c1fe1bf000e0",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "b4bb82b96cb5d41752dfbe436802220c6466f151f7b665650595379931f1d6d3",
+      "public_sha256": "915e2fbe1d8db6ced4e0c0cc258a54a185be12760dbd2ca8af890ade16ceca7a"
+    },
+    {
+      "shard_id": 0,
+      "manifest_digest": "38c53bd3037b5576bff30cac6bfc2f28d70f00938777ebd2da62c1fe1bf000e0",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "fc0126586d67dd0339c3143726bd45575d39ce2c325e71107fd27e8c132d7b5c",
+      "public_sha256": "4f63e8a1533fcfbe78320c84e61d162a87d30da1b2b66c7938d5a63614d2df50"
+    },
+    {
+      "shard_id": 1,
+      "manifest_digest": "61528d29e884140e3c33192f754d6c7d55e1c55a4d65ba2dee6dd77739abfce3",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "db775abbc7d2514926c1453cc1c102d2d1c989eaba129b71d1ef95626f28a0fc",
+      "public_sha256": "c4b8a5a3eba9939c288e7ed9d3097d3ae19801be758541978df8326dc6531006"
+    },
+    {
+      "shard_id": 1,
+      "manifest_digest": "61528d29e884140e3c33192f754d6c7d55e1c55a4d65ba2dee6dd77739abfce3",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "96d8b270655d6a9bf5ebcc31c5697782e98c49e0399307fed8b45a60da947035",
+      "public_sha256": "85c301bf0ee9d71080477c4ddbb15a733cb91e86f1c27bd1501be7221acdf138"
+    },
+    {
+      "shard_id": 2,
+      "manifest_digest": "a6dcfc05171af0b3811f85f2549dd90026827b1fd81f4b77a7d88c93608792a5",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "31375d50172827d33b7e7855f71a451c306d41759b0d404489d41b1840a29c08",
+      "public_sha256": "7ceedff47cbed9fa339030f29755b7f5e7b26dba8d58167320849b4437a5c3c5"
+    },
+    {
+      "shard_id": 2,
+      "manifest_digest": "a6dcfc05171af0b3811f85f2549dd90026827b1fd81f4b77a7d88c93608792a5",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "c41d40b45f81198ccc6ed4b0af01d12f2a42ca5dc0a2b983856148bc3e787b22",
+      "public_sha256": "fa7d8bda0b67083436f57fb69f0656669b2ce95d64187bdb53dc148587134e0a"
+    },
+    {
+      "shard_id": 3,
+      "manifest_digest": "e8c60419d778545681f888acbf72da3bf1c9ed5a2b434fa213f13beb2bff35dd",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "b5f10ba9bcb604463987211f77b47f686456ed4a9a901bcbbb993114a4a5c77b",
+      "public_sha256": "280c5e3a79cc83240b9fbad7432abd2d0841ac1fa924a7e3bc0d2d392201d145"
+    },
+    {
+      "shard_id": 3,
+      "manifest_digest": "e8c60419d778545681f888acbf72da3bf1c9ed5a2b434fa213f13beb2bff35dd",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "38e97640e4d36040d2ca3a4885647d479d29143612aa2665806e9222c219f25f",
+      "public_sha256": "427eee9f2de87e01e34e27ca2611ef6eebdf5f6c060d99e8dab805c80c93e3f5"
+    },
+    {
+      "shard_id": 4,
+      "manifest_digest": "c3bf6e6c068b27a9ea5279b740c5bda37bcde9b8d76244d0a542f38fa5542a8b",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "0c81fd94e9222931217030267425f5f4f1963650fff7d47ef75044e75b38bba1",
+      "public_sha256": "467efa1a3cd744d9825504a4f83755e6d56141d5f799ad22fdc2c9661f075df5"
+    },
+    {
+      "shard_id": 4,
+      "manifest_digest": "c3bf6e6c068b27a9ea5279b740c5bda37bcde9b8d76244d0a542f38fa5542a8b",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "16572642c1dfab89a9042d370b432d79c54010440a3a3f38b5abc2472109f405",
+      "public_sha256": "c30bdb6ed9751ad349885cd799bf766ce8721fe295368a5a290a3b3fa5f91776"
+    },
+    {
+      "shard_id": 5,
+      "manifest_digest": "3a324cd024273242ac5315acdb0fdc9b55a01a264f04d1dc86344755649a845e",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "29d9133a46b0b5ccddbf4190152a484924712287950a0d1598ba6932e843e473",
+      "public_sha256": "456864f18f21e045c7831b6055db476a339d7cc99bdde45d78d7eef46c47826f"
+    },
+    {
+      "shard_id": 5,
+      "manifest_digest": "3a324cd024273242ac5315acdb0fdc9b55a01a264f04d1dc86344755649a845e",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "d7ee025d5ecd777f3050b825526f7666d61470042f2a407cee6e18504530efd1",
+      "public_sha256": "d848dad129d0f5cf3eaf3fa2ec604ff7ffc731391ea2ac673c28e28b8138d743"
+    },
+    {
+      "shard_id": 6,
+      "manifest_digest": "e5b597dcd431b50f75bd3e2941adf9c18e6029647d0d97e8a8778701752dff71",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "e7dc5bc9429e3d4271c2e44466145d791a92c1c207e0de63ceccb7469450c66a",
+      "public_sha256": "98e7f15bc21c4b03bb62b1ad8b96f83eaa1ddeeeab6d2f410eb4f301d142414c"
+    },
+    {
+      "shard_id": 6,
+      "manifest_digest": "e5b597dcd431b50f75bd3e2941adf9c18e6029647d0d97e8a8778701752dff71",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "26174a5084f165d03366afabe5a6735433aa02b8b8eafe67db92faa12ff17caf",
+      "public_sha256": "1fd70a3eff2153a6a84ca546a68cc3d0076a5eeeedb7ed94753d15ae2a783b6e"
+    },
+    {
+      "shard_id": 7,
+      "manifest_digest": "f8016c499d6d8e6d579bfe52dec0820b5086a9c7f55061f78212cbac7e638764",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "7f534e9426ce9a58bab5c1cddf9bded35d3a395da1fbcb4cbb94c5167d0f6577",
+      "public_sha256": "48f38adb34a32ab294378aedc709555d6ef8bd631982ea6639ae86d7f1083e91"
+    },
+    {
+      "shard_id": 7,
+      "manifest_digest": "f8016c499d6d8e6d579bfe52dec0820b5086a9c7f55061f78212cbac7e638764",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "531c4ba8e97470eb954394a8705da1af224de77d4cd227a329d445c563c00c71",
+      "public_sha256": "ac3c74ee523b9e043d08fb2dc13db1138e72eae86755b8ff49d3fe94bf03cda9"
+    },
+    {
+      "shard_id": 8,
+      "manifest_digest": "2cdd37bd8fd09986cfbb0b6eb2cf8a49a9fdcfb92459f4e5b5dbdbde8f2088cf",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "987669f0a7d93812e6d3bc2b38c1563d1a4ca52fdda69464eadfd2843978de98",
+      "public_sha256": "238565b54b406f11551121a6f5cefde8388dd5a1cbe85fc837ae7876c6ce1857"
+    },
+    {
+      "shard_id": 8,
+      "manifest_digest": "2cdd37bd8fd09986cfbb0b6eb2cf8a49a9fdcfb92459f4e5b5dbdbde8f2088cf",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "924e2142da6d938661c48bc477e54f13baef2bfeb8e18d84c191b8311dbb5db8",
+      "public_sha256": "0d3ef98fe2cc050c2b1e5ceaa5b527b10bb776de5ea83610a1e7d24dc0b550ec"
+    },
+    {
+      "shard_id": 9,
+      "manifest_digest": "aff43450772c0270a5fc65f513a8705befc468ebc96018f7244fe09658ffeba2",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "eacbe9281546cebc11d889f9ee01fa12963a7b7a7c105af881257d7c532a85e4",
+      "public_sha256": "f181dcf7c4df6f6bba082653814fc8513ff0a4174aafe50525e9bd0ca0d90805"
+    },
+    {
+      "shard_id": 9,
+      "manifest_digest": "aff43450772c0270a5fc65f513a8705befc468ebc96018f7244fe09658ffeba2",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "303d2e6b84d54d23d07e02fed76b78fc49025d6b73ddef79f96a393b4c9ba284",
+      "public_sha256": "24fef18b5dff6229c1e65fabced0409c95bb53a46bf7b6da402a1efb492412ba"
+    },
+    {
+      "shard_id": 10,
+      "manifest_digest": "669b1de94884e07b2aa4025e10201910750aed268ebe980c0f990305082141c1",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "4bc108a3353eb7da964d0b912e6566424307ac903f4ebe74f859fec67deadce7",
+      "public_sha256": "99441fb6a98d043fae064ac378e77a68910869e9d9578145dd2ad18e4d3fbe77"
+    },
+    {
+      "shard_id": 10,
+      "manifest_digest": "669b1de94884e07b2aa4025e10201910750aed268ebe980c0f990305082141c1",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "c98f1cb1bf351c083e7f0e22deb67cbd0ca298a123f01bced1e9eef1f9bee8db",
+      "public_sha256": "d98e566261753415bf722163a4724432416f8fcf98825c34563f988e5d7f7f60"
+    },
+    {
+      "shard_id": 11,
+      "manifest_digest": "67176db2c0676239615612ab02018f06e5b7306275d732303718b9bcfa624867",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "95797707b89acb0bac54aa82bcb47d687bd93d0a77c8fca3f420cd32326ad6b1",
+      "public_sha256": "b83a486ce77ed52bd4819a44a0c0e1bcf7f21f5f9c5f03966950530f0b374b02"
+    },
+    {
+      "shard_id": 11,
+      "manifest_digest": "67176db2c0676239615612ab02018f06e5b7306275d732303718b9bcfa624867",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "fd2ed438af99025666ec35b95c713e024f27e80bb7926973e6427991363f13b6",
+      "public_sha256": "daaf7095591b61e50370a174d70a3de6018b8afca97881bffcc6c88fb925cefc"
+    },
+    {
+      "shard_id": 12,
+      "manifest_digest": "758292491c88c8d92b46d944dcba35a04e45ca9d9777271bcef67d79cb337c97",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "bc4aaf9f28e634f14aee0747f94018a3cdf1b369855dd518b79f194e907f6f22",
+      "public_sha256": "e6df92d0799b2b0b0392fd65113f9959d861a32968246e7119cb2b5f4a40af67"
+    },
+    {
+      "shard_id": 12,
+      "manifest_digest": "758292491c88c8d92b46d944dcba35a04e45ca9d9777271bcef67d79cb337c97",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "4f38285d479a5df6aa10187cf0c1a06a4748572f008f38c49b53d1459ec33a78",
+      "public_sha256": "70ef71dd0bc3cda49a43ec72df9e60269e6e2eb289f01ecebe45694b8063b3d0"
+    },
+    {
+      "shard_id": 13,
+      "manifest_digest": "51ec5548e41251ebb7f0050eea556bd331329c13330033022977fdce2cbf4af8",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "0a3a472ebc5c7b33a25b6f7fa6b25d2bf5403d56114d580c1411e7f8f5fc430d",
+      "public_sha256": "f31fb2c20f678336d3277088e4fa2b3a40d359d0ca1e8168490eaad1183e3be4"
+    },
+    {
+      "shard_id": 13,
+      "manifest_digest": "51ec5548e41251ebb7f0050eea556bd331329c13330033022977fdce2cbf4af8",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "c67a3f92f286677f64627fe72600660d61efb6620d00cd31e39330311595a6a6",
+      "public_sha256": "a9ac8eb24567260c538a0a95c46bb3d2b89864c5619e44c7886f4b5520a61ce4"
+    },
+    {
+      "shard_id": 14,
+      "manifest_digest": "3751f19d238c0348a5c3b87d0d84a6e8ccceefaf253aecfe495bc697dc1327bd",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "3e1163ed01b32321658a76f90391b96f86e9af349fc875c55468804c05d84923",
+      "public_sha256": "b243260b59e9f972be398517f20d20eef0739e8a5d031832ffd35f19e26a5928"
+    },
+    {
+      "shard_id": 14,
+      "manifest_digest": "3751f19d238c0348a5c3b87d0d84a6e8ccceefaf253aecfe495bc697dc1327bd",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "dce7bcb6408461e53f82bf20f2c7cf43c8c1fa099dd1572306b94953a21f809b",
+      "public_sha256": "d6461ce358c9d613ab73752a8b691c86c701f374463f113b7787096fec5d3377"
+    },
+    {
+      "shard_id": 15,
+      "manifest_digest": "a32eb4b00f64fd4495da926fa1af8c5f03ac1eb274ed73824cb448bc6ad10ecb",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "e5d826c36d7d81fdc8ab6b503ba0c4735cd7eba881b6c0ada8894464e04e2a95",
+      "public_sha256": "348eeb7d1481ff2be6ce7dc0a5f59e244bff4255fd990e3764e56d88e4f9df16"
+    },
+    {
+      "shard_id": 15,
+      "manifest_digest": "a32eb4b00f64fd4495da926fa1af8c5f03ac1eb274ed73824cb448bc6ad10ecb",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "3d279a5d7dae42320ab52a6b78a33b82c698864dd48c25fd346a34e5725bab2c",
+      "public_sha256": "c2550c346bbfb42e5a612ae47d336f6e961888217df6d28638caf4119a7c4233"
+    },
+    {
+      "shard_id": 16,
+      "manifest_digest": "21c9ed4fda6384433b95f2507d5eae147ae77cb3c5103cf35b192c7b28b649e2",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "3539afa013c853e6c014e32dd18395d89942f065a8a4bb1ad0b5b1862c153918",
+      "public_sha256": "535f181349f5adefe60bafc341c01793bf6da12f26bf9cbd73d7c836cdfb4b0d"
+    },
+    {
+      "shard_id": 16,
+      "manifest_digest": "21c9ed4fda6384433b95f2507d5eae147ae77cb3c5103cf35b192c7b28b649e2",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "76f8b4c38bcadcd89ddbb53b60fb6f45e9d247c8e98753184bfa2306a54b3ee5",
+      "public_sha256": "2950dced2f08ecc6d48ad7002ef47ae3a42529c3d62984a4e6446316c3fa1222"
+    },
+    {
+      "shard_id": 17,
+      "manifest_digest": "22fb3cf32c880c4288fa2129408b1be15b251f6c3770f92b1be0b97620c72bb4",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "01f0189ebc0e15dfdcb7b2ed03e094e6f3ccd29a8809954961323494d4d3e676",
+      "public_sha256": "278cdf3e14c29ddd704fab8326a35c62e7fbf9832ee250db287aede7178790bb"
+    },
+    {
+      "shard_id": 17,
+      "manifest_digest": "22fb3cf32c880c4288fa2129408b1be15b251f6c3770f92b1be0b97620c72bb4",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "c2094365d5706e180f9516f81a390e225f38cce047b734b05138deba5578ea01",
+      "public_sha256": "5b9a4aaa9a46d33391e05dccde8b3051b8b54fd72dc4518fa58d719e33b67013"
+    },
+    {
+      "shard_id": 18,
+      "manifest_digest": "30e2789505b6188e17bfebc7010af86360e2b0b66be41a2d4424a3da9c74d6f1",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "de0cb690c324a0abd50ed1f19a802f8aa377e288386bbf42c0dfe2e5b098d1d7",
+      "public_sha256": "aacae285863add61e9acfa270c9202bf663073222d9e60182ec99d9d74fb7c18"
+    },
+    {
+      "shard_id": 18,
+      "manifest_digest": "30e2789505b6188e17bfebc7010af86360e2b0b66be41a2d4424a3da9c74d6f1",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "62673f232348253d3078ffc48eb983b6fc646e236c87cde2157471d822be8438",
+      "public_sha256": "60299bb84df953de2ba122992a23d9711b01255df50c07c0432a34f371a0b10f"
+    },
+    {
+      "shard_id": 19,
+      "manifest_digest": "0720914ad755a12ae5c7c623dae984c99d9f86498e297ce1bb1c0750c69c6d3c",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "58f417913d4c5bc22d70866c23a27c1f0e346b86a119065af3decd4f159081cf",
+      "public_sha256": "ebb4f0cfa7ae1f4fcdb9717e43a7345e82365d6526a1d83f00e93f1a0f9bd6b4"
+    },
+    {
+      "shard_id": 19,
+      "manifest_digest": "0720914ad755a12ae5c7c623dae984c99d9f86498e297ce1bb1c0750c69c6d3c",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "aa1e5006d9a06b0197d1b36acc9e78659c59b2710cea5cc68bd1885003f8ae95",
+      "public_sha256": "2d78cbc97f862793b0ef29569be8bdff1deb6eb697ef7662bc5e8957967a1623"
+    },
+    {
+      "shard_id": 20,
+      "manifest_digest": "8faf5bbe36700c31f24d5a98f9eee4b6aa6934afe9a9ae53b05a3b8628be61b4",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "c534eed2b055e4b73c47ccf88f45248a19f6d50dc5d453a9da0ae85893f09ef1",
+      "public_sha256": "b9c85011e05989222138620bf7c163d61f50732c61f817939f1f8f04bbb5256e"
+    },
+    {
+      "shard_id": 20,
+      "manifest_digest": "8faf5bbe36700c31f24d5a98f9eee4b6aa6934afe9a9ae53b05a3b8628be61b4",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "ede78cd54ce59bd65b573d9bb493f6baf098a37342ef401a838ac93d6312fa2c",
+      "public_sha256": "59f45c18b454435f8f9c18dec354686fe4c0d401e49bba5ee408c1224b5e9e53"
+    },
+    {
+      "shard_id": 21,
+      "manifest_digest": "cbd0a2789674558e1e2198f1b8a4310269bdb1b22680138d9d1ffde553786175",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "5723262bbfcf2e5befba7418d03bd44e03488f05e31381da6505cade290d625f",
+      "public_sha256": "4ba3fd6417ed2f1213a2d4a325d34f15688ff0c3d8a0e659918dffb0041e203f"
+    },
+    {
+      "shard_id": 21,
+      "manifest_digest": "cbd0a2789674558e1e2198f1b8a4310269bdb1b22680138d9d1ffde553786175",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "a46d69858fa6409412b9b1d4eb77cd9a5303f95d1ec5cced42b14555afb74d40",
+      "public_sha256": "300afea52c83792a33b07b21bd64667d202b34f4c9c370050af1ab658cc8085c"
+    },
+    {
+      "shard_id": 22,
+      "manifest_digest": "13756b0d4f20fd51765b7a2938708148854ffd83b6681fd623ed2b3553df796a",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "5a76af7f5b59099828b0421105a6183f9b360c2e0265d1813fd9df68e355e350",
+      "public_sha256": "bad43e365c6a4c806ab25617e56837fe2ce5f888804907cd5aef2407b8d0a9f3"
+    },
+    {
+      "shard_id": 22,
+      "manifest_digest": "13756b0d4f20fd51765b7a2938708148854ffd83b6681fd623ed2b3553df796a",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "5924979bf161c39009c8c6e6beb66fd12e2bdb94ed91e77b7a927f55aa58cf63",
+      "public_sha256": "0623655af0f728a330c4c4d2d61c72ca72d8c6a54024415868fc99ccc01a0c64"
+    },
+    {
+      "shard_id": 23,
+      "manifest_digest": "22fc752a33e575cac898b615ba7ce1bf6a28abe96752ca72d622f9f43857189c",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "07848cce56138db59e4cc6956782218f51c9816d622db2865468c459b76b4fcc",
+      "public_sha256": "2747392a550ec4dd89dcef4368424621ef6eacd653c1f6411529032f767200ca"
+    },
+    {
+      "shard_id": 23,
+      "manifest_digest": "22fc752a33e575cac898b615ba7ce1bf6a28abe96752ca72d622f9f43857189c",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "048d26fde723a713a6c5b7d30efda103ed11f1806c9e3678680302beaf5286d9",
+      "public_sha256": "ad3463f5f2b8aaa258848431f2bd09ed1b62be43abce89d084d52974742270a9"
+    },
+    {
+      "shard_id": 24,
+      "manifest_digest": "f6edc6e0520ed95040539cdfb63918a9ac7324cd092780f50cdcb74aab0df7ec",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "cd0c1c05ab5f4e7d4d2e548cb2d5c633459236acc259e04050f2ea81180a1575",
+      "public_sha256": "ca708e5dd010eaab439ad5428c7ab087a109503eb3052616c00aeeb82068946e"
+    },
+    {
+      "shard_id": 24,
+      "manifest_digest": "f6edc6e0520ed95040539cdfb63918a9ac7324cd092780f50cdcb74aab0df7ec",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "ed8d2c0acae07a93e670b9ea9aafc0fac692945c25cdc914d52cab5f031984fb",
+      "public_sha256": "b478c0a0bf0dcb48416c6b47de99b10ec0113561cb25e739e154174ce77c7f12"
+    },
+    {
+      "shard_id": 25,
+      "manifest_digest": "e940634ebd14acb1fdb97f735917ead274a34120dd278b33f2535cddbeaa5f93",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "aee26bc613e0ec562859a6699d606f190bff194500dec2811d31a9a31a33cfa1",
+      "public_sha256": "8337fe76dbb0c3fdfaac78d352c8b5ccd083cff1584f63b4937f0a35a3559fb6"
+    },
+    {
+      "shard_id": 25,
+      "manifest_digest": "e940634ebd14acb1fdb97f735917ead274a34120dd278b33f2535cddbeaa5f93",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "662ffe4b7fd9ee5ff7ed5d5c4d8bf5bf5db921e44ffdb59046663b7743d0c755",
+      "public_sha256": "2096d76675b5008b35e9573cf013cdad5bdf1c9c88f2d5942dd93f1b8ebdbeb4"
+    },
+    {
+      "shard_id": 26,
+      "manifest_digest": "7e1072264c9b759a2ec06da0d249e968630179fffe0948c245a5ca92bc94131d",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "73717980f90e551e1f53b3cc9cbdd0bd5c68e18548a255dd0dfa5c2f9f5ecf58",
+      "public_sha256": "a0e085e9de264325998612f4ee192ddb13a964c2cd8f86addde23a213c77ba24"
+    },
+    {
+      "shard_id": 26,
+      "manifest_digest": "7e1072264c9b759a2ec06da0d249e968630179fffe0948c245a5ca92bc94131d",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "c1fcd96ea73c4b4b692985483745b68a378d206a7dfd671bf15e1ae43c0346d9",
+      "public_sha256": "581900bc02d9d3536a032e87c3578475a113bc0319e94252d45f8031959f2f58"
+    },
+    {
+      "shard_id": 27,
+      "manifest_digest": "b9d9daf93c5cf6060f1c962c3d6defef9627dedfd0aec61ff028c30012cafcce",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "f8cc113ede120e05e12fb92c2c1ef335a2c8dc5bbb0761c8e5d1b1311d7730c6",
+      "public_sha256": "35f59268874c7e57c69e63b4a9cd0275c49edddadcecb4752685187d467dfdfc"
+    },
+    {
+      "shard_id": 27,
+      "manifest_digest": "b9d9daf93c5cf6060f1c962c3d6defef9627dedfd0aec61ff028c30012cafcce",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "1453fd9a427ef208399ae498c36142ade2d6873e033dad8e29ba0ff4573f0f91",
+      "public_sha256": "f46be581ee49766e00e31c83c64486432747d88642431e635af0c5602693fac1"
+    },
+    {
+      "shard_id": 28,
+      "manifest_digest": "577b1a6f868e04c7885dd7ad52d9f53e04937d73abb69fb49d27e43d125758c6",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "f91e13528468acf071b4e84617a8fde45e31e0b515511d7c7a148c310dd4322c",
+      "public_sha256": "76d530ae7eb073c765b9123a8a01328314dbf07c7da031e7a8c2ab1b3784637d"
+    },
+    {
+      "shard_id": 28,
+      "manifest_digest": "577b1a6f868e04c7885dd7ad52d9f53e04937d73abb69fb49d27e43d125758c6",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "9e084868349607af516e2c5d3858905bd904b92192203b8c2df433d5620721cd",
+      "public_sha256": "7c53f9dafee52cc3dd90c76658ef0c3dcd3bb1a9333d47b06fcb24a8ae461d86"
+    },
+    {
+      "shard_id": 29,
+      "manifest_digest": "674612b109afbbf4a70a99081b52001c034230c47f8898d214b0a72648b5a89c",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "e90feafb56f672d8c05e1cce02dedac4a71d6fd51003ad367d53284448021ea2",
+      "public_sha256": "fffd00569650bed16efa7cce11aa8bcb572bf14e8105f9cfb52e1f302f9c5c18"
+    },
+    {
+      "shard_id": 29,
+      "manifest_digest": "674612b109afbbf4a70a99081b52001c034230c47f8898d214b0a72648b5a89c",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "b4e3c90f179b8dd042d018871551c5c6069634e3cac62aaba99b716d785548b3",
+      "public_sha256": "c4b1dbca38c48dbdf8520c7755b67de1682623ccb1409cfd8612cbea4d62d18e"
+    },
+    {
+      "shard_id": 30,
+      "manifest_digest": "4999d74f57b9bb166cc751dfffc77709e72b362781064925ac7ebf72a59546bf",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "85aaf78ae476bd65d6c74e479828cc2b0bd8c2c9bd058c86608269758bc11240",
+      "public_sha256": "124c24e53724c1b68330e1a9c8e0ff77513a77004ac79b83ea0448960cab2321"
+    },
+    {
+      "shard_id": 30,
+      "manifest_digest": "4999d74f57b9bb166cc751dfffc77709e72b362781064925ac7ebf72a59546bf",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "dbe0a6479dd63a8fd642c63dfa65cc679e173f4a41641cc1ffc52b83113ec7ff",
+      "public_sha256": "6f05a1d90da76d1aa480e38ee6ecb271550e9b803031ec5d24fff3a0b5023b87"
+    },
+    {
+      "shard_id": 31,
+      "manifest_digest": "851178fb9c9b4e9311de3fe9fd9cce92fcb0544f48e4d708771f985c1eb7356e",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "9f5af7a6573e7da1b4c2cac0e86142c05fa12c866ed144d54ceb27fe81e53a27",
+      "public_sha256": "54b61c7013c3352702fab38933b55ea9a404e2827040ff5163046a4e768b4022"
+    },
+    {
+      "shard_id": 31,
+      "manifest_digest": "851178fb9c9b4e9311de3fe9fd9cce92fcb0544f48e4d708771f985c1eb7356e",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "56a383d47377f30f4200f9d2c7fd2473a7086ca87ee92c3971a1ff5d2cbc6051",
+      "public_sha256": "fa7c2bf626959b4688758bd618c1db47ec59a8586a7dd6bc28988ff7827d6740"
+    },
+    {
+      "shard_id": 32,
+      "manifest_digest": "67e7bc741a467d3c749162c3728311048a9c2366307a81f3f99f7b05d5184c56",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "2cfd0bd79f351a6a25cbda0f71bcd6958fe7860ac60299eb76ebf478ba64214f",
+      "public_sha256": "3cf5287fa136cf8bbf51c8f9f7f5d3fb2b93139e5ca2be1ec97ffdce621a71df"
+    },
+    {
+      "shard_id": 32,
+      "manifest_digest": "67e7bc741a467d3c749162c3728311048a9c2366307a81f3f99f7b05d5184c56",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "c0552f003ba05e293036640485d60633282023a9702b7d279e052c447619134e",
+      "public_sha256": "3bad92494bad15927b053ad64d6caf6d37c3086e310a13e6efea39fab2631015"
+    },
+    {
+      "shard_id": 33,
+      "manifest_digest": "595d5338f556e1b5cde6dcb2c8db819c798a7eec9be1c6bace451872ac630919",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "3e09412523f6d1c8a60ac1cbf06e62311f43c196000e2568a0d24162021bb5ec",
+      "public_sha256": "713abc8e8284a023e28c43bdd4b5acc580265951917ab82ef27a3e24c60a40eb"
+    },
+    {
+      "shard_id": 33,
+      "manifest_digest": "595d5338f556e1b5cde6dcb2c8db819c798a7eec9be1c6bace451872ac630919",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "24df880245ca20b39f7aa4f70b90e22ea5d4a72317a8838d145e8d3e35bee483",
+      "public_sha256": "743ebe31c719a3b767a6621da2a5567dac8849c4abc5c67c007d2e5ec9699c8f"
+    },
+    {
+      "shard_id": 34,
+      "manifest_digest": "582682f2b51c4491b33df0206a75912670b018ff1cf3f38fb1d1a3dfd682de15",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "990dc8613691d95484a17196406193aca78134215e524296c99ed96845801c19",
+      "public_sha256": "ef574ecd5b0b10c45cdc7e520e9d278264b0e58d076514c5196823e1604c3fd1"
+    },
+    {
+      "shard_id": 34,
+      "manifest_digest": "582682f2b51c4491b33df0206a75912670b018ff1cf3f38fb1d1a3dfd682de15",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "a7aa6c415aeeed1b5648df238b22bb35f03c00be820567299ad6b53b9c7c1319",
+      "public_sha256": "a80400c9c4f7cb2de360c4cb874a4c9a1b6b4ac3648b64ac83b14a5885c0b546"
+    },
+    {
+      "shard_id": 35,
+      "manifest_digest": "3b4d6a6be10c3bac4b57a25e9de938d2bbbb56a32497ae49cc2ca4abec6b3cba",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "8ea3c63b954408d0ad21f482b12b09277fcd36ef276670dd2cbd49c8f33b0455",
+      "public_sha256": "c5e04d01e135d5875ff6facc95c98cb853374bce43041d3677d589ffcc70d71d"
+    },
+    {
+      "shard_id": 35,
+      "manifest_digest": "3b4d6a6be10c3bac4b57a25e9de938d2bbbb56a32497ae49cc2ca4abec6b3cba",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "879c321948924c98798e624bb17577c6429fd02f519b77bba660d0d14e40b8f4",
+      "public_sha256": "02d798e1d5624bd7cac42ca7fb70fc3b180203c28ec51e2324092066caf0cbea"
+    },
+    {
+      "shard_id": 36,
+      "manifest_digest": "405d77104adbf684f7ac44405c436fb15ec875e5eb5d7fd85ab240b7f567c843",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "d231832ea2c7cfd37d03c7408965f12c477a90e9b36ab96d8e7cf2487f12a3d4",
+      "public_sha256": "8852fa446e8c09bad37f59a9a53b3ac2a49ff27900bba9fcd96a05c3ce315f24"
+    },
+    {
+      "shard_id": 36,
+      "manifest_digest": "405d77104adbf684f7ac44405c436fb15ec875e5eb5d7fd85ab240b7f567c843",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "26d5397c41f277f5ba6fff5be26cc03e7de1f36597db6c8c99c0f2ff8b9899e9",
+      "public_sha256": "d9d55d771f16ed8942aaabc05f963c85e8a49397d96845d33451f9f34fcc27f6"
+    },
+    {
+      "shard_id": 37,
+      "manifest_digest": "8a7a80ab2b4eb40d0266fe57d51587c2c0edcd4502ffe193210a7a90d101671e",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "aa8bdc21d48d9d2a662265cc67f2c776a25c1dc935bc903b3330ef3d1123ed9b",
+      "public_sha256": "1a115237eb5a3358d8e745f6d82e8e25717af1350eff7a8f9d6e11a1d71096c9"
+    },
+    {
+      "shard_id": 37,
+      "manifest_digest": "8a7a80ab2b4eb40d0266fe57d51587c2c0edcd4502ffe193210a7a90d101671e",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "4becb80ccc4103fa3a4a5774bb689c0aa7f2f19380509ce8ad815558f000772f",
+      "public_sha256": "0499eb843dcd1963e9a4e868c3a753ba8fabe936bcf46f734a307fc9f1159bac"
+    },
+    {
+      "shard_id": 38,
+      "manifest_digest": "8ba9e3970a82461c6d79f693511bbda8e917b940084e670026c9befd0f09ffff",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "17d87cf16c02a7872fe3a6eea925b11fc9544f1f9a8a0ff4cf5c02da477d6c5d",
+      "public_sha256": "7df2655815d61c4123439c88af34a26d7dc55a274f46fabb9f02d6570a77523b"
+    },
+    {
+      "shard_id": 38,
+      "manifest_digest": "8ba9e3970a82461c6d79f693511bbda8e917b940084e670026c9befd0f09ffff",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "06741ee871c02890ed4a5b56ea58d3e6b5163d430b44c9a2357a06dbcb091a4b",
+      "public_sha256": "9436a5eedc840455bf0f13734fd92d18e53694e6331c740e92e3d7e885f7d7f7"
+    },
+    {
+      "shard_id": 39,
+      "manifest_digest": "0d33274cd98e0322485ba68cc2af4b979c2e9aa71cc04cd8aaae3e5fb8368d0d",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "f2e77e1b0e69794f0df3f3120bd1ac7b95a94ed33775a7754086c100a209bdef",
+      "public_sha256": "38bdc0764f96b90a36eb33c3ec81c9fa15f7cb8b057f85addd072c305a23a22b"
+    },
+    {
+      "shard_id": 39,
+      "manifest_digest": "0d33274cd98e0322485ba68cc2af4b979c2e9aa71cc04cd8aaae3e5fb8368d0d",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "a32b7c664a83979b044edf03639850dd225d8724bd5c77260d3df9a97b6d54fc",
+      "public_sha256": "e5579685fdf71f070695925e4fc5d7802dc15f1762dea40222e3e4e0155cc76f"
+    },
+    {
+      "shard_id": 40,
+      "manifest_digest": "a4c0770082c3180dd53ec480ee96cdbb75aa4de2a06dc572b9c3692a4e68ee07",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "32515a6a21aec0c1ee78b81c699632debaec0c5fdf5abd189485ccef783f23b3",
+      "public_sha256": "94f376282afdc4a446d57212ca768e36adcc52aff97c276c212ddd9f48074c34"
+    },
+    {
+      "shard_id": 40,
+      "manifest_digest": "a4c0770082c3180dd53ec480ee96cdbb75aa4de2a06dc572b9c3692a4e68ee07",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "0cea84842f2db5a5c7ee4f6d9dc345434ce2a86073969181108977a4d410a98e",
+      "public_sha256": "5898a4c802d9df1fc5297db384e1de4018bdb9206e0f924ea2099dbbbed2f369"
+    },
+    {
+      "shard_id": 41,
+      "manifest_digest": "dabbc87c624631caaf713cf013d8175e0424e27bf0cd8eeca95e650d4c918abb",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "b07e0beea804b67e5a20b8209b89757121a4fb38e469988488a2829bb5869742",
+      "public_sha256": "c56ed4e0c925f470e603720cd8feed0fc56c0d5a6627bcbd6b566470d92308ca"
+    },
+    {
+      "shard_id": 41,
+      "manifest_digest": "dabbc87c624631caaf713cf013d8175e0424e27bf0cd8eeca95e650d4c918abb",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "04f85d8ecfb52e39eb4c636631e9ff69f10385f0d6a6c7520eb6359b19e2c991",
+      "public_sha256": "eb6a9ef2f2e8613357c9685215810e31d7aa78d389c47064d3b108cccdf98283"
+    },
+    {
+      "shard_id": 42,
+      "manifest_digest": "7f19fce742fb5f08f8f8a30db814e896413614f8b30a97ba7cbcd6598a983bbd",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "544eed82bc518bb0bef8cadbf45023a39d587c25a095425beec9cf114f052ab3",
+      "public_sha256": "49a02ce01e8ce984620a9f5b86bd08127805c4a2c624a710d0b8c51a20ed1a5a"
+    },
+    {
+      "shard_id": 42,
+      "manifest_digest": "7f19fce742fb5f08f8f8a30db814e896413614f8b30a97ba7cbcd6598a983bbd",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "a799a44c7d2d79b6b6bd84da87bf7baf009b758e5281069a793ce79d2795664a",
+      "public_sha256": "902d5ef0243194c70b93cb42bba0147b2d82d9594a5881949c9b7cb90ba1d4e5"
+    },
+    {
+      "shard_id": 43,
+      "manifest_digest": "c317898f88a05093eeece052f75236fb3e95687d03c6aaae8dc6ef4029808dd0",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "5fb4465623f5dcc8102608c541631d77bfd376dbbf29ab68e927a126cc308cca",
+      "public_sha256": "c896e2de5bd0733a1c7d4ba85d613744c77870d727c8c8ad00ab7eddde4ca7f9"
+    },
+    {
+      "shard_id": 43,
+      "manifest_digest": "c317898f88a05093eeece052f75236fb3e95687d03c6aaae8dc6ef4029808dd0",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "84d14e34e46bae05974afe0b56e97373bd87b70b11a7cec2b5f8b8f5a0c3686e",
+      "public_sha256": "cf87f181cb1584ad2894b2f6f657d60f380fd67b76e1672be8968510aebb1e4b"
+    },
+    {
+      "shard_id": 44,
+      "manifest_digest": "d163eabdf87f08db9b2bd7c9d2cf3742ba246c798c38c3991ebb6b0f989d3f45",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "8c0aa7a4b05074b375aafba9636ad04c3c77153707c881890534b84cc17f94a3",
+      "public_sha256": "4781cdd8bb53e76392267c1034a593d44836b946ff06fe8526d04688ca81d005"
+    },
+    {
+      "shard_id": 44,
+      "manifest_digest": "d163eabdf87f08db9b2bd7c9d2cf3742ba246c798c38c3991ebb6b0f989d3f45",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "96d870d3946df4e4a2e7a1cb83c85f319971e1fd8fe5ae6a49713f0fe0c03a39",
+      "public_sha256": "ae59963e55389c373130f841f8b4032e02cfcd9e17b00215069dcd327710547d"
+    },
+    {
+      "shard_id": 45,
+      "manifest_digest": "44b140b65d5fada279f4e12d6b68efd12b5148e76d42e72f1ce40276f3dfa595",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "70e2ba40259f40683d56e8dbbb8439f58c7461c63d8e27e225741292bf86c26c",
+      "public_sha256": "826743e995bbc5b681dd09eda5f87d5608b674d781f09ec36f620ab7d306fd73"
+    },
+    {
+      "shard_id": 45,
+      "manifest_digest": "44b140b65d5fada279f4e12d6b68efd12b5148e76d42e72f1ce40276f3dfa595",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "c8ee41f7acb592fbbdffd3a1b747ed4d69fad27913a2ac71b0e4b22f0843b3a7",
+      "public_sha256": "c14a400d36334eb8676efb6121b56f02d139682ce68b8d8f6d1fe0e4e116c24a"
+    },
+    {
+      "shard_id": 46,
+      "manifest_digest": "abcfe0b2f2d652902156b5e0213ff31c7f04f63ae1137ed7e041139091cdeded",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "d936467dfaf115c8ccdcc7aed3293d590986c527088052a26649eb6a44c17ba2",
+      "public_sha256": "0bc59661c9e6047285fdaea41afd0d79d96589ca5b1c28161e53d0905929bfe4"
+    },
+    {
+      "shard_id": 46,
+      "manifest_digest": "abcfe0b2f2d652902156b5e0213ff31c7f04f63ae1137ed7e041139091cdeded",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "524343ced0846551462c5d25e75779092757bb34b32aa77b136861cf0f9c1582",
+      "public_sha256": "7128134388c1cf514de1104d29a3ac2c801a678fc598a349dab8997442adbb01"
+    },
+    {
+      "shard_id": 47,
+      "manifest_digest": "e26454f443ff3f014358302b54811102ead33fbe77d268dce65e6dd9fcb0fd3d",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "50426c02ac0775cc672338335cbb300f28002cd9161ea42529525326ea841a9d",
+      "public_sha256": "8374c33f835c4be5815e531171296fcc0c35ade89c8180980fb6a541d149fffc"
+    },
+    {
+      "shard_id": 47,
+      "manifest_digest": "e26454f443ff3f014358302b54811102ead33fbe77d268dce65e6dd9fcb0fd3d",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "bc47a6f2570b9d10b20a931801516ffb0c589f8486d3ca331cb67ad93a98c671",
+      "public_sha256": "1258e220407f60fc6dee126ea29c1000b81f3d03d1d8bce907611367aaa66e56"
+    },
+    {
+      "shard_id": 48,
+      "manifest_digest": "d3f467a65cf549926d3f0acab6802af7b70a2977d41b1a46afd63b35e3f74d99",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "7242bf2a6bdccafbe3573e7fa01d5b335010bc9cfe49db05a8c8c3b4aaf333ac",
+      "public_sha256": "c85b8e1c156759753eed578a6cbef5ebe36c9043576fc46c2ade7a874a604372"
+    },
+    {
+      "shard_id": 48,
+      "manifest_digest": "d3f467a65cf549926d3f0acab6802af7b70a2977d41b1a46afd63b35e3f74d99",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "f90d3003113483dcb69d0e0bc202f2383561f88e9e90f187a95e2cf76ee29c4d",
+      "public_sha256": "c8fe071a43c1d95edc0ff162dd3dd5a5a72c8b0e52cb22a3b87443d7e7c8e8d5"
+    },
+    {
+      "shard_id": 49,
+      "manifest_digest": "8712ef7d3aafc3282159fb97baa3a24b47b57bac35d082b36c66ec492c38ecaa",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "f775c1335bb0b1d81aeeaeee50c4a86c74f68e45f09f5b0b93874de68287e8ef",
+      "public_sha256": "7e9d38c9074fa3db089aa449c999330f923850f8fe3e173a4b48438f892adfcf"
+    },
+    {
+      "shard_id": 49,
+      "manifest_digest": "8712ef7d3aafc3282159fb97baa3a24b47b57bac35d082b36c66ec492c38ecaa",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "50f5dd8964a16b2010fad4a454e32d9e454b20e9478e82313d96764355d5d978",
+      "public_sha256": "a4ef27d0deda98f3a5b50e75e55b26ce7ce6248a04767e0d9c854c2d8c783bd6"
+    },
+    {
+      "shard_id": 50,
+      "manifest_digest": "adcb6468e280a3d1c563ca13ae9019234ab04ed94e103adb08990d690e717cbe",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "f5f1472a88a89b07fd53699ddac0812b89160f941ba736400b765d7884c2cb87",
+      "public_sha256": "f7cf74f98d5caad728be67bb3e1ead0e5287be710dad229e873d839a13c09e27"
+    },
+    {
+      "shard_id": 50,
+      "manifest_digest": "adcb6468e280a3d1c563ca13ae9019234ab04ed94e103adb08990d690e717cbe",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "5430d9d951c1ba18bf58ac3727060c00fc2d64dcd40bac3da8edeaff4b3ed3f7",
+      "public_sha256": "df215cf67a29ffb25357704aa16ee6538b971eb6554ce824e5885ef29d17a30b"
+    },
+    {
+      "shard_id": 51,
+      "manifest_digest": "9732e9dc8bbd2bb77679ab7e01034d24d77d91ac3d296b16b1d356a8d835a5c4",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "2ca9057b34de0c7afdc7449c0066027781d3ede63d3995e18f426b8fce1bf4aa",
+      "public_sha256": "5290730f5705eea9a9ab95cba73debdcadec05c55c572c410f6a9fa78635cd09"
+    },
+    {
+      "shard_id": 51,
+      "manifest_digest": "9732e9dc8bbd2bb77679ab7e01034d24d77d91ac3d296b16b1d356a8d835a5c4",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "3bf352570feaccd892072fff4a83e57d9e6cf75eac793b165f27c4306aa65bde",
+      "public_sha256": "d47b9264b2eb9831a38b18fd9c42ab3e7a06759a892f2d062e151751d7b0dd0e"
+    },
+    {
+      "shard_id": 52,
+      "manifest_digest": "ee59ecaa8874dab8b000c4bd4222689a6ade03074fc731ad19ba0af975c06937",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "8c35f0b25bae7de83b15cb5acc0a0bd6fca54a5b1b45d7415b781392f9d0d1f2",
+      "public_sha256": "07f45396aa87529b21796dfb29edfd18b5cdee5eeeed5e939294a1a2053cfdfd"
+    },
+    {
+      "shard_id": 52,
+      "manifest_digest": "ee59ecaa8874dab8b000c4bd4222689a6ade03074fc731ad19ba0af975c06937",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "7446214b78e6211ca8f1631aa392259e3cca7901b9470867e07bdc4a2e5660ef",
+      "public_sha256": "63c9ad50bbd9d9ecded2ab14786dba8055d2f07eef74b32f3bd7d6573323b28b"
+    },
+    {
+      "shard_id": 53,
+      "manifest_digest": "4f292dc89bf014c686226f1c41c5d9a46c41d6b6b27a248e9e7349f4a59716fe",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "2b33234ce107749e994b620668ecf1a9aaa5fe2fb38a5d2455de1aae1ea0f92e",
+      "public_sha256": "e1190733e754fc73cf19f1bbf8b7e73127b4ef5fae4d994408b27a92e139ee70"
+    },
+    {
+      "shard_id": 53,
+      "manifest_digest": "4f292dc89bf014c686226f1c41c5d9a46c41d6b6b27a248e9e7349f4a59716fe",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "cb0b4e034303aa30237f05c7ed0050a1d8ff5164384a96747b62f11000937c62",
+      "public_sha256": "d13ffeca5aa41639016c593a332587155f7f9c0ab224ff243f27b10e42c929cd"
+    },
+    {
+      "shard_id": 54,
+      "manifest_digest": "e9f95508c40b8e8904777edc7ea3260952f5cc42f721788d6f90053e2b33c5ac",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "f49e0d80f0d7f093a1c7c1a4f47f27326b47dae055fd8f05c343a36efcf87e10",
+      "public_sha256": "0fda32cea11f9b00d1ae503575e0f8fc951ae47a5a3df35375f0ca97c99e8496"
+    },
+    {
+      "shard_id": 54,
+      "manifest_digest": "e9f95508c40b8e8904777edc7ea3260952f5cc42f721788d6f90053e2b33c5ac",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "c2aa28869406b4cd132ac2dab5b035310326f5dc327c52d92a809da88974d90d",
+      "public_sha256": "017e479aad8c0c4fb2e75671e66889453a672cfb0de5fde43e568f23526ca2bc"
+    },
+    {
+      "shard_id": 55,
+      "manifest_digest": "051ba4172a356111878aa04e44c8f7621fa9ac3a30707ca8364424170cc913b7",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "448dbed2189bae42e6b726ef6d9f3ab6d7fc68b45a882b4d07e4a0b2e131689b",
+      "public_sha256": "74bd4073bdb6cf2522e6d817e8c475e5e78882af0e89000f17518254656ca6e3"
+    },
+    {
+      "shard_id": 55,
+      "manifest_digest": "051ba4172a356111878aa04e44c8f7621fa9ac3a30707ca8364424170cc913b7",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "f8b82906d32391ced8e90485132962c8724c0dd0a952f81132047c63b1fa41a6",
+      "public_sha256": "aa38e7c2660cb7dbda06fe7a3e71b11f647422cf29b8ac46caaa8d2a499dadd1"
+    },
+    {
+      "shard_id": 56,
+      "manifest_digest": "ba09a1a460eb91c64b22f63c87746898e09152bf719e1807862c83aa1507685d",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "5699046946ba25771a858644fa7409abf533af65824e8b205a0878d603ce8e9e",
+      "public_sha256": "8b9323c361453813902d12e9e94c9fbadf5622a1e6b43c2791d5c7bc5462d838"
+    },
+    {
+      "shard_id": 56,
+      "manifest_digest": "ba09a1a460eb91c64b22f63c87746898e09152bf719e1807862c83aa1507685d",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "c4e8594ccc6e3a223f72d2c51ecbc20b5fc576c91c146c45b1b0b3ac9f475f5f",
+      "public_sha256": "98604c39433edb914318e519209494ac0ca6d5dc434962fd624570abba1ee8bd"
+    },
+    {
+      "shard_id": 57,
+      "manifest_digest": "7dbd20cffd65d56a964cbf30f4e7fe3e11a5e4648587971f012181955cf8f95d",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "902fb4fcaa8aa18244a95ebf1507a2ae55c7b7f7ea0554b51a2eca9731ff6b7f",
+      "public_sha256": "794814002042fcfa916c0b1ec6cbc0aba6ebb1eaff1bf4ba768f98205f3097b2"
+    },
+    {
+      "shard_id": 57,
+      "manifest_digest": "7dbd20cffd65d56a964cbf30f4e7fe3e11a5e4648587971f012181955cf8f95d",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "7baac7bde5c2e1aac450442ac0c9624e3e2071e1f3fcce192337d606df3dd87c",
+      "public_sha256": "e192048662391f9e9abf8a8a3892d702c02d9dc16a6a40fa041186e3c8dd2d7c"
+    },
+    {
+      "shard_id": 58,
+      "manifest_digest": "a5b183b035029e3a2f878f7f2d8a0fa6db74d6bb92432110a934566d3d9acf23",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "0f6b76069a039e4d4b3060ce0975c9b4ba792dcf7dfb3e97464bfda4c33315f0",
+      "public_sha256": "81a8980cdca9ec530768d6f5489af3bbaa762ec3d58af7c1c740bda807c4ff07"
+    },
+    {
+      "shard_id": 58,
+      "manifest_digest": "a5b183b035029e3a2f878f7f2d8a0fa6db74d6bb92432110a934566d3d9acf23",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "e4f72031d99464f8fa8071132f4c23743e6af62975ea71670e99f7fd0f15630d",
+      "public_sha256": "444fb8e4a782ce246ade09898d7154dcaa4f6f3a055f58de170a8481770bdc27"
+    },
+    {
+      "shard_id": 59,
+      "manifest_digest": "e63a6464c1e9c750c6dd1e00ce54d79999bed8c72f59137fa6b6a58503f4808b",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "40b578dd6376937643d676a7b60b6a34e98daa4566ad0cba5539ab6f6351494a",
+      "public_sha256": "1efa088dd0f9b7a413fdb3655a97e9855bfae3d633058288ee6ed85ebc9ed16d"
+    },
+    {
+      "shard_id": 59,
+      "manifest_digest": "e63a6464c1e9c750c6dd1e00ce54d79999bed8c72f59137fa6b6a58503f4808b",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "640b5fde83e613463f9a99a08e0dcacdf5fe3286a7218299fa774245545bf7f4",
+      "public_sha256": "b88a3dd941c17850659735301e7f6c6d244225ea2c3daf9073d5b894d11f1fc6"
+    },
+    {
+      "shard_id": 60,
+      "manifest_digest": "11d7b0894d7e4b7450757513d459ed1d994b06b79f96b9f2e72a84c8a52c1e44",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "026149a914cf7d5dc0bc6b7a9c80119463e08d050fee70f4751b16fcf960735f",
+      "public_sha256": "533b4b178123192064189484c59fe8da422f55ec29aaaf6832ab9ad9abd2092a"
+    },
+    {
+      "shard_id": 60,
+      "manifest_digest": "11d7b0894d7e4b7450757513d459ed1d994b06b79f96b9f2e72a84c8a52c1e44",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "f758b5bae963bf4c9a20dcfb93c25804c5e11cfc84eb9052a0ba74d04e2d783b",
+      "public_sha256": "50a2718f0aeeaf962843fce8acb9b15af921a2e0ec0bef36f72f61725a4aa57c"
+    },
+    {
+      "shard_id": 61,
+      "manifest_digest": "0293fb2b9958fab032eb10c5e9e9000b25bef313569008994dc7578f42f9841e",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "affb5b2213de3e8e5374ddee505103cd02b81ad11cb06888f6e30c29b0d90b41",
+      "public_sha256": "d6952efe2f8f90684f808253eaa2168f8aaa3aa393b0e080fad756b9ed91b3e3"
+    },
+    {
+      "shard_id": 61,
+      "manifest_digest": "0293fb2b9958fab032eb10c5e9e9000b25bef313569008994dc7578f42f9841e",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "d71d509a8e3ebcca08af8812b3dffb54e9bd9873eded37b8a0fc93c78b225a0f",
+      "public_sha256": "1054dbdb1844d1f8f598a4fa189308b7d0a9ddb4f2b68c9e6fc9fdf7283d3272"
+    },
+    {
+      "shard_id": 62,
+      "manifest_digest": "3c7ffda3ec80c40fa43adc9075c9796a59566fbe2d65b22fca7efa7128983659",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "469763b6e8fc74bf949ecf24bc208dd19230ce84eb4ce7579e057e26587a01f6",
+      "public_sha256": "d8196a63c1ff7f7cfb2cf82b8079b4be6918bd2ee6f60ecd136f4abb7e430129"
+    },
+    {
+      "shard_id": 62,
+      "manifest_digest": "3c7ffda3ec80c40fa43adc9075c9796a59566fbe2d65b22fca7efa7128983659",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "243c306dee49637e8e4a9783acb50fcb3ab362725e7de22ba532542871f6ad02",
+      "public_sha256": "e046713d8b7ca1990c078d80009907e8519210fec3b534a12b373b6c7cc8f3c8"
+    },
+    {
+      "shard_id": 63,
+      "manifest_digest": "b329ce747abfb09cdef4eb9b2b86c264a7878ab2cceabf2c2975c56687cbbefb",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "100111cbd7d13aee1fd58a3aa126cc304a3f9360f0347bc0d9e20308f7716d56",
+      "public_sha256": "e11a1f0521b21b23daea3b06de006f513a7935ebaca51ea73257745ab003987e"
+    },
+    {
+      "shard_id": 63,
+      "manifest_digest": "b329ce747abfb09cdef4eb9b2b86c264a7878ab2cceabf2c2975c56687cbbefb",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "4ff19ccb4651dd630cf0d08bbd007e0c1bdfc8a38433104cabe8ed1c736947ea",
+      "public_sha256": "b103dcfda116d94cffe44ace47937ae3a0047514b16e4909955d8db13aa24b1c"
+    },
+    {
+      "shard_id": 64,
+      "manifest_digest": "a48d88781b36d7cb74f264317a4313f8089d8805385ef4642fd9f4c77c7ef64c",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "ba540151d1ee564f7a88f04581eecdc54fdc4ccf895fbe53d3808432f4e66ce7",
+      "public_sha256": "356d90fb1451d6cf38d9230f67aff51d0594cbf6f2f2485acb9993e9d0b018ae"
+    },
+    {
+      "shard_id": 64,
+      "manifest_digest": "a48d88781b36d7cb74f264317a4313f8089d8805385ef4642fd9f4c77c7ef64c",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "803068e98dc7a13a25767da5aa055f7f6a49faa0caab02606b5e5205a48a2051",
+      "public_sha256": "dd43dc5523f0ecae477f6e17a3009a0143100a9e7a74deeefef347fa2974ff12"
+    },
+    {
+      "shard_id": 65,
+      "manifest_digest": "94cc6d6e425c2bcb9745fcbe494e99ecb94a29f1a878d58bec740dd8346c37ee",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "7ca6528dcf920bab1fc9fe7e63e340993f217f5f8cf1167e83b1e71015d6427d",
+      "public_sha256": "1e86729b736479e81fe1f1cb1b5e7e2121794c11eb00abe68900d2dbd98e668e"
+    },
+    {
+      "shard_id": 65,
+      "manifest_digest": "94cc6d6e425c2bcb9745fcbe494e99ecb94a29f1a878d58bec740dd8346c37ee",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "5764df770ca1d97e8336132abd4c4dab52a1d36249c893fe39cc7168546c8fb3",
+      "public_sha256": "c0183933f38cdceb57c50a61510e64e9a7a76461514913ae30566e242e2fc209"
+    },
+    {
+      "shard_id": 66,
+      "manifest_digest": "5e2e32d9a7e83cde99cbd22eb0979098db2ccac9816f0149e55e765b2826ad30",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "2985cc4cb36844e66ea56c8477f71a141f8d2eacee13536f6022cc1ac4015564",
+      "public_sha256": "747549bff1c36b3c76adf177237c6c8e69471d5316f9accbac6a33249ea80e37"
+    },
+    {
+      "shard_id": 66,
+      "manifest_digest": "5e2e32d9a7e83cde99cbd22eb0979098db2ccac9816f0149e55e765b2826ad30",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "987599cdf5fc79f46b5a4843b5c6109fea968e66dbea033cd2c89b390848ea54",
+      "public_sha256": "180729fb45b2bcb85a55d58956fd0355269dafd3485ee8ab00e4d0c673478742"
+    },
+    {
+      "shard_id": 67,
+      "manifest_digest": "97ea310d4ec810f99c1a6444fd3fb07e5534c77453de119bba488b158b2db65b",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "c797388bfacce583896cf2ac5fe93961482f939712dc4b8fe9dc37921085ba00",
+      "public_sha256": "60472ab5d0b12e6d28d499595f7d3f40a39814ba4bf312d5ff626a0c1c13c1b1"
+    },
+    {
+      "shard_id": 67,
+      "manifest_digest": "97ea310d4ec810f99c1a6444fd3fb07e5534c77453de119bba488b158b2db65b",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "6f7ed284724ccbbafc4eaa3ee30d17bd56eacc347116144074e21629cf5d6907",
+      "public_sha256": "4efd552dd6470980ad73f7920109f035c90ac7fb3553ac2fb1b40f923f9d8b4f"
+    },
+    {
+      "shard_id": 68,
+      "manifest_digest": "241511ca8cb8fbb53797bb67129c18e71d72b30e47dfa8dab65b1cf3bf586079",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "dfe19bbe9f7dfce356973cb6396c7b6bbd3c304566f7b5ac30dd8069fd627038",
+      "public_sha256": "ee9fd29f095191c1d7cb456edfaf27457b427de8f2059dfac4eedfab11edaa8a"
+    },
+    {
+      "shard_id": 68,
+      "manifest_digest": "241511ca8cb8fbb53797bb67129c18e71d72b30e47dfa8dab65b1cf3bf586079",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "0b10257ae3d370ce0d0d97fbd818ab9ed38af1ddf72943007f8686f237e416ef",
+      "public_sha256": "fa99e4b1d25c16948551c9fb72b388aa15262b9a63174c4d80d5ab823b6236df"
+    },
+    {
+      "shard_id": 69,
+      "manifest_digest": "f302b670d8b0c7017d2584d5c0241079aac0a850c5f94b8fadac3e072d567fe0",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "5a8d1bae5ab22968844431f813a4135569af6973ef62b830891892abb5991657",
+      "public_sha256": "b08ad28147d68ee319362f2acd438cfc3f34db7b1362f0b0c90d2ac9c5474790"
+    },
+    {
+      "shard_id": 69,
+      "manifest_digest": "f302b670d8b0c7017d2584d5c0241079aac0a850c5f94b8fadac3e072d567fe0",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "687df841db4dd997396923978dd35fc3f1b9c16c686c6bd0205cbcd32c00abf3",
+      "public_sha256": "721d098dc4a33c396ee46f6b52aef5023777fd2d95467b053ca12278d2fe943a"
+    },
+    {
+      "shard_id": 70,
+      "manifest_digest": "0b73706b58400f07754e3fc9ca399701e765c6e44fe14ca2b125a377d5abdad2",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "bc3d64950cf4b5afdfd3bebdccbf889a2ef5367462658361b1fce15788f02015",
+      "public_sha256": "60fd7399ffa0b6c2806196c3cc0aaf591f87c239ec20029b6ba7ce2de064ce02"
+    },
+    {
+      "shard_id": 70,
+      "manifest_digest": "0b73706b58400f07754e3fc9ca399701e765c6e44fe14ca2b125a377d5abdad2",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "ddba7ebf9d0d4bb86f367fe0cd717df302b68d52107bfc44e6ca04b2c9aaa414",
+      "public_sha256": "afbf85dfe1f5db17681f070a2bf167b20bb106b1cc2d69a0e4a9e8b9891d912d"
+    },
+    {
+      "shard_id": 71,
+      "manifest_digest": "e59efb52cb4aa51eef42103b13201f36fac2fd0ca0f2fddf322e0228c294a0ef",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "043ec0af299b3c897c632728a5379ae997300e1028672982ff4caf137ba1daa7",
+      "public_sha256": "ee5a6fef40ee1af835627c4208af4da6068dfd2c8e2ca72d7775a01ded202c0c"
+    },
+    {
+      "shard_id": 71,
+      "manifest_digest": "e59efb52cb4aa51eef42103b13201f36fac2fd0ca0f2fddf322e0228c294a0ef",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "cfce500ddd74a9d8a4f7b3b0152db9f7f325aae9f81d89a0ad992fc187b6098d",
+      "public_sha256": "ca4c4dbce269a021244e5dd12dc5bec609305db1cabfab35be536f363c9c5158"
+    },
+    {
+      "shard_id": 72,
+      "manifest_digest": "38180c1132dab1de75b081c7c14664a6e8a7fbd1e6d84ded6c586ff98cb49469",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "10212c0901d3b263b8a977e2efbbf8f50ea8cbc5f362471797c677dd6b7fd2a2",
+      "public_sha256": "3475cdc5c6a449065c24dd4a5b0ec85f5579b66466165e9b79ce3984df0b4edd"
+    },
+    {
+      "shard_id": 72,
+      "manifest_digest": "38180c1132dab1de75b081c7c14664a6e8a7fbd1e6d84ded6c586ff98cb49469",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "ad60f9c914c3f147fa34a06ae6bc0f22a9c72233e0b07bcd343fcb1309fa784e",
+      "public_sha256": "239d24f2b59c41f5eaad782b5525ae02a0f0ba7eb27333f7dbfcbc5dbc28872a"
+    },
+    {
+      "shard_id": 73,
+      "manifest_digest": "bb9fd8dfcc9f0ee22e90fb25a36bc4769978ff9da3153cc9cec60359390e7da9",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "d9de86e3b9a536cb8c8a9335941041c26534b1ac70026fb06e67e57e4fe80ccc",
+      "public_sha256": "03be879b260ac48dfbfdb05e38e32a8d1b0c2dec2a6b364b4224ea8d815fdc7e"
+    },
+    {
+      "shard_id": 73,
+      "manifest_digest": "bb9fd8dfcc9f0ee22e90fb25a36bc4769978ff9da3153cc9cec60359390e7da9",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "efd04409c11c564726d286b000b8065c555f367b5be3232abe18c11076b741d6",
+      "public_sha256": "aa5badc959137ab125b1f7d9d19d3512103b507309f19a1cd01cd21e8305fe53"
+    },
+    {
+      "shard_id": 74,
+      "manifest_digest": "7c8e5e809cae7b0fef2b55be6a83e4d74abddf65e0ef5d28b64c82b6abf665fb",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "9b6e7ccbdd5e489586063539fd6f3832d16548d3f49f926fa06d4af848f2854f",
+      "public_sha256": "22408f4700f652356c0199016c30b11f1bd48d2a61d763159c417d66813c34c7"
+    },
+    {
+      "shard_id": 74,
+      "manifest_digest": "7c8e5e809cae7b0fef2b55be6a83e4d74abddf65e0ef5d28b64c82b6abf665fb",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "3232f5aa85f2f92a34d2a96dd0d0681e9f867fc21caa945d0f6e3b6e7b63f73c",
+      "public_sha256": "69c36bde69edbb803086d41b579fb4dd58b00bb9600e9aed76c72316682f2f88"
+    },
+    {
+      "shard_id": 75,
+      "manifest_digest": "52bb118363c11e056cab048902b0c7433216e1a5e18d2158a81dbec0d53bf426",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "e851085945a4f09240a2676e6d549a3e9b49b6e790c934854046f4b7d9f3b2b5",
+      "public_sha256": "a5a7326b26042fd083afd7cdf7bc7c904cfad383121c6b7ba6a26cf3f424f2fe"
+    },
+    {
+      "shard_id": 75,
+      "manifest_digest": "52bb118363c11e056cab048902b0c7433216e1a5e18d2158a81dbec0d53bf426",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "5f55d8b2c04c141ff3baf809c13b559343f1d5e794ada80f6f3e23fb7e8994ef",
+      "public_sha256": "80fe8149f954196565c21bf7b92ac571235f7d3f032ff2ea1cd259a32e3f71b9"
+    },
+    {
+      "shard_id": 76,
+      "manifest_digest": "193ef9848aef05ac6743580864750d23cee4ca7d58f28629d72fca82cfa52279",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "2f945729ff985fd49eabf4a6651f87f5280befde01eabe7975ea83e91e8f8c08",
+      "public_sha256": "c04e73ddf07b341cac8e1244b5cf13d1a75e1ef89e20fa756d5a91f89e0b1e94"
+    },
+    {
+      "shard_id": 76,
+      "manifest_digest": "193ef9848aef05ac6743580864750d23cee4ca7d58f28629d72fca82cfa52279",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "93de0539e2acac77f191eaa2568d0d898e6dba522d4746ba2d01343b27452c52",
+      "public_sha256": "5c005eb807a253348c9486b8f6c9ba7319695ace5a3196b859cede5730d8c38d"
+    },
+    {
+      "shard_id": 77,
+      "manifest_digest": "e93b14594a6df422a4321d987282cd26eb84f078734f742d1b4ff27913b04482",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "8e0b7dc7ccc358686da8f638c85f0c5cee813b539c5307a25b6835306cfb307f",
+      "public_sha256": "0a5d57627de3b1a678bab29108e6336bea9122071dd3d5f0d538423d02058841"
+    },
+    {
+      "shard_id": 77,
+      "manifest_digest": "e93b14594a6df422a4321d987282cd26eb84f078734f742d1b4ff27913b04482",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "690c85642d6afcd7a5427d892f47de9050668d0144df56c0b49f2542b9779ee7",
+      "public_sha256": "d4eb052387a94564bafef8d16e0abad50c6c8695405c6310c9319177797b4f4d"
+    },
+    {
+      "shard_id": 78,
+      "manifest_digest": "26024b872b6066147853ea96bd9aa190c849af782c24529ac3444ae8c1130e21",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "12262b7829021d13324b0341a128443cbdd7ebaed0648984831dd044f8bbbb01",
+      "public_sha256": "06528d3764ddb051dcee6d1dba351c4f83438a2917605c6631844a361a66dea9"
+    },
+    {
+      "shard_id": 78,
+      "manifest_digest": "26024b872b6066147853ea96bd9aa190c849af782c24529ac3444ae8c1130e21",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "d9d05d67c16b8c04ce55ff00edbd1a97f9d664cfebc1babbe6bef88fbb98e8dd",
+      "public_sha256": "ff693678d538a3953de640eea6598b7121a7f8738ecd1d7462f8ec82e79fec51"
+    },
+    {
+      "shard_id": 79,
+      "manifest_digest": "98ee9108e9ef2720b4847e8de1ece94f2ef2c53d44074809c8b7111a523c94af",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "a00eb8feaf1d8bf69d34208b9976a1f8f0ec2775224b51b2d3a9b5164c9e7523",
+      "public_sha256": "df0dddb7bf738d232dfded4ee99ad7bb7fcfa370a1d7f0822799aa68e77fd9b0"
+    },
+    {
+      "shard_id": 79,
+      "manifest_digest": "98ee9108e9ef2720b4847e8de1ece94f2ef2c53d44074809c8b7111a523c94af",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "c05b56b058f8728dabf3f929cae4409848aade9e98c315387b943b2000782c6d",
+      "public_sha256": "ae5e279046e1eb1050c0ade29314bd31a4b4cf536f745ae7c2eccd25585abbc0"
+    },
+    {
+      "shard_id": 80,
+      "manifest_digest": "742d07ddc620d8867a6b1734e4a7399cc3bddaf818f4baf6e6d4486b5143747a",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "b68ded7b241eb1c4ac933e9cf8b4fda506b3cc950d7a66b874a20917d601e804",
+      "public_sha256": "f82e94643644686581dba6088468d0e07440bd2f01e9713e853cc84e921d03f7"
+    },
+    {
+      "shard_id": 80,
+      "manifest_digest": "742d07ddc620d8867a6b1734e4a7399cc3bddaf818f4baf6e6d4486b5143747a",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "9ec74a61c89de457d33e57e0d71a2086373e05feca0b441a9133c26a2db61355",
+      "public_sha256": "d40575d9dd5cbebd402ca30dcd71edef439f29ec579c797021cf81b09a7b6273"
+    },
+    {
+      "shard_id": 81,
+      "manifest_digest": "c3bb4594bfc5072c84add1eec255d2a17aec2d41ad78b3401dbfc49cc3bf058b",
+      "geometry": "archive-wide",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "61c9b0311e00302959ead73cfd887d0eb55129446a96819bfc0de2c96967a3af",
+      "public_sha256": "db38980765ff011daa41aee55c7a71184f746a336d47e416580eb2ecb4ff10ce"
+    },
+    {
+      "shard_id": 81,
+      "manifest_digest": "c3bb4594bfc5072c84add1eec255d2a17aec2d41ad78b3401dbfc49cc3bf058b",
+      "geometry": "archive-wide",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "13295a80621e719882c4997cbb896e16ae5fb8de080a3da729a10b09c10fcb48",
+      "public_sha256": "f233934c1026a8746801464495c175b1ecf4c5d4f6fb15d7ec32327fee731d13"
+    },
+    {
+      "shard_id": 82,
+      "manifest_digest": "df0061313a3dddd4fab1d5227f1460feed4124a2cdb83616cba26a3f80646d62",
+      "geometry": "recent-4k-8k",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "7551828919f5e2eb8531844dc84070b0238f37064dc99e9cb089e66a1f3c2951",
+      "public_sha256": "94d6cdec712094507ac0d8139d0ccfa19b54871e7eaac23ae24673cb7b2d0050"
+    },
+    {
+      "shard_id": 82,
+      "manifest_digest": "df0061313a3dddd4fab1d5227f1460feed4124a2cdb83616cba26a3f80646d62",
+      "geometry": "recent-4k-8k",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "3e976c72fd57e363bf81c2751ddd3b75d047350e10e6eaeae6ddbbc9c6914916",
+      "public_sha256": "8e2799ca44d789ae12acb7d9bb3261d040a3a1abfb56c43e3a20d775a943cd21"
+    },
+    {
+      "shard_id": 83,
+      "manifest_digest": "e05f5e54785af4282e82079bddc38005354f1fd11aae7782a8d5a08280b2f8df",
+      "geometry": "recent-4k-8k",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "b7c02969c4c9e37d467282b6cbfc0063d744c57d72a165447604712d4c94291f",
+      "public_sha256": "78197da3d333706e4a56b8c709996de9bee768764eac90a7e1840dbf4ea2a141"
+    },
+    {
+      "shard_id": 83,
+      "manifest_digest": "e05f5e54785af4282e82079bddc38005354f1fd11aae7782a8d5a08280b2f8df",
+      "geometry": "recent-4k-8k",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "1767d628685616acb7680b0cddaf29e1b28b01bfbdf8ce4ce6a0e76506c16867",
+      "public_sha256": "baeba6af86622eacef4eeefaa7a90db1ff119042f2c1a7a506fb5b7ed61f0236"
+    },
+    {
+      "shard_id": 84,
+      "manifest_digest": "da3871eb09fd5856d26245de0acda5793e885fdf0427ceca5298289197d5e8de",
+      "geometry": "recent-4k-8k",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "28d98bb4d89dbd1eef97d6ad817ae4a33141479572d1c19abb3767c11b25865d",
+      "public_sha256": "3a13ccc34630cb4f452fc70b4b5a4c1f37618d6bdfaa9ebc226b5411bb149161"
+    },
+    {
+      "shard_id": 84,
+      "manifest_digest": "da3871eb09fd5856d26245de0acda5793e885fdf0427ceca5298289197d5e8de",
+      "geometry": "recent-4k-8k",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "0238aa5f20fb3016232198853c48d7ed39afa4696ae754c829d928bf714d499f",
+      "public_sha256": "aaa2fdfb489a1679097fd84fa323d4a956b278c39d5d075f4c2fbb6753d3e7ee"
+    },
+    {
+      "shard_id": 85,
+      "manifest_digest": "a8534af57d11db052314567f7dd3289b3b30b0ca70b1b4857b1717bd31fa244f",
+      "geometry": "recent-4k-8k",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "6aeb4716ffbc6237328b5be3eaa973c92518f0173fb502bf174fd853a086c0be",
+      "public_sha256": "d29ffff880653a7eb58e2a947ca07a574833b149a089ac525f86a7cdedd0f562"
+    },
+    {
+      "shard_id": 85,
+      "manifest_digest": "a8534af57d11db052314567f7dd3289b3b30b0ca70b1b4857b1717bd31fa244f",
+      "geometry": "recent-4k-8k",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "193bad8ead13f10c8cdb40fb03358b452acc97f1f5afd92224afc476c8800732",
+      "public_sha256": "031c0308b9393676a30312ea7eb5d789b96f5590cd27eb981d34fa98e913742e"
+    },
+    {
+      "shard_id": 86,
+      "manifest_digest": "7f9b6f8605716d285fcc4bcc4630a868fe75e45fbd3f0c0bc9cd940937d8b124",
+      "geometry": "recent-4k-8k",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "4e988fc898cd6061520862d57442366ce42d0f177b14c01ebfb954761d4914db",
+      "public_sha256": "e982b60315003f6f5160f38422ccf09c5c486fce4afdf7ad5ce6283ff41d1e6b"
+    },
+    {
+      "shard_id": 86,
+      "manifest_digest": "7f9b6f8605716d285fcc4bcc4630a868fe75e45fbd3f0c0bc9cd940937d8b124",
+      "geometry": "recent-4k-8k",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "a2293c1a13acbd9af9707c939164d475413861176e279085abb97940529205f4",
+      "public_sha256": "5ac9b21f0c7248443f06a371c59b44fa00f180d848be5ec126c17e02937a58de"
+    },
+    {
+      "shard_id": 87,
+      "manifest_digest": "ff12d5aa7f0967a291ba43f911bffba930666f7e7b7a8101d3b92a71ba33cbfb",
+      "geometry": "recent-4k-8k",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "0a25636d8d9d0cad80f2845d02ae514ace264c6feeedadc1e98bc3cd6846fd10",
+      "public_sha256": "c99dc3ed38be7da953ff014ae31284e5b715a66616096536f3bf4338a1867d2c"
+    },
+    {
+      "shard_id": 87,
+      "manifest_digest": "ff12d5aa7f0967a291ba43f911bffba930666f7e7b7a8101d3b92a71ba33cbfb",
+      "geometry": "recent-4k-8k",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "41232dbc67c4d56e822da7c13aab132670f4fb95b0d818caa5d3d7eb0208c064",
+      "public_sha256": "31ff70a41aeab73a4b8b56c268b574a82593d15f494a9a90fffa609a18d9c6df"
+    },
+    {
+      "shard_id": 88,
+      "manifest_digest": "661b71c34bded948f73a9007287e53a5e628e088f7b55665b313fbccce2d5655",
+      "geometry": "recent-4k-8k",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "76f158d6c3f67a0e512c663acf0a8857736346a17a0886a82aa2998f1c528d7e",
+      "public_sha256": "aa687af09300fbe129ffbc18ef955e246fad47b127280732c8e281e9a34e7c81"
+    },
+    {
+      "shard_id": 88,
+      "manifest_digest": "661b71c34bded948f73a9007287e53a5e628e088f7b55665b313fbccce2d5655",
+      "geometry": "recent-4k-8k",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "f416494dab7afeced6696172e33fc3f7d7934ecb292067b86f187e9fddf76b30",
+      "public_sha256": "519e10de8dd15ef694d6754ac186c4dadd4716d4b3aa73499b4aeeda7c51ad4b"
+    },
+    {
+      "shard_id": 89,
+      "manifest_digest": "88c19c6dc78beab59ff56d8e90884f2b5bf85150e615de8a49518174e69b3326",
+      "geometry": "recent-4k-8k",
+      "table": "directory",
+      "segment": 0,
+      "table_sha256": "af62d3aae3553f138ed1343faed3b999dda4e9d1921a57f906c357d6c37e2d52",
+      "public_sha256": "11447fcbd1e7d6389c8a377b98937fbe90f3d6abb6b357f80b37f5114ed494c7"
+    },
+    {
+      "shard_id": 89,
+      "manifest_digest": "88c19c6dc78beab59ff56d8e90884f2b5bf85150e615de8a49518174e69b3326",
+      "geometry": "recent-4k-8k",
+      "table": "pages",
+      "segment": 0,
+      "table_sha256": "01ed1d693bae92e1db2d7aa32b0a4abb5b152b9d22c94823fcae1fb9d65fc987",
+      "public_sha256": "3c72dd6308139bc448a761516a21dfaafd0f7d06d8e94d612aa1d51b8eeeaf5e"
+    }
+  ]
+}

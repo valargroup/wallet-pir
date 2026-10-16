@@ -39,7 +39,7 @@ I = PRODUCT.I
 C = I.C
 R = PRODUCT.R
 RELEASE = module('candidate_release_test', HERE.parents[2]/'tools/ci/release.py')
-EVIDENCE = HERE.parents[1]/'evidence'
+EVIDENCE = HERE.parents[1]/'ops/fixtures/deployment-provenance'
 OLD = '12ce12918446eaa56e2d766ec2f43d82c531abb9'
 PUBLICATION = '34e3ebe3510206617460cebc87528e56f01949b971797e6f17cc8ca958f23f5d'
 

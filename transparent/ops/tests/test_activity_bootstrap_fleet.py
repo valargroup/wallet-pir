@@ -544,7 +544,7 @@ class RetainedSurvey(unittest.TestCase):
 
 
 class RuntimeSource(unittest.TestCase):
-    EVIDENCE=HERE.parents[2]/'evidence'
+    EVIDENCE=HERE.parents[2]/'ops/fixtures/deployment-provenance'
 
     def test_replacement_is_the_committed_router_hook_and_the_reconciler_pins(self):
         hook=json.loads((self.EVIDENCE/'txid-display-tiered-2026-10-07/deploy/transactions/'

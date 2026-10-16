@@ -120,7 +120,7 @@ class Templates(unittest.TestCase):
                 M.read_fixture(path)
 
     def test_load_executable_path_matches_the_frozen_release_receipt(self):
-        receipt=json.loads((HERE.parents[1]/'evidence/activity-metadata-2026-09-30/release-12ce1291.json').read_text())
+        receipt=json.loads((HERE.parents[1]/'ops/fixtures/deployment-provenance/activity-metadata-2026-09-30/release-12ce1291.json').read_text())
         self.assertEqual(str(M.LOAD_BINARY),receipt['binaries']['examples/rate-query']['retained_path'])
 
     def test_legacy_hosts_install_the_deployed_pair_and_controller_and_12ce_otherwise(self):
@@ -138,7 +138,7 @@ class Templates(unittest.TestCase):
             self.assertEqual(M.selected_binary('worker','transparent-publish-controller',False),
                              M.RELEASE/'transparent-publish-controller')
         self.assertEqual(selected,['transparent-shard-server','shard-control','transparent-publish-controller'])
-        receipt=json.loads((HERE.parents[1]/'evidence/activity-metadata-2026-09-30/release-12ce1291.json').read_text())
+        receipt=json.loads((HERE.parents[1]/'ops/fixtures/deployment-provenance/activity-metadata-2026-09-30/release-12ce1291.json').read_text())
         self.assertEqual(str(M.RELEASE/'shard-assign'),receipt['binaries']['shard-assign']['retained_path'])
         with patch.object(M.C,'binary',side_effect=lambda name:Path('/candidate')/name):
             self.assertEqual(M.selected_binary('coordinator','shard-control',True),Path('/candidate/shard-control'))

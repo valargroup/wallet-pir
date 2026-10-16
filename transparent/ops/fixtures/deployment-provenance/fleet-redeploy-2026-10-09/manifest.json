@@ -1,0 +1,263 @@
+{
+  "run_id": "fleet-redeploy-2026-10-09",
+  "kind": "production redeploy of transparent history workers and publisher, with validation",
+  "utc": {
+    "baseline": "2026-10-09T11:06:57Z",
+    "stage_and_verify": [
+      "2026-10-09T11:50:44Z",
+      "2026-10-09T11:58:44Z"
+    ],
+    "load_stopped_for_roll": "2026-10-09T11:58:56Z",
+    "recent_01_roll": [
+      "2026-10-09T11:59:09Z",
+      "2026-10-09T11:59:33Z"
+    ],
+    "mixed_version_window": [
+      "2026-10-09T12:00:08Z",
+      "2026-10-09T12:32:58Z"
+    ],
+    "recent_02_roll": [
+      "2026-10-09T12:33:09Z",
+      "2026-10-09T12:33:33Z"
+    ],
+    "recent_new_load_gate": [
+      "2026-10-09T12:33:54Z",
+      "2026-10-09T12:45:43Z"
+    ],
+    "controller_restart": "2026-10-09T12:46:03.083Z",
+    "controller_load_gate": [
+      "2026-10-09T12:47:22Z",
+      "2026-10-09T12:59:07Z"
+    ],
+    "archive_install": [
+      "2026-10-09T12:59:26Z",
+      "2026-10-09T13:08:47Z"
+    ],
+    "archive_restart": "2026-10-09T13:03:04Z",
+    "load_resumed_all_new": "2026-10-09T13:30:18Z",
+    "load_gate_30min": [
+      "2026-10-09T13:30:18Z",
+      "2026-10-09T14:00:58Z"
+    ],
+    "gate_20qps": [
+      "2026-10-09T14:01:19Z",
+      "2026-10-09T14:11:20Z"
+    ]
+  },
+  "source": {
+    "commit": "a317455e9feecdd2639d5348188c6a2341819a4d",
+    "ci_full_run": 37921342549,
+    "ci_run": 37921342595,
+    "artifact": "transparent-publisher-a317455e9feecdd2639d5348188c6a2341819a4d",
+    "archive_sha256": "23cfeb121738ff7e765689248e65150c8555f554d4698d421264cbfe9615a83c",
+    "build": "CI full release job, RUSTFLAGS -C target-cpu=x86-64-v3; checked with tools/ci/release.py extract on the Mac (a317455e) and on the coordinator (4c85b6c2 tool), identical SHA256SUMS",
+    "operations_source": "/srv/transparent-activity/ops/sources/4c85b6c20ced1e2077245491e77d3afc98bfd644; the seven tools used are hash-equal to a317455e (tools/ci/release.py differs and was used only to extract)"
+  },
+  "binaries": {
+    "transparent-shard-server": {
+      "before": "6db1fa05cfaf7a6422f7307b394c95ef20129598ea591818c9d4da324ef20430",
+      "after": "34ba7ebbdb9c59de1ca9f4fd32be9b7058e9b2d2ab08dacaa63bb62cecc1970c",
+      "hosts": [
+        "transparent-pir-recent-01",
+        "transparent-pir-recent-02",
+        "transparent-pir-archive-03"
+      ]
+    },
+    "shard-control (workers)": {
+      "before": "6dfe78fa1909fa542d540cd685b7e2dcc536eb0085cd14f052f1f02b70120170",
+      "after": "9208555a4903945e6e7262df94db8934c532d83dad28d395b513ac1f9187bc66"
+    },
+    "transparent-publish-controller": {
+      "before": "a68dca012c35004ec9628368a87b1cda9ee21605404f0f8cb0ac40d4d8ffad4d",
+      "after": "13af048e53bf2d5921ede069db582b9821b5d26a54169d84dc15bf1cbb8ba2ba",
+      "host": "enhance-pir-coordinator-01"
+    },
+    "unchanged": {
+      "coordinator shard-assign": "a22f7a93cb7f18a4b256020a997b7106ac43ca87a104e98245999b696c2c3d8d",
+      "coordinator shard-control": "fe5edd221ef12073bf5c5fc1ec39313edc7cd76bcc300fda0d513965e6fca125",
+      "transparent-filter-server": "161fd6582a4b0f7df37466a87f3e235fe72d61be17657b1a0ce8f51df1b16876",
+      "txid display worker": "3ba0ab47d8d4c8a4d655b06c1c574a8d13cc3f8931e5f2d2329ede61e4f51483",
+      "txid display controller": "96bf18d4 (d730ed6b release, not redeployed)"
+    },
+    "staged_only": {
+      "shard-assign a317455e": "1c61ed6f967271815775816b77a03bff6f2b59429477a819b3ec2aa2b052ebb3 (used read-only for map re-serialization checks)"
+    }
+  },
+  "configuration_changes": {
+    "/opt/transparent-publisher/v11/controller.json": "source_sha 12ce12918446eaa56e2d766ec2f43d82c531abb9 -> a317455e9feecdd2639d5348188c6a2341819a4d (decision D5); new publication.json files record tool_sha a317455e",
+    "/srv/transparent-activity/canonical-load/v11/pins.json": "all three workers 6db1fa05 -> 34ba7ebb (decision D8)",
+    "worker units": "rewritten by install_worker: --control-socket/--active-record/--runtime-cache-dir/--build-slots moved to the end of ExecStart; on archive-03 the MemoryMax=56G line moved below MemoryHigh; values unchanged",
+    "roll-recent-replicas.py": "MIN_OTHER_SERVING set to 1 for this run only by raw/steps/roll-two-replica.py (decision D2); committed default stays 2"
+  },
+  "fleet": {
+    "recent": [
+      "transparent-pir-recent-01 (10.142.0.10, 4 vCPU / 8 GiB)",
+      "transparent-pir-recent-02 (10.142.0.8, 4 vCPU / 8 GiB)"
+    ],
+    "archive": [
+      "transparent-pir-archive-03 (10.142.0.7, m-8vcpu-64gb, shards 0-81, 164 runtimes)"
+    ],
+    "schema": "transparent-shard-v11, map 91 shards (0-90), recent_from 3289805",
+    "not_changed": [
+      "router-01 caddy",
+      "transparent-filter-server",
+      "txid display controller and workers (decision D6)",
+      "reconciler, control sessions, scaler (observe), actuator (disabled)",
+      "pir-apm, pir-monitor"
+    ]
+  },
+  "measurements": {
+    "recent_roll_seconds": {
+      "transparent-pir-recent-01": 24.3,
+      "transparent-pir-recent-02": 24.2
+    },
+    "controller_metadata_unavailable": {
+      "last_200": "12:46:02.287",
+      "non_200": [
+        "12:46:03.376 502/502",
+        "12:46:04.496 503 (transparent-pir) / 200 (enhance-pir)"
+      ],
+      "first_200_both": "12:46:05.609",
+      "upper_bound_seconds": 3.3,
+      "probe_interval_seconds": 1.1
+    },
+    "archive": {
+      "verify_only_seconds": 217.1,
+      "service_stop": "13:03:04",
+      "service_start": "13:03:06",
+      "shard_set_loaded": "13:06:50.657",
+      "prewarm_finished": "13:08:42.241",
+      "prewarm_seconds": 111.5,
+      "runtime_cache": {
+        "hits": 164,
+        "misses": 0,
+        "write_failures": 0
+      },
+      "worker_unavailable_seconds": 339.3,
+      "last_old_ready": "13:03:03.459",
+      "first_new_ready": "13:08:42.712",
+      "publication_stall": {
+        "last_activation_before": "3511789 at 13:02:39",
+        "first_activation_after": "3511793 at 13:08:45 (freshness 289.8 s)",
+        "normal_again": "3511794 at 13:09:56 (11.5 s)"
+      },
+      "public_metadata": "1,702 one-second origin probes during the window, all 200"
+    },
+    "load_5qps": {
+      "mixed_version_window": {
+        "exact": 9337,
+        "errors": 0,
+        "missed_slots": 0,
+        "minutes": 32.8
+      },
+      "recents_new": {
+        "exact": 3415,
+        "errors": 0,
+        "missed_slots": 0,
+        "minutes": 11.8
+      },
+      "after_controller": {
+        "exact": 3389,
+        "errors": 0,
+        "missed_slots": 0,
+        "minutes": 11.7
+      },
+      "all_new_30min": {
+        "exact": 9088,
+        "errors": 0,
+        "missed_slots": 0,
+        "minutes": 30.7
+      },
+      "through_14_14_29": {
+        "exact": 13144,
+        "errors": 0
+      }
+    },
+    "freshness": {
+      "after_controller": {
+        "heights": 11,
+        "p50_s": 12.1,
+        "max_s": 19.3
+      },
+      "after_archive_30min": {
+        "heights": 32,
+        "p50_s": 12.8,
+        "max_s": 23.4,
+        "max_node_minus_public": 2
+      },
+      "baseline_s": 14.5
+    },
+    "gate_20qps": {
+      "workload": "3 x rate-query --qps 7 --workers 16 --seconds 600 against https://transparent-pir.valargroup.dev, v11 canonical-load fixture (705770a6) and rate-query (3d8d0cda), client roman-ipir-bench-8vcpu, on top of the 5 QPS load",
+      "queries": 12290,
+      "exact": 12290,
+      "errors": 0,
+      "missed_slots": 423,
+      "achieved_qps": 20.51,
+      "p50_s": 0.017,
+      "p95_s": 0.0385,
+      "p99_s": 0.0592,
+      "max_s": 0.994,
+      "classes_p50_p99_ms": {
+        "archive-wide/directory": [
+          15.7,
+          47.7
+        ],
+        "archive-wide/pages": [
+          24.2,
+          63.9
+        ],
+        "recent-4k-8k/directory": [
+          14.8,
+          52.3
+        ],
+        "recent-4k-8k/pages": [
+          17.2,
+          63.5
+        ]
+      },
+      "worker_slot_utilization": {
+        "recent-01": 0.041,
+        "recent-02": 0.05,
+        "archive-03": 0.025
+      },
+      "gate": "p99 < 2 s, p50 < 700 ms, every query exact: passed"
+    },
+    "memory_after": {
+      "recent-01": {
+        "service_bytes": 1245929472,
+        "peak_bytes": 1445650432,
+        "mem_available_kib": 5628780
+      },
+      "recent-02": {
+        "service_bytes": 1263194112,
+        "peak_bytes": 1469829120,
+        "mem_available_kib": 6324456
+      },
+      "archive-03": {
+        "service_bytes": 33616453632,
+        "peak_bytes": 33893822464,
+        "mem_available_kib": 32022108,
+        "memory_high_bytes": 51539607552
+      },
+      "coordinator_disk_free": {
+        "/": "24%",
+        "/srv/zakura": "22.8%",
+        "/srv/transparent-activity": "59%"
+      }
+    },
+    "pir_monitor_transparent": {
+      "13:32": "oracle_invalid (v10 fixture, pre-existing)",
+      "14:19": "passing: 30 successes, 0 failures since a separate session moved it to the v11 fixture at 13:50 (evidence quality-monitoring-v11-2026-10-09)"
+    }
+  },
+  "limits": [
+    "first production run on history of the batched recent hint, admission, held-byte charge, restore-slot release and tail sealer changes; validated by exact-row load, cross-version setup equality and byte-identical maps, not a soak",
+    "the wallet regression fixture pins the v10 map 3780f252 and stops at preflight with publication drift; no wallet sync ran against production",
+    "the 20 QPS client host also ran CI Rust builds during the window; the 423 missed slots are client admission delays",
+    "20 QPS numbers use the v11 schema, fixture and shard counts, so they are not like-for-like with the v10 runs of 2026-09-29 and 2026-09-30"
+  ],
+  "concurrent_changes": [
+    "13:49:43-~13:58 UTC another session held the production lock to move pir-monitor's transparent canary and pir-apm's Transparent inputs to v11; no serving component changed; this run held no lock in that window (5 QPS gate only)"
+  ]
+}

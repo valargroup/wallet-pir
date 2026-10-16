@@ -1,0 +1,46 @@
+{
+  "status": "passed",
+  "gate": "independent-chain-oracle",
+  "native_source_sha": "12ce12918446eaa56e2d766ec2f43d82c531abb9",
+  "publication_sha256": "34e3ebe3510206617460cebc87528e56f01949b971797e6f17cc8ca958f23f5d",
+  "operations_source_sha": "801d7a62ae14fc3eb99f0672227b14484b01d197",
+  "owner": "0de34ccaad5b4a3483d3f199c3ac0577",
+  "duration_seconds": 1691.7989680831088,
+  "binary_sha256": "24752e85fec6aee49a2b45df0b7d74bc39d248a3ff4d2bb35f252bfee0777235",
+  "result_sha256": "a904b3548968a3d98e46fb852b1f32bc2a3d5bb7776939c6268cb239d61f06f5",
+  "capture_index_sha256": "8e39189216e49831105bb9f37b06401854c4d599a6df37e9950e7f9aa8f3eb5e",
+  "blocks_compared": 17,
+  "blocks_disagreeing": 0,
+  "events_compared": 52550,
+  "raw_rpc_attempts": 247,
+  "raw_transport_failures": [],
+  "rpc_method_counts": {
+    "getblockhash": 1,
+    "getblock": 17,
+    "getrawtransaction": 24087
+  },
+  "raw_rpc_application_refusals": [
+    {
+      "code": -32011,
+      "message": "The batch response was too large",
+      "attempts": 4,
+      "recovery": "Native oracle halves batch size and retains every refusal; exact identities/outputs still required."
+    }
+  ],
+  "raw_pool_category_coverage": {
+    "sampled_transactions": 221,
+    "coinbase": 17,
+    "transparent_only": 202,
+    "multiple_outputs": 87,
+    "non_coinbase": 204,
+    "multiple_inputs": 149,
+    "sprout_component_transactions": 6,
+    "mixed_transparent_shielded": 13,
+    "sapling_component_transactions": 7,
+    "multiple_shielded_pools": 2,
+    "ironwood_component_transactions": 8
+  },
+  "limitations": [
+    "Sampled extraction evidence, not exhaustive chain verification. Category counts describe public transactions, not ownership/account classification. Ironwood real-chain coverage is absent unless its count is nonzero; focused fixture coverage remains separate. Canonical HTTP/SQLite and wallet capacity qualification remain open."
+  ]
+}

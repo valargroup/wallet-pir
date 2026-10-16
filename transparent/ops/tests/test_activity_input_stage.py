@@ -189,7 +189,7 @@ class Inputs(unittest.TestCase):
     def test_portable_pins_are_the_release_production_runs(self):
         # Independent record of the 2026-10-09 redeploy: its manifest's "after"
         # identities and the CI bundle's own checksums.
-        evidence=Path(__file__).parents[2]/'evidence/fleet-redeploy-2026-10-09'
+        evidence=Path(__file__).parents[2]/'ops/fixtures/deployment-provenance/fleet-redeploy-2026-10-09'
         manifest=json.loads((evidence/'manifest.json').read_text())
         sums=dict(reversed(line.split()) for line in (evidence/'raw/release-SHA256SUMS').read_text().splitlines())
         binaries=manifest['binaries']
