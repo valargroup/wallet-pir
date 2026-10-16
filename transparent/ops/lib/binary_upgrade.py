@@ -175,12 +175,12 @@ class Upgrade:
             raise DeployError('controller runs %s, the worker executable; refusing to select it as the controller' % binary)
         return [self.controller], dataclasses.replace(self.service, root=self.service.root + '/controller', binary=name)
 
-    def controller_problems(self, ex):
+    def controller_problems(self, ex, *, check_authority=True):
         problems = []
         controller = self.request['controller']
         host = controller['host']
         state = ex.probe_unit(host, self.product['controller'])
-        problem_if(state['active_state'] != 'active', 'controller is %s' % state['active_state'], problems)
+        problem_if(check_authority and state['active_state'] != 'active', 'controller is %s' % state['active_state'], problems)
         problem_if(unit_digest(state) != controller['unit_sha256'], 'controller unit changed from the pinned bytes', problems)
         for path, digest in sorted(controller['files'].items()):
             problem_if(ex.sha256(host, path) != digest, 'controller file %s differs from its pinned digest' % path, problems)
@@ -202,9 +202,17 @@ class Upgrade:
             problem_if('--geometry' in words, 'controller passes --geometry, which run mode does not take', problems)
             problem_if(not any(words[i:i + 2] == ['--root', root] for i in range(len(words))),
                        'controller does not run --root %s' % root, problems)
-            problem_if('%s/%s' % (root, self.product['controller_root_file']) not in controller['files'],
-                       'controller.files must pin %s/%s' % (root, self.product['controller_root_file']), problems)
-        problems.extend(self.authority_problems(ex)[1])
+            layout_path = '%s/%s' % (root, self.product['controller_root_file'])
+            problem_if(layout_path not in controller['files'],
+                       'controller.files must pin %s' % layout_path, problems)
+            try:
+                layout = json.loads(ex.read(host, layout_path) or 'null')
+                geometry = layout.get('geometry') if isinstance(layout, dict) else None
+            except ValueError:
+                geometry = None
+            problem_if(geometry != 'txid-4k8', 'display layout must use txid-4k8, found %r' % geometry, problems)
+        if check_authority:
+            problems.extend(self.authority_problems(ex)[1])
         return problems
 
     def worker_problems(self, ex, target):
@@ -255,7 +263,8 @@ class Upgrade:
         pinned = self.request['workers'][key]['ready_identity']
         before, problems = self.authority_problems(ex)
         status, body = ex.http_get(host, url)
-        after, _ = self.authority_problems(ex)
+        after, after_problems = self.authority_problems(ex)
+        problems += after_problems
         try:
             document = json.loads(body) if status == 200 else None
         except ValueError:
@@ -273,10 +282,14 @@ class Upgrade:
             problem_if(type(document.get('covered_through')) is not int, '%s has no covered_through' % key, problems)
         else:
             problems += self.assignment_problems(ex, key, document)
+            problem_if(document.get('ready') is not True, '%s is not ready' % key, problems)
+            problem_if(type(document.get('target_runtimes')) is not int or document.get('target_runtimes', 0) <= 0
+                       or type(document.get('warm_runtimes')) is not int,
+                       '%s runtime counts are missing or invalid' % key, problems)
             problem_if(document.get('warm_runtimes') != document.get('target_runtimes'),
                        '%s warm_runtimes %r of target %r' % (key, document.get('warm_runtimes'),
                                                              document.get('target_runtimes')), problems)
-            problem_if(bool(document.get('prewarm_failed')), '%s prewarm_failed %r' % (key, document.get('prewarm_failed')),
+            problem_if(type(document.get('prewarm_failed')) is not int or document.get('prewarm_failed') != 0, '%s prewarm_failed %r' % (key, document.get('prewarm_failed')),
                        problems)
         return problems
 
@@ -354,12 +367,18 @@ class UpgradeDeployer(Deployer):
 
     def schema_fence(self):
         super().schema_fence()
-        problems = self.upgrade.problems(self.ex)
-        problems += self.upgrade.load_problems(self.ex, check_pin=self.operation != 'rollback')
+        if self.operation == 'rollback':
+            # Recovery must remain possible when the new process is unhealthy.
+            # Keep the pinned configuration and unit contract checks; the shared
+            # journal independently checks ownership of every restored change.
+            problems = self.upgrade.controller_problems(self.ex, check_authority=False)
+        else:
+            problems = self.upgrade.problems(self.ex)
+            problems += self.upgrade.load_problems(self.ex, check_pin=True)
         if problems:
             raise DeployError('product state refused under the lock; nothing was changed:\n  ' + '\n  '.join(problems))
 
-    def pause_load(self, journal):
+    def pause_load(self, journal, *, refuse_latch=True):
         load = self.upgrade.request['load']
         if load is None or self.load_was_active is not None:
             return
@@ -367,7 +386,7 @@ class UpgradeDeployer(Deployer):
         self.load_was_active = self.ex.probe_unit(load['host'], unit)['active_state'] == 'active'
         journal.event('load paused', host=load['host'], unit=unit, was_active=self.load_was_active)
         self.ex.systemctl(load['host'], 'stop', unit)
-        if self.ex.sha256(load['host'], self.upgrade.product['load']['root'] + '/latched.json') is not None:
+        if refuse_latch and self.ex.sha256(load['host'], self.upgrade.product['load']['root'] + '/latched.json') is not None:
             raise DeployError('a critical load latch appeared while pausing load')
         self.out('monitoring: %s stopped for the restarts' % unit)
 
@@ -408,14 +427,27 @@ class UpgradeDeployer(Deployer):
                          % self.upgrade.product['load']['unit'])
             raise
         if journal is not None and self.load_was_active is not None:
-            pins = self.repin_load(journal)
+            journal.set_status('verifying')
             unit = self.upgrade.product['load']['unit']
-            if self.load_was_active:
-                # restart starts the stopped unit; it re-reads the new pins.
-                self.ex.systemctl(self.upgrade.request['load']['host'], 'restart', unit)
-                self.out('monitoring: %s started with pins %s' % (unit, json.dumps(pins, sort_keys=True)))
-            else:
-                self.out('monitoring: %s was not running and stays stopped; pins %s' % (unit, json.dumps(pins, sort_keys=True)))
+            host = self.upgrade.request['load']['host']
+            try:
+                pins = self.repin_load(journal)
+                if self.load_was_active:
+                    # restart starts the stopped unit; it re-reads the new pins.
+                    self.ex.systemctl(host, 'restart', unit)
+                    self.out('monitoring: %s started with pins %s' % (unit, json.dumps(pins, sort_keys=True)))
+                else:
+                    self.out('monitoring: %s was not running and stays stopped; pins %s' % (unit, json.dumps(pins, sort_keys=True)))
+            except BaseException as error:
+                # The worker checks passed, but monitoring is part of this rollout.
+                # Keep the lock while restoring workers and their pins. Preserve
+                # the stopped observer and its incident history for investigation.
+                journal.event('monitoring failed', error=str(error))
+                self.ex.systemctl(host, 'stop', unit)
+                self.rollback_journal(journal)
+                self.repin_load(journal)
+                raise DeployError('monitoring recovery failed; workers rolled back and load left stopped: %s' % error) from error
+            journal.set_status('committed')
         return journal
 
     def rollback_journal(self, journal, force=False):
@@ -425,7 +457,7 @@ class UpgradeDeployer(Deployer):
                               % (journal.id, self.upgrade.request['component']))
         explicit = self.operation == 'rollback' and self.upgrade.request['component'] == 'workers'
         if explicit:
-            self.pause_load(journal)
+            self.pause_load(journal, refuse_latch=False)
         super().rollback_journal(journal, force)
         if explicit and self.load_was_active is not None:
             pins = self.repin_load(journal)
