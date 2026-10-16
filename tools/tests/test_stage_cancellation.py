@@ -18,7 +18,7 @@ class CancellationTests(unittest.TestCase):
         leaf = ("import os,signal,socket; s=socket.socket(); s.bind(('127.0.0.1',0)); s.listen(); "
                 "print('READY:'+str(s.getsockname()[1])+':'+str(os.getpid()),flush=True); signal.pause()")
         nested = [sys.executable, str(ROOT / 'tools/ci/stage.py'), 'nested', '--', sys.executable, '-c', leaf]
-        controller = f'import subprocess; subprocess.run({nested!r},check=True)'
+        controller = f'import subprocess; subprocess.run({nested!r},check=True,pass_fds={inherited_fds().get("pass_fds", ())!r})'
         for trial in range(50):
             with self.subTest(trial=trial):
                 command = [sys.executable, str(ROOT / 'tools/ci/stage.py'), 'cancellation', '--',

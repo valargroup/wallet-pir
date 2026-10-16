@@ -200,19 +200,24 @@ def main():
     parser.add_argument('--limit', type=int, default=20)
     parser.add_argument('--cache-records', action='store_true', help='read job logs for sanitized cache/stage records')
     parser.add_argument('--slo', action='store_true', help='qualify warm main feedback with selection/cache evidence; needs 20 representative runs')
+    parser.add_argument('--since-run', help='start the SLO window at this Actions run; excludes older pipeline versions')
     args = parser.parse_args()
-    if args.slo and not args.workflow:
-        parser.error('--slo requires --workflow')
+    if args.slo and (not args.workflow or not args.since_run):
+        parser.error('--slo requires --workflow and --since-run')
     if args.run:
         result = report(args.repo, args.run, args.cache_records)
     else:
         runs = api(f'repos/{args.repo}/actions/workflows/{args.workflow}/runs?status=completed&per_page={args.limit}')['workflow_runs']
+        anchor = api(f'repos/{args.repo}/actions/runs/{args.since_run}') if args.slo else None
+        if anchor:
+            runs = [run for run in runs if timestamp(run['created_at']) >= timestamp(anchor['created_at'])]
         rows = [report(args.repo, r['id'], args.cache_records or args.slo) for r in runs
                 if args.slo or r['conclusion'] == 'success']
         result = {'workflow': args.workflow, 'successful_runs': sum(r.get('conclusion') == 'success' for r in rows),
                   'p95_dispatch_seconds': percentile95([r['dispatch_seconds'] for r in rows]), 'runs': rows}
     if args.slo:
-        result['slo'] = feedback_slo(rows)
+        result['slo'] = {**feedback_slo(rows), 'since_run': args.since_run,
+                         'since_created_at': anchor['created_at']}
     print(json.dumps(result, indent=2))
     if os.environ.get('GITHUB_STEP_SUMMARY'):
         with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as out:

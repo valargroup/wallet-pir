@@ -95,9 +95,9 @@ published. Unset variables retain the **ubuntu-24.04** hosted fallback.
 
 Use separate Unix users and 0700 homes for the two services:
 `wallet-pir-fast` and `wallet-pir-build`. Neither has sudo or a deployment SSH key.
-Fast runners execute same-repository PR code and have no production access or
-access to the build user's release caches or runner credentials. Fork PRs always use disposable
-hosted runners. Full CI on PRs, and manual runs from any branch other than main,
+The fast runner executes main and explicit cold preparation, with no production access or
+access to the build user's release caches or runner credentials. All PRs and branch
+dispatches use hosted runners to reserve main's queue. Full CI on PRs, and manual runs from any branch other than main,
 also use hosted runners; only main builds use the trusted persistent build pool. The fast service has CPU/I/O weight 1000 and a 6-GiB memory ceiling; the build
 service has weight 100, nice level 10 and a 9-GiB ceiling. Both use
 `MemoryHigh=infinity`: a soft threshold previously trapped tests and the runner
@@ -167,8 +167,8 @@ never reads PR entries. Because main CI full runs on the persistent pool, the
 main-only [Prime hosted Cargo caches](../.github/workflows/ci-cache.yml) workflow
 saves the full lint and test entries from main code. It checks for the exact
 entry without downloading it and compiles only when it is missing. It runs no
-tests and is not a gate. It does not prime fast-lane entries (used only by fork
-PRs) or the Enhance native/CUDA feature checks; those units compile in the job.
+tests and is not a gate. It does not prime fast-lane entries (used by hosted
+PR feedback) or the Enhance native/CUDA feature checks; those units compile in the job.
 
 A restored cache can only save work. Cargo still checks every unit; a fresh
 checkout's workspace sources are newer than cached outputs, so workspace crates
@@ -204,9 +204,10 @@ cases use their own cache directories. No client secrets are cached.
 To assess the target using completed main runs:
 
 ```sh
-python3 tools/ci/timings.py --workflow ci.yml --limit 100 --slo
+python3 tools/ci/timings.py --workflow ci.yml --limit 100 --slo --since-run <first-updated-run-id>
 ```
 
+The explicit starting run excludes older pipeline versions and their failures.
 This needs at least 20 representative runs, coverage of all service families,
 shared changes, operations and docs, and a p95 below 180 seconds. Workflow-only,
 canceled, cold and unknown-cache samples cannot qualify the target. Failed runs
