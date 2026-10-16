@@ -16,6 +16,10 @@ serde_json = "1"
 tokio = { version = "1", features = ["rt", "sync", "time"] }
 
 [dev-dependencies]
+# The receiver client wallets use, from wallet-libraries, which the service's routes
+# must serve; the library does not depend on this service.
+library-receiver-pir = { package = "zakura-receiver-pir", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "bf3c560ba71e4ed6c4601bf30e196f102a20010a" }
+library-receiver-directory = { package = "zakura-receiver-directory", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "bf3c560ba71e4ed6c4601bf30e196f102a20010a" }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 sha2 = "0.10"
 tokio = { version = "1", features = ["io-util", "macros", "net"] }
