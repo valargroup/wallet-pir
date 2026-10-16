@@ -4,11 +4,9 @@ import argparse
 import json
 import os
 from pathlib import Path
-import subprocess
 import sys
 import tempfile
 import urllib.error
-import urllib.request
 
 from fast import ROOT, FULL_GROUPS, HELPERS, plan, workspace_packages
 from stage import run
@@ -67,53 +65,31 @@ def selection(repo, sha, requested='affected'):
     return result
 
 
-def checks(family):
-    groups = {'ops', 'enhance_infra', 'transparent_infra'} if family == 'ops' else {
-        'ops', 'shared', family, 'transparent_infra' if family == 'transparent' else 'enhance_infra'}
+def checks(family, service_only=False):
+    if family == 'common':
+        groups = {'ops', 'enhance_infra', 'transparent_infra'}
+    elif family == 'shared':
+        groups = {'shared'}
+    elif service_only:
+        groups = set() if family == 'ops' else {family}
+    else:
+        groups = {'ops', 'enhance_infra', 'transparent_infra'} if family == 'ops' else {
+            'ops', 'shared', family, 'transparent_infra' if family == 'transparent' else 'enhance_infra'}
     with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
         for group in sorted(FULL_GROUPS):
             out.write(f'{group}={str(group in groups).lower()}\n')
-        out.write(f'helpers={json.dumps(sorted(HELPERS))}\n')
-
-
-def background(repo, sha):
-    if release.api(f'repos/{repo}/commits/main')['sha'] == sha:
-        run([sys.executable, 'tools/ci/fast.py', '--all', '--select-only', '--github-output'], stage='selection')
-        return
-    print('Superseded automatic regression: no native work selected')
-    with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
-        for group in sorted(FULL_GROUPS):
-            out.write(f'{group}=false\n')
-        out.write('helpers=[]\n')
-
-
-def cancel_regressions(repo, sha):
-    """Cancel only obsolete automatic regressions, never pinned runs or deploys."""
-    runs = release.api(f'repos/{repo}/actions/workflows/ci-full.yml/runs?per_page=100')['workflow_runs']
-    for candidate in runs:
-        if (candidate.get('event') not in ('push', 'workflow_run') or candidate.get('head_branch') != 'main'
-                or candidate.get('status') not in ('queued', 'in_progress', 'waiting')
-                or candidate.get('head_sha') == sha):
-            continue
-        request = urllib.request.Request(
-            os.environ.get('GITHUB_API_URL', 'https://api.github.com')
-            + f'/repos/{repo}/actions/runs/{candidate["id"]}/cancel', method='POST',
-            headers={'Authorization': 'Bearer ' + (os.environ.get('GH_TOKEN') or os.environ['GITHUB_TOKEN']),
-                     'Accept': 'application/vnd.github+json'})
-        try:
-            with urllib.request.urlopen(request, timeout=30):
-                pass
-        except urllib.error.HTTPError as error:
-            # Completion between list and cancel is harmless. All other errors
-            # are visible and fail the selector rather than silently building a backlog.
-            if error.code != 409:
-                raise
+        out.write(f'helpers={json.dumps(sorted(HELPERS) if 'ops' in groups else [])}\n')
 
 
 def verify(family, sha, output):
     with tempfile.TemporaryDirectory() as directory:
         for kind in KINDS[family]:
-            release.extract(output / kind / (kind + '.tar.gz'), Path(directory) / kind, sha, kind)
+            destination = Path(directory) / kind
+            release.extract(output / kind / (kind + '.tar.gz'), destination, sha, kind)
+            for name in ('candidate.json', 'operations.json'):
+                metadata = destination / name
+                if metadata.exists() and json.loads(metadata.read_text()).get('source_dirty') is not False:
+                    raise ValueError(f'{kind}: candidate source was dirty')
 
 
 def build(family):
@@ -148,11 +124,9 @@ def main():
     select = sub.add_parser('select')
     select.add_argument('--sha', required=True)
     select.add_argument('--family', choices=['affected', 'all', *FAMILIES], default='affected')
-    for command in ('cancel-regressions', 'background'):
-        child = sub.add_parser(command)
-        child.add_argument('--sha', required=True)
     check = sub.add_parser('checks')
-    check.add_argument('--family', choices=FAMILIES, required=True)
+    check.add_argument('--family', choices=[*FAMILIES, 'common', 'shared'], required=True)
+    check.add_argument('--service-only', action='store_true')
     for command in ('build', 'assemble', 'verify'):
         child = sub.add_parser(command)
         child.add_argument('--family', choices=FAMILIES, required=True)
@@ -168,12 +142,8 @@ def main():
         with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
             for family, value in result.items():
                 out.write(f'{family}={str(value["selected"]).lower()}\n')
-    elif args.command == 'cancel-regressions':
-        cancel_regressions(os.environ['GITHUB_REPOSITORY'], args.sha)
-    elif args.command == 'background':
-        background(os.environ['GITHUB_REPOSITORY'], args.sha)
     elif args.command == 'checks':
-        checks(args.family)
+        checks(args.family, args.service_only)
     elif args.command == 'verify':
         verify(args.family, args.sha, args.output)
     elif args.command == 'build':

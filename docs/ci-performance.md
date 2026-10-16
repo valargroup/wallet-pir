@@ -1,6 +1,6 @@
 # CI and deployment latency
 
-The target is **30 seconds from workflow creation to fast checks completing**
+The target is **three minutes from main push to fast checks completing**
 for routine changes on warm runners, and **two minutes from deployment dispatch
 to healthy service** when an exact-SHA qualified artifact is already available.
 Cold builds, dependency/toolchain changes, initial data preparation, schema
@@ -13,24 +13,25 @@ not measured guarantees; hosted fallback and cold fleet warming can exceed them.
 and their transitive reverse dependencies. Deleted files are included; build
 configuration, dependency manifests and unknown paths select the whole workspace.
 Documentation-only changes run documentation checks without installing Rust.
-Operations-only changes run helper checks without compiling Rust.
+Operations-only changes run helper checks without compiling Rust. Main compares against
+the last successful main fast run, so canceled or failed runs cannot leave unchecked changes behind.
 
-Rust feedback runs library and binary unit tests serially in `release-fast`, so independent
-service fixtures share the fast runner’s 6-GiB ceiling without overlapping their
-crypto allocations. The package-qualified full-geometry/cache, multi-unit preparation, RPC publication
+Rust feedback compiles sequentially in `release-fast`, then CI executes at most
+two Cargo-reported unit test programs concurrently. Cases within each program stay
+serial, preserving process-local immutable public fixtures within the fast runner’s
+6-GiB ceiling. Local focused checks default to one program at a time. The package-qualified full-geometry/cache, multi-unit preparation, RPC publication
 and real HTTP retry cases run only in full CI;
-`tools/ci/slow-tests.json` records the exact names and reasons. Binary unit tests run as well as library targets. When the Enhance server is selected, fast CI also
+`tools/ci/slow-tests.json` records the exact names and reasons. Binary unit tests run as well as library targets. For affected packages, fast CI also
 runs the integration targets classified as `fast` in
-[`tools/ci/enhance-tests.json`](../tools/ci/enhance-tests.json). The remaining
+[`tools/ci/integration-tests.json`](../tools/ci/integration-tests.json). The remaining
 integration targets, doctests, binary unit tests and all-feature lint run in
-**CI full**. PRs select affected product, shared, operations and infrastructure
-families; main qualifies affected service families. The aggregate completion check fails if a
+**CI full**, nightly or on request. The aggregate completion check fails if a
 selected job fails or is skipped. This avoids compiling every integration target just
 to exclude its tests at runtime. Affected helper
 checks run concurrently with Rust; selected operations suites run in
 four parallel make slots, and failures in any task fail fast CI.
 
-Every Enhance server integration target must be classified exactly once.
+Every workspace integration target must be classified exactly once.
 `make check-tools` validates the registry against manifests and integration source files without invoking Rust, rejecting new
 unclassified targets and stale entries. Full CI runs both tiers serially, including
 the real-crypto `packing_http` path; it clears `QUALIFY_*` overrides so that CI uses
@@ -45,19 +46,25 @@ main revision captured by dispatch; newer pushes do not cancel manual runs.
 
 Receiver, Transparent, Enhance/Status and the operations package qualify
 independently, using the existing full family suites, shared tests and helper
-checks. Cheap helper checks precede native work on the fast pool. Operations archives
+checks. Common helper, shared-library and infrastructure checks run once per qualification, before service-specific native work. Helpers run on hosted runners to reserve the fast queue for main. Operations archives
 assemble on hosted runners without Rust, so they never queue behind native tests. Candidate release builds may run
 alongside testing in separate target lanes; candidate archives are uploaded under
 an ineligible name and re-verified before qualified publication. Each family
 publishes immediately after its required checks pass. Failure in another family
 cannot authorize or prevent that publication. CPU artifacts do not wait for CUDA.
 
-Whole-repository **CI full** follows automatic service qualification in the
-background, at the triggering source revision. New main pushes cancel obsolete
-automatic qualification and regression work; pinned manual runs and production
-deployments retain separate concurrency groups. Full PR checks remain affected
-checks. No tests are removed or newly ignored, and hardware qualification remains
-a separate deployment gate.
+Only **CI / Fast checks** runs automatically on main pushes and PRs. The main
+job has a three-minute execution ceiling; queueing also counts toward the latency
+target. A timeout is a failure, never evidence of successful fast validation.
+The pre-push health guard follows this workflow, rather than long qualification.
+
+Whole-repository **CI full** runs nightly at 04:17 UTC and on explicit dispatch.
+**Qualify services** is dispatch-only and pins its main revision. It retains
+full service suites and exact-SHA artifact checks; a green fast gate cannot
+replace it. Hosted cache priming runs nightly at 03:37 UTC or on request, without
+launching qualification or holding the main result open. Dependency/toolchain
+validation and cold preparation belong before landing an upgrade. Unexpected
+missing prerequisites must fail visibly rather than skip required tests.
 
 To reproduce selection without running tests:
 
@@ -85,14 +92,16 @@ published. Unset variables retain the **ubuntu-24.04** hosted fallback.
 
 | Repository variable | Configured value |
 |---|---|
-| `WALLET_PIR_FAST_RUNNER` | `["self-hosted","Linux","X64","wallet-pir-fast"]` |
+| `WALLET_PIR_MAIN_RUNNER` | `["self-hosted","Linux","X64","wallet-pir-fast"]` |
 | `WALLET_PIR_BUILD_RUNNER` | `["self-hosted","Linux","X64","wallet-pir-build"]` |
 
 Use separate Unix users and 0700 homes for the two services:
 `wallet-pir-fast` and `wallet-pir-build`. Neither has sudo or a deployment SSH key.
-Fast runners execute same-repository PR code and have no production access or
-access to the build user's release caches or runner credentials. Fork PRs always use disposable
-hosted runners. Full CI on PRs, and manual runs from any branch other than main,
+The fast runner executes main and explicit cold preparation, with no production access or
+access to the build user's release caches or runner credentials. All PRs and branch
+dispatches use hosted runners to reserve main's queue. The legacy
+`WALLET_PIR_FAST_RUNNER` variable is `"ubuntu-24.04"`, so a workflow stored
+on an older branch cannot take main's runner through the previous setting. Explicit full runs from branches other than main
 also use hosted runners; only main builds use the trusted persistent build pool. The fast service has CPU/I/O weight 1000 and a 6-GiB memory ceiling; the build
 service has weight 100, nice level 10 and a 9-GiB ceiling. Both use
 `MemoryHigh=infinity`: a soft threshold previously trapped tests and the runner
@@ -158,17 +167,57 @@ Hosted jobs restore one exact key, `v1-wallet-pir-<lane>-<scope>-<identity>-Linu
 with no partial fallback to another identity. Lanes, scopes, CPU, native CPU and
 Ubuntu 22.04 CUDA builds therefore never share entries. GitHub scopes a PR's saves
 to its merge ref; a PR restores its own entry first and otherwise main's. Main
-never reads PR entries. Because main CI full runs on the persistent pool, the
-main-only [Prime hosted Cargo caches](../.github/workflows/ci-cache.yml) workflow
-saves the full lint and test entries from main code. It checks for the exact
-entry without downloading it and compiles only when it is missing. It runs no
-tests and is not a gate. It does not prime fast-lane entries (used only by fork
-PRs) or the Enhance native/CUDA feature checks; those units compile in the job.
+never reads PR entries. Because main uses persistent targets, the separate
+[Prime hosted Cargo caches](../.github/workflows/ci-cache.yml) workflow warms
+one fast feedback entry from main for hosted PRs. It looks up the exact key and
+compiles fast units only when missing. It runs no tests and is not a gate.
+Full qualification uses persistent build lanes; its former six hosted PR cache
+primers are no longer automatic work. Explicit branch full runs may build cold.
 
 A restored cache can only save work. Cargo still checks every unit; a fresh
 checkout's workspace sources are newer than cached outputs, so workspace crates
 rebuild on hosted runners, while unchanged third-party units can be fresh.
-A missing cache is a valid cold build.
+A missing cache is a separately measured cold build; it does not relax main validation or its deadline.
+
+## Cold preparation and representative latency
+
+Dispatch **Prepare fast validation** on a dependency/toolchain upgrade branch
+before landing it. It compiles and validates the same fast units using the fast
+runner's cache. Main pushes preempt preparation; preparation cannot cancel a
+running main check. Main rejects an entirely empty cache with an explicit
+preparation error instead of spending its three-minute budget on native builds.
+Cargo still validates dependencies and rebuilds changed units on every run.
+The optional `stress` input repeats each family's encrypted HTTP/recovery smoke
+50 times with fresh service state and no test retries. It remains preemptible
+and does not publish release artifacts.
+
+Fast coverage includes an encrypted HTTP smoke for Receiver, Transparent and
+Enhance. Transparent checks a nonzero row against public source bytes, refuses
+malformed input before preparation, and repeats after a cache restore and
+corruption. Enhance verifies encrypted records after draining the old listener
+and reopening durable coordinator state. Listener readiness/shutdown use bound
+sockets and completion signals, without timing sleeps. Full suites retain the
+larger publication, failover, geometry and independent-reference campaigns.
+
+Wallet walk fixtures cache their immutable manifests, returning owned copies
+for mutation cases. Full Transparent wallet suites also reuse verified public
+runtime snapshots in a bounded, temporary directory owned by the test runner;
+services, wallets and mutable stores remain fresh. Explicit cold/corruption
+cases use their own cache directories. No client secrets are cached.
+
+To assess the target using completed main runs:
+
+```sh
+python3 tools/ci/timings.py --workflow ci.yml --limit 100 --slo --since-run <first-updated-run-id>
+```
+
+The explicit starting run excludes older pipeline versions and their failures.
+This needs at least 20 representative runs, coverage of all service families,
+shared changes, operations and docs, and a p95 below 180 seconds. Workflow-only,
+canceled, cold and unknown-cache samples cannot qualify the target. Failed runs
+remain visible. Warm means Cargo reported no third-party compilation; workspace
+source can still rebuild. Queueing and final job cleanup count. A missing sample
+population is an unqualified target, not a measured guarantee.
 
 ## Prepared-artifact deployment
 

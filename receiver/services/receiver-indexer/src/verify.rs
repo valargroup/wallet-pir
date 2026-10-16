@@ -7,6 +7,7 @@ use receiver_directory::{
     snapshot::{Manifest, Snapshot, ROW_BYTES, SLOTS},
     Payment, RawRecord, ReceiverBytes, RECORD_BYTES,
 };
+#[cfg(not(test))]
 use receiver_pir::server::Server;
 use receiver_pir_server::Publication;
 use receiver_store::{Error, IndexedBlock, Store};
@@ -131,7 +132,14 @@ pub fn prepare(
             Error::Sql(_) => receiver_directory::Error::Malformed,
         })
     })?;
-    Ok(Publication::verified(Server::new(snapshot)?, witnesses))
+    #[cfg(test)]
+    {
+        crate::prepared::prepare(snapshot, witnesses)
+    }
+    #[cfg(not(test))]
+    {
+        Ok(Publication::verified(Server::new(snapshot)?, witnesses))
+    }
 }
 
 #[cfg(test)]

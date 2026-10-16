@@ -64,6 +64,19 @@ class SelectionTests(unittest.TestCase):
 class BoundaryTests(unittest.TestCase):
     """The Common/node and wallet-libraries dependency boundary; see tools/ci/boundary.py."""
 
+    def test_nested_checkouts_are_excluded_but_new_local_manifests_are_checked(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'Cargo.toml').write_text('[workspace]\n')
+            for name in ['new', 'target/cached', '.claude/worktrees/old']:
+                path = root / name
+                path.mkdir(parents=True)
+                (path / 'Cargo.toml').write_text('[package]\nname="example"\n[dependencies]\nzakura-chain="1"\n')
+            (root / '.claude/worktrees/old/.git').write_text('gitdir: elsewhere')
+            packages = boundary.manifests(root)
+            self.assertEqual([p['manifest'] for p in packages], ['new/Cargo.toml'])
+            self.assertTrue(boundary.violations(packages, set()))
+
     def edge(self, name, kind='dependencies', git=''):
         return {'name': name, 'kind': kind, 'git': git}
 
@@ -276,6 +289,31 @@ class ReleaseTests(unittest.TestCase):
             self.assertTrue((root / 'status-pir' / 'status-pir').stat().st_mode & 0o111)
             with self.assertRaises(ValueError):
                 release.extract(root / 'bundles-status-pir' / 'status-pir.tar.gz', root / 'cross-status', revision, 'enhance-pir-native')
+
+    def test_sequential_candidate_outputs_keep_clean_source_but_real_edits_are_dirty(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / '.gitignore').write_text((ROOT / '.gitignore').read_text())
+            (root / 'source.rs').write_text('source')
+            def git(*args):
+                return subprocess.check_output(['git', *args], cwd=root, stderr=subprocess.DEVNULL, text=True).strip()
+            git('init')
+            git('add', '.gitignore', 'source.rs')
+            git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-m', 'fixture')
+            revision = git('rev-parse', 'HEAD')
+            (root / 'target/release').mkdir(parents=True)
+            (root / 'target/release/server').write_bytes(b'fixture binary')
+            kind = 'enhance-pir-native'
+            with patch.object(release, 'ROOT', root), patch.object(release, 'BINARIES', {kind: ['server']}), \
+                    patch.object(release, 'FILES', {kind: []}):
+                for number, expected_dirty in [(1, False), (2, False), (3, True)]:
+                    if expected_dirty:
+                        (root / 'untracked-source.rs').write_text('real source change')
+                    output = root / 'release-bundles' / str(number)
+                    release.assemble(revision, root / 'target', output, kind)
+                    with tarfile.open(output / (kind + '.tar.gz')) as archive:
+                        metadata = json.load(archive.extractfile('candidate.json'))
+                    self.assertEqual(metadata['source_dirty'], expected_dirty)
 
     def test_cuda_metadata_and_kind_are_required_before_extraction(self):
         kind = 'enhance-pir-native-cuda'
@@ -807,11 +845,18 @@ class CacheWorkflowTests(unittest.TestCase):
         self.assertNotIn('pull_request', prime)
         self.assertNotIn('save-if', full + prime)
 
-    def test_primed_identity_matches_pr_full_jobs(self):
+    def test_primed_identity_matches_hosted_feedback(self):
         def flags(text):
             env = text.split('\nenv:\n', 1)[1].split('\n\n', 1)[0]
             return {key: value for key, value in re.findall(r'^  (\w+): (.+)$', env, re.M) if key in ('RUSTFLAGS', 'CFLAGS', 'CXXFLAGS')}
-        self.assertEqual(flags(self.workflows['ci-cache.yml']), flags(self.workflows['ci-full.yml']))
+        self.assertEqual(flags(self.workflows['ci-cache.yml']), flags(self.workflows['ci.yml']))
+
+    def test_hosted_priming_prepares_feedback_instead_of_unused_full_pr_caches(self):
+        prime = self.workflows['ci-cache.yml']
+        self.assertIn('lane: fast', prime)
+        self.assertIn('scope: affected', prime)
+        self.assertIn('tools/ci/fast.py --all --compile-only', prime)
+        self.assertNotIn('full_packages.py', prime)
 
     def test_cuda_cache_identity_sees_the_build_script_flags(self):
         script = (ROOT / 'tools/ci/build-cuda.sh').read_text()

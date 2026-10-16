@@ -8,7 +8,10 @@ also emit JSON messages: rendered diagnostics go to stderr, other output passes
 through, and each compiler-artifact is logged with its `fresh` flag only.
 """
 import json
+from contextlib import nullcontext
 import os
+import signal
+import threading
 from pathlib import Path
 import subprocess
 import sys
@@ -21,6 +24,7 @@ from target_lease import inherited_fds  # noqa: E402
 
 PARENT = 'WALLET_PIR_STAGE_PARENT'
 ARTIFACT_LOG = 'WALLET_PIR_ARTIFACT_LOG'
+COMMAND_GROUP = 'WALLET_PIR_COMMAND_GROUP'
 BUILDS = {'build', 'check', 'clippy', 'test'}
 
 
@@ -37,12 +41,12 @@ def with_messages(command):
     return [*command[:subcommand + 1], '--message-format=json-diagnostic-rendered-ansi', *command[subcommand + 1:]]
 
 
-def relay(process, log, stage):
+def relay(process, log, stage, executables=None):
     """Pass non-message output through; log sanitized compiler-artifact records."""
     sys.path.insert(0, str(ROOT / 'tools/ci'))
     from cargo_cache import artifact_unit
     command = uuid.uuid4().hex[:12]
-    with open(log, 'a') as out:
+    with (open(log, 'a') if log else nullcontext(None)) as out:
         for line in process.stdout:
             message = None
             if line.startswith('{'):
@@ -57,24 +61,105 @@ def relay(process, log, stage):
                 sys.stderr.write((message.get('message') or {}).get('rendered') or '')
                 sys.stderr.flush()
             elif (unit := artifact_unit(message)) is not None:
+                if (executables is not None and message.get('profile', {}).get('test')
+                        and message.get('executable')):
+                    executables.append(message['executable'])
+                if out is None:
+                    continue
                 out.write(json.dumps({**unit, 'stage': stage, 'command': command}) + '\n')
 
 
-def run(command, *, env=None, stage='helper'):
+_ACTIVE = {}
+_PROCESS_LOCK = threading.RLock()
+_CANCELLED = 0
+_SPAWNING = False
+
+
+def reap(groups):
+    # Allow shell EXIT traps to remove owned fixtures before forcing any
+    # uncooperative descendants to stop. This thread keeps cancellation bounded.
+    deadline = time.monotonic() + 2
+    remaining = set(groups)
+    while remaining and time.monotonic() < deadline:
+        for group in list(remaining):
+            try:
+                os.killpg(group, 0)
+            except (ProcessLookupError, PermissionError):
+                remaining.remove(group)
+        if remaining:
+            time.sleep(.05)
+    for group in remaining:
+        try:
+            os.killpg(group, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+
+
+def cancel(signum, _frame):
+    """Stop owned command groups, including Cargo's compiler/test descendants."""
+    global _CANCELLED
+    with _PROCESS_LOCK:
+        _CANCELLED = signum
+        if _SPAWNING:
+            return
+        processes = list(_ACTIVE.values())
+    # Do not re-enter Popen.wait here: the signal can interrupt its waitpid
+    # lock. A separate reaper bounds cleanup after graceful signal propagation.
+    for process in processes:
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+    threading.Thread(target=reap, args=([p.pid for p in processes],), daemon=False).start()
+    raise SystemExit(128 + signum)
+
+
+def install_cancellation():
+    if os.name == 'posix' and not os.environ.get(COMMAND_GROUP) and threading.current_thread() is threading.main_thread():
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            signal.signal(sig, cancel)
+
+
+def run(command, *, env=None, stage='helper', cwd=ROOT, collect_tests=False):
+    global _SPAWNING
+    install_cancellation()
     identifier = uuid.uuid4().hex[:12]
     child = dict(os.environ if env is None else env, **{PARENT: identifier})
+    owns_group = os.name == 'posix' and not os.environ.get(COMMAND_GROUP)
+    child[COMMAND_GROUP] = '1'
     started = time.time()
     start = time.monotonic()
     print('+ ' + ' '.join(command), flush=True)
     log = os.environ.get(ARTIFACT_LOG)
-    messages = with_messages(command) if log else None
-    if messages:
-        with subprocess.Popen(messages, cwd=ROOT, env=child, stdout=subprocess.PIPE, text=True,
-                              errors='replace', **inherited_fds(child)) as process:
-            relay(process, log, stage)
-        result = subprocess.CompletedProcess(messages, process.returncode)
-    else:
-        result = subprocess.run(command, cwd=ROOT, env=child, **inherited_fds(child))
+    messages = with_messages(command) if log or collect_tests else None
+    executables = []
+    if collect_tests and not messages:
+        raise ValueError("test executable collection requires a Cargo build command")
+    with _PROCESS_LOCK:
+        if _CANCELLED:
+            raise SystemExit(128 + _CANCELLED)
+        # Defer a signal during main-thread Popen construction until the new
+        # group has an owner record. Worker-thread construction holds the lock.
+        _SPAWNING = True
+        try:
+            process = subprocess.Popen(messages or command, cwd=cwd, env=child,
+                                       stdout=subprocess.PIPE if messages else None,
+                                       text=True, errors='replace', start_new_session=owns_group,
+                                       **inherited_fds(child))
+            _ACTIVE[process.pid] = process
+        finally:
+            _SPAWNING = False
+        if _CANCELLED:
+            cancel(_CANCELLED, None)
+    try:
+        with process:
+            if messages:
+                relay(process, log, stage, executables if collect_tests else None)
+            process.wait()
+        result = subprocess.CompletedProcess(messages or command, process.returncode)
+    finally:
+        with _PROCESS_LOCK:
+            _ACTIVE.pop(process.pid, None)
     elapsed = time.monotonic() - start
     record = {'stage': stage, 'seconds': round(elapsed, 3), 'exit': result.returncode}
     print('CHECK_STAGE ' + json.dumps(record), flush=True)
@@ -87,6 +172,8 @@ def run(command, *, env=None, stage='helper'):
         with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as out:
             out.write(f'| {stage} | {elapsed:.2f}s | {result.returncode} |\n')
     result.check_returncode()
+    if collect_tests:
+        return list(dict.fromkeys(executables))
 
 
 

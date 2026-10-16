@@ -81,3 +81,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "../../receiver-pir-server/tests/common/prepared.rs"]
+pub(crate) mod prepared;

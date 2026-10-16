@@ -3,6 +3,8 @@ import importlib.util
 import json
 from pathlib import Path
 import unittest
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/ci'))
 
 ROOT = Path(__file__).resolve().parents[2]
 spec = importlib.util.spec_from_file_location('enhance_tests', ROOT / 'tools/ci/enhance_tests.py')
@@ -40,7 +42,7 @@ class ClassificationTests(unittest.TestCase):
                          prefix + ['--lib', '--bins', '--test', 'alpha', '--test', 'crypto', '--test', 'zebra'])
 
     def test_repository_registry_matches_source_targets(self):
-        registry = json.loads((ROOT / 'tools/ci/enhance-tests.json').read_text())
+        registry = json.loads((ROOT / 'tools/ci/integration-tests.json').read_text())[enhance.PACKAGE]
         targets = ROOT / 'enhance/services/enhance-pir-server/tests'
         enhance.validate(metadata([p.stem for p in targets.glob('*.rs')]), registry)
 

@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import tempfile
 import sys
@@ -94,7 +95,18 @@ def manifests(root=ROOT):
     """Every package manifest, with its direct dependencies of every kind and whether
     it lies in a preserved (EXCLUDED) tree."""
     packages = []
-    for path in sorted(root.rglob('Cargo.toml')):
+    paths = []
+    for directory, children, files in os.walk(root):
+        directory = Path(directory)
+        # A nested checkout is another source snapshot. Preserved evidence and
+        # demos in this checkout still receive the direct dependency checks.
+        if directory != root and '.git' in (*children, *files):
+            children[:] = []
+            continue
+        children[:] = sorted(child for child in children if child not in {'.git', 'target'})
+        if 'Cargo.toml' in files:
+            paths.append(directory / 'Cargo.toml')
+    for path in sorted(paths):
         relative = path.relative_to(root).as_posix()
         if relative.startswith('target/') or '/target/' in relative:
             continue

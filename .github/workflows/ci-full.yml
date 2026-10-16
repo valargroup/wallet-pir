@@ -9,12 +9,11 @@ on:
       family:
         type: string
         required: true
-  workflow_run:
-    workflows: [Qualify services]
-    types: [completed]
-    branches: [main]
-  pull_request:
-    branches: [main]
+      service-only:
+        type: boolean
+        default: false
+  schedule:
+    - cron: '17 4 * * *'
   workflow_dispatch:
 
 permissions:
@@ -39,7 +38,6 @@ defaults:
 jobs:
   select:
     name: Select full checks
-    if: github.event_name != 'workflow_run' || (github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.conclusion != 'cancelled')
     runs-on: ubuntu-24.04
     outputs:
       enhance: ${{ steps.affected.outputs.enhance }}
@@ -53,26 +51,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          ref: ${{ github.sha }}
       - name: Select affected full suites
         id: affected
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
           FAMILY: ${{ inputs.family }}
-          SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
+          SERVICE_ONLY: ${{ inputs.service-only }}
           GH_TOKEN: ${{ github.token }}
         run: |
           umask 022
           set -euo pipefail
           umask 022
           if [[ -n "$FAMILY" ]]; then
-            python3 tools/ci/qualification.py checks --family "$FAMILY"
+            args=(--family "$FAMILY")
+            [[ "$SERVICE_ONLY" != true ]] || args+=(--service-only)
+            python3 tools/ci/qualification.py checks "${args[@]}"
           elif [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
             [[ "$BASE" =~ ^[0-9a-f]{40}$ ]]
             git fetch --no-tags --depth=1 origin "$BASE"
             python3 tools/ci/fast.py --committed-only --base "$BASE" --select-only --github-output
-          elif [[ "$GITHUB_EVENT_NAME" == workflow_run ]]; then
-            python3 tools/ci/qualification.py background --sha "$SOURCE_SHA"
           else
             python3 tools/ci/fast.py --all --select-only --github-output
           fi
@@ -92,7 +90,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          ref: ${{ github.sha }}
       - uses: ./.github/actions/rust-setup
         with:
           lane: full-lint
@@ -124,7 +122,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          ref: ${{ github.sha }}
       - uses: ./.github/actions/rust-setup
         with:
           lane: full-test
@@ -146,7 +144,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          ref: ${{ github.sha }}
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.14.8
@@ -177,7 +175,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          ref: ${{ github.sha }}
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.14.8
@@ -195,11 +193,11 @@ jobs:
     needs: select
     if: needs.select.outputs.ops == 'true'
     name: Validate selected helper checks
-    runs-on: ${{ fromJSON(github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.WALLET_PIR_FAST_RUNNER || '"ubuntu-24.04"') }}
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          ref: ${{ github.sha }}
       - name: Read repository Rust toolchain
         id: helper-toolchain
         run: umask 022 && python3 -c 'import os,tomllib; t=tomllib.load(open("rust-toolchain.toml","rb"))["toolchain"]["channel"]; print("toolchain="+t, file=open(os.environ["GITHUB_OUTPUT"],"a"))'
@@ -302,7 +300,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          ref: ${{ github.sha }}
       - uses: ./.github/actions/rust-setup
         with:
           lane: full-lint
@@ -329,7 +327,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          ref: ${{ github.sha }}
       - uses: ./.github/actions/rust-setup
         with:
           lane: full-test
@@ -376,7 +374,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          ref: ${{ github.sha }}
       - uses: ./.github/actions/rust-setup
         with:
           lane: full-test
@@ -397,7 +395,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          ref: ${{ github.sha }}
       - uses: ./.github/actions/rust-setup
         with:
           lane: full-test
@@ -438,7 +436,7 @@ jobs:
 
   build:
     name: Build candidate release artifacts
-    if: inputs.family != '' && github.event_name != 'pull_request' && github.event_name != 'workflow_run' && github.ref == 'refs/heads/main'
+    if: ${{ !cancelled() && needs.select.result == 'success' && (needs.validate-ops.result == 'success' || needs.validate-ops.result == 'skipped') && inputs.family != '' && inputs.family != 'common' && inputs.family != 'shared' && github.ref == 'refs/heads/main' }}
     needs: [select, validate-ops]
     runs-on: ${{ fromJSON(inputs.family == 'ops' && '"ubuntu-24.04"' || vars.WALLET_PIR_BUILD_RUNNER || '"ubuntu-24.04"') }}
     timeout-minutes: 60
@@ -492,7 +490,7 @@ jobs:
 
   release:
     name: Prepare qualified release artifacts
-    if: ${{ !cancelled() && needs.complete.result == 'success' && needs.build.result == 'success' && inputs.family != '' && github.event_name != 'pull_request' && github.event_name != 'workflow_run' && github.ref == 'refs/heads/main' }}
+    if: ${{ !cancelled() && needs.complete.result == 'success' && needs.build.result == 'success' && inputs.family != '' && inputs.family != 'common' && inputs.family != 'shared' && github.event_name != 'pull_request' && github.event_name != 'workflow_run' && github.ref == 'refs/heads/main' }}
     needs: [complete, build]
     runs-on: ubuntu-24.04
     steps:

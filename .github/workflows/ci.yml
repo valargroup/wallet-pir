@@ -28,10 +28,11 @@ defaults:
 jobs:
   fast:
     name: Fast checks
-    # This pool is separate from release builders and has no production access.
-    # Fork PRs always use disposable hosted runners.
-    runs-on: ${{ fromJSON((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && vars.WALLET_PIR_FAST_RUNNER || '"ubuntu-24.04"') }}
-    timeout-minutes: 30
+    # Reserve this queue for main. PRs and branch dispatches use hosted runners
+    # so their cold builds cannot delay a main push.
+    runs-on: ${{ fromJSON(github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && vars.WALLET_PIR_MAIN_RUNNER || '"ubuntu-24.04"') }}
+    # Cold preparation is explicit; main must fail promptly rather than wait.
+    timeout-minutes: ${{ github.event_name == 'push' && 3 || 30 }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -39,9 +40,11 @@ jobs:
       - name: Fetch comparison revision
         env:
           BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           umask 022
           set -euo pipefail
+          BASE=$(python3 tools/ci/feedback_base.py)
           if [[ -n "$BASE" && "$BASE" != 0000000000000000000000000000000000000000 ]]; then
             [[ "$BASE" =~ ^[0-9a-f]{40}$ ]]
             git fetch --no-tags --depth=1 origin "$BASE"
@@ -50,17 +53,20 @@ jobs:
       - name: Select affected packages
         id: affected
         env:
-          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
-        run: umask 022 && python3 tools/ci/fast.py --committed-only --base "$BASE" --select-only --github-output
+          BASE: ${{ env.FAST_BASE }}
+        run: umask 022 && TMPDIR="$RUNNER_TEMP" python3 tools/ci/fast.py --committed-only --base "$BASE" --select-only --github-output
       - uses: ./.github/actions/rust-setup
         if: steps.affected.outputs.rust == 'true'
         with:
           lane: fast
           scope: affected
+      - name: Require an existing warm build cache on main
+        if: github.event_name == 'push' && steps.affected.outputs.rust == 'true'
+        run: umask 022 && python3 tools/ci/cargo_cache.py require-warm --lane fast
       - name: Run affected fast checks
         env:
-          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
-        run: umask 022 && python3 tools/ci/fast.py --committed-only --base "$BASE"
+          BASE: ${{ env.FAST_BASE }}
+        run: umask 022 && TMPDIR="$RUNNER_TEMP" python3 tools/ci/fast.py --committed-only --base "$BASE" --unit-jobs 2
       - name: Report Cargo cache reuse
         if: always() && steps.affected.outputs.rust == 'true'
         continue-on-error: true

@@ -10,13 +10,14 @@ use transparent_filter::{
     filter_hash, BlockHash, Recut, ScriptBytes, SealParameters, ShardMap, ShardMapEntry,
 };
 mod prepared;
+mod runtime;
 
 use prepared::prepared_shard;
 use transparent_shard::layout::{Geometry, DECOUPLED_2K_8K};
 use transparent_shard::manifest::{
     ManifestLayout, ManifestOccupancy, ManifestSeal, ShardManifest, TableGeometry, SCHEMA,
 };
-use transparent_shard_server::service::{router, ServiceConfig, ServiceState};
+use transparent_shard_server::service::router;
 use transparent_shard_server::shardset::{ShardSet, DEFAULT_RETAIN_REVISIONS};
 use zakura_pir_transparent::engine::ledger::Ledger;
 use zakura_pir_transparent::engine::transport::{BoxError, FilterSource};
@@ -536,7 +537,7 @@ pub fn compare(recovered: &Ledger, expected: &Ledger) {
 /// Starts the service on an ephemeral port and returns its base URL.
 pub async fn serve(dir: &Path) -> String {
     let set = ShardSet::open(dir, DEFAULT_RETAIN_REVISIONS).expect("load");
-    let state = ServiceState::build(set, ServiceConfig::default()).expect("state");
+    let state = runtime::state(set);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move {

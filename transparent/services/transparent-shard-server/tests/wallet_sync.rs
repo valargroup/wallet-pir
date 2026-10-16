@@ -10,6 +10,8 @@
 
 #[path = "common/prepared.rs"]
 mod prepared;
+#[path = "common/runtime.rs"]
+mod runtime;
 use prepared::prepared_shard;
 
 #[path = "support/revision.rs"]
@@ -27,7 +29,7 @@ use transparent_filter::{BlockHash, ScriptBytes, SealParameters, ShardMap};
 use transparent_shard::build::{BuiltChild, BuiltDirectory};
 use transparent_shard::layout::{Geometry, DECOUPLED_2K_8K, DECOUPLED_32K_32K};
 use transparent_shard::manifest::ShardManifest;
-use transparent_shard_server::service::{router, ServiceConfig, ServiceState};
+use transparent_shard_server::service::router;
 use transparent_shard_server::shardset::{ShardSet, DEFAULT_RETAIN_REVISIONS};
 use zakura_pir_transparent::engine::client::Table;
 use zakura_pir_transparent::engine::http::{HttpOptions, HttpShardTransport};
@@ -626,7 +628,7 @@ fn compare(recovered: &Ledger, expected: &Ledger) {
 /// Starts the service on an ephemeral port and returns its base URL.
 async fn serve(dir: &Path) -> String {
     let set = ShardSet::open(dir, DEFAULT_RETAIN_REVISIONS).expect("load");
-    let state = ServiceState::build(set, ServiceConfig::default()).expect("state");
+    let state = runtime::state(set);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move {
@@ -2728,7 +2730,7 @@ async fn a_failed_batch_falls_back_to_the_sequential_walk() {
 /// together, as they would on a real link.
 async fn serve_delayed(dir: &Path, delay: std::time::Duration) -> String {
     let set = ShardSet::open(dir, DEFAULT_RETAIN_REVISIONS).expect("load");
-    let state = ServiceState::build(set, ServiceConfig::default()).expect("state");
+    let state = runtime::state(set);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let app = router(state).layer(axum::middleware::from_fn(

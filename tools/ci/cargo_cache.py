@@ -476,6 +476,15 @@ def restored(args, env):
     print(f"CI_CACHE_RESTORE {json.dumps({'lane': args.lane, 'status': state['status'], 'restored_units': len(state['before'])})}", flush=True)
 
 
+def require_warm(lane, env):
+    """Reject an empty target before a main push spends its budget compiling dependencies."""
+    path = state_dir(env) / f'{lane}.json'
+    state = json.loads(path.read_text())
+    if not state.get('before'):
+        raise ValueError('cold Cargo cache: dispatch Prepare fast validation before landing dependency/toolchain changes; '
+                         'required tests were not skipped or passed')
+
+
 def read_jsonl(path):
     if not path.is_file():
         return []
@@ -536,6 +545,8 @@ def main():
     done = commands.add_parser('restored')
     done.add_argument('--lane', required=True)
     done.add_argument('--cache-hit', default='')
+    warm = commands.add_parser('require-warm')
+    warm.add_argument('--lane', required=True)
     commands.add_parser('report')
     args = parser.parse_args()
     env = dict(os.environ)
@@ -543,6 +554,8 @@ def main():
         prepare(args, env)
     elif args.command == 'restored':
         restored(args, env)
+    elif args.command == 'require-warm':
+        require_warm(args.lane, env)
     else:
         report(env)
 

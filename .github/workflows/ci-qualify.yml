@@ -1,8 +1,6 @@
 name: Qualify services
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
     inputs:
       family:
@@ -16,8 +14,8 @@ permissions:
   actions: read
 
 concurrency:
-  # Manual runs retain their pinned revision when newer main commits arrive.
-  group: qualify-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.ref }}
+  # Explicit qualification retains its pinned revision as main advances.
+  group: qualify-${{ github.run_id }}
   cancel-in-progress: true
 
 jobs:
@@ -27,7 +25,7 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: read
-      actions: write
+      actions: read
     outputs:
       ops: ${{ steps.affected.outputs.ops }}
       receiver: ${{ steps.affected.outputs.receiver }}
@@ -37,10 +35,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Stop obsolete automatic regression runs
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python3 tools/ci/qualification.py cancel-regressions --sha "$GITHUB_SHA"
       - name: Select services since each last qualified ancestor
         id: affected
         env:
@@ -48,34 +42,53 @@ jobs:
           FAMILY: ${{ inputs.family || 'affected' }}
         run: python3 tools/ci/qualification.py select --sha "$GITHUB_SHA" --family "$FAMILY"
 
+  common:
+    name: Common
+    needs: select
+    uses: ./.github/workflows/ci-full.yml
+    with:
+      family: common
+
+  shared:
+    name: Shared
+    needs: select
+    if: needs.select.outputs.receiver == 'true' || needs.select.outputs.transparent == 'true' || needs.select.outputs.enhance == 'true'
+    uses: ./.github/workflows/ci-full.yml
+    with:
+      family: shared
+
   ops:
     name: Operations
-    needs: select
+    needs: [select, common]
     if: needs.select.outputs.ops == 'true'
     uses: ./.github/workflows/ci-full.yml
     with:
       family: ops
+      service-only: true
 
   receiver:
     name: Receiver
-    needs: select
+    needs: [select, common, shared]
     if: needs.select.outputs.receiver == 'true'
     uses: ./.github/workflows/ci-full.yml
     with:
       family: receiver
+      service-only: true
 
   transparent:
     name: Transparent
-    needs: select
+    needs: [select, common, shared]
     if: needs.select.outputs.transparent == 'true'
     uses: ./.github/workflows/ci-full.yml
     with:
       family: transparent
+      service-only: true
 
   enhance:
     name: Enhance
-    needs: select
+    needs: [select, common, shared]
     if: needs.select.outputs.enhance == 'true'
     uses: ./.github/workflows/ci-full.yml
     with:
       family: enhance
+      service-only: true
