@@ -243,7 +243,7 @@ blocks, refusal of invalid records and witness files before storing or serving,
 witness files fetched over HTTP and checked with the library, serving from
 memory and the probe's encrypted lookup.
 
-The [receiver packages in wallet-libraries](https://github.com/zakura-core/wallet-libraries/tree/ai-dev/t-3f9434686275499b/a1/l4-ownership/zakura)
+The [receiver packages in wallet-libraries](https://github.com/zakura-core/wallet-libraries/tree/0c110882ad6d36c9d3ad811903abdf37b13d35d5/zakura)
 own record and address validation, public mainnet refund recovery, independent
 tree witnesses, encrypted round trips at every geometry, and fixed protocol
 seeds, framing and row placement. Run those tests in that repository with its
