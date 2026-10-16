@@ -47,15 +47,17 @@ use axum::http::{Request, StatusCode};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use tower::ServiceExt;
-use transparent_events::{ReceiveEvent, TransparentEvent, Txid};
-use transparent_filter::{BlockHash, ScriptBytes, SealParameters, ShardMap, ShardMapEntry};
+use zakura_transparent_private_shared::events::{ReceiveEvent, TransparentEvent, Txid};
+use zakura_transparent_private_shared::filter::{
+    BlockHash, ScriptBytes, SealParameters, ShardMap, ShardMapEntry,
+};
 #[path = "support/revision.rs"]
 mod revision;
-use transparent_shard::layout::{Geometry, DECOUPLED_2K_8K};
 use transparent_shard_server::service::{router, ServiceConfig, ServiceState};
 use transparent_shard_server::shardset::{ShardSet, DEFAULT_RETAIN_REVISIONS};
+use zakura_transparent_private_shared::shard::layout::{Geometry, DECOUPLED_2K_8K};
 
-const GENESIS: &str = transparent_filter::MAINNET_GENESIS_DISPLAY;
+const GENESIS: &str = zakura_transparent_private_shared::filter::MAINNET_GENESIS_DISPLAY;
 const FIRST: u64 = 3_428_143;
 const SPAN: u64 = 40;
 
@@ -173,9 +175,9 @@ fn publish(dir: &Path) -> ShardMap {
 
     let map = ShardMap {
         genesis_hash: GENESIS.to_string(),
-        network: transparent_filter::NETWORK.to_string(),
-        profile: transparent_filter::RANGE_PROFILE.to_string(),
-        range_envelope_version: transparent_filter::RANGE_ENVELOPE_VERSION,
+        network: zakura_transparent_private_shared::filter::NETWORK.to_string(),
+        profile: zakura_transparent_private_shared::filter::RANGE_PROFILE.to_string(),
+        range_envelope_version: zakura_transparent_private_shared::filter::RANGE_ENVELOPE_VERSION,
         start_height: FIRST,
         seal,
         shards: entries,

@@ -158,7 +158,7 @@ fn main() -> Result<(), BoxError> {
         "tool_sha": cli.source_sha,
         "data_dir": dir,
         "open": "EventStore::open_existing (read-only; the uncommitted tail is ignored)",
-        "network": transparent_filter::NETWORK,
+        "network": zakura_transparent_private_shared::filter::NETWORK,
         "genesis_hash": store.genesis_hash(),
         "genesis_agrees_with_node": genesis_agrees,
         "start_height": store.start_height(),

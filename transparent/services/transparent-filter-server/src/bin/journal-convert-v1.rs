@@ -22,8 +22,10 @@ use clap::Parser;
 use std::fs::{File, OpenOptions};
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
-use transparent_events::{ReceiveEvent, SpendEvent, TransparentEvent, Txid, EVENT_BYTES};
 use transparent_filter_server::events::EventStore;
+use zakura_transparent_private_shared::events::{
+    ReceiveEvent, SpendEvent, TransparentEvent, Txid, EVENT_BYTES,
+};
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
@@ -331,7 +333,7 @@ fn main() -> Result<(), BoxError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use transparent_filter::{BlockHash, ScriptBytes};
+    use zakura_transparent_private_shared::filter::{BlockHash, ScriptBytes};
 
     fn encode_v1(event: &TransparentEvent) -> [u8; V1_EVENT_BYTES] {
         let mut bytes = [0u8; V1_EVENT_BYTES];

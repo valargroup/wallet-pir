@@ -18,12 +18,12 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 use transparent_filter_server::events::EventStore;
 use transparent_filter_server::shard_matches::MatchCounter;
-use transparent_shard::layout::{
-    by_name as geometry_by_name, Geometry, PAGE_ROW_BYTES, PAGE_ROW_HEADER_BYTES,
-};
-use transparent_shard::seal::{
+use zakura_transparent_private_server::shard::seal::{
     ChoiceMeasure, DecoupledPolicy, DisplacementSealer, Limit, PageBasis, SealPolicy, SealReason,
     SealedDirectory, SealedShard, Sealer,
+};
+use zakura_transparent_private_shared::shard::layout::{
+    by_name as geometry_by_name, Geometry, PAGE_ROW_BYTES, PAGE_ROW_HEADER_BYTES,
 };
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
@@ -198,11 +198,11 @@ struct Cli {
     #[arg(long)]
     page_rows: Option<u64>,
     /// Page shards one decoupled directory shard may hold.
-    #[arg(long, default_value_t = transparent_shard::seal::MAX_PAGE_CHILDREN)]
+    #[arg(long, default_value_t = zakura_transparent_private_server::shard::seal::MAX_PAGE_CHILDREN)]
     max_page_children: u32,
     /// Page entry header bytes in the decoupled layout. 40 carries the chain
     /// fields; 34 prices the same content without them.
-    #[arg(long, default_value_t = transparent_shard::layout::PAGE_ENTRY_HEADER_BYTES)]
+    #[arg(long, default_value_t = zakura_transparent_private_shared::shard::layout::PAGE_ENTRY_HEADER_BYTES)]
     page_entry_header: usize,
     /// A workload sample (`sample.json`): print each sampled script's per-shard
     /// page cost, for the first policy only, as `sample` rows.
@@ -219,7 +219,7 @@ struct Cli {
 /// the row *width* instead and so are equal across every candidate compared
 /// here, which is why only the query is priced.
 fn query_bytes(rows: u64, row_bytes: usize) -> u64 {
-    let native = transparent_native::profile_for("directory");
+    let native = zakura_transparent_private_shared::native::profile_for("directory");
     assert!(
         row_bytes.is_multiple_of(native.instance_bytes()),
         "a validated geometry has whole instances"
@@ -322,10 +322,12 @@ fn directory_segments(shard: &SealedShard, geometry: &Geometry) -> u64 {
     shard.placement.map_or_else(
         || {
             let payload = geometry.directory_row_bytes as u64 - 4;
-            u64::from(transparent_shard::layout::segments_for(
-                shard.occupancy.directory_bytes.div_ceil(payload),
-                geometry.directory_rows,
-            ))
+            u64::from(
+                zakura_transparent_private_shared::shard::layout::segments_for(
+                    shard.occupancy.directory_bytes.div_ceil(payload),
+                    geometry.directory_rows,
+                ),
+            )
         },
         |p| u64::from(p.segments),
     )
@@ -352,7 +354,7 @@ fn utilisation(shards: &[SealedShard], geometry: &Geometry) {
     let mut page_segments = 0u64;
     for shard in shards {
         let d = directory_segments(shard, geometry);
-        let p = transparent_shard::layout::segments_for(
+        let p = zakura_transparent_private_shared::shard::layout::segments_for(
             shard.occupancy.fragments,
             page_rows_per_segment,
         ) as u64;
@@ -370,7 +372,7 @@ fn utilisation(shards: &[SealedShard], geometry: &Geometry) {
         .iter()
         .map(|s| s.occupancy.directory_bytes)
         .sum::<u64>()
-        + page_rows * transparent_shard::PAGE_ENTRY_HEADER_BYTES as u64
+        + page_rows * zakura_transparent_private_shared::shard::PAGE_ENTRY_HEADER_BYTES as u64
         + shards
             .iter()
             .map(|s| s.occupancy.demand.event_bytes())
@@ -383,12 +385,13 @@ fn utilisation(shards: &[SealedShard], geometry: &Geometry) {
     let page_fill = if page_rows == 0 {
         0.0
     } else {
-        (page_rows * transparent_shard::PAGE_ENTRY_HEADER_BYTES as u64
+        (page_rows * zakura_transparent_private_shared::shard::PAGE_ENTRY_HEADER_BYTES as u64
             + shards
                 .iter()
                 .map(|s| s.occupancy.demand.event_bytes())
                 .sum::<u64>()) as f64
-            / (page_rows * transparent_shard::packing::ROW_PAYLOAD as u64) as f64
+            / (page_rows * zakura_transparent_private_shared::shard::packing::ROW_PAYLOAD as u64)
+                as f64
     };
 
     println!("  utilisation (directory segments use real placement when requested, otherwise a byte-density lower bound)");
@@ -496,7 +499,10 @@ fn single_lookup(shards: &[SealedShard]) {
 /// Silent unless placement was requested. More segments increase every lookup's
 /// setup, response bytes and server work for that shard.
 fn placement(shards: &[SealedShard], geometry: &Geometry, modelled_segments: u64) {
-    let placed: Vec<(&SealedShard, transparent_shard::build::Placement)> = shards
+    let placed: Vec<(
+        &SealedShard,
+        zakura_transparent_private_server::shard::build::Placement,
+    )> = shards
         .iter()
         .filter_map(|shard| shard.placement.map(|p| (shard, p)))
         .collect();
@@ -548,7 +554,10 @@ fn placement(shards: &[SealedShard], geometry: &Geometry, modelled_segments: u64
 directory segment, and each added segment doubles the directory query and setup cost of every \
 wallet that touches that shard"
         );
-    } else if worst + transparent_shard::records::MAX_DIRECTORY_ENTRY_BYTES as u64 > row_payload {
+    } else if worst
+        + zakura_transparent_private_shared::shard::records::MAX_DIRECTORY_ENTRY_BYTES as u64
+        > row_payload
+    {
         println!(
             "    the fullest row cannot accept a maximum-size entry directly; further placement may need relocation"
         );
@@ -635,7 +644,7 @@ fn projection(shards: &[SealedShard], policy: &SealPolicy, geometry: &Geometry, 
         .iter()
         .map(|s| s.occupancy.directory_bytes)
         .sum::<u64>()
-        + fragments * transparent_shard::PAGE_ENTRY_HEADER_BYTES as u64
+        + fragments * zakura_transparent_private_shared::shard::PAGE_ENTRY_HEADER_BYTES as u64
         + packed * PAGE_ROW_HEADER_BYTES as u64
         + shards
             .iter()
@@ -646,7 +655,7 @@ fn projection(shards: &[SealedShard], policy: &SealPolicy, geometry: &Geometry, 
     let mut dir_segments = 0u64;
     for shard in shards {
         let d = directory_segments(shard, geometry);
-        let g = transparent_shard::layout::segments_for(
+        let g = zakura_transparent_private_shared::shard::layout::segments_for(
             shard.occupancy.packed_page_rows,
             page_rows_per_segment,
         ) as u64;
@@ -658,7 +667,8 @@ fn projection(shards: &[SealedShard], policy: &SealPolicy, geometry: &Geometry, 
 
     // Row fill is measured in bytes, not events. Once a row mixes classes,
     // a fixed event-slot fraction is no longer a measure of byte occupancy.
-    let used_bytes: u64 = fragments * transparent_shard::PAGE_ENTRY_HEADER_BYTES as u64
+    let used_bytes: u64 = fragments
+        * zakura_transparent_private_shared::shard::PAGE_ENTRY_HEADER_BYTES as u64
         + shards
             .iter()
             .map(|s| s.occupancy.demand.event_bytes())
@@ -681,7 +691,7 @@ fn projection(shards: &[SealedShard], policy: &SealPolicy, geometry: &Geometry, 
     let stacked = shards
         .iter()
         .filter(|s| {
-            transparent_shard::layout::segments_for(
+            zakura_transparent_private_shared::shard::layout::segments_for(
                 s.occupancy.packed_page_rows,
                 page_rows_per_segment,
             ) > 1
@@ -785,7 +795,7 @@ fn report(
                 reason.replace(' ', "_"),
                 shard.occupancy.directory_bytes,
                 directory_segments(shard, geometry),
-                transparent_shard::layout::segments_for(
+                zakura_transparent_private_shared::shard::layout::segments_for(
                     shard.occupancy.packed_page_rows,
                     geometry.page_rows
                 ),
@@ -806,7 +816,7 @@ fn report(
                 shard.occupancy.events,
                 shard.occupancy.directory_bytes,
                 directory_segments(shard, geometry),
-                transparent_shard::layout::segments_for(
+                zakura_transparent_private_shared::shard::layout::segments_for(
                     shard.occupancy.packed_page_rows,
                     geometry.page_rows
                 ),
@@ -1347,7 +1357,8 @@ sweeps do not apply to it"
 
     if let Some(path) = &cli.compare_map {
         let raw = std::fs::read(path)?;
-        let map: transparent_filter::ShardMap = serde_json::from_slice(&raw)?;
+        let map: zakura_transparent_private_shared::filter::ShardMap =
+            serde_json::from_slice(&raw)?;
         let predicted: Vec<&SealedShard> =
             archive_shards.iter().chain(recent_shards.iter()).collect();
         let mut disagreements = 0usize;
@@ -1481,11 +1492,11 @@ fn print_sample(shards: &[SealedShard], sample: Option<&HashSet<Vec<u8>>>) {
 /// What one query costs at a table of `rows` rows: upload, response and
 /// published setup per segment, at the native profile wallets use.
 fn prices(directory_rows: u64, page_rows: u64) {
-    let native = transparent_native::profile_for("pages");
+    let native = zakura_transparent_private_shared::native::profile_for("pages");
     let blocks = PAGE_ROW_BYTES / native.instance_bytes();
     println!(
         "prices\tdirectory_rows\t{directory_rows}\tdirectory_query\t{}\tpage_rows\t{page_rows}\tpage_query\t{}\tresponse\t{}\tsetup\t{}",
-        query_bytes(directory_rows, transparent_shard::DIRECTORY_ROW_BYTES),
+        query_bytes(directory_rows, zakura_transparent_private_shared::shard::DIRECTORY_ROW_BYTES),
         query_bytes(page_rows, PAGE_ROW_BYTES),
         16 + blocks * native.block_response_bytes(),
         blocks * native.block_public_bytes(),
@@ -1534,7 +1545,7 @@ fn decoupled(
         name: "decoupled",
         directory_rows,
         page_rows,
-        ..transparent_shard::layout::DECOUPLED_2K_8K
+        ..zakura_transparent_private_shared::shard::layout::DECOUPLED_2K_8K
     };
     geometry.validate()?;
     if cli.max_page_children == 0 || cli.max_page_children > 32 {
@@ -1584,10 +1595,12 @@ page shards, {}-byte page entry header; {policy:?}",
     let directory_segments = |shard: &SealedDirectory| -> u64 {
         shard.placement.map_or_else(
             || {
-                u64::from(transparent_shard::layout::segments_for(
-                    shard.occupancy.directory_bytes.div_ceil(directory_payload),
-                    directory_rows,
-                ))
+                u64::from(
+                    zakura_transparent_private_shared::shard::layout::segments_for(
+                        shard.occupancy.directory_bytes.div_ceil(directory_payload),
+                        directory_rows,
+                    ),
+                )
             },
             |p| u64::from(p.segments),
         )
@@ -1635,15 +1648,17 @@ page shards, {}-byte page entry header; {policy:?}",
     println!(
         "  per_child\tshard_id\tchild\tstart\tend\tblocks\tpage_rows\tfragments\truns\tpaged_events\tevent_bytes\tpage_segments\treason"
     );
-    let row_payload = transparent_shard::packing::ROW_PAYLOAD as u64;
+    let row_payload = zakura_transparent_private_shared::shard::packing::ROW_PAYLOAD as u64;
     let (mut rows, mut fragments, mut event_bytes, mut page_segments) = (0u64, 0u64, 0u64, 0u64);
     let mut child_rows: Vec<u64> = Vec::new();
     for shard in &shards {
         for child in &shard.children {
-            let segments = u64::from(transparent_shard::layout::segments_for(
-                child.occupancy.page_rows,
-                page_rows,
-            ));
+            let segments = u64::from(
+                zakura_transparent_private_shared::shard::layout::segments_for(
+                    child.occupancy.page_rows,
+                    page_rows,
+                ),
+            );
             println!(
                 "  per_child\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
                 shard.shard_id,
@@ -1763,7 +1778,7 @@ fn drain_scripts_in_tier(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use transparent_shard::layout::DECOUPLED_2K_8K;
+    use zakura_transparent_private_shared::shard::layout::DECOUPLED_2K_8K;
 
     /// The coupled v11 shapes the archived censuses were taken at, which the
     /// census still scores: no longer in the registry.
@@ -1807,7 +1822,7 @@ mod tests {
     /// worth having for the real one rather than an arbitrary sweep point.
     #[test]
     fn the_first_policy_is_the_one_the_publisher_would_use() {
-        for geometry in transparent_shard::layout::PROFILES {
+        for geometry in zakura_transparent_private_shared::shard::layout::PROFILES {
             let (name, first) = default_policies(geometry).remove(0);
             assert_eq!(first, SealPolicy::for_geometry(geometry), "{name}");
             assert!(name.starts_with(geometry.name), "{name}");

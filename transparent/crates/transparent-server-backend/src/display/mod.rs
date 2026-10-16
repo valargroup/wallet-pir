@@ -6,11 +6,11 @@ pub mod synth;
 
 use crate::runtime::RuntimeKey;
 use crate::shardset::Table;
-use transparent_shard::display::{DisplayKind, DisplayTable};
+use zakura_transparent_private_shared::shard::display::{DisplayKind, DisplayTable};
 
 /// The history table kind whose row count and row width a display table
 /// uses. Its native profile and setup seeds are derived under display's own
-/// [`NATIVE_SCHEMA`](transparent_shard::display::NATIVE_SCHEMA) and this
+/// [`NATIVE_SCHEMA`](zakura_transparent_private_shared::shard::display::NATIVE_SCHEMA) and this
 /// kind's name, not under the history schema.
 pub fn kind(table: DisplayTable) -> Table {
     match table.kind() {
@@ -132,7 +132,7 @@ mod query_memory_tests {
     use crate::runtime::SharedParams;
     use crate::shardset::Table;
     use std::sync::Arc;
-    use transparent_shard::display::TXID_2K8;
+    use zakura_transparent_private_shared::shard::display::TXID_2K8;
 
     /// The combined display worker runs under `MemoryMax=48G` and holds every
     /// archive runtime and the recent one. Admission allows

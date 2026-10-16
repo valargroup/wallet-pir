@@ -255,7 +255,9 @@ pub struct Fleet {
     pub workers: Vec<Worker>,
 }
 
-fn sealed_digests(map: &transparent_shard::display::DisplayMap) -> Vec<String> {
+fn sealed_digests(
+    map: &zakura_transparent_private_shared::shard::display::DisplayMap,
+) -> Vec<String> {
     map.shards
         .iter()
         .filter(|s| s.sealed)
@@ -294,7 +296,10 @@ impl Fleet {
     /// map, whose sealed set a worker serving it is known to hold.
     pub async fn refresh(
         &mut self,
-        current: (&str, &transparent_shard::display::DisplayMap),
+        current: (
+            &str,
+            &zakura_transparent_private_shared::shard::display::DisplayMap,
+        ),
     ) -> Vec<(String, String)> {
         let mut errors = Vec::new();
         for worker in self.workers.iter_mut().filter(|w| !w.known) {
@@ -308,7 +313,11 @@ impl Fleet {
     /// Whether any worker is behind `map`: a worker holding the recent shard
     /// not serving it or owed an invalidation, or an archive owner not serving
     /// its sealed set.
-    pub fn stale(&self, sha: &str, map: &transparent_shard::display::DisplayMap) -> bool {
+    pub fn stale(
+        &self,
+        sha: &str,
+        map: &zakura_transparent_private_shared::shard::display::DisplayMap,
+    ) -> bool {
         let sealed = sealed_digests(map);
         self.workers.iter().any(|w| {
             if w.config.role.holds_recent() {
@@ -328,7 +337,7 @@ impl Fleet {
         &mut self,
         candidate: &Path,
         sha: &str,
-        map: &transparent_shard::display::DisplayMap,
+        map: &zakura_transparent_private_shared::shard::display::DisplayMap,
         recent: bool,
     ) -> Result<ActivationReport, String> {
         let sealed = sealed_digests(map);
@@ -411,7 +420,10 @@ impl Fleet {
     /// map that is; a failure keeps the invalidation owed.
     pub async fn invalidate(
         &mut self,
-        current: (&str, &transparent_shard::display::DisplayMap),
+        current: (
+            &str,
+            &zakura_transparent_private_shared::shard::display::DisplayMap,
+        ),
     ) -> Vec<(String, String)> {
         let mut errors = Vec::new();
         for worker in self
@@ -482,7 +494,10 @@ impl Fleet {
 
 async fn refresh_worker(
     worker: &mut Worker,
-    (current_sha, current_map): (&str, &transparent_shard::display::DisplayMap),
+    (current_sha, current_map): (
+        &str,
+        &zakura_transparent_private_shared::shard::display::DisplayMap,
+    ),
 ) -> Result<(), String> {
     let reply = worker
         .config

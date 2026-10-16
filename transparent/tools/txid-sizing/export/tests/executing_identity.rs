@@ -11,15 +11,15 @@ use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
-use transparent_events::{FeeState, TransactionMetadata, Txid};
-use transparent_shard::txid::DisplayOutput;
-use transparent_shard::txid_v1::TransparentDisplayRecord;
-use transparent_shard::txid_v2x::TransparentDisplayRecordV2x;
+use zakura_transparent_private_shared::events::{FeeState, TransactionMetadata, Txid};
+use zakura_transparent_private_server::shard::txid::DisplayOutput;
+use zakura_transparent_private_server::shard::txid_v1::TransparentDisplayRecord;
+use zakura_transparent_private_server::shard::txid_v2x::TransparentDisplayRecordV2x;
 
 /// A committed one-block v2x journal from mainnet genesis.
 fn journal(dir: &Path) {
-    let hash = transparent_filter::BlockHash::from_display_hex(
-        transparent_filter::MAINNET_GENESIS_DISPLAY,
+    let hash = zakura_transparent_private_shared::filter::BlockHash::from_display_hex(
+        zakura_transparent_private_shared::filter::MAINNET_GENESIS_DISPLAY,
     )
     .unwrap();
     let coinbase = TransparentDisplayRecord {
@@ -36,7 +36,7 @@ fn journal(dir: &Path) {
         }],
     };
     let mut store =
-        events::EventStore::open(dir, transparent_filter::MAINNET_GENESIS_DISPLAY, 0).unwrap();
+        events::EventStore::open(dir, zakura_transparent_private_shared::filter::MAINNET_GENESIS_DISPLAY, 0).unwrap();
     store
         .append_block_with_display(
             0,

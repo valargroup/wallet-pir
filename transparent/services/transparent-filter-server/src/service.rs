@@ -8,13 +8,15 @@ use axum::routing::get;
 use axum::Router;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use transparent_filter::digest::filter_hash;
-use transparent_filter::envelope::MAX_BATCH_BYTES;
-use transparent_filter::envelope::{FilterBatch, FilterRecord, ENVELOPE_VERSION};
-use transparent_filter::wire::{
+use zakura_transparent_private_shared::filter::digest::filter_hash;
+use zakura_transparent_private_shared::filter::envelope::MAX_BATCH_BYTES;
+use zakura_transparent_private_shared::filter::envelope::{
+    FilterBatch, FilterRecord, ENVELOPE_VERSION,
+};
+use zakura_transparent_private_shared::filter::wire::{
     ChainEntry, FilterDigestEntry, FilterServiceHealth, FilterServiceInfo,
 };
-use transparent_filter::{BlockHash, FilterLimits, MAX_RECORDS_PER_BATCH};
+use zakura_transparent_private_shared::filter::{BlockHash, FilterLimits, MAX_RECORDS_PER_BATCH};
 
 /// Where ingestion has got to.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -172,7 +174,7 @@ async fn info(State(state): State<ServiceState>) -> Response {
     let inner = state.inner.read().await;
     let body = FilterServiceInfo {
         genesis_hash: inner.store.genesis_hash().to_string(),
-        network: transparent_filter::NETWORK.to_string(),
+        network: zakura_transparent_private_shared::filter::NETWORK.to_string(),
         profile: inner.store.profile().to_string(),
         envelope_version: ENVELOPE_VERSION,
         start_height: inner.store.start_height(),

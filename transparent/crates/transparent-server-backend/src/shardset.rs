@@ -61,9 +61,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use transparent_filter::{filter_hash, ShardMap};
-use transparent_shard::layout::{by_name as geometry_by_name, Geometry};
-use transparent_shard::manifest::{ShardManifest, SCHEMA};
+use zakura_transparent_private_shared::filter::{filter_hash, ShardMap};
+use zakura_transparent_private_shared::shard::layout::{by_name as geometry_by_name, Geometry};
+use zakura_transparent_private_shared::shard::manifest::{ShardManifest, SCHEMA};
 
 /// Superseded revisions kept per shard, beyond the one the map names.
 ///
@@ -223,14 +223,16 @@ impl TableRef {
         if name == Table::Directory.as_str() {
             return Some(Self::Directory);
         }
-        transparent_shard::manifest::parse_pages_table(name).map(Self::Pages)
+        zakura_transparent_private_shared::shard::manifest::parse_pages_table(name).map(Self::Pages)
     }
 
     /// The name on the wire and in the query binding.
     pub fn name(self) -> String {
         match self {
             Self::Directory => Table::Directory.as_str().to_string(),
-            Self::Pages(child) => transparent_shard::manifest::pages_table(child),
+            Self::Pages(child) => {
+                zakura_transparent_private_shared::shard::manifest::pages_table(child)
+            }
         }
     }
 
@@ -245,9 +247,12 @@ impl TableRef {
 }
 
 /// The published seed a table's public query setup is derived from; see
-/// [`transparent_shard::display::setup_seed_named`], which clients share.
+/// [`zakura_transparent_private_shared::shard::display::setup_seed_named`], which clients share.
 pub fn setup_seed(geometry: &Geometry, table: Table) -> u64 {
-    transparent_shard::display::setup_seed_named(geometry.name, table.as_str())
+    zakura_transparent_private_shared::shard::display::setup_seed_named(
+        geometry.name,
+        table.as_str(),
+    )
 }
 
 /// Where one segment's bytes are, and what they must be.
@@ -273,7 +278,7 @@ pub struct SegmentSource {
     /// row. Checked wherever the digest is, so no runtime is built or
     /// restored from a segment whose omitted rows hold data.
     ///
-    /// [`query_rows`]: transparent_shard::manifest::PageChild::query_rows
+    /// [`query_rows`]: zakura_transparent_private_shared::shard::manifest::PageChild::query_rows
     zero_from_row: u64,
     /// What this process observed of the file the last time it hashed it,
     /// when that observation is certain enough to vouch for the file later;
@@ -775,7 +780,7 @@ impl LoadedShard {
                 manifest.schema
             )));
         }
-        if manifest.layout != transparent_shard::ManifestLayout::current() {
+        if manifest.layout != zakura_transparent_private_shared::shard::ManifestLayout::current() {
             return Err(LoadError::Invalid(
                 "manifest layout disagrees with shard schema".into(),
             ));
@@ -789,11 +794,13 @@ impl LoadedShard {
                     LoadError::Invalid(format!("shard {}: {error}", manifest.shard_id))
                 })?;
         }
-        if manifest.tag_salt_counter > transparent_shard::tag::MAX_TAG_SALT_COUNTER {
+        if manifest.tag_salt_counter
+            > zakura_transparent_private_shared::shard::tag::MAX_TAG_SALT_COUNTER
+        {
             return Err(LoadError::Invalid(format!(
                 "shard declares tag salt counter {}, above {}",
                 manifest.tag_salt_counter,
-                transparent_shard::tag::MAX_TAG_SALT_COUNTER
+                zakura_transparent_private_shared::shard::tag::MAX_TAG_SALT_COUNTER
             )));
         }
 
@@ -881,41 +888,42 @@ impl LoadedShard {
         // Every segment must match the named geometry, not just the first: a
         // segment with its own widths would silently need its own parameters,
         // and sharing one set per geometry is the whole point of naming it.
-        let source = |table: TableRef,
-                      identity: &str,
-                      index: usize,
-                      published: &transparent_shard::manifest::TableGeometry,
-                      zero_from_row: u64,
-                      report: &mut VerificationReport|
-         -> Result<SegmentSource, LoadError> {
-            let kind = table.kind();
-            if published.rows != kind.rows(geometry)
-                || published.row_bytes != kind.row_bytes(geometry)
-            {
-                return Err(LoadError::Invalid(format!(
-                    "{} segment {index} of shard {} is {}x{} but geometry {} is {}x{}",
-                    table.name(),
-                    manifest.shard_id,
+        let source =
+            |table: TableRef,
+             identity: &str,
+             index: usize,
+             published: &zakura_transparent_private_shared::shard::manifest::TableGeometry,
+             zero_from_row: u64,
+             report: &mut VerificationReport|
+             -> Result<SegmentSource, LoadError> {
+                let kind = table.kind();
+                if published.rows != kind.rows(geometry)
+                    || published.row_bytes != kind.row_bytes(geometry)
+                {
+                    return Err(LoadError::Invalid(format!(
+                        "{} segment {index} of shard {} is {}x{} but geometry {} is {}x{}",
+                        table.name(),
+                        manifest.shard_id,
+                        published.rows,
+                        published.row_bytes,
+                        geometry.name,
+                        kind.rows(geometry),
+                        kind.row_bytes(geometry),
+                    )));
+                }
+                SegmentSource::published(
+                    dir.join(format!("{}.{index}.bin", table.name())),
                     published.rows,
                     published.row_bytes,
-                    geometry.name,
-                    kind.rows(geometry),
-                    kind.row_bytes(geometry),
-                )));
-            }
-            SegmentSource::published(
-                dir.join(format!("{}.{index}.bin", table.name())),
-                published.rows,
-                published.row_bytes,
-                published.sha256.clone(),
-                zero_from_row,
-            )
-            .verify_or_reuse(
-                evidence.get(identity, kind, index as u32).iter().copied(),
-                report,
-                kind == Table::Pages,
-            )
-        };
+                    published.sha256.clone(),
+                    zero_from_row,
+                )
+                .verify_or_reuse(
+                    evidence.get(identity, kind, index as u32).iter().copied(),
+                    report,
+                    kind == Table::Pages,
+                )
+            };
         if manifest.directory_segments.is_empty() {
             return Err(LoadError::Invalid(format!(
                 "shard {} declares no directory segments",
@@ -1054,7 +1062,7 @@ fn verify_choice_routes(
         report.bytes_hashed += bytes.len() as u64;
         for (within, raw) in bytes.chunks(geometry.directory_row_bytes).enumerate() {
             let row = segment as u64 * geometry.directory_rows + within as u64;
-            let decoded = transparent_shard::records::decode_directory_row(
+            let decoded = zakura_transparent_private_shared::shard::records::decode_directory_row(
                 raw,
                 manifest.page_children.len() as u32,
             )
@@ -1734,7 +1742,7 @@ mod tests {
     fn a_segment_with_data_past_its_selected_rows_is_refused() {
         use sha2::Digest;
         let dir = tempfile::tempdir().unwrap();
-        let (rows, row_bytes) = (2 * transparent_native::D as u64, 16u32);
+        let (rows, row_bytes) = (2 * zakura_pir_native::D as u64, 16u32);
         let mut bytes = vec![0u8; rows as usize * row_bytes as usize];
         bytes[7] = 1;
         let source = |bytes: &[u8], zero_from_row| {
@@ -1748,7 +1756,7 @@ mod tests {
                 zero_from_row,
             )
         };
-        let half = transparent_native::D as u64;
+        let half = zakura_pir_native::D as u64;
         assert!(source(&bytes, half).verify().is_ok());
         assert!(source(&bytes, half).load().is_ok());
         bytes[half as usize * row_bytes as usize] = 1;

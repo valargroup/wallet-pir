@@ -9,7 +9,6 @@
 
 use std::path::{Path, PathBuf};
 use transparent_filter_server::txid_display::publisher::verify_dir;
-use transparent_shard::display::{DisplaySealParams, TXID_2K8};
 use transparent_shard_server::display::live::{
     DisplayCommand, DisplayLive, DisplayPublication, Reply,
 };
@@ -22,6 +21,7 @@ use transparent_shard_server::display::{kind, runtime_key};
 use transparent_shard_server::runtime::disk::ShippedRuntimes;
 use transparent_shard_server::runtime::{SharedParams, TableRuntime};
 use transparent_shard_server::service::ServiceConfig;
+use zakura_transparent_private_shared::shard::display::{DisplaySealParams, TXID_2K8};
 
 fn spec(shard_id: u64, start: u64, end: u64, sealed: bool, n_buckets: u32) -> ShardSpec {
     ShardSpec {

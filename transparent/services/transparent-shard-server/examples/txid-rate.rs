@@ -22,8 +22,8 @@ use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use transparent_shard::display::DisplayMap;
 use txdisplay::{DisplayClient, LookupReport, LookupResult};
+use zakura_transparent_private_shared::shard::display::DisplayMap;
 
 /// The fixture schema `txid-inventory fixture` writes, with `entry_sha256`.
 const FIXTURE_SCHEMA: &str = "transparent-txid-display-fixture-v2";

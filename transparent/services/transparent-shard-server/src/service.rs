@@ -52,7 +52,7 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use transparent_shard::manifest::query_binding;
+use zakura_transparent_private_shared::shard::manifest::query_binding;
 
 /// How the worker is sized. Everything here is per process, not per shard.
 #[derive(Clone, Copy, Debug)]
@@ -217,15 +217,15 @@ pub struct GeometryInit {
     pub name: String,
     pub directory_rows: u64,
     pub directory_row_bytes: u32,
-    pub directory_scheme: transparent_native::NativeScheme,
+    pub directory_scheme: zakura_transparent_private_shared::native::NativeScheme,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub directory_scheme_dq44: Option<transparent_native::NativeScheme>,
+    pub directory_scheme_dq44: Option<zakura_transparent_private_shared::native::NativeScheme>,
     pub directory_setup_seed: u64,
     pub page_rows: u64,
     pub page_row_bytes: u32,
-    pub pages_scheme: transparent_native::NativeScheme,
+    pub pages_scheme: zakura_transparent_private_shared::native::NativeScheme,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub pages_scheme_dq44: Option<transparent_native::NativeScheme>,
+    pub pages_scheme_dq44: Option<zakura_transparent_private_shared::native::NativeScheme>,
     pub pages_setup_seed: u64,
 }
 
@@ -952,7 +952,7 @@ async fn init(State(state): State<ServiceState>) -> Response {
         })
         .collect();
     let body = InitResponse {
-        schema: transparent_shard::manifest::SCHEMA.to_string(),
+        schema: zakura_transparent_private_shared::shard::manifest::SCHEMA.to_string(),
         profile: inner.set.map.profile.clone(),
         network: inner.set.map.network.clone(),
         genesis_hash: inner.set.map.genesis_hash.clone(),

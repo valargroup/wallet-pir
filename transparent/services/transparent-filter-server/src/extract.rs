@@ -20,18 +20,20 @@
 //! output and spent-output scripts with its exact fee, and fails the block on an
 //! output it cannot resolve. This module applies the rules above to what it read.
 
-use transparent_events::{
-    FeeState, ReceiveEvent, SpendEvent, TransactionMetadata, TransparentEvent, Txid,
-};
-use transparent_filter::ScriptBytes;
-use transparent_shard::txid::DisplayOutput;
-use transparent_shard::txid_v1::TransparentDisplayRecord;
-use transparent_shard::txid_v2x::{DisplayInput, TransparentDisplayRecordV2x};
 use zakura_server_chain::transparent::Fee;
 pub use zakura_server_chain::transparent::{
     read_transaction, BoxError, ExtractError, FetchedBlock, Output, PreviousOutputs,
     TransparentTransaction,
 };
+use zakura_transparent_private_server::shard::txid::DisplayOutput;
+use zakura_transparent_private_server::shard::txid_v1::TransparentDisplayRecord;
+use zakura_transparent_private_server::shard::txid_v2x::{
+    DisplayInput, TransparentDisplayRecordV2x,
+};
+use zakura_transparent_private_shared::events::{
+    FeeState, ReceiveEvent, SpendEvent, TransactionMetadata, TransparentEvent, Txid,
+};
+use zakura_transparent_private_shared::filter::ScriptBytes;
 
 /// One event, paired with the exact raw script it is indexed under.
 ///
@@ -370,7 +372,7 @@ mod tests {
 
     #[test]
     fn display_entries_take_the_first_address_shaped_source_in_input_order() {
-        use transparent_shard::txid::{Address, AddressKind};
+        use zakura_transparent_private_shared::shard::txid::{Address, AddressKind};
         let outpoint = |byte: u8| ([byte; 32], 0);
         let p2pk = [&[0x21][..], &[2; 33], &[0xac]].concat();
         let mut previous = MapPreviousOutputs::default();
@@ -729,10 +731,11 @@ mod tests {
         );
 
         let journal = tempfile::tempdir().unwrap();
-        let hash = transparent_filter::BlockHash::from_internal_bytes([5; 32]);
+        let hash =
+            zakura_transparent_private_shared::filter::BlockHash::from_internal_bytes([5; 32]);
         let mut store = crate::events::EventStore::open(
             journal.path(),
-            transparent_filter::MAINNET_GENESIS_DISPLAY,
+            zakura_transparent_private_shared::filter::MAINNET_GENESIS_DISPLAY,
             7,
         )
         .unwrap();

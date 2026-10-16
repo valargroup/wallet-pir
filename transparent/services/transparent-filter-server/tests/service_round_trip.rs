@@ -7,14 +7,14 @@
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use tower::ServiceExt;
-use transparent_filter::{
-    build_filter, check_batch, ChainMap, FilterBatch, FilterLimits, RangeRequest, ScriptBytes,
-};
-use transparent_filter::{BlockHash, FilterServiceInfo};
 use transparent_filter_server::service::{router, Phase, ServiceState};
 use transparent_filter_server::store::FilterStore;
+use zakura_transparent_private_server::filter::build_filter;
+use zakura_transparent_private_shared::filter::{BlockHash, FilterServiceInfo};
+use zakura_transparent_private_shared::filter::{FilterBatch, FilterLimits, ScriptBytes};
+use zakura_transparent_private_wallet::filter::{check_batch, ChainMap, RangeRequest};
 
-const GENESIS: &str = transparent_filter::MAINNET_GENESIS_DISPLAY;
+const GENESIS: &str = zakura_transparent_private_shared::filter::MAINNET_GENESIS_DISPLAY;
 const START: u64 = 3_428_143;
 
 fn hash_at(height: u64) -> BlockHash {
@@ -31,8 +31,13 @@ fn wallet_script() -> ScriptBytes {
 /// Blocks START..START+blocks; the wallet's script appears at `active`.
 fn state_with(blocks: u64, active: u64) -> (ServiceState, tempfile::TempDir, ChainMap) {
     let dir = tempfile::tempdir().unwrap();
-    let mut store =
-        FilterStore::open(dir.path(), transparent_filter::PROFILE, GENESIS, START).unwrap();
+    let mut store = FilterStore::open(
+        dir.path(),
+        zakura_transparent_private_shared::filter::PROFILE,
+        GENESIS,
+        START,
+    )
+    .unwrap();
     let mut chain = ChainMap::new();
     for height in START..START + blocks {
         let elements = if height == active {
@@ -92,7 +97,7 @@ async fn a_range_validates_and_the_active_block_matches() {
     let batch = FilterBatch::decode(&body).expect("decode");
     let request = RangeRequest {
         genesis: BlockHash::from_display_hex(GENESIS).unwrap(),
-        profile: transparent_filter::PROFILE.to_string(),
+        profile: zakura_transparent_private_shared::filter::PROFILE.to_string(),
         start_height: START,
         stop_block_hash: stop,
     };
@@ -101,7 +106,7 @@ async fn a_range_validates_and_the_active_block_matches() {
 
     let mut matched = Vec::new();
     for record in &checked {
-        let indices = transparent_filter::match_scripts(
+        let indices = zakura_transparent_private_wallet::filter::match_scripts(
             &record.filter,
             record.block_hash,
             &[wallet_script()],
@@ -134,7 +139,7 @@ async fn a_wallet_on_a_different_branch_rejects_the_batch() {
     chain.insert(START + 2, BlockHash::from_internal_bytes([0xfe; 32]));
     let request = RangeRequest {
         genesis: BlockHash::from_display_hex(GENESIS).unwrap(),
-        profile: transparent_filter::PROFILE.to_string(),
+        profile: zakura_transparent_private_shared::filter::PROFILE.to_string(),
         start_height: START,
         stop_block_hash: stop,
     };
@@ -182,7 +187,8 @@ async fn the_chain_endpoint_returns_the_covered_prefix_only() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    let entries: Vec<transparent_filter::ChainEntry> = serde_json::from_slice(&body).unwrap();
+    let entries: Vec<zakura_transparent_private_shared::filter::ChainEntry> =
+        serde_json::from_slice(&body).unwrap();
     assert_eq!(entries.len(), 3);
     assert_eq!(entries[0].height, START);
     assert_eq!(entries[2].block_hash, hash_at(START + 2).to_display_hex());
@@ -200,7 +206,7 @@ async fn published_digests_match_the_served_filter_bytes() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    let entries: Vec<transparent_filter::FilterDigestEntry> =
+    let entries: Vec<zakura_transparent_private_shared::filter::FilterDigestEntry> =
         serde_json::from_slice(&body).unwrap();
     assert_eq!(entries.len(), 4);
 
@@ -221,7 +227,8 @@ async fn published_digests_match_the_served_filter_bytes() {
         assert_eq!(entry.block_hash, record.block_hash.to_display_hex());
         assert_eq!(
             entry.filter_hash,
-            transparent_filter::digest::filter_hash(&record.filter).to_display_hex()
+            zakura_transparent_private_shared::filter::digest::filter_hash(&record.filter)
+                .to_display_hex()
         );
     }
 }
@@ -236,7 +243,7 @@ async fn a_digest_request_past_coverage_returns_the_covered_prefix() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    let entries: Vec<transparent_filter::FilterDigestEntry> =
+    let entries: Vec<zakura_transparent_private_shared::filter::FilterDigestEntry> =
         serde_json::from_slice(&body).unwrap();
     assert_eq!(entries.len(), 3);
 
@@ -290,7 +297,13 @@ async fn a_service_that_is_still_syncing_is_not_ready() {
 #[tokio::test]
 async fn a_service_with_no_coverage_is_not_ready() {
     let dir = tempfile::tempdir().unwrap();
-    let store = FilterStore::open(dir.path(), transparent_filter::PROFILE, GENESIS, START).unwrap();
+    let store = FilterStore::open(
+        dir.path(),
+        zakura_transparent_private_shared::filter::PROFILE,
+        GENESIS,
+        START,
+    )
+    .unwrap();
     let state = ServiceState::new(store);
     let (status, _) = get(&state, "/ready").await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
@@ -313,12 +326,12 @@ async fn a_batch_is_capped_and_the_client_accepts_the_bounded_prefix() {
     let batch = FilterBatch::decode(&body).expect("decode");
     assert_eq!(
         batch.records.len() as u64,
-        transparent_filter::MAX_RECORDS_PER_BATCH,
+        zakura_transparent_private_shared::filter::MAX_RECORDS_PER_BATCH,
         "the service must bound a batch"
     );
     let request = RangeRequest {
         genesis: BlockHash::from_display_hex(GENESIS).unwrap(),
-        profile: transparent_filter::PROFILE.to_string(),
+        profile: zakura_transparent_private_shared::filter::PROFILE.to_string(),
         start_height: START,
         stop_block_hash: stop,
     };

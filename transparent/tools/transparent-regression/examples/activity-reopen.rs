@@ -1,9 +1,9 @@
 //! Reopen retained real HTTP recoveries and export facts for an independent comparison.
 use serde_json::json;
 use std::path::{Path, PathBuf};
-use transparent_events::FeeState;
-use zakura_pir_transparent::engine::WalletStore;
-use zakura_pir_transparent::engine_store::SqliteStore;
+use zakura_transparent_private_shared::events::FeeState;
+use zakura_transparent_private_wallet::engine::WalletStore;
+use zakura_transparent_private_wallet::engine_store::SqliteStore;
 
 fn databases(root: &Path, paths: &mut Vec<PathBuf>) -> std::io::Result<()> {
     for entry in std::fs::read_dir(root)? {
@@ -28,7 +28,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for path in paths {
         let store = SqliteStore::open(&path)?;
         let identity = store.set_identity()?.ok_or("missing set identity")?;
-        if identity.shard_schema != transparent_shard::SCHEMA {
+        if identity.shard_schema != zakura_transparent_private_shared::shard::SCHEMA {
             return Err("recovery used an incompatible schema".into());
         }
         let events = store.events()?;

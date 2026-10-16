@@ -1,10 +1,10 @@
 //! One-shot shard publication; continuous operation uses the same builder.
 use clap::Parser;
-use transparent_filter::BlockHash;
 use transparent_filter_server::{
     events::EventStore,
     publication::{publish, BoxError, PublishOptions},
 };
+use zakura_transparent_private_shared::filter::BlockHash;
 #[derive(Parser)]
 #[command(name = "shard-publish", about = "Publish a transparent shard set")]
 struct Cli {

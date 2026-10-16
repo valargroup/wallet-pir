@@ -8,8 +8,8 @@ use std::{
     io::{Read, Seek, SeekFrom},
     path::Path,
 };
-use transparent_events::{TransparentEvent, EVENT_BYTES, MAX_EVENT_BYTES};
-use transparent_filter::{BlockHash, ScriptBytes};
+use zakura_transparent_private_shared::events::{TransparentEvent, EVENT_BYTES, MAX_EVENT_BYTES};
+use zakura_transparent_private_shared::filter::{BlockHash, ScriptBytes};
 #[derive(Deserialize)]
 struct Meta {
     version: u16,
@@ -152,15 +152,16 @@ mod tests {
     #[test]
     fn respects_committed_lengths_without_truncating_the_journal() {
         let dir = tempfile::tempdir().unwrap();
-        let event = TransparentEvent::Receive(transparent_events::ReceiveEvent {
-            metadata: None,
-            height: 0,
-            txid: transparent_events::Txid([7; 32]),
-            transaction_index: 0,
-            output_index: 0,
-            value: 5,
-            coinbase: true,
-        });
+        let event =
+            TransparentEvent::Receive(zakura_transparent_private_shared::events::ReceiveEvent {
+                metadata: None,
+                height: 0,
+                txid: zakura_transparent_private_shared::events::Txid([7; 32]),
+                transaction_index: 0,
+                output_index: 0,
+                value: 5,
+                coinbase: true,
+            });
         let mut record = vec![1, 0, 0x51];
         record.extend_from_slice(&event.to_bytes().unwrap());
         let committed = record.len() as u64;

@@ -8,9 +8,10 @@ use crate::txid_display::timeline::read_timeline;
 use std::collections::BTreeSet;
 use std::os::unix::fs::{FileExt, MetadataExt};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
-use transparent_filter::BlockHash;
-use transparent_shard::txid::{DisplayEntry, DisplayRecord, ENTRY_BYTES};
-use transparent_shard::txid_v2x::TransparentDisplayRecordV2x;
+use zakura_transparent_private_server::shard::txid::DisplayRecord;
+use zakura_transparent_private_server::shard::txid_v2x::TransparentDisplayRecordV2x;
+use zakura_transparent_private_shared::filter::BlockHash;
+use zakura_transparent_private_shared::shard::txid::{DisplayEntry, ENTRY_BYTES};
 
 fn settings() -> Settings {
     Settings {
@@ -1003,7 +1004,7 @@ async fn a_restart_after_a_rollback_still_invalidates() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_seal_a_rollback_undoes_waits_for_the_reorg_margin() {
-    use transparent_shard::display::height_counts;
+    use zakura_transparent_private_server::shard::display::height_counts;
     let temp = tempfile::tempdir().unwrap();
     let journal = temp.path().join("journal");
     fixture::write_journal(&journal, 100, 130, 0);
@@ -1275,7 +1276,7 @@ async fn replay_paces_coalesces_and_stops_at_its_end() {
 
 #[test]
 fn plan_start_leaves_room_for_bootstrap_and_replay_seals() {
-    use transparent_shard::display::height_counts;
+    use zakura_transparent_private_server::shard::display::height_counts;
     let temp = tempfile::tempdir().unwrap();
     let journal = temp.path().join("journal");
     fixture::write_journal(&journal, 100, 220, 0);

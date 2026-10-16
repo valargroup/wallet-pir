@@ -28,8 +28,10 @@
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
-use transparent_events::{EventError, TransparentEvent, EVENT_BYTES, MAX_EVENT_BYTES};
-use transparent_filter::{BlockHash, ScriptBytes};
+use zakura_transparent_private_shared::events::{
+    EventError, TransparentEvent, EVENT_BYTES, MAX_EVENT_BYTES,
+};
+use zakura_transparent_private_shared::filter::{BlockHash, ScriptBytes};
 
 /// Bump when the on-disk layout changes.
 ///
@@ -363,7 +365,9 @@ impl EventStore {
         }
         let offset = self.events_len;
         let mut buffer = Vec::new();
-        transparent_events::check_transaction_consistency(events.iter().map(|(_, event)| event))?;
+        zakura_transparent_private_shared::events::check_transaction_consistency(
+            events.iter().map(|(_, event)| event),
+        )?;
         for (script, event) in events {
             let length = u16::try_from(script.as_slice().len()).map_err(|_| {
                 EventStoreError::Invariant(format!(
@@ -411,12 +415,14 @@ impl EventStore {
         height: u64,
         block_hash: BlockHash,
         events: &[(ScriptBytes, TransparentEvent)],
-        records: &[transparent_shard::txid_v2x::TransparentDisplayRecordV2x],
+        records: &[zakura_transparent_private_server::shard::txid_v2x::TransparentDisplayRecordV2x],
     ) -> Result<(), EventStoreError> {
         if height != self.next_height() {
             return Err(EventStoreError::Invariant("display append height".into()));
         }
-        transparent_events::check_transaction_consistency(events.iter().map(|(_, event)| event))?;
+        zakura_transparent_private_shared::events::check_transaction_consistency(
+            events.iter().map(|(_, event)| event),
+        )?;
         crate::display_journal::validate_events(records, events)?;
         let (oversized, ordinary): (Vec<_>, Vec<_>) =
             events.iter().cloned().partition(|(script, _)| {
@@ -431,7 +437,8 @@ impl EventStore {
     pub fn display_at(
         &self,
         height: u64,
-    ) -> Result<Vec<transparent_shard::txid::DisplayRecord>, EventStoreError> {
+    ) -> Result<Vec<zakura_transparent_private_server::shard::txid::DisplayRecord>, EventStoreError>
+    {
         let block = self.block_at(height).ok_or_else(|| {
             EventStoreError::Invariant("display height outside checkpoint".into())
         })?;
@@ -664,9 +671,9 @@ impl EventStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use transparent_events::{ReceiveEvent, SpendEvent, Txid};
+    use zakura_transparent_private_shared::events::{ReceiveEvent, SpendEvent, Txid};
 
-    const GENESIS: &str = transparent_filter::MAINNET_GENESIS_DISPLAY;
+    const GENESIS: &str = zakura_transparent_private_shared::filter::MAINNET_GENESIS_DISPLAY;
     const START: u64 = 100;
 
     fn hash(height: u64) -> BlockHash {
@@ -745,13 +752,13 @@ mod tests {
         let invalid = receive(START as u32 + 1, 2);
         let invalid = (
             invalid.0,
-            invalid
-                .1
-                .with_metadata(Some(transparent_events::TransactionMetadata {
-                    fee: transparent_events::FeeState::NotApplicable,
+            invalid.1.with_metadata(Some(
+                zakura_transparent_private_shared::events::TransactionMetadata {
+                    fee: zakura_transparent_private_shared::events::FeeState::NotApplicable,
                     transparent_input_count: 1,
                     has_shielded_components: false,
-                })),
+                },
+            )),
         );
         assert!(invalid.1.to_bytes().is_err());
         assert!(journal

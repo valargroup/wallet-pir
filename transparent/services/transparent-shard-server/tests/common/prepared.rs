@@ -2,10 +2,12 @@
 //! still writes a fresh publication and opens fresh service and wallet stores.
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, OnceLock};
-use transparent_events::TransparentEvent;
-use transparent_filter::{BlockHash, ScriptBytes};
-use transparent_shard::build::{build_directory_shard, Block, BuiltChild, BuiltDirectory};
-use transparent_shard::layout::Geometry;
+use zakura_transparent_private_server::shard::build::{
+    build_directory_shard, Block, BuiltChild, BuiltDirectory,
+};
+use zakura_transparent_private_shared::events::TransparentEvent;
+use zakura_transparent_private_shared::filter::{BlockHash, ScriptBytes};
+use zakura_transparent_private_shared::shard::layout::Geometry;
 
 const CACHE_BYTES: usize = 128 << 20;
 /// A directory shard and its page shards, as built.
@@ -136,7 +138,7 @@ fn prepared_in(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use transparent_shard::layout::DECOUPLED_2K_8K;
+    use zakura_transparent_private_shared::shard::layout::DECOUPLED_2K_8K;
 
     #[test]
     fn identical_inputs_reuse_bytes_but_different_anchors_do_not() {
@@ -153,7 +155,7 @@ mod tests {
                 2,
                 BlockHash::from_internal_bytes([1; 32]),
                 hash,
-                transparent_filter::RANGE_PROFILE,
+                zakura_transparent_private_shared::filter::RANGE_PROFILE,
                 &DECOUPLED_2K_8K,
                 1,
                 0,

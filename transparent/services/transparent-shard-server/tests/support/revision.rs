@@ -4,11 +4,15 @@
 #![allow(dead_code)]
 
 use std::path::Path;
-use transparent_events::TransparentEvent;
-use transparent_filter::{filter_hash, BlockHash, ScriptBytes, ShardMapEntry};
-use transparent_shard::build::{build_directory_shard, Block, BuiltChild, BuiltDirectory};
-use transparent_shard::layout::Geometry;
-use transparent_shard::manifest::{
+use zakura_transparent_private_server::shard::build::{
+    build_directory_shard, Block, BuiltChild, BuiltDirectory,
+};
+use zakura_transparent_private_shared::events::TransparentEvent;
+use zakura_transparent_private_shared::filter::{
+    filter_hash, BlockHash, ScriptBytes, ShardMapEntry,
+};
+use zakura_transparent_private_shared::shard::layout::Geometry;
+use zakura_transparent_private_shared::shard::manifest::{
     pages_table, ManifestLayout, ManifestOccupancy, ManifestSeal, ShardManifest, TableGeometry,
     SCHEMA,
 };
@@ -59,7 +63,7 @@ pub fn build(
         spec.shard_id,
         spec.geometry,
         spec.genesis,
-        transparent_filter::RANGE_PROFILE,
+        zakura_transparent_private_shared::filter::RANGE_PROFILE,
         blocks,
         &child_ends(spec.start, spec.end, spec.children),
         spec.hash,
@@ -74,9 +78,9 @@ pub fn manifest(spec: &Revision, built: &BuiltDirectory, children: &[BuiltChild]
     let page_children: Vec<_> = children.iter().map(|c| c.describe(geometry)).collect();
     ShardManifest {
         schema: SCHEMA.to_string(),
-        profile: transparent_filter::RANGE_PROFILE.to_string(),
+        profile: zakura_transparent_private_shared::filter::RANGE_PROFILE.to_string(),
         geometry: geometry.name.to_string(),
-        network: transparent_filter::NETWORK.to_string(),
+        network: zakura_transparent_private_shared::filter::NETWORK.to_string(),
         genesis_hash: spec.genesis.to_display_hex(),
         shard_id: spec.shard_id,
         start_height: spec.start,
@@ -95,7 +99,7 @@ pub fn manifest(spec: &Revision, built: &BuiltDirectory, children: &[BuiltChild]
             directory_bytes_capacity: 8_380_416,
             page_rows_target: 2_048,
             page_rows_capacity: 4_096,
-            max_page_children: transparent_shard::MAX_PAGE_CHILDREN,
+            max_page_children: zakura_transparent_private_shared::shard::MAX_PAGE_CHILDREN,
         },
         layout: ManifestLayout::current(),
         filter_hash: filter_hash(built.filter.as_slice()).to_display_hex(),

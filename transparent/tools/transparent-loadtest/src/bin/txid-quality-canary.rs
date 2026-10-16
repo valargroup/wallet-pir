@@ -20,7 +20,7 @@ use std::{
     path::PathBuf,
     time::{Duration, Instant},
 };
-use transparent_txid_client::{
+use zakura_transparent_private_wallet::txid_client::{
     Method, TransportError, TxidDisplayClient, TxidError, TxidLookup, TxidReply, TxidRequest,
     TxidTransport,
 };
@@ -178,9 +178,11 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use transparent_events::Txid;
-    use transparent_shard::txid::{Address, AddressKind, DisplayEntry, EntryOutput, Tag};
-    use transparent_txid_client::{Placement, ProtocolKind};
+    use zakura_transparent_private_shared::events::Txid;
+    use zakura_transparent_private_shared::shard::txid::{
+        Address, AddressKind, DisplayEntry, EntryOutput, Tag,
+    };
+    use zakura_transparent_private_wallet::txid_client::{Placement, ProtocolKind};
 
     const TXID_DISPLAY: &str = "00000000000000000000000000000000000000000000000000000000000000ab";
 
@@ -219,12 +221,12 @@ mod tests {
     fn found(entry: DisplayEntry) -> Result<TxidLookup, TxidError> {
         Ok(TxidLookup::Found {
             entry,
-            provenance: transparent_txid_client::Provenance {
+            provenance: zakura_transparent_private_wallet::txid_client::Provenance {
                 map_sha256: String::new(),
                 shard_id: 1,
                 revision: 0,
                 manifest_digest: String::new(),
-                tier: transparent_txid_client::Tier::Archive,
+                tier: zakura_transparent_private_wallet::txid_client::Tier::Archive,
             },
         })
     }

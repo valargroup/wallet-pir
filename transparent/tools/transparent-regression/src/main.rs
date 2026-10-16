@@ -14,14 +14,14 @@ use std::{
     time::{Duration, Instant},
 };
 use transparent_regression::{actual, validate, Case, Fixture};
-use zakura_pir_transparent::engine::{
+use zakura_transparent_private_wallet::engine::{
     http::{HttpFilterSource, HttpOptions, HttpShardTransport},
     store::{ScriptEntry, ScriptOrigin},
     sync_into,
     transport::{FilterSource, ShardTransport},
     Completion, SetIdentity, StaticChain, StaticScripts, WalletStore, WorkLimits,
 };
-use zakura_pir_transparent::engine_store::SqliteStore;
+use zakura_transparent_private_wallet::engine_store::SqliteStore;
 
 #[derive(Parser)]
 struct Args {
@@ -44,7 +44,7 @@ struct Args {
     source_sha: String,
     /// Shard service requests a sync keeps in flight across matched shards;
     /// 1 walks every request in sequence.
-    #[arg(long, default_value_t = zakura_pir_transparent::engine::http::SHARD_REQUEST_CONCURRENCY)]
+    #[arg(long, default_value_t = zakura_transparent_private_wallet::engine::http::SHARD_REQUEST_CONCURRENCY)]
     shard_concurrency: usize,
     #[arg(long, hide = true)]
     worker_case: Option<String>,
@@ -65,8 +65,8 @@ fn options(a: &Args) -> HttpOptions {
 /// geometry, start height and parent hash; a shrunk, re-parented or renumbered
 /// tail is still drift and still fails.
 fn agrees(
-    pinned: &transparent_filter::ShardMap,
-    served: &transparent_filter::ShardMap,
+    pinned: &zakura_transparent_private_shared::filter::ShardMap,
+    served: &zakura_transparent_private_shared::filter::ShardMap,
 ) -> Result<()> {
     served
         .validate_supported()
@@ -134,7 +134,7 @@ struct TailWatch {
 }
 
 impl TailWatch {
-    fn of(map: &transparent_filter::ShardMap) -> Result<Self> {
+    fn of(map: &zakura_transparent_private_shared::filter::ShardMap) -> Result<Self> {
         let tail = map.shards.last().context("served map has no shards")?;
         Ok(Self {
             shard_id: tail.shard_id,
@@ -179,7 +179,7 @@ impl TailWatch {
 /// One origin's answer to the map route.
 struct Origin {
     url: String,
-    map: transparent_filter::ShardMap,
+    map: zakura_transparent_private_shared::filter::ShardMap,
     bytes: u64,
     digest: String,
 }
@@ -189,7 +189,9 @@ struct Origin {
 ///
 /// Recorded as evidence rather than checked as a whole, because the check has
 /// to name *which* entry moved when one does.
-fn sealed_prefix_digest(map: &transparent_filter::ShardMap) -> (usize, String) {
+fn sealed_prefix_digest(
+    map: &zakura_transparent_private_shared::filter::ShardMap,
+) -> (usize, String) {
     let sealed: Vec<_> = map.shards.iter().filter(|s| s.sealed).collect();
     let body = json!({"identity": SetIdentity::of(map), "sealed": sealed});
     (
@@ -211,7 +213,11 @@ fn pinned(
     a: &Args,
     f: &Fixture,
     watch: &mut Option<TailWatch>,
-) -> Result<(transparent_filter::ShardMap, u64, Value)> {
+) -> Result<(
+    zakura_transparent_private_shared::filter::ShardMap,
+    u64,
+    Value,
+)> {
     let mut seen: Vec<Origin> = vec![];
     for url in [&a.filter_url, &a.shard_url] {
         let mut origin = HttpFilterSource::new(url, &options(a))
@@ -219,7 +225,8 @@ fn pinned(
             .with_retry_attempts(usize::from(a.http_attempts))
             .with_observer(http_evidence::observer(a)?);
         let (raw, bytes) = origin.shard_map().map_err(anyhow::Error::msg)?;
-        let map: transparent_filter::ShardMap = serde_json::from_slice(&raw)?;
+        let map: zakura_transparent_private_shared::filter::ShardMap =
+            serde_json::from_slice(&raw)?;
         agrees(&f.map, &map).with_context(|| format!("publication drift at {url}"))?;
         seen.push(Origin {
             url: url.clone(),
@@ -341,8 +348,8 @@ fn run_case(a: &Args, f: &Fixture, case: &Case, stages: &mut Vec<Value>) -> Resu
             stages: counts.clone(),
         };
         let (init, _) = transport.init().map_err(anyhow::Error::msg)?;
-        let geometry =
-            zakura_pir_transparent::engine::parse_init(&init).map_err(anyhow::Error::msg)?;
+        let geometry = zakura_transparent_private_wallet::engine::parse_init(&init)
+            .map_err(anyhow::Error::msg)?;
         let mut store = SqliteStore::open(&path)?;
         let mut scripts = StaticScripts(entries.clone());
         let result = sync_into(
@@ -413,7 +420,7 @@ fn run_case(a: &Args, f: &Fixture, case: &Case, stages: &mut Vec<Value>) -> Resu
         }
         for script in &entries {
             let ranges = reopened.coverage(&script.script)?;
-            if !zakura_pir_transparent::engine::store::uncovered(
+            if !zakura_transparent_private_wallet::engine::store::uncovered(
                 &ranges,
                 script.required_from,
                 cp.anchor.height,

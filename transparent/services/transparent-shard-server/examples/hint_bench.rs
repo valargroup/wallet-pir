@@ -10,7 +10,7 @@
 //! By default, for each table it builds the column-major database the runtime
 //! scans, over the leading row blocks that hold any nonzero byte as the runtime
 //! does. It then alternates the reference `pir_native::hint` with the batched
-//! `transparent_native::batched_hint::hint`, requires every hint to be equal,
+//! `zakura_transparent_private_server::native::batched_hint::hint`, requires every hint to be equal,
 //! and requires the masks published from the reference hint to equal those of
 //! a full `TableRuntime::build`.
 //!
@@ -24,9 +24,11 @@
 //! file, as the publisher would lay them out.
 use serde_json::json;
 use std::time::Instant;
-use transparent_native::{self as native, D};
 use transparent_shard_server::runtime::{build_pool, SharedParams, TableRuntime};
 use transparent_shard_server::shardset::Table;
+use zakura_pir_native as native;
+use zakura_pir_native::D;
+use zakura_transparent_private_server::native::{batched_hint, row_coefficient};
 
 fn peak_rss_bytes() -> Option<u64> {
     let status = std::fs::read_to_string("/proc/self/status").ok()?;
@@ -59,8 +61,8 @@ fn main() -> Result<(), String> {
             ),
         }
     }
-    let geometry = transparent_shard::layout::by_name(&geometry)
-        .or_else(|| transparent_shard::display::display_by_name(&geometry))
+    let geometry = zakura_transparent_private_shared::shard::layout::by_name(&geometry)
+        .or_else(|| zakura_transparent_private_shared::shard::display::display_by_name(&geometry))
         .ok_or("unknown geometry")?;
     let threads = build_pool().current_num_threads();
     let mut inputs = Vec::new();
@@ -76,8 +78,10 @@ fn main() -> Result<(), String> {
             Some(count) => {
                 let count: usize = count.parse().map_err(|_| "synthetic entry count")?;
                 let records = transparent_shard_server::display::synth::records(count, 1);
-                let built = transparent_shard::display::build_shard(0, geometry, 1, &records)
-                    .map_err(|e| e.0)?;
+                let built = zakura_transparent_private_server::shard::display::build_shard(
+                    0, geometry, 1, &records,
+                )
+                .map_err(|e| e.0)?;
                 built.buckets[0].directory[0].clone()
             }
             None => std::fs::read(&path).map_err(|e| format!("{path}: {e}"))?,
@@ -125,7 +129,7 @@ fn main() -> Result<(), String> {
         let columns: Vec<Vec<u16>> = (0..profile.cols)
             .map(|col| {
                 (0..rows)
-                    .map(|row| native::row_coefficient(bytes, profile.row_bytes, row, col))
+                    .map(|row| row_coefficient(bytes, profile.row_bytes, row, col))
                     .collect()
             })
             .collect();
@@ -138,9 +142,8 @@ fn main() -> Result<(), String> {
                 .install(|| native::hint(masks, rows, profile.cols, |c| &columns[c]))?;
             reference_s.push(started.elapsed().as_secs_f64());
             let started = Instant::now();
-            let b = build_pool().install(|| {
-                native::batched_hint::hint(masks, rows, profile.cols, |c| &columns[c])
-            })?;
+            let b = build_pool()
+                .install(|| batched_hint::hint(masks, rows, profile.cols, |c| &columns[c]))?;
             batched_s.push(started.elapsed().as_secs_f64());
             if r != b {
                 return Err(format!("{path}: batched hint differs from the reference"));

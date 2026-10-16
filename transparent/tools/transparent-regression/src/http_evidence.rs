@@ -9,7 +9,7 @@ use std::{
     path::PathBuf,
     sync::{Arc, Mutex},
 };
-use zakura_pir_transparent::engine::http::HttpObserver;
+use zakura_transparent_private_wallet::engine::http::HttpObserver;
 
 fn path(args: &Args) -> PathBuf {
     let name = match &args.worker_case {

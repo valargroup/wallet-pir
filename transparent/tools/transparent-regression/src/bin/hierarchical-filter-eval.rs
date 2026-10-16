@@ -10,11 +10,15 @@ use std::{
     path::{Path, PathBuf},
     time::Instant,
 };
-use transparent_filter::{
+use transparent_regression::journal::EventStore;
+use zakura_transparent_private_server::filter::{
+    build_range_filter, experimental_parent::ParentBuild as _,
+};
+use zakura_transparent_private_shared::filter::{
     experimental_parent::{self as parent, Manifest, Parent},
     *,
 };
-use transparent_regression::journal::EventStore;
+use zakura_transparent_private_wallet::filter::{experimental_parent::ParentMatch as _, matching};
 
 #[derive(Parser)]
 struct Cli {
@@ -528,8 +532,8 @@ fn main() -> Result<()> {
 
 fn export_seeds(data_dir: &Path, map_path: &Path, sample_path: &Path, out: &Path) -> Result<()> {
     use sha2::{Digest, Sha256};
-    use transparent_events::TransparentEvent;
     use transparent_regression::{reference, EventRecord};
+    use zakura_transparent_private_shared::events::TransparentEvent;
     #[derive(Deserialize)]
     struct Client {
         scripts: Vec<String>,
@@ -638,7 +642,9 @@ fn export_seeds(data_dir: &Path, map_path: &Path, sample_path: &Path, out: &Path
 #[cfg(test)]
 mod seed_tests {
     use super::*;
-    use transparent_events::{ReceiveEvent, SpendEvent, TransparentEvent, Txid};
+    use zakura_transparent_private_shared::events::{
+        ReceiveEvent, SpendEvent, TransparentEvent, Txid,
+    };
     #[test]
     fn journal_seeds_verify_window_and_preserve_only_prior_events() {
         let dir = tempfile::tempdir().unwrap();

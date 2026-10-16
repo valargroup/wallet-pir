@@ -19,17 +19,21 @@ use common::*;
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
-use transparent_events::{ReceiveEvent, SpendEvent, TransparentEvent};
-use transparent_filter::{Recut, ScriptBytes, ShardMap, ShardMapEntry, SupersededShard};
-use transparent_shard::layout::{DECOUPLED_2K_8K, DECOUPLED_32K_32K};
-use zakura_pir_transparent::engine::client::Table;
-use zakura_pir_transparent::engine::http::{HttpOptions, HttpShardTransport};
-use zakura_pir_transparent::engine::transport::{BoxError, FilterSource, ShardTransport};
-use zakura_pir_transparent::engine::{
+use zakura_transparent_private_shared::events::{ReceiveEvent, SpendEvent, TransparentEvent};
+use zakura_transparent_private_shared::filter::{
+    Recut, ScriptBytes, ShardMap, ShardMapEntry, SupersededShard,
+};
+use zakura_transparent_private_shared::shard::layout::{DECOUPLED_2K_8K, DECOUPLED_32K_32K};
+use zakura_transparent_private_wallet::engine::client::Table;
+use zakura_transparent_private_wallet::engine::http::{HttpOptions, HttpShardTransport};
+use zakura_transparent_private_wallet::engine::transport::{
+    BoxError, FilterSource, ShardTransport,
+};
+use zakura_transparent_private_wallet::engine::{
     Anchor, Completion, IncompleteReason, Ledger, ScriptEntry, ScriptOrigin, StaticChain,
     StaticScripts, SyncError, SyncReport, WalletStore, WorkLimits,
 };
-use zakura_pir_transparent::engine_store::SqliteStore;
+use zakura_transparent_private_wallet::engine_store::SqliteStore;
 
 /// Where both tails start: the five sealed shards end just below.
 const TAIL: u64 = FIRST + 5 * SPAN;
@@ -75,7 +79,11 @@ fn events() -> Vec<(ScriptBytes, TransparentEvent)> {
         (script(2), receive(TAIL + 7, 302, 7_002)),
         (script(2), receive(TAIL + 150, 303, 7_003)),
     ];
-    let long = u64::from(transparent_shard::EVENTS_PER_PAGE + transparent_shard::INLINE_EVENTS + 5);
+    let long = u64::from(
+        zakura_transparent_private_shared::shard::EVENTS_PER_PAGE
+            + zakura_transparent_private_shared::shard::INLINE_EVENTS
+            + 5,
+    );
     for i in 0..long {
         events.push((script(3), receive(TAIL + 20 + i % 60, 1_000 + i, 11)));
         events.push((
@@ -95,7 +103,11 @@ fn events() -> Vec<(ScriptBytes, TransparentEvent)> {
     events
 }
 
-fn sealed(start: u64, end: u64, geometry: &'static transparent_shard::layout::Geometry) -> Laid {
+fn sealed(
+    start: u64,
+    end: u64,
+    geometry: &'static zakura_transparent_private_shared::shard::layout::Geometry,
+) -> Laid {
     Laid {
         start,
         end,
@@ -301,7 +313,7 @@ async fn run(
 /// [`run`] with the wallet's chain given by `chain_hash`.
 #[allow(clippy::too_many_arguments)]
 async fn run_on(
-    chain_hash: fn(u64) -> transparent_filter::BlockHash,
+    chain_hash: fn(u64) -> zakura_transparent_private_shared::filter::BlockHash,
     path: &Path,
     base: &str,
     filters: impl FilterSource + Send + 'static,
@@ -326,7 +338,7 @@ async fn run_on(
         };
         let geometry = transport.inner.geometry().unwrap();
         let (mut filters, mut scripts) = (filters, scripts);
-        zakura_pir_transparent::engine::sync_into(
+        zakura_transparent_private_wallet::engine::sync_into(
             &mut store,
             &map,
             0,
@@ -570,7 +582,7 @@ async fn held_with_merged_pages(
     path: &Path,
     base: &str,
     sets: &Publications,
-) -> Vec<zakura_pir_transparent::engine::StoredEvent> {
+) -> Vec<zakura_transparent_private_wallet::engine::StoredEvent> {
     let filters = || PublishedFilters::load(sets.before_dir.path(), &sets.before);
     let (report, _) = run(
         path,
@@ -787,7 +799,7 @@ async fn an_honest_reorg_of_republished_sealed_shards_rolls_back_rather_than_ref
     held_before_the_re_cut(&path, &before_base, &sets).await;
 
     const FORK: u64 = FIRST + 2 * SPAN + 50;
-    fn forked(height: u64) -> transparent_filter::BlockHash {
+    fn forked(height: u64) -> zakura_transparent_private_shared::filter::BlockHash {
         hash_forked(FORK)(height)
     }
     // The new branch drops script 2's receive in shard 4 and pays script 1
@@ -853,7 +865,7 @@ async fn a_shallow_reorg_the_publisher_followed_first_waits_for_the_chain() {
     // The fork is inside shard 4, the newest sealed shard; the tail, now
     // longer and at a higher revision, covers the wallet's target.
     const FORK: u64 = FIRST + 4 * SPAN + 150;
-    fn forked(height: u64) -> transparent_filter::BlockHash {
+    fn forked(height: u64) -> zakura_transparent_private_shared::filter::BlockHash {
         hash_forked(FORK)(height)
     }
     let mut branch = events.clone();
@@ -951,14 +963,14 @@ async fn a_hostile_change_below_a_reorg_cannot_hold_the_rollback_back() {
     // The fork is inside the tail; the new branch drops script 3's receives
     // at and past it.
     const FORK: u64 = TAIL + 50;
-    fn forked(height: u64) -> transparent_filter::BlockHash {
+    fn forked(height: u64) -> zakura_transparent_private_shared::filter::BlockHash {
         hash_forked(FORK)(height)
     }
     // The publisher's chain agrees with it except at the last sealed
     // shard's end, where it names a block the wallet's chain rejects.
-    fn hostile(height: u64) -> transparent_filter::BlockHash {
+    fn hostile(height: u64) -> zakura_transparent_private_shared::filter::BlockHash {
         if height == TAIL - 1 {
-            transparent_filter::BlockHash::from_internal_bytes([0xee; 32])
+            zakura_transparent_private_shared::filter::BlockHash::from_internal_bytes([0xee; 32])
         } else {
             forked(height)
         }

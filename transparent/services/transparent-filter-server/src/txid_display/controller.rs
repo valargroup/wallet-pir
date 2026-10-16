@@ -41,14 +41,16 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
-use transparent_filter::BlockHash;
 use transparent_server_backend::display::prebuild::Shipped;
 use transparent_server_backend::runtime::disk::ShippedRuntimes;
-use transparent_shard::display::{
-    height_counts, plan_seals, recent_start, window_start, DisplayManifest, DisplayMap,
-    DisplayMapEntry, DisplaySealParams,
+use zakura_transparent_private_server::shard::display::{
+    height_counts, plan_seals, recent_start, window_start,
 };
-use transparent_shard::manifest::PublishedRevision;
+use zakura_transparent_private_server::shard::manifest::PublishedRevision;
+use zakura_transparent_private_shared::filter::BlockHash;
+use zakura_transparent_private_shared::shard::display::{
+    DisplayManifest, DisplayMap, DisplayMapEntry, DisplaySealParams,
+};
 
 const MAX_BACKOFF: Duration = Duration::from_secs(30);
 /// Command-adapter workers are asked to collect every this many cycles.

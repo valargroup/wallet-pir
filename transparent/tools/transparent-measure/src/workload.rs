@@ -11,8 +11,8 @@
 //! than user traces. That distinction matters when the results are quoted.
 
 use std::collections::BTreeMap;
-use transparent_filter::ScriptBytes;
-use transparent_shard::MAX_SCRIPT_BYTES;
+use zakura_transparent_private_shared::filter::ScriptBytes;
+use zakura_transparent_private_shared::shard::MAX_SCRIPT_BYTES;
 
 /// One named script set to measure.
 pub struct Workload {

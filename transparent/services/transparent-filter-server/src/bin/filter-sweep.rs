@@ -11,8 +11,9 @@
 use clap::Parser;
 use std::collections::BTreeSet;
 use std::path::PathBuf;
-use transparent_filter::{build_range_filter_with, BlockHash, ScriptBytes, ShardKey};
 use transparent_filter_server::events::EventStore;
+use zakura_transparent_private_server::filter::build_range_filter_with;
+use zakura_transparent_private_shared::filter::{BlockHash, ScriptBytes, ShardKey};
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
@@ -90,7 +91,7 @@ fn main() -> Result<(), BoxError> {
         let elements: Vec<ScriptBytes> = set.into_iter().map(ScriptBytes::new).collect();
         let terminal = store.block_at(*end).ok_or("uncovered end")?.block_hash;
         let key = ShardKey::derive(
-            transparent_filter::RANGE_PROFILE,
+            zakura_transparent_private_shared::filter::RANGE_PROFILE,
             genesis,
             *id,
             *start,

@@ -35,7 +35,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use tower::ServiceExt;
-use transparent_shard::display::DisplayMap;
+use zakura_transparent_private_shared::shard::display::DisplayMap;
 
 /// A publication directory and the digest of its map.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1015,7 +1015,7 @@ mod tests {
                 parent_manifest_digest: String::new(),
                 n_buckets: 1,
                 archive_target: 1,
-                geometry: &transparent_shard::display::TXID_2K8,
+                geometry: &zakura_transparent_private_shared::shard::display::TXID_2K8,
             };
             let records = synth::records(3, shard_id);
             let published = synth::write_shard(store.path(), &spec, &records).unwrap();
@@ -1085,7 +1085,9 @@ mod tests {
     #[test]
     fn seals_are_published_below_the_recent_shard() {
         use super::super::synth;
-        use transparent_shard::display::{DisplayMapEntry, DisplaySealParams};
+        use zakura_transparent_private_shared::shard::display::{
+            DisplayMapEntry, DisplaySealParams,
+        };
         let entry = |shard_id: u64, sealed: bool| DisplayMapEntry {
             shard_id,
             start_height: shard_id,

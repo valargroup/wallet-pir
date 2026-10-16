@@ -11,7 +11,7 @@ use transparent_filter_server::txid_display::{
     serving::WorkersFile,
     source::{open_writer, LiveSource, ReplaySource, Source},
 };
-use transparent_shard::display::DisplaySealParams;
+use zakura_transparent_private_shared::shard::display::DisplaySealParams;
 
 #[derive(Parser)]
 #[command(
@@ -215,7 +215,7 @@ async fn main() -> Result<(), BoxError> {
                 geometry: seal.geometry.clone(),
                 seal: seal.params(),
                 max_archive_shards: seal.max_archive_shards,
-                network: transparent_filter::NETWORK.to_string(),
+                network: zakura_transparent_private_shared::filter::NETWORK.to_string(),
                 genesis_hash: store.genesis_hash().to_string(),
                 start_height: start,
                 base_parent: store

@@ -5,11 +5,10 @@
 mod journal;
 use anyhow::{bail, Context, Result};
 use std::{fs, time::Instant};
-use transparent_events::TransparentEvent;
-use transparent_filter::ShardMap;
-use transparent_shard::{
-    geometry_by_name, layout::segments_for, seal::PageBasis, SealPolicy, SealedShard, Sealer,
-};
+use zakura_transparent_private_server::shard::{seal::PageBasis, SealPolicy, SealedShard, Sealer};
+use zakura_transparent_private_shared::events::TransparentEvent;
+use zakura_transparent_private_shared::filter::ShardMap;
+use zakura_transparent_private_shared::shard::{geometry_by_name, layout::segments_for};
 fn height(event: &TransparentEvent) -> u64 {
     u64::from(event.height())
 }
@@ -71,21 +70,22 @@ fn main() -> Result<()> {
     let mut bytes = 0u64;
     let mut shards = 0u64;
     let mut total_events = 0u64;
-    let mut emit = |shard: SealedShard, geometry: &transparent_shard::Geometry| {
-        let directory = shard.placement.expect("placement requested");
-        let pages = segments_for(shard.occupancy.packed_page_rows, geometry.page_rows);
-        bytes += u64::from(directory.segments) * geometry.directory_bytes_per_segment()
-            + u64::from(pages) * geometry.page_bytes_per_segment();
-        shards += 1;
-        println!(
-            "{}",
-            serde_json::json!({"type":"shard", "id":shard.shard_id, "geometry":geometry.name,
+    let mut emit =
+        |shard: SealedShard, geometry: &zakura_transparent_private_shared::shard::Geometry| {
+            let directory = shard.placement.expect("placement requested");
+            let pages = segments_for(shard.occupancy.packed_page_rows, geometry.page_rows);
+            bytes += u64::from(directory.segments) * geometry.directory_bytes_per_segment()
+                + u64::from(pages) * geometry.page_bytes_per_segment();
+            shards += 1;
+            println!(
+                "{}",
+                serde_json::json!({"type":"shard", "id":shard.shard_id, "geometry":geometry.name,
             "start":shard.start_height, "end":shard.end_height, "scripts":shard.occupancy.scripts,
             "events":shard.occupancy.events, "page_rows":shard.occupancy.packed_page_rows,
             "directory_bytes":shard.occupancy.directory_bytes, "directory_segments":directory.segments,
             "page_segments":pages, "max_directory_row_bytes":directory.max_row_bytes})
-        );
-    };
+            );
+        };
     for h in journal.start_height()..=end {
         while h > map.shards[index].end_height {
             index += 1;
@@ -117,7 +117,7 @@ fn main() -> Result<()> {
     }
     println!(
         "{}",
-        serde_json::json!({"type":"summary", "schema":transparent_shard::SCHEMA,
+        serde_json::json!({"type":"summary", "schema":zakura_transparent_private_shared::shard::SCHEMA,
         "classification":"coverage-matched read-only census; exact directory placement and shared page-demand calculation; not a publication or throughput benchmark",
         "start":journal.start_height(), "end":end, "events":total_events,
         "v9_shards":last-first+1, "v10_shards":shards, "v9_allocated_plaintext_bytes":baseline_bytes,

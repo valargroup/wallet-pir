@@ -31,10 +31,10 @@
 use crate::extract::index;
 use crate::ingest::BuiltEvents;
 use std::path::Path;
-use transparent_filter::BlockHash;
 pub use zakura_server_chain::transparent::state::StateError;
 use zakura_server_chain::transparent::FetchedBlock;
 use zakura_server_chain::Network;
+use zakura_transparent_private_shared::filter::BlockHash;
 
 /// A read-only view of a running node's finalized state.
 pub struct StateReader(zakura_server_chain::transparent::state::StateReader);

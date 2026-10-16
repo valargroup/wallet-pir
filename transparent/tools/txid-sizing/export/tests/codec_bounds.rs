@@ -56,11 +56,11 @@ fn snapshot_bounds_are_the_compiled_codec_bounds() {
     let compiled = compiled_bounds();
     assert_eq!(
         compiled["event_bytes"].as_u64(),
-        Some(transparent_events::EVENT_BYTES as u64)
+        Some(zakura_transparent_private_shared::events::EVENT_BYTES as u64)
     );
     assert_eq!(
         compiled["max_event_bytes"].as_u64(),
-        Some(transparent_events::MAX_EVENT_BYTES as u64)
+        Some(zakura_transparent_private_shared::events::MAX_EVENT_BYTES as u64)
     );
     assert_eq!(python_bounds(&snapshot_module(), ""), compiled);
 }

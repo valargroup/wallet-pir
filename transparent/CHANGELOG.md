@@ -1,13 +1,24 @@
 # Transparent history recovery changelog
 
 Covers the crates a wallet uses to recover transparent history over PIR:
-`transparent-events`, `transparent-filter`, `transparent-native`,
-`transparent-shard`, the canonical `zakura-pir-transparent` recovery engine and store, and the
+wallet-libraries' `zakura-transparent-private-shared` protocol crate, its
+`zakura-transparent-private-wallet` recovery engine and store, its
+`zakura-transparent-private-server` publisher, and the
 `transparent-shard-server`, `transparent-filter-server` and
 `transparent-block-server` services. Txid display lookups have their own
 [changelog](CHANGELOG-txid.md). Both are released under one tag.
 
 ## Unreleased
+
+- Build on wallet-libraries' consolidated Transparent crates: the protocol
+  types from `zakura-transparent-private-shared`, the builders, sealers,
+  display publication and native query parsing from
+  `zakura-transparent-private-server`, and recovery from
+  `zakura-transparent-private-wallet`, replacing `zakura-transparent-{events,
+  filter,shard,native,txid-client}` and `zakura-pir-transparent`. Services
+  select `zakura-pir-native`'s `server` operations, and `client` where the
+  runtime self-check prepares and decodes a query. Published bytes, routes and
+  responses are unchanged.
 
 - Publishers and query workers share one server backend for publication loading,
   native runtime preparation and bounded caches. Query-worker tests no longer

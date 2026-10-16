@@ -23,9 +23,9 @@ use crate::publication::BoxError;
 use crate::zakura::NodeClient;
 use std::collections::{BTreeMap, VecDeque};
 use std::time::{Duration, Instant};
-use transparent_filter::BlockHash;
-use transparent_shard::txid::DisplayRecord;
-use transparent_shard::txid_v2x::TransparentDisplayRecordV2x;
+use zakura_transparent_private_server::shard::txid::DisplayRecord;
+use zakura_transparent_private_server::shard::txid_v2x::TransparentDisplayRecordV2x;
+use zakura_transparent_private_shared::filter::BlockHash;
 
 /// Most blocks one poll returns, so a catch-up still publishes as it goes.
 const BATCH: u64 = 64;

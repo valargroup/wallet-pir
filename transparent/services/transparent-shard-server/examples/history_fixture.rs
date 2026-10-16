@@ -5,11 +5,11 @@
 //! `FIRST + END`, its `shards.json`, and nothing else. Exact answers are checked
 //! by `soak-query`, which reads the expected rows from these files, not the server.
 use std::path::Path;
-use transparent_events::{ReceiveEvent, TransparentEvent, Txid};
-use transparent_filter::{BlockHash, ScriptBytes, SealParameters, ShardMap};
+use zakura_transparent_private_shared::events::{ReceiveEvent, TransparentEvent, Txid};
+use zakura_transparent_private_shared::filter::{BlockHash, ScriptBytes, SealParameters, ShardMap};
 #[path = "../tests/support/revision.rs"]
 mod revision;
-use transparent_shard::layout::DECOUPLED_2K_8K;
+use zakura_transparent_private_shared::shard::layout::DECOUPLED_2K_8K;
 
 const FIRST: u64 = 3_428_143;
 
@@ -33,7 +33,10 @@ fn main() {
         Path::new(&args[1]),
         FIRST + args[2].parse::<u64>().expect("END"),
     );
-    let genesis = BlockHash::from_display_hex(transparent_filter::MAINNET_GENESIS_DISPLAY).unwrap();
+    let genesis = BlockHash::from_display_hex(
+        zakura_transparent_private_shared::filter::MAINNET_GENESIS_DISPLAY,
+    )
+    .unwrap();
     let events: Vec<_> = (FIRST..=end)
         .flat_map(|height| {
             (0..12u64).map(move |n| {
@@ -73,10 +76,11 @@ fn main() {
         &events,
     );
     let map = ShardMap {
-        genesis_hash: transparent_filter::MAINNET_GENESIS_DISPLAY.to_string(),
-        network: transparent_filter::NETWORK.to_string(),
-        profile: transparent_filter::RANGE_PROFILE.to_string(),
-        range_envelope_version: transparent_filter::RANGE_ENVELOPE_VERSION,
+        genesis_hash: zakura_transparent_private_shared::filter::MAINNET_GENESIS_DISPLAY
+            .to_string(),
+        network: zakura_transparent_private_shared::filter::NETWORK.to_string(),
+        profile: zakura_transparent_private_shared::filter::RANGE_PROFILE.to_string(),
+        range_envelope_version: zakura_transparent_private_shared::filter::RANGE_ENVELOPE_VERSION,
         start_height: FIRST,
         seal: std::collections::BTreeMap::from([(
             DECOUPLED_2K_8K.name.to_string(),

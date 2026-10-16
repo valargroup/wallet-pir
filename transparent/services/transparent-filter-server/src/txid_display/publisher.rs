@@ -6,7 +6,7 @@
 //!   writing it again verifies the existing bytes instead, and a difference
 //!   is a hard error because a published identity never changes content.
 //! - `index/<sha256>.json` holds one archive index chunk of the split map
-//!   (`transparent_shard::display::split`), written once when a seal or a
+//!   (`zakura_transparent_private_shared::shard::display::split`), written once when a seal or a
 //!   window drop first produces it.
 //! - `candidate-<tip>-<hash>-<nanos>/` is one publication: a hard link of
 //!   every revision the map names and of every index chunk
@@ -31,15 +31,19 @@ use std::io::Read;
 use std::os::unix::fs::{FileExt, MetadataExt};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
-use transparent_shard::display::split::{index_file, RECENT_MAP_FILE};
-use transparent_shard::display::{
-    build_shard, display_by_name, plan_seals, recent_start, verify, verify_rows, DisplayManifest,
-    DisplayMap, DisplayMapEntry, DisplaySealParams, DisplayTable, ManifestHeader, DISPLAY_SCHEMA,
-    MAX_BUCKETS,
+use zakura_transparent_private_server::shard::display::split::{index_file, RECENT_MAP_FILE};
+use zakura_transparent_private_server::shard::display::DisplayManifestBuild as _;
+use zakura_transparent_private_server::shard::display::DisplayMapSplit as _;
+use zakura_transparent_private_server::shard::display::{
+    build_shard, plan_seals, recent_start, verify, verify_rows,
 };
-use transparent_shard::layout::Geometry;
-use transparent_shard::manifest::{PublishedRevision, RevisionError};
-use transparent_shard::txid::DisplayRecord;
+use zakura_transparent_private_server::shard::manifest::{PublishedRevision, RevisionError};
+use zakura_transparent_private_server::shard::txid::DisplayRecord;
+use zakura_transparent_private_shared::shard::display::{
+    display_by_name, DisplayManifest, DisplayMap, DisplayMapEntry, DisplaySealParams, DisplayTable,
+    ManifestHeader, DISPLAY_SCHEMA, MAX_BUCKETS,
+};
+use zakura_transparent_private_shared::shard::layout::Geometry;
 
 pub const MAP_FILE: &str = "txid-shards.json";
 pub const MANIFEST_FILE: &str = "manifest.json";
@@ -387,7 +391,8 @@ pub fn publish_shard(
 
     Ok(PublishedShard {
         entry: DisplayMapEntry::from_manifest(&manifest, &digest),
-        used_bytes: built.records * transparent_shard::txid::ENTRY_BYTES as u64,
+        used_bytes: built.records
+            * zakura_transparent_private_shared::shard::txid::ENTRY_BYTES as u64,
         seed_tries: built.buckets.iter().map(|b| b.seed_tries).collect(),
         manifest,
         digest,
@@ -623,12 +628,14 @@ pub fn verify_dir(directory: &Path, digest: &str) -> Result<DisplayManifest, Box
         &records,
         &manifest.placement_seeds(),
         |table: DisplayTable, segment, row| {
-            let file = files
-                .get(&(table, segment))
-                .ok_or_else(|| transparent_shard::txid::Error("segment out of range".into()))?;
+            let file = files.get(&(table, segment)).ok_or_else(|| {
+                zakura_transparent_private_shared::shard::txid::Error("segment out of range".into())
+            })?;
             let mut bytes = vec![0u8; width];
             file.read_exact_at(&mut bytes, (row * width) as u64)
-                .map_err(|e| transparent_shard::txid::Error(e.to_string()))?;
+                .map_err(|e| {
+                    zakura_transparent_private_shared::shard::txid::Error(e.to_string())
+                })?;
             Ok(bytes)
         },
     )?;
@@ -713,10 +720,12 @@ pub fn bootstrap(
     let mut counts = Vec::with_capacity((through - start + 1) as usize);
     for height in start..=through {
         let records = store.display_at(height)?;
-        counts.push(transparent_shard::display::height_counts(
-            &layout.seal,
-            &records,
-        ));
+        counts.push(
+            zakura_transparent_private_server::shard::display::height_counts(
+                &layout.seal,
+                &records,
+            ),
+        );
         index.append(height, &records)?;
     }
     let count_s = started.elapsed().as_secs_f64();
@@ -911,7 +920,7 @@ mod tests {
             geometry: "txid-2k8".into(),
             seal: fixture::params(),
             max_archive_shards: 4,
-            network: transparent_filter::NETWORK.into(),
+            network: zakura_transparent_private_shared::filter::NETWORK.into(),
             genesis_hash: fixture::GENESIS.into(),
             start_height: 10,
             base_parent: "11".repeat(32),

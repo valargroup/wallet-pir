@@ -2,9 +2,9 @@
 //! Unknown fees remain unknown; Python bounds their optional encoded length.
 use super::*;
 use std::io::{self, BufRead, Read, Write};
-use transparent_events::TransactionMetadata;
-use transparent_shard::txid::DisplayOutput;
-use transparent_shard::txid_v1::TransparentDisplayRecord;
+use zakura_transparent_private_shared::events::TransactionMetadata;
+use zakura_transparent_private_server::shard::txid::DisplayOutput;
+use zakura_transparent_private_server::shard::txid_v1::TransparentDisplayRecord;
 
 pub fn run() -> Result<(), AnyError> {
     let stdin = io::stdin();
@@ -62,7 +62,7 @@ pub fn run() -> Result<(), AnyError> {
                     .record
             } else {
                 TransparentDisplayRecord {
-                    txid: transparent_events::Txid(tx.txid),
+                    txid: zakura_transparent_private_shared::events::Txid(tx.txid),
                     coinbase,
                     metadata: TransactionMetadata {
                         fee: FeeState::Unknown,

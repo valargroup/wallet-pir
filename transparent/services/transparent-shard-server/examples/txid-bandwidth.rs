@@ -20,8 +20,8 @@ use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
-use transparent_shard::layout::Geometry;
 use txdisplay::{DisplayClient, LookupReport, LookupResult};
+use zakura_transparent_private_shared::shard::layout::Geometry;
 
 type Error = Box<dyn std::error::Error + Send + Sync>;
 
@@ -74,8 +74,8 @@ enum Command {
 }
 
 /// The native profile display tables are served with.
-fn native() -> transparent_native::Profile {
-    transparent_native::profile_for("txdirectory")
+fn native() -> zakura_transparent_private_shared::native::Profile {
+    zakura_transparent_private_shared::native::profile_for("txdirectory")
 }
 
 /// Body bytes of one 28-bit dithered query and of its answer, for a table of
@@ -104,7 +104,7 @@ fn formula(
     setup_json_bytes: u64,
 ) -> Vec<serde_json::Value> {
     let mut rows = Vec::new();
-    for geometry in transparent_shard::display::DISPLAY_PROFILES {
+    for geometry in zakura_transparent_private_shared::shard::display::DISPLAY_PROFILES {
         let setup = setup_bytes(geometry, setup_json_bytes);
         let (dir_up, dir_down) = query_bytes(geometry, directory_segments);
         let queries = 1;
@@ -434,7 +434,7 @@ mod tests {
     /// directory query for every lookup.
     #[test]
     fn warm_transcripts_match_the_native_lengths() {
-        use transparent_shard::display::TXID_2K8;
+        use zakura_transparent_private_shared::shard::display::TXID_2K8;
         assert_eq!(query_bytes(&TXID_2K8, 1), (21_000, 10_256));
         assert_eq!(query_bytes(&TXID_2K8, 2).1, 20_512);
         let rows = formula(1, 0, 0, 0, 0);

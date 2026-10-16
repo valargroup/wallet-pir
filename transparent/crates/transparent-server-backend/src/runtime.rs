@@ -60,12 +60,46 @@ use reinspiring::native_kernel::PreparedU16Query;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use transparent_native::{
-    self as native, NativeKeys, NativePreprocessed, NativeScheme, Profile, TableProfile,
-};
-use transparent_shard::layout::Geometry;
+use zakura_pir_native::{self as native, NativeKeys, NativePreprocessed, Profile};
+use zakura_transparent_private_server::native::TableServe as _;
+use zakura_transparent_private_server::native::{batched_hint, row_coefficient};
+use zakura_transparent_private_shared::native::{profile_for, NativeScheme, TableProfile};
+use zakura_transparent_private_shared::shard::layout::Geometry;
 
-const _: () = assert!(transparent_shard::manifest::QUERY_ROW_QUANTUM as usize == native::D);
+/// The query the self-check sends and how it reads the answer, with the
+/// native profile's client operations: what a wallet prepares and decodes,
+/// without the service depending on the wallet crate.
+pub(crate) trait SelfCheckQuery {
+    fn prepare(&self, target: usize) -> Result<(native::NativeSecret, Vec<u8>), String>;
+    fn decode(
+        &self,
+        secret: &native::NativeSecret,
+        public: &[u8],
+        body: &[u8],
+    ) -> Result<Vec<u8>, String>;
+}
+
+impl SelfCheckQuery for TableProfile {
+    fn prepare(&self, target: usize) -> Result<(native::NativeSecret, Vec<u8>), String> {
+        self.native
+            .prepare(&self.setup, &self.masks, self.rows, target)
+    }
+
+    fn decode(
+        &self,
+        secret: &native::NativeSecret,
+        public: &[u8],
+        body: &[u8],
+    ) -> Result<Vec<u8>, String> {
+        let mut row = self.native.decode_cols(secret, public, body, self.cols)?;
+        row.truncate(self.row_bytes);
+        Ok(row)
+    }
+}
+
+const _: () = assert!(
+    zakura_transparent_private_shared::shard::manifest::QUERY_ROW_QUANTUM as usize == native::D
+);
 
 /// Explicit build policy for reproducible hardware-path comparisons. The
 /// portable feature selects the library's existing fallback; it changes no
@@ -135,7 +169,7 @@ pub fn transport_params(rows: u64, row_bytes: u32) -> Result<YpirSchemeParams, S
 /// budget is therefore always set below the host's real headroom, and
 /// re-checked with `shard-residency` whenever the scheme moves.
 pub fn reserved_bytes(table: Table, rows: u64, row_bytes: u32) -> u64 {
-    let profile = native::profile_for(table.as_str());
+    let profile = profile_for(table.as_str());
     let blocks = (row_bytes as usize / profile.instance_bytes()) as u64;
     rows * row_bytes as u64
         + blocks * profile.block_public_bytes() as u64
@@ -154,7 +188,7 @@ pub fn reserved_bytes(table: Table, rows: u64, row_bytes: u32) -> u64 {
 /// full reservation, and a plan made with this figure then comes up short and
 /// says so through overloads rather than through memory.
 pub fn held_bytes(table: Table, rows: u64, row_bytes: u32) -> u64 {
-    let profile = native::profile_for(table.as_str());
+    let profile = profile_for(table.as_str());
     let blocks = (row_bytes as usize / profile.instance_bytes()) as u64;
     reserved_bytes(table, rows, row_bytes)
         - blocks * (profile.prepared_block_max_bytes() - profile.prepared_block_planned_bytes())
@@ -209,12 +243,20 @@ pub struct ParsedQuery {
 impl SharedParams {
     /// A history table's parameters, under the history schema.
     pub fn build(geometry: &'static Geometry, table: Table) -> Result<Self, String> {
-        Self::build_in(transparent_shard::manifest::SCHEMA, geometry, table)
+        Self::build_in(
+            zakura_transparent_private_shared::shard::manifest::SCHEMA,
+            geometry,
+            table,
+        )
     }
 
     /// A display table's parameters, under display's own native schema.
     pub fn build_display(geometry: &'static Geometry, table: Table) -> Result<Self, String> {
-        Self::build_in(transparent_shard::display::NATIVE_SCHEMA, geometry, table)
+        Self::build_in(
+            zakura_transparent_private_shared::shard::display::NATIVE_SCHEMA,
+            geometry,
+            table,
+        )
     }
 
     fn build_in(schema: &str, geometry: &'static Geometry, table: Table) -> Result<Self, String> {
@@ -224,12 +266,12 @@ impl SharedParams {
             geometry,
             table,
             profile: TableProfile::new(schema, geometry.name, table.as_str(), rows, row_bytes)?,
-            transport: if native::profile_for(table.as_str()) == native::P16 {
+            transport: if profile_for(table.as_str()) == native::P16 {
                 Some(transport_params(rows, row_bytes)?)
             } else {
                 None
             },
-            setup_seed: transparent_shard::display::setup_seed_in(
+            setup_seed: zakura_transparent_private_shared::shard::display::setup_seed_in(
                 schema,
                 geometry.name,
                 table.as_str(),
@@ -329,7 +371,7 @@ impl SharedParams {
     /// row otherwise. A body selecting over only those rows is zero-filled to
     /// the full selection; the rows it omits are zero in every segment.
     ///
-    /// [`query_rows`]: transparent_shard::manifest::PageChild::query_rows
+    /// [`query_rows`]: zakura_transparent_private_shared::shard::manifest::PageChild::query_rows
     pub fn parse(
         &self,
         binding: [u8; 8],
@@ -369,18 +411,18 @@ impl Iterator for RowCoefficients<'_> {
         }
         let (row, col) = (self.position / self.cols, self.position % self.cols);
         self.position += 1;
-        Some(native::row_coefficient(self.rows, self.row_bytes, row, col))
+        Some(row_coefficient(self.rows, self.row_bytes, row, col))
     }
 }
 
 /// Geometries whose runtime hint skips trailing zero blocks and is computed
-/// by [`native::batched_hint`]: the recent tails and the display tables, whose
+/// by [`batched_hint`]: the recent tails and the display tables, whose
 /// recent shard is rebuilt at every block. Every other geometry, the history
 /// archives included, keeps the reference product over every block.
 const BATCHED_HINT_GEOMETRIES: [&Geometry; 3] = [
-    &transparent_shard::layout::DECOUPLED_2K_8K,
-    &transparent_shard::display::TXID_2K8,
-    &transparent_shard::display::TXID_4K8,
+    &zakura_transparent_private_shared::shard::layout::DECOUPLED_2K_8K,
+    &zakura_transparent_private_shared::shard::display::TXID_2K8,
+    &zakura_transparent_private_shared::shard::display::TXID_4K8,
 ];
 
 fn uses_batched_hint(geometry: &Geometry) -> bool {
@@ -559,7 +601,7 @@ impl TableRuntime {
             // The batched hint computes the reference's exact integers several
             // times faster.
             let used = used_blocks(rows, profile.row_bytes, profile.rows);
-            native::batched_hint::hint(
+            batched_hint::hint(
                 &profile.masks[..used],
                 used * native::D,
                 profile.cols,
@@ -599,7 +641,7 @@ impl TableRuntime {
         let mut db = column_major_bytes(rows, row_count, profile.row_bytes);
         let hint = if uses_batched_hint(shared.geometry) {
             let used = used_blocks(rows, profile.row_bytes, row_count);
-            native::batched_hint::hint(
+            batched_hint::hint(
                 &profile.masks[..used],
                 used * native::D,
                 profile.cols,
@@ -697,7 +739,7 @@ impl TableRuntime {
                 for col in 0..profile.cols {
                     let column = &db[col * padded..col * padded + profile.rows];
                     if (0..profile.rows).any(|row| {
-                        column[row] != native::row_coefficient(rows, profile.row_bytes, row, col)
+                        column[row] != row_coefficient(rows, profile.row_bytes, row, col)
                     }) {
                         return Err(format!("database column {col} differs from the segment"));
                     }
@@ -1455,14 +1497,14 @@ pub(crate) mod tests {
     }
 
     use super::*;
-    use transparent_shard::display::{TXID_2K8, TXID_4K8};
-    use transparent_shard::layout::{DECOUPLED_2K_8K, DECOUPLED_32K_32K};
+    use zakura_transparent_private_shared::shard::display::{TXID_2K8, TXID_4K8};
+    use zakura_transparent_private_shared::shard::layout::{DECOUPLED_2K_8K, DECOUPLED_32K_32K};
 
     /// The masks a table's rows publish, from the whole-table hint over the
     /// columns the profile encodes (single bytes for an 8-bit table, u16
     /// pairs for a 16-bit one), without the scan server: what the certificate
     /// tool rebuilds.
-    fn reference_masks(profile: &native::TableProfile, rows: &[u8]) -> Vec<u8> {
+    fn reference_masks(profile: &TableProfile, rows: &[u8]) -> Vec<u8> {
         let hint = if profile.native.entry_bytes() == 1 {
             let columns: Vec<Vec<u8>> = (0..profile.cols)
                 .map(|col| {
@@ -1476,7 +1518,7 @@ pub(crate) mod tests {
             let columns: Vec<Vec<u16>> = (0..profile.cols)
                 .map(|col| {
                     (0..profile.rows)
-                        .map(|row| native::row_coefficient(rows, profile.row_bytes, row, col))
+                        .map(|row| row_coefficient(rows, profile.row_bytes, row, col))
                         .collect()
                 })
                 .collect();
@@ -1711,9 +1753,9 @@ pub(crate) mod tests {
     /// excess of each runtime that cannot.
     #[test]
     fn the_warm_fit_never_exceeds_the_reservations_it_replaces() {
-        use transparent_shard::display::DISPLAY_PROFILES;
+        use zakura_transparent_private_shared::shard::display::DISPLAY_PROFILES;
         let mut every = Vec::new();
-        for geometry in transparent_shard::layout::PROFILES {
+        for geometry in zakura_transparent_private_shared::shard::layout::PROFILES {
             for table in [Table::Directory, Table::Pages] {
                 every.push(SharedParams::build(geometry, table).unwrap());
             }
@@ -1832,8 +1874,11 @@ pub(crate) mod tests {
     /// those masks to equal the served ones, so the two derivations must agree.
     #[test]
     fn masks_rebuilt_from_row_bytes_equal_the_served_masks() {
-        let shared =
-            SharedParams::build(&transparent_shard::layout::DECOUPLED_2K_8K, Table::Pages).unwrap();
+        let shared = SharedParams::build(
+            &zakura_transparent_private_shared::shard::layout::DECOUPLED_2K_8K,
+            Table::Pages,
+        )
+        .unwrap();
         let profile = &shared.profile;
         let rows: Vec<u8> = (0..profile.rows * profile.row_bytes)
             .map(|i| (i.wrapping_mul(2_654_435_761) >> 7) as u8)
@@ -1850,8 +1895,11 @@ pub(crate) mod tests {
     /// on either side of a block boundary, and content in the last row.
     #[test]
     fn trailing_zero_blocks_leave_the_published_masks_unchanged() {
-        let shared =
-            SharedParams::build(&transparent_shard::layout::DECOUPLED_2K_8K, Table::Pages).unwrap();
+        let shared = SharedParams::build(
+            &zakura_transparent_private_shared::shard::layout::DECOUPLED_2K_8K,
+            Table::Pages,
+        )
+        .unwrap();
         let profile = &shared.profile;
         let full = |rows: &[u8]| reference_masks(profile, rows);
         let bytes = profile.rows * profile.row_bytes;
@@ -1902,7 +1950,7 @@ pub(crate) mod tests {
                 let server = database_server(
                     &shared,
                     (0..profile.rows * profile.cols).map(|i| {
-                        native::row_coefficient(
+                        row_coefficient(
                             &rows,
                             profile.row_bytes,
                             i / profile.cols,
@@ -1958,8 +2006,8 @@ pub(crate) mod tests {
     /// geometry added later, keep the reference product over every block.
     #[test]
     fn the_batched_hint_is_dispatched_for_recent_geometries_only() {
-        use transparent_shard::display::DISPLAY_PROFILES;
-        use transparent_shard::layout::{DECOUPLED_32K_32K, PROFILES};
+        use zakura_transparent_private_shared::shard::display::DISPLAY_PROFILES;
+        use zakura_transparent_private_shared::shard::layout::{DECOUPLED_32K_32K, PROFILES};
         for geometry in PROFILES {
             assert_eq!(
                 uses_batched_hint(geometry),
@@ -1980,8 +2028,8 @@ pub(crate) mod tests {
             for table in tables {
                 let shared = SharedParams::build(geometry, table).unwrap();
                 assert_eq!(
-                    native::batched_hint::path(&shared.profile.masks).unwrap(),
-                    native::batched_hint::Path::Batched,
+                    batched_hint::path(&shared.profile.masks).unwrap(),
+                    batched_hint::Path::Batched,
                     "{} {table:?}",
                     geometry.name
                 );
@@ -1995,7 +2043,7 @@ pub(crate) mod tests {
     /// be finding it out in production.
     #[test]
     fn every_registry_geometry_reserves_something_servable() {
-        for geometry in transparent_shard::layout::PROFILES {
+        for geometry in zakura_transparent_private_shared::shard::layout::PROFILES {
             for table in [Table::Directory, Table::Pages] {
                 let shared = SharedParams::build(geometry, table).unwrap();
                 let bytes = shared.reserved_bytes();

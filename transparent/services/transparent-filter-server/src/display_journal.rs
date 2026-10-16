@@ -13,10 +13,12 @@ use std::{
     io::{Read, Write},
     path::Path,
 };
-use transparent_events::{decode_varint, encode_varint, TransparentEvent, Txid, MAX_EVENT_BYTES};
-use transparent_filter::{BlockHash, ScriptBytes};
-use transparent_shard::txid::DisplayRecord;
-use transparent_shard::txid_v2x::TransparentDisplayRecordV2x;
+use zakura_transparent_private_server::shard::txid::DisplayRecord;
+use zakura_transparent_private_server::shard::txid_v2x::TransparentDisplayRecordV2x;
+use zakura_transparent_private_shared::events::{
+    decode_varint, encode_varint, TransparentEvent, Txid, MAX_EVENT_BYTES,
+};
+use zakura_transparent_private_shared::filter::{BlockHash, ScriptBytes};
 // Conservative envelope bound over a 2 MB canonical block, including txid and
 // length headers for every indexed transaction. Never allocate from disk length.
 const MAX_BLOCK_DISPLAY_BYTES: usize = 8_000_076;
@@ -71,7 +73,12 @@ pub(crate) fn write_envelope(
     envelope: &Envelope,
     dir: &Path,
     hash: BlockHash,
-    payloads: impl ExactSizeIterator<Item = (Txid, Result<Vec<u8>, transparent_shard::txid::Error>)>,
+    payloads: impl ExactSizeIterator<
+        Item = (
+            Txid,
+            Result<Vec<u8>, zakura_transparent_private_shared::shard::txid::Error>,
+        ),
+    >,
     oversized: &[(ScriptBytes, TransparentEvent)],
 ) -> Result<(), EventStoreError> {
     let bound = || EventStoreError::Invariant("display block size bound".into());
@@ -152,7 +159,7 @@ pub(crate) fn read_envelope<R>(
     envelope: &Envelope,
     dir: &Path,
     hash: BlockHash,
-    decode: impl Fn(Txid, &[u8]) -> Result<R, transparent_shard::txid::Error>,
+    decode: impl Fn(Txid, &[u8]) -> Result<R, zakura_transparent_private_shared::shard::txid::Error>,
 ) -> Result<(Vec<R>, IndexedEvents), EventStoreError> {
     let bytes = bounded_read(
         &dir.join(envelope.dir)
@@ -286,7 +293,7 @@ pub fn implied_events(
     height: u64,
     sources: &[TransparentDisplayRecordV2x],
 ) -> Result<IndexedEvents, EventStoreError> {
-    use transparent_events::{ReceiveEvent, SpendEvent};
+    use zakura_transparent_private_shared::events::{ReceiveEvent, SpendEvent};
     let bound =
         |what: &str| EventStoreError::Invariant(format!("{what} exceeds the event encoding"));
     let height = u32::try_from(height).map_err(|_| bound("height"))?;
@@ -333,7 +340,9 @@ pub fn implied_events(
     Ok(events)
 }
 fn validate_record_events<'a>(
-    records: impl Iterator<Item = &'a transparent_shard::txid_v1::TransparentDisplayRecord>,
+    records: impl Iterator<
+        Item = &'a zakura_transparent_private_server::shard::txid_v1::TransparentDisplayRecord,
+    >,
     events: &[(ScriptBytes, TransparentEvent)],
 ) -> Result<(), EventStoreError> {
     let by_id: std::collections::BTreeMap<_, _> = records.map(|r| (r.txid.0, r)).collect();
@@ -380,13 +389,13 @@ fn bounded_read(path: &Path, max_bytes: usize) -> Result<Vec<u8>, EventStoreErro
 mod tests {
     use super::*;
     use crate::events::EventStore;
-    use transparent_events::{
+    use zakura_transparent_private_server::shard::txid::DisplayOutput;
+    use zakura_transparent_private_server::shard::txid_v1::TransparentDisplayRecord;
+    use zakura_transparent_private_server::shard::txid_v2x::DisplayInput;
+    use zakura_transparent_private_shared::events::{
         FeeState, ReceiveEvent, SpendEvent, TransactionMetadata, TransparentEvent,
     };
-    use transparent_filter::ScriptBytes;
-    use transparent_shard::txid::DisplayOutput;
-    use transparent_shard::txid_v1::TransparentDisplayRecord;
-    use transparent_shard::txid_v2x::DisplayInput;
+    use zakura_transparent_private_shared::filter::ScriptBytes;
     fn source(output_script: Vec<u8>) -> TransparentDisplayRecordV2x {
         TransparentDisplayRecordV2x {
             record: TransparentDisplayRecord {
@@ -444,7 +453,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let mut store = crate::events::EventStore::open(
             temp.path(),
-            transparent_filter::MAINNET_GENESIS_DISPLAY,
+            zakura_transparent_private_shared::filter::MAINNET_GENESIS_DISPLAY,
             1,
         )
         .unwrap();
@@ -547,8 +556,12 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let r = source(vec![0x51]);
         let hash = BlockHash::from_internal_bytes([2; 32]);
-        let mut store =
-            EventStore::open(temp.path(), transparent_filter::MAINNET_GENESIS_DISPLAY, 1).unwrap();
+        let mut store = EventStore::open(
+            temp.path(),
+            zakura_transparent_private_shared::filter::MAINNET_GENESIS_DISPLAY,
+            1,
+        )
+        .unwrap();
         let events = events(&r);
         let mut altered = r.clone();
         altered.record.outputs[0].value -= 1;
@@ -560,16 +573,24 @@ mod tests {
             .append_block_with_display(1, hash, &events, std::slice::from_ref(&r))
             .unwrap();
         drop(store); // Durable sidecar alone never advances committed coverage.
-        let mut store =
-            EventStore::open(temp.path(), transparent_filter::MAINNET_GENESIS_DISPLAY, 1).unwrap();
+        let mut store = EventStore::open(
+            temp.path(),
+            zakura_transparent_private_shared::filter::MAINNET_GENESIS_DISPLAY,
+            1,
+        )
+        .unwrap();
         assert!(store.display_at(1).is_err());
         store
             .append_block_with_display(1, hash, &events, std::slice::from_ref(&r))
             .unwrap();
         store.commit().unwrap();
         drop(store);
-        let mut store =
-            EventStore::open(temp.path(), transparent_filter::MAINNET_GENESIS_DISPLAY, 1).unwrap();
+        let mut store = EventStore::open(
+            temp.path(),
+            zakura_transparent_private_shared::filter::MAINNET_GENESIS_DISPLAY,
+            1,
+        )
+        .unwrap();
         assert_eq!(
             store.display_at(1).unwrap(),
             vec![r.display_record().unwrap()]
@@ -642,8 +663,12 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let r = source(vec![0x51; 65_536]);
         let events = events(&r);
-        let mut store =
-            EventStore::open(temp.path(), transparent_filter::MAINNET_GENESIS_DISPLAY, 1).unwrap();
+        let mut store = EventStore::open(
+            temp.path(),
+            zakura_transparent_private_shared::filter::MAINNET_GENESIS_DISPLAY,
+            1,
+        )
+        .unwrap();
         store
             .append_block_with_display(
                 1,

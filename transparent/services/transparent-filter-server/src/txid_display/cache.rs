@@ -11,9 +11,10 @@
 use crate::publication::{BoxError, Journal};
 use std::ops::RangeInclusive;
 use std::sync::Arc;
-use transparent_filter::BlockHash;
-use transparent_shard::display::{height_counts, DisplaySealParams, HeightCounts};
-use transparent_shard::txid::DisplayRecord;
+use zakura_transparent_private_server::shard::display::{height_counts, HeightCounts};
+use zakura_transparent_private_server::shard::txid::DisplayRecord;
+use zakura_transparent_private_shared::filter::BlockHash;
+use zakura_transparent_private_shared::shard::display::DisplaySealParams;
 
 /// One block of the cache.
 #[derive(Clone, Debug)]

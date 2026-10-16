@@ -43,7 +43,10 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .flat_map(|c| c["scripts"].as_array().unwrap())
         .map(|s| hex::decode(s.as_str().unwrap()))
         .collect::<Result<_, _>>()?;
-    let mut events: HashMap<Vec<u8>, Vec<transparent_events::TransparentEvent>> = HashMap::new();
+    let mut events: HashMap<
+        Vec<u8>,
+        Vec<zakura_transparent_private_shared::events::TransparentEvent>,
+    > = HashMap::new();
     for height in 0..=anchor {
         for (script, event) in store.events_at(height)?.ok_or("journal gap")? {
             if scripts.contains(script.as_slice()) {

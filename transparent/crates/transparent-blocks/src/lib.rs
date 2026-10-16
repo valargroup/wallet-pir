@@ -1,7 +1,7 @@
-//! Pinned compact-block benchmark format, immutable datasets and wallet scanning.
+//! Pinned compact-block benchmark format and immutable datasets. Scanning a
+//! dataset into a wallet store is the load test's (`transparent-loadtest`).
 //! This is a benchmark transport, not a lightwalletd compatibility implementation.
 pub mod dataset;
-pub mod scan;
 pub mod proto {
     include!(concat!(env!("OUT_DIR"), "/cash.z.wallet.sdk.rpc.rs"));
 }

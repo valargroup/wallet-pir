@@ -61,7 +61,7 @@ struct Cli {
     #[arg(long, default_value = "./transparent-event-data")]
     data_dir: PathBuf,
     /// First height to index. Defaults to Ironwood activation.
-    #[arg(long, default_value_t = transparent_filter::START_HEIGHT)]
+    #[arg(long, default_value_t = zakura_transparent_private_shared::filter::START_HEIGHT)]
     start_height: u64,
     /// Last height to index. Defaults to the node's tip when the run begins.
     ///
@@ -195,10 +195,10 @@ async fn run_state_backfill(cli: Cli, state_dir: PathBuf) -> Result<(), BoxError
     // Chain identity from the database itself, so this path needs no RPC at
     // all — not even to learn which chain it is reading.
     let genesis_hash = reader.block_hash(0)?;
-    if genesis_hash != transparent_filter::MAINNET_GENESIS_DISPLAY {
+    if genesis_hash != zakura_transparent_private_shared::filter::MAINNET_GENESIS_DISPLAY {
         tracing::warn!(
             %genesis_hash,
-            expected = transparent_filter::MAINNET_GENESIS_DISPLAY,
+            expected = zakura_transparent_private_shared::filter::MAINNET_GENESIS_DISPLAY,
             "node is not on Zcash mainnet; the journal will be pinned to this chain"
         );
     }
@@ -318,10 +318,10 @@ async fn main() -> Result<(), BoxError> {
     // Chain identity comes from the node, once, and is then pinned in the
     // store: a journal built against one chain must never be read as another's.
     let genesis_hash = zakura.block_hash_display(0).await?;
-    if genesis_hash != transparent_filter::MAINNET_GENESIS_DISPLAY {
+    if genesis_hash != zakura_transparent_private_shared::filter::MAINNET_GENESIS_DISPLAY {
         tracing::warn!(
             %genesis_hash,
-            expected = transparent_filter::MAINNET_GENESIS_DISPLAY,
+            expected = zakura_transparent_private_shared::filter::MAINNET_GENESIS_DISPLAY,
             "node is not on Zcash mainnet; the journal will be pinned to this chain"
         );
     }

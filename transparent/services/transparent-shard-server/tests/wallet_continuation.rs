@@ -9,21 +9,21 @@ mod common;
 
 use common::*;
 use std::path::Path;
-use transparent_events::{ReceiveEvent, TransparentEvent};
-use transparent_filter::{ScriptBytes, ShardMap};
-use transparent_shard::layout::{DECOUPLED_2K_8K, DECOUPLED_32K_32K};
-use zakura_pir_transparent::engine::client::Table;
-use zakura_pir_transparent::engine::http::{HttpOptions, HttpShardTransport};
-use zakura_pir_transparent::engine::store::{
+use zakura_transparent_private_shared::events::{ReceiveEvent, TransparentEvent};
+use zakura_transparent_private_shared::filter::{ScriptBytes, ShardMap};
+use zakura_transparent_private_shared::shard::layout::{DECOUPLED_2K_8K, DECOUPLED_32K_32K};
+use zakura_transparent_private_wallet::engine::client::Table;
+use zakura_transparent_private_wallet::engine::http::{HttpOptions, HttpShardTransport};
+use zakura_transparent_private_wallet::engine::store::{
     Anchor, CoverageRange, PendingPages, ScriptEntry, ScriptOrigin, SetIdentity, SetupBlob,
     SetupKey, ShardCommit, StoreError, StoredEvent, WalletStore,
 };
-use zakura_pir_transparent::engine::transport::{refusal, BoxError, ShardTransport};
-use zakura_pir_transparent::engine::{
+use zakura_transparent_private_wallet::engine::transport::{refusal, BoxError, ShardTransport};
+use zakura_transparent_private_wallet::engine::{
     sync_into, Completion, IncompleteReason, ScriptProvider, StaticChain, StaticScripts, SyncError,
     SyncReport, WorkLimits,
 };
-use zakura_pir_transparent::engine_store::SqliteStore;
+use zakura_transparent_private_wallet::engine_store::SqliteStore;
 
 fn entry(tag: u32, required_from: u64) -> ScriptEntry {
     ScriptEntry {
@@ -72,7 +72,7 @@ where
             &mut filters,
             &mut transport,
             &limits,
-            &zakura_pir_transparent::engine::Anchor {
+            &zakura_transparent_private_wallet::engine::Anchor {
                 height: map.shards.last().unwrap().end_height,
                 hash: map.shards.last().unwrap().terminal_block_hash.clone(),
             },
@@ -84,13 +84,17 @@ where
 }
 
 trait GeometryOf {
-    fn geometry(&mut self) -> Result<zakura_pir_transparent::engine::ServiceGeometry, BoxError>;
+    fn geometry(
+        &mut self,
+    ) -> Result<zakura_transparent_private_wallet::engine::ServiceGeometry, BoxError>;
 }
 
 impl<T: ShardTransport> GeometryOf for T {
-    fn geometry(&mut self) -> Result<zakura_pir_transparent::engine::ServiceGeometry, BoxError> {
+    fn geometry(
+        &mut self,
+    ) -> Result<zakura_transparent_private_wallet::engine::ServiceGeometry, BoxError> {
         let (raw, _) = self.init()?;
-        zakura_pir_transparent::engine::parse_init(&raw)
+        zakura_transparent_private_wallet::engine::parse_init(&raw)
     }
 }
 
@@ -137,7 +141,11 @@ async fn a_spend_synced_later_resolves_against_a_receive_persisted_earlier() {
     .await;
     let report = report.unwrap();
     complete(&report);
-    let long = u64::from(transparent_shard::EVENTS_PER_PAGE + transparent_shard::INLINE_EVENTS + 5);
+    let long = u64::from(
+        zakura_transparent_private_shared::shard::EVENTS_PER_PAGE
+            + zakura_transparent_private_shared::shard::INLINE_EVENTS
+            + 5,
+    );
     assert_eq!(
         report.ledger.confirmed_balance(),
         50_000 + 7_000 + 11 * long
@@ -277,8 +285,8 @@ async fn a_query_budget_stops_between_pages_and_resumes_exactly() {
         }
     }
     // Script 3's history needs pages; every one was fetched exactly once.
-    let expected_pages =
-        (transparent_shard::EVENTS_PER_PAGE + 5).div_ceil(transparent_shard::EVENTS_PER_PAGE);
+    let expected_pages = (zakura_transparent_private_shared::shard::EVENTS_PER_PAGE + 5)
+        .div_ceil(zakura_transparent_private_shared::shard::EVENTS_PER_PAGE);
     assert_eq!(page_queries, u64::from(expected_pages));
     assert!(calls > 1, "the budget was actually hit");
 }
@@ -306,7 +314,7 @@ async fn compact_outpoint_context_resets_across_a_sqlite_restart() {
     let last_receive = events.last().unwrap().1;
     events.push((
         script(1),
-        TransparentEvent::Spend(transparent_events::SpendEvent {
+        TransparentEvent::Spend(zakura_transparent_private_shared::events::SpendEvent {
             metadata: None,
             height: (FIRST + 79) as u32,
             transaction_index: 0,
@@ -518,7 +526,8 @@ impl<S: WalletStore> WalletStore for CrashAt<S> {
         &self,
         child_digest: &str,
         script: &[u8],
-    ) -> Result<Option<zakura_pir_transparent::engine::store::CachedRun>, StoreError> {
+    ) -> Result<Option<zakura_transparent_private_wallet::engine::store::CachedRun>, StoreError>
+    {
         self.inner.cached_run(child_digest, script)
     }
     fn setup(&self, key: &SetupKey) -> Result<Option<SetupBlob>, StoreError> {
@@ -541,6 +550,9 @@ impl<S: WalletStore> WalletStore for CrashAt<S> {
         bytes: &[u8],
     ) -> Result<(), StoreError> {
         self.inner.put_filter(digest, hash, sealed, bytes)
+    }
+    fn prune_caches(&mut self, queryable: &[&str]) -> Result<(), StoreError> {
+        self.inner.prune_caches(queryable)
     }
     fn last_commit(&self) -> Result<u64, StoreError> {
         self.inner.last_commit()
@@ -611,8 +623,8 @@ async fn a_crash_around_the_pending_commit_resumes_without_duplicating_pages() {
         let report = report.unwrap();
         complete(&report);
         compare(&report.ledger, &traverse(&all, &wallet(&[1, 2, 3]), 0));
-        let expected_pages =
-            (transparent_shard::EVENTS_PER_PAGE + 5).div_ceil(transparent_shard::EVENTS_PER_PAGE);
+        let expected_pages = (zakura_transparent_private_shared::shard::EVENTS_PER_PAGE + 5)
+            .div_ceil(zakura_transparent_private_shared::shard::EVENTS_PER_PAGE);
         assert_eq!(
             first_pages + report.charges.pages.queries,
             u64::from(expected_pages),
@@ -844,13 +856,14 @@ async fn a_superseded_provisional_tail_is_truncated_and_replayed_not_appended() 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_reorg_below_the_tier_boundary_rewinds_to_the_accepted_ancestor() {
     let all = chain();
-    let two_tier = |shard: u64| -> &'static transparent_shard::layout::Geometry {
-        if shard < 2 {
-            &DECOUPLED_32K_32K
-        } else {
-            &DECOUPLED_2K_8K
-        }
-    };
+    let two_tier =
+        |shard: u64| -> &'static zakura_transparent_private_shared::shard::layout::Geometry {
+            if shard < 2 {
+                &DECOUPLED_32K_32K
+            } else {
+                &DECOUPLED_2K_8K
+            }
+        };
     let dir_a = tempfile::tempdir().unwrap();
     let map_a = publish_with(dir_a.path(), &all, two_tier, 0, "", hash_at);
     let fork = FIRST + SPAN + 100; // inside shard 1, the archive side

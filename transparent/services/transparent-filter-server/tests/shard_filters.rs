@@ -11,11 +11,11 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use std::path::Path;
 use tower::ServiceExt;
-use transparent_filter::digest::filter_hash;
-use transparent_filter::wire::{SealParameters, ShardMap, ShardMapEntry};
 use transparent_filter_server::shard_filters::ShardFilters;
+use zakura_transparent_private_shared::filter::digest::filter_hash;
+use zakura_transparent_private_shared::filter::wire::{SealParameters, ShardMap, ShardMapEntry};
 
-const GENESIS: &str = transparent_filter::MAINNET_GENESIS_DISPLAY;
+const GENESIS: &str = zakura_transparent_private_shared::filter::MAINNET_GENESIS_DISPLAY;
 
 fn entry(shard_id: u64, digest: &str, filter: &[u8]) -> ShardMapEntry {
     ShardMapEntry {
@@ -58,9 +58,9 @@ fn publish(dir: &Path, corrupt: bool) {
     }
     let map = ShardMap {
         genesis_hash: GENESIS.to_string(),
-        network: transparent_filter::NETWORK.to_string(),
-        profile: transparent_filter::RANGE_PROFILE.to_string(),
-        range_envelope_version: transparent_filter::RANGE_ENVELOPE_VERSION,
+        network: zakura_transparent_private_shared::filter::NETWORK.to_string(),
+        profile: zakura_transparent_private_shared::filter::RANGE_PROFILE.to_string(),
+        range_envelope_version: zakura_transparent_private_shared::filter::RANGE_ENVELOPE_VERSION,
         start_height: 100,
         seal: std::collections::BTreeMap::from([(
             "decoupled-2k-8k".to_string(),
@@ -90,7 +90,8 @@ fn unsupported_map_metadata_is_rejected_before_reading_filters() {
         if unknown_profile {
             map.profile = "unregistered-range-profile".into();
         } else {
-            map.range_envelope_version = transparent_filter::RANGE_ENVELOPE_VERSION + 1;
+            map.range_envelope_version =
+                zakura_transparent_private_shared::filter::RANGE_ENVELOPE_VERSION + 1;
         }
         map.check_shape().unwrap(); // The structure alone cannot qualify the protocol.
         for entry in &map.shards {
@@ -151,7 +152,7 @@ async fn the_routes_serve_the_map_and_each_filter() {
 
     let store = transparent_filter_server::store::FilterStore::open(
         dir.path().join("filter-store"),
-        transparent_filter::PROFILE,
+        zakura_transparent_private_shared::filter::PROFILE,
         GENESIS,
         100,
     )
@@ -223,7 +224,7 @@ async fn without_a_set_the_shard_routes_are_not_found() {
     let dir = tempfile::tempdir().unwrap();
     let store = transparent_filter_server::store::FilterStore::open(
         dir.path(),
-        transparent_filter::PROFILE,
+        zakura_transparent_private_shared::filter::PROFILE,
         GENESIS,
         100,
     )

@@ -13,6 +13,8 @@ mod prepared;
 #[path = "common/runtime.rs"]
 mod runtime;
 use prepared::prepared_shard;
+use zakura_transparent_private_server::shard::ChoiceBuild as _;
+use zakura_transparent_private_wallet::native::TableQuery as _;
 
 #[path = "support/revision.rs"]
 mod revision;
@@ -24,22 +26,24 @@ const CHILDREN: u32 = 2;
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
-use transparent_events::{ReceiveEvent, SpendEvent, TransparentEvent, Txid};
-use transparent_filter::{BlockHash, ScriptBytes, SealParameters, ShardMap};
-use transparent_shard::build::{BuiltChild, BuiltDirectory};
-use transparent_shard::layout::{Geometry, DECOUPLED_2K_8K, DECOUPLED_32K_32K};
-use transparent_shard::manifest::ShardManifest;
 use transparent_shard_server::service::{router, ServiceConfig, ServiceState};
 use transparent_shard_server::shardset::{ShardSet, DEFAULT_RETAIN_REVISIONS};
-use zakura_pir_transparent::engine::client::Table;
-use zakura_pir_transparent::engine::http::{HttpOptions, HttpShardTransport};
-use zakura_pir_transparent::engine::ledger::Ledger;
-use zakura_pir_transparent::engine::sync::{sync, GeometryParams, ServiceGeometry};
-use zakura_pir_transparent::engine::transport::{
+use zakura_transparent_private_server::shard::build::{BuiltChild, BuiltDirectory};
+use zakura_transparent_private_shared::events::{ReceiveEvent, SpendEvent, TransparentEvent, Txid};
+use zakura_transparent_private_shared::filter::{BlockHash, ScriptBytes, SealParameters, ShardMap};
+use zakura_transparent_private_shared::shard::layout::{
+    Geometry, DECOUPLED_2K_8K, DECOUPLED_32K_32K,
+};
+use zakura_transparent_private_shared::shard::manifest::ShardManifest;
+use zakura_transparent_private_wallet::engine::client::Table;
+use zakura_transparent_private_wallet::engine::http::{HttpOptions, HttpShardTransport};
+use zakura_transparent_private_wallet::engine::ledger::Ledger;
+use zakura_transparent_private_wallet::engine::sync::{sync, GeometryParams, ServiceGeometry};
+use zakura_transparent_private_wallet::engine::transport::{
     refusal, BoxError, FilterSource, ShardReply, ShardRequest, ShardTransport,
 };
 
-const GENESIS: &str = transparent_filter::MAINNET_GENESIS_DISPLAY;
+const GENESIS: &str = zakura_transparent_private_shared::filter::MAINNET_GENESIS_DISPLAY;
 const FIRST: u64 = 3_428_143;
 const SPAN: u64 = 200;
 const SHARDS: u64 = 4;
@@ -121,7 +125,9 @@ fn chain() -> Vec<Vec<(ScriptBytes, TransparentEvent)>> {
         );
     }
 
-    let long = transparent_shard::EVENTS_PER_PAGE + transparent_shard::INLINE_EVENTS + 5;
+    let long = zakura_transparent_private_shared::shard::EVENTS_PER_PAGE
+        + zakura_transparent_private_shared::shard::INLINE_EVENTS
+        + 5;
     for i in 0..long {
         let height = FIRST + SPAN + 20 + u64::from(i) % 100;
         push(
@@ -209,7 +215,7 @@ fn publish_choosing(
         tail_revision,
         tail_supersedes,
         choice,
-        transparent_filter::RANGE_PROFILE,
+        zakura_transparent_private_shared::filter::RANGE_PROFILE,
     )
 }
 
@@ -259,7 +265,7 @@ fn publish_rewriting(
         0,
         "",
         |_, _| None,
-        transparent_filter::RANGE_PROFILE,
+        zakura_transparent_private_shared::filter::RANGE_PROFILE,
         bad,
     )
 }
@@ -324,8 +330,10 @@ fn publish_with_bad_row(
         let bad_row = bad(shard_id, built, &children);
         match &bad_row {
             Some((Table::Directory, row, bytes)) => {
-                let (segment, within) =
-                    transparent_shard::layout::split_row(*row, geometry.directory_rows);
+                let (segment, within) = zakura_transparent_private_shared::shard::layout::split_row(
+                    *row,
+                    geometry.directory_rows,
+                );
                 let width = geometry.directory_row_bytes;
                 let at = within as usize * width;
                 directory[segment as usize][at..at + width].copy_from_slice(bytes);
@@ -375,9 +383,9 @@ fn publish_with_bad_row(
 
     let map = ShardMap {
         genesis_hash: GENESIS.to_string(),
-        network: transparent_filter::NETWORK.to_string(),
+        network: zakura_transparent_private_shared::filter::NETWORK.to_string(),
         profile: profile.to_string(),
-        range_envelope_version: transparent_filter::RANGE_ENVELOPE_VERSION,
+        range_envelope_version: zakura_transparent_private_shared::filter::RANGE_ENVELOPE_VERSION,
         start_height: FIRST,
         seal: entries
             .iter()
@@ -643,7 +651,7 @@ async fn run_sync(
     wallet: Vec<ScriptBytes>,
     birthday: u64,
     map: ShardMap,
-) -> zakura_pir_transparent::engine::SyncOutcome {
+) -> zakura_transparent_private_wallet::engine::SyncOutcome {
     run_sync_with_init(dir, base, wallet, birthday, map, |_| {}).await
 }
 
@@ -655,7 +663,7 @@ async fn run_sync_with_init(
     birthday: u64,
     map: ShardMap,
     edit: fn(&mut serde_json::Value),
-) -> zakura_pir_transparent::engine::SyncOutcome {
+) -> zakura_transparent_private_wallet::engine::SyncOutcome {
     let filters = PublishedFilters::load(dir, &map);
     let map_bytes = serde_json::to_vec(&map).unwrap().len() as u64;
     tokio::task::spawn_blocking(move || {
@@ -684,8 +692,8 @@ async fn run_sync_with_init(
             &mut transport,
             &wallet,
             birthday,
-            &zakura_pir_transparent::engine::StaticChain::from_map(&map),
-            &zakura_pir_transparent::engine::Anchor {
+            &zakura_transparent_private_wallet::engine::StaticChain::from_map(&map),
+            &zakura_transparent_private_wallet::engine::Anchor {
                 height: map.shards.last().unwrap().end_height,
                 hash: map.shards.last().unwrap().terminal_block_hash.clone(),
             },
@@ -791,7 +799,10 @@ async fn a_service_serving_another_schema_is_refused() {
             .bytes()
             .unwrap();
         let mut geometry = parse_init(&raw);
-        assert_eq!(geometry.schema, transparent_shard::SCHEMA);
+        assert_eq!(
+            geometry.schema,
+            zakura_transparent_private_shared::shard::SCHEMA
+        );
         geometry.schema = "transparent-shard-v4".to_string();
         let mut filters = filters;
         sync(
@@ -802,8 +813,8 @@ async fn a_service_serving_another_schema_is_refused() {
             &mut transport,
             &wallet,
             FIRST,
-            &zakura_pir_transparent::engine::StaticChain::from_map(&map),
-            &zakura_pir_transparent::engine::Anchor {
+            &zakura_transparent_private_wallet::engine::StaticChain::from_map(&map),
+            &zakura_transparent_private_wallet::engine::Anchor {
                 height: map.shards.last().unwrap().end_height,
                 hash: map.shards.last().unwrap().terminal_block_hash.clone(),
             },
@@ -817,7 +828,7 @@ async fn a_service_serving_another_schema_is_refused() {
     assert!(
         matches!(
             error,
-            zakura_pir_transparent::engine::SyncError::Schema { .. }
+            zakura_transparent_private_wallet::engine::SyncError::Schema { .. }
         ),
         "expected a schema refusal, got {error}"
     );
@@ -838,7 +849,7 @@ async fn a_wallet_sends_the_published_28_bit_queries() {
     // The directory has 2,048 rows, and every page shard here holds under
     // 2,048 rows, so its queries select that 2,048-row prefix: one length.
     let rows = DECOUPLED_2K_8K.directory_rows as usize;
-    let native = transparent_native::profile_for("directory");
+    let native = zakura_transparent_private_shared::native::profile_for("directory");
     let upload = 8 + native.request_len_bits(rows, 28);
     let plain = run_sync(dir.path(), base.clone(), wallet.clone(), FIRST, map.clone()).await;
     let advertised = run_sync_with_init(dir.path(), base, wallet, FIRST, map, |init| {
@@ -887,7 +898,8 @@ async fn a_wallet_syncs_from_its_birthday_and_matches_an_independent_traversal()
     // Expressed against the geometry rather than a fixed number: the fixture's
     // long history is sized to exceed one page, and what matters is that it
     // still does, whatever the page width is.
-    let one_page = (transparent_shard::EVENTS_PER_PAGE + transparent_shard::INLINE_EVENTS) as usize;
+    let one_page = (zakura_transparent_private_shared::shard::EVENTS_PER_PAGE
+        + zakura_transparent_private_shared::shard::INLINE_EVENTS) as usize;
     assert!(
         expected.utxos().count() > one_page,
         "the long history should span more than one page ({} of {one_page})",
@@ -1005,8 +1017,10 @@ async fn compact_local_outpoints_and_shared_tails_recover_over_native_pir() {
 fn oversized_chain() -> Vec<Vec<(ScriptBytes, TransparentEvent)>> {
     // Two inline, then a full fragment and one more, so the history is long and
     // takes two rows that nothing else may share.
-    let per_script = transparent_shard::INLINE_EVENTS + transparent_shard::EVENTS_PER_PAGE + 1;
-    let scripts = transparent_shard::PAGE_ROWS as u32 / 2 + 1;
+    let per_script = zakura_transparent_private_shared::shard::INLINE_EVENTS
+        + zakura_transparent_private_shared::shard::EVENTS_PER_PAGE
+        + 1;
+    let scripts = zakura_transparent_private_shared::shard::PAGE_ROWS as u32 / 2 + 1;
     let mut events = Vec::new();
     for tag in 0..scripts {
         for i in 0..per_script {
@@ -1031,7 +1045,7 @@ fn oversized_chain() -> Vec<Vec<(ScriptBytes, TransparentEvent)>> {
 /// The wallet for the oversized fixture: scripts spread across the page space,
 /// so at least one of them is located past the first segment's boundary.
 fn oversized_wallet() -> Vec<ScriptBytes> {
-    let last = transparent_shard::PAGE_ROWS as u32 / 2;
+    let last = zakura_transparent_private_shared::shard::PAGE_ROWS as u32 / 2;
     vec![script(0), script(last / 2), script(last)]
 }
 
@@ -1056,8 +1070,9 @@ async fn a_shard_whose_pages_need_two_segments_syncs_exactly() {
     let expected = traverse(&per_shard, &wallet, 0);
     compare(&outcome.ledger, &expected);
     assert!(outcome.ledger.unresolved().is_empty());
-    let per_script =
-        (transparent_shard::INLINE_EVENTS + transparent_shard::EVENTS_PER_PAGE + 1) as usize;
+    let per_script = (zakura_transparent_private_shared::shard::INLINE_EVENTS
+        + zakura_transparent_private_shared::shard::EVENTS_PER_PAGE
+        + 1) as usize;
     assert_eq!(
         expected.utxos().count(),
         wallet.len() * per_script,
@@ -1111,8 +1126,8 @@ async fn coverage_does_not_advance_when_a_segment_is_missing() {
             &mut transport,
             &wallet,
             FIRST,
-            &zakura_pir_transparent::engine::StaticChain::from_map(&map),
-            &zakura_pir_transparent::engine::Anchor {
+            &zakura_transparent_private_wallet::engine::StaticChain::from_map(&map),
+            &zakura_transparent_private_wallet::engine::Anchor {
                 height: map.shards.last().unwrap().end_height,
                 hash: map.shards.last().unwrap().terminal_block_hash.clone(),
             },
@@ -1213,8 +1228,8 @@ async fn a_wallet_refuses_a_manifest_that_does_not_digest_to_the_map() {
             &mut transport,
             &wallet,
             FIRST,
-            &zakura_pir_transparent::engine::StaticChain::from_map(&map),
-            &zakura_pir_transparent::engine::Anchor {
+            &zakura_transparent_private_wallet::engine::StaticChain::from_map(&map),
+            &zakura_transparent_private_wallet::engine::Anchor {
                 height: map.shards.last().unwrap().end_height,
                 hash: map.shards.last().unwrap().terminal_block_hash.clone(),
             },
@@ -1243,7 +1258,7 @@ async fn a_wallet_refuses_a_manifest_that_does_not_digest_to_the_map() {
     assert!(
         matches!(
             error,
-            zakura_pir_transparent::engine::SyncError::ManifestMismatch {
+            zakura_transparent_private_wallet::engine::SyncError::ManifestMismatch {
                 field: "digest",
                 ..
             }
@@ -1329,16 +1344,17 @@ async fn a_birthday_that_omits_a_receive_cannot_report_complete() {
     let birthday = map.shards[2].start_height;
     let filters = PublishedFilters::load(dir.path(), &map);
     let outcome = tokio::task::spawn_blocking(move || {
-        use zakura_pir_transparent::engine::{
+        use zakura_transparent_private_wallet::engine::{
             Anchor, MemoryStore, ScriptEntry, ScriptOrigin, StaticChain, StaticScripts,
             WalletStore, WorkLimits,
         };
         let mut store = MemoryStore::new();
-        let mut transport = zakura_pir_transparent::engine::http::HttpShardTransport::new(
-            base,
-            &Default::default(),
-        )
-        .unwrap();
+        let mut transport =
+            zakura_transparent_private_wallet::engine::http::HttpShardTransport::new(
+                base,
+                &Default::default(),
+            )
+            .unwrap();
         let geometry = transport.geometry().unwrap();
         let mut filters = filters;
         let mut provider = StaticScripts(
@@ -1352,7 +1368,7 @@ async fn a_birthday_that_omits_a_receive_cannot_report_complete() {
                 .collect(),
         );
         let tip = map.shards.last().unwrap();
-        let result = zakura_pir_transparent::engine::sync_into(
+        let result = zakura_transparent_private_wallet::engine::sync_into(
             &mut store,
             &map,
             0,
@@ -1370,8 +1386,9 @@ async fn a_birthday_that_omits_a_receive_cannot_report_complete() {
         .unwrap();
         assert!(matches!(
             result.completion,
-            zakura_pir_transparent::engine::Completion::Incomplete {
-                reason: zakura_pir_transparent::engine::IncompleteReason::UnresolvedSpends,
+            zakura_transparent_private_wallet::engine::Completion::Incomplete {
+                reason:
+                    zakura_transparent_private_wallet::engine::IncompleteReason::UnresolvedSpends,
                 ..
             }
         ));
@@ -1524,7 +1541,8 @@ async fn init_declares_one_parameter_set_per_geometry() {
     // A service that published one geometry's name over another's row counts
     // would be choosing the geometry for the wallet.
     for entry in &geometry.geometries {
-        let registered = transparent_shard::layout::by_name(&entry.name).unwrap();
+        let registered =
+            zakura_transparent_private_shared::shard::layout::by_name(&entry.name).unwrap();
         assert_eq!(entry.directory_rows, registered.directory_rows);
         assert_eq!(entry.page_rows, registered.page_rows);
     }
@@ -1591,8 +1609,8 @@ async fn a_shard_naming_an_unknown_geometry_stops_the_sync() {
             &mut transport,
             &wallet,
             FIRST,
-            &zakura_pir_transparent::engine::StaticChain::from_map(&map),
-            &zakura_pir_transparent::engine::Anchor {
+            &zakura_transparent_private_wallet::engine::StaticChain::from_map(&map),
+            &zakura_transparent_private_wallet::engine::Anchor {
                 height: map.shards.last().unwrap().end_height,
                 hash: map.shards.last().unwrap().terminal_block_hash.clone(),
             },
@@ -1604,7 +1622,7 @@ async fn a_shard_naming_an_unknown_geometry_stops_the_sync() {
     .unwrap();
 
     assert!(
-        matches!(error, zakura_pir_transparent::engine::SyncError::UnknownGeometry(ref name) if name == "recent-2k"),
+        matches!(error, zakura_transparent_private_wallet::engine::SyncError::UnknownGeometry(ref name) if name == "recent-2k"),
         "expected an unknown-geometry refusal, got {error}"
     );
 }
@@ -1755,8 +1773,8 @@ async fn replaced_tail_recovers(filter_race: bool, concurrency: usize) {
             &mut transport,
             &wallet,
             FIRST,
-            &zakura_pir_transparent::engine::StaticChain::from_map(&map_before),
-            &zakura_pir_transparent::engine::Anchor {
+            &zakura_transparent_private_wallet::engine::StaticChain::from_map(&map_before),
+            &zakura_transparent_private_wallet::engine::Anchor {
                 height: map_before.shards.last().unwrap().end_height,
                 hash: map_before
                     .shards
@@ -1929,8 +1947,8 @@ async fn overloaded_then_recovers(concurrency: usize) {
             &mut transport,
             &wallet,
             FIRST,
-            &zakura_pir_transparent::engine::StaticChain::from_map(&map),
-            &zakura_pir_transparent::engine::Anchor {
+            &zakura_transparent_private_wallet::engine::StaticChain::from_map(&map),
+            &zakura_transparent_private_wallet::engine::Anchor {
                 height: map.shards.last().unwrap().end_height,
                 hash: map.shards.last().unwrap().terminal_block_hash.clone(),
             },
@@ -1996,8 +2014,8 @@ async fn unrelenting_overload_stops(concurrency: usize) {
             &mut transport,
             &wallet,
             FIRST,
-            &zakura_pir_transparent::engine::StaticChain::from_map(&map),
-            &zakura_pir_transparent::engine::Anchor {
+            &zakura_transparent_private_wallet::engine::StaticChain::from_map(&map),
+            &zakura_transparent_private_wallet::engine::Anchor {
                 height: map.shards.last().unwrap().end_height,
                 hash: map.shards.last().unwrap().terminal_block_hash.clone(),
             },
@@ -2011,7 +2029,7 @@ async fn unrelenting_overload_stops(concurrency: usize) {
     assert!(
         matches!(
             error,
-            zakura_pir_transparent::engine::SyncError::Overloaded { .. }
+            zakura_transparent_private_wallet::engine::SyncError::Overloaded { .. }
         ),
         "expected a named overload, got: {error}"
     );
@@ -2060,8 +2078,8 @@ async fn a_503_that_names_no_delay_is_not_retried() {
             &mut transport,
             &wallet,
             FIRST,
-            &zakura_pir_transparent::engine::StaticChain::from_map(&map),
-            &zakura_pir_transparent::engine::Anchor {
+            &zakura_transparent_private_wallet::engine::StaticChain::from_map(&map),
+            &zakura_transparent_private_wallet::engine::Anchor {
                 height: map.shards.last().unwrap().end_height,
                 hash: map.shards.last().unwrap().terminal_block_hash.clone(),
             },
@@ -2075,7 +2093,7 @@ async fn a_503_that_names_no_delay_is_not_retried() {
     assert!(
         !matches!(
             error,
-            zakura_pir_transparent::engine::SyncError::Overloaded { .. }
+            zakura_transparent_private_wallet::engine::SyncError::Overloaded { .. }
         ),
         "a 503 without a delay must not be treated as the capacity refusal"
     );
@@ -2188,8 +2206,8 @@ async fn unhelpful_refresh_stops(corrupt_filter: bool, concurrency: usize) {
             &mut transport,
             &wallet,
             FIRST,
-            &zakura_pir_transparent::engine::StaticChain::from_map(&map_before),
-            &zakura_pir_transparent::engine::Anchor {
+            &zakura_transparent_private_wallet::engine::StaticChain::from_map(&map_before),
+            &zakura_transparent_private_wallet::engine::Anchor {
                 height: map_before.shards.last().unwrap().end_height,
                 hash: map_before
                     .shards
@@ -2206,7 +2224,7 @@ async fn unhelpful_refresh_stops(corrupt_filter: bool, concurrency: usize) {
     .unwrap();
 
     match error {
-        zakura_pir_transparent::engine::SyncError::StaleRevision {
+        zakura_transparent_private_wallet::engine::SyncError::StaleRevision {
             shard_id,
             refreshes,
             ..
@@ -2230,7 +2248,7 @@ fn tabled(_: u64, built: &BuiltDirectory) -> Option<String> {
     built
         .choice
         .as_ref()
-        .map(transparent_shard::manifest::encode_directory_choice)
+        .map(zakura_transparent_private_shared::shard::manifest::encode_directory_choice)
 }
 
 /// Wallet scripts with activity in `shard`, which is what its filter matches.
@@ -2359,8 +2377,8 @@ async fn a_choice_table_costs_one_query_per_script_whatever_the_script() {
 /// while it still has the raw scripts.
 #[test]
 fn a_server_refuses_a_choice_table_that_does_not_match() {
-    use transparent_shard::manifest::encode_directory_choice;
-    use transparent_shard::ChoiceTable;
+    use zakura_transparent_private_shared::shard::manifest::encode_directory_choice;
+    use zakura_transparent_private_shared::shard::ChoiceTable;
 
     let short = |id: u64, _: &BuiltDirectory| {
         Some(encode_directory_choice(
@@ -2534,7 +2552,7 @@ async fn run_recorded(
     map: ShardMap,
     concurrency: usize,
     batches: Batches,
-) -> (zakura_pir_transparent::engine::SyncOutcome, Log) {
+) -> (zakura_transparent_private_wallet::engine::SyncOutcome, Log) {
     let filters = PublishedFilters::load(dir, &map);
     let map_bytes = serde_json::to_vec(&map).unwrap().len() as u64;
     let log = Arc::new(Mutex::new(Log::default()));
@@ -2557,8 +2575,8 @@ async fn run_recorded(
             &mut transport,
             &wallet,
             FIRST,
-            &zakura_pir_transparent::engine::StaticChain::from_map(&map),
-            &zakura_pir_transparent::engine::Anchor {
+            &zakura_transparent_private_wallet::engine::StaticChain::from_map(&map),
+            &zakura_transparent_private_wallet::engine::Anchor {
                 height: map.shards.last().unwrap().end_height,
                 hash: map.shards.last().unwrap().terminal_block_hash.clone(),
             },
@@ -2808,9 +2826,12 @@ async fn a_set_under_the_v2_range_profile_syncs_exactly_with_smaller_filters() {
         0,
         "",
         tabled,
-        transparent_filter::RANGE_PROFILE_V2.name,
+        zakura_transparent_private_shared::filter::RANGE_PROFILE_V2.name,
     );
-    assert_eq!(v2_map.profile, transparent_filter::RANGE_PROFILE_V2.name);
+    assert_eq!(
+        v2_map.profile,
+        zakura_transparent_private_shared::filter::RANGE_PROFILE_V2.name
+    );
 
     let v1_base = serve(v1.path()).await;
     let v2_base = serve(v2.path()).await;
@@ -2858,8 +2879,8 @@ async fn an_unknown_range_profile_stops_the_sync_before_matching() {
             &mut transport,
             &wallet,
             FIRST,
-            &zakura_pir_transparent::engine::StaticChain::from_map(&map),
-            &zakura_pir_transparent::engine::Anchor {
+            &zakura_transparent_private_wallet::engine::StaticChain::from_map(&map),
+            &zakura_transparent_private_wallet::engine::Anchor {
                 height: map.shards.last().unwrap().end_height,
                 hash: map.shards.last().unwrap().terminal_block_hash.clone(),
             },
@@ -2870,7 +2891,7 @@ async fn an_unknown_range_profile_stops_the_sync_before_matching() {
     .await
     .unwrap();
     assert!(
-        matches!(error, zakura_pir_transparent::engine::SyncError::UnknownProfile(ref name) if name == "zcash-transparent-range-v99"),
+        matches!(error, zakura_transparent_private_wallet::engine::SyncError::UnknownProfile(ref name) if name == "zcash-transparent-range-v99"),
         "{error}"
     );
 }
@@ -3015,10 +3036,13 @@ impl<T: ShardTransport> ShardTransport for Alters<T> {
     }
 }
 
-/// What a recorded [`sync_into`](zakura_pir_transparent::engine::sync_into) against one
+/// What a recorded [`sync_into`](zakura_transparent_private_wallet::engine::sync_into) against one
 /// store returned and sent.
 type Recorded = (
-    Result<zakura_pir_transparent::engine::SyncReport, zakura_pir_transparent::engine::SyncError>,
+    Result<
+        zakura_transparent_private_wallet::engine::SyncReport,
+        zakura_transparent_private_wallet::engine::SyncError,
+    >,
     Log,
 );
 
@@ -3030,17 +3054,20 @@ async fn sync_recorded(
     dir: &Path,
     base: &str,
     map: &ShardMap,
-    store: zakura_pir_transparent::engine::MemoryStore,
+    store: zakura_transparent_private_wallet::engine::MemoryStore,
     wallet: &[ScriptBytes],
     concurrency: usize,
     corruption: Option<Corruption>,
-) -> (zakura_pir_transparent::engine::MemoryStore, Recorded) {
+) -> (
+    zakura_transparent_private_wallet::engine::MemoryStore,
+    Recorded,
+) {
     let filters = PublishedFilters::load(dir, map);
     let map = map.clone();
     let base = base.to_string();
     let wallet = wallet.to_vec();
     tokio::task::spawn_blocking(move || {
-        use zakura_pir_transparent::engine::{
+        use zakura_transparent_private_wallet::engine::{
             Anchor, ScriptEntry, ScriptOrigin, StaticChain, StaticScripts, WorkLimits,
         };
         let mut store = store;
@@ -3070,7 +3097,7 @@ async fn sync_recorded(
                 .collect(),
         );
         let tip = map.shards.last().unwrap();
-        let result = zakura_pir_transparent::engine::sync_into(
+        let result = zakura_transparent_private_wallet::engine::sync_into(
             &mut store,
             &map,
             0,
@@ -3121,27 +3148,34 @@ fn directory_queries(log: &Log, shard_id: u64) -> usize {
 fn entry_row(
     built: &BuiltDirectory,
     script: &ScriptBytes,
-) -> (u64, transparent_shard::records::DirectoryEntry) {
-    let salt = transparent_shard::tag_salt(
+) -> (
+    u64,
+    zakura_transparent_private_shared::shard::records::DirectoryEntry,
+) {
+    let salt = zakura_transparent_private_shared::shard::tag_salt(
         built.shard_id,
         &hash_at(built.end_height),
         built.tag_salt_counter,
     );
-    let tag = transparent_shard::script_tag(&salt, script.as_slice());
+    let tag = zakura_transparent_private_shared::shard::script_tag(&salt, script.as_slice());
     let rows = built.geometry.directory_rows * u64::from(built.directory_segments());
-    transparent_shard::build::candidate_rows(built.shard_id, script.as_slice(), rows)
+    zakura_transparent_private_shared::shard::placement::candidate_rows(
+        built.shard_id,
+        script.as_slice(),
+        rows,
+    )
+    .into_iter()
+    .find_map(|row| {
+        zakura_transparent_private_shared::shard::records::decode_directory_row(
+            built.directory_row(row),
+            built.children,
+        )
+        .unwrap()
         .into_iter()
-        .find_map(|row| {
-            transparent_shard::records::decode_directory_row(
-                built.directory_row(row),
-                built.children,
-            )
-            .unwrap()
-            .into_iter()
-            .find(|entry| entry.tag == tag)
-            .map(|entry| (row, entry))
-        })
-        .expect("an entry")
+        .find(|entry| entry.tag == tag)
+        .map(|entry| (row, entry))
+    })
+    .expect("an entry")
 }
 
 /// The page row holding the last fragment of `script`'s oldest run in a
@@ -3161,26 +3195,31 @@ fn oldest_run(
     built: &BuiltDirectory,
     children: &[BuiltChild],
     script: &ScriptBytes,
-) -> (u32, u64, transparent_shard::PageEntry) {
+) -> (
+    u32,
+    u64,
+    zakura_transparent_private_shared::shard::PageEntry,
+) {
     let (_, entry) = entry_row(built, script);
     let mut next = entry.head();
     let mut last = None;
     while let Some((child, row)) = next {
         let page = &children[usize::from(child)];
-        let salt = transparent_shard::page_tag_salt(
+        let salt = zakura_transparent_private_shared::shard::page_tag_salt(
             built.shard_id,
             page.index,
             page.end_height,
             &page.terminal_block_hash,
             page.tag_salt_counter,
         );
-        let tag = transparent_shard::script_tag(&salt, script.as_slice());
-        let head =
-            transparent_shard::decode_page_row(page.page_row(built.geometry, u64::from(row)))
-                .unwrap()
-                .into_iter()
-                .find(|entry| entry.tag == tag && entry.ordinal == 0)
-                .unwrap();
+        let tag = zakura_transparent_private_shared::shard::script_tag(&salt, script.as_slice());
+        let head = zakura_transparent_private_shared::shard::decode_page_row(
+            page.page_row(built.geometry, u64::from(row)),
+        )
+        .unwrap()
+        .into_iter()
+        .find(|entry| entry.tag == tag && entry.ordinal == 0)
+        .unwrap();
         next = head.link.previous();
         last = Some((u32::from(child), u64::from(row), head));
     }
@@ -3216,7 +3255,9 @@ async fn honest_and_corrupt(
 /// with concurrent lookahead alike.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_corrupt_directory_row_fails_one_entry_and_the_sync_finishes() {
-    use zakura_pir_transparent::engine::{Completion, FailedEntry, IncompleteReason, MemoryStore};
+    use zakura_transparent_private_wallet::engine::{
+        Completion, FailedEntry, IncompleteReason, MemoryStore,
+    };
     let per_shard = chain();
     let ((honest_dir, honest_map, honest_base), (dir, map, base)) =
         honest_and_corrupt(&per_shard, &|shard_id, built, _| {
@@ -3279,9 +3320,11 @@ async fn a_corrupt_directory_row_fails_one_entry_and_the_sync_finishes() {
         without[2].retain(|(owner, _)| owner.as_slice() != script(1).as_slice());
         compare(&report.ledger, &traverse(&without, &wallet, 0));
         assert!(report.covered_through < map.shards[2].end_height);
-        assert!(zakura_pir_transparent::engine::WalletStore::anchor(&store)
-            .unwrap()
-            .is_none());
+        assert!(
+            zakura_transparent_private_wallet::engine::WalletStore::anchor(&store)
+                .unwrap()
+                .is_none()
+        );
     }
 }
 
@@ -3290,7 +3333,9 @@ async fn a_corrupt_directory_row_fails_one_entry_and_the_sync_finishes() {
 /// report keeps listing the entry.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_corrupt_entry_is_asked_three_times_then_held() {
-    use zakura_pir_transparent::engine::{Completion, IncompleteReason, MemoryStore, WalletStore};
+    use zakura_transparent_private_wallet::engine::{
+        Completion, IncompleteReason, MemoryStore, WalletStore,
+    };
     let per_shard = chain();
     let dir = tempfile::tempdir().unwrap();
     let map = publish_corrupting(dir.path(), &per_shard, &|shard_id, built, _| {
@@ -3341,7 +3386,9 @@ async fn a_corrupt_entry_is_asked_three_times_then_held() {
 /// entry is counted, its walk stays owed, and the next sync asks again.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_corrupt_page_row_fails_one_walk_with_the_honest_transcript() {
-    use zakura_pir_transparent::engine::{Completion, IncompleteReason, MemoryStore, WalletStore};
+    use zakura_transparent_private_wallet::engine::{
+        Completion, IncompleteReason, MemoryStore, WalletStore,
+    };
     let per_shard = chain();
     let ((honest_dir, honest_map, honest_base), (dir, map, base)) =
         honest_and_corrupt(&per_shard, &|shard_id, built, children| {
@@ -3409,7 +3456,7 @@ async fn a_corrupt_page_row_fails_one_walk_with_the_honest_transcript() {
 fn chain_with_a_long_oldest_run() -> Vec<Vec<(ScriptBytes, TransparentEvent)>> {
     let mut per_shard = chain();
     let start = FIRST + SPAN;
-    let older = 2 * transparent_shard::EVENTS_PER_PAGE + 10;
+    let older = 2 * zakura_transparent_private_shared::shard::EVENTS_PER_PAGE + 10;
     for i in 0..older + 3 {
         let height = if i < older {
             start + u64::from(i) % 90
@@ -3441,8 +3488,12 @@ fn chain_with_a_long_oldest_run() -> Vec<Vec<(ScriptBytes, TransparentEvent)>> {
 /// sees exactly the honest transcript, sequentially and at concurrency 4.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_bad_link_owes_dummies_and_keeps_the_honest_transcript() {
-    use transparent_shard::{decode_page_row, encode_page_row, page_tag_salt, script_tag, RunLink};
-    use zakura_pir_transparent::engine::{Completion, IncompleteReason, MemoryStore, WalletStore};
+    use zakura_transparent_private_shared::shard::{
+        decode_page_row, encode_page_row, page_tag_salt, script_tag, RunLink,
+    };
+    use zakura_transparent_private_wallet::engine::{
+        Completion, IncompleteReason, MemoryStore, WalletStore,
+    };
     let per_shard = chain_with_a_long_oldest_run();
     let honest_dir = tempfile::tempdir().unwrap();
     let honest_map = publish(honest_dir.path(), &per_shard);
@@ -3555,7 +3606,7 @@ async fn a_bad_link_owes_dummies_and_keeps_the_honest_transcript() {
 /// The failure is counted once.
 #[tokio::test(flavor = "multi_thread")]
 async fn an_overload_after_a_failed_entry_retries_with_the_honest_transcript() {
-    use zakura_pir_transparent::engine::{
+    use zakura_transparent_private_wallet::engine::{
         Completion, FailedEntry, IncompleteReason, MemoryStore, WalletStore,
     };
     let per_shard = chain();
@@ -3667,8 +3718,10 @@ async fn an_overload_after_a_failed_entry_retries_with_the_honest_transcript() {
 /// wallet holds drops that setup, so the next sync fetches it again.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_reply_failing_its_binding_or_epoch_fails_the_request_not_an_entry() {
-    use zakura_pir_transparent::engine::client::ClientError;
-    use zakura_pir_transparent::engine::{MemoryStore, SetupKey, SyncError, WalletStore};
+    use zakura_transparent_private_wallet::engine::client::ClientError;
+    use zakura_transparent_private_wallet::engine::{
+        MemoryStore, SetupKey, SyncError, WalletStore,
+    };
     let dir = tempfile::tempdir().unwrap();
     let per_shard = chain();
     let map = publish(dir.path(), &per_shard);
@@ -3743,7 +3796,7 @@ async fn a_reply_failing_its_binding_or_epoch_fails_the_request_not_an_entry() {
 /// every wallet, so refusing it reveals nothing about the wallet's rows.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_corrupt_manifest_still_stops_the_sync() {
-    use zakura_pir_transparent::engine::{MemoryStore, WalletStore};
+    use zakura_transparent_private_wallet::engine::{MemoryStore, WalletStore};
     let dir = tempfile::tempdir().unwrap();
     let per_shard = chain();
     let map = publish(dir.path(), &per_shard);
@@ -3771,7 +3824,7 @@ async fn a_corrupt_manifest_still_stops_the_sync() {
 /// A malformed shard map still stops the sync before anything is read.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_malformed_shard_map_still_stops_the_sync() {
-    use zakura_pir_transparent::engine::{MemoryStore, SyncError};
+    use zakura_transparent_private_wallet::engine::{MemoryStore, SyncError};
     let dir = tempfile::tempdir().unwrap();
     let per_shard = chain();
     let map = publish(dir.path(), &per_shard);
@@ -3943,7 +3996,7 @@ async fn prepared_and_built_runtimes_answer_identically_at_populated_empty_and_b
                     })
                     .max()
                     .unwrap();
-                let block = transparent_native::D;
+                let block = zakura_pir_native::D;
                 let mut rows: Vec<usize> = vec![
                     0,
                     populated,
@@ -3958,8 +4011,11 @@ async fn prepared_and_built_runtimes_answer_identically_at_populated_empty_and_b
                 for row in rows {
                     let (secret, upload) = profile.prepare(row).unwrap();
                     let mut body =
-                        transparent_shard::manifest::query_binding(&shard.digest, &table.name())
-                            .to_vec();
+                        zakura_transparent_private_shared::shard::manifest::query_binding(
+                            &shard.digest,
+                            &table.name(),
+                        )
+                        .to_vec();
                     body.extend(upload);
                     let mut answers = Vec::new();
                     for base in [&shipped_base, &built_base] {

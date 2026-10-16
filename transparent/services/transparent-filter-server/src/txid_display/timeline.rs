@@ -14,7 +14,7 @@ use std::io::Write;
 use std::os::unix::fs::FileExt;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use transparent_shard::txid::DisplayRecord;
+use zakura_transparent_private_server::shard::txid::DisplayRecord;
 
 pub const TIMELINE_FILE: &str = "timeline.jsonl";
 pub const HEIGHTS_FILE: &str = "tooling/heights.bin";

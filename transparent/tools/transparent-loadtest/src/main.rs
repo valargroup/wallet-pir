@@ -13,6 +13,7 @@
 //! and the report says so rather than estimating them.
 
 mod preparation_cache;
+mod scan;
 mod scenario;
 mod simulation_report;
 
@@ -25,18 +26,20 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use transparent_filter::ShardMap;
-use zakura_pir_transparent::engine::client::Table;
-use zakura_pir_transparent::engine::http::{HttpFilterSource, HttpOptions, HttpShardTransport};
-use zakura_pir_transparent::engine::store::{ScriptEntry, ScriptOrigin, WalletStore};
-use zakura_pir_transparent::engine::transport::{
+use zakura_transparent_private_shared::filter::ShardMap;
+use zakura_transparent_private_wallet::engine::client::Table;
+use zakura_transparent_private_wallet::engine::http::{
+    HttpFilterSource, HttpOptions, HttpShardTransport,
+};
+use zakura_transparent_private_wallet::engine::store::{ScriptEntry, ScriptOrigin, WalletStore};
+use zakura_transparent_private_wallet::engine::transport::{
     BoxError, FilterSource, ShardReply, ShardRequest, ShardTransport,
 };
-use zakura_pir_transparent::engine::{
+use zakura_transparent_private_wallet::engine::{
     sync_into, Completion, IncompleteReason, MemoryStore, ServiceGeometry, StaticChain,
     StaticScripts, WorkLimits,
 };
-use zakura_pir_transparent::engine_store::SqliteStore;
+use zakura_transparent_private_wallet::engine_store::SqliteStore;
 
 #[derive(Parser, Debug, Clone)]
 #[command(
@@ -87,7 +90,7 @@ struct Args {
     /// Shard service requests one sync keeps in flight across matched shards;
     /// 1 walks every request in sequence. A sync with --max-queries always
     /// walks in sequence.
-    #[arg(long, default_value_t = zakura_pir_transparent::engine::http::SHARD_REQUEST_CONCURRENCY)]
+    #[arg(long, default_value_t = zakura_transparent_private_wallet::engine::http::SHARD_REQUEST_CONCURRENCY)]
     shard_concurrency: usize,
     /// Only these classes, comma separated.
     #[arg(long, value_delimiter = ',')]
@@ -181,9 +184,12 @@ impl<T> Counting<T> {
             Ok(down) => entry.down += down,
             Err(error) => {
                 let text = error.to_string();
-                if zakura_pir_transparent::engine::StaleRevision::found_in(error).is_some() {
+                if zakura_transparent_private_wallet::engine::StaleRevision::found_in(error)
+                    .is_some()
+                {
                     entry.http_409 += 1;
-                } else if zakura_pir_transparent::engine::Overloaded::found_in(error).is_some()
+                } else if zakura_transparent_private_wallet::engine::Overloaded::found_in(error)
+                    .is_some()
                     || text.contains("503")
                 {
                     entry.http_503 += 1;
@@ -353,7 +359,7 @@ impl Outcome {
 /// refusing: 128 clients recorded about 28,000 failed syncs in ten minutes,
 /// each one more request against a pool that had none to spare.
 fn resubmit_backoff(failures: u32) -> Duration {
-    zakura_pir_transparent::engine::backoff::exponential(
+    zakura_transparent_private_wallet::engine::backoff::exponential(
         Duration::from_millis(500),
         failures,
         Duration::from_secs(16),
@@ -366,14 +372,18 @@ fn store_digest<S: WalletStore>(
     from: u64,
     through: u64,
 ) -> anyhow::Result<(String, u64)> {
-    let mut events: Vec<transparent_events::TransparentEvent> = store
+    let mut events: Vec<zakura_transparent_private_shared::events::TransparentEvent> = store
         .events()?
         .into_iter()
         .map(|stored| stored.event)
         .filter(|event| {
             let height = match event {
-                transparent_events::TransparentEvent::Receive(r) => u64::from(r.height),
-                transparent_events::TransparentEvent::Spend(s) => u64::from(s.height),
+                zakura_transparent_private_shared::events::TransparentEvent::Receive(r) => {
+                    u64::from(r.height)
+                }
+                zakura_transparent_private_shared::events::TransparentEvent::Spend(s) => {
+                    u64::from(s.height)
+                }
             };
             height >= from && height <= through
         })
@@ -393,7 +403,7 @@ fn run_client(
     map: &ShardMap,
     map_bytes: u64,
     geometry: &ServiceGeometry,
-    target: &zakura_pir_transparent::engine::Anchor,
+    target: &zakura_transparent_private_wallet::engine::Anchor,
     index: usize,
 ) -> Outcome {
     let started = Instant::now();
@@ -741,7 +751,7 @@ async fn legacy_main() -> anyhow::Result<()> {
         bail!("no clients selected");
     }
     let target = if pinned {
-        zakura_pir_transparent::engine::Anchor {
+        zakura_transparent_private_wallet::engine::Anchor {
             height: sample.anchor_height,
             hash: sample
                 .anchor_hash
@@ -749,7 +759,7 @@ async fn legacy_main() -> anyhow::Result<()> {
                 .expect("pinned requires the anchor hash"),
         }
     } else {
-        zakura_pir_transparent::engine::Anchor {
+        zakura_transparent_private_wallet::engine::Anchor {
             height: tip.end_height,
             hash: tip.terminal_block_hash.clone(),
         }
@@ -974,7 +984,7 @@ async fn legacy_main() -> anyhow::Result<()> {
 fn write_report(
     args: &Args,
     map: &ShardMap,
-    tip: &transparent_filter::ShardMapEntry,
+    tip: &zakura_transparent_private_shared::filter::ShardMapEntry,
     sample: &Sample,
     sample_sha256: &str,
     filter_url: &str,

@@ -33,9 +33,9 @@
 //! which would flatter the plaintext side of the measurement.
 
 use clap::Parser;
-use transparent_shard::layout::{by_name as geometry_by_name, Geometry};
 use transparent_shard_server::runtime::{SharedParams, TableRuntime};
 use transparent_shard_server::shardset::Table;
+use zakura_transparent_private_shared::shard::layout::{by_name as geometry_by_name, Geometry};
 
 #[derive(Parser)]
 #[command(
@@ -90,7 +90,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let geometry: &'static Geometry = geometry_by_name(&cli.geometry)
-        .or_else(|| transparent_shard::display::display_by_name(&cli.geometry))
+        .or_else(|| {
+            zakura_transparent_private_shared::shard::display::display_by_name(&cli.geometry)
+        })
         .ok_or_else(|| format!("unknown geometry {:?}", cli.geometry))?;
 
     let plaintext = table.rows(geometry) * u64::from(table.row_bytes(geometry));

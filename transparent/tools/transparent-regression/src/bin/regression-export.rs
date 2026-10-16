@@ -7,10 +7,10 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     path::PathBuf,
 };
-use transparent_filter::ShardMap;
 use transparent_regression::journal::EventStore;
 use transparent_regression::{reference, validate, Case, Checkpoint, EventRecord, Fixture, SCHEMA};
-use zakura_pir_transparent::engine::Anchor;
+use zakura_transparent_private_shared::filter::ShardMap;
+use zakura_transparent_private_wallet::engine::Anchor;
 
 type Error = Box<dyn std::error::Error + Send + Sync>;
 #[derive(Parser)]

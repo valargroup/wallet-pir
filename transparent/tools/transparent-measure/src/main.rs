@@ -26,17 +26,19 @@ type JournalBlock = (u64, Vec<(ScriptBytes, TransparentEvent)>);
 use clap::Parser;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use transparent_events::TransparentEvent;
-use transparent_filter::{ScriptBytes, ShardMap};
 use transparent_filter_server::events::EventStore;
-use transparent_shard::manifest::ShardManifest;
 use transparent_shard_server::service::{router, ServiceConfig, ServiceState};
 use transparent_shard_server::shardset::{ShardSet, DEFAULT_RETAIN_REVISIONS};
 use workload::{ScriptCensus, Workload};
-use zakura_pir_transparent::engine::client::Table;
-use zakura_pir_transparent::engine::ledger::Ledger;
-use zakura_pir_transparent::engine::sync::{sync, GeometryParams, ServiceGeometry};
-use zakura_pir_transparent::engine::transport::{refusal, BoxError, FilterSource, ShardTransport};
+use zakura_transparent_private_shared::events::TransparentEvent;
+use zakura_transparent_private_shared::filter::{ScriptBytes, ShardMap};
+use zakura_transparent_private_shared::shard::manifest::ShardManifest;
+use zakura_transparent_private_wallet::engine::client::Table;
+use zakura_transparent_private_wallet::engine::ledger::Ledger;
+use zakura_transparent_private_wallet::engine::sync::{sync, GeometryParams, ServiceGeometry};
+use zakura_transparent_private_wallet::engine::transport::{
+    refusal, BoxError, FilterSource, ShardTransport,
+};
 
 /// Incremental transparent bytes a shielded-scanning wallet downloads, measured
 /// over 1,152 blocks in the mainnet study.
@@ -297,8 +299,8 @@ struct TableShare {
     query_download: u64,
 }
 
-impl From<zakura_pir_transparent::engine::TableCharges> for TableShare {
-    fn from(charges: zakura_pir_transparent::engine::TableCharges) -> Self {
+impl From<zakura_transparent_private_wallet::engine::TableCharges> for TableShare {
+    fn from(charges: zakura_transparent_private_wallet::engine::TableCharges) -> Self {
         Self {
             segments_opened: charges.segments_opened,
             queries: charges.queries,
@@ -455,8 +457,8 @@ async fn main() -> Result<(), BoxError> {
                 &mut transport,
                 &scripts,
                 birthday,
-                &zakura_pir_transparent::engine::StaticChain::from_map(&map),
-                &zakura_pir_transparent::engine::Anchor {
+                &zakura_transparent_private_wallet::engine::StaticChain::from_map(&map),
+                &zakura_transparent_private_wallet::engine::Anchor {
                     height: map.shards.last().unwrap().end_height,
                     hash: map.shards.last().unwrap().terminal_block_hash.clone(),
                 },

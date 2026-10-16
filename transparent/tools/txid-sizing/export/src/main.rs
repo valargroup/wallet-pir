@@ -7,7 +7,7 @@ mod extract;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{collections::HashMap, error::Error, fs, path::Path};
-use transparent_events::FeeState;
+use zakura_transparent_private_shared::events::FeeState;
 use zakura_server_chain::{
     hash::display,
     transparent::{read_transaction, FetchedBlock, Output},
@@ -152,10 +152,10 @@ fn main() -> Result<(), AnyError> {
         inventory.push(pin);
     }
     let built =
-        crate::historical_v1::build(0, &transparent_shard::DECOUPLED_2K_8K, &canonical_records)?;
+        crate::historical_v1::build(0, &zakura_transparent_private_shared::shard::DECOUPLED_2K_8K, &canonical_records)?;
     crate::historical_v1::verify(
         0,
-        &transparent_shard::DECOUPLED_2K_8K,
+        &zakura_transparent_private_shared::shard::DECOUPLED_2K_8K,
         &built.directory,
         &built.pages,
         built.records,
@@ -188,7 +188,7 @@ fn main() -> Result<(), AnyError> {
         "implemented_packing": {"shard_id":0,"geometry":"decoupled-2k-8k","threshold":128,
             "payload_bytes":built.payload_bytes,"directory_segments":built.directory.len(),"page_segments":built.pages.len(),
             "occupied_directory_rows":directory_occupied.0,"occupied_page_rows":pages_occupied.0,
-            "occupied_bytes":directory_occupied.1+pages_occupied.1,"manifest":built.manifest(&transparent_shard::DECOUPLED_2K_8K)},
+            "occupied_bytes":directory_occupied.1+pages_occupied.1,"manifest":built.manifest(&zakura_transparent_private_shared::shard::DECOUPLED_2K_8K)},
         "blocks":inventory,"records":records,"excluded":excluded,"shielded_only_transactions":ineligible});
     let dest = Path::new(&args[2]);
     fs::write(dest, serde_json::to_vec(&output)?)?;

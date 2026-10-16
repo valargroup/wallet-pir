@@ -21,7 +21,7 @@
 //! clients built before the split), every worker serves the recent map
 //! (`/v2/txid/map`) and the archive index chunks
 //! (`/v2/txid/map/{base}/{sha256}`) derived from the same map; see
-//! `transparent_shard::display::split`.
+//! `zakura_transparent_private_shared::shard::display::split`.
 //!
 //! **Tiers in the path.** Data-plane routes name the tier,
 //! `/v2/txid/{archive|recent}/...`, so a static edge route can send archive

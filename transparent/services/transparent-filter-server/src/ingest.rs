@@ -9,9 +9,10 @@ use crate::extract::{index, IndexedEvent};
 use crate::prevout::OutputCache;
 use crate::service::{Phase, ServiceState};
 use crate::store::FilterStore;
-use transparent_filter::{build_filter, BlockHash, ScriptBytes};
 use zakura_server_chain::transparent::FetchedBlock;
 use zakura_server_chain::NodeClient;
+use zakura_transparent_private_server::filter::build_filter;
+use zakura_transparent_private_shared::filter::{BlockHash, ScriptBytes};
 
 pub type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
@@ -53,7 +54,7 @@ pub async fn reconcile(
 /// The filter for one block, and what resolving it cost.
 pub struct BuiltFilter {
     pub block_hash: BlockHash,
-    pub filter: transparent_filter::FilterBytes,
+    pub filter: zakura_transparent_private_server::filter::FilterBytes,
     pub rpc_lookups: u64,
     pub cache_hits: u64,
 }
@@ -64,7 +65,8 @@ pub struct BuiltEvents {
     pub events: Vec<IndexedEvent>,
     /// Display source records, one per transaction with a transparent input
     /// or output, when requested; otherwise empty.
-    pub display: Vec<transparent_shard::txid_v2x::TransparentDisplayRecordV2x>,
+    pub display:
+        Vec<zakura_transparent_private_server::shard::txid_v2x::TransparentDisplayRecordV2x>,
     pub rpc_lookups: u64,
     pub cache_hits: u64,
 }

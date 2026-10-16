@@ -23,10 +23,11 @@ sysinfo = "0.36"
 thiserror = "2"
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
-transparent-events = { package = "zakura-transparent-events", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "609cbd309625938ba70c115147a21b4c0db9fdf5" }
-transparent-filter = { package = "zakura-transparent-filter", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "609cbd309625938ba70c115147a21b4c0db9fdf5" }
-transparent-native = { package = "zakura-transparent-native", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "609cbd309625938ba70c115147a21b4c0db9fdf5" }
-transparent-shard = { package = "zakura-transparent-shard", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "609cbd309625938ba70c115147a21b4c0db9fdf5" }
+zakura-transparent-private-shared = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "854391d9e5355c1b5087cb383e855c442b378658" }
+zakura-transparent-private-server = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "854391d9e5355c1b5087cb383e855c442b378658" }
+# The native profile's operations; `client` too, for the runtime self-check,
+# which prepares and decodes one query against every table it loads.
+zakura-pir-native = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "854391d9e5355c1b5087cb383e855c442b378658", features = ["client", "server"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 rustix = { version = "1.1", features = ["fs", "process", "thread"] }

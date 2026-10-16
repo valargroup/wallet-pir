@@ -32,6 +32,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::ops::RangeInclusive;
 use std::path::{Path, PathBuf};
+use zakura_transparent_private_server::native::TableServe as _;
 
 // ipir-sp 1f2aec6 is v0.1.0-rc.6, which pins reinspiring 0.1.2.
 const FORMAT: &[u8] = b"transparent-runtime-v2/native-two-mask-m29/ipir-1f2aec6/reinspiring-0.1.2";
@@ -693,8 +694,9 @@ pub fn retained_digests(set: &Path) -> io::Result<std::collections::HashSet<Stri
             // A manifest that does not parse keeps only its directory: its
             // page shards' runtimes are then rebuilt rather than kept.
             if let Ok(raw) = fs::read(entry.path().join("manifest.json")) {
-                if let Ok(manifest) =
-                    serde_json::from_slice::<transparent_shard::manifest::ShardManifest>(&raw)
+                if let Ok(manifest) = serde_json::from_slice::<
+                    zakura_transparent_private_shared::shard::manifest::ShardManifest,
+                >(&raw)
                 {
                     keep.extend(manifest.child_digests().iter().map(hex::encode));
                 }
@@ -708,8 +710,9 @@ pub fn retained_digests(set: &Path) -> io::Result<std::collections::HashSet<Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runtime::SelfCheckQuery as _;
     use crate::shardset::Table;
-    use transparent_shard::layout::{DECOUPLED_2K_8K, DECOUPLED_32K_32K};
+    use zakura_transparent_private_shared::shard::layout::{DECOUPLED_2K_8K, DECOUPLED_32K_32K};
 
     #[test]
     fn busy_collection_defers_then_prunes_only_unretained_files() {
@@ -841,7 +844,10 @@ mod tests {
                 assert_eq!(cold.public_params_sha256, restored.public_params_sha256);
                 assert_eq!(cold.public_params_epoch, restored.public_params_epoch);
                 assert_eq!(cold.db.to_bytes(), restored.db.to_bytes());
-                let binding = transparent_shard::manifest::query_binding(&key.0, table.as_str());
+                let binding = zakura_transparent_private_shared::shard::manifest::query_binding(
+                    &key.0,
+                    table.as_str(),
+                );
                 let width = table.row_bytes(geometry) as usize;
                 for selected in [0, table.rows(geometry) as usize - 1] {
                     let (secret, upload) = shared.profile.prepare(selected).unwrap();
@@ -921,7 +927,7 @@ mod cache_integration_tests {
     use crate::runtime::RuntimeCache;
     use crate::shardset::{SegmentSource, Table};
     use std::sync::Arc;
-    use transparent_shard::layout::DECOUPLED_2K_8K;
+    use zakura_transparent_private_shared::shard::layout::DECOUPLED_2K_8K;
 
     async fn wait_for_saves(metrics: &Arc<Metrics>) {
         tokio::time::timeout(std::time::Duration::from_secs(30), async {
@@ -1196,10 +1202,11 @@ mod cache_integration_tests {
 mod shipped_tests {
     use super::*;
     use crate::metrics::Metrics;
+    use crate::runtime::SelfCheckQuery as _;
     use crate::runtime::{Produced, RuntimeCache};
     use crate::shardset::{SegmentSource, Table};
     use std::sync::Arc;
-    use transparent_shard::display::TXID_2K8;
+    use zakura_transparent_private_shared::shard::display::TXID_2K8;
 
     struct Segment {
         shared: Arc<SharedParams>,
@@ -1458,7 +1465,7 @@ mod shipped_tests {
     /// `filled` rows hold bytes drawn from `seed`, keyed as a page shard's
     /// or a directory's runtime is.
     fn history_segment(dir: &Path, table: Table, filled: usize, seed: usize) -> Segment {
-        use transparent_shard::layout::DECOUPLED_2K_8K;
+        use zakura_transparent_private_shared::shard::layout::DECOUPLED_2K_8K;
         let shared = Arc::new(SharedParams::build(&DECOUPLED_2K_8K, table).unwrap());
         let profile = &shared.profile;
         let mut rows = vec![0u8; profile.rows * profile.row_bytes];
@@ -1488,7 +1495,7 @@ mod shipped_tests {
     /// schema's parameters, are each refused and built here, once.
     #[tokio::test(flavor = "multi_thread")]
     async fn history_files_of_another_identity_are_refused_once_each() {
-        use transparent_shard::layout::DECOUPLED_32K_32K;
+        use zakura_transparent_private_shared::shard::layout::DECOUPLED_32K_32K;
         let dir = tempfile::tempdir().unwrap();
         for table in [Table::Directory, Table::Pages] {
             let s = history_segment(dir.path(), table, 900, 3);
@@ -1502,9 +1509,11 @@ mod shipped_tests {
             let mut kind_key = s.key.clone();
             kind_key.1 = other_kind;
             let wide = SharedParams::build(&DECOUPLED_32K_32K, table).unwrap();
-            let display =
-                SharedParams::build_display(&transparent_shard::layout::DECOUPLED_2K_8K, table)
-                    .unwrap();
+            let display = SharedParams::build_display(
+                &zakura_transparent_private_shared::shard::layout::DECOUPLED_2K_8K,
+                table,
+            )
+            .unwrap();
             let cases: Vec<(&str, RuntimeKey, &SharedParams, String)> = vec![
                 (
                     "another identity",

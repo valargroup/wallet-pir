@@ -33,8 +33,8 @@ use clap::Parser;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
-use transparent_events::TransparentEvent;
 use transparent_filter_server::events::EventStore;
+use zakura_transparent_private_shared::events::TransparentEvent;
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 

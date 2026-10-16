@@ -28,8 +28,8 @@ use serde::Serialize;
 use std::collections::{BTreeSet, HashMap};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use transparent_shard::display::{self, DisplayTable};
-use transparent_shard::layout::Geometry;
+use zakura_transparent_private_shared::shard::display::{self, DisplayTable};
+use zakura_transparent_private_shared::shard::layout::Geometry;
 
 type ParamsKey = (&'static str, Table);
 
@@ -193,7 +193,7 @@ pub struct DisplayState {
 pub struct TableInit {
     pub rows: u64,
     pub row_bytes: u32,
-    pub scheme: transparent_native::NativeScheme,
+    pub scheme: zakura_transparent_private_shared::native::NativeScheme,
     pub setup_seed: u64,
 }
 
@@ -559,7 +559,8 @@ fn stale(shard_id: u64, digest: &str) -> RequestError {
 /// at any width its profile takes. Fixed at startup, before any publication
 /// is loaded.
 pub fn body_limit() -> usize {
-    let native = transparent_native::profile_for(Table::TxDirectory.as_str());
+    let native =
+        zakura_transparent_private_shared::native::profile_for(Table::TxDirectory.as_str());
     let bits = native.nearest_bits.unwrap_or(0).max(native.dithered_bits);
     display::DISPLAY_PROFILES
         .iter()
@@ -668,9 +669,9 @@ async fn init(State(state): State<DisplayState>) -> Response {
     };
     let body = InitResponse {
         schema: display::DISPLAY_SCHEMA.into(),
-        codec: transparent_shard::txid::CODEC.into(),
+        codec: zakura_transparent_private_shared::shard::txid::CODEC.into(),
         bucket_domain: String::from_utf8_lossy(display::BUCKET_DOMAIN).into_owned(),
-        native_schema: transparent_shard::display::NATIVE_SCHEMA.into(),
+        native_schema: zakura_transparent_private_shared::shard::display::NATIVE_SCHEMA.into(),
         network: set.map.network.clone(),
         genesis_hash: set.map.genesis_hash.clone(),
         map_sha256: set.map_digest.clone(),

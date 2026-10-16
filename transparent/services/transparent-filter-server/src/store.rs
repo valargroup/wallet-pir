@@ -24,7 +24,7 @@ use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
-use transparent_filter::{filter_hash, BlockHash};
+use zakura_transparent_private_shared::filter::{filter_hash, BlockHash};
 
 /// Bump when any on-disk layout changes. A mismatch sets the directory aside
 /// and re-ingests rather than refusing to start.
@@ -392,10 +392,11 @@ impl FilterStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use transparent_filter::{build_filter, ScriptBytes};
+    use zakura_transparent_private_server::filter::build_filter;
+    use zakura_transparent_private_shared::filter::ScriptBytes;
 
-    const GENESIS: &str = transparent_filter::MAINNET_GENESIS_DISPLAY;
-    const PROFILE: &str = transparent_filter::PROFILE;
+    const GENESIS: &str = zakura_transparent_private_shared::filter::MAINNET_GENESIS_DISPLAY;
+    const PROFILE: &str = zakura_transparent_private_shared::filter::PROFILE;
     const START: u64 = 100;
 
     fn hash_at(height: u64) -> BlockHash {
@@ -447,7 +448,7 @@ mod tests {
         assert_eq!(stored.bytes, filter_for(START + 1));
         assert_eq!(
             stored.digest,
-            transparent_filter::filter_hash(&stored.bytes).0
+            zakura_transparent_private_shared::filter::filter_hash(&stored.bytes).0
         );
     }
 

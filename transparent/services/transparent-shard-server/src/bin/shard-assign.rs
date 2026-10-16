@@ -15,11 +15,11 @@
 use clap::{Parser, Subcommand};
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
-use transparent_filter::ShardMap;
 use transparent_shard_server::assignment::{Assignment, GeneratedBy};
 use transparent_shard_server::router::{
     files_with_runtimes, plan, render_caddyfile_with, RosterEntry,
 };
+use zakura_transparent_private_shared::filter::ShardMap;
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 

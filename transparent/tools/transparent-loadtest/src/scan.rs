@@ -1,11 +1,13 @@
-use crate::{
+//! Wallet scanning of a compact-block dataset into a recovery engine store, the
+//! block-scan baseline the simulation compares private recovery against.
+use anyhow::{ensure, Result};
+use std::collections::{BTreeMap, HashMap, HashSet};
+use transparent_blocks::{
     dataset::{verify_blocks, Batch, Manifest},
     proto::CompactBlock,
 };
-use anyhow::{ensure, Result};
-use std::collections::{BTreeMap, HashMap, HashSet};
-use transparent_events::{ReceiveEvent, SpendEvent, TransparentEvent, Txid};
-use zakura_pir_transparent::engine::store::{
+use zakura_transparent_private_shared::events::{ReceiveEvent, SpendEvent, TransparentEvent, Txid};
+use zakura_transparent_private_wallet::engine::store::{
     Anchor, ScriptEntry, SetIdentity, ShardCommit, StoredEvent, WalletStore,
 };
 
@@ -89,7 +91,7 @@ impl Scanner {
         verify_blocks(blocks, batch)?;
         if let Some(block) = blocks.first().filter(|b| b.height == 0) {
             ensure!(
-                crate::dataset::display_hash(&block.hash)? == self.genesis_hash
+                transparent_blocks::dataset::display_hash(&block.hash)? == self.genesis_hash
                     && block.prev_hash == vec![0; 32],
                 "genesis block mismatch"
             );
@@ -184,3 +186,6 @@ impl Scanner {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests;

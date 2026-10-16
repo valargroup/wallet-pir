@@ -632,7 +632,7 @@ bits, and a map may declare at most 65,536 superseded entries across all its re-
 (`MAX_SUPERSEDED`), far above any real publication, so a hostile map cannot make wallets
 store or scan an unbounded list. The checks themselves cannot overflow on hostile values.
 
-A wallet (`zakura-pir-transparent::engine`, `engine/sync/manifest.rs`) keeps its history across a declared re-cut:
+A wallet (`zakura-transparent-private-wallet::engine`, `engine/sync/manifest.rs`) keeps its history across a declared re-cut:
 
 - Stored sealed coverage is looked up by the height it starts at, not by shard id. It stays
   good while the map publishes that revision there, or declares exactly that revision

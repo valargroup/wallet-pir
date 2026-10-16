@@ -2,12 +2,12 @@
 mod common;
 use common::*;
 use std::path::Path;
-use transparent_filter::ShardMap;
-use zakura_pir_transparent::engine::{
+use zakura_transparent_private_shared::filter::ShardMap;
+use zakura_transparent_private_wallet::engine::{
     http::HttpOptions, http::HttpShardTransport, store::ScriptOrigin, Anchor, Completion,
     ScriptEntry, ScriptProvider, StaticChain, StaticScripts, WalletStore, WorkLimits,
 };
-use zakura_pir_transparent::engine_store::SqliteStore;
+use zakura_transparent_private_wallet::engine_store::SqliteStore;
 
 fn anchor(height: u64) -> Anchor {
     Anchor {
@@ -28,22 +28,26 @@ fn scripts() -> StaticScripts {
 }
 fn expected(
     all: &[Vec<(
-        transparent_filter::ScriptBytes,
-        transparent_events::TransparentEvent,
+        zakura_transparent_private_shared::filter::ScriptBytes,
+        zakura_transparent_private_shared::events::TransparentEvent,
     )>],
     through: u64,
-) -> zakura_pir_transparent::engine::Ledger {
+) -> zakura_transparent_private_wallet::engine::Ledger {
     let mut events = all
         .iter()
         .flatten()
         .filter(|(s, _)| (1..=3).any(|n| script(n) == *s))
         .filter(|(_, e)| match e {
-            transparent_events::TransparentEvent::Receive(e) => u64::from(e.height) <= through,
-            transparent_events::TransparentEvent::Spend(e) => u64::from(e.height) <= through,
+            zakura_transparent_private_shared::events::TransparentEvent::Receive(e) => {
+                u64::from(e.height) <= through
+            }
+            zakura_transparent_private_shared::events::TransparentEvent::Spend(e) => {
+                u64::from(e.height) <= through
+            }
         })
         .map(|(s, e)| (s.as_slice().to_vec(), *e))
         .collect::<Vec<_>>();
-    let mut ledger = zakura_pir_transparent::engine::Ledger::new();
+    let mut ledger = zakura_transparent_private_wallet::engine::Ledger::new();
     ledger.replay(&mut events).unwrap();
     ledger
 }
@@ -56,7 +60,10 @@ async fn run<P: ScriptProvider + Send + 'static>(
     target: Anchor,
     provider: P,
     limits: WorkLimits,
-) -> Result<zakura_pir_transparent::engine::SyncReport, zakura_pir_transparent::engine::SyncError> {
+) -> Result<
+    zakura_transparent_private_wallet::engine::SyncReport,
+    zakura_transparent_private_wallet::engine::SyncError,
+> {
     let mut filters = PublishedFilters::load(dir, map);
     let map = map.clone();
     let base = base.to_string();
@@ -71,7 +78,7 @@ async fn run<P: ScriptProvider + Send + 'static>(
         }
         let mut transport = HttpShardTransport::new(base, &HttpOptions::default()).unwrap();
         let geometry = transport.geometry().unwrap();
-        zakura_pir_transparent::engine::sync_into(
+        zakura_transparent_private_wallet::engine::sync_into(
             &mut store,
             &map,
             0,
@@ -282,7 +289,7 @@ async fn unknown_rejected_and_unpublished_targets_do_not_commit_progress() {
         let mut chain = StaticChain::from_map(&map);
         let mut scripts = scripts();
         let h = FIRST + 17;
-        let r = zakura_pir_transparent::engine::sync_into(
+        let r = zakura_transparent_private_wallet::engine::sync_into(
             &mut store,
             &map,
             0,
@@ -298,12 +305,12 @@ async fn unknown_rejected_and_unpublished_targets_do_not_commit_progress() {
         assert!(matches!(
             r.completion,
             Completion::Incomplete {
-                reason: zakura_pir_transparent::engine::IncompleteReason::ChainUnknown { .. },
+                reason: zakura_transparent_private_wallet::engine::IncompleteReason::ChainUnknown { .. },
                 ..
             }
         ));
         chain.hashes.insert(h, "ff".repeat(32));
-        assert!(zakura_pir_transparent::engine::sync_into(
+        assert!(zakura_transparent_private_wallet::engine::sync_into(
             &mut store,
             &map,
             0,
@@ -323,7 +330,7 @@ async fn unknown_rejected_and_unpublished_targets_do_not_commit_progress() {
         };
         chain.hashes.insert(boundary, conflicting.hash.clone());
         assert!(
-            zakura_pir_transparent::engine::sync_into(
+            zakura_transparent_private_wallet::engine::sync_into(
                 &mut store,
                 &map,
                 0,
@@ -340,7 +347,7 @@ async fn unknown_rejected_and_unpublished_targets_do_not_commit_progress() {
         );
         let future = map.shards.last().unwrap().end_height + 1;
         chain.hashes.insert(future, anchor(future).hash);
-        let r = zakura_pir_transparent::engine::sync_into(
+        let r = zakura_transparent_private_wallet::engine::sync_into(
             &mut store,
             &map,
             0,
@@ -356,7 +363,7 @@ async fn unknown_rejected_and_unpublished_targets_do_not_commit_progress() {
         assert!(matches!(
             r.completion,
             Completion::Incomplete {
-                reason: zakura_pir_transparent::engine::IncompleteReason::PublicationBehind { .. },
+                reason: zakura_transparent_private_wallet::engine::IncompleteReason::PublicationBehind { .. },
                 ..
             }
         ));
@@ -375,7 +382,8 @@ async fn a_replaced_tail_rewinds_pending_events_without_completed_coverage() {
     all[1].retain(|(s, e)| {
         if *s == script(3) {
             let mut e = *e;
-            if let transparent_events::TransparentEvent::Receive(r) = &mut e {
+            if let zakura_transparent_private_shared::events::TransparentEvent::Receive(r) = &mut e
+            {
                 r.height += (2 * SPAN) as u32;
             }
             pages.push((s.clone(), e));
@@ -423,21 +431,23 @@ async fn a_replaced_tail_rewinds_pending_events_without_completed_coverage() {
     drop(store);
     all[3].push((
         script(3),
-        transparent_events::TransparentEvent::Receive(transparent_events::ReceiveEvent {
-            metadata: None,
-            height: (h + 5) as u32,
-            txid: txid(99999),
-            transaction_index: 0,
-            output_index: 0,
-            value: 17,
-            coinbase: false,
-        }),
+        zakura_transparent_private_shared::events::TransparentEvent::Receive(
+            zakura_transparent_private_shared::events::ReceiveEvent {
+                metadata: None,
+                height: (h + 5) as u32,
+                txid: txid(99999),
+                transaction_index: 0,
+                output_index: 0,
+                value: 17,
+                coinbase: false,
+            },
+        ),
     ));
     let new_dir = tempfile::tempdir().unwrap();
     let map = publish_with(
         new_dir.path(),
         &all,
-        |_| &transparent_shard::layout::DECOUPLED_2K_8K,
+        |_| &zakura_transparent_private_shared::shard::layout::DECOUPLED_2K_8K,
         1,
         &old.shards[3].manifest_digest,
         hash_at,
@@ -473,7 +483,7 @@ async fn a_replaced_tail_rewinds_pending_events_without_completed_coverage() {
         .filter(|(s, e)| {
             *s == script(3)
                 && match e {
-                    transparent_events::TransparentEvent::Receive(r) => {
+                    zakura_transparent_private_shared::events::TransparentEvent::Receive(r) => {
                         u64::from(r.height) <= h + 20
                     }
                     _ => false,
@@ -481,7 +491,7 @@ async fn a_replaced_tail_rewinds_pending_events_without_completed_coverage() {
         })
         .map(|(s, e)| (s.as_slice().to_vec(), *e))
         .collect::<Vec<_>>();
-    let mut expected = zakura_pir_transparent::engine::Ledger::new();
+    let mut expected = zakura_transparent_private_wallet::engine::Ledger::new();
     expected.replay(&mut expected_events).unwrap();
     compare(&result.ledger, &expected);
 }
@@ -511,27 +521,33 @@ async fn an_exact_common_ancestor_inside_a_shard_survives_a_real_fork() {
     changed[1].retain(|(s, e)| {
         *s != script(3)
             || match e {
-                transparent_events::TransparentEvent::Receive(r) => u64::from(r.height) < fork,
-                transparent_events::TransparentEvent::Spend(s) => u64::from(s.height) < fork,
+                zakura_transparent_private_shared::events::TransparentEvent::Receive(r) => {
+                    u64::from(r.height) < fork
+                }
+                zakura_transparent_private_shared::events::TransparentEvent::Spend(s) => {
+                    u64::from(s.height) < fork
+                }
             }
     });
     changed[1].push((
         script(1),
-        transparent_events::TransparentEvent::Receive(transparent_events::ReceiveEvent {
-            metadata: None,
-            height: (fork + 3) as u32,
-            txid: txid(88888),
-            transaction_index: 0,
-            output_index: 0,
-            value: 71,
-            coinbase: false,
-        }),
+        zakura_transparent_private_shared::events::TransparentEvent::Receive(
+            zakura_transparent_private_shared::events::ReceiveEvent {
+                metadata: None,
+                height: (fork + 3) as u32,
+                txid: txid(88888),
+                transaction_index: 0,
+                output_index: 0,
+                value: 71,
+                coinbase: false,
+            },
+        ),
     ));
     let new_dir = tempfile::tempdir().unwrap();
     let map = publish_with(
         new_dir.path(),
         &changed,
-        |_| &transparent_shard::layout::DECOUPLED_2K_8K,
+        |_| &zakura_transparent_private_shared::shard::layout::DECOUPLED_2K_8K,
         0,
         "",
         hash_forked(fork),
@@ -556,7 +572,7 @@ async fn an_exact_common_ancestor_inside_a_shard_survives_a_real_fork() {
         let mut store = SqliteStore::open(path).unwrap();
         let mut transport = HttpShardTransport::new(base, &HttpOptions::default()).unwrap();
         let geometry = transport.geometry().unwrap();
-        zakura_pir_transparent::engine::sync_into(
+        zakura_transparent_private_wallet::engine::sync_into(
             &mut store,
             &map,
             0,

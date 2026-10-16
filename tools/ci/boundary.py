@@ -62,14 +62,20 @@ PURE = {
     'transparent-shard-server', 'transparent-server-backend',
 }
 RECEIVER = {'receiver-pir-server'}
+# Transparent services and the libraries they are built from. A production build
+# of any of them never contains the Transparent wallet; tests may use it.
+TRANSPARENT_SERVICES = {
+    'transparent-blocks', 'transparent-server-backend', 'transparent-shard-server',
+    'transparent-filter-server', 'transparent-block-server',
+}
+TRANSPARENT_WALLET = 'zakura-transparent-private-wallet'
 CODEC = 'zakura-receiver-crypto'
 # The canonical PIR primitive and protocol packages wallet-libraries owns. A pure
 # package may consume them; their own graphs are checked like the package's.
 CANONICAL = {
-    'zakura-pir-native', 'zakura-transparent-native', 'zakura-transparent-events',
-    'zakura-transparent-filter', 'zakura-transparent-shard',
-    'zakura-transparent-txid-client', 'zakura-receiver-directory', 'zakura-receiver-pir',
-    'zakura-pir-transparent',
+    'zakura-pir-native', 'zakura-transparent-private-shared',
+    'zakura-transparent-private-server', 'zakura-transparent-private-wallet',
+    'zakura-receiver-directory', 'zakura-receiver-pir',
 }
 # Preserved sources outside the active product: legacy demos and retained evidence.
 # They are still checked for direct Common and node edges, which includes the
@@ -144,6 +150,10 @@ def violations(packages, allowed):
                 if edge not in allowed:
                     problems.append(f"{package['manifest']}: {dependency['kind']} on "
                                     f"{'Common' if name in COMMON else 'node'} package {name}")
+            if (package['name'] in TRANSPARENT_SERVICES and name == TRANSPARENT_WALLET
+                    and 'dev-dependencies' not in dependency['kind']):
+                problems.append(f"{package['manifest']}: Transparent service has a "
+                                f"{dependency['kind']} on the wallet crate {name}")
             if (package['name'] in PURE and not package.get('preserved')
                     and WALLET_LIBRARIES in dependency['git']
                     and name not in CANONICAL):
@@ -166,6 +176,20 @@ def resolved_violations(metadata, *, workspace_unified=False):
     packages = {p['id']: p for p in metadata['packages']}
     nodes = {n['id']: n for n in metadata['resolve']['nodes']}
     problems = set()
+    for root_id, package in packages.items():
+        if package['name'] not in TRANSPARENT_SERVICES or package['source'] is not None:
+            continue
+        seen, queue = set(), [root_id]
+        while queue:
+            current = queue.pop()
+            if current in seen:
+                continue
+            seen.add(current)
+            if packages[current]['name'] == TRANSPARENT_WALLET:
+                problems.add(f"{package['name']}: resolves {TRANSPARENT_WALLET}")
+            for dep in nodes[current]['deps']:
+                if any(k['kind'] in (None, 'build') for k in dep['dep_kinds']):
+                    queue.append(dep['pkg'])
     for root_id, package in packages.items():
         if package['name'] not in PURE or package['source'] is not None:
             continue

@@ -21,15 +21,16 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use transparent_events::Txid;
-use transparent_native::{NativeScheme, TableProfile};
-use transparent_shard::display::{
-    self, display_by_name, DisplayManifest, DisplayMap, DisplayMapEntry, DisplayTable,
-};
-use transparent_shard::layout::Geometry;
-use transparent_shard::txid::{self, DisplayEntry, Tag};
 use transparent_shard_server::display::kind;
 use transparent_shard_server::shardset::Table;
+use zakura_transparent_private_shared::events::Txid;
+use zakura_transparent_private_shared::native::{NativeScheme, TableProfile};
+use zakura_transparent_private_shared::shard::display::{
+    self, display_by_name, DisplayManifest, DisplayMap, DisplayMapEntry, DisplayTable,
+};
+use zakura_transparent_private_shared::shard::layout::Geometry;
+use zakura_transparent_private_shared::shard::txid::{self, DisplayEntry, Tag};
+use zakura_transparent_private_wallet::native::TableQuery as _;
 
 #[derive(Debug)]
 pub enum LookupError {
@@ -459,7 +460,8 @@ impl DisplayClient {
                 let supported = document.schema == display::DISPLAY_SCHEMA
                     && document.codec == txid::CODEC
                     && document.bucket_domain.as_bytes() == display::BUCKET_DOMAIN
-                    && document.native_schema == transparent_shard::display::NATIVE_SCHEMA;
+                    && document.native_schema
+                        == zakura_transparent_private_shared::shard::display::NATIVE_SCHEMA;
                 Ok(Arc::new(Init {
                     supported,
                     geometries: document
@@ -525,7 +527,7 @@ impl DisplayClient {
                     // schema. Only the binding is display-specific.
                     let profile = Arc::new(
                         TableProfile::new(
-                            transparent_shard::display::NATIVE_SCHEMA,
+                            zakura_transparent_private_shared::shard::display::NATIVE_SCHEMA,
                             geometry.name,
                             table.as_str(),
                             table.rows(geometry),
@@ -552,8 +554,8 @@ impl DisplayClient {
             || served.rows != table.rows(geometry)
             || served.row_bytes != table.row_bytes(geometry)
             || served.setup_seed
-                != transparent_shard::display::setup_seed_in(
-                    transparent_shard::display::NATIVE_SCHEMA,
+                != zakura_transparent_private_shared::shard::display::setup_seed_in(
+                    zakura_transparent_private_shared::shard::display::NATIVE_SCHEMA,
                     geometry.name,
                     table.as_str(),
                 )

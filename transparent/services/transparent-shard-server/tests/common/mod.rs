@@ -5,24 +5,24 @@
 
 use std::collections::BTreeMap;
 use std::path::Path;
-use transparent_events::{ReceiveEvent, SpendEvent, TransparentEvent, Txid};
-use transparent_filter::{
+use zakura_transparent_private_shared::events::{ReceiveEvent, SpendEvent, TransparentEvent, Txid};
+use zakura_transparent_private_shared::filter::{
     filter_hash, BlockHash, Recut, ScriptBytes, SealParameters, ShardMap, ShardMapEntry,
 };
 mod prepared;
 mod runtime;
 
 use prepared::prepared_shard;
-use transparent_shard::layout::{Geometry, DECOUPLED_2K_8K};
-use transparent_shard::manifest::{
-    ManifestLayout, ManifestOccupancy, ManifestSeal, ShardManifest, TableGeometry, SCHEMA,
-};
 use transparent_shard_server::service::router;
 use transparent_shard_server::shardset::{ShardSet, DEFAULT_RETAIN_REVISIONS};
-use zakura_pir_transparent::engine::ledger::Ledger;
-use zakura_pir_transparent::engine::transport::{BoxError, FilterSource};
+use zakura_transparent_private_shared::shard::layout::{Geometry, DECOUPLED_2K_8K};
+use zakura_transparent_private_shared::shard::manifest::{
+    ManifestLayout, ManifestOccupancy, ManifestSeal, ShardManifest, TableGeometry, SCHEMA,
+};
+use zakura_transparent_private_wallet::engine::ledger::Ledger;
+use zakura_transparent_private_wallet::engine::transport::{BoxError, FilterSource};
 
-pub const GENESIS: &str = transparent_filter::MAINNET_GENESIS_DISPLAY;
+pub const GENESIS: &str = zakura_transparent_private_shared::filter::MAINNET_GENESIS_DISPLAY;
 pub const FIRST: u64 = 3_428_143;
 pub const SPAN: u64 = 200;
 pub const SHARDS: u64 = 4;
@@ -128,7 +128,9 @@ pub fn chain() -> Vec<Vec<(ScriptBytes, TransparentEvent)>> {
         );
     }
 
-    let long = transparent_shard::EVENTS_PER_PAGE + transparent_shard::INLINE_EVENTS + 5;
+    let long = zakura_transparent_private_shared::shard::EVENTS_PER_PAGE
+        + zakura_transparent_private_shared::shard::INLINE_EVENTS
+        + 5;
     for i in 0..long {
         let height = FIRST + SPAN + 20 + u64::from(i) % 100;
         push(
@@ -318,7 +320,7 @@ fn write_shard(
         end,
         genesis(),
         hash,
-        transparent_filter::RANGE_PROFILE,
+        zakura_transparent_private_shared::filter::RANGE_PROFILE,
         geometry,
         children,
         child_span,
@@ -332,9 +334,9 @@ fn write_shard(
         .collect();
     let manifest = ShardManifest {
         schema: SCHEMA.to_string(),
-        profile: transparent_filter::RANGE_PROFILE.to_string(),
+        profile: zakura_transparent_private_shared::filter::RANGE_PROFILE.to_string(),
         geometry: geometry.name.to_string(),
-        network: transparent_filter::NETWORK.to_string(),
+        network: zakura_transparent_private_shared::filter::NETWORK.to_string(),
         genesis_hash: GENESIS.to_string(),
         shard_id,
         start_height: start,
@@ -353,7 +355,7 @@ fn write_shard(
             directory_bytes_capacity: 8_380_416,
             page_rows_target: 2_048,
             page_rows_capacity: 4_096,
-            max_page_children: transparent_shard::MAX_PAGE_CHILDREN,
+            max_page_children: zakura_transparent_private_shared::shard::MAX_PAGE_CHILDREN,
         },
         layout: ManifestLayout::current(),
         filter_hash: filter_hash(built.filter.as_slice()).to_display_hex(),
@@ -395,7 +397,7 @@ fn write_shard(
             std::fs::write(
                 shard_dir.join(format!(
                     "{}.{segment}.bin",
-                    transparent_shard::manifest::pages_table(child.index)
+                    zakura_transparent_private_shared::shard::manifest::pages_table(child.index)
                 )),
                 child.segment(geometry, segment),
             )
@@ -432,9 +434,9 @@ fn write_map(dir: &Path, entries: Vec<ShardMapEntry>, recuts: Vec<Recut>) -> Sha
     };
     let map = ShardMap {
         genesis_hash: GENESIS.to_string(),
-        network: transparent_filter::NETWORK.to_string(),
-        profile: transparent_filter::RANGE_PROFILE.to_string(),
-        range_envelope_version: transparent_filter::RANGE_ENVELOPE_VERSION,
+        network: zakura_transparent_private_shared::filter::NETWORK.to_string(),
+        profile: zakura_transparent_private_shared::filter::RANGE_PROFILE.to_string(),
+        range_envelope_version: zakura_transparent_private_shared::filter::RANGE_ENVELOPE_VERSION,
         start_height: FIRST,
         seal: entries
             .iter()

@@ -7,8 +7,9 @@ use crate::events::EventStore;
 use crate::publication::{BoxError, Journal};
 use serde_json::{json, Value};
 use std::path::Path;
-use transparent_shard::display::plan_seals;
-use transparent_shard::display::split::{index_file, RECENT_MAP_FILE};
+use zakura_transparent_private_server::shard::display::plan_seals;
+use zakura_transparent_private_server::shard::display::split::{index_file, RECENT_MAP_FILE};
+use zakura_transparent_private_server::shard::display::DisplayMapSplit as _;
 
 /// Re-bootstraps into a scratch root at the journal end and checks every
 /// recorded seal against it; verifies every revision of the active candidate.
@@ -118,7 +119,7 @@ fn rebuild_seal(
     parent: Option<&SealRecord>,
     seal: &SealRecord,
 ) -> Result<(), BoxError> {
-    use transparent_shard::display::{archive_boundary, height_counts};
+    use zakura_transparent_private_server::shard::display::{archive_boundary, height_counts};
     let (id, start) = parent.map_or((0, layout.start_height), |p| {
         (p.shard_id + 1, p.end_height + 1)
     });
@@ -172,12 +173,12 @@ fn rebuild_seal(
 /// recent shard starts near its largest and replay seals right away.
 pub fn plan_start(
     store: &impl Journal,
-    seal: &transparent_shard::display::DisplaySealParams,
+    seal: &zakura_transparent_private_shared::shard::display::DisplaySealParams,
     archives: u64,
     replay_seals: u64,
     max_archive_shards: u64,
 ) -> Result<Value, BoxError> {
-    use transparent_shard::display::height_counts;
+    use zakura_transparent_private_server::shard::display::height_counts;
     let end = store.covered_through().ok_or("the journal is empty")?;
     let first = store.start_height() + 1;
     let wanted = (archives + replay_seals) as usize;
@@ -245,7 +246,7 @@ pub fn bench_recent(
             geometry: geometry.to_string(),
             seal: Default::default(),
             max_archive_shards: 1,
-            network: transparent_filter::NETWORK.to_string(),
+            network: zakura_transparent_private_shared::filter::NETWORK.to_string(),
             genesis_hash: "00".repeat(32),
             start_height: 1,
             base_parent: "00".repeat(32),
@@ -265,7 +266,8 @@ pub fn bench_recent(
         let segments = shard.entry.directory_segments.iter().sum::<u32>() as u64;
         let slots = segments
             * g.directory_rows
-            * transparent_shard::txid::slots_per_row(g.directory_row_bytes) as u64;
+            * zakura_transparent_private_shared::shard::txid::slots_per_row(g.directory_row_bytes)
+                as u64;
         out.push(json!({
             "geometry": geometry, "records": size,
             "directory_segments": shard.entry.directory_segments,
@@ -308,7 +310,7 @@ pub fn synth_journal(
         );
         let count = mean_records / 2 + block_seed % (mean_records + 1);
         let sources = synthetic_sources(count, block_seed);
-        let hash = transparent_filter::BlockHash::from_internal_bytes(
+        let hash = zakura_transparent_private_shared::filter::BlockHash::from_internal_bytes(
             Sha256::digest([b"synthetic".as_slice(), &block_seed.to_le_bytes()].concat()).into(),
         );
         let events = crate::display_journal::implied_events(height, &sources)?;
@@ -329,12 +331,14 @@ pub fn synth_journal(
 pub fn synthetic_sources(
     count: u64,
     seed: u64,
-) -> Vec<transparent_shard::txid_v2x::TransparentDisplayRecordV2x> {
+) -> Vec<zakura_transparent_private_server::shard::txid_v2x::TransparentDisplayRecordV2x> {
     use sha2::{Digest, Sha256};
-    use transparent_events::{FeeState, TransactionMetadata, Txid};
-    use transparent_shard::txid::DisplayOutput;
-    use transparent_shard::txid_v1::TransparentDisplayRecord;
-    use transparent_shard::txid_v2x::{DisplayInput, TransparentDisplayRecordV2x};
+    use zakura_transparent_private_server::shard::txid::DisplayOutput;
+    use zakura_transparent_private_server::shard::txid_v1::TransparentDisplayRecord;
+    use zakura_transparent_private_server::shard::txid_v2x::{
+        DisplayInput, TransparentDisplayRecordV2x,
+    };
+    use zakura_transparent_private_shared::events::{FeeState, TransactionMetadata, Txid};
     let mut x = seed ^ 0x9e37_79b9_7f4a_7c15;
     let mut next = move || {
         x ^= x << 13;
@@ -409,7 +413,10 @@ pub fn synthetic_sources(
 }
 
 /// The published entries of [`synthetic_sources`].
-pub fn synthetic_records(count: u64, seed: u64) -> Vec<transparent_shard::txid::DisplayRecord> {
+pub fn synthetic_records(
+    count: u64,
+    seed: u64,
+) -> Vec<zakura_transparent_private_server::shard::txid::DisplayRecord> {
     synthetic_sources(count, seed)
         .iter()
         .map(|source| {

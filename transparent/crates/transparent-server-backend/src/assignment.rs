@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
-use transparent_filter::ShardMap;
+use zakura_transparent_private_shared::filter::ShardMap;
 
 pub const ASSIGNMENT_SCHEMA: &str = "transparent-assignment-v1";
 
@@ -290,11 +290,11 @@ impl Assignment {
                 self.set.map_sha256
             ));
         }
-        if self.set.shard_schema != transparent_shard::manifest::SCHEMA {
+        if self.set.shard_schema != zakura_transparent_private_shared::shard::manifest::SCHEMA {
             return invalid(format!(
                 "the assignment names shard schema {}, this build serves {}",
                 self.set.shard_schema,
-                transparent_shard::manifest::SCHEMA
+                zakura_transparent_private_shared::shard::manifest::SCHEMA
             ));
         }
         if self.set.network != map.network || self.set.genesis_hash != map.genesis_hash {
@@ -400,7 +400,7 @@ mod tests {
         Assignment {
             schema: ASSIGNMENT_SCHEMA.into(),
             set: SetIdentity {
-                shard_schema: transparent_shard::manifest::SCHEMA.into(),
+                shard_schema: zakura_transparent_private_shared::shard::manifest::SCHEMA.into(),
                 map_sha256: "ab".repeat(32),
                 network: "main".into(),
                 genesis_hash: "cd".repeat(32),

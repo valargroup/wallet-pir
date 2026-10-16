@@ -12,19 +12,21 @@ use std::fs::{File, OpenOptions};
 use std::os::unix::fs::FileExt;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
-use transparent_events::{ReceiveEvent, TransparentEvent, Txid};
-use transparent_filter::{BlockHash, ScriptBytes, SealParameters, ShardMap, ShardMapEntry};
+use zakura_transparent_private_shared::events::{ReceiveEvent, TransparentEvent, Txid};
+use zakura_transparent_private_shared::filter::{
+    BlockHash, ScriptBytes, SealParameters, ShardMap, ShardMapEntry,
+};
 #[path = "support/revision.rs"]
 mod revision;
-use transparent_shard::build::build_directory_shard;
-use transparent_shard::layout::{Geometry, DECOUPLED_2K_8K};
-use transparent_shard::manifest::pages_table;
 use transparent_shard_server::shardset::{
     LoadOptions, ShardSet, TableRef, VerificationReport, DEFAULT_RETAIN_REVISIONS,
 };
+use zakura_transparent_private_server::shard::build::build_directory_shard;
+use zakura_transparent_private_shared::shard::layout::{Geometry, DECOUPLED_2K_8K};
+use zakura_transparent_private_shared::shard::manifest::pages_table;
 
 const GEOMETRY: &Geometry = &DECOUPLED_2K_8K;
-const GENESIS: &str = transparent_filter::MAINNET_GENESIS_DISPLAY;
+const GENESIS: &str = zakura_transparent_private_shared::filter::MAINNET_GENESIS_DISPLAY;
 const FIRST: u64 = 3_428_143;
 
 fn genesis() -> BlockHash {
@@ -82,7 +84,8 @@ fn events_through(last: u64) -> Vec<(ScriptBytes, TransparentEvent)> {
 
 const LIGHT_SCRIPTS: u64 = 8;
 /// One more event than a page fragment holds, so each run is two rows.
-const RUN_EVENTS: u64 = transparent_shard::layout::EVENTS_PER_PAGE as u64 + 1;
+const RUN_EVENTS: u64 =
+    zakura_transparent_private_shared::shard::layout::EVENTS_PER_PAGE as u64 + 1;
 /// Enough two-row runs to pass one 8,192-row segment.
 const LONG_RUNS: u64 = 4_160;
 /// Where the first page shard ends: sealed in every revision.
@@ -130,7 +133,7 @@ fn write_revision(
         0,
         GEOMETRY,
         genesis(),
-        transparent_filter::RANGE_PROFILE,
+        zakura_transparent_private_shared::filter::RANGE_PROFILE,
         blocks,
         ends,
         &hash_at,
@@ -139,7 +142,7 @@ fn write_revision(
     .unwrap();
     let (manifest, entry) = revision::write_built(dir, &spec, &built, &children);
     if let Some(from) = link_from {
-        let old: transparent_shard::manifest::ShardManifest =
+        let old: zakura_transparent_private_shared::shard::manifest::ShardManifest =
             serde_json::from_slice(&std::fs::read(from.join("manifest.json")).unwrap()).unwrap();
         for (child, published) in manifest.page_children.iter().enumerate() {
             if old.page_children.get(child) != Some(published) {
@@ -159,9 +162,9 @@ fn write_revision(
 fn write_map(dir: &Path, entry: &ShardMapEntry) {
     let map = ShardMap {
         genesis_hash: GENESIS.to_string(),
-        network: transparent_filter::NETWORK.to_string(),
-        profile: transparent_filter::RANGE_PROFILE.to_string(),
-        range_envelope_version: transparent_filter::RANGE_ENVELOPE_VERSION,
+        network: zakura_transparent_private_shared::filter::NETWORK.to_string(),
+        profile: zakura_transparent_private_shared::filter::RANGE_PROFILE.to_string(),
+        range_envelope_version: zakura_transparent_private_shared::filter::RANGE_ENVELOPE_VERSION,
         start_height: FIRST,
         seal: std::collections::BTreeMap::from([(
             GEOMETRY.name.to_string(),

@@ -58,7 +58,9 @@ use reinspiring::noise::{gaussian_cdf_sha256, gaussian_counts, WeightNorms};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
-use transparent_native::{self as native, NativePreprocessed, TableProfile, D};
+use zakura_pir_native::D;
+use zakura_transparent_private_server::native::NativePreprocessed;
+use zakura_transparent_private_shared::native::TableProfile;
 
 fn norms(w: WeightNorms) -> Value {
     json!({"l1": w.l1.to_string(), "l2_squared": w.l2_squared.to_string(), "max": w.max.to_string()})
@@ -77,17 +79,17 @@ fn worst(rows: usize, max: u128) -> WeightNorms {
 /// display one, derived exactly as the server and wallet derive it.
 fn table_profile(flags: &HashMap<String, String>) -> TableProfile {
     let name = &flags["geometry"];
-    let geometry = transparent_shard::layout::by_name(name)
-        .or_else(|| transparent_shard::display::display_by_name(name))
+    let geometry = zakura_transparent_private_shared::shard::layout::by_name(name)
+        .or_else(|| zakura_transparent_private_shared::shard::display::display_by_name(name))
         .expect("registry or display geometry");
     let table = transparent_shard_server::shardset::Table::parse(&flags["table"])
         .expect("directory, pages or txdirectory");
     // Display tables are derived under display's own native schema, history
     // tables under the history schema, as the server builds them.
     let schema = if table == transparent_shard_server::shardset::Table::TxDirectory {
-        transparent_shard::display::NATIVE_SCHEMA
+        zakura_transparent_private_shared::shard::display::NATIVE_SCHEMA
     } else {
-        transparent_shard::manifest::SCHEMA
+        zakura_transparent_private_shared::shard::manifest::SCHEMA
     };
     TableProfile::new(
         schema,
@@ -145,11 +147,11 @@ fn main() {
                 table_profile(&flags)
             } else {
                 TableProfile::new(
-                    transparent_shard::manifest::SCHEMA,
+                    zakura_transparent_private_shared::shard::manifest::SCHEMA,
                     "certificate-synthetic",
                     "directory",
                     flags["rows"].parse().unwrap(),
-                    native::INSTANCE_BYTES as u32,
+                    zakura_pir_native::INSTANCE_BYTES as u32,
                 )
                 .unwrap()
             };
@@ -197,7 +199,8 @@ fn main() {
         None => unreachable!(),
     };
     let started = std::time::Instant::now();
-    let hint = native::hint(&profile.masks, profile.rows, profile.cols, |c| &columns[c]).unwrap();
+    let hint = zakura_pir_native::hint(&profile.masks, profile.rows, profile.cols, |c| &columns[c])
+        .unwrap();
     let analyzed: Vec<_> = hint
         .par_iter()
         .map(|block| {
@@ -268,7 +271,7 @@ fn main() {
             let selected = a
                 .public_mask_screens
                 .iter()
-                .find(|(bits, _)| *bits as usize == native::MASK_BITS)
+                .find(|(bits, _)| *bits as usize == zakura_pir_native::MASK_BITS)
                 .expect("selected precision screen")
                 .1;
             let mut block = json!({
@@ -292,8 +295,8 @@ fn main() {
     );
     let mut report = json!({
         "format": "native-noise-two-mask-rounded-v1",
-        "d": D, "q_bits": native::Q_BITS, "p_bits": native::P_BITS,
-        "published_mask_bits": native::MASK_BITS,
+        "d": D, "q_bits": zakura_pir_native::Q_BITS, "p_bits": zakura_pir_native::P_BITS,
+        "published_mask_bits": zakura_pir_native::MASK_BITS,
         // RNP3-equivalent size; the Transparent wire omits RNP3's 36-byte
         // magic/setup header because the init document binds the setup.
         "published_bytes": 36 + public.len(),
@@ -302,7 +305,7 @@ fn main() {
         "served_public_checked": served.is_some(),
         "product": format!("transparent-{mode}"),
         "rows": profile.rows, "cols": profile.cols,
-        "query_bits": native::QUERY_BITS, "response_bits": native::RESPONSE_BITS, "kh_bits": 54,
+        "query_bits": zakura_pir_native::QUERY_BITS, "response_bits": zakura_pir_native::RESPONSE_BITS, "kh_bits": 54,
         "worst_case_query": worst_case,
         "setup_id": hex::encode(profile.setup.id()),
         "database_sha256": binding,
@@ -341,7 +344,12 @@ fn columns_of(rows_bin: &[u8], profile: &TableProfile) -> Vec<Vec<u16>> {
                     if bytes {
                         u16::from(rows_bin[row * profile.row_bytes + col])
                     } else {
-                        native::row_coefficient(rows_bin, profile.row_bytes, row, col)
+                        zakura_transparent_private_server::native::row_coefficient(
+                            rows_bin,
+                            profile.row_bytes,
+                            row,
+                            col,
+                        )
                     }
                 })
                 .collect()

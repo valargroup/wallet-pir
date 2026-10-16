@@ -4,8 +4,8 @@ mod common;
 use common::*;
 use sha2::{Digest, Sha256};
 use transparent_regression::{reference, Case, Checkpoint, EventRecord, Fixture, SCHEMA};
-use transparent_shard::layout::DECOUPLED_2K_8K;
-use zakura_pir_transparent::engine::Anchor;
+use zakura_transparent_private_shared::shard::layout::DECOUPLED_2K_8K;
+use zakura_transparent_private_wallet::engine::Anchor;
 #[tokio::test(flavor = "multi_thread")]
 async fn executable_checks_frozen_checkpoints_and_reports_publication_drift() {
     let all = chain();
@@ -38,8 +38,12 @@ async fn executable_checks_frozen_checkpoints_and_reports_publication_drift() {
         // map counts page shards where it once counted page segments); this
         // fixture's page shards hold one segment each.
         let tables = std::iter::once(("directory".to_string(), shard.directory_segments)).chain(
-            (0..shard.page_segments)
-                .map(|child| (transparent_shard::manifest::pages_table(child), 1)),
+            (0..shard.page_segments).map(|child| {
+                (
+                    zakura_transparent_private_shared::shard::manifest::pages_table(child),
+                    1,
+                )
+            }),
         );
         for (table, segments) in tables {
             allowed.insert(format!("POST {prefix}/query/{table}"));

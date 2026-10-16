@@ -160,6 +160,30 @@ class BoundaryTests(unittest.TestCase):
             self.assertEqual(len(boundary.violations([changed], [])), 1, name)
         self.assertEqual(boundary.violations([{**changed, 'name': 'receiver-indexer'}], []), [])
 
+    def test_transparent_services_use_the_wallet_crate_in_tests_alone(self):
+        library = 'https://github.com/zakura-core/wallet-libraries'
+        for kind, expected in [('dependencies', 1), ('build-dependencies', 1), ('dev-dependencies', 0)]:
+            with self.subTest(kind=kind):
+                package = {'name': 'transparent-shard-server', 'manifest': 'server/Cargo.toml',
+                           'dependencies': [{**self.edge(boundary.TRANSPARENT_WALLET, git=library), 'kind': kind}]}
+                self.assertEqual(len(boundary.violations([package], [])), expected)
+
+        def node(name, deps=()):
+            return {'id': name, 'deps': [{'pkg': d, 'dep_kinds': [{'kind': None}]} for d in deps]}
+        metadata = {
+            'packages': [
+                {'id': 'svc', 'name': 'transparent-filter-server', 'source': None},
+                {'id': 'blocks', 'name': 'transparent-blocks', 'source': None},
+                {'id': 'wallet', 'name': boundary.TRANSPARENT_WALLET, 'source': 'git+' + library},
+            ],
+            'resolve': {'nodes': [node('svc', ['blocks']), node('blocks'), node('wallet')]},
+        }
+        self.assertEqual(boundary.resolved_violations(metadata, workspace_unified=True), [])
+        metadata['resolve']['nodes'][1] = node('blocks', ['wallet'])
+        self.assertEqual(boundary.resolved_violations(metadata, workspace_unified=True),
+                         ['transparent-blocks: resolves zakura-transparent-private-wallet',
+                          'transparent-filter-server: resolves zakura-transparent-private-wallet'])
+
     def test_workspace_crypto_unification_does_not_excuse_standalone_crypto_or_nodes(self):
         def node(name, deps=()):
             return {'id': name, 'deps': [{'pkg': d, 'dep_kinds': [{'kind': None}]} for d in deps]}

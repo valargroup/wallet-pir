@@ -13,20 +13,22 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
 use tower::ServiceExt;
-use transparent_events::{ReceiveEvent, TransparentEvent, Txid};
-use transparent_filter::{BlockHash, ScriptBytes, SealParameters, ShardMap, ShardMapEntry};
+use zakura_transparent_private_shared::events::{ReceiveEvent, TransparentEvent, Txid};
+use zakura_transparent_private_shared::filter::{
+    BlockHash, ScriptBytes, SealParameters, ShardMap, ShardMapEntry,
+};
 #[path = "support/revision.rs"]
 mod revision;
-use transparent_shard::layout::{Geometry, DECOUPLED_2K_8K};
-use transparent_shard::manifest::{ShardManifest, SCHEMA};
 use transparent_shard_server::assignment::{
     Assignment, GeneratedBy, SetIdentity, WorkerAssignment, WorkerRole, ASSIGNMENT_SCHEMA,
 };
 use transparent_shard_server::router::{files_for, plan, render_caddyfile, RosterEntry};
 use transparent_shard_server::service::{router, ReadinessMode, ServiceConfig, ServiceState};
 use transparent_shard_server::shardset::{LoadOptions, LoadScope, ShardSet};
+use zakura_transparent_private_shared::shard::layout::{Geometry, DECOUPLED_2K_8K};
+use zakura_transparent_private_shared::shard::manifest::{ShardManifest, SCHEMA};
 
-const GENESIS: &str = transparent_filter::MAINNET_GENESIS_DISPLAY;
+const GENESIS: &str = zakura_transparent_private_shared::filter::MAINNET_GENESIS_DISPLAY;
 const FIRST: u64 = 3_428_143;
 const SPAN: u64 = 40;
 /// Four archive shards at the narrow geometry, two recent at the wider one.
@@ -129,9 +131,9 @@ fn publish(dir: &Path) -> ShardMap {
         .collect::<BTreeMap<_, _>>();
     let map = ShardMap {
         genesis_hash: GENESIS.to_string(),
-        network: transparent_filter::NETWORK.to_string(),
-        profile: transparent_filter::RANGE_PROFILE.to_string(),
-        range_envelope_version: transparent_filter::RANGE_ENVELOPE_VERSION,
+        network: zakura_transparent_private_shared::filter::NETWORK.to_string(),
+        profile: zakura_transparent_private_shared::filter::RANGE_PROFILE.to_string(),
+        range_envelope_version: zakura_transparent_private_shared::filter::RANGE_ENVELOPE_VERSION,
         start_height: FIRST,
         seal,
         shards: entries,
@@ -530,9 +532,9 @@ fn retention_by_bytes_keeps_newest_first_and_reports_the_rest_prunable() {
     }
     let map = ShardMap {
         genesis_hash: GENESIS.to_string(),
-        network: transparent_filter::NETWORK.to_string(),
-        profile: transparent_filter::RANGE_PROFILE.to_string(),
-        range_envelope_version: transparent_filter::RANGE_ENVELOPE_VERSION,
+        network: zakura_transparent_private_shared::filter::NETWORK.to_string(),
+        profile: zakura_transparent_private_shared::filter::RANGE_PROFILE.to_string(),
+        range_envelope_version: zakura_transparent_private_shared::filter::RANGE_ENVELOPE_VERSION,
         start_height: FIRST,
         seal: BTreeMap::from([(
             DECOUPLED_2K_8K.name.to_string(),
@@ -778,7 +780,9 @@ async fn history_answers_are_pinned() {
     t.send(&app, &query, Upload::Sized(vec![0; 16])).await;
     let length = expected_query_length(&app, &query).await;
     t.send(&app, &query, Upload::Sized(vec![0; length])).await;
-    let mut binding = transparent_shard::manifest::query_binding(&d0, "directory").to_vec();
+    let mut binding =
+        zakura_transparent_private_shared::shard::manifest::query_binding(&d0, "directory")
+            .to_vec();
     binding.resize(length, 0);
     t.send(&app, &query, Upload::Sized(binding)).await;
     t.check("history_answers.txt");

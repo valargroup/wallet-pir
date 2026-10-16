@@ -19,14 +19,14 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use transparent_events::Txid;
-use transparent_shard::display::{
-    self, display_by_name, DisplayMap, DisplaySealParams, DisplayTable,
-};
-use transparent_shard::txid::{self, AddressKind, DisplayEntry, Tag};
 use transparent_shard_server::display::set::{DisplayRevision, MAP_FILE};
 use transparent_shard_server::display::synth::{self, ShardSpec};
 use transparent_shard_server::display::tier;
+use zakura_transparent_private_shared::events::Txid;
+use zakura_transparent_private_shared::shard::display::{
+    self, display_by_name, DisplayMap, DisplaySealParams, DisplayTable,
+};
+use zakura_transparent_private_shared::shard::txid::{self, AddressKind, DisplayEntry, Tag};
 
 type Error = Box<dyn std::error::Error + Send + Sync>;
 
@@ -902,7 +902,7 @@ fn synthesize(
     records: usize,
     shards: u64,
     n_buckets: u32,
-    geometry: &'static transparent_shard::layout::Geometry,
+    geometry: &'static zakura_transparent_private_shared::shard::layout::Geometry,
     seed: u64,
     start_height: u64,
     blocks_per_shard: u64,

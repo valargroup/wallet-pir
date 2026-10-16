@@ -6,7 +6,7 @@ use std::{
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
-use zakura_pir_transparent::engine::{
+use zakura_transparent_private_wallet::engine::{
     client::{Table, TableClient},
     http::{HttpFilterSource, HttpOptions, HttpShardTransport},
     transport::{BoxError, FilterSource, ShardTransport},
@@ -53,7 +53,7 @@ fn once_at(
     let mut filters = HttpFilterSource::new(url, &options)?;
     let mut transport = HttpShardTransport::new(url, &options)?;
     let (bytes, _) = filters.shard_map()?;
-    let map: transparent_filter::ShardMap = serde_json::from_slice(&bytes)?;
+    let map: zakura_transparent_private_shared::filter::ShardMap = serde_json::from_slice(&bytes)?;
     map.validate_supported().map_err(|e| format!("map: {e}"))?;
     let entry = map.shards.get(shard).ok_or("shard absent")?;
     let geometry = transport.geometry()?;
@@ -64,7 +64,7 @@ fn once_at(
         .ok_or("geometry absent")?;
     let directory = find_revision(publications, &entry.manifest_digest)?;
     let manifest_bytes = std::fs::read(directory.join("manifest.json"))?;
-    let manifest: transparent_shard::manifest::ShardManifest =
+    let manifest: zakura_transparent_private_shared::shard::manifest::ShardManifest =
         serde_json::from_slice(&manifest_bytes)?;
     if manifest.digest() != entry.manifest_digest {
         return Err("local manifest digest mismatch".into());

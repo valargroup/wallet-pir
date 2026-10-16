@@ -23,9 +23,11 @@
 use clap::Parser;
 use ipir_sp::server::IPIRServer;
 use std::time::{Duration, Instant};
-use transparent_shard::layout::{by_name as geometry_by_name, DECOUPLED_2K_8K};
 use transparent_shard_server::runtime::{reserved_bytes, transport_params};
 use transparent_shard_server::shardset::Table;
+use zakura_transparent_private_shared::shard::layout::{
+    by_name as geometry_by_name, DECOUPLED_2K_8K,
+};
 
 #[derive(Parser)]
 #[command(
@@ -71,7 +73,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "{:>7} {:>8} {:>8} {:>10} {:>10} {:>10} {:>10}",
             "rows", "db_rows", "db_cols", "db MiB", "pack MiB", "total MiB", "query B"
         );
-        let native = transparent_native::profile_for(Table::Directory.as_str());
+        let native =
+            zakura_transparent_private_shared::native::profile_for(Table::Directory.as_str());
         for rows in [
             2_048u64, 4_096, 8_192, 16_384, 32_768, 65_536, 131_072, 262_144,
         ] {
@@ -135,7 +138,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let cols = scheme.db_cols;
             let rows = &rows;
             let coefficients = (0..scheme.db_rows * cols).map(move |i| {
-                transparent_native::row_coefficient(rows, row_bytes, i / cols, i % cols)
+                zakura_transparent_private_server::native::row_coefficient(
+                    rows,
+                    row_bytes,
+                    i / cols,
+                    i % cols,
+                )
             });
             IPIRServer::<u16>::new_auto_kernel(scheme.clone(), coefficients, false, true)
         })
@@ -154,7 +162,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         while started.elapsed() < budget {
                             std::hint::black_box(
                                 server
-                                    .try_multiply_power_of_two(transparent_native::Q, query)
+                                    .try_multiply_power_of_two(zakura_pir_native::Q, query)
                                     .expect("scan"),
                             );
                             done += 1;

@@ -12,8 +12,8 @@ use clap::Parser;
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use transparent_events::TransparentEvent;
 use transparent_filter_server::events::EventStore;
+use zakura_transparent_private_shared::events::TransparentEvent;
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
@@ -139,7 +139,7 @@ fn main() -> Result<(), BoxError> {
         "from_sample_sha256": hex::encode(Sha256::digest(&raw)),
         "journal_version": store.version(),
         "event_encoding": "self-contained canonical event bytes, including available transaction metadata",
-        "event_bytes_max": transparent_events::MAX_EVENT_BYTES,
+        "event_bytes_max": zakura_transparent_private_shared::events::MAX_EVENT_BYTES,
         "journal": cli.data_dir,
         "tool_sha": cli.source_sha,
         "clients_changed": changed,

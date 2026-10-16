@@ -24,8 +24,8 @@ use std::{
     },
 };
 use tokio::io::AsyncWriteExt;
-use transparent_events::TransparentEvent;
-use transparent_filter::{BlockHash, ScriptBytes, ShardMap};
+use zakura_transparent_private_shared::events::TransparentEvent;
+use zakura_transparent_private_shared::filter::{BlockHash, ScriptBytes, ShardMap};
 
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -81,7 +81,7 @@ impl Config {
 }
 
 fn default_range_profile() -> String {
-    transparent_filter::RANGE_PROFILE.to_string()
+    zakura_transparent_private_shared::filter::RANGE_PROFILE.to_string()
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ActivePublication {
@@ -243,7 +243,8 @@ impl Journal for Snapshot {
     fn display_at(
         &self,
         height: u64,
-    ) -> Result<Vec<transparent_shard::txid::DisplayRecord>, EventStoreError> {
+    ) -> Result<Vec<zakura_transparent_private_server::shard::txid::DisplayRecord>, EventStoreError>
+    {
         let block = self
             .blocks
             .get(&height)
@@ -1509,7 +1510,7 @@ mod tests {
             record: None,
             source_sha: None,
             directory_choice: publication::DirectoryChoice::Off,
-            range_profile: transparent_filter::RANGE_PROFILE.to_string(),
+            range_profile: zakura_transparent_private_shared::filter::RANGE_PROFILE.to_string(),
         };
         publication::publish(&options, &journal, BlockHash::from_internal_bytes([0; 32])).unwrap();
         let hook = root.path().join("fleet.py");
@@ -1544,7 +1545,7 @@ print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('re
             source_sha: "fixture".into(),
             shadow: false,
             directory_choice: publication::DirectoryChoice::Off,
-            range_profile: transparent_filter::RANGE_PROFILE.to_string(),
+            range_profile: zakura_transparent_private_shared::filter::RANGE_PROFILE.to_string(),
             follow_journal: false,
             snapshot_dir: None,
             ship_runtimes: false,
@@ -1770,7 +1771,7 @@ print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('re
             record: None,
             source_sha: None,
             directory_choice: publication::DirectoryChoice::Off,
-            range_profile: transparent_filter::RANGE_PROFILE.to_string(),
+            range_profile: zakura_transparent_private_shared::filter::RANGE_PROFILE.to_string(),
         };
         publication::publish(&options, &journal, BlockHash::from_internal_bytes([0; 32])).unwrap();
         // The fleet records every request it is sent.
@@ -1807,7 +1808,7 @@ print(json.dumps({'ok':True,'upstreams':[],'workers':{},'retained_publication':b
             source_sha: "fixture".into(),
             shadow: false,
             directory_choice: publication::DirectoryChoice::Off,
-            range_profile: transparent_filter::RANGE_PROFILE.to_string(),
+            range_profile: zakura_transparent_private_shared::filter::RANGE_PROFILE.to_string(),
             follow_journal: false,
             snapshot_dir: None,
             ship_runtimes: true,

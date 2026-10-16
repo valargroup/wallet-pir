@@ -13,7 +13,7 @@
 //! Every manifest is read and checked, whatever the worker's role, so any
 //! worker can serve the map and every manifest. Tables are verified only for
 //! the revisions the role serves: streamed SHA-256 per segment, then every
-//! row through [`display::verify_rows`] with seek reads, so a corrupt shard is
+//! row through [`zakura_transparent_private_server::shard::display::verify_rows`] with seek reads, so a corrupt shard is
 //! refused at load rather than served as a PIR fault.
 //!
 //! A revision already verified by the previous snapshot, or staged ahead of
@@ -31,15 +31,19 @@ use std::collections::{BTreeMap, HashSet};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use transparent_shard::display::{self, DisplayManifest, DisplayMap, DisplayTable, SplitMap};
-use transparent_shard::layout::Geometry;
-use transparent_shard::txid;
+use zakura_transparent_private_server::shard::display::DisplayMapSplit as _;
+use zakura_transparent_private_server::shard::display::SplitMap;
+use zakura_transparent_private_shared::shard::display::{
+    DisplayManifest, DisplayMap, DisplayTable,
+};
+use zakura_transparent_private_shared::shard::layout::Geometry;
+use zakura_transparent_private_shared::shard::txid;
 
 /// The map file of a publication directory.
 pub const MAP_FILE: &str = "txid-shards.json";
 /// The manifest file of a revision directory.
 pub const MANIFEST_FILE: &str = "manifest.json";
-pub use display::split::{index_file, RECENT_MAP_FILE};
+pub use zakura_transparent_private_server::shard::display::split::{index_file, RECENT_MAP_FILE};
 
 /// Checks the split files of `dir`, when the controller wrote them, against
 /// the split derived from its map.
@@ -239,7 +243,7 @@ impl DisplayRevision {
         let seeds = self.manifest.placement_seeds();
         let width = geometry.directory_row_bytes;
         let mut row_checked = 0u64;
-        display::verify_rows(
+        zakura_transparent_private_server::shard::display::verify_rows(
             shard_id,
             geometry,
             &directory_segments,
@@ -552,7 +556,7 @@ impl DisplaySet {
 mod tests {
     use super::super::synth::{self, ShardSpec};
     use super::*;
-    use transparent_shard::display::{DisplaySealParams, TXID_2K8};
+    use zakura_transparent_private_shared::shard::display::{DisplaySealParams, TXID_2K8};
 
     fn spec(shard_id: u64, start: u64, end: u64, sealed: bool) -> ShardSpec {
         ShardSpec {

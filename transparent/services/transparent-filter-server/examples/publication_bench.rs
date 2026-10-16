@@ -30,16 +30,16 @@ use std::{
     path::{Path, PathBuf},
     time::Instant,
 };
-use transparent_events::{
-    FeeState, ReceiveEvent, SpendEvent, TransactionMetadata, TransparentEvent, Txid,
-};
-use transparent_filter::{BlockHash, ScriptBytes};
 use transparent_filter_server::{
     controller::Snapshot,
     events::EventStore,
     publication::{self, DirectoryChoice, PublishOptions},
     shard_filters::ShardFilters,
 };
+use zakura_transparent_private_shared::events::{
+    FeeState, ReceiveEvent, SpendEvent, TransactionMetadata, TransparentEvent, Txid,
+};
+use zakura_transparent_private_shared::filter::{BlockHash, ScriptBytes};
 
 #[derive(Parser)]
 struct Cli {
@@ -237,7 +237,9 @@ fn options(output: &Path, previous: Option<&Path>, choice: DirectoryChoice) -> P
         record: None,
         source_sha: None,
         directory_choice: choice,
-        range_profile: transparent_filter::RANGE_PROFILE_V2.name.to_string(),
+        range_profile: zakura_transparent_private_shared::filter::RANGE_PROFILE_V2
+            .name
+            .to_string(),
     }
 }
 
@@ -276,7 +278,7 @@ fn main() {
     let base = cli.work.join("publication-base");
     let started = Instant::now();
     let mut previous_map = if base.join("shards.json").exists() {
-        let map: transparent_filter::ShardMap =
+        let map: zakura_transparent_private_shared::filter::ShardMap =
             serde_json::from_slice(&std::fs::read(base.join("shards.json")).unwrap()).unwrap();
         if map.shards.last().map(|s| s.end_height) != Some(initial) {
             std::fs::remove_dir_all(&base).unwrap();

@@ -4,9 +4,9 @@ use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
-use transparent_events::TransparentEvent;
-use transparent_filter::ShardMap;
-use zakura_pir_transparent::engine::{Anchor, WalletStore};
+use zakura_transparent_private_shared::events::TransparentEvent;
+use zakura_transparent_private_shared::filter::ShardMap;
+use zakura_transparent_private_wallet::engine::{Anchor, WalletStore};
 
 pub const SCHEMA: &str = "transparent-regression-v1";
 
@@ -74,7 +74,7 @@ pub fn height(event: &TransparentEvent) -> u64 {
         TransparentEvent::Spend(e) => e.height.into(),
     }
 }
-fn key(txid: transparent_events::Txid, index: u32) -> String {
+fn key(txid: zakura_transparent_private_shared::events::Txid, index: u32) -> String {
     format!("{}:{index}", txid.to_display_hex())
 }
 
@@ -268,23 +268,26 @@ pub fn validate(f: &Fixture) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use transparent_events::{ReceiveEvent, SpendEvent, Txid};
+    use zakura_transparent_private_shared::events::{ReceiveEvent, SpendEvent, Txid};
     #[test]
     fn invalid_metadata_cannot_be_exported_as_a_frozen_event_record() {
-        let invalid =
-            transparent_events::TransparentEvent::Receive(transparent_events::ReceiveEvent {
+        let invalid = zakura_transparent_private_shared::events::TransparentEvent::Receive(
+            zakura_transparent_private_shared::events::ReceiveEvent {
                 height: 1,
-                txid: transparent_events::Txid([1; 32]),
+                txid: zakura_transparent_private_shared::events::Txid([1; 32]),
                 transaction_index: 0,
                 output_index: 0,
                 value: 7,
                 coinbase: false,
-                metadata: Some(transparent_events::TransactionMetadata {
-                    fee: transparent_events::FeeState::NotApplicable,
-                    transparent_input_count: 1,
-                    has_shielded_components: false,
-                }),
-            });
+                metadata: Some(
+                    zakura_transparent_private_shared::events::TransactionMetadata {
+                        fee: zakura_transparent_private_shared::events::FeeState::NotApplicable,
+                        transparent_input_count: 1,
+                        has_shielded_components: false,
+                    },
+                ),
+            },
+        );
         assert!(EventRecord::new(&[0x51], &invalid).is_err());
     }
 

@@ -10,19 +10,20 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use std::path::Path;
 use tower::ServiceExt;
+use zakura_transparent_private_wallet::native::TableQuery as _;
 #[path = "support/revision.rs"]
 mod revision;
 
-use transparent_filter::{BlockHash, ScriptBytes, ShardMap};
-use transparent_shard::layout::{Geometry, DECOUPLED_2K_8K};
-use transparent_shard::manifest::{query_binding, ShardManifest};
 use transparent_shard_server::service::{router, ServiceConfig, ServiceState};
 use transparent_shard_server::shardset::{ShardSet, Table, TableRef, DEFAULT_RETAIN_REVISIONS};
+use zakura_transparent_private_shared::filter::{BlockHash, ScriptBytes, ShardMap};
+use zakura_transparent_private_shared::shard::layout::{Geometry, DECOUPLED_2K_8K};
+use zakura_transparent_private_shared::shard::manifest::{query_binding, ShardManifest};
 
 /// The geometry this fixture publishes at.
 const GEOMETRY: Geometry = DECOUPLED_2K_8K;
 
-const GENESIS: &str = transparent_filter::MAINNET_GENESIS_DISPLAY;
+const GENESIS: &str = zakura_transparent_private_shared::filter::MAINNET_GENESIS_DISPLAY;
 const SHARDS: u64 = 3;
 const SPAN: u64 = 100;
 const FIRST: u64 = 3_428_143;
@@ -64,11 +65,11 @@ fn publish(dir: &Path) -> ShardMap {
                 txid[8..16].copy_from_slice(&shard_id.to_le_bytes());
                 events.push((
                     script(shard_id, tag),
-                    transparent_events::TransparentEvent::Receive(
-                        transparent_events::ReceiveEvent {
+                    zakura_transparent_private_shared::events::TransparentEvent::Receive(
+                        zakura_transparent_private_shared::events::ReceiveEvent {
                             metadata: None,
                             height: (start + u64::from(i) % SPAN) as u32,
-                            txid: transparent_events::Txid(txid),
+                            txid: zakura_transparent_private_shared::events::Txid(txid),
                             transaction_index: 0,
                             output_index: i,
                             value: 1_000 + u64::from(i),
@@ -104,13 +105,13 @@ fn publish(dir: &Path) -> ShardMap {
 
     let map = ShardMap {
         genesis_hash: GENESIS.to_string(),
-        network: transparent_filter::NETWORK.to_string(),
-        profile: transparent_filter::RANGE_PROFILE.to_string(),
-        range_envelope_version: transparent_filter::RANGE_ENVELOPE_VERSION,
+        network: zakura_transparent_private_shared::filter::NETWORK.to_string(),
+        profile: zakura_transparent_private_shared::filter::RANGE_PROFILE.to_string(),
+        range_envelope_version: zakura_transparent_private_shared::filter::RANGE_ENVELOPE_VERSION,
         start_height: FIRST,
         seal: std::collections::BTreeMap::from([(
             GEOMETRY.name.to_string(),
-            transparent_filter::SealParameters {
+            zakura_transparent_private_shared::filter::SealParameters {
                 max_scripts: 8_192,
                 max_page_rows: 2_048,
                 max_txids: 0,
@@ -201,7 +202,7 @@ async fn retrieve(f: &Fixture, shard_id: u64, table: TableRef, row: usize) -> Ve
         Table::Pages => "pages_scheme",
         Table::TxDirectory => unreachable!("history-only fixture"),
     };
-    let scheme: transparent_native::NativeScheme =
+    let scheme: zakura_transparent_private_shared::native::NativeScheme =
         serde_json::from_value(published[scheme_key].clone()).unwrap();
     assert!(
         published.get(format!("{scheme_key}_dq44")).is_none(),
@@ -227,8 +228,8 @@ async fn retrieve(f: &Fixture, shard_id: u64, table: TableRef, row: usize) -> Ve
 
     // Re-derive rather than trust: a client that adopted the server's
     // parameters would decode against whatever geometry the server chose.
-    let profile = transparent_native::TableProfile::new(
-        transparent_shard::manifest::SCHEMA,
+    let profile = zakura_transparent_private_shared::native::TableProfile::new(
+        zakura_transparent_private_shared::shard::manifest::SCHEMA,
         GEOMETRY.name,
         table.kind().as_str(),
         table.kind().rows(&GEOMETRY),
@@ -297,7 +298,7 @@ async fn rows_retrieved_from_each_shard_equal_that_shards_published_table() {
 
 /// The upload length of a query over `rows` rows of a history table.
 fn request_len(rows: usize) -> usize {
-    let native = transparent_native::profile_for(Table::Directory.as_str());
+    let native = zakura_transparent_private_shared::native::profile_for(Table::Directory.as_str());
     native.request_len_bits(rows, native.primary_bits())
 }
 
@@ -332,8 +333,8 @@ async fn only_the_query_length_is_accepted() {
         accepted - 1,
         accepted + 1,
         request_len(2 * rows),
-        transparent_native::dithered_request_len(rows),
-        transparent_native::request_len(rows),
+        zakura_transparent_private_shared::native::dithered_request_len(rows),
+        zakura_pir_native::request_len(rows),
     ];
     for request in refused {
         let (status, raw) = post(
@@ -934,11 +935,11 @@ async fn a_page_shards_prefix_query_is_answered_as_its_full_one() {
     assert!(shard.manifest.sealed);
     let rows = Table::Pages.rows(&GEOMETRY) as usize;
     let query_rows = shard.manifest.page_children[0].query_rows() as usize;
-    assert!(query_rows < rows && query_rows.is_multiple_of(transparent_native::D));
+    assert!(query_rows < rows && query_rows.is_multiple_of(zakura_pir_native::D));
     assert!(shard.manifest.page_children[0].occupancy.page_rows as usize <= query_rows);
 
-    let profile = transparent_native::TableProfile::new(
-        transparent_shard::manifest::SCHEMA,
+    let profile = zakura_transparent_private_shared::native::TableProfile::new(
+        zakura_transparent_private_shared::shard::manifest::SCHEMA,
         GEOMETRY.name,
         "pages",
         rows as u64,
@@ -1008,7 +1009,7 @@ async fn only_page_shards_take_a_prefix_and_only_their_own() {
         tail,
         tail_revision.as_str(),
         TableRef::Pages(0),
-        query_rows + transparent_native::D,
+        query_rows + zakura_pir_native::D,
     )] {
         let (status, raw) = post(
             &f.state,

@@ -113,16 +113,16 @@ pub fn packing() -> Result<(), AnyError> {
             return Err("sample packing memory bound".into());
         }
         records.push(
-            transparent_shard::txid_v1::TransparentDisplayRecord::decode(
-                transparent_events::Txid(txid),
+            zakura_transparent_private_server::shard::txid_v1::TransparentDisplayRecord::decode(
+                zakura_transparent_private_shared::events::Txid(txid),
                 &payload,
             )?,
         );
     }
-    let built = crate::historical_v1::build(0, &transparent_shard::DECOUPLED_2K_8K, &records)?;
+    let built = crate::historical_v1::build(0, &zakura_transparent_private_shared::shard::DECOUPLED_2K_8K, &records)?;
     crate::historical_v1::verify(
         0,
-        &transparent_shard::DECOUPLED_2K_8K,
+        &zakura_transparent_private_shared::shard::DECOUPLED_2K_8K,
         &built.directory,
         &built.pages,
         built.records,

@@ -17,7 +17,7 @@ use crate::runtime::reserved_bytes;
 use crate::shardset::Table;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use transparent_filter::{ShardMap, ShardMapEntry};
+use zakura_transparent_private_shared::filter::{ShardMap, ShardMapEntry};
 
 /// One worker as the operator describes it, before shards are assigned.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -49,12 +49,13 @@ pub enum PlanError {
 
 /// Bytes every runtime of `entry` reserves: both tables, every segment.
 pub fn shard_reserved_bytes(entry: &ShardMapEntry) -> Result<u64, PlanError> {
-    let geometry = transparent_shard::layout::by_name(&entry.geometry).ok_or_else(|| {
-        PlanError::Invalid(format!(
-            "shard {} names geometry {}, which this build does not know",
-            entry.shard_id, entry.geometry
-        ))
-    })?;
+    let geometry = zakura_transparent_private_shared::shard::layout::by_name(&entry.geometry)
+        .ok_or_else(|| {
+            PlanError::Invalid(format!(
+                "shard {} names geometry {}, which this build does not know",
+                entry.shard_id, entry.geometry
+            ))
+        })?;
     let mut total = 0u64;
     for (table, segments) in [
         (Table::Directory, entry.directory_segments),
@@ -290,7 +291,7 @@ pub fn plan(
     let assignment = Assignment {
         schema: ASSIGNMENT_SCHEMA.to_string(),
         set: SetIdentity {
-            shard_schema: transparent_shard::manifest::SCHEMA.to_string(),
+            shard_schema: zakura_transparent_private_shared::shard::manifest::SCHEMA.to_string(),
             map_sha256: map_sha256.to_string(),
             network: map.network.clone(),
             genesis_hash: map.genesis_hash.clone(),
@@ -531,7 +532,7 @@ pub fn files_with_runtimes(
             continue;
         }
         let name = entry.file_name().to_string_lossy().into_owned();
-        let manifest: transparent_shard::manifest::ShardManifest =
+        let manifest: zakura_transparent_private_shared::shard::manifest::ShardManifest =
             match std::fs::read(entry.path().join("manifest.json"))
                 .ok()
                 .and_then(|raw| serde_json::from_slice(&raw).ok())
@@ -573,7 +574,7 @@ pub fn files_with_runtimes(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use transparent_filter::SealParameters;
+    use zakura_transparent_private_shared::filter::SealParameters;
 
     fn entry(shard_id: u64, geometry: &str) -> ShardMapEntry {
         ShardMapEntry {

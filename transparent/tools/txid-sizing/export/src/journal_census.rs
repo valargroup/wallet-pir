@@ -12,9 +12,9 @@ use std::{
     path::Path,
     time::Instant,
 };
-use transparent_events::{encode_varint, FeeState, MAX_MONEY};
-use transparent_shard::txid_v1::TransparentDisplayRecord;
-use transparent_shard::txid_v2x::{DisplayInput, CODEC as CODEC_V2X};
+use zakura_transparent_private_shared::events::{encode_varint, FeeState, MAX_MONEY};
+use zakura_transparent_private_server::shard::txid_v1::TransparentDisplayRecord;
+use zakura_transparent_private_server::shard::txid_v2x::{DisplayInput, CODEC as CODEC_V2X};
 
 const THRESHOLDS: [usize; 7] = [128, 192, 256, 384, 512, 768, 1024];
 const ARCHIVE: usize = 40_000;
@@ -147,12 +147,12 @@ impl Shape {
         let mut coincidence = 0;
         for buckets in [1, 4, 16, 64] {
             let b = (lookup_hash % buckets) as usize;
-            let [a, c] = candidate_rows(transparent_events::Txid(id), b as u64, 4096);
+            let [a, c] = candidate_rows(zakura_transparent_private_shared::events::Txid(id), b as u64, 4096);
             if a == c {
                 coincidence |= 1u64 << b;
             }
         }
-        let [a, b] = candidate_rows(transparent_events::Txid(id), archive as u64, 4096);
+        let [a, b] = candidate_rows(zakura_transparent_private_shared::events::Txid(id), archive as u64, 4096);
         Self {
             id,
             sizes,
@@ -669,7 +669,7 @@ pub fn collect(args: &[String]) -> Result<Value, AnyError> {
     lock.try_lock_shared()?;
     let store = EventStore::open_existing(dir)?;
     if store.start_height() != 0
-        || store.genesis_hash() != transparent_filter::MAINNET_GENESIS_DISPLAY
+        || store.genesis_hash() != zakura_transparent_private_shared::filter::MAINNET_GENESIS_DISPLAY
     {
         return Err("census requires mainnet genesis start".into());
     }
@@ -902,8 +902,8 @@ pub fn run(args: &[String]) -> Result<(), AnyError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use transparent_events::{TransactionMetadata, Txid};
-    use transparent_shard::txid::DisplayOutput;
+    use zakura_transparent_private_shared::events::{TransactionMetadata, Txid};
+    use zakura_transparent_private_server::shard::txid::DisplayOutput;
     fn record(id: u8) -> TransparentDisplayRecord {
         TransparentDisplayRecord {
             txid: Txid([id; 32]),
@@ -956,12 +956,12 @@ mod tests {
     #[test]
     fn complete_synthetic_journal_census_and_cross_block_duplicate_refusal() {
         let dir = tempfile::tempdir().unwrap();
-        let hash = transparent_filter::BlockHash::from_display_hex(
-            transparent_filter::MAINNET_GENESIS_DISPLAY,
+        let hash = zakura_transparent_private_shared::filter::BlockHash::from_display_hex(
+            zakura_transparent_private_shared::filter::MAINNET_GENESIS_DISPLAY,
         )
         .unwrap();
         let mut store =
-            EventStore::open(dir.path(), transparent_filter::MAINNET_GENESIS_DISPLAY, 0).unwrap();
+            EventStore::open(dir.path(), zakura_transparent_private_shared::filter::MAINNET_GENESIS_DISPLAY, 0).unwrap();
         let mut coinbase = record(1);
         coinbase.coinbase = true;
         coinbase.metadata.transparent_input_count = 0;
@@ -994,8 +994,8 @@ mod tests {
         wrong[2] = "00".repeat(32);
         assert!(collect(&wrong).is_err());
         let mut store =
-            EventStore::open(dir.path(), transparent_filter::MAINNET_GENESIS_DISPLAY, 0).unwrap();
-        let hash2 = transparent_filter::BlockHash::from_internal_bytes([3; 32]);
+            EventStore::open(dir.path(), zakura_transparent_private_shared::filter::MAINNET_GENESIS_DISPLAY, 0).unwrap();
+        let hash2 = zakura_transparent_private_shared::filter::BlockHash::from_internal_bytes([3; 32]);
         crate::historical_v1::append_sidecar_block(&mut store, 1, hash2, &[coinbase]).unwrap();
         store.commit().unwrap();
         drop(store);
@@ -1011,10 +1011,10 @@ mod tests {
     }
     #[test]
     fn v2x_journal_reports_with_inputs_and_stripped_populations() {
-        use transparent_shard::txid_v2x::TransparentDisplayRecordV2x;
+        use zakura_transparent_private_server::shard::txid_v2x::TransparentDisplayRecordV2x;
         let dir = tempfile::tempdir().unwrap();
-        let hash = transparent_filter::BlockHash::from_display_hex(
-            transparent_filter::MAINNET_GENESIS_DISPLAY,
+        let hash = zakura_transparent_private_shared::filter::BlockHash::from_display_hex(
+            zakura_transparent_private_shared::filter::MAINNET_GENESIS_DISPLAY,
         )
         .unwrap();
         let mut coinbase = record(1);
@@ -1027,7 +1027,7 @@ mod tests {
         let inputs: Vec<_> = [(3u8, 0usize), (4, 200)]
             .into_iter()
             .map(|(tag, script)| DisplayInput {
-                prevout_txid: transparent_events::Txid([tag; 32]),
+                prevout_txid: zakura_transparent_private_shared::events::Txid([tag; 32]),
                 prevout_index: 1,
                 value: 5,
                 script: vec![0x6a; script],
@@ -1044,7 +1044,7 @@ mod tests {
             },
         ];
         let mut store =
-            EventStore::open(dir.path(), transparent_filter::MAINNET_GENESIS_DISPLAY, 0).unwrap();
+            EventStore::open(dir.path(), zakura_transparent_private_shared::filter::MAINNET_GENESIS_DISPLAY, 0).unwrap();
         store
             .append_block_with_display(0, hash, &[], &records)
             .unwrap();
@@ -1118,7 +1118,7 @@ mod tests {
         let v1_dir = tempfile::tempdir().unwrap();
         let mut store = EventStore::open(
             v1_dir.path(),
-            transparent_filter::MAINNET_GENESIS_DISPLAY,
+            zakura_transparent_private_shared::filter::MAINNET_GENESIS_DISPLAY,
             0,
         )
         .unwrap();
@@ -1133,14 +1133,14 @@ mod tests {
     }
     #[test]
     fn incomplete_and_ineligible_sidecar_records_are_refused() {
-        let hash = transparent_filter::BlockHash::from_display_hex(
-            transparent_filter::MAINNET_GENESIS_DISPLAY,
+        let hash = zakura_transparent_private_shared::filter::BlockHash::from_display_hex(
+            zakura_transparent_private_shared::filter::MAINNET_GENESIS_DISPLAY,
         )
         .unwrap();
         for missing_coinbase in [true, false] {
             let dir = tempfile::tempdir().unwrap();
             let mut store =
-                EventStore::open(dir.path(), transparent_filter::MAINNET_GENESIS_DISPLAY, 0)
+                EventStore::open(dir.path(), zakura_transparent_private_shared::filter::MAINNET_GENESIS_DISPLAY, 0)
                     .unwrap();
             let mut excluded = record(2);
             excluded.metadata.transparent_input_count = 0;
@@ -1182,10 +1182,10 @@ mod tests {
             .collect();
         shapes.sort_unstable_by_key(|s| s.id);
         let tables =
-            crate::historical_v1::build(0, &transparent_shard::DECOUPLED_2K_8K, &records).unwrap();
+            crate::historical_v1::build(0, &zakura_transparent_private_shared::shard::DECOUPLED_2K_8K, &records).unwrap();
         crate::historical_v1::verify(
             0,
-            &transparent_shard::DECOUPLED_2K_8K,
+            &zakura_transparent_private_shared::shard::DECOUPLED_2K_8K,
             &tables.directory,
             &tables.pages,
             tables.records,
@@ -1404,9 +1404,9 @@ mod tests {
     #[test]
     fn journal_reader_fixture_orphans_missing_checksum_and_writer_lock() {
         let dir = tempfile::tempdir().unwrap();
-        let hash = transparent_filter::BlockHash::from_internal_bytes([2; 32]);
+        let hash = zakura_transparent_private_shared::filter::BlockHash::from_internal_bytes([2; 32]);
         let mut store =
-            EventStore::open(dir.path(), transparent_filter::MAINNET_GENESIS_DISPLAY, 0).unwrap();
+            EventStore::open(dir.path(), zakura_transparent_private_shared::filter::MAINNET_GENESIS_DISPLAY, 0).unwrap();
         crate::historical_v1::append_sidecar_block(&mut store, 0, hash, &[record(1)]).unwrap();
         store.commit().unwrap();
         let read_lock = File::open(dir.path().join("writer.lock")).unwrap();
@@ -1422,7 +1422,7 @@ mod tests {
         );
         crate::historical_v1::write_sidecar(
             dir.path(),
-            transparent_filter::BlockHash::from_internal_bytes([3; 32]),
+            zakura_transparent_private_shared::filter::BlockHash::from_internal_bytes([3; 32]),
             &[record(4)],
         )
         .unwrap();

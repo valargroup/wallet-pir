@@ -21,16 +21,16 @@ use std::path::Path;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tower::ServiceExt;
-use transparent_events::{ReceiveEvent, TransparentEvent, Txid};
-use transparent_filter::{BlockHash, ScriptBytes, SealParameters, ShardMap};
+use zakura_transparent_private_shared::events::{ReceiveEvent, TransparentEvent, Txid};
+use zakura_transparent_private_shared::filter::{BlockHash, ScriptBytes, SealParameters, ShardMap};
 #[path = "support/revision.rs"]
 mod revision;
-use transparent_shard::layout::{Geometry, DECOUPLED_2K_8K};
-use transparent_shard::manifest::ShardManifest;
 use transparent_shard_server::metrics::Metrics;
 use transparent_shard_server::runtime::{reserved_bytes, CacheError, RuntimeCache, SharedParams};
 use transparent_shard_server::service::{router, ServiceConfig, ServiceState};
 use transparent_shard_server::shardset::{ShardSet, Table, TableRef, DEFAULT_RETAIN_REVISIONS};
+use zakura_transparent_private_shared::shard::layout::{Geometry, DECOUPLED_2K_8K};
+use zakura_transparent_private_shared::shard::manifest::ShardManifest;
 
 /// The table of a kind in these single-page-shard fixtures.
 fn tref(table: Table) -> TableRef {
@@ -44,7 +44,7 @@ fn tref(table: Table) -> TableRef {
 /// several times in a test.
 const GEOMETRY: Geometry = DECOUPLED_2K_8K;
 
-const GENESIS: &str = transparent_filter::MAINNET_GENESIS_DISPLAY;
+const GENESIS: &str = zakura_transparent_private_shared::filter::MAINNET_GENESIS_DISPLAY;
 const FIRST: u64 = 3_428_143;
 
 fn genesis() -> BlockHash {
@@ -138,9 +138,9 @@ fn write_map_geometry(
 ) -> ShardMap {
     let map = ShardMap {
         genesis_hash: GENESIS.to_string(),
-        network: transparent_filter::NETWORK.to_string(),
-        profile: transparent_filter::RANGE_PROFILE.to_string(),
-        range_envelope_version: transparent_filter::RANGE_ENVELOPE_VERSION,
+        network: zakura_transparent_private_shared::filter::NETWORK.to_string(),
+        profile: zakura_transparent_private_shared::filter::RANGE_PROFILE.to_string(),
+        range_envelope_version: zakura_transparent_private_shared::filter::RANGE_ENVELOPE_VERSION,
         start_height: FIRST,
         seal: std::collections::BTreeMap::from([(
             geometry.name.to_string(),
@@ -150,7 +150,7 @@ fn write_map_geometry(
                 max_txids: 0,
             },
         )]),
-        shards: vec![transparent_filter::ShardMapEntry {
+        shards: vec![zakura_transparent_private_shared::filter::ShardMapEntry {
             shard_id: 0,
             geometry: geometry.name.to_string(),
             start_height: FIRST,
@@ -238,7 +238,8 @@ fn unsupported_map_metadata_is_rejected_before_revision_loading_or_reuse() {
         if unknown_profile {
             map.profile = "unregistered-range-profile".into();
         } else {
-            map.range_envelope_version = transparent_filter::RANGE_ENVELOPE_VERSION + 1;
+            map.range_envelope_version =
+                zakura_transparent_private_shared::filter::RANGE_ENVELOPE_VERSION + 1;
         }
         map.check_shape().unwrap();
         std::fs::write(

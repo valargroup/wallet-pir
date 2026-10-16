@@ -5,12 +5,14 @@ use crate::events::EventStore;
 use crate::publication::Journal;
 use sha2::{Digest, Sha256};
 use std::path::Path;
-use transparent_events::{FeeState, TransactionMetadata, Txid};
-use transparent_filter::BlockHash;
-use transparent_shard::display::{DisplaySealParams, TXID_2K8};
-use transparent_shard::txid::{DisplayOutput, DisplayRecord};
-use transparent_shard::txid_v1::TransparentDisplayRecord;
-use transparent_shard::txid_v2x::{DisplayInput, TransparentDisplayRecordV2x};
+use zakura_transparent_private_server::shard::txid::{DisplayOutput, DisplayRecord};
+use zakura_transparent_private_server::shard::txid_v1::TransparentDisplayRecord;
+use zakura_transparent_private_server::shard::txid_v2x::{
+    DisplayInput, TransparentDisplayRecordV2x,
+};
+use zakura_transparent_private_shared::events::{FeeState, TransactionMetadata, Txid};
+use zakura_transparent_private_shared::filter::BlockHash;
+use zakura_transparent_private_shared::shard::display::{DisplaySealParams, TXID_2K8};
 
 /// The published entry of a non-coinbase transaction spending one P2PKH
 /// output into `outputs` P2PKH outputs; more than two set the entry's
@@ -121,7 +123,7 @@ pub(crate) fn layout(store: &impl Journal, start: u64, max_archive_shards: u64) 
         geometry: TXID_2K8.name.to_string(),
         seal: params(),
         max_archive_shards,
-        network: transparent_filter::NETWORK.to_string(),
+        network: zakura_transparent_private_shared::filter::NETWORK.to_string(),
         genesis_hash: store.genesis_hash().to_string(),
         start_height: start,
         base_parent: store

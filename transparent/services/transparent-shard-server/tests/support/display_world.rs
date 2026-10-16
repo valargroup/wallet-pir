@@ -14,16 +14,17 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use tower::ServiceExt;
-use transparent_events::Txid;
-use transparent_shard::display::{DisplaySealParams, TXID_2K8};
-use transparent_shard::txid::{DisplayEntry, DisplayFacts, DisplayOutput, DisplayRecord, Tag};
 use transparent_shard_server::display::live::{DisplayCommand, DisplayLive, DisplayPublication};
 use transparent_shard_server::display::service::DisplayRuntime;
 use transparent_shard_server::display::synth::{self, Published, ShardSpec};
 use transparent_shard_server::display::DisplayRole;
 use transparent_shard_server::service::{ReadinessMode, ServiceConfig};
-pub use transparent_txid_client::Provenance;
-use transparent_txid_client::{
+use zakura_transparent_private_server::shard::txid::{DisplayFacts, DisplayOutput, DisplayRecord};
+use zakura_transparent_private_shared::events::Txid;
+use zakura_transparent_private_shared::shard::display::{DisplaySealParams, TXID_2K8};
+use zakura_transparent_private_shared::shard::txid::{DisplayEntry, Tag};
+pub use zakura_transparent_private_wallet::txid_client::Provenance;
+use zakura_transparent_private_wallet::txid_client::{
     Method, ProfileCache, Route, TransportError, TxidDisplayClient, TxidError, TxidLookup,
     TxidReply, TxidRequest, TxidTransport,
 };

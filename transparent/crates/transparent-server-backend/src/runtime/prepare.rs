@@ -157,7 +157,7 @@ mod tests {
     use sha2::{Digest, Sha256};
     use std::fs;
     use std::os::unix::fs::MetadataExt;
-    use transparent_shard::layout::DECOUPLED_2K_8K;
+    use zakura_transparent_private_shared::shard::layout::DECOUPLED_2K_8K;
 
     fn segment(dir: &std::path::Path, seed: u8) -> (SharedParams, SegmentSource) {
         let shared = SharedParams::build(&DECOUPLED_2K_8K, Table::Pages).unwrap();

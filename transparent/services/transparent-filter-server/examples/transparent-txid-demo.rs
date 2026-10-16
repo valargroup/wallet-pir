@@ -24,15 +24,11 @@ use std::{
     time::{Duration, Instant},
 };
 use tower::ServiceExt;
-use transparent_events::Txid;
-use transparent_filter::{BlockHash, MAINNET_GENESIS_DISPLAY};
 use transparent_filter_server::{
     events::EventStore,
     extract::{index, read_transaction, BoxError, FetchedBlock, Output, PreviousOutputs},
     txid_display::publisher::{publish_shard, write_candidate, DisplayRoot, ShardSpec},
 };
-use transparent_shard::display::{self, DisplaySealParams, DisplayTable, TXID_2K8};
-use transparent_shard::txid::{AddressKind, DisplayEntry, DisplayRecord, Tag};
 use transparent_shard_server::{
     display::{
         live::{DisplayCommand, DisplayLive, DisplayPublication},
@@ -41,7 +37,15 @@ use transparent_shard_server::{
     },
     service::{ReadinessMode, ServiceConfig},
 };
-use transparent_txid_client::{
+use zakura_transparent_private_server::shard::txid::DisplayRecord;
+use zakura_transparent_private_shared::events::Txid;
+use zakura_transparent_private_shared::filter::{BlockHash, MAINNET_GENESIS_DISPLAY};
+use zakura_transparent_private_shared::shard::display::{
+    self, DisplaySealParams, DisplayTable, TXID_2K8,
+};
+use zakura_transparent_private_shared::shard::txid::{AddressKind, DisplayEntry, Tag};
+use zakura_transparent_private_wallet::native::TableQuery as _;
+use zakura_transparent_private_wallet::txid_client::{
     Method, Placement, Route, TransportError, TxidDisplayClient, TxidLookup, TxidReply,
     TxidRequest, TxidTransport,
 };
@@ -309,7 +313,7 @@ fn packing(directory: &Path) -> Result<Vec<Value>, Error> {
         let mut entries = 0usize;
         let mut occupied = 0usize;
         for row in bytes.chunks_exact(TXID_2K8.directory_row_bytes) {
-            let n = transparent_shard::txid::row_entries(row)?.len();
+            let n = zakura_transparent_private_shared::shard::txid::row_entries(row)?.len();
             entries += n;
             occupied += usize::from(n > 0);
         }
@@ -436,7 +440,7 @@ async fn run_range(
         geometry: TXID_2K8.name.to_string(),
         seal,
         max_archive_shards: 4,
-        network: transparent_filter::NETWORK.to_string(),
+        network: zakura_transparent_private_shared::filter::NETWORK.to_string(),
         genesis_hash: store.genesis_hash().to_string(),
         start_height: blocks[0].height,
         base_parent: parent.to_display_hex(),
@@ -671,8 +675,8 @@ async fn run_range(
                 return Err("unsupported capability dispatched a lookup".into());
             }
             // A query bound to another revision is refused.
-            let profile = transparent_native::TableProfile::new(
-                transparent_shard::display::NATIVE_SCHEMA,
+            let profile = zakura_transparent_private_shared::native::TableProfile::new(
+                zakura_transparent_private_shared::shard::display::NATIVE_SCHEMA,
                 TXID_2K8.name,
                 "txdirectory",
                 TXID_2K8.directory_rows,
@@ -782,7 +786,7 @@ async fn main() -> Result<(), Error> {
     let report = json!({
         "format": "transparent-txid-native-demo-v2",
         "passed": true,
-        "codec": transparent_shard::txid::CODEC,
+        "codec": zakura_transparent_private_shared::shard::txid::CODEC,
         "source_sha": source_sha(),
         "source_dirty": !std::process::Command::new("git").args(["status", "--porcelain"]).output()?.stdout.is_empty(),
         "fixture_source_sha": fixture.source_sha,

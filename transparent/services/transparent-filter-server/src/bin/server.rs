@@ -31,7 +31,7 @@ struct Cli {
     #[arg(long, default_value = "./transparent-filter-data")]
     data_dir: PathBuf,
     /// First height to publish a filter for. Defaults to Ironwood activation.
-    #[arg(long, default_value_t = transparent_filter::START_HEIGHT)]
+    #[arg(long, default_value_t = zakura_transparent_private_shared::filter::START_HEIGHT)]
     start_height: u64,
     /// Transactions retained in the previous-output cache.
     #[arg(long, default_value_t = transparent_filter_server::prevout::DEFAULT_CACHE_OUTPUTS)]
@@ -73,7 +73,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             "{}",
             serde_json::json!({
                 "shard_dir": dir,
-                "schema": transparent_shard::manifest::SCHEMA,
+                "schema": zakura_transparent_private_shared::shard::manifest::SCHEMA,
                 "profile": map.profile,
                 "network": map.network,
                 "genesis_hash": map.genesis_hash,
@@ -94,16 +94,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Chain identity comes from the node, once, and is then pinned in the
     // store: a store built against one chain must never be served as another.
     let genesis_hash = zakura.block_hash_display(0).await?;
-    if genesis_hash != transparent_filter::MAINNET_GENESIS_DISPLAY {
+    if genesis_hash != zakura_transparent_private_shared::filter::MAINNET_GENESIS_DISPLAY {
         tracing::warn!(
             %genesis_hash,
-            expected = transparent_filter::MAINNET_GENESIS_DISPLAY,
+            expected = zakura_transparent_private_shared::filter::MAINNET_GENESIS_DISPLAY,
             "node is not on Zcash mainnet; the store will be pinned to this chain"
         );
     }
     let store = FilterStore::open(
         &cli.data_dir,
-        transparent_filter::PROFILE,
+        zakura_transparent_private_shared::filter::PROFILE,
         &genesis_hash,
         cli.start_height,
     )?;

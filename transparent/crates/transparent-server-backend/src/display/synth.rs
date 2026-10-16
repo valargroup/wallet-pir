@@ -9,13 +9,16 @@
 use super::set::{index_file, MANIFEST_FILE, MAP_FILE, RECENT_MAP_FILE};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
-use transparent_events::Txid;
-use transparent_shard::display::{
-    build_shard, DisplayManifest, DisplayMap, DisplayMapEntry, DisplaySealParams, ManifestHeader,
-    DISPLAY_SCHEMA,
+use zakura_transparent_private_server::shard::display::build_shard;
+use zakura_transparent_private_server::shard::display::DisplayManifestBuild as _;
+use zakura_transparent_private_server::shard::display::DisplayMapSplit as _;
+use zakura_transparent_private_server::shard::txid::{DisplayFacts, DisplayOutput};
+use zakura_transparent_private_shared::events::Txid;
+use zakura_transparent_private_shared::shard::display::{
+    DisplayManifest, DisplayMap, DisplayMapEntry, DisplaySealParams, ManifestHeader, DISPLAY_SCHEMA,
 };
-use transparent_shard::layout::Geometry;
-use transparent_shard::txid::{DisplayEntry, DisplayFacts, DisplayOutput};
+use zakura_transparent_private_shared::shard::layout::Geometry;
+use zakura_transparent_private_shared::shard::txid::DisplayEntry;
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
 

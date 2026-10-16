@@ -22,15 +22,18 @@ use crate::events::EventStore;
 use clap::Parser;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
-use transparent_filter::{filter_hash, BlockHash, ScriptBytes};
+use zakura_transparent_private_shared::filter::{filter_hash, BlockHash, ScriptBytes};
 
-use transparent_shard::build::{Built, BuiltChild, BuiltDirectory, ShardStream};
-use transparent_shard::layout::{by_name as geometry_by_name, Geometry};
-use transparent_shard::manifest::{
-    ManifestLayout, ManifestOccupancy, ManifestSeal, PageChild, PublishedRevision, ShardManifest,
-    TableGeometry, SCHEMA,
+use zakura_transparent_private_server::shard::build::{
+    Built, BuiltChild, BuiltDirectory, ShardStream,
 };
-use transparent_shard::seal::{DecoupledPolicy, SealedDirectory};
+use zakura_transparent_private_server::shard::manifest::PublishedRevision;
+use zakura_transparent_private_server::shard::seal::{DecoupledPolicy, SealedDirectory};
+use zakura_transparent_private_shared::shard::layout::{by_name as geometry_by_name, Geometry};
+use zakura_transparent_private_shared::shard::manifest::{
+    ManifestLayout, ManifestOccupancy, ManifestSeal, PageChild, ShardManifest, TableGeometry,
+    SCHEMA,
+};
 
 pub type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
@@ -102,7 +105,7 @@ pub struct PublishOptions {
     /// every manifest. Changing it changes every filter, so a publication
     /// under a new profile cannot continue a previous one and must be written
     /// into a directory of its own.
-    #[arg(long, default_value = transparent_filter::RANGE_PROFILE)]
+    #[arg(long, default_value = zakura_transparent_private_shared::filter::RANGE_PROFILE)]
     pub range_profile: String,
 }
 
@@ -175,7 +178,7 @@ pub fn publish(
     cli: &PublishOptions,
     store: &impl Journal,
     base_parent: BlockHash,
-) -> Result<transparent_filter::ShardMap, BoxError> {
+) -> Result<zakura_transparent_private_shared::filter::ShardMap, BoxError> {
     publish_with(cli, store, base_parent, &DecoupledPolicy::for_geometry)
 }
 
@@ -188,7 +191,7 @@ pub fn publish_with(
     store: &impl Journal,
     base_parent: BlockHash,
     policy_of: &dyn Fn(&Geometry) -> DecoupledPolicy,
-) -> Result<transparent_filter::ShardMap, BoxError> {
+) -> Result<zakura_transparent_private_shared::filter::ShardMap, BoxError> {
     if store.journal_version() != 3 {
         return Err("v12 publication requires a v3 journal with transaction metadata".into());
     }
@@ -211,7 +214,7 @@ pub fn publish_with(
         None => journal_end,
     };
 
-    if transparent_filter::range_profile(&cli.range_profile).is_none() {
+    if zakura_transparent_private_shared::filter::range_profile(&cli.range_profile).is_none() {
         return Err(format!("unknown range profile {:?}", cli.range_profile).into());
     }
     let recent: &'static Geometry = geometry_by_name(&cli.recent_geometry)
@@ -269,7 +272,7 @@ pub fn publish_with(
         ),
     }
 
-    let mut entries: Vec<transparent_filter::ShardMapEntry> = Vec::new();
+    let mut entries: Vec<zakura_transparent_private_shared::filter::ShardMapEntry> = Vec::new();
     let mut parent_manifest_digest = String::new();
     let mut parent_block_hash = base_parent;
 
@@ -277,9 +280,12 @@ pub fn publish_with(
     // The map from a previous run, if any. It is what tells a republished tail
     // which revision it supersedes; without it a growing tail would look like a
     // first publication every time.
-    let mut previous: std::collections::BTreeMap<u64, transparent_filter::ShardMapEntry> =
-        match std::fs::read(previous_dir.join("shards.json")) {
-            Ok(raw) => serde_json::from_slice::<transparent_filter::ShardMap>(&raw)
+    let mut previous: std::collections::BTreeMap<
+        u64,
+        zakura_transparent_private_shared::filter::ShardMapEntry,
+    > = match std::fs::read(previous_dir.join("shards.json")) {
+        Ok(raw) => {
+            serde_json::from_slice::<zakura_transparent_private_shared::filter::ShardMap>(&raw)
                 // A map this build cannot read is a set published under another
                 // schema. Publishing beside it would leave two incompatible
                 // sets in one directory, which the loader refuses to serve, so
@@ -302,10 +308,11 @@ pub fn publish_with(
                 .shards
                 .into_iter()
                 .map(|entry| (entry.shard_id, entry))
-                .collect(),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Default::default(),
-            Err(error) => return Err(error.into()),
-        };
+                .collect()
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Default::default(),
+        Err(error) => return Err(error.into()),
+    };
 
     // Preserve sealed directory shards, with every page shard they hold, only
     // while their chain endpoints agree. A changed sealed suffix belongs to a
@@ -382,7 +389,9 @@ pub fn publish_with(
     let terminal = |height: u64| store.block_at(height).map(|block| block.block_hash);
     let publish_built = |built: Vec<Built>,
                          children: &mut Vec<PageChild>,
-                         entries: &mut Vec<transparent_filter::ShardMapEntry>,
+                         entries: &mut Vec<
+        zakura_transparent_private_shared::filter::ShardMapEntry,
+    >,
                          parent_block_hash: &mut BlockHash,
                          parent_manifest_digest: &mut String|
      -> Result<(), BoxError> {
@@ -468,11 +477,11 @@ pub fn publish_with(
         std::fs::remove_dir_all(&staging)?;
     }
 
-    let map = transparent_filter::ShardMap {
+    let map = zakura_transparent_private_shared::filter::ShardMap {
         genesis_hash: store.genesis_hash().to_string(),
-        network: transparent_filter::NETWORK.to_string(),
+        network: zakura_transparent_private_shared::filter::NETWORK.to_string(),
         profile: cli.range_profile.clone(),
-        range_envelope_version: transparent_filter::RANGE_ENVELOPE_VERSION,
+        range_envelope_version: zakura_transparent_private_shared::filter::RANGE_ENVELOPE_VERSION,
         start_height: first,
         // One entry per geometry the set actually used. A single-tier set
         // publishes one; the two-tier set publishes both, because the two were
@@ -523,7 +532,7 @@ pub fn publish_with(
             "tool_sha": cli.source_sha,
             "data_dir": cli.data_dir,
             "output": cli.output,
-            "network": transparent_filter::NETWORK,
+            "network": zakura_transparent_private_shared::filter::NETWORK,
             "genesis_hash": store.genesis_hash(),
             "shard_schema": SCHEMA,
             "journal": {
@@ -572,8 +581,10 @@ pub fn publish_with(
 }
 
 /// What the map publishes about a policy.
-fn seal_parameters(policy: &DecoupledPolicy) -> transparent_filter::SealParameters {
-    transparent_filter::SealParameters {
+fn seal_parameters(
+    policy: &DecoupledPolicy,
+) -> zakura_transparent_private_shared::filter::SealParameters {
+    zakura_transparent_private_shared::filter::SealParameters {
         max_scripts: policy.scripts.target,
         max_page_rows: policy.page_rows.target,
         max_txids: 0,
@@ -584,7 +595,7 @@ fn seal_parameters(policy: &DecoupledPolicy) -> transparent_filter::SealParamete
 pub fn page_segment_file(child: u32, segment: usize) -> String {
     format!(
         "{}.{segment}.bin",
-        transparent_shard::manifest::pages_table(child)
+        zakura_transparent_private_shared::shard::manifest::pages_table(child)
     )
 }
 
@@ -629,7 +640,10 @@ fn stage_child(
 fn publish_directory(
     cli: &PublishOptions,
     store: &impl Journal,
-    previous: &std::collections::BTreeMap<u64, transparent_filter::ShardMapEntry>,
+    previous: &std::collections::BTreeMap<
+        u64,
+        zakura_transparent_private_shared::filter::ShardMapEntry,
+    >,
     previous_dir: &Path,
     staging: &Path,
     built: BuiltDirectory,
@@ -638,7 +652,7 @@ fn publish_directory(
     policy: DecoupledPolicy,
     parent_block_hash: BlockHash,
     parent_manifest_digest: &str,
-) -> Result<transparent_filter::ShardMapEntry, BoxError> {
+) -> Result<zakura_transparent_private_shared::filter::ShardMapEntry, BoxError> {
     let geometry = built.geometry;
     let terminal = store
         .block_at(built.end_height)
@@ -673,7 +687,7 @@ fn publish_directory(
         schema: SCHEMA.to_string(),
         profile: cli.range_profile.clone(),
         geometry: geometry.name.to_string(),
-        network: transparent_filter::NETWORK.to_string(),
+        network: zakura_transparent_private_shared::filter::NETWORK.to_string(),
         genesis_hash: store.genesis_hash().to_string(),
         shard_id: built.shard_id,
         start_height: built.start_height,
@@ -711,7 +725,7 @@ fn publish_directory(
             .choice
             .as_ref()
             .filter(|_| with_choice)
-            .map(transparent_shard::manifest::encode_directory_choice),
+            .map(zakura_transparent_private_shared::shard::manifest::encode_directory_choice),
     };
 
     // A shard already in the previous map is being republished. Building it
@@ -810,7 +824,7 @@ fn publish_directory(
         },
     );
 
-    Ok(transparent_filter::ShardMapEntry {
+    Ok(zakura_transparent_private_shared::filter::ShardMapEntry {
         shard_id: built.shard_id,
         geometry: geometry.name.to_string(),
         start_height: built.start_height,
@@ -853,7 +867,10 @@ pub trait Journal {
     fn display_at(
         &self,
         _height: u64,
-    ) -> Result<Vec<transparent_shard::txid::DisplayRecord>, crate::events::EventStoreError> {
+    ) -> Result<
+        Vec<zakura_transparent_private_server::shard::txid::DisplayRecord>,
+        crate::events::EventStoreError,
+    > {
         Err(crate::events::EventStoreError::Invariant(
             "journal has no display capability".into(),
         ))
@@ -867,7 +884,12 @@ pub trait Journal {
         &self,
         height: u64,
     ) -> Result<
-        Option<Vec<(ScriptBytes, transparent_events::TransparentEvent)>>,
+        Option<
+            Vec<(
+                ScriptBytes,
+                zakura_transparent_private_shared::events::TransparentEvent,
+            )>,
+        >,
         crate::events::EventStoreError,
     >;
 }
@@ -878,7 +900,10 @@ impl Journal for EventStore {
     fn display_at(
         &self,
         height: u64,
-    ) -> Result<Vec<transparent_shard::txid::DisplayRecord>, crate::events::EventStoreError> {
+    ) -> Result<
+        Vec<zakura_transparent_private_server::shard::txid::DisplayRecord>,
+        crate::events::EventStoreError,
+    > {
         self.display_at(height)
     }
     fn genesis_hash(&self) -> &str {
@@ -900,7 +925,12 @@ impl Journal for EventStore {
         &self,
         height: u64,
     ) -> Result<
-        Option<Vec<(ScriptBytes, transparent_events::TransparentEvent)>>,
+        Option<
+            Vec<(
+                ScriptBytes,
+                zakura_transparent_private_shared::events::TransparentEvent,
+            )>,
+        >,
         crate::events::EventStoreError,
     > {
         self.events_at(height)
@@ -917,7 +947,7 @@ impl Journal for EventStore {
 fn link_superseded_tails(
     previous: &Path,
     output: &Path,
-    shards: &[transparent_filter::ShardMapEntry],
+    shards: &[zakura_transparent_private_shared::filter::ShardMapEntry],
     store: &impl Journal,
 ) -> Result<(), BoxError> {
     if shards.is_empty() {
@@ -997,7 +1027,7 @@ trait ValidatePrevious {
     where
         Self: Sized;
 }
-impl ValidatePrevious for transparent_filter::ShardMap {
+impl ValidatePrevious for zakura_transparent_private_shared::filter::ShardMap {
     fn pipe_validate(
         self,
         store: &impl Journal,
@@ -1010,7 +1040,7 @@ impl ValidatePrevious for transparent_filter::ShardMap {
         self.validate_supported()?;
         if self.genesis_hash != store.genesis_hash()
             || self.start_height != store.start_height()
-            || self.network != transparent_filter::NETWORK
+            || self.network != zakura_transparent_private_shared::filter::NETWORK
             || self.profile != range_profile
         {
             return Err("previous publication identity mismatch".into());
@@ -1056,21 +1086,23 @@ mod tests {
             record: None,
             source_sha: None,
             directory_choice: DirectoryChoice::Off,
-            range_profile: transparent_filter::RANGE_PROFILE.to_string(),
+            range_profile: zakura_transparent_private_shared::filter::RANGE_PROFILE.to_string(),
         }
     }
     fn block(store: &mut EventStore, h: u64, tag: u8) {
-        use transparent_events::{ReceiveEvent, TransparentEvent};
+        use zakura_transparent_private_shared::events::{ReceiveEvent, TransparentEvent};
         let events = vec![(
             ScriptBytes::new(vec![0x51, tag]),
             TransparentEvent::Receive(ReceiveEvent {
-                metadata: Some(transparent_events::TransactionMetadata {
-                    fee: transparent_events::FeeState::Exact(0),
-                    transparent_input_count: 1,
-                    has_shielded_components: false,
-                }),
+                metadata: Some(
+                    zakura_transparent_private_shared::events::TransactionMetadata {
+                        fee: zakura_transparent_private_shared::events::FeeState::Exact(0),
+                        transparent_input_count: 1,
+                        has_shielded_components: false,
+                    },
+                ),
                 height: h as u32,
-                txid: transparent_events::Txid([tag; 32]),
+                txid: zakura_transparent_private_shared::events::Txid([tag; 32]),
                 transaction_index: 0,
                 output_index: 0,
                 value: 100,
@@ -1104,7 +1136,9 @@ mod tests {
         assert_eq!(before.shards[0], after.shards[0]);
         assert_eq!(after.shards[1].revision, 1);
         assert_eq!(after.shards[1].end_height, 4);
-        let read = |dir: &Path, e: &transparent_filter::ShardMapEntry| -> ShardManifest {
+        let read = |dir: &Path,
+                    e: &zakura_transparent_private_shared::filter::ShardMapEntry|
+         -> ShardManifest {
             serde_json::from_slice(
                 &std::fs::read(dir.join(&e.manifest_digest).join("manifest.json")).unwrap(),
             )
@@ -1123,7 +1157,7 @@ mod tests {
     /// A block where a few busy scripts receive several times, so events are
     /// pushed out of the directory every block, and a new script appears.
     fn busy_block(store: &mut EventStore, h: u64, fork: u8) {
-        use transparent_events::{ReceiveEvent, TransparentEvent};
+        use zakura_transparent_private_shared::events::{ReceiveEvent, TransparentEvent};
         let mut events = Vec::new();
         for k in 0..4u8 {
             let tag = if k == 3 { 100 + (h % 150) as u8 } else { k };
@@ -1133,13 +1167,15 @@ mod tests {
             events.push((
                 ScriptBytes::new(vec![0x51, tag]),
                 TransparentEvent::Receive(ReceiveEvent {
-                    metadata: Some(transparent_events::TransactionMetadata {
-                        fee: transparent_events::FeeState::Exact(0),
-                        transparent_input_count: 1,
-                        has_shielded_components: false,
-                    }),
+                    metadata: Some(
+                        zakura_transparent_private_shared::events::TransactionMetadata {
+                            fee: zakura_transparent_private_shared::events::FeeState::Exact(0),
+                            transparent_input_count: 1,
+                            has_shielded_components: false,
+                        },
+                    ),
                     height: h as u32,
-                    txid: transparent_events::Txid(txid),
+                    txid: zakura_transparent_private_shared::events::Txid(txid),
                     transaction_index: u16::from(k),
                     output_index: 0,
                     value: 100,
@@ -1159,7 +1195,7 @@ mod tests {
     /// several directory shards, by page rows, by the child limit and by
     /// directory bytes.
     fn small(geometry: &Geometry) -> DecoupledPolicy {
-        use transparent_shard::seal::Limit;
+        use zakura_transparent_private_server::shard::seal::Limit;
         DecoupledPolicy {
             scripts: Limit::new(60, 400).unwrap(),
             directory_bytes: Limit::new(2_500, 40_000).unwrap(),
@@ -1178,7 +1214,10 @@ mod tests {
         }
     }
 
-    fn read_manifest(dir: &Path, e: &transparent_filter::ShardMapEntry) -> ShardManifest {
+    fn read_manifest(
+        dir: &Path,
+        e: &zakura_transparent_private_shared::filter::ShardMapEntry,
+    ) -> ShardManifest {
         serde_json::from_slice(
             &std::fs::read(dir.join(&e.manifest_digest).join("manifest.json")).unwrap(),
         )
@@ -1217,7 +1256,7 @@ mod tests {
                 // last candidate published is the same file in this one.
                 let tail = published.shards.last().unwrap();
                 let grown = read_manifest(&output, tail);
-                let old_map: transparent_filter::ShardMap =
+                let old_map: zakura_transparent_private_shared::filter::ShardMap =
                     serde_json::from_slice(&std::fs::read(before.join("shards.json")).unwrap())
                         .unwrap();
                 if let Some(old) = old_map.shards.get(tail.shard_id as usize) {
@@ -1343,7 +1382,9 @@ mod tests {
             options.directory_choice = choice;
             options
         };
-        let read = |dir: &Path, e: &transparent_filter::ShardMapEntry| -> ShardManifest {
+        let read = |dir: &Path,
+                    e: &zakura_transparent_private_shared::filter::ShardMapEntry|
+         -> ShardManifest {
             serde_json::from_slice(
                 &std::fs::read(dir.join(&e.manifest_digest).join("manifest.json")).unwrap(),
             )
@@ -1406,20 +1447,30 @@ mod tests {
 
         let v2 = root.path().join("v2");
         let mut fresh = options(&v2, None);
-        fresh.range_profile = transparent_filter::RANGE_PROFILE_V2.name.into();
+        fresh.range_profile = zakura_transparent_private_shared::filter::RANGE_PROFILE_V2
+            .name
+            .into();
         let map = publish(&fresh, &journal, zero).unwrap();
-        assert_eq!(map.profile, transparent_filter::RANGE_PROFILE_V2.name);
+        assert_eq!(
+            map.profile,
+            zakura_transparent_private_shared::filter::RANGE_PROFILE_V2.name
+        );
         for entry in &map.shards {
             let manifest: ShardManifest = serde_json::from_slice(
                 &std::fs::read(v2.join(&entry.manifest_digest).join("manifest.json")).unwrap(),
             )
             .unwrap();
-            assert_eq!(manifest.profile, transparent_filter::RANGE_PROFILE_V2.name);
+            assert_eq!(
+                manifest.profile,
+                zakura_transparent_private_shared::filter::RANGE_PROFILE_V2.name
+            );
         }
         transparent_server_backend::shardset::ShardSet::open(&v2, 3).unwrap();
 
         let mut continued = options(&root.path().join("v2-continued"), Some(&v1));
-        continued.range_profile = transparent_filter::RANGE_PROFILE_V2.name.into();
+        continued.range_profile = zakura_transparent_private_shared::filter::RANGE_PROFILE_V2
+            .name
+            .into();
         assert!(publish(&continued, &journal, zero).is_err());
 
         let mut unknown = options(&root.path().join("unknown"), None);
@@ -1431,7 +1482,7 @@ mod tests {
     fn link_superseded_tails_per_shard(
         previous: &Path,
         output: &Path,
-        shards: &[transparent_filter::ShardMapEntry],
+        shards: &[zakura_transparent_private_shared::filter::ShardMapEntry],
         store: &impl Journal,
     ) {
         for entry in shards {
@@ -1648,7 +1699,7 @@ mod tests {
         assert_eq!(replacement.shards[0].revision, 0);
         transparent_server_backend::shardset::ShardSet::open(&b, 3).unwrap();
         // Original immutable artifact remains exactly the original map.
-        let old: transparent_filter::ShardMap =
+        let old: zakura_transparent_private_shared::filter::ShardMap =
             serde_json::from_slice(&std::fs::read(a.join("shards.json")).unwrap()).unwrap();
         assert_eq!(old, before);
     }

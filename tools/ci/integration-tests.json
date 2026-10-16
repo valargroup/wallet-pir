@@ -46,12 +46,6 @@
       "store"
     ]
   },
-  "transparent-blocks": {
-    "fast": [],
-    "full": [
-      "recovery"
-    ]
-  },
   "transparent-filter-server": {
     "fast": [],
     "full": [

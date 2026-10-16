@@ -22,10 +22,10 @@
 use clap::Parser;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::PathBuf;
-use transparent_events::TransparentEvent;
-use transparent_filter::ScriptBytes;
 use transparent_filter_server::events::EventStore;
 use transparent_filter_server::zakura::NodeClient;
+use zakura_transparent_private_shared::events::TransparentEvent;
+use zakura_transparent_private_shared::filter::ScriptBytes;
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
@@ -121,9 +121,13 @@ fn metadata_line(event: &TransparentEvent) -> Option<(String, u32, bool)> {
     event.metadata().map(|m| {
         (
             match m.fee {
-                transparent_events::FeeState::Exact(fee) => format!("exact:{fee}"),
-                transparent_events::FeeState::Unknown => "unknown".into(),
-                transparent_events::FeeState::NotApplicable => "not-applicable".into(),
+                zakura_transparent_private_shared::events::FeeState::Exact(fee) => {
+                    format!("exact:{fee}")
+                }
+                zakura_transparent_private_shared::events::FeeState::Unknown => "unknown".into(),
+                zakura_transparent_private_shared::events::FeeState::NotApplicable => {
+                    "not-applicable".into()
+                }
             },
             m.transparent_input_count,
             m.has_shielded_components,
@@ -386,7 +390,7 @@ async fn node_lines(
             "not-applicable".to_string()
         } else {
             let fee = u64::try_from(input_value - output_value + tx.shielded_balance)?;
-            if fee > transparent_events::MAX_MONEY {
+            if fee > zakura_transparent_private_shared::events::MAX_MONEY {
                 return Err("oracle fee exceeds monetary bound".into());
             }
             format!("exact:{fee}")

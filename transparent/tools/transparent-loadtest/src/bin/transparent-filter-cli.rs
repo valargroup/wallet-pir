@@ -8,9 +8,12 @@
 
 use clap::{Parser, Subcommand};
 use std::io::{BufRead, Write};
-use transparent_filter::{
-    build_filter, filter_hash, http::HttpTransport, sync_range, validate_filter, BlockHash,
-    ChainMap, FilterLimits, RangeRequest, ScriptBytes,
+use zakura_transparent_private_server::filter::build_filter;
+use zakura_transparent_private_shared::filter::{
+    filter_hash, validate_filter, BlockHash, FilterLimits, ScriptBytes,
+};
+use zakura_transparent_private_wallet::filter::{
+    http::HttpTransport, sync_range, ChainMap, RangeRequest,
 };
 
 #[derive(Parser)]
@@ -197,7 +200,7 @@ fn run() -> Result<(), String> {
                         "filter": hex::encode(filter.as_slice()),
                         "filter_hash": hex::encode(filter_hash(filter.as_slice()).0),
                         "bytes": filter.len(),
-                        "elements": transparent_filter::element_count(&elements),
+                        "elements": zakura_transparent_private_server::filter::element_count(&elements),
                     })
                 )
                 .map_err(|e| e.to_string())?;
@@ -234,8 +237,10 @@ fn run() -> Result<(), String> {
                     .collect::<Result<_, _>>()?;
                 let validated =
                     validate_filter(&bytes, FilterLimits::default()).map_err(|e| e.to_string())?;
-                let matched = transparent_filter::match_scripts(&validated, hash, &scripts)
-                    .map_err(|e| e.to_string())?;
+                let matched = zakura_transparent_private_wallet::filter::match_scripts(
+                    &validated, hash, &scripts,
+                )
+                .map_err(|e| e.to_string())?;
                 writeln!(
                     stdout,
                     "{}",

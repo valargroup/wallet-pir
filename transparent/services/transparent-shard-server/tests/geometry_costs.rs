@@ -18,15 +18,15 @@
 //! bytes of response) are recorded in
 //! `transparent/evidence/baselines/shard-utilisation/measurement-v4.json`.
 
-use transparent_native::Profile;
-use transparent_shard::layout::{Geometry, DECOUPLED_2K_8K, PROFILES};
-use transparent_shard::PAGE_ROW_BYTES;
 use transparent_shard_server::runtime::SharedParams;
+use zakura_transparent_private_shared::native::Profile;
+use zakura_transparent_private_shared::shard::layout::{Geometry, DECOUPLED_2K_8K, PROFILES};
+use zakura_transparent_private_shared::shard::PAGE_ROW_BYTES;
 
 /// The profile every history table uses.
 fn native() -> Profile {
-    let profile = transparent_native::profile_for("directory");
-    assert!(profile == transparent_native::profile_for("pages"));
+    let profile = zakura_transparent_private_shared::native::profile_for("directory");
+    assert!(profile == zakura_transparent_private_shared::native::profile_for("pages"));
     profile
 }
 
@@ -150,7 +150,10 @@ fn the_pinned_geometry_costs_what_it_did() {
 /// dense old history.
 #[test]
 fn the_archive_candidates_cost_what_the_plan_claims() {
-    let wide = table_cost(&transparent_shard::DECOUPLED_32K_32K, Table::Directory);
+    let wide = table_cost(
+        &zakura_transparent_private_shared::shard::DECOUPLED_32K_32K,
+        Table::Directory,
+    );
     assert_eq!(wide.query, 128_520, "decoupled-32k-32k directory query");
     // What a 65,536-row directory would have cost, and the reason the archive
     // has none.

@@ -9,10 +9,10 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
-use transparent_events::Txid;
-use transparent_shard::txid::Error;
-use transparent_shard::txid_v1::{TransparentDisplayRecord, MAX_RECORD_BYTES};
-use transparent_shard::{Geometry, TableGeometry};
+use zakura_transparent_private_shared::events::Txid;
+use zakura_transparent_private_shared::shard::txid::Error;
+use zakura_transparent_private_server::shard::txid_v1::{TransparentDisplayRecord, MAX_RECORD_BYTES};
+use zakura_transparent_private_shared::shard::{Geometry, TableGeometry};
 
 pub const CODEC: &str = "transparent-txid-display-v1";
 pub const INLINE_BYTES: usize = 128;
@@ -439,7 +439,7 @@ pub fn verify_rows(
 /// sidecars only for their oversized events; never substitute v2 entries.
 pub fn read_sidecar(
     dir: &std::path::Path,
-    hash: transparent_filter::BlockHash,
+    hash: zakura_transparent_private_shared::filter::BlockHash,
 ) -> Result<Vec<TransparentDisplayRecord>, crate::events::EventStoreError> {
     use crate::display_journal::{read_envelope, V1};
     Ok(read_envelope(&V1, dir, hash, TransparentDisplayRecord::decode)?.0)
@@ -450,7 +450,7 @@ pub fn read_sidecar(
 #[cfg(test)]
 pub fn write_sidecar(
     dir: &std::path::Path,
-    hash: transparent_filter::BlockHash,
+    hash: zakura_transparent_private_shared::filter::BlockHash,
     records: &[TransparentDisplayRecord],
 ) -> Result<(), crate::events::EventStoreError> {
     use crate::display_journal::{write_envelope, V1};
@@ -463,7 +463,7 @@ pub fn write_sidecar(
 pub fn append_sidecar_block(
     store: &mut crate::events::EventStore,
     height: u64,
-    hash: transparent_filter::BlockHash,
+    hash: zakura_transparent_private_shared::filter::BlockHash,
     records: &[TransparentDisplayRecord],
 ) -> Result<(), crate::events::EventStoreError> {
     write_sidecar(&store.directory().to_path_buf(), hash, records)?;
@@ -473,14 +473,14 @@ pub fn append_sidecar_block(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use transparent_events::{FeeState, TransactionMetadata, MAX_MONEY};
-    use transparent_shard::txid::DisplayOutput;
+    use zakura_transparent_private_shared::events::{FeeState, TransactionMetadata, MAX_MONEY};
+    use zakura_transparent_private_server::shard::txid::DisplayOutput;
     // Retained test geometry from that same historical source.
     const RECENT_4K: Geometry = Geometry {
         name: "recent-4k",
         directory_rows: 4096,
         page_rows: 4096,
-        ..transparent_shard::DECOUPLED_2K_8K
+        ..zakura_transparent_private_shared::shard::DECOUPLED_2K_8K
     };
     fn record(n: usize) -> TransparentDisplayRecord {
         TransparentDisplayRecord {

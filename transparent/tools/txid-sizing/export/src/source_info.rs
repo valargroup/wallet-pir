@@ -25,8 +25,8 @@ impl Executing {
         });
         // The pinned event codec's extents, as compiled into this reader.
         identity["event_codec_bounds"] = json!({
-            "event_bytes":transparent_events::EVENT_BYTES,
-            "max_event_bytes":transparent_events::MAX_EVENT_BYTES,
+            "event_bytes":zakura_transparent_private_shared::events::EVENT_BYTES,
+            "max_event_bytes":zakura_transparent_private_shared::events::MAX_EVENT_BYTES,
         });
         identity["binary_sha256"] = json!(running_image_sha256()?);
         Ok(Self(identity))

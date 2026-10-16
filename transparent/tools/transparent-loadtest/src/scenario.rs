@@ -14,16 +14,16 @@ use clap::Parser;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use zakura_pir_transparent::engine::http::{
+use zakura_transparent_private_wallet::engine::http::{
     HttpFilterSource, HttpObserver, HttpOptions, HttpShardTransport,
 };
-use zakura_pir_transparent::engine::store::{
+use zakura_transparent_private_wallet::engine::store::{
     ScriptEntry, ScriptOrigin, SetIdentity, ShardCommit, StoredEvent, WalletStore,
 };
-use zakura_pir_transparent::engine::{
+use zakura_transparent_private_wallet::engine::{
     sync_into, Anchor, Completion, MemoryStore, StaticChain, StaticScripts, WorkLimits,
 };
-use zakura_pir_transparent::engine_store::SqliteStore;
+use zakura_transparent_private_wallet::engine_store::SqliteStore;
 
 use crate::simulation_report::{self, Report};
 use crate::{Sample, SampleClient};
@@ -173,7 +173,7 @@ fn preparation_concurrency() -> usize {
     2
 }
 fn shard_concurrency() -> usize {
-    zakura_pir_transparent::engine::http::SHARD_REQUEST_CONCURRENCY
+    zakura_transparent_private_wallet::engine::http::SHARD_REQUEST_CONCURRENCY
 }
 
 fn one_attempt() -> usize {
@@ -334,7 +334,9 @@ pub fn now() -> f64 {
 fn digest(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
 }
-fn io_error(error: zakura_pir_transparent::engine::transport::BoxError) -> anyhow::Error {
+fn io_error(
+    error: zakura_transparent_private_wallet::engine::transport::BoxError,
+) -> anyhow::Error {
     anyhow::Error::from_boxed(error)
 }
 
@@ -429,7 +431,7 @@ struct SeedEvent {
 /// the explicitly labeled journal-verified experiment seed path.
 fn seed_store(
     store: &mut impl WalletStore,
-    map: &transparent_filter::ShardMap,
+    map: &zakura_transparent_private_shared::filter::ShardMap,
     path: &Path,
     wallet: &SampleClient,
     job: &Job,
@@ -448,7 +450,9 @@ fn seed_store(
     store.bind_set(&SetIdentity::of(map))?;
     let mut by_shard: BTreeMap<usize, Vec<StoredEvent>> = BTreeMap::new();
     for entry in seed.events {
-        let event = transparent_events::TransparentEvent::from_bytes(&hex::decode(entry.event)?)?;
+        let event = zakura_transparent_private_shared::events::TransparentEvent::from_bytes(
+            &hex::decode(entry.event)?,
+        )?;
         let height = u64::from(event.height());
         if height >= wallet.required_from || !wallet.scripts.contains(&entry.script) {
             bail!("seed contains an event outside the prior wallet history");
@@ -486,7 +490,7 @@ fn seed_store(
 
 fn validate_seed(
     seed: &Seed,
-    map: &transparent_filter::ShardMap,
+    map: &zakura_transparent_private_shared::filter::ShardMap,
     anchor: &Anchor,
     wallet: &SampleClient,
     advancing: bool,
@@ -502,8 +506,9 @@ fn validate_seed(
         .events
         .iter()
         .map(|entry| {
-            let event =
-                transparent_events::TransparentEvent::from_bytes(&hex::decode(&entry.event)?)?;
+            let event = zakura_transparent_private_shared::events::TransparentEvent::from_bytes(
+                &hex::decode(&entry.event)?,
+            )?;
             if u64::from(event.height()) >= wallet.required_from
                 || u64::from(event.height()) < map.start_height
                 || !wallet.scripts.contains(&entry.script)
@@ -1006,7 +1011,11 @@ fn preflight(
     config: &Config,
     out: &Path,
     filename: &str,
-) -> Result<(transparent_filter::ShardMap, String, String)> {
+) -> Result<(
+    zakura_transparent_private_shared::filter::ShardMap,
+    String,
+    String,
+)> {
     let file = Arc::new(std::sync::Mutex::new(File::create(out.join(filename))?));
     let observer: HttpObserver = Arc::new(move |o| {
         let _ = write_line(
@@ -1395,7 +1404,7 @@ fn prepare(
 /// A named endpoint at that height must still agree; events above the target
 /// are excluded by the wallet and never enter the expected-event comparison.
 fn validate_publication(
-    map: &transparent_filter::ShardMap,
+    map: &zakura_transparent_private_shared::filter::ShardMap,
     genesis: &str,
     start: u64,
     anchor: &Anchor,
@@ -1763,7 +1772,7 @@ fn block_preflight(
     let manifest = if let Some(path) = &config.block_dataset {
         Manifest::load(path, true)?
     } else {
-        let client = zakura_pir_transparent::engine::http::HttpResourceClient::new(
+        let client = zakura_transparent_private_wallet::engine::http::HttpResourceClient::new(
             &config.options(),
             None,
             3,
@@ -1856,11 +1865,9 @@ where
 }
 
 fn recover_blocks(job: &Job, observer: HttpObserver) -> Result<Value> {
-    use transparent_blocks::{
-        dataset::{decode, Manifest},
-        scan::Scanner,
-    };
-    use zakura_pir_transparent::engine::http::HttpResourceClient;
+    use crate::scan::Scanner;
+    use transparent_blocks::dataset::{decode, Manifest};
+    use zakura_transparent_private_wallet::engine::http::HttpResourceClient;
     let base = job
         .config
         .block_url
@@ -1943,7 +1950,9 @@ fn recover_blocks(job: &Job, observer: HttpObserver) -> Result<Value> {
             .iter()
             .map(|e| {
                 let event =
-                    transparent_events::TransparentEvent::from_bytes(&hex::decode(&e.event)?)?;
+                    zakura_transparent_private_shared::events::TransparentEvent::from_bytes(
+                        &hex::decode(&e.event)?,
+                    )?;
                 anyhow::ensure!(
                     u64::from(event.height()) < job.wallet.required_from
                         && job.wallet.scripts.contains(&e.script),

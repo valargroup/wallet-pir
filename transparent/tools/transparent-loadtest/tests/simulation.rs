@@ -15,10 +15,10 @@ use axum::middleware::{self, Next};
 use axum::response::IntoResponse;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use transparent_filter::ShardMap;
-use transparent_shard::layout::DECOUPLED_2K_8K;
 use transparent_shard_server::service::{router, ServiceConfig, ServiceState};
 use transparent_shard_server::shardset::{ShardSet, DEFAULT_RETAIN_REVISIONS};
+use zakura_transparent_private_shared::filter::ShardMap;
+use zakura_transparent_private_shared::shard::layout::DECOUPLED_2K_8K;
 
 fn sample(path: &Path, map: &ShardMap, tags: &[u32], wrong: bool) {
     let chain = common::chain();
@@ -900,7 +900,7 @@ async fn block_backend_matches_oracle_with_network_and_offline_scanning() {
         dataset::{read_batch, write_batch, Manifest},
         proto::*,
     };
-    use transparent_events::TransparentEvent;
+    use zakura_transparent_private_shared::events::TransparentEvent;
     let dir = tempfile::tempdir().unwrap();
     fixture(dir.path(), &[2]);
     let (base, _) = service(dir.path(), Fault::None).await;

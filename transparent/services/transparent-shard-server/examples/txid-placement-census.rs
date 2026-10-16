@@ -14,7 +14,7 @@
 //! window plus the next one.
 //!
 //! Each table is then placed by the production placement
-//! (`transparent_shard::display::place_bucket`) over pseudorandom tags. A tag
+//! (`zakura_transparent_private_server::shard::display::place_bucket`) over pseudorandom tags. A tag
 //! is a SHA-256 output, and a row is a SHA-256 of the tag under the seed, so
 //! random tags have the placement statistics of real ones; only which seed a
 //! given archive keeps differs from a run over the journal's own txids. The
@@ -26,8 +26,9 @@ use rayon::prelude::*;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::time::Instant;
-use transparent_shard::display::{place_bucket, Placement, MAX_PLACEMENT_SEEDS, TXID_2K8};
-use transparent_shard::txid::{slots_per_row, Tag};
+use zakura_transparent_private_server::shard::display::{place_bucket, Placement};
+use zakura_transparent_private_shared::shard::display::{MAX_PLACEMENT_SEEDS, TXID_2K8};
+use zakura_transparent_private_shared::shard::txid::{slots_per_row, Tag};
 
 type Error = Box<dyn std::error::Error + Send + Sync>;
 

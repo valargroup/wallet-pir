@@ -52,13 +52,13 @@ use chrono::{DateTime, Months, Utc};
 use clap::Parser;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use transparent_events::TransparentEvent;
-use transparent_filter::ScriptBytes;
 use transparent_filter_server::events::EventStore;
 use transparent_filter_server::state::StateReader;
 use transparent_filter_server::zakura::NodeClient;
-use transparent_shard::layout::{by_name as geometry_by_name, Geometry};
-use transparent_shard::seal::{DecoupledPolicy, DisplacementSealer};
+use zakura_transparent_private_server::shard::seal::{DecoupledPolicy, DisplacementSealer};
+use zakura_transparent_private_shared::events::TransparentEvent;
+use zakura_transparent_private_shared::filter::ScriptBytes;
+use zakura_transparent_private_shared::shard::layout::{by_name as geometry_by_name, Geometry};
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
@@ -405,7 +405,7 @@ fn main() -> Result<(), BoxError> {
         "generated_at": Utc::now().to_rfc3339(),
         "tool_sha": cli.source_sha,
         "source": cached.inner.label(),
-        "network": transparent_filter::NETWORK,
+        "network": zakura_transparent_private_shared::filter::NETWORK,
         "genesis_hash": store.genesis_hash(),
         "journal": {
             "data_dir": cli.data_dir,

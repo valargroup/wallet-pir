@@ -10,11 +10,14 @@ use std::cell::Cell;
 use std::path::Path;
 use std::sync::OnceLock;
 use std::time::Duration;
-use transparent_events::Txid;
-use transparent_shard::display::{self, DisplayRecentMap, DisplayTable, TXID_2K8};
-use transparent_shard::txid::{self, flags, AddressKind, DisplayEntry, DisplayRecord, Tag};
 use transparent_shard_server::display::synth::{self, Published};
-use transparent_txid_client::{
+use zakura_transparent_private_server::shard::txid::DisplayRecord;
+use zakura_transparent_private_shared::events::Txid;
+use zakura_transparent_private_shared::shard::display::{
+    self, DisplayRecentMap, DisplayTable, TXID_2K8,
+};
+use zakura_transparent_private_shared::shard::txid::{self, flags, AddressKind, DisplayEntry, Tag};
+use zakura_transparent_private_wallet::txid_client::{
     Method, Placement, ProtocolKind, Route, Tier, TxidDisplayClient, TxidError, TxidLookup,
     TxidReply,
 };
@@ -84,7 +87,10 @@ fn recent_sha256(world: &World) -> String {
 
 /// SHA-256 of the recent map a publication directory holds.
 fn recent_sha256_of(publication: &Path) -> String {
-    let bytes = std::fs::read(publication.join(display::split::RECENT_MAP_FILE)).unwrap();
+    let bytes = std::fs::read(
+        publication.join(zakura_transparent_private_server::shard::display::RECENT_MAP_FILE),
+    )
+    .unwrap();
     hex::encode(Sha256::digest(bytes))
 }
 

@@ -13,16 +13,17 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 use tower::ServiceExt;
-use transparent_events::Txid;
-use transparent_shard::display::{self, DisplayTable};
-use transparent_shard::txid::{DisplayRecord, Tag};
 use transparent_shard_server::display::live::DisplayCommand;
 use transparent_shard_server::display::service::{router, DisplayRuntime, DisplayState};
 use transparent_shard_server::display::set::DisplaySet;
 use transparent_shard_server::display::synth::{self, Published};
 use transparent_shard_server::display::DisplayRole;
 use transparent_shard_server::service::{ReadinessMode, ServiceConfig};
-use transparent_txid_client::{
+use zakura_transparent_private_server::shard::txid::DisplayRecord;
+use zakura_transparent_private_shared::events::Txid;
+use zakura_transparent_private_shared::shard::display::{self, DisplayTable};
+use zakura_transparent_private_shared::shard::txid::Tag;
+use zakura_transparent_private_wallet::txid_client::{
     Placement, Route, Tier, TxidDisplayClient, TxidError, TxidLookup, TxidReply,
 };
 
@@ -801,8 +802,8 @@ fn header<'a>(headers: &'a reqwest::header::HeaderMap, name: &str) -> &'a str {
 /// still holding the old recent map gets its chunk from the retired snapshot.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn the_split_map_is_served_beside_the_unchanged_full_map() {
-    use transparent_shard::display::split::{index_file, RECENT_MAP_FILE};
-    use transparent_shard::display::{DisplayIndexChunk, DisplayRecentMap};
+    use zakura_transparent_private_server::shard::display::split::{index_file, RECENT_MAP_FILE};
+    use zakura_transparent_private_shared::shard::display::{DisplayIndexChunk, DisplayRecentMap};
     let world = World::start().await;
     let file = |dir: &Path, name: &str| std::fs::read(dir.join(name)).unwrap();
 

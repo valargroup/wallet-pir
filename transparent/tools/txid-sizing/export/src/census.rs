@@ -49,7 +49,7 @@ fn script_size(raw: &[u8]) -> (usize, &'static str) {
     }
 }
 fn stats(
-    record: &transparent_shard::txid_v1::TransparentDisplayRecord,
+    record: &zakura_transparent_private_server::shard::txid_v1::TransparentDisplayRecord,
     missing: usize,
 ) -> Result<Value, AnyError> {
     let display = record.encode()?;
@@ -184,10 +184,10 @@ pub fn run(path: &str) -> Result<(), AnyError> {
                 } else {
                     // Extraction refuses partial filters. Census preserves eligibility
                     // with the shared explicitly unknown fee state; no invented fee.
-                    transparent_shard::txid_v1::TransparentDisplayRecord {
-                        txid: transparent_events::Txid(txid),
+                    zakura_transparent_private_server::shard::txid_v1::TransparentDisplayRecord {
+                        txid: zakura_transparent_private_shared::events::Txid(txid),
                         coinbase,
-                        metadata: transparent_events::TransactionMetadata {
+                        metadata: zakura_transparent_private_shared::events::TransactionMetadata {
                             fee: if coinbase {
                                 FeeState::NotApplicable
                             } else {
@@ -199,7 +199,7 @@ pub fn run(path: &str) -> Result<(), AnyError> {
                         outputs: transaction
                             .outputs
                             .iter()
-                            .map(|o| transparent_shard::txid::DisplayOutput {
+                            .map(|o| zakura_transparent_private_server::shard::txid::DisplayOutput {
                                 value: o.value,
                                 script: o.script.clone(),
                             })
@@ -249,14 +249,14 @@ mod tests {
     use super::*;
     #[test]
     fn compact_size_oracle_preserves_raw_scripts_and_count_escapes() {
-        use transparent_shard::txid::DisplayOutput;
-        use transparent_shard::txid_v1::TransparentDisplayRecord;
+        use zakura_transparent_private_server::shard::txid::DisplayOutput;
+        use zakura_transparent_private_server::shard::txid_v1::TransparentDisplayRecord;
         for ni in [0, 14, 15, 128] {
             for no in [0, 1, 14, 15, 128] {
                 let record = TransparentDisplayRecord {
-                    txid: transparent_events::Txid([0; 32]),
+                    txid: zakura_transparent_private_shared::events::Txid([0; 32]),
                     coinbase: false,
-                    metadata: transparent_events::TransactionMetadata {
+                    metadata: zakura_transparent_private_shared::events::TransactionMetadata {
                         fee: FeeState::Exact(0),
                         transparent_input_count: ni,
                         has_shielded_components: false,

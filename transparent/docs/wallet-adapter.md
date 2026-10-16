@@ -1,7 +1,7 @@
 # Wallet adapter contract
 
 Status: the boundary a wallet integrates through, 2026-09-08. The reference
-implementation is owned by wallet-libraries' `zakura-pir-transparent` package
+implementation is owned by wallet-libraries' `zakura-transparent-private-wallet` package
 (`zakura/pir-transparent`, at the revision this repository's `Cargo.lock` pins):
 its `engine` module (feature `engine`, pure Rust) with `engine_store::SqliteStore`
 (feature `engine-store`, SQLite persistence). Vizor is the first
@@ -21,17 +21,17 @@ boundary as a callback, so a binding generator can take the facade as it is.
 | Chain view | accepted headers `(height, hash)` | A height listed with another hash is a reorg and coverage above it is rolled back; a height not listed is unknown and the sync stops short rather than guessing. |
 | Transport | `ShardTransport`, `FilterSource` | The reference HTTP adapters live behind the `reqwest` feature; a wallet with its own HTTP stack implements the two traits. |
 
-The facade `zakura_pir_transparent::engine::TransparentSync` (`src/engine/facade.rs`) binds
+The facade `zakura_transparent_private_wallet::engine::TransparentSync` (`src/engine/facade.rs`) binds
 these: `refresh_map` fetches the map and the service parameters and returns
 the tip for the wallet to validate; `sync_once(SyncRequest)` performs one
 bounded sync and returns `SyncStatus`; `status`, `snapshot` and
 `rollback_to(Anchor)` read or adjust the store without network work. The caller supplies an accepted common ancestor for rollback, including inside a shard.
 
 A wallet that brings its own store proves it with the contract suite:
-`zakura_pir_transparent::engine::testing::suite` (feature `engine-conformance`) is
+`zakura_transparent_private_wallet::engine::testing::suite` (feature `engine-conformance`) is
 the same suite the two reference stores, `engine::MemoryStore` and
 `engine_store::SqliteStore`, pass. The init document is parsed by
-`zakura_pir_transparent::engine::parse_init` whichever transport fetched it.
+`zakura_transparent_private_wallet::engine::parse_init` whichever transport fetched it.
 
 ## What the wallet gets back
 

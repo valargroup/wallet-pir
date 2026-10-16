@@ -1,19 +1,20 @@
 //! A real encrypted HTTP query matches nonzero public rows before and after restart.
 use axum::http::StatusCode;
 use std::path::Path;
+use zakura_transparent_private_wallet::native::TableQuery as _;
 #[path = "support/revision.rs"]
 mod revision;
 
-use transparent_filter::{BlockHash, ScriptBytes, ShardMap};
-use transparent_shard::layout::{Geometry, DECOUPLED_2K_8K};
-use transparent_shard::manifest::query_binding;
 use transparent_shard_server::service::{router, ServiceConfig, ServiceState};
 use transparent_shard_server::shardset::{ShardSet, Table, TableRef, DEFAULT_RETAIN_REVISIONS};
+use zakura_transparent_private_shared::filter::{BlockHash, ScriptBytes, ShardMap};
+use zakura_transparent_private_shared::shard::layout::{Geometry, DECOUPLED_2K_8K};
+use zakura_transparent_private_shared::shard::manifest::query_binding;
 
 /// The geometry this fixture publishes at.
 const GEOMETRY: Geometry = DECOUPLED_2K_8K;
 
-const GENESIS: &str = transparent_filter::MAINNET_GENESIS_DISPLAY;
+const GENESIS: &str = zakura_transparent_private_shared::filter::MAINNET_GENESIS_DISPLAY;
 const SHARDS: u64 = 1;
 const SPAN: u64 = 100;
 const FIRST: u64 = 3_428_143;
@@ -55,11 +56,11 @@ fn publish(dir: &Path) -> ShardMap {
                 txid[8..16].copy_from_slice(&shard_id.to_le_bytes());
                 events.push((
                     script(shard_id, tag),
-                    transparent_events::TransparentEvent::Receive(
-                        transparent_events::ReceiveEvent {
+                    zakura_transparent_private_shared::events::TransparentEvent::Receive(
+                        zakura_transparent_private_shared::events::ReceiveEvent {
                             metadata: None,
                             height: (start + u64::from(i) % SPAN) as u32,
-                            txid: transparent_events::Txid(txid),
+                            txid: zakura_transparent_private_shared::events::Txid(txid),
                             transaction_index: 0,
                             output_index: i,
                             value: 1_000 + u64::from(i),
@@ -95,13 +96,13 @@ fn publish(dir: &Path) -> ShardMap {
 
     let map = ShardMap {
         genesis_hash: GENESIS.to_string(),
-        network: transparent_filter::NETWORK.to_string(),
-        profile: transparent_filter::RANGE_PROFILE.to_string(),
-        range_envelope_version: transparent_filter::RANGE_ENVELOPE_VERSION,
+        network: zakura_transparent_private_shared::filter::NETWORK.to_string(),
+        profile: zakura_transparent_private_shared::filter::RANGE_PROFILE.to_string(),
+        range_envelope_version: zakura_transparent_private_shared::filter::RANGE_ENVELOPE_VERSION,
         start_height: FIRST,
         seal: std::collections::BTreeMap::from([(
             GEOMETRY.name.to_string(),
-            transparent_filter::SealParameters {
+            zakura_transparent_private_shared::filter::SealParameters {
                 max_scripts: 8_192,
                 max_page_rows: 2_048,
                 max_txids: 0,
@@ -168,7 +169,7 @@ async fn retrieve(origin: &str, revision: &str, row: usize) -> Vec<u8> {
         Table::Pages => "pages_scheme",
         Table::TxDirectory => unreachable!("history-only fixture"),
     };
-    let scheme: transparent_native::NativeScheme =
+    let scheme: zakura_transparent_private_shared::native::NativeScheme =
         serde_json::from_value(published[scheme_key].clone()).unwrap();
     assert!(
         published.get(format!("{scheme_key}_dq44")).is_none(),
@@ -193,8 +194,8 @@ async fn retrieve(origin: &str, revision: &str, row: usize) -> Vec<u8> {
 
     // Re-derive rather than trust: a client that adopted the server's
     // parameters would decode against whatever geometry the server chose.
-    let profile = transparent_native::TableProfile::new(
-        transparent_shard::manifest::SCHEMA,
+    let profile = zakura_transparent_private_shared::native::TableProfile::new(
+        zakura_transparent_private_shared::shard::manifest::SCHEMA,
         GEOMETRY.name,
         table.kind().as_str(),
         table.kind().rows(&GEOMETRY),

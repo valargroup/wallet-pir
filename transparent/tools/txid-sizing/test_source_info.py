@@ -20,7 +20,7 @@ def identity():
     return dict(schema='txid-sizing-export-source-v1',
                 node_parser=package('zakura-chain', 'a'*40),
                 server_adapter=package('zakura-server-chain', 'b'*40),
-                event_codec=package('zakura-transparent-events', 'b'*40),
+                event_codec=package('zakura-transparent-private-shared', 'b'*40),
                 cargo_lock_sha256='c'*64,
                 compiled_source_file_sha256=dict(extractor='d'*64,census='e'*64))
 

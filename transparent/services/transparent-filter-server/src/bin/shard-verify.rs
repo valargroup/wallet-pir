@@ -17,10 +17,10 @@
 use clap::Parser;
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
-use transparent_filter::BlockHash;
 use transparent_filter_server::events::EventStore;
 use transparent_server_backend::shardset::{ShardSet, DEFAULT_RETAIN_REVISIONS};
-use transparent_shard::build::build_directory_shard;
+use zakura_transparent_private_server::shard::build::build_directory_shard;
+use zakura_transparent_private_shared::filter::BlockHash;
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
@@ -378,9 +378,10 @@ fn main() -> Result<(), BoxError> {
                 &terminal,
                 manifest.sealed,
             )?;
-            let filter_ok = transparent_filter::filter_hash(built.filter.as_slice())
-                .to_display_hex()
-                == manifest.filter_hash;
+            let filter_ok =
+                zakura_transparent_private_shared::filter::filter_hash(built.filter.as_slice())
+                    .to_display_hex()
+                    == manifest.filter_hash;
             let directory_ok = built.directory.len() == manifest.directory_segments.len()
                 && built
                     .directory

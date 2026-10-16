@@ -23,8 +23,8 @@
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use transparent_filter::digest::filter_hash;
-use transparent_filter::wire::ShardMap;
+use zakura_transparent_private_shared::filter::digest::filter_hash;
+use zakura_transparent_private_shared::filter::wire::ShardMap;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ShardFilterError {
