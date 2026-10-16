@@ -232,7 +232,7 @@ def scan(cache,binary,status,evidence):
             scanned_blocks=counts[0],last_height=last[0],last_hash=last[1],transactions=txids,
             database_sha256=digest(cache/"census.sqlite"),binary_sha256=digest(binary),
             # Blocks are parsed by wallet-libraries' zakura-server-chain at the export's pin.
-            parser_sha="4c5e779524b08644ef7fd6055456078c29edc87e",
+            parser_sha="aac3d7ade1dca69bcb8f4d5d9352855efc3642f5",
             extractor_sha256=digest(Path("transparent/services/transparent-filter-server/src/extract.rs")),
             census_source_sha256=digest(Path("transparent/tools/txid-sizing/export/src/census.rs")),
             coverage="INCOMPLETE" if counts[0]!=ANCHOR_HEIGHT+1 else "FULL_CHAIN")

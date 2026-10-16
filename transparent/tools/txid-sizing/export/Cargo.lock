@@ -3168,7 +3168,7 @@ dependencies = [
 [[package]]
 name = "zakura-receiver-crypto"
 version = "0.0.1-rc0"
-source = "git+https://github.com/zakura-core/wallet-libraries.git?rev=4c5e779524b08644ef7fd6055456078c29edc87e#4c5e779524b08644ef7fd6055456078c29edc87e"
+source = "git+https://github.com/zakura-core/wallet-libraries.git?rev=aac3d7ade1dca69bcb8f4d5d9352855efc3642f5#aac3d7ade1dca69bcb8f4d5d9352855efc3642f5"
 dependencies = [
  "incrementalmerkletree",
  "thiserror",
@@ -3239,7 +3239,7 @@ dependencies = [
 [[package]]
 name = "zakura-server-chain"
 version = "0.0.1-rc0"
-source = "git+https://github.com/zakura-core/wallet-libraries.git?rev=4c5e779524b08644ef7fd6055456078c29edc87e#4c5e779524b08644ef7fd6055456078c29edc87e"
+source = "git+https://github.com/zakura-core/wallet-libraries.git?rev=aac3d7ade1dca69bcb8f4d5d9352855efc3642f5#aac3d7ade1dca69bcb8f4d5d9352855efc3642f5"
 dependencies = [
  "axum",
  "hex",
