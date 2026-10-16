@@ -33,8 +33,8 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Receiver address, record, recovery and proof checks, and the node reads and block
 # interpretation, from one exact wallet-libraries revision.
-zakura-receiver-crypto = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "5293d937ac8e369d2f75910e68617319b61554ce", default-features = false, features = ["crypto"] }
-zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "5293d937ac8e369d2f75910e68617319b61554ce" }
+zakura-receiver-crypto = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "513537bec79ea834a5eb145c3e01883fc3dfda5e", default-features = false, features = ["crypto"] }
+zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "513537bec79ea834a5eb145c3e01883fc3dfda5e" }
 
 [dev-dependencies]
-zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "5293d937ac8e369d2f75910e68617319b61554ce", features = ["testing"] }
+zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "513537bec79ea834a5eb145c3e01883fc3dfda5e", features = ["testing"] }

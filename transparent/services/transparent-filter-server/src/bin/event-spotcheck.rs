@@ -25,7 +25,7 @@ use std::path::PathBuf;
 use transparent_events::TransparentEvent;
 use transparent_filter::ScriptBytes;
 use transparent_filter_server::events::EventStore;
-use transparent_filter_server::zakura::ZakuraClient;
+use transparent_filter_server::zakura::NodeClient;
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
@@ -283,7 +283,7 @@ fn parse_verbose(value: &serde_json::Value) -> Result<VerboseTx, BoxError> {
 const BATCH_RESPONSE_TOO_LARGE: i64 = -32011;
 
 async fn verbose_transactions(
-    client: &ZakuraClient,
+    client: &NodeClient,
     txids: &[String],
     batch: usize,
 ) -> Result<Vec<VerboseTx>, BoxError> {
@@ -311,7 +311,7 @@ async fn verbose_transactions(
                 }
                 start = end;
             }
-            Err(transparent_filter_server::zakura::ZakuraError::Rpc(
+            Err(transparent_filter_server::zakura::NodeError::Rpc(
                 BATCH_RESPONSE_TOO_LARGE,
                 _,
             )) if size > 1 => {
@@ -325,7 +325,7 @@ async fn verbose_transactions(
 
 /// Events at `height` as the node's verbose interface describes them.
 async fn node_lines(
-    client: &ZakuraClient,
+    client: &NodeClient,
     height: u64,
     batch: usize,
     include_metadata: bool,
@@ -519,8 +519,8 @@ fn sample_heights(store: &EventStore, cli: &Cli) -> Result<Vec<u64>, BoxError> {
 async fn main() -> Result<(), BoxError> {
     let cli = Cli::parse();
     let store = EventStore::open_existing(&cli.data_dir)?;
-    let client = ZakuraClient::from_cookie_file(&cli.zakura_rpc_url, &cli.zakura_cookie)?;
-    let genesis = client.genesis_hash().await?;
+    let client = transparent_filter_server::zakura::connect(&cli.zakura_rpc_url, &cli.zakura_cookie)?;
+    let genesis = client.block_hash_display(0).await?;
     if genesis != store.genesis_hash() {
         return Err(format!(
             "the node is on genesis {genesis}, the journal on {}",

@@ -13,7 +13,7 @@ use transparent_filter_server::ingest;
 use transparent_filter_server::service::{router, Phase, ServiceState};
 use transparent_filter_server::shard_filters::ShardFilters;
 use transparent_filter_server::store::FilterStore;
-use transparent_filter_server::zakura::ZakuraClient;
+use transparent_filter_server::zakura::NodeClient;
 
 #[derive(Parser, Clone)]
 #[command(
@@ -92,10 +92,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .zakura_cookie
         .as_ref()
         .ok_or("--zakura-cookie is required to serve")?;
-    let zakura = ZakuraClient::from_cookie_file(&cli.zakura_rpc_url, cookie)?;
+    let zakura = transparent_filter_server::zakura::connect(&cli.zakura_rpc_url, cookie)?;
     // Chain identity comes from the node, once, and is then pinned in the
     // store: a store built against one chain must never be served as another.
-    let genesis_hash = zakura.genesis_hash().await?;
+    let genesis_hash = zakura.block_hash_display(0).await?;
     if genesis_hash != transparent_filter::MAINNET_GENESIS_DISPLAY {
         tracing::warn!(
             %genesis_hash,

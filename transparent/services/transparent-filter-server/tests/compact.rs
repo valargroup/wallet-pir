@@ -9,7 +9,19 @@ use transparent_blocks::{
     proto::CompactBlock,
 };
 use transparent_filter_server::compact::compact_block;
-use zakura_chain::{block::Block, serialization::ZcashDeserialize};
+use zakura_server_chain::transparent::{BoxError, FetchedBlock, Output, PreviousOutputs};
+
+/// Resolves every spent output to a large value, for reading a block's shape.
+struct AnyOutput;
+
+impl PreviousOutputs for AnyOutput {
+    fn previous_output(&mut self, _: [u8; 32], _: u32) -> Result<Option<Output>, BoxError> {
+        Ok(Some(Output {
+            value: 2_100_000_000_000_000,
+            script: vec![0x51],
+        }))
+    }
+}
 fn protoc(mode: &str, input: &[u8]) -> Vec<u8> {
     let mut child = Command::new("protoc")
         .args([
@@ -29,7 +41,8 @@ fn protoc(mode: &str, input: &[u8]) -> Vec<u8> {
 #[test]
 fn raw_shielded_and_transparent_fields_round_trip_through_protoc() {
     let raw = hex::decode(include_str!("fixtures/compact-mainnet-1687106.hex").trim()).unwrap();
-    let block = Block::zcash_deserialize(raw.as_slice()).unwrap();
+    let block = FetchedBlock::from_bytes(&raw).unwrap();
+    let transparent = block.transparent(1687106, &mut AnyOutput).unwrap();
     let compact = compact_block(&block, 1687106, &mut [0; 3]).unwrap();
     let combined = encode(std::slice::from_ref(&compact), "combined").unwrap();
     let prefix = combined.iter().position(|b| b & 128 == 0).unwrap() + 1;
@@ -48,23 +61,11 @@ fn raw_shielded_and_transparent_fields_round_trip_through_protoc() {
     assert_eq!(independent, compact);
     assert_eq!(
         compact.vtx.iter().map(|t| t.vin.len()).sum::<usize>(),
-        block
-            .transactions
-            .iter()
-            .map(|t| t
-                .inputs()
-                .iter()
-                .filter(|i| !matches!(i, zakura_chain::transparent::Input::Coinbase { .. }))
-                .count())
-            .sum::<usize>()
+        transparent.iter().map(|t| t.inputs.len()).sum::<usize>()
     );
     assert_eq!(
         compact.vtx.iter().map(|t| t.vout.len()).sum::<usize>(),
-        block
-            .transactions
-            .iter()
-            .map(|t| t.outputs().len())
-            .sum::<usize>()
+        transparent.iter().map(|t| t.outputs.len()).sum::<usize>()
     );
     assert!(compact
         .vtx

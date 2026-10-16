@@ -20,7 +20,7 @@ use crate::events::{EventStore, EventStoreError};
 use crate::ingest::build_fetched_block_events;
 use crate::prevout::OutputCache;
 use crate::publication::BoxError;
-use crate::zakura::ZakuraClient;
+use crate::zakura::NodeClient;
 use std::collections::{BTreeMap, VecDeque};
 use std::time::{Duration, Instant};
 use transparent_filter::BlockHash;
@@ -122,7 +122,7 @@ fn from_journal(
 
 /// Follows the node and ingests into the journal.
 pub struct LiveSource {
-    rpc: ZakuraClient,
+    rpc: NodeClient,
     poll: Duration,
     last_poll: Option<Instant>,
     outputs: OutputCache,
@@ -133,7 +133,7 @@ pub struct LiveSource {
 }
 
 impl LiveSource {
-    pub fn new(rpc: ZakuraClient, poll: Duration) -> Self {
+    pub fn new(rpc: NodeClient, poll: Duration) -> Self {
         Self {
             rpc,
             poll,
@@ -196,7 +196,7 @@ impl LiveSource {
                 .ok_or_else(|| transient("missing journal block"))?
                 .block_hash;
             if ancestor <= tip
-                && self.rpc.block_hash(ancestor).await.map_err(transient)? == ours.to_display_hex()
+                && self.rpc.block_hash_display(ancestor).await.map_err(transient)? == ours.to_display_hex()
             {
                 break ours;
             }
@@ -251,8 +251,8 @@ impl LiveSource {
         store: &mut EventStore,
         height: u64,
     ) -> Result<(BlockHash, Vec<DisplayRecord>), SourceError> {
-        let fetched = self.rpc.block(height).await.map_err(transient)?;
-        let parent = fetched.1.header.previous_block_hash.to_string();
+        let fetched = self.rpc.fetch_block(height).await.map_err(transient)?;
+        let parent = BlockHash::from_internal_bytes(fetched.parent()).to_display_hex();
         let expected = store
             .block_at(height - 1)
             .ok_or_else(|| transient("missing journal parent"))?
@@ -264,7 +264,7 @@ impl LiveSource {
         let built = build_fetched_block_events(&self.rpc, &mut self.outputs, height, fetched, true)
             .await
             .map_err(transient)?;
-        if self.rpc.block_hash(height).await.map_err(transient)?
+        if self.rpc.block_hash_display(height).await.map_err(transient)?
             != built.block_hash.to_display_hex()
         {
             return Err(transient("block became noncanonical during extraction"));

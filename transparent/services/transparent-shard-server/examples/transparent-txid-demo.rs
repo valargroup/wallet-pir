@@ -28,7 +28,7 @@ use transparent_events::Txid;
 use transparent_filter::{BlockHash, MAINNET_GENESIS_DISPLAY};
 use transparent_filter_server::{
     events::EventStore,
-    extract::{extract_block, PreviousOutputs},
+    extract::{index, read_transaction, BoxError, FetchedBlock, Output, PreviousOutputs},
     txid_display::publisher::{publish_shard, write_candidate, DisplayRoot, ShardSpec},
 };
 use transparent_shard::display::{self, DisplaySealParams, DisplayTable, TXID_2K8};
@@ -44,12 +44,6 @@ use transparent_shard_server::{
 use transparent_txid_client::{
     Method, Placement, Route, TransportError, TxidDisplayClient, TxidLookup, TxidReply,
     TxidRequest, TxidTransport,
-};
-use zakura_chain::{
-    block::Block,
-    serialization::ZcashDeserialize,
-    transaction::Transaction,
-    transparent::{OutPoint, Output},
 };
 
 type Error = Box<dyn std::error::Error + Send + Sync>;
@@ -101,10 +95,10 @@ struct ExpectedOutput {
     script: String,
 }
 
-struct Parents(HashMap<OutPoint, Output>);
+struct Parents(HashMap<([u8; 32], u32), Output>);
 impl PreviousOutputs for Parents {
-    fn previous_output(&mut self, point: &OutPoint) -> Result<Option<Output>, Error> {
-        Ok(self.0.get(point).cloned())
+    fn previous_output(&mut self, txid: [u8; 32], index: u32) -> Result<Option<Output>, BoxError> {
+        Ok(self.0.get(&(txid, index)).cloned())
     }
 }
 
@@ -351,18 +345,12 @@ async fn run_range(
     let mut previous = Parents(HashMap::new());
     for parent in &fixture.parents {
         let bytes = checked_bytes(&parent.raw, &parent.sha256)?;
-        let transaction = Transaction::zcash_deserialize(bytes.as_slice())?;
-        if transaction.hash().0 != identity(&parent.txid)?.0 {
+        let transaction = read_transaction(&bytes)?;
+        if transaction.txid != identity(&parent.txid)?.0 {
             return Err("parent identity mismatch".into());
         }
-        for (index, output) in transaction.outputs().iter().enumerate() {
-            previous.0.insert(
-                OutPoint {
-                    hash: transaction.hash(),
-                    index: index as u32,
-                },
-                output.clone(),
-            );
+        for (index, output) in transaction.outputs.into_iter().enumerate() {
+            previous.0.insert((transaction.txid, index as u32), output);
         }
     }
     let mut store = EventStore::open(&journal, MAINNET_GENESIS_DISPLAY, blocks[0].height)?;
@@ -371,25 +359,24 @@ async fn run_range(
     let mut extracted_records: BTreeMap<u64, Vec<DisplayRecord>> = BTreeMap::new();
     for frozen in blocks {
         let bytes = checked_bytes(&frozen.raw, &frozen.sha256)?;
-        let block = Block::zcash_deserialize(bytes.as_slice())?;
-        let hash = BlockHash::from_internal_bytes(block.hash().0);
+        let block = FetchedBlock::from_bytes(&bytes)?;
+        let hash = BlockHash::from_internal_bytes(block.hash());
         if hash.internal_bytes() != &hex::decode(&frozen.hash)?[..] {
             return Err("confirmed block identity mismatch".into());
         }
         if let Some(previous_block) = blocks.iter().find(|b| b.height + 1 == frozen.height) {
-            if block.header.previous_block_hash.0 != identity(&previous_block.hash)?.0 {
+            if block.parent() != identity(&previous_block.hash)?.0 {
                 return Err("fixture chain discontinuity".into());
             }
         }
-        parent_hash.get_or_insert(BlockHash::from_internal_bytes(
-            block.header.previous_block_hash.0,
-        ));
-        for (transaction, facts) in block.transactions.iter().zip(&frozen.transactions) {
-            if transaction.hash().0 != identity(&facts.txid)?.0 {
+        parent_hash.get_or_insert(BlockHash::from_internal_bytes(block.parent()));
+        for (txid, facts) in block.txids().iter().zip(&frozen.transactions) {
+            if *txid != identity(&facts.txid)?.0 {
                 return Err("confirmed transaction identity mismatch".into());
             }
         }
-        let extracted = extract_block(&block.transactions, &mut previous, frozen.height as u32)?;
+        let read = block.transparent(frozen.height as u32, &mut previous)?;
+        let extracted = index(&read, frozen.height as u32, true)?;
         let mut derived = Vec::new();
         for source in &extracted.display {
             let record = source.display_record()?;
@@ -411,15 +398,9 @@ async fn run_range(
             return Err("incomplete canonical display extraction".into());
         }
         expected.extend(eligible.into_iter().map(|e| (frozen.height, e)));
-        for transaction in &block.transactions {
-            for (index, output) in transaction.outputs().iter().enumerate() {
-                previous.0.insert(
-                    OutPoint {
-                        hash: transaction.hash(),
-                        index: index as u32,
-                    },
-                    output.clone(),
-                );
+        for transaction in read {
+            for (index, output) in transaction.outputs.into_iter().enumerate() {
+                previous.0.insert((transaction.txid, index as u32), output);
             }
         }
         store.append_block_with_display(

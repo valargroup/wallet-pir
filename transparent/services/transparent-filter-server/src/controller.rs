@@ -6,7 +6,7 @@ use crate::{
     prevout::OutputCache,
     publication::{self, BoxError, Journal, PublishOptions},
     shard_filters::ShardFilters,
-    zakura::ZakuraClient,
+    zakura::NodeClient,
 };
 use axum::{
     extract::{Request, State},
@@ -356,9 +356,9 @@ pub async fn run(config: Config) -> Result<(), BoxError> {
         .open(config.publication_root.join("controller.lock"))?;
     lock.try_lock()
         .map_err(|e| format!("another publication controller owns this root: {e}"))?;
-    let rpc = ZakuraClient::from_cookie_file(&config.rpc_url, &config.rpc_cookie)?;
+    let rpc = crate::zakura::connect(&config.rpc_url, &config.rpc_cookie)?;
     let existing = EventStore::open_existing(&config.data_dir)?;
-    if existing.start_height() != 0 || existing.genesis_hash() != rpc.genesis_hash().await? {
+    if existing.start_height() != 0 || existing.genesis_hash() != rpc.block_hash_display(0).await? {
         return Err("journal identity does not match genesis RPC history".into());
     }
     std::fs::create_dir_all(config.snapshot_dir())?;
@@ -553,14 +553,14 @@ async fn invalidate(config: &Config, authority: &Authority, from: u64) -> Result
 /// lowest height seen, until the fleet acknowledges it.
 async fn follow_once(
     config: &Config,
-    rpc: &ZakuraClient,
+    rpc: &NodeClient,
     store: &Arc<tokio::sync::Mutex<EventStore>>,
     authority: &Authority,
     pending_invalidation: &mut Option<u64>,
     notify: &tokio::sync::watch::Sender<u64>,
 ) -> Result<(), BoxError> {
     let tip = rpc.tip_height().await?;
-    let tip_hash = rpc.block_hash(tip).await?;
+    let tip_hash = rpc.block_hash_display(tip).await?;
     {
         let public = authority.0.active.read().unwrap();
         if tip > public.publication.height
@@ -604,14 +604,14 @@ async fn follow_once(
 
 async fn ingest_once(
     config: &Config,
-    rpc: &ZakuraClient,
+    rpc: &NodeClient,
     store: &Arc<tokio::sync::Mutex<EventStore>>,
     authority: &Authority,
     cache: &mut OutputCache,
     notify: &tokio::sync::watch::Sender<u64>,
 ) -> Result<(), BoxError> {
     let tip = rpc.tip_height().await?;
-    let tip_hash = rpc.block_hash(tip).await?;
+    let tip_hash = rpc.block_hash_display(tip).await?;
     {
         let public = authority.0.active.read().unwrap();
         if tip > public.publication.height
@@ -630,7 +630,7 @@ async fn ingest_once(
     authority.0.status.write().unwrap()["node_hash"] = tip_hash.clone().into();
     let public = authority.0.active.read().unwrap().clone();
     let public_changed = public.publication.height > tip
-        || rpc.block_hash(public.publication.height).await? != public.publication.hash;
+        || rpc.block_hash_display(public.publication.height).await? != public.publication.hash;
     let acknowledged = || {
         std::fs::read(config.publication_root.join("withdrawn.json"))
             .ok()
@@ -645,7 +645,7 @@ async fn ingest_once(
     if withdrew_early {
         invalidate(config, authority, 0).await?;
     }
-    if public_changed && rpc.genesis_hash().await? != store.lock().await.genesis_hash() {
+    if public_changed && rpc.block_hash_display(0).await? != store.lock().await.genesis_hash() {
         return Err("node genesis changed; publication withdrawn and journal retained".into());
     }
     let mut ancestor = store.lock().await.covered_through();
@@ -656,7 +656,7 @@ async fn ingest_once(
             .block_at(height)
             .ok_or("missing journal endpoint")?
             .block_hash;
-        if height <= tip && rpc.block_hash(height).await? == hash.to_display_hex() {
+        if height <= tip && rpc.block_hash_display(height).await? == hash.to_display_hex() {
             break;
         }
         ancestor = height.checked_sub(1);
@@ -689,8 +689,8 @@ async fn ingest_once(
     }
     let mut next = store.lock().await.next_height();
     while next <= tip {
-        let fetched = rpc.block(next).await?;
-        let parent = fetched.1.header.previous_block_hash.to_string();
+        let fetched = rpc.fetch_block(next).await?;
+        let parent = BlockHash::from_internal_bytes(fetched.parent()).to_display_hex();
         let expected = if next == 0 {
             BlockHash::from_internal_bytes([0; 32]).to_display_hex()
         } else {
@@ -706,7 +706,7 @@ async fn ingest_once(
             return Err("node reorganized while fetching block; retry reconciliation".into());
         }
         let built = build_fetched_block_events(rpc, cache, next, fetched, false).await?;
-        if rpc.block_hash(next).await? != built.block_hash.to_display_hex() {
+        if rpc.block_hash_display(next).await? != built.block_hash.to_display_hex() {
             return Err("block became noncanonical during extraction".into());
         }
         {
@@ -725,7 +725,7 @@ async fn ingest_once(
 
 async fn publish_once(
     config: &Config,
-    rpc: &ZakuraClient,
+    rpc: &NodeClient,
     store: &Arc<tokio::sync::Mutex<EventStore>>,
     authority: &Authority,
 ) -> Result<(), BoxError> {
@@ -756,7 +756,7 @@ async fn publish_once(
         .ok_or("snapshot has no endpoint")?
         .block_hash
         .to_display_hex();
-    if rpc.block_hash(height).await? != hash {
+    if rpc.block_hash_display(height).await? != hash {
         return Err("journal endpoint not canonical".into());
     }
     if height == old.publication.height
@@ -830,7 +830,7 @@ async fn publish_once(
         _ = invalidated => return Err("candidate invalidated while preparing".into()),
         result = fleet(config, request) => result?,
     };
-    if authority.0.epoch.load(Ordering::Acquire) != epoch || rpc.block_hash(height).await? != hash {
+    if authority.0.epoch.load(Ordering::Acquire) != epoch || rpc.block_hash_display(height).await? != hash {
         return Err("candidate invalidated while preparing".into());
     }
     if config.shadow {
@@ -845,7 +845,7 @@ async fn publish_once(
         &serde_json::to_vec(&candidate.publication)?,
     )?;
     let activated=fleet(config,serde_json::json!({"operation":"activate","directory":directory,"map_sha256":candidate.publication.map_sha256,"prepared":prepared})).await?;
-    if authority.0.epoch.load(Ordering::Acquire) != epoch || rpc.block_hash(height).await? != hash {
+    if authority.0.epoch.load(Ordering::Acquire) != epoch || rpc.block_hash_display(height).await? != hash {
         authority.0.withdrawn.store(true, Ordering::Release);
         // The ingest loop invalidates the exact changed suffix; until then the
         // fleet hook withdraws routing entirely.
@@ -1255,7 +1255,6 @@ mod tests {
 
     use super::*;
     use axum::{routing::post, Json};
-    use zakura_chain::serialization::ZcashDeserialize;
     type Chain = Arc<RwLock<Vec<Vec<u8>>>>;
     struct MockNode {
         chain: Chain,
@@ -1279,8 +1278,8 @@ mod tests {
         raw
     }
     fn hash(raw: &[u8]) -> BlockHash {
-        let block = zakura_chain::block::Block::zcash_deserialize(raw).unwrap();
-        BlockHash::from_display_hex(&block.hash().to_string()).unwrap()
+        let block = zakura_server_chain::transparent::FetchedBlock::from_bytes(raw).unwrap();
+        BlockHash::from_internal_bytes(block.hash())
     }
     fn extend(chain: &mut Vec<Vec<u8>>, count: usize, tag: u8) {
         for i in 0..count {
@@ -1337,7 +1336,7 @@ mod tests {
         });
         let cookie = root.path().join("cookie");
         std::fs::write(&cookie, "fixture:fixture").unwrap();
-        let client = ZakuraClient::from_cookie_file(format!("http://{address}"), &cookie).unwrap();
+        let client = crate::zakura::connect(format!("http://{address}"), &cookie).unwrap();
         let journal_dir = root.path().join("journal");
         let mut journal = EventStore::open(
             &journal_dir,

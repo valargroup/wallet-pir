@@ -5,19 +5,25 @@
 mod extract;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::{collections::HashMap, error::Error, fs, path::Path, sync::Arc};
+use std::{collections::HashMap, error::Error, fs, path::Path};
 use transparent_events::FeeState;
-use zakura_chain::{
-    block::Block,
-    serialization::ZcashDeserialize,
-    transparent::{OutPoint, Output},
+use zakura_server_chain::{
+    hash::display,
+    transparent::{read_transaction, FetchedBlock, Output},
 };
 type AnyError = Box<dyn Error + Send + Sync>;
+/// An outpoint: a txid in protocol byte order and an output index.
+type OutPoint = ([u8; 32], u32);
 struct Previous(HashMap<OutPoint, Output>);
 impl extract::PreviousOutputs for Previous {
-    fn previous_output(&mut self, point: &OutPoint) -> Result<Option<Output>, AnyError> {
-        Ok(self.0.get(point).cloned())
+    fn previous_output(&mut self, txid: [u8; 32], index: u32) -> Result<Option<Output>, AnyError> {
+        Ok(self.0.get(&(txid, index)).cloned())
     }
+}
+
+/// The single block in `raw`, refusing trailing bytes.
+fn read_block(raw: &[u8]) -> Result<FetchedBlock, AnyError> {
+    Ok(FetchedBlock::from_exact_bytes(raw)?)
 }
 mod census;
 #[allow(dead_code)]
@@ -62,11 +68,7 @@ fn main() -> Result<(), AnyError> {
     for path in &paths {
         let text = fs::read(path)?;
         let raw = hex::decode(std::str::from_utf8(&text)?.trim())?;
-        let mut cursor = raw.as_slice();
-        let block = Arc::new(Block::zcash_deserialize(&mut cursor)?);
-        if !cursor.is_empty() {
-            return Err("trailing block bytes".into());
-        }
+        let block = read_block(&raw)?;
         let stem = path.file_stem().unwrap().to_str().unwrap();
         let height: u32 = stem
             .trim_start_matches("block-main-")
@@ -74,15 +76,9 @@ fn main() -> Result<(), AnyError> {
             .parse()?;
         // Retain full outputs only from the chosen blocks. Missing external
         // parents cause explicit exclusions, never fabricated unknown fees.
-        for tx in &block.transactions {
-            for (index, output) in tx.outputs().iter().enumerate() {
-                previous.0.insert(
-                    OutPoint {
-                        hash: tx.hash(),
-                        index: index as u32,
-                    },
-                    output.clone(),
-                );
+        for tx in block.transactions() {
+            for (index, output) in tx.outputs.into_iter().enumerate() {
+                previous.0.insert((tx.txid, index as u32), output);
             }
         }
         blocks.push((height, block, json!({"height":height,"file":path.file_name().unwrap().to_str(),
@@ -94,17 +90,21 @@ fn main() -> Result<(), AnyError> {
     let mut inventory = Vec::new();
     let mut ineligible = 0;
     for (height, block, mut pin) in blocks {
-        pin["block_hash_display"] = json!(block.hash().to_string());
-        pin["transactions"] = json!(block.transactions.len());
+        let transactions = block.transactions();
+        pin["block_hash_display"] = json!(display(&block.hash()));
+        pin["transactions"] = json!(transactions.len());
         let mut eligible = 0;
         let mut extracted = 0;
-        for (index, tx) in block.transactions.iter().enumerate() {
-            if tx.inputs().is_empty() && tx.outputs().is_empty() {
+        for (index, tx) in transactions.iter().enumerate() {
+            if !tx.coinbase && tx.spends.is_empty() && tx.outputs.is_empty() {
                 ineligible += 1;
                 continue;
             }
             eligible += 1;
-            match extract::extract_block(std::slice::from_ref(tx), &mut previous, height) {
+            match block
+                .transparent_transaction(index, height, &mut previous)
+                .and_then(|read| extract::index(&[read], height, true))
+            {
                 Ok(result) => {
                     let record = result
                         .display
@@ -118,7 +118,7 @@ fn main() -> Result<(), AnyError> {
                         FeeState::NotApplicable => json!("not_applicable"),
                     };
                     records.push(json!({"txid_internal":hex::encode(record.txid.0),"height":height,
-                        "block_hash_display":block.hash().to_string(),"transaction_index":index,
+                        "block_hash_display":display(&block.hash()),"transaction_index":index,
                         "coinbase":record.coinbase,"input_count":record.metadata.transparent_input_count,
                         "shielded_components":record.metadata.has_shielded_components,"fee":fee,
                         "outputs":record.outputs.iter().map(|o| json!({"value":o.value,"script":hex::encode(&o.script)})).collect::<Vec<_>>(),
@@ -128,7 +128,7 @@ fn main() -> Result<(), AnyError> {
                 }
                 Err(extract::ExtractError::MissingPreviousOutput(_)) => excluded
                     .push(json!({"height":height,
-                    "txid_display":tx.hash().to_string(),"reason":"external_prevout_unavailable"})),
+                    "txid_display":display(&tx.txid),"reason":"external_prevout_unavailable"})),
                 Err(e) => return Err(e.into()),
             }
         }

@@ -24,7 +24,7 @@ use transparent_filter_server::events::EventStore;
 use transparent_filter_server::ingest::{build_fetched_block_events, BoxError};
 use transparent_filter_server::prevout::OutputCache;
 use transparent_filter_server::state::StateReader;
-use transparent_filter_server::zakura::ZakuraClient;
+use transparent_filter_server::zakura::NodeClient;
 
 #[derive(Parser, Clone)]
 #[command(
@@ -116,7 +116,7 @@ fn append(
 /// near the tip can resume across a reorg. Walking back one block at a time is
 /// what makes that a rollback rather than a silently divergent journal.
 async fn reconcile(
-    zakura: &ZakuraClient,
+    zakura: &NodeClient,
     store: &mut EventStore,
     tip: u64,
 ) -> Result<(), BoxError> {
@@ -135,7 +135,7 @@ async fn reconcile(
         let stored = store
             .block_at(covered)
             .ok_or("covered height has no stored block")?;
-        if zakura.block_hash(covered).await? == stored.block_hash.to_display_hex() {
+        if zakura.block_hash_display(covered).await? == stored.block_hash.to_display_hex() {
             return Ok(());
         }
         tracing::warn!(
@@ -192,7 +192,7 @@ fn reconcile_state(reader: &StateReader, store: &mut EventStore, tip: u64) -> Re
 async fn run_state_backfill(cli: Cli, state_dir: PathBuf) -> Result<(), BoxError> {
     let opened = state_dir.clone();
     let reader = tokio::task::spawn_blocking(move || {
-        StateReader::open(&opened, zakura_chain::parameters::Network::Mainnet)
+        StateReader::open(&opened, zakura_server_chain::Network::Mainnet)
     })
     .await??;
 
@@ -318,10 +318,10 @@ async fn main() -> Result<(), BoxError> {
     let Some(cookie) = cli.zakura_cookie.clone() else {
         return Err("--zakura-cookie is required unless --state-dir is given".into());
     };
-    let zakura = ZakuraClient::from_cookie_file(&cli.zakura_rpc_url, &cookie)?;
+    let zakura = transparent_filter_server::zakura::connect(&cli.zakura_rpc_url, &cookie)?;
     // Chain identity comes from the node, once, and is then pinned in the
     // store: a journal built against one chain must never be read as another's.
-    let genesis_hash = zakura.genesis_hash().await?;
+    let genesis_hash = zakura.block_hash_display(0).await?;
     if genesis_hash != transparent_filter::MAINNET_GENESIS_DISPLAY {
         tracing::warn!(
             %genesis_hash,
@@ -369,7 +369,7 @@ async fn main() -> Result<(), BoxError> {
     let mut ahead = if height <= stop {
         Some(tokio::spawn({
             let zakura = zakura.clone();
-            async move { zakura.block(height).await }
+            async move { zakura.fetch_block(height).await }
         }))
     } else {
         None
@@ -383,7 +383,7 @@ async fn main() -> Result<(), BoxError> {
             let next = height + 1;
             ahead = Some(tokio::spawn({
                 let zakura = zakura.clone();
-                async move { zakura.block(next).await }
+                async move { zakura.fetch_block(next).await }
             }));
         }
 

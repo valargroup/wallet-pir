@@ -1400,9 +1400,8 @@ mod live {
     //! Live follow against a mock node, as `controller.rs`'s RPC fixture.
     use super::*;
     use crate::txid_display::source::{LiveSource, ReplaySource};
-    use crate::zakura::ZakuraClient;
+    use crate::zakura::NodeClient;
     use axum::{extract::State, routing::post, Json, Router};
-    use zakura_chain::serialization::ZcashDeserialize;
 
     type Chain = Arc<RwLock<Vec<Vec<u8>>>>;
 
@@ -1422,8 +1421,8 @@ mod live {
     }
 
     fn hash(raw: &[u8]) -> BlockHash {
-        let block = zakura_chain::block::Block::zcash_deserialize(raw).unwrap();
-        BlockHash::from_display_hex(&block.hash().to_string()).unwrap()
+        let block = zakura_server_chain::transparent::FetchedBlock::from_bytes(raw).unwrap();
+        BlockHash::from_internal_bytes(block.hash())
     }
 
     fn extend(chain: &mut Vec<Vec<u8>>, count: usize, tag: u8) {
@@ -1485,7 +1484,7 @@ mod live {
         let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         let cookie = temp.path().join("cookie");
         std::fs::write(&cookie, "fixture:fixture").unwrap();
-        let client = ZakuraClient::from_cookie_file(format!("http://{address}"), &cookie).unwrap();
+        let client = crate::zakura::connect(format!("http://{address}"), &cookie).unwrap();
 
         // The journal starts at genesis; display starts one block later.
         let journal = temp.path().join("journal");

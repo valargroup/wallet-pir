@@ -4,7 +4,6 @@ use super::*;
 use std::io::{self, BufRead, Read, Write};
 use transparent_events::TransactionMetadata;
 use transparent_shard::txid::{DisplayOutput, TransparentDisplayRecord};
-use zakura_chain::transparent::Input;
 
 pub fn run() -> Result<(), AnyError> {
     let stdin = io::stdin();
@@ -25,76 +24,55 @@ pub fn run() -> Result<(), AnyError> {
         let frame: Value = serde_json::from_slice(&line)?;
         let height = u32::try_from(frame["height"].as_u64().ok_or("height")?)?;
         let raw = hex::decode(frame["raw_block"].as_str().ok_or("raw block")?)?;
-        let mut cursor = raw.as_slice();
-        let block = Block::zcash_deserialize(&mut cursor)?;
-        if !cursor.is_empty() {
-            return Err("trailing canonical block bytes".into());
-        }
-        if block.hash().to_string() != frame["hash"].as_str().ok_or("hash")?
-            || block.coinbase_height().map(|h| h.0) != Some(height)
+        let block = FetchedBlock::from_exact_bytes(&raw)
+            .map_err(|e| format!("canonical block: {e}"))?;
+        if display(&block.hash()) != frame["hash"].as_str().ok_or("hash")?
+            || block.coinbase_height() != Some(height)
         {
             return Err("canonical block identity/height mismatch".into());
         }
         let mut records = Vec::new();
         let mut all_txids = Vec::new();
-        for (index, tx) in block.transactions.iter().enumerate() {
-            all_txids.push(hex::encode(tx.hash().0));
-            let coinbase = tx
-                .inputs()
-                .iter()
-                .any(|i| matches!(i, Input::Coinbase { .. }));
+        let transactions = block.transactions();
+        for (index, tx) in transactions.iter().enumerate() {
+            all_txids.push(hex::encode(tx.txid));
+            let coinbase = tx.coinbase;
             if coinbase != (index == 0) {
                 return Err("coinbase position mismatch".into());
             }
-            if tx.inputs().is_empty() && tx.outputs().is_empty() {
+            if !coinbase && tx.spends.is_empty() && tx.outputs.is_empty() {
                 continue;
             }
-            let points: std::collections::HashSet<_> = tx
-                .inputs()
-                .iter()
-                .filter_map(|i| {
-                    if let Input::PrevOut { outpoint, .. } = i {
-                        Some(*outpoint)
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-            let ni = tx
-                .inputs()
-                .iter()
-                .filter(|i| matches!(i, Input::PrevOut { .. }))
-                .count();
+            let points: std::collections::HashSet<_> = tx.spends.iter().copied().collect();
+            let ni = tx.spends.len();
             if points.len() != ni {
                 return Err("duplicate transparent input".into());
             }
             // No-input transactions need no parent facts. Reuse the production
             // value-balance extraction for their exact fee (and for coinbase).
             let record = if ni == 0 {
-                extract::extract_block(
-                    std::slice::from_ref(tx),
-                    &mut Previous(HashMap::new()),
-                    height,
-                )?
-                .display
-                .into_iter()
-                .next()
-                .ok_or("eligible display missing")?
+                let read =
+                    block.transparent_transaction(index, height, &mut Previous(HashMap::new()))?;
+                extract::index(&[read], height, true)?
+                    .display
+                    .into_iter()
+                    .next()
+                    .ok_or("eligible display missing")?
             } else {
                 TransparentDisplayRecord {
-                    txid: transparent_events::Txid(tx.hash().0),
+                    txid: transparent_events::Txid(tx.txid),
                     coinbase,
                     metadata: TransactionMetadata {
                         fee: FeeState::Unknown,
                         transparent_input_count: u32::try_from(ni)?,
-                        has_shielded_components: tx.has_shielded_data(),
+                        has_shielded_components: tx.has_shielded_components,
                     },
                     outputs: tx
-                        .outputs()
+                        .outputs
                         .iter()
                         .map(|o| DisplayOutput {
-                            value: u64::from(o.value),
-                            script: o.lock_script.as_raw_bytes().to_vec(),
+                            value: o.value,
+                            script: o.script.clone(),
                         })
                         .collect(),
                 }
@@ -112,10 +90,10 @@ pub fn run() -> Result<(), AnyError> {
         }
         serde_json::to_writer(
             &mut output,
-            &json!({"height":height,"hash":block.hash().to_string(),
-            "previousblockhash":block.header.previous_block_hash.to_string(),
-            "transactions":block.transactions.len(),"eligible":records.len(),
-            "shielded_only":block.transactions.len()-records.len(),"all_txids":all_txids,"records":records}),
+            &json!({"height":height,"hash":display(&block.hash()),
+            "previousblockhash":display(&block.parent()),
+            "transactions":transactions.len(),"eligible":records.len(),
+            "shielded_only":transactions.len()-records.len(),"all_txids":all_txids,"records":records}),
         )?;
         output.write_all(b"\n")?;
         output.flush()?;
