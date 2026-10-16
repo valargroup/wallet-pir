@@ -2,10 +2,10 @@
 //! pass reads, whether an anchor is on its chain, and the revocation of served
 //! anchors that fall off it. Block and chain decoding stay in wallet-libraries
 //! behind the server-only chain adapter.
-use zakura_server_chain::NodeClient as ZakuraClient;
+use receiver_directory::Hash;
 use receiver_pir_server::Publications;
 use tracing::warn;
-use receiver_directory::Hash;
+use zakura_server_chain::NodeClient as ZakuraClient;
 
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
