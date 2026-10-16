@@ -3817,3 +3817,31 @@ in the evidence.
 This plan does not build a frozen-prefix lineage, per-height geometry, a second
 display archive owner, client changes beyond the split map, or any wallet
 change.
+
+## Worker binary upgrade of the current v12 history and 4k8 display fleets
+
+`ops/scripts/wallet-pir-deploy.py transparent-binary-{plan,preflight,baseline,deploy,status,rollback}
+--request F --request-sha256 H` (`transparent/ops/lib/binary_upgrade.py`) changes only worker
+executables through the shared engine: immutable `releases/<binary sha256>` staging, the managed
+ExecStart drop-in, the production lock, journals and touched-target rollback.
+
+- **Release identity** is the request's `release.git_sha` and `release.binary_sha256`; a mutating
+  command also requires the installed operations package to name that Git revision.
+- **Publication identity** is pinned separately: v12 `publication.source_sha` (the controller's
+  `source_sha`, for example `fb90519b`), or the 4k8 display `geometry` and `publication_root`; the
+  controller's effective unit bytes and the digests of its configuration, `fleet.json` and fleet
+  script; each worker's ready identity fields, cache/limit unit properties and argument pairs.
+- History refuses unless the controller holds `follow_journal: false`, the full-v3 journal, the
+  full-v12 publication root and no `ship_runtimes`. Display refuses unless its controller runs
+  `--geometry txid-4k8`.
+- Supported topology only: history workers exactly `transparent-v12-archive.service` and
+  `transparent-v12-recent.service` with the `transparent-v12-publish-controller.service` controller;
+  display worker exactly `transparent-txid-display-worker.service` with
+  `transparent-txid-display-k8-controller.service`. External workers or other units refuse.
+- The checks run in preflight, under the lock before any change, after every worker restart (a
+  changed identity fails the transaction and rolls back every touched worker) and after rollback.
+  Controllers, publications, assignments, journals and routing are never written; unit drift beyond
+  the binary refuses.
+
+Not covered: controller or fleet-script upgrades, and confirmation that the live ready endpoints
+expose the pinned identity fields. The display path has no fixture test yet.
