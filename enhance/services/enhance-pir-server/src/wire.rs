@@ -91,8 +91,9 @@ fn scan_crs_blocks(
         return Err(invalid("unexpected CRS block count"));
     }
     let mut output = Vec::new();
-    // Validation needs the framing and exact payload length, not individual
-    // coefficients. Digest verification remains in the underlying reader.
+    // Read rows in bounded chunks even when retaining coefficients: a file
+    // reader must not issue one syscall per coefficient. Digest verification
+    // remains in the underlying reader.
     let mut scratch = [0u8; 64 * 1024];
     for _ in 0..expected_blocks {
         if u32(&mut input)? != degree {
@@ -108,19 +109,16 @@ fn scan_crs_blocks(
             } else {
                 Vec::new()
             };
-            if retain {
-                for _ in 0..degree {
-                    let mut bytes = [0; 8];
-                    input.read_exact(&mut bytes)?;
-                    row.push(u64::from_le_bytes(bytes));
+            let mut remaining = degree * 8; // checked by crs_encoded_len above
+            while remaining != 0 {
+                let n = remaining.min(scratch.len());
+                input.read_exact(&mut scratch[..n])?;
+                if retain {
+                    row.extend(scratch[..n].chunks_exact(8).map(|bytes| {
+                        u64::from_le_bytes(bytes.try_into().expect("whole coefficients"))
+                    }));
                 }
-            } else {
-                let mut remaining = degree * 8; // checked by crs_encoded_len above
-                while remaining != 0 {
-                    let n = remaining.min(scratch.len());
-                    input.read_exact(&mut scratch[..n])?;
-                    remaining -= n;
-                }
+                remaining -= n;
             }
             if retain {
                 rows.push(row);
@@ -170,6 +168,41 @@ mod streaming_tests {
     use super::*;
 
     #[test]
+    fn decoding_reads_payload_in_bounded_chunks() {
+        struct Counting<'a> {
+            bytes: &'a [u8],
+            calls: usize,
+            largest: usize,
+        }
+        impl Read for Counting<'_> {
+            fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
+                self.calls += 1;
+                self.largest = self.largest.max(out.len());
+                assert!(out.len() <= 64 * 1024);
+                self.bytes.read(out)
+            }
+        }
+        let degree = 128;
+        let rows: Vec<Vec<u64>> = (0..degree)
+            .map(|row| (0..degree).map(|col| ((row << 16) | col) as u64).collect())
+            .collect();
+        let encoded = encode_crs_blocks(&[CrsBlock { rows: rows.clone() }]);
+        let mut reader = Counting {
+            bytes: &encoded,
+            calls: 0,
+            largest: 0,
+        };
+        let decoded = read_crs_blocks(&mut reader, 1, degree).unwrap();
+        assert_eq!(decoded[0].rows, rows);
+        assert!(
+            reader.calls < 3 * degree,
+            "decoding read each coefficient separately: {} reads",
+            reader.calls
+        );
+        assert_eq!(reader.largest, degree * 8);
+    }
+
+    #[test]
     fn validation_reads_payload_in_bounded_chunks() {
         struct Counting<'a> {
             bytes: &'a [u8],
@@ -209,6 +242,7 @@ mod streaming_tests {
         truncated.extend_from_slice(&(degree as u32).to_le_bytes());
         truncated.extend_from_slice(&(degree as u32).to_le_bytes());
         truncated.resize(truncated.len() + degree * 8, 0);
+        assert!(read_crs_blocks(truncated.as_slice(), 1, degree).is_err());
         let mut reader = Counting {
             bytes: &truncated,
             calls: 0,
