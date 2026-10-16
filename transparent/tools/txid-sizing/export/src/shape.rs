@@ -59,6 +59,7 @@ pub fn run() -> Result<(), AnyError> {
                     .into_iter()
                     .next()
                     .ok_or("eligible display missing")?
+                    .record
             } else {
                 TransparentDisplayRecord {
                     txid: transparent_events::Txid(tx.txid),

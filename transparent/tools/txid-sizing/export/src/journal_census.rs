@@ -728,13 +728,15 @@ pub fn collect(args: &[String]) -> Result<Value, AnyError> {
         source_bytes += std::fs::metadata(&path)?.len();
         // Use the existing checksum/extent/duplicate/canonical-codec reader.
         // Do not load events.bin; event replay adds no display sizing facts.
+        // v1 reads the historical v1 sidecar records, never the published v2
+        // entries `display_journal::read` derives from v2x source records.
         let records: Vec<(TransparentDisplayRecord, Option<Vec<DisplayInput>>)> = if v2x {
-            display_journal::read_inputs(dir, block.block_hash)?
+            display_journal::read_sources(dir, block.block_hash)?
                 .into_iter()
                 .map(|r| (r.record, Some(r.inputs)))
                 .collect()
         } else {
-            display_journal::read(dir, block.block_hash)?
+            crate::historical_v1::read_sidecar(dir, block.block_hash)?
                 .into_iter()
                 .map(|r| (r, None))
                 .collect()
@@ -959,9 +961,13 @@ mod tests {
         coinbase.coinbase = true;
         coinbase.metadata.transparent_input_count = 0;
         coinbase.metadata.fee = FeeState::NotApplicable;
-        store
-            .append_block_with_display(0, hash, &[], &[coinbase.clone(), record(2)])
-            .unwrap();
+        crate::historical_v1::append_sidecar_block(
+            &mut store,
+            0,
+            hash,
+            &[coinbase.clone(), record(2)],
+        )
+        .unwrap();
         store.commit().unwrap();
         drop(store);
         let args = vec![
@@ -985,9 +991,7 @@ mod tests {
         let mut store =
             EventStore::open(dir.path(), transparent_filter::MAINNET_GENESIS_DISPLAY, 0).unwrap();
         let hash2 = transparent_filter::BlockHash::from_internal_bytes([3; 32]);
-        store
-            .append_block_with_display(1, hash2, &[], &[coinbase])
-            .unwrap();
+        crate::historical_v1::append_sidecar_block(&mut store, 1, hash2, &[coinbase]).unwrap();
         store.commit().unwrap();
         drop(store);
         let args = vec![
@@ -1037,7 +1041,7 @@ mod tests {
         let mut store =
             EventStore::open(dir.path(), transparent_filter::MAINNET_GENESIS_DISPLAY, 0).unwrap();
         store
-            .append_block_with_display_inputs(0, hash, &[], &records)
+            .append_block_with_display(0, hash, &[], &records)
             .unwrap();
         store.commit().unwrap();
         drop(store);
@@ -1113,8 +1117,7 @@ mod tests {
             0,
         )
         .unwrap();
-        store
-            .append_block_with_display(0, hash, &[], &[coinbase, spend])
+        crate::historical_v1::append_sidecar_block(&mut store, 0, hash, &[coinbase, spend])
             .unwrap();
         store.commit().unwrap();
         drop(store);
@@ -1146,9 +1149,7 @@ mod tests {
                 cb.metadata.fee = FeeState::NotApplicable;
                 records.push(cb);
             }
-            store
-                .append_block_with_display(0, hash, &[], &records)
-                .unwrap();
+            crate::historical_v1::append_sidecar_block(&mut store, 0, hash, &records).unwrap();
             store.commit().unwrap();
             drop(store);
             let args = vec![
@@ -1401,9 +1402,7 @@ mod tests {
         let hash = transparent_filter::BlockHash::from_internal_bytes([2; 32]);
         let mut store =
             EventStore::open(dir.path(), transparent_filter::MAINNET_GENESIS_DISPLAY, 0).unwrap();
-        store
-            .append_block_with_display(0, hash, &[], &[record(1)])
-            .unwrap();
+        crate::historical_v1::append_sidecar_block(&mut store, 0, hash, &[record(1)]).unwrap();
         store.commit().unwrap();
         let read_lock = File::open(dir.path().join("writer.lock")).unwrap();
         assert!(read_lock.try_lock_shared().is_err());
@@ -1411,12 +1410,12 @@ mod tests {
         read_lock.try_lock_shared().unwrap();
         let reader = EventStore::open_existing(dir.path()).unwrap();
         assert_eq!(
-            display_journal::read(dir.path(), reader.block_at(0).unwrap().block_hash)
+            crate::historical_v1::read_sidecar(dir.path(), reader.block_at(0).unwrap().block_hash)
                 .unwrap()
                 .len(),
             1
         );
-        display_journal::write(
+        crate::historical_v1::write_sidecar(
             dir.path(),
             transparent_filter::BlockHash::from_internal_bytes([3; 32]),
             &[record(4)],
@@ -1430,8 +1429,8 @@ mod tests {
         let mut bytes = std::fs::read(&path).unwrap();
         bytes[50] ^= 1;
         std::fs::write(&path, bytes).unwrap();
-        assert!(display_journal::read(dir.path(), hash).is_err());
+        assert!(crate::historical_v1::read_sidecar(dir.path(), hash).is_err());
         std::fs::remove_file(path).unwrap();
-        assert!(display_journal::read(dir.path(), hash).is_err());
+        assert!(crate::historical_v1::read_sidecar(dir.path(), hash).is_err());
     }
 }

@@ -25,12 +25,14 @@ type IndexedEvents = Vec<(ScriptBytes, TransparentEvent)>;
 
 /// One sidecar family: its directory, envelope magic and block size bound.
 /// v1 is read only for oversized history events; v2x is written and read.
-struct Envelope {
+/// Crate-visible for the excluded txid-sizing exporter, which compiles this
+/// module to read historical v1 records with the same envelope checks.
+pub(crate) struct Envelope {
     dir: &'static str,
     magic: &'static [u8; 8],
     max_bytes: usize,
 }
-const V1: Envelope = Envelope {
+pub(crate) const V1: Envelope = Envelope {
     dir: "display-v1",
     magic: b"TPIRTX01",
     max_bytes: MAX_BLOCK_DISPLAY_BYTES,
@@ -65,7 +67,7 @@ pub fn write_with_events(
     let payloads = records.iter().map(|r| (r.record.txid, r.encode()));
     write_envelope(&V2X, dir, hash, payloads, oversized)
 }
-fn write_envelope(
+pub(crate) fn write_envelope(
     envelope: &Envelope,
     dir: &Path,
     hash: BlockHash,
@@ -146,7 +148,7 @@ pub fn read_sources(
 ) -> Result<Vec<TransparentDisplayRecordV2x>, EventStoreError> {
     Ok(read_envelope(&V2X, dir, hash, TransparentDisplayRecordV2x::decode)?.0)
 }
-fn read_envelope<R>(
+pub(crate) fn read_envelope<R>(
     envelope: &Envelope,
     dir: &Path,
     hash: BlockHash,

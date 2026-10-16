@@ -46,7 +46,7 @@ pub fn run() -> Result<(), AnyError> {
             .enumerate()
             .map(|(i, t)| (t.txid, i))
             .collect();
-        for record in extracted.display {
+        for record in extracted.display.into_iter().map(|source| source.record) {
             let fee = match record.metadata.fee {
                 FeeState::Exact(v) => json!(v),
                 FeeState::Unknown => json!("unknown"),

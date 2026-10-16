@@ -1,6 +1,5 @@
 //! Analysis-only sequential disk UTXO census, using the production extractor.
 use super::*;
-use crate::extract::PreviousOutputs;
 use rusqlite::{params, Connection, OptionalExtension};
 use std::io::{self, BufRead, Write};
 
@@ -181,6 +180,7 @@ pub fn run(path: &str) -> Result<(), AnyError> {
                         .into_iter()
                         .next()
                         .ok_or("missing eligible record")?
+                        .record
                 } else {
                     // Extraction refuses partial filters. Census preserves eligibility
                     // with the shared explicitly unknown fee state; no invented fee.

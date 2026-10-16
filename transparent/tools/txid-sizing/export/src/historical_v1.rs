@@ -433,6 +433,43 @@ pub fn verify_rows(
     Ok(())
 }
 
+/// The historical display-v1 records of a committed block's sidecar, through
+/// the service's own envelope reader (checksum, block hash, extents, unique
+/// txids) and the pinned library's v1 record codec. Current services read v1
+/// sidecars only for their oversized events; never substitute v2 entries.
+pub fn read_sidecar(
+    dir: &std::path::Path,
+    hash: transparent_filter::BlockHash,
+) -> Result<Vec<TransparentDisplayRecord>, crate::events::EventStoreError> {
+    use crate::display_journal::{read_envelope, V1};
+    Ok(read_envelope(&V1, dir, hash, TransparentDisplayRecord::decode)?.0)
+}
+
+/// Writes a historical display-v1 sidecar as ingests before v2 did.
+/// Synthetic journals only.
+#[cfg(test)]
+pub fn write_sidecar(
+    dir: &std::path::Path,
+    hash: transparent_filter::BlockHash,
+    records: &[TransparentDisplayRecord],
+) -> Result<(), crate::events::EventStoreError> {
+    use crate::display_journal::{write_envelope, V1};
+    let payloads = records.iter().map(|r| (r.txid, r.encode()));
+    write_envelope(&V1, dir, hash, payloads, &[])
+}
+
+/// [`write_sidecar`], then the checkpoint-referenced block, in that order.
+#[cfg(test)]
+pub fn append_sidecar_block(
+    store: &mut crate::events::EventStore,
+    height: u64,
+    hash: transparent_filter::BlockHash,
+    records: &[TransparentDisplayRecord],
+) -> Result<(), crate::events::EventStoreError> {
+    write_sidecar(&store.directory().to_path_buf(), hash, records)?;
+    store.append_block(height, hash, &[])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

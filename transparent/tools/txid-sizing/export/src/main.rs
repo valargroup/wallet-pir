@@ -1,6 +1,7 @@
 //! Offline analysis only. Compile the existing canonical extractor without its
 //! service/RocksDB stack. No fee implementation is copied into this tool.
-#[allow(dead_code)]
+// The service re-exports adapter items this tool does not use.
+#[allow(dead_code, unused_imports)]
 #[path = "../../../../services/transparent-filter-server/src/extract.rs"]
 mod extract;
 use serde_json::{json, Value};
@@ -116,11 +117,14 @@ fn main() -> Result<(), AnyError> {
                 .and_then(|read| extract::index(&[read], height, true))
             {
                 Ok(result) => {
+                    // Historical v1 analysis: the v1 record the extracted
+                    // v2x source record carries, never its v2x encoding.
                     let record = result
                         .display
                         .into_iter()
                         .next()
-                        .ok_or("missing eligible display record")?;
+                        .ok_or("missing eligible display record")?
+                        .record;
                     let payload = record.encode()?;
                     let fee = match record.metadata.fee {
                         FeeState::Exact(v) => json!(v),
