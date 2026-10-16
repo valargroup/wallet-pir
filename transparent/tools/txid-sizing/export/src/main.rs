@@ -34,9 +34,17 @@ mod display_journal;
 mod events;
 mod journal_census;
 mod shape;
+mod source_info;
 mod stream;
 fn main() -> Result<(), AnyError> {
     let args: Vec<_> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("--source-info") {
+        if args.len() != 2 {
+            return Err("usage: txid-sizing-export --source-info".into());
+        }
+        println!("{}", source_info::executing()?);
+        return Ok(());
+    }
     if args.get(1).map(String::as_str) == Some("--shape-stream") {
         return shape::run();
     }

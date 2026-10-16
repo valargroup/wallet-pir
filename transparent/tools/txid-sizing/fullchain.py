@@ -9,7 +9,7 @@ import subprocess
 import sqlite3
 import os
 import time
-import tomllib
+import source_info
 from pathlib import Path
 from census import Gateway, ANCHOR_HEIGHT, ANCHOR_HASH, atomic_json, digest
 
@@ -208,32 +208,32 @@ def extract_bundle(cache,binary,bundle,rows,status):
     finally:
         if process.poll() is None: process.terminate();process.wait()
 
-EXPORT_MANIFEST=Path("transparent/tools/txid-sizing/export/Cargo.toml")
-
-def parser_revision(manifest=EXPORT_MANIFEST):
-    """The wallet-libraries revision whose zakura-server-chain parses the export's blocks:
-    read from the export's own pin, so the recorded parser cannot drift from what ran."""
-    dependency=tomllib.loads(Path(manifest).read_text()).get("dependencies",{}).get("zakura-server-chain")
-    revision=dependency.get("rev") if isinstance(dependency,dict) else None
-    if not revision or len(revision)!=40: raise ValueError("export does not pin zakura-server-chain to an exact revision")
-    return revision
+def parser_revision(binary):
+    """The node parser compiled into this export binary, distinct from its adapter."""
+    return source_info.read(binary)["node_parser"]["git_revision"]
 
 def scan(cache,binary,status,evidence):
     cache=cache.resolve();binary=binary.resolve();evidence=evidence.resolve()
+    identity=source_info.read(binary)
     checkpoint=cache/"checkpoint.json"
     if checkpoint.exists():
         saved=json.loads(checkpoint.read_text())
         if digest(cache/"census.sqlite")!=saved["database_sha256"]: raise ValueError("census database checksum differs from checkpoint")
         if saved["anchor_hash"]!=ANCHOR_HASH or saved["anchor_height"]!=ANCHOR_HEIGHT:
             raise ValueError("checkpoint anchor differs")
-        if saved["extractor_sha256"]!=digest(Path("transparent/services/transparent-filter-server/src/extract.rs")):
+        if saved["binary_sha256"]!=identity["binary_sha256"]:
+            raise ValueError("checkpoint export binary differs")
+        if saved["extractor_sha256"]!=identity["compiled_source_file_sha256"]["extractor"]:
             raise ValueError("checkpoint extractor differs")
-        if saved["census_source_sha256"]!=digest(Path("transparent/tools/txid-sizing/export/src/census.rs")):
+        if saved["census_source_sha256"]!=identity["compiled_source_file_sha256"]["census"]:
             raise ValueError("checkpoint census source differs")
     started=time.monotonic(); scanned=0
     for bundle,rows in sorted(bundles(cache),key=lambda p:min(r["height"] for r in p[1])):
+        if digest(binary)!=identity["binary_sha256"]: raise ValueError("export binary changed during scan")
         receipt=extract_bundle(cache,binary,bundle,rows,status);scanned+=receipt["blocks"]
+        if digest(binary)!=identity["binary_sha256"]: raise ValueError("export binary changed during scan")
     def snapshot():
+        if digest(binary)!=identity["binary_sha256"]: raise ValueError("export binary changed during scan")
         with sqlite3.connect(cache/"census.sqlite") as db:
             last=db.execute("SELECT height,hash FROM blocks ORDER BY height DESC LIMIT 1").fetchone()
             counts=db.execute("SELECT count(*),min(height),max(height) FROM blocks").fetchone()
@@ -242,10 +242,9 @@ def scan(cache,binary,status,evidence):
         value=dict(schema="txid-full-chain-checkpoint-v1",anchor_height=ANCHOR_HEIGHT,anchor_hash=ANCHOR_HASH,
             scanned_blocks=counts[0],last_height=last[0],last_hash=last[1],transactions=txids,
             database_sha256=digest(cache/"census.sqlite"),binary_sha256=digest(binary),
-            # Blocks are parsed by wallet-libraries' zakura-server-chain at the export's pin.
-            parser_sha=parser_revision(),
-            extractor_sha256=digest(Path("transparent/services/transparent-filter-server/src/extract.rs")),
-            census_source_sha256=digest(Path("transparent/tools/txid-sizing/export/src/census.rs")),
+            parser_sha=identity["node_parser"]["git_revision"],compiled_reader_identity=identity,
+            extractor_sha256=identity["compiled_source_file_sha256"]["extractor"],
+            census_source_sha256=identity["compiled_source_file_sha256"]["census"],
             coverage="INCOMPLETE" if counts[0]!=ANCHOR_HEIGHT+1 else "FULL_CHAIN")
         atomic_json(checkpoint,value);atomic_json(evidence/"full-chain-checkpoint.json",value)
         return value

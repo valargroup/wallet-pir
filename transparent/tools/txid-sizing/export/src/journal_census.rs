@@ -844,12 +844,15 @@ pub fn collect(args: &[String]) -> Result<Value, AnyError> {
     .into_iter()
     .map(|(name, bytes)| (name, hex::encode(Sha256::digest(bytes))))
     .collect();
+    let reader_identity = crate::source_info::executing()?;
     let source = json!({"start_height":0,"anchor_height":end,"anchor_hash_display":expected,"anchor_hash_external_expectation":!derive_anchor,"journal_version":store.version(),
             "journal_covered_through":store.covered_through(),"era_boundaries":ERAS,"checkpoint_hex":hex::encode(checkpoint),
             "block_membership_sha256":hex::encode(digest.finalize()),
             "sidecar_content_digest_chain_sha256":hex::encode(sidecar_digest.finalize()),"sidecar_bytes_read":source_bytes,
             "sidecar_validation":"existing reader checks SHA256, hash envelope, unique block txids and canonical display encoding",
-            "chain_consensus_independently_validated":false,"parser_git_pin":"af944f5194ef2e9921bc96af017629450375013c",
+            "chain_consensus_independently_validated":false,"parser_git_pin":reader_identity["node_parser"]["git_revision"],
+            "compiled_reader_identity":reader_identity,
+            "journal_ingest_parser_identity":Value::Null,
             "compiled_source_file_sha256":pins,
             "binary_sha256":hex::encode(Sha256::digest(std::fs::read(std::env::current_exe()?)?)),"ingest_executable_and_source_pin":Value::Null});
     let measurement = json!({"elapsed_seconds":start.elapsed().as_secs_f64(),"partial_archive_records":partial_archive_records,"distinct_display_records":n,"committed_blocks":end+1,

@@ -5,6 +5,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 from types import SimpleNamespace
 import fullchain
@@ -89,17 +90,15 @@ class AggregateTests(unittest.TestCase):
             aggregate.close()
 
 class ParserRevisionTests(unittest.TestCase):
-    def test_parser_revision_is_the_export_pin(self):
-        manifest=Path(__file__).parent/"export"/"Cargo.toml"
-        pinned=[line for line in manifest.read_text().splitlines() if line.startswith("zakura-server-chain =")][0]
-        self.assertIn(f'rev = "{fullchain.parser_revision(manifest)}"',pinned)
+    def test_parser_revision_is_from_the_binary_node_not_the_adapter(self):
+        identity={"node_parser":{"git_revision":"a"*40},"server_adapter":{"git_revision":"b"*40}}
+        with patch.object(fullchain.source_info,"read",return_value=identity) as read:
+            self.assertEqual(fullchain.parser_revision(Path("compiled-export")),"a"*40)
+            read.assert_called_once_with(Path("compiled-export"))
 
-    def test_parser_revision_needs_an_exact_pin(self):
-        with tempfile.TemporaryDirectory() as directory:
-            manifest=Path(directory)/"Cargo.toml"
-            for dependency in ('', 'zakura-server-chain = { git = "x", branch = "main" }', 'zakura-server-chain = { git = "x", rev = "abc" }'):
-                manifest.write_text("[dependencies]\n"+dependency+"\n")
-                with self.subTest(dependency=dependency), self.assertRaisesRegex(ValueError,"exact revision"):
-                    fullchain.parser_revision(manifest)
+    def test_parser_revision_refuses_a_binary_without_compiled_identity(self):
+        with patch.object(fullchain.source_info,"read",side_effect=ValueError("missing compiled identity")):
+            with self.assertRaisesRegex(ValueError,"compiled identity"):
+                fullchain.parser_revision(Path("old-export"))
 
 if __name__=='__main__':unittest.main()

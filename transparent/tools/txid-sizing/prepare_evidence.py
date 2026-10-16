@@ -10,6 +10,7 @@ import census
 import geometry
 import survey
 import verify_stream
+import source_info
 
 ROOT=Path(__file__).resolve().parents[3]
 
@@ -37,6 +38,7 @@ def sample_packing(checkpoint,binary,analysis):
 
 
 def publish(checkpoint,binary,output):
+    identity=source_info.read(binary)
     checkpoint=Path(checkpoint);output=Path(output)
     receipt=json.loads((checkpoint/"receipt.json").read_text())
     replay=json.loads((checkpoint/"final-replay.json").read_text())
@@ -60,8 +62,8 @@ def publish(checkpoint,binary,output):
         acquisition_completed_at_utc=datetime.fromtimestamp((checkpoint/"receipt.json").stat().st_mtime,timezone.utc).isoformat(),
         source=receipt["source"],base_source_sha="7d46f7618b94f2a889dcfebd5b3dc9229bd98b5a",
         analysis_tools_sha=subprocess.check_output(["git","rev-parse","HEAD"],cwd=ROOT,text=True).strip(),
-        parser_revision="af944f5194ef2e9921bc96af017629450375013c",
-        metadata_dependency="3cfbc4848b92b1385b9215174251f8e51fbfa804",
+        parser_revision=identity["node_parser"]["git_revision"],
+        metadata_dependency=identity["event_codec"]["git_revision"],compiled_reader_identity=identity,
         node_chain=node.get("chain"),node_pruned=node.get("pruned"),node_reported_upgrades=node.get("upgrades"),node_build_version="unavailable from allowed RPC methods; not inferred from source",
         anchor_height=census.ANCHOR_HEIGHT,anchor_hash=census.ANCHOR_HASH,
         complete_census=False,selected_blocks=len(receipt["blocks"]),selection=receipt["design"],blocks=receipt["blocks"],

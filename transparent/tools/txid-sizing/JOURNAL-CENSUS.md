@@ -41,6 +41,17 @@ alongside it. Compiled reader/codec/metadata/tool/lock digests, binary digest,
 checkpoint bytes, block-membership digest and validated-sidecar digest chain are
 included. The checkpoint can cover more blocks than the selected anchor.
 
+`txid-sizing-export --source-info` reports the node parser (`zakura-chain`),
+server adapter (`zakura-server-chain`) and event codec separately, with their
+resolved Git sources from the lock embedded at compilation and the executing
+binary's SHA-256. Both Python evidence tools consume this identity from the
+selected executable; the current checkout's dependency pin is not binary
+provenance. The journal report labels it as the compiled reader's identity.
+The original journal ingest executable, source and parser remain explicitly
+unknown unless an independent ingest receipt establishes them; the current
+reader cannot establish that historical identity.
+
+
 ## What the JSON establishes
 
 - `domains`: distinct eligible display records, output/input counts, mixed and
