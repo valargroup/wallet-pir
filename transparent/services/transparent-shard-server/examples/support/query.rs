@@ -6,7 +6,7 @@ use std::{
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
-use transparent_wallet::{
+use zakura_pir_transparent::engine::{
     client::{Table, TableClient},
     http::{HttpFilterSource, HttpOptions, HttpShardTransport},
     transport::{BoxError, FilterSource, ShardTransport},

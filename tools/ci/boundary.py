@@ -58,7 +58,7 @@ WALLET_LIBRARIES = 'github.com/zakura-core/wallet-libraries'
 PURE = {
     'receiver-pir-server',
     'pir-observability', 'pir-control', 'enhance-pir', 'transparent-blocks',
-    'transparent-wallet', 'transparent-wallet-store', 'transparent-shard-server',
+    'transparent-shard-server',
 }
 RECEIVER = {'receiver-pir-server'}
 CODEC = 'zakura-receiver-crypto'
@@ -68,6 +68,7 @@ CANONICAL = {
     'zakura-pir-native', 'zakura-transparent-native', 'zakura-transparent-events',
     'zakura-transparent-filter', 'zakura-transparent-shard',
     'zakura-transparent-txid-client', 'zakura-receiver-directory', 'zakura-receiver-pir',
+    'zakura-pir-transparent',
 }
 # Preserved sources outside the active product: legacy demos and retained evidence.
 # They are still checked for direct Common and node edges, which includes the

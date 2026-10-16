@@ -219,19 +219,21 @@ class PlannerTests(unittest.TestCase):
 
 
     def test_feature_gated_classifications_enable_discovery_and_reject_renames(self):
-        metadata = {'packages': [{'name': 'transparent-wallet', 'targets': [{'kind': ['lib']}]}]}
-        registry = json.loads((ROOT/'tools/ci/slow-tests.json').read_text())['transparent-wallet']
+        metadata = {'packages': [{'name': 'fixture-client', 'targets': [{'kind': ['lib']}]}]}
+        registry = {'http::slow': {'reason': 'A gated fixture test.', 'features': ['reqwest']}}
         listing = ''.join(name + ': test\n' for name in registry)
         calls = []
-        with patch.object(fast.subprocess, 'check_output', side_effect=[json.dumps(metadata).encode(), listing]), \
+        with patch.object(Path, 'read_text', return_value=json.dumps({'fixture-client': registry})), \
+             patch.object(fast.subprocess, 'check_output', side_effect=[json.dumps(metadata).encode(), listing]), \
              patch.object(fast, 'run', side_effect=lambda command, **kw: calls.append(command)):
-            fast.rust_checks(['transparent-wallet'])
+            fast.rust_checks(['fixture-client'])
         self.assertIn('reqwest', calls[-1])
         self.assertIn('--skip', calls[-1])
-        with patch.object(fast.subprocess, 'check_output', side_effect=[json.dumps(metadata).encode(), 'renamed: test\n']), \
+        with patch.object(Path, 'read_text', return_value=json.dumps({'fixture-client': registry})), \
+             patch.object(fast.subprocess, 'check_output', side_effect=[json.dumps(metadata).encode(), 'renamed: test\n']), \
              patch.object(fast, 'run'):
             with self.assertRaisesRegex(ValueError, 'stale'):
-                fast.rust_checks(['transparent-wallet'])
+                fast.rust_checks(['fixture-client'])
 
 
 

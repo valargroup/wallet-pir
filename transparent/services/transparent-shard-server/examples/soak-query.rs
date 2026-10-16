@@ -6,7 +6,7 @@ use std::{
     path::PathBuf,
     time::{Duration, Instant},
 };
-use transparent_wallet::{
+use zakura_pir_transparent::engine::{
     client::Table,
     transport::{BoxError, Overloaded, StaleRevision},
 };

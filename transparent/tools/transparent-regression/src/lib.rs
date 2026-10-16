@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use transparent_events::TransparentEvent;
 use transparent_filter::ShardMap;
-use transparent_wallet::{Anchor, WalletStore};
+use zakura_pir_transparent::engine::{Anchor, WalletStore};
 
 pub const SCHEMA: &str = "transparent-regression-v1";
 

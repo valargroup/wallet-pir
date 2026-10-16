@@ -15,10 +15,10 @@ use sha2::{Digest, Sha256};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use transparent_filter::ShardMap;
-use transparent_wallet::http::{HttpFilterSource, HttpOptions, HttpShardTransport};
-use transparent_wallet::store::{ScriptEntry, ScriptOrigin, WalletStore};
-use transparent_wallet::transport::{FilterSource, ShardTransport};
-use transparent_wallet::{
+use zakura_pir_transparent::engine::http::{HttpFilterSource, HttpOptions, HttpShardTransport};
+use zakura_pir_transparent::engine::store::{ScriptEntry, ScriptOrigin, WalletStore};
+use zakura_pir_transparent::engine::transport::{FilterSource, ShardTransport};
+use zakura_pir_transparent::engine::{
     parse_init, sync_into, Anchor, MemoryStore, StaticChain, StaticScripts, TableCharges,
     WorkLimits,
 };
