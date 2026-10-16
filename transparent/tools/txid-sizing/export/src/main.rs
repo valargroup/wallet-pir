@@ -32,6 +32,8 @@ mod display_journal;
 #[allow(dead_code)]
 #[path = "../../../../services/transparent-filter-server/src/events.rs"]
 mod events;
+#[allow(dead_code)]
+mod historical_v1;
 mod journal_census;
 mod shape;
 mod source_info;
@@ -146,8 +148,8 @@ fn main() -> Result<(), AnyError> {
         inventory.push(pin);
     }
     let built =
-        transparent_shard::txid::build(0, &transparent_shard::DECOUPLED_2K_8K, &canonical_records)?;
-    transparent_shard::txid::verify(
+        crate::historical_v1::build(0, &transparent_shard::DECOUPLED_2K_8K, &canonical_records)?;
+    crate::historical_v1::verify(
         0,
         &transparent_shard::DECOUPLED_2K_8K,
         &built.directory,

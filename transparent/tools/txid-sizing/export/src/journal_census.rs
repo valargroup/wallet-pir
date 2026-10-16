@@ -1,6 +1,7 @@
 //! Offline census of immutable, checkpoint-referenced display sidecars.
 //! No RPC, parents, UTXO reconstruction, service dependency or journal writes.
 use super::{display_journal, events::EventStore, AnyError};
+use crate::historical_v1::{candidate_rows, CODEC};
 use rusqlite::{params, Connection};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -12,7 +13,7 @@ use std::{
     time::Instant,
 };
 use transparent_events::{encode_varint, FeeState, MAX_MONEY};
-use transparent_shard::txid::{candidate_rows, TransparentDisplayRecord, CODEC};
+use transparent_shard::txid_v1::TransparentDisplayRecord;
 use transparent_shard::txid_v2x::{DisplayInput, CODEC as CODEC_V2X};
 
 const THRESHOLDS: [usize; 7] = [128, 192, 256, 384, 512, 768, 1024];
@@ -1175,9 +1176,8 @@ mod tests {
             .collect();
         shapes.sort_unstable_by_key(|s| s.id);
         let tables =
-            transparent_shard::txid::build(0, &transparent_shard::DECOUPLED_2K_8K, &records)
-                .unwrap();
-        transparent_shard::txid::verify(
+            crate::historical_v1::build(0, &transparent_shard::DECOUPLED_2K_8K, &records).unwrap();
+        crate::historical_v1::verify(
             0,
             &transparent_shard::DECOUPLED_2K_8K,
             &tables.directory,

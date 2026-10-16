@@ -112,13 +112,15 @@ pub fn packing() -> Result<(), AnyError> {
         if bytes > 128 * 1024 * 1024 || records.len() >= 100_000 {
             return Err("sample packing memory bound".into());
         }
-        records.push(transparent_shard::txid::TransparentDisplayRecord::decode(
-            transparent_events::Txid(txid),
-            &payload,
-        )?);
+        records.push(
+            transparent_shard::txid_v1::TransparentDisplayRecord::decode(
+                transparent_events::Txid(txid),
+                &payload,
+            )?,
+        );
     }
-    let built = transparent_shard::txid::build(0, &transparent_shard::DECOUPLED_2K_8K, &records)?;
-    transparent_shard::txid::verify(
+    let built = crate::historical_v1::build(0, &transparent_shard::DECOUPLED_2K_8K, &records)?;
+    crate::historical_v1::verify(
         0,
         &transparent_shard::DECOUPLED_2K_8K,
         &built.directory,

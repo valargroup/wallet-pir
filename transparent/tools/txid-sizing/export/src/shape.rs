@@ -3,7 +3,8 @@
 use super::*;
 use std::io::{self, BufRead, Read, Write};
 use transparent_events::TransactionMetadata;
-use transparent_shard::txid::{DisplayOutput, TransparentDisplayRecord};
+use transparent_shard::txid::DisplayOutput;
+use transparent_shard::txid_v1::TransparentDisplayRecord;
 
 pub fn run() -> Result<(), AnyError> {
     let stdin = io::stdin();
