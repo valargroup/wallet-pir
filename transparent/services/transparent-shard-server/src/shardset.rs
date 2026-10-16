@@ -148,6 +148,8 @@ pub enum LoadError {
         path: PathBuf,
         source: serde_json::Error,
     },
+    #[error("{path} changed while it was verified")]
+    ChangedDuringVerification { path: PathBuf },
     #[error("{0}")]
     Invalid(String),
 }
@@ -456,6 +458,29 @@ impl SegmentSource {
     /// Verifies the segment and returns what was observed of its file, when
     /// that is settled enough to serve as evidence later.
     fn verify_stamped(&self) -> Result<Option<FileStamp>, LoadError> {
+        self.verify_stamped_observing(|| {})
+    }
+
+    fn verify_stamped_observing(
+        &self,
+        mut after_read: impl FnMut(),
+    ) -> Result<Option<FileStamp>, LoadError> {
+        // Collecting an old publication removes hard links and changes ctime
+        // even when its shared table bytes are untouched. Retry the whole hash,
+        // never the stamp alone. Content errors and persistent churn still fail.
+        for attempt in 0..3 {
+            match self.verify_stamped_once(&mut after_read) {
+                Err(LoadError::ChangedDuringVerification { .. }) if attempt < 2 => continue,
+                result => return result,
+            }
+        }
+        unreachable!("the final verification attempt returns its result")
+    }
+
+    fn verify_stamped_once(
+        &self,
+        after_read: &mut impl FnMut(),
+    ) -> Result<Option<FileStamp>, LoadError> {
         let io = |source| LoadError::Io {
             path: self.path.clone(),
             source,
@@ -483,14 +508,14 @@ impl SegmentSource {
         crate::filecache::consumed(&file);
         self.check(total, hasher.finalize().as_slice())?;
         self.check_zero_tail(tail_data)?;
+        after_read();
         let after = file.metadata().map_err(io)?;
         let named = std::fs::metadata(&self.path).map_err(io)?;
         let stamp = FileStamp::of(&before);
         if stamp.is_none() || stamp != FileStamp::of(&after) || stamp != FileStamp::of(&named) {
-            return Err(LoadError::Invalid(format!(
-                "{} changed while it was verified",
-                self.path.display()
-            )));
+            return Err(LoadError::ChangedDuringVerification {
+                path: self.path.clone(),
+            });
         }
         Ok(stamp.filter(|stamp| stamp.settled_before(started)))
     }
@@ -1550,6 +1575,80 @@ impl ShardSet {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn small_source(dir: &Path) -> SegmentSource {
+        let path = dir.join("source.bin");
+        let bytes = vec![0u8; 32];
+        std::fs::write(&path, &bytes).unwrap();
+        SegmentSource::published(path, 2, 16, hex::encode(Sha256::digest(&bytes)), 2)
+    }
+
+    #[test]
+    fn collecting_a_hard_link_rechecks_the_complete_source() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = small_source(dir.path());
+        let link = dir.path().join("retired.bin");
+        std::fs::hard_link(source.path(), &link).unwrap();
+        let mut reads = 0;
+        let evidence = source
+            .verify_stamped_observing(|| {
+                reads += 1;
+                if reads == 1 {
+                    std::fs::remove_file(&link).unwrap();
+                }
+            })
+            .unwrap();
+        assert_eq!(
+            reads, 2,
+            "a changed identity requires another complete hash"
+        );
+        assert!(
+            evidence.is_none(),
+            "a freshly changed file cannot supply reusable evidence"
+        );
+    }
+
+    #[test]
+    fn a_changed_row_is_rejected_after_a_verification_race() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = small_source(dir.path());
+        let mut reads = 0;
+        let result = source.verify_stamped_observing(|| {
+            reads += 1;
+            let mut changed = [0u8; 32];
+            changed[0] = 1;
+            std::fs::write(source.path(), changed).unwrap();
+        });
+        assert!(
+            matches!(result, Err(LoadError::Invalid(_))),
+            "the second hash must reject changed bytes"
+        );
+        assert_eq!(
+            reads, 1,
+            "a digest mismatch fails before another successful read"
+        );
+    }
+
+    #[test]
+    fn persistent_file_identity_changes_exhaust_the_verification_bound() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = small_source(dir.path());
+        let link = dir.path().join("retired.bin");
+        let mut reads = 0;
+        let result = source.verify_stamped_observing(|| {
+            reads += 1;
+            if link.exists() {
+                std::fs::remove_file(&link).unwrap();
+            } else {
+                std::fs::hard_link(source.path(), &link).unwrap();
+            }
+        });
+        assert!(matches!(
+            result,
+            Err(LoadError::ChangedDuringVerification { .. })
+        ));
+        assert_eq!(reads, 3, "verification must not retry indefinitely");
+    }
 
     #[test]
     fn restoring_modification_time_does_not_hide_a_changed_source() {
