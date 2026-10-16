@@ -62,7 +62,9 @@ impl Node {
     fn hash(&self, height: u64) -> Result<Option<String>, BoxError> {
         Ok(match self {
             Node::State(reader) => Some(reader.block_hash(height)?),
-            Node::Rpc(runtime, client) => Some(runtime.block_on(client.block_hash_display(height))?),
+            Node::Rpc(runtime, client) => {
+                Some(runtime.block_on(client.block_hash_display(height))?)
+            }
             Node::None => None,
         })
     }

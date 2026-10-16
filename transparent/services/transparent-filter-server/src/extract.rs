@@ -27,11 +27,11 @@ use transparent_filter::ScriptBytes;
 use transparent_shard::txid::DisplayOutput;
 use transparent_shard::txid_v1::TransparentDisplayRecord;
 use transparent_shard::txid_v2x::{DisplayInput, TransparentDisplayRecordV2x};
+use zakura_server_chain::transparent::Fee;
 pub use zakura_server_chain::transparent::{
     read_transaction, BoxError, ExtractError, FetchedBlock, Output, PreviousOutputs,
     TransparentTransaction,
 };
-use zakura_server_chain::transparent::Fee;
 
 /// One event, paired with the exact raw script it is indexed under.
 ///
@@ -253,7 +253,11 @@ pub(crate) mod testing {
     }
 
     impl PreviousOutputs for MapPreviousOutputs {
-        fn previous_output(&mut self, txid: [u8; 32], index: u32) -> Result<Option<Output>, BoxError> {
+        fn previous_output(
+            &mut self,
+            txid: [u8; 32],
+            index: u32,
+        ) -> Result<Option<Output>, BoxError> {
             self.lookups += 1;
             Ok(self.scripts.get(&(txid, index)).map(|bytes| Output {
                 value: *self.values.get(&(txid, index)).unwrap_or(&100_000_000),

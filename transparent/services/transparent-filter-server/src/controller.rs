@@ -830,7 +830,9 @@ async fn publish_once(
         _ = invalidated => return Err("candidate invalidated while preparing".into()),
         result = fleet(config, request) => result?,
     };
-    if authority.0.epoch.load(Ordering::Acquire) != epoch || rpc.block_hash_display(height).await? != hash {
+    if authority.0.epoch.load(Ordering::Acquire) != epoch
+        || rpc.block_hash_display(height).await? != hash
+    {
         return Err("candidate invalidated while preparing".into());
     }
     if config.shadow {
@@ -845,7 +847,9 @@ async fn publish_once(
         &serde_json::to_vec(&candidate.publication)?,
     )?;
     let activated=fleet(config,serde_json::json!({"operation":"activate","directory":directory,"map_sha256":candidate.publication.map_sha256,"prepared":prepared})).await?;
-    if authority.0.epoch.load(Ordering::Acquire) != epoch || rpc.block_hash_display(height).await? != hash {
+    if authority.0.epoch.load(Ordering::Acquire) != epoch
+        || rpc.block_hash_display(height).await? != hash
+    {
         authority.0.withdrawn.store(true, Ordering::Release);
         // The ingest loop invalidates the exact changed suffix; until then the
         // fleet hook withdraws routing entirely.

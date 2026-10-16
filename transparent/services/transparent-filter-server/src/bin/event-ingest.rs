@@ -115,11 +115,7 @@ fn append(
 /// A backfill of sealed history should never need this, but a run interrupted
 /// near the tip can resume across a reorg. Walking back one block at a time is
 /// what makes that a rollback rather than a silently divergent journal.
-async fn reconcile(
-    zakura: &NodeClient,
-    store: &mut EventStore,
-    tip: u64,
-) -> Result<(), BoxError> {
+async fn reconcile(zakura: &NodeClient, store: &mut EventStore, tip: u64) -> Result<(), BoxError> {
     loop {
         let Some(covered) = store.covered_through() else {
             return Ok(());

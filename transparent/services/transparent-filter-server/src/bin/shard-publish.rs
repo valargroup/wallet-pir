@@ -62,7 +62,8 @@ async fn main() -> Result<(), BoxError> {
     } else if let Some(parent) = parent_block_hash {
         BlockHash::from_display_hex(&parent)?
     } else {
-        let rpc = transparent_filter_server::zakura::connect(&cli.zakura_rpc_url, &cli.zakura_cookie)?;
+        let rpc =
+            transparent_filter_server::zakura::connect(&cli.zakura_rpc_url, &cli.zakura_cookie)?;
         BlockHash::from_display_hex(&rpc.block_hash(store.start_height() - 1).await?)?
     };
     let endpoint = cli

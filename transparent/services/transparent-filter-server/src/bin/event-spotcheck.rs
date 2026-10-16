@@ -311,10 +311,9 @@ async fn verbose_transactions(
                 }
                 start = end;
             }
-            Err(transparent_filter_server::zakura::NodeError::Rpc(
-                BATCH_RESPONSE_TOO_LARGE,
-                _,
-            )) if size > 1 => {
+            Err(transparent_filter_server::zakura::NodeError::Rpc(BATCH_RESPONSE_TOO_LARGE, _))
+                if size > 1 =>
+            {
                 size /= 2;
             }
             Err(error) => return Err(error.into()),
@@ -519,7 +518,8 @@ fn sample_heights(store: &EventStore, cli: &Cli) -> Result<Vec<u64>, BoxError> {
 async fn main() -> Result<(), BoxError> {
     let cli = Cli::parse();
     let store = EventStore::open_existing(&cli.data_dir)?;
-    let client = transparent_filter_server::zakura::connect(&cli.zakura_rpc_url, &cli.zakura_cookie)?;
+    let client =
+        transparent_filter_server::zakura::connect(&cli.zakura_rpc_url, &cli.zakura_cookie)?;
     let genesis = client.block_hash_display(0).await?;
     if genesis != store.genesis_hash() {
         return Err(format!(
