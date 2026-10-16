@@ -25,6 +25,17 @@ admission (`pir-control`), metrics (`pir-observability`) and the PIR profile
 wallet-libraries' server-only chain adapters (`zakura-server-chain`), which decode
 blocks, count note positions and recover receivers.
 
+## Node RPC policy
+
+The current indexer source uses wallet-libraries' server-only chain adapter with
+a 20-second connection timeout and a 120-second total request timeout. The total
+deadline includes connection establishment and response reading. The RPC cookie
+is reread for every request; HTTP 401 remains an HTTP error. Responses retain the
+chain-derived bound for a maximum-size verbose block and are streamed within
+that bound even without Content-Length. The transport does not retry or split
+batches. This source policy is independent of the existing deployment decision
+to retain the prior Receiver release.
+
 ## Records and publications
 
 A 285-byte record holds version (1 byte), receiver (43), page (4), total pages

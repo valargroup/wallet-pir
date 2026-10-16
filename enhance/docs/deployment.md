@@ -20,6 +20,19 @@ Use fresh controller, worker, hint and cache directories. A schema-11 canonical
 journal may be copied while stopped and validated; older-width journals must be
 re-ingested. Never open v6 controller or worker state with the v7 binary.
 
+## Node RPC policy
+
+The current source reads the node through wallet-libraries' server-only
+`zakura-server-chain` adapter. Enhance and Status read their RPC cookie when the
+client is constructed and report HTTP 401 as an invalid cookie. Each request has
+a 120-second total deadline, including connection establishment and reading the
+body, with no separate connection timeout. Each whole response, including a
+batch, is limited to 64 MiB even without Content-Length. A valid large batch can
+exceed this deliberate cap and fail; the transport does not retry, split batches
+or fall back to another endpoint. Batch results are returned in request order.
+These are source policies; the deployed release is established by its transaction
+and artifact receipt.
+
 ## Build and local validation
 
 ```sh

@@ -113,7 +113,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let directory = args.output.join(format!("shard-{repeat}-{rows}"));
             let mut engine = Engine::new(&directory);
             let at = Instant::now();
-            let eval = engine.prepare(plan.clone(), records)?;
+            let (eval, _) = engine
+                .prepare(plan.clone(), records)
+                .map_err(String::from)?;
             let cold_prepare_ms = ms(at);
             let at = Instant::now();
             let hint = eval.hint()?;
@@ -160,9 +162,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
             let at = Instant::now();
-            let reused = engine.prepare(plan.clone(), |_, _| {
-                Err("unexpected canonical reread".into())
-            })?;
+            let reused = engine
+                .prepare(plan.clone(), |_, _| {
+                    Err("unexpected canonical reread".into())
+                })
+                .map_err(String::from)?;
             let reuse_ms = ms(at);
             let database_bytes = engine.live_bytes();
             drop(reused);
@@ -170,7 +174,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             drop(engine);
             let mut restarted = Engine::new(&directory);
             let at = Instant::now();
-            let reloaded = restarted.prepare(plan, |_, _| Err("unexpected rebuild".into()))?;
+            let reloaded = restarted
+                .prepare(plan, |_, _| Err("unexpected rebuild".into()))
+                .map_err(String::from)?;
             let reload_ms = ms(at);
             emit(
                 json!({"kind":"shard","repeat":repeat,"rows":rows,"populated_records":record_count,"database_bytes":database_bytes,
