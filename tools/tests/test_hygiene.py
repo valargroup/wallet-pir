@@ -1,9 +1,8 @@
 """Exercise artifact rules and exact Git snapshots without invoking Cargo or GitHub."""
 from contextlib import redirect_stdout
-import importlib.util
+import hashlib
 import io
 from pathlib import Path
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -81,14 +80,28 @@ reason = "Essential correctness certificate."
         self.assertIn('README.md', areas)
 
     def test_committed_check_uses_committed_bytes_despite_local_edits(self):
-        self.write('transparent/evidence/correctness/proof.json', '{"original": true}\n')
+        proof = self.write('transparent/evidence/correctness/proof.json', '{"original": true}\n')
+        self.write('evidence/SHA256SUMS', hashlib.sha256(proof.read_bytes()).hexdigest() +
+                   '  transparent/evidence/correctness/proof.json\n')
         self.commit()
         self.base = self.git('rev-parse', 'HEAD').strip()
         self.write('README.md', 'Next revision\n')
         self.commit()
         self.write('transparent/evidence/correctness/proof.json', '{"rewritten": true}\n')
         self.assertEqual(self.inspect(head='HEAD', local=False)[0], [])
-        self.assertIn('immutable', self.inspect()[0][0])
+        self.assertTrue(any('immutable' in error for error in self.inspect()[0]))
+
+    def test_allowed_evidence_still_needs_a_matching_checksum(self):
+        self.write('transparent/evidence/correctness/proof.json', '{}')
+        self.assertIn('exact digest', self.inspect()[0][0])
+
+    def test_uncommitted_policy_cannot_hide_noise_in_a_pushed_commit(self):
+        self.write('dump.json', '{}')
+        self.commit()
+        path = self.root / 'tools/ci/hygiene.toml'
+        path.write_text(path.read_text() + '\n[[allow_data]]\npattern = "dump.json"\nreason = "Local exception."\n')
+        self.assertEqual(self.inspect()[0], [])
+        self.assertTrue(self.inspect(local=False)[0])
 
     def test_renames_and_deletions_do_not_inflate_size_warnings(self):
         self.write('long.md', 'line\n' * 1700)
@@ -126,6 +139,7 @@ reason = "Essential correctness certificate."
         path = self.root / 'tools/ci/hygiene.toml'
         original = path.read_text()
         for malformed in [original.replace('1500', '0'), original.replace('product/tests/fixtures/*.json', '*.json'),
+                          original.replace('product/tests/fixtures/*.json', 'transparent/*.json'),
                           original.replace('reason = "Consumed by the regression tests."', 'reason = ""')]:
             path.write_text(malformed)
             with self.assertRaises(ValueError):
@@ -151,6 +165,8 @@ reason = "Essential correctness certificate."
     def test_symlink_outside_checkout_is_rejected(self):
         (self.root / 'escape.json').symlink_to('/etc/hosts')
         self.assertIn('symlink leaves', self.inspect()[0][0])
+        self.commit()
+        self.assertIn('symlink leaves', self.inspect(local=False)[0][0])
 
 
 if __name__ == '__main__':

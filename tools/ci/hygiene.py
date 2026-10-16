@@ -2,14 +2,16 @@
 """Reject captured run output; report change size without imposing a line budget.
 
 Read paths and blobs from the selected Git revision, or include local edits and
-untracked files for developer checks. Nothing is written and no network or build
+untracked files for developer checks. Only the optional Actions job summary is written; no network or build
 tool is invoked. The policy declares bounded locations for useful data files.
 """
 import argparse
 from collections import Counter
 from fnmatch import fnmatchcase
+import hashlib
 from pathlib import Path, PurePosixPath
 import os
+import posixpath
 import re
 import subprocess
 import sys
@@ -37,8 +39,11 @@ def blob(root, revision, path):
     return result.stdout if result.returncode == 0 else None
 
 
-def read_policy(root):
-    policy = tomllib.loads((root / POLICY).read_text())
+def read_policy(root, revision=None):
+    source = blob(root, revision, POLICY) if revision else (root / POLICY).read_bytes()
+    if source is None:
+        raise ValueError(f'{revision} has no hygiene policy; update the branch onto main')
+    policy = tomllib.loads(source.decode())
     if set(policy) != {'warnings', 'allow_data'} or set(policy['warnings']) != {'added_lines', 'files', 'large_bytes'}:
         raise ValueError('policy requires warnings and allow_data only')
     if any(type(n) is not int or n <= 0 for n in policy['warnings'].values()):
@@ -48,7 +53,7 @@ def read_policy(root):
             raise ValueError('each data allowance needs a pattern and a reason')
         pattern = entry['pattern']
         if (not isinstance(pattern, str) or pattern.startswith(('/', '*')) or '..' in pattern.split('/')
-                or not PurePosixPath(pattern).suffix):
+                or not PurePosixPath(pattern).suffix or ('*' in pattern and len(pattern.split('/')) < 3)):
             raise ValueError('data allowances must name a bounded relative location and extension')
     return policy
 
@@ -84,14 +89,16 @@ def size_warnings(added, files, large, thresholds):
 
 
 def inspect(root=ROOT, *, base='', head='HEAD', local=True, all_files=False):
-    policy = read_policy(root)
+    policy = read_policy(root, None if local else head)
     # Reuse the affected-check planner's inclusion of staged, unstaged and
     # untracked paths. Importing it reads no Cargo metadata and runs no tools.
     from fast import changed_paths
     paths = ((names(root, 'ls-files', '--cached', '--others', '--exclude-standard', '-z') if local else
               names(root, 'ls-tree', '-r', '--name-only', '-z', head)) if all_files else
              changed_paths(base, head, local=local, root=root))
-    existing = None if local else set(names(root, 'ls-tree', '-r', '--name-only', '-z', head))
+    tree = [] if local else names(root, 'ls-tree', '-r', '-z', head)
+    existing = None if local else {entry.split('\t', 1)[1] for entry in tree}
+    symlinks = {entry.split('\t', 1)[1] for entry in tree if entry.startswith('120000 ')}
     renames = {}
     if base and not all_files:
         changes = iter(names(root, 'diff', '--name-status', '-z', '--find-renames', base, *([] if local else [head])))
@@ -102,8 +109,27 @@ def inspect(root=ROOT, *, base='', head='HEAD', local=True, all_files=False):
                 if status == 'R100':
                     renames[destination] = source
     errors, areas, added, modified, large = [], Counter(), 0, 0, []
+    checksum_path = root / 'evidence/SHA256SUMS'
+    checksum_data = (checksum_path.read_bytes() if checksum_path.is_file() else b'') if local else (
+        blob(root, head, 'evidence/SHA256SUMS') or b'')
+    digests = {}
+    for line in checksum_data.decode().splitlines():
+        if not re.fullmatch(r'[0-9a-f]{64}  [^\r\n]+', line):
+            raise ValueError('evidence/SHA256SUMS has a malformed entry')
+        digest, path = line.split('  ', 1)
+        if not path.startswith(EVIDENCE) or '..' in PurePosixPath(path).parts:
+            raise ValueError('evidence/SHA256SUMS must name repository-relative evidence files')
+        if path in digests:
+            raise ValueError('evidence/SHA256SUMS has a duplicate path')
+        digests[path] = digest
+    if all_files or 'evidence/SHA256SUMS' in paths:
+        current = (names(root, 'ls-files', '--cached', '--others', '--exclude-standard', '-z', '--',
+                         *[prefix.rstrip('/') for prefix in EVIDENCE]) if local else list(existing))
+        paths = set(paths) | set(digests) | {p for p in current if p.startswith(EVIDENCE)}
     for path in sorted(set(paths)):
         if existing is not None and path not in existing:
+            if path in digests:
+                errors.append(f'{path}: checksum names a missing proof')
             continue
         file = root / path
         if local:
@@ -115,10 +141,20 @@ def inspect(root=ROOT, *, base='', head='HEAD', local=True, all_files=False):
         else:
             data = blob(root, head, path)
         if data is None:
+            if path in digests:
+                errors.append(f'{path}: checksum names a missing proof')
             continue  # Deletions are welcome; they do not count toward size warnings.
+        if path in symlinks:
+            target = posixpath.normpath(str(PurePosixPath(path).parent / data.decode()))
+            if target == '..' or target.startswith(('../', '/')):
+                errors.append(f'{path}: symlink leaves the repository')
+            continue
         old = blob(root, base, renames.get(path, path)) if base else None
         if reason := violation(path, data, policy):
             errors.append(f'{path}: {reason}')
+        if path.startswith(EVIDENCE) and PurePosixPath(path).suffix != '.md' and PurePosixPath(path).name != 'SHA256SUMS':
+            if digests.get(path) != hashlib.sha256(data).hexdigest():
+                errors.append(f'{path}: essential proof needs its exact digest in evidence/SHA256SUMS')
         if (old is not None and old != data and path.startswith(EVIDENCE)
                 and PurePosixPath(path).suffix != '.md' and PurePosixPath(path).name != 'SHA256SUMS'):
             errors.append(f'{path}: captured proof is immutable; add a correction note or new capture')

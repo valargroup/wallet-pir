@@ -107,3 +107,59 @@ reason = "Source and workload provenance for the retained publication-cache resu
 [[allow_data]]
 pattern = "receiver/evidence/publication-cache-2026-09-28/results.json"
 reason = "Bounded publication-cache correctness and timing result."
+
+[[allow_data]]
+pattern = "enhance/evidence/dithered-query-2026-10-09/*.json"
+reason = "Native dithered-query certificates, checker reports and source manifest."
+
+[[allow_data]]
+pattern = "receiver/evidence/batched-backfill-2026-09-26/*.json"
+reason = "Bounded receiver backfill correctness result and source manifest."
+
+[[allow_data]]
+pattern = "receiver/evidence/deployment-2026-10-08/manifest.json"
+reason = "Exact source identity for the dated deployment record."
+
+[[allow_data]]
+pattern = "transparent/evidence/p8-trial-2026-10-12/manifest.json"
+reason = "Source identity for the 8-bit history profile certificate screen."
+
+[[allow_data]]
+pattern = "transparent/evidence/p8-trial-2026-10-12/raw/summary.json"
+reason = "Interpretation and limitations of the 8-bit table screen."
+
+[[allow_data]]
+pattern = "transparent/evidence/p8-trial-2026-10-12/raw/raw-reports.tar.gz"
+reason = "Essential per-table analytical certificate reports, preserved as captured."
+
+[[allow_data]]
+pattern = "transparent/evidence/served-segment-certificates-2026-10-09/manifest.json"
+reason = "Source identity for the served-segment native correctness screen."
+
+[[allow_data]]
+pattern = "transparent/evidence/served-segment-certificates-2026-10-09/results.json"
+reason = "Summary and failed-attempt limits for the served-segment screen."
+
+[[allow_data]]
+pattern = "transparent/evidence/served-segment-certificates-2026-10-09/reports.tar.xz"
+reason = "Essential per-segment certificates and checker reports as captured."
+
+[[allow_data]]
+pattern = "transparent/evidence/txid-display-4k8-2026-10-13/manifest.json"
+reason = "Source identity for the currently linked txid display layout."
+
+[[allow_data]]
+pattern = "transparent/evidence/txid-display-4k8-2026-10-13/raw/summary.json"
+reason = "Interpretation of the txid display certificate and correctness screen."
+
+[[allow_data]]
+pattern = "transparent/evidence/txid-display-4k8-2026-10-13/raw/reports-and-verdicts.tar.gz"
+reason = "Essential certificates and checker verdicts for the txid display tables."
+
+[[allow_data]]
+pattern = "transparent/tools/txid-sizing/fixtures/*.json"
+reason = "Independent canonical codec and packing input consumed by sizing tests."
+
+[[allow_data]]
+pattern = "transparent/ops/fixtures/observation/failed-observation-20260912T003121Z.tar.gz"
+reason = "Real failed observation consumed by the mandatory audit negative control."
