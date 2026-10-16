@@ -36,10 +36,11 @@ def commands(group, groups, lint=False, compile_only=False):
     # This server's full registry includes lib, bins and every integration target.
     ordinary = [name for name in names if name != 'enhance-pir-server']
     runner = ['cargo', 'test', '--no-run'] if compile_only else ['bash', 'tools/ci/full-test.sh']
+    # Canonical library CLI/internal tests run in wallet-libraries CI. Only
+    # this workspace's own packages may enable features from this driver.
     result = [[*runner, '--locked', '--profile', 'release-fast',
                *[arg for name in ordinary for arg in ('-p', name)],
                *(['--features', 'enhance-pir/cli'] if group == 'enhance' else
-                 ['--features', 'transparent-filter/cli'] if group == 'transparent' else
                  ['--features', 'pir-control/admission'] if group == 'shared' else [])]]
     if 'enhance-pir-server' in names:
         result.append(['python3', 'tools/ci/enhance_tests.py', '--tier', 'full',

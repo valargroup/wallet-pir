@@ -196,6 +196,21 @@ class PlannerTests(unittest.TestCase):
             helpers.targets(['check-docs; unsafe'])
 
 
+    def test_full_commands_only_select_workspace_packages_and_feature_owners(self):
+        workspace = {package['name'] for package in self.packages}
+        groups = full.inventory()
+        for group in groups:
+            for lint, compile_only in [(False, False), (False, True), (True, False)]:
+                for command in full.commands(group, groups, lint=lint, compile_only=compile_only):
+                    selected = {command[index + 1] for index, word in enumerate(command[:-1]) if word == '-p'}
+                    self.assertFalse(selected - workspace, (group, command))
+                    for index, word in enumerate(command[:-1]):
+                        if word == '--features':
+                            for feature in command[index + 1].split(','):
+                                if '/' in feature:
+                                    owner, _ = feature.split('/', 1)
+                                    self.assertIn(owner, selected, (group, command))
+
     def test_required_cli_binary_tests_are_enabled_without_changing_protocol(self):
         metadata = {'packages': [{'name': 'example', 'targets': [
             {'name': 'client', 'kind': ['bin'], 'required-features': ['cli']}]}]}
@@ -207,7 +222,7 @@ class PlannerTests(unittest.TestCase):
         self.assertNotIn('native-reinspiring', calls[-1])
         groups = full.inventory()
         self.assertIn('enhance-pir/cli', full.commands('enhance', groups)[0])
-        self.assertIn('transparent-filter/cli', full.commands('transparent', groups)[0])
+        self.assertNotIn('--features', full.commands('transparent', groups)[0])
 
 
     def test_explicit_disabled_integration_target_cannot_pass_with_zero_tests(self):
