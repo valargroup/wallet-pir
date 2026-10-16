@@ -1,0 +1,109 @@
+# Bounded data locations; additions need an actual consumer or evidence claim.
+[warnings]
+added_lines = 1500
+files = 30
+large_bytes = 1048576
+
+[[allow_data]]
+pattern = "tools/ci/*.json"
+reason = "CI registries consumed by the affected/full check planners."
+
+[[allow_data]]
+pattern = "enhance/ops/deploy/*.example.json"
+reason = "Public examples for the maintained deployment commands."
+
+[[allow_data]]
+pattern = "ops/deploy/*.example.json"
+reason = "Public shared control-session configuration example."
+
+[[allow_data]]
+pattern = "transparent/ops/deploy/*.example.json"
+reason = "Public fleet-scaler configuration example."
+
+[[allow_data]]
+pattern = "enhance/crates/enhance-pir/tests/fixtures/*.json"
+reason = "Protocol regression inputs consumed by Rust tests."
+
+[[allow_data]]
+pattern = "enhance/services/enhance-pir-server/tests/fixtures/*.json"
+reason = "Independent Ironwood record oracle consumed by tests."
+
+[[allow_data]]
+pattern = "enhance/ops/fixtures/*.json"
+reason = "Frozen operator API payloads used by operations tests."
+
+[[allow_data]]
+pattern = "ops/tests/fixtures/*.json"
+reason = "DigitalOcean layout contract used by operations tests."
+
+[[allow_data]]
+pattern = "receiver/crates/receiver-store/tests/fixtures/*.json"
+reason = "Receiver record and independent action oracles used by tests."
+
+[[allow_data]]
+pattern = "receiver/services/receiver-indexer/fixtures/*.json"
+reason = "Mainnet probe input used by the receiver indexer."
+
+[[allow_data]]
+pattern = "transparent/crates/transparent-native/testdata/*.json"
+reason = "Frozen independent prewarm-hint known-answer oracle."
+
+[[allow_data]]
+pattern = "transparent/ops/fixtures/*.json"
+reason = "Frozen deployment and API payloads used by operations tests."
+
+[[allow_data]]
+pattern = "transparent/ops/benchmarks/*.json"
+reason = "Maintained block-comparison scenario and fresh input sample."
+
+[[allow_data]]
+pattern = "transparent/services/transparent-shard-server/examples/fixtures/*.json"
+reason = "Confirmed transaction input for the display example."
+
+[[allow_data]]
+pattern = "transparent/tools/transparent-loadtest/scenarios/*.json"
+reason = "User-selectable scenarios consumed by the load driver."
+
+[[allow_data]]
+pattern = "transparent/tools/transparent-regression/fixtures/*.json"
+reason = "Independent accepted-anchor regression and workflow inputs."
+
+[[allow_data]]
+pattern = "enhance/tools/noise-analysis/sampler-cdf.json"
+reason = "Sampling distribution input consumed by noise-analysis."
+
+[[allow_data]]
+pattern = "enhance/evidence/native-certificate-2026-09-26/*.json"
+reason = "Certificate inputs and outputs retained for the native correctness argument."
+
+[[allow_data]]
+pattern = "transparent/evidence/v12-native-certificates-2026-10-12/*.certificate.json"
+reason = "Native correctness certificates for the current v12 table shapes."
+
+[[allow_data]]
+pattern = "transparent/evidence/v12-native-certificates-2026-10-12/*.report.json"
+reason = "Checker reports interpreting the v12 certificates."
+
+[[allow_data]]
+pattern = "transparent/evidence/v12-native-certificates-2026-10-12/results.json"
+reason = "Summary of the retained v12 certificate screen."
+
+[[allow_data]]
+pattern = "transparent/evidence/prewarm-hint-assurance-2026-10-04/manifest.json"
+reason = "Hash provenance required by the independent oracle regression."
+
+[[allow_data]]
+pattern = "receiver/evidence/receiver-pir-2026-09-26/manifest.json"
+reason = "Source and workload provenance for the retained encrypted lookup proof."
+
+[[allow_data]]
+pattern = "receiver/evidence/receiver-pir-2026-09-26/results.json"
+reason = "Bounded receiver encrypted lookup correctness result."
+
+[[allow_data]]
+pattern = "receiver/evidence/publication-cache-2026-09-28/manifest.json"
+reason = "Source and workload provenance for the retained publication-cache result."
+
+[[allow_data]]
+pattern = "receiver/evidence/publication-cache-2026-09-28/results.json"
+reason = "Bounded publication-cache correctness and timing result."

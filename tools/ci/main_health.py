@@ -134,7 +134,13 @@ def main():
         return install()
     if args.installed:
         raise SystemExit(0 if installed() else 1)
-    if not pushes_main(sys.stdin.read().splitlines()):
+    updates = sys.stdin.read()
+    hygiene = ROOT / "tools/ci/hygiene.py"
+    result = subprocess.run([sys.executable, str(hygiene), "--pre-push"],
+                            input=updates, text=True, cwd=ROOT)
+    if result.returncode:
+        raise SystemExit(result.returncode)
+    if not pushes_main(updates.splitlines()):
         return
     try:
         allowed, message = check_main()

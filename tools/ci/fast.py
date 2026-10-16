@@ -316,6 +316,10 @@ def main():
     args = parser.parse_args()
     if args.unit_jobs > 1 and (args.features or args.test or args.test_target):
         parser.error('--unit-jobs requires the standard fast unit selection')
+    if not args.select_only:
+        from hygiene import check
+        if check(base=args.base or "HEAD", head=args.head, local=not args.committed_only):
+            raise SystemExit(1)
     packages = workspace_packages()
     paths = changed_paths(args.base, args.head, local=not args.committed_only)
     selected = plan(packages, paths, all_checks=args.all or (args.committed_only and (not args.base or set(args.base) == {'0'})))

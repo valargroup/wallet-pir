@@ -57,6 +57,15 @@ from source. Keep evidence provenance and immutable retained raw inputs; repair
 links when removing superseded documents. Production protocol defaults, rollout
 floors, qualification durations, and rollback gates are not iteration shortcuts.
 
+- Commit only code, tests, configuration and concise documentation needed for the requested change; keep generated run output, AI task reports and exploratory scripts out of Git, and promote only essential evidence or tested reusable tools.
+
 ## Dependency and release boundary
 
 - Keep release dependencies one-way: wallet-pir may consume wallet-libraries, but wallet-libraries must not depend on packages owned or released by wallet-pir, including normal, optional, build, target-specific and development dependencies.
+
+## Focused changes
+
+- Give each change one outcome; split independently useful refactors, operations features, benchmarks and unrelated fixes.
+- Run `make check-hygiene BASE=<comparison-sha>` before publishing; the same rules apply to direct pushes and PRs.
+- Store local run output and exploratory scripts under ignored `.local-pir/`; add data allowances only with their consumer or essential evidence claim.
+- Update existing documentation; keep self-review verdicts, task summaries and handoff reports in chat or PR descriptions.

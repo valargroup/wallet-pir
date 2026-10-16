@@ -52,6 +52,43 @@ Before landing a dependency/toolchain upgrade, dispatch **Prepare fast
 validation** on its branch. Cold preparation and hosted cache priming run
 separately from main CI. A main push preempts fast preparation.
 
+## Keep changes focused
+
+Each change has one outcome. Include only files that implement it, test it,
+document it, or preserve essential evidence. Split independently useful
+refactors, operations features, benchmarks and unrelated fixes. Before pushing,
+inspect additions by area and remove files with no direct role in the outcome.
+Update existing documentation instead of adding task narratives or duplicate plans.
+Review findings, self-review verdicts and task summaries belong in chat or the PR.
+
+Run `make check-hygiene BASE=origin/main` for an inexpensive artifact check;
+`python3 tools/ci/hygiene.py --all` audits the current tree. The same check runs
+before builds in affected validation and CI, and before branch pushes through
+the guard installed by `make prepare-dev`. Existing custom hooks are preserved;
+if setup reports a custom hook, compose its invocation of
+`tools/ci/main_health.py --pre-push` as directed. That entry point checks hygiene
+on every pushed branch before checking main's CI health.
+
+The checker blocks captured logs, run dumps, exploratory scripts in evidence,
+recognizable agent reports and undeclared data files. JSON configuration,
+consumed fixtures and essential proofs have bounded locations and reasons in
+`tools/ci/hygiene.toml`. Add an allowance only with its consumer or retained claim;
+never allow a whole product or every JSON file. It does not identify prose by
+its author or decide whether independent features belong together.
+
+Changes exceeding 1,500 added text lines, 30 added/modified files, or a 1 MiB
+data file produce warnings, not failures. Pure deletions and unchanged renames
+add no review content to these budgets. The grouped summary is a prompt to
+split unrelated work; there is no universal line limit or extra approval gate.
+
+Use ignored `.local-pir/runs/<product>/<run-id>/` for local run output and
+`.local-pir/scratch/` for exploratory scripts. Temporary CI output stays in CI
+artifacts. Promote reusable tools with tests, and promote only essential evidence
+under the [retention policy](../evidence/README.md). An expiring artifact is not
+a durable acceptance record. Local report defaults stay ignored; explicit output
+options remain available. Production runtime paths are independent of these
+local development defaults.
+
 ## Build and monitor ownership
 
 `check-fast` and `check-package` automatically lease reusable local target lanes

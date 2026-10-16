@@ -3,7 +3,7 @@
 LOAD_TEST_DURATION ?= 60s
 LOAD_TEST_PARALLELISM ?= 8
 LOAD_TEST_WARMUP ?= 10s
-LOAD_TEST_JSON ?= load-test-summary.json
+LOAD_TEST_JSON ?= .local-pir/runs/enhance/load-test-summary.json
 LOAD_TEST_MAX_ERROR_RATE ?= 0.01
 LOAD_TEST_URL ?= https://enhance-pir.valargroup.dev
 
@@ -11,14 +11,17 @@ TRANSPARENT_LOAD_URL ?= https://transparent-pir.valargroup.dev
 TRANSPARENT_LOAD_SAMPLE ?= sample.json
 TRANSPARENT_LOAD_STEPS ?= 8,32,128,512
 TRANSPARENT_LOAD_STEP_DURATION ?= 10m
-TRANSPARENT_LOAD_JSON ?= transparent-load-report.json
+TRANSPARENT_LOAD_JSON ?= .local-pir/runs/transparent/load-report.json
 
 build:
 	cargo build --release --workspace --bins --features enhance-pir/cli
 
 check: check-full
 
-.PHONY: check-full check-fast check-package doctor prepare-dev
+.PHONY: check-full check-fast check-hygiene check-package doctor prepare-dev
+check-hygiene:
+	python3 tools/ci/hygiene.py $(if $(BASE),--base "$(BASE)")
+
 check-fast:
 	python3 tools/ci/fast.py $(if $(BASE),--base "$(BASE)") $(if $(filter 1,$(OFFLINE)),--offline)
 
@@ -33,7 +36,7 @@ prepare-dev:
 	cargo fetch --locked
 	python3 tools/ci/main_health.py --install
 
-check-full: check-ops check-docs check-reports check-tools
+check-full: check-hygiene check-ops check-docs check-reports check-tools
 	cargo fmt --all --check
 	cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
 	tools/ci/full-test.sh --locked --workspace --profile release-fast
@@ -152,6 +155,7 @@ run-worker:
 	cargo run --release -p enhance-pir-server --bin enhance-pir-server -- worker --help
 
 load-test:
+	@mkdir -p .local-pir/runs/enhance
 	cargo run --release -p enhance-pir-load-test -- \
 		--server "$(LOAD_TEST_URL)" \
 		--duration "$(LOAD_TEST_DURATION)" \
@@ -167,6 +171,7 @@ load-test:
 # sync is checked against the sample's expected event digest, so the report
 # measures correct recoveries per second, not requests.
 transparent-load-test:
+	@mkdir -p .local-pir/runs/transparent
 	cargo run --release -p transparent-loadtest -- \
 		--shard-url "$(TRANSPARENT_LOAD_URL)" \
 		$(if $(strip $(TRANSPARENT_LOAD_FILTER_URL)),--filter-url "$(TRANSPARENT_LOAD_FILTER_URL)") \
@@ -189,7 +194,7 @@ fmt:
 # Correctness at wallet-accepted anchors; each run preserves its SQLite stores
 # and exact mismatch evidence in a new output directory.
 TRANSPARENT_REGRESSION_FIXTURE ?= transparent/tools/transparent-regression/fixtures/mainnet.json
-TRANSPARENT_REGRESSION_OUT ?= transparent-regression-results
+TRANSPARENT_REGRESSION_OUT ?= .local-pir/runs/transparent/regression
 TRANSPARENT_REGRESSION_FILTER_URL ?= https://enhance-pir.valargroup.dev
 .PHONY: transparent-regression
 transparent-regression:

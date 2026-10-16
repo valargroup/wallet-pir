@@ -50,6 +50,10 @@ jobs:
             git fetch --no-tags --depth=1 origin "$BASE"
           fi
           git config --local --unset-all "http.${GITHUB_SERVER_URL}/.extraheader" || true
+      - name: Reject generated noise
+        env:
+          BASE: ${{ env.FAST_BASE }}
+        run: python3 tools/ci/hygiene.py --committed-only --base "$BASE"
       - name: Select affected packages
         id: affected
         env:
