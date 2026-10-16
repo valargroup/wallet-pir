@@ -43,7 +43,7 @@ enum Fault {
     RetryPageSetup,
     Advance,
     SlowFirstFilter,
-    UploadTimeout,
+    RequestTimeout { private: bool },
 }
 async fn service(dir: &Path, fault: Fault) -> (String, ServiceState) {
     let set = ShardSet::open(&dir.join("shards"), DEFAULT_RETAIN_REVISIONS).unwrap();
@@ -68,14 +68,11 @@ async fn service(dir: &Path, fault: Fault) -> (String, ServiceState) {
                     tip["terminal_block_hash"] = json!(common::hash_at(height).to_display_hex());
                     return axum::Json(advanced_map).into_response();
                 }
-                if matches!(fault, Fault::UploadTimeout)
-                    && path.contains("/query/")
+                if matches!(fault, Fault::RequestTimeout { private }
+                    if if private { path.contains("/query/") } else { path.ends_with("/manifest") })
                     && calls.fetch_add(1, Ordering::SeqCst) == 0
                 {
-                    return (
-                        StatusCode::REQUEST_TIMEOUT,
-                        "query body did not arrive in time",
-                    )
+                    return (StatusCode::REQUEST_TIMEOUT, "injected request timeout")
                         .into_response();
                 }
                 if path.ends_with("/filter") {
@@ -768,16 +765,19 @@ async fn preparation_cache_and_queue_preserve_exact_recoveries() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn measured_upload_retry_is_exact_and_fully_accounted() {
+async fn measured_request_timeouts_follow_public_and_private_retry_contract() {
     let dir = tempfile::tempdir().unwrap();
     fixture(dir.path(), &[3]);
-    for attempts in [1, 3] {
-        let (base, _) = service(dir.path(), Fault::UploadTimeout).await;
-        let name = format!("attempts-{attempts}");
+    for (private, attempts) in [(false, 1), (false, 3), (true, 1), (true, 3)] {
+        let (base, _) = service(dir.path(), Fault::RequestTimeout { private }).await;
+        let name = format!("private-{private}-attempts-{attempts}");
         let config = json!({"schema":"transparent-scenario-v1","name":name,"mode":"wave","sample":"sample.json","shard_url":base,"profiles":{"test":1},"recovery_deadline_seconds":120,"measured_http_attempts":attempts});
         let report = run_config(dir.path(), &name, config).await;
-        assert_eq!(report["success"], attempts == 3, "{report}");
-        if attempts == 3 {
+        // The library owns private retries so every physical attempt is charged
+        // against wallet work limits. HTTP retry settings only replay public calls.
+        let recovered = !private && attempts == 3;
+        assert_eq!(report["success"], recovered, "{report}");
+        if recovered {
             assert_eq!(report["summary"]["exact_after_retry"], 1);
             assert_eq!(report["users"][0]["http_totals"]["retry_attempts"], 1.0);
             assert_eq!(
@@ -794,6 +794,16 @@ async fn measured_upload_retry_is_exact_and_fully_accounted() {
             assert!(lines.iter().any(|e| e["request_id"] == failed["request_id"]
                 && e["attempt"] == 2
                 && e["status"] == 200));
+        } else {
+            assert_eq!(report["users"][0]["http_totals"]["retry_attempts"], 0.0);
+            assert_eq!(
+                report["users"][0]["http_totals"]["http_status_counts"]["408"],
+                1.0
+            );
+            assert!(report["users"][0]["error"]
+                .as_str()
+                .unwrap()
+                .contains("408"));
         }
     }
 }
@@ -803,7 +813,7 @@ async fn measured_connection_close_retries_and_retains_diagnostics() {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let dir = tempfile::tempdir().unwrap();
     fixture(dir.path(), &[3]);
-    for attempts in [1, 3] {
+    for (private, attempts) in [(false, 1), (false, 3), (true, 1), (true, 3)] {
         let (base, _) = service(dir.path(), Fault::None).await;
         let upstream = base.trim_start_matches("http://").to_owned();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -822,9 +832,13 @@ async fn measured_connection_close_retries_and_retains_diagnostics() {
                         headers.push(byte);
                         assert!(headers.len() < 8192);
                     }
-                    if String::from_utf8_lossy(&headers).contains("/query/")
-                        && dropped.fetch_add(1, Ordering::SeqCst) == 0
-                    {
+                    let request = String::from_utf8_lossy(&headers);
+                    let selected = if private {
+                        request.contains("/query/")
+                    } else {
+                        request.contains("/manifest ")
+                    };
+                    if selected && dropped.fetch_add(1, Ordering::SeqCst) == 0 {
                         // Drop the established connection with no HTTP response.
                         return;
                     }
@@ -838,11 +852,12 @@ async fn measured_connection_close_retries_and_retains_diagnostics() {
                 });
             }
         });
-        let name = format!("connection-close-{attempts}");
+        let name = format!("connection-close-private-{private}-{attempts}");
         let config = json!({"schema":"transparent-scenario-v1","name":name,"mode":"wave","sample":"sample.json","shard_url":proxy_url,"profiles":{"test":1},"recovery_deadline_seconds":120,"measured_http_attempts":attempts});
         let report = run_config(dir.path(), &name, config).await;
         proxy.abort();
-        assert_eq!(report["success"], attempts == 3, "{report}");
+        let recovered = !private && attempts == 3;
+        assert_eq!(report["success"], recovered, "{report}");
         let lines: Vec<Value> = fs::read_to_string(dir.path().join(&name).join("requests.ndjson"))
             .unwrap()
             .lines()
@@ -852,13 +867,21 @@ async fn measured_connection_close_retries_and_retains_diagnostics() {
         assert!(failed["status"].is_null());
         let cause = failed["transport_error"].as_str().unwrap();
         assert!(!cause.is_empty());
-        if attempts == 3 {
+        if recovered {
             assert_eq!(report["summary"]["exact_after_retry"], 1);
             assert_eq!(report["users"][0]["http_totals"]["retry_attempts"], 1.0);
             assert!(lines.iter().any(|e| e["request_id"] == failed["request_id"]
                 && e["attempt"] == 2
                 && e["status"] == 200));
         } else {
+            assert_eq!(report["users"][0]["http_totals"]["retry_attempts"], 0.0);
+            assert_eq!(
+                lines
+                    .iter()
+                    .filter(|e| e["request_id"] == failed["request_id"])
+                    .count(),
+                1
+            );
             assert!(
                 report["users"][0]["error"]
                     .as_str()

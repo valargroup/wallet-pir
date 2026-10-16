@@ -78,8 +78,8 @@ struct Args {
     /// million events then holds a step for hours.
     #[arg(long)]
     max_queries: Option<u64>,
-    /// Attempts per HTTP call for transient gateway, upload and connection
-    /// failures (1–3), as the wallet's transport offers. One keeps runs
+    /// Attempts per public HTTP call for transient gateway and connection
+    /// failures (1–3). Private setup/query calls make one physical attempt. One keeps runs
     /// comparable with earlier evidence; overload refusals keep the wallet's
     /// own policy either way.
     #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u8).range(1..=3))]

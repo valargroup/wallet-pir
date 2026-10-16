@@ -105,7 +105,7 @@ A `transparent-scenario-v1` JSON file contains:
 | `preparation_concurrency` | Total preparation workers across all profiles, default 2; idle slots immediately take the next eligible wallet |
 | `preparation_cache` | `reuse` (default), `refresh`, or `off` |
 | `preparation_cache_dir` | Optional persistent cache directory override |
-| `measured_http_attempts` | 1–3 attempts per HTTP call; custom scenarios default to 1, supplied scenarios use 3 |
+| `measured_http_attempts` | 1–3 attempts per public HTTP call; private setup/query calls remain one physical attempt; custom scenarios default to 1, supplied scenarios use 3 |
 | `seed` | Deterministic class shuffle, default 1 |
 | `duration_seconds` | Sustained admission window, default 600 |
 | `recovery_deadline_seconds` | Measured recovery hard deadline from dispatch, default 600 |
@@ -282,11 +282,17 @@ with outcome counts, exact/unsuccessful latency distributions and HTTP totals.
 HTTP time sums request durations and should not be interpreted as wall-clock time.
 
 Preparation adapters retain their bounded transient/overload retry policy.
-Measured adapters retry HTTP 408/502/504, connection/request timeouts,
+Measured adapters retry public HTTP calls (init, manifests and filters) on
+HTTP 408/502/504, connection/request timeouts,
 request-send failures on established connections, and interrupted response bodies when
 `measured_http_attempts` exceeds one, waiting one second before the second
 attempt and two before the third. Typed overloads remain in the wallet's
-existing refusal policy, without an extra measured HTTP retry layer.
+existing refusal policy, without an extra measured HTTP retry layer. Private
+setup and query calls make one physical attempt per transport call, regardless
+of `measured_http_attempts`, so the library can check and charge wallet query
+and byte limits before another attempt. A private upload timeout or broken
+connection therefore remains an unsuccessful recovery; it is not hidden by an
+HTTP retry.
 All attempts and backoff remain inside the original recovery deadline. Ordinary
 client defaults remain one HTTP attempt. Server upload deadlines are unchanged.
 

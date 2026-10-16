@@ -63,6 +63,7 @@ struct Cli {
     /// Any other failure still stops preparation.
     #[arg(long)]
     preparation_wallet_attempts: Option<usize>,
+    /// Attempts per public HTTP call (1–3); private setup/query calls attempt once.
     #[arg(long)]
     measured_http_attempts: Option<usize>,
 }
