@@ -113,7 +113,7 @@ struct StateHeaders(StateReader);
 
 impl Headers for StateHeaders {
     fn time(&mut self, height: u64) -> Result<DateTime<Utc>, BoxError> {
-        Ok(self.0.block_time(height)?)
+        self.0.block_time(height)
     }
     fn hash(&mut self, height: u64) -> Result<String, BoxError> {
         Ok(self.0.block_hash(height)?)
