@@ -34,7 +34,7 @@ env:
 
 defaults:
   run:
-    shell: bash --noprofile --norc -e -o pipefail -c 'umask 022; source "$1"' -- {0}
+    shell: bash
 
 jobs:
   select:
@@ -62,6 +62,7 @@ jobs:
           SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
           GH_TOKEN: ${{ github.token }}
         run: |
+          umask 022
           set -euo pipefail
           umask 022
           if [[ -n "$FAMILY" ]]; then
@@ -99,6 +100,7 @@ jobs:
       - run: cargo fmt --all --check
       - name: Test simulation report helpers
         run: |
+          umask 022
           node --test transparent/tools/transparent-loadtest/tests/apm.test.cjs
           python3 transparent/tools/transparent-loadtest/tests/test_open_report.py
           python3 transparent/tools/transparent-loadtest/tests/test_compare.py
@@ -106,7 +108,7 @@ jobs:
       - name: Report Cargo cache reuse
         if: always()
         continue-on-error: true
-        run: python3 tools/ci/cargo_cache.py report
+        run: umask 022 && python3 tools/ci/cargo_cache.py report
 
   transparent-test:
     needs: [select, validate-ops]
@@ -134,7 +136,7 @@ jobs:
       - name: Report Cargo cache reuse
         if: always()
         continue-on-error: true
-        run: python3 tools/ci/cargo_cache.py report
+        run: umask 022 && python3 tools/ci/cargo_cache.py report
 
   validate-enhance-infra:
     needs: select
@@ -152,6 +154,7 @@ jobs:
       - name: Validate provider schema and mock fleet plans
         working-directory: ops/infra/digitalocean/enhance/worker-pool
         run: |
+          umask 022
           terraform fmt -check -recursive
           terraform init -backend=false -input=false -lockfile=readonly
           terraform validate -no-color
@@ -160,6 +163,7 @@ jobs:
       - name: Validate fleet and service modules
         working-directory: ops/infra/digitalocean/fleet
         run: |
+          umask 022
           terraform fmt -check -recursive ..
           terraform init -backend=false -input=false -lockfile=readonly
           terraform validate -no-color
@@ -181,6 +185,7 @@ jobs:
       - name: Validate provider schema and mock member plans
         working-directory: ops/infra/digitalocean/transparent/worker-pool
         run: |
+          umask 022
           terraform fmt -check -recursive
           terraform init -backend=false -input=false -lockfile=readonly
           terraform validate -no-color
@@ -197,7 +202,7 @@ jobs:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
       - name: Read repository Rust toolchain
         id: helper-toolchain
-        run: python3 -c 'import os,tomllib; t=tomllib.load(open("rust-toolchain.toml","rb"))["toolchain"]["channel"]; print("toolchain="+t, file=open(os.environ["GITHUB_OUTPUT"],"a"))'
+        run: umask 022 && python3 -c 'import os,tomllib; t=tomllib.load(open("rust-toolchain.toml","rb"))["toolchain"]["channel"]; print("toolchain="+t, file=open(os.environ["GITHUB_OUTPUT"],"a"))'
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: ${{ steps.helper-toolchain.outputs.toolchain }}
@@ -212,13 +217,13 @@ jobs:
       - name: Run selected full helper suites
         env:
           HELPERS: ${{ needs.select.outputs.helpers }}
-        run: python3 tools/ci/helpers.py --full --targets "$HELPERS"
+        run: umask 022 && python3 tools/ci/helpers.py --full --targets "$HELPERS"
       - name: Validate current transparent deployment inputs
         if: contains(needs.select.outputs.helpers, 'check-ops-contracts') || contains(needs.select.outputs.helpers, 'check-ops-deploy')
         # The current candidate validator owns filter/publisher artifact inputs.
         # Exercise valid inputs and refusal cases; the retired shell wrapper is
         # no longer an executable deployment contract.
-        run: python3 -B transparent/ops/tests/test_activity_candidate.py
+        run: umask 022 && python3 -B transparent/ops/tests/test_activity_candidate.py
 
       - name: Validate transparent shard inputs
         if: contains(needs.select.outputs.helpers, 'check-ops-contracts') || contains(needs.select.outputs.helpers, 'check-ops-deploy')
@@ -232,6 +237,7 @@ jobs:
           TRANSPARENT_SHARD_DIR: /srv/transparent-pir/sets
           TRANSPARENT_PUBLIC_URL: https://transparent-pir.example.net
         run: |
+          umask 022
           set -euo pipefail
           shard_set="$RUNNER_TEMP/shard-set"
           mkdir -p "$shard_set/aaa" "$shard_set/bbb"
@@ -305,7 +311,7 @@ jobs:
       - name: Report Cargo cache reuse
         if: always()
         continue-on-error: true
-        run: python3 tools/ci/cargo_cache.py report
+        run: umask 022 && python3 tools/ci/cargo_cache.py report
 
   enhance-test:
     needs: [select, validate-ops]
@@ -330,6 +336,7 @@ jobs:
           scope: enhance
       - name: Run Enhance release tests
         run: |
+          umask 022
           # Full-size embedded/topology fixtures exceed the CI runner's memory
           # on shared runners. Hardware qualification is a separate exact-release
           # deployment gate; keep artifact CI bounded to correctness coverage.
@@ -341,6 +348,7 @@ jobs:
           QUALIFY_QUERY_LANES: "2"
           QUALIFY_QUERIES_PER_LANE: "3"
         run: |
+          umask 022
           python3 tools/ci/stage.py compile:native-cuda-check -- cargo check --locked -p enhance-pir-server -p enhance-pir-load-test --features native-reinspiring,cuda
           tools/ci/full-test.sh --locked --profile release-fast -p enhance-pir-server --features native-reinspiring --test packing_http --test status_wallet --test enhance_wallet_native
           python3 tools/ci/stage.py tests:native-lib -- cargo test --locked --profile release-fast -p enhance-pir --features native-reinspiring --lib native
@@ -349,13 +357,14 @@ jobs:
 
       - name: Check optional CUDA worker without a GPU
         run: |
+          umask 022
           python3 tools/ci/stage.py compile:cuda-check -- cargo check --locked -p enhance-pir-server --all-targets --features cuda
           python3 tools/ci/stage.py tests:cuda-config -- cargo test --locked --profile release-fast -p enhance-pir-server --features cuda --test matvec_config
           python3 tools/ci/stage.py tests:cuda-load -- cargo test --locked --profile release-fast -p enhance-pir-server --features cuda --lib backend_load_failure_does_not_rebuild_or_replace_published_units
       - name: Report Cargo cache reuse
         if: always()
         continue-on-error: true
-        run: python3 tools/ci/cargo_cache.py report
+        run: umask 022 && python3 tools/ci/cargo_cache.py report
 
   shared-test:
     name: Shared lint and tests
@@ -378,7 +387,7 @@ jobs:
       - name: Report Cargo cache reuse
         if: always()
         continue-on-error: true
-        run: python3 tools/ci/cargo_cache.py report
+        run: umask 022 && python3 tools/ci/cargo_cache.py report
 
   receiver-test:
     name: Receiver lint and tests
@@ -399,7 +408,7 @@ jobs:
       - name: Report Cargo cache reuse
         if: always()
         continue-on-error: true
-        run: python3 tools/ci/cargo_cache.py report
+        run: umask 022 && python3 tools/ci/cargo_cache.py report
 
   complete:
     name: Full checks complete
@@ -411,6 +420,7 @@ jobs:
         env:
           RESULTS: ${{ toJSON(needs) }}
         run: |
+          umask 022
           python3 - <<'PYCHECK'
           import json, os
           results = json.loads(os.environ['RESULTS'])
@@ -441,7 +451,7 @@ jobs:
           persist-credentials: false
       - name: Prepare operations candidate
         if: inputs.family == 'ops'
-        run: python3 tools/ci/qualification.py assemble --family ops --sha "$GITHUB_SHA"
+        run: umask 022 && python3 tools/ci/qualification.py assemble --family ops --sha "$GITHUB_SHA"
       - uses: ./.github/actions/rust-setup
         if: inputs.family != 'ops'
         with:
@@ -452,6 +462,7 @@ jobs:
         env:
           FAMILY: ${{ inputs.family }}
         run: |
+          umask 022
           python3 tools/ci/qualification.py build --family "$FAMILY"
           python3 tools/ci/qualification.py assemble --family "$FAMILY" --sha "$GITHUB_SHA"
       - uses: ./.github/actions/rust-setup
@@ -462,6 +473,7 @@ jobs:
       - name: Build native Enhance and Status candidates
         if: inputs.family == 'enhance'
         run: |
+          umask 022
           python3 tools/ci/stage.py compile:native -- cargo build --locked --release \
             -p enhance-pir-server -p enhance-pir -p enhance-pir-load-test \
             --bin enhance-pir-server --bin enhance-pir-load-test --bin enhance-pir-cli --bin status-pir \
@@ -470,7 +482,7 @@ jobs:
       - name: Report Cargo cache reuse
         if: always() && inputs.family != 'ops'
         continue-on-error: true
-        run: python3 tools/ci/cargo_cache.py report
+        run: umask 022 && python3 tools/ci/cargo_cache.py report
       - uses: actions/upload-artifact@v4
         with:
           name: candidate-${{ inputs.family }}-${{ github.sha }}
@@ -495,7 +507,7 @@ jobs:
       - name: Verify qualified candidate contents
         env:
           FAMILY: ${{ inputs.family }}
-        run: python3 tools/ci/qualification.py verify --family "$FAMILY" --sha "$GITHUB_SHA"
+        run: umask 022 && python3 tools/ci/qualification.py verify --family "$FAMILY" --sha "$GITHUB_SHA"
       - uses: actions/upload-artifact@v4
         if: inputs.family == 'ops'
         with:
@@ -599,6 +611,7 @@ jobs:
     steps:
       - name: Install Ubuntu 22.04 build dependencies
         run: |
+          umask 022
           apt-get update -qq
           apt-get install -y -qq build-essential ca-certificates curl git libclang-dev protobuf-compiler python3 pkg-config libssl-dev
       - uses: actions/checkout@v4
@@ -611,7 +624,7 @@ jobs:
         id: identity
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python3 tools/ci/cargo_cache.py prepare --lane native-cuda --scope cuda --target-dir target/native-cuda
+        run: umask 022 && python3 tools/ci/cargo_cache.py prepare --lane native-cuda --scope cuda --target-dir target/native-cuda
       # Main-only job: these entries are trusted and never read PR output.
       - name: Restore native CUDA Cargo cache
         id: restore
@@ -626,9 +639,9 @@ jobs:
       - name: Record restored Cargo state
         env:
           CACHE_HIT: ${{ steps.restore.outputs.cache-hit }}
-        run: python3 tools/ci/cargo_cache.py restored --lane native-cuda --cache-hit "$CACHE_HIT"
+        run: umask 022 && python3 tools/ci/cargo_cache.py restored --lane native-cuda --cache-hit "$CACHE_HIT"
       - name: Build isolated native CUDA binaries and record ABI
-        run: tools/ci/build-cuda.sh
+        run: umask 022 && tools/ci/build-cuda.sh
       - name: Assemble checksummed native CUDA bundle
         env:
           SHA: ${{ github.sha }}
@@ -638,13 +651,14 @@ jobs:
           GIT_CONFIG_KEY_0: safe.directory
           GIT_CONFIG_VALUE_0: ${{ github.workspace }}
         run: >-
+          umask 022 &&
           python3 tools/ci/stage.py artifact:cuda -- python3 tools/ci/release.py assemble --sha "$SHA"
           --kind enhance-pir-native-cuda --target target/native-cuda
           --build-metadata target/native-cuda/build.json --output release-bundles-native-cuda
       - name: Report Cargo cache reuse
         if: always()
         continue-on-error: true
-        run: python3 tools/ci/cargo_cache.py report
+        run: umask 022 && python3 tools/ci/cargo_cache.py report
       - uses: actions/upload-artifact@v4
         with:
           name: enhance-pir-native-cuda-${{ github.sha }}

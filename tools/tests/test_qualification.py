@@ -48,6 +48,19 @@ def complete_jobs(family):
 
 
 class QualificationTests(unittest.TestCase):
+    def test_only_obsolete_automatic_main_regressions_are_cancelled(self):
+        runs = [{'id': i, 'event': event, 'head_branch': branch, 'head_sha': sha, 'status': status}
+                for i, (event, branch, sha, status) in enumerate([
+                    ('push', 'main', BASE, 'queued'), ('workflow_run', 'main', BASE, 'in_progress'),
+                    ('workflow_dispatch', 'main', BASE, 'in_progress'),
+                    ('pull_request', 'feature', BASE, 'in_progress'), ('push', 'main', SHA, 'in_progress'),
+                    ('push', 'main', BASE, 'completed')])]
+        with patch.object(release, 'api', return_value={'workflow_runs': runs}), \
+                patch.dict(os.environ, GH_TOKEN='fixture-not-a-credential'), \
+                patch.object(q.urllib.request, 'urlopen') as request:
+            q.cancel_regressions(REPO, SHA)
+        self.assertEqual([call.args[0].full_url.rsplit('/', 2)[-2] for call in request.call_args_list], ['0', '1'])
+
     def test_ci_only_feedback_does_not_compile_unchanged_rust_but_full_coverage_remains(self):
         packages = q.workspace_packages()
         for paths in [['tools/ci/fast.py', 'ops/lib/wallet_pir_ops/release.py'],

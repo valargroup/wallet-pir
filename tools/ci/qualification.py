@@ -91,7 +91,7 @@ def cancel_regressions(repo, sha):
     """Cancel only obsolete automatic regressions, never pinned runs or deploys."""
     runs = release.api(f'repos/{repo}/actions/workflows/ci-full.yml/runs?per_page=100')['workflow_runs']
     for candidate in runs:
-        if (candidate.get('event') != 'workflow_run' or candidate.get('head_branch') != 'main'
+        if (candidate.get('event') not in ('push', 'workflow_run') or candidate.get('head_branch') != 'main'
                 or candidate.get('status') not in ('queued', 'in_progress', 'waiting')
                 or candidate.get('head_sha') == sha):
             continue

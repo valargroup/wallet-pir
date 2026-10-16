@@ -23,7 +23,7 @@ env:
 
 defaults:
   run:
-    shell: bash --noprofile --norc -e -o pipefail -c 'umask 022; source "$1"' -- {0}
+    shell: bash
 
 jobs:
   fast:
@@ -40,6 +40,7 @@ jobs:
         env:
           BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: |
+          umask 022
           set -euo pipefail
           if [[ -n "$BASE" && "$BASE" != 0000000000000000000000000000000000000000 ]]; then
             [[ "$BASE" =~ ^[0-9a-f]{40}$ ]]
@@ -50,7 +51,7 @@ jobs:
         id: affected
         env:
           BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
-        run: python3 tools/ci/fast.py --committed-only --base "$BASE" --select-only --github-output
+        run: umask 022 && python3 tools/ci/fast.py --committed-only --base "$BASE" --select-only --github-output
       - uses: ./.github/actions/rust-setup
         if: steps.affected.outputs.rust == 'true'
         with:
@@ -59,15 +60,15 @@ jobs:
       - name: Run affected fast checks
         env:
           BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
-        run: python3 tools/ci/fast.py --committed-only --base "$BASE"
+        run: umask 022 && python3 tools/ci/fast.py --committed-only --base "$BASE"
       - name: Report Cargo cache reuse
         if: always() && steps.affected.outputs.rust == 'true'
         continue-on-error: true
-        run: python3 tools/ci/cargo_cache.py report
+        run: umask 022 && python3 tools/ci/cargo_cache.py report
 
       - name: Report queue and stage timings
         if: always()
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python3 tools/ci/timings.py --run "$GITHUB_RUN_ID"
+        run: umask 022 && python3 tools/ci/timings.py --run "$GITHUB_RUN_ID"
