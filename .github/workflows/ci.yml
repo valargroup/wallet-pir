@@ -58,6 +58,9 @@ jobs:
         with:
           lane: fast
           scope: affected
+      - name: Require an existing warm build cache on main
+        if: github.event_name == 'push' && steps.affected.outputs.rust == 'true'
+        run: umask 022 && python3 tools/ci/cargo_cache.py require-warm --lane fast
       - name: Run affected fast checks
         env:
           BASE: ${{ github.event.pull_request.base.sha || github.event.before }}

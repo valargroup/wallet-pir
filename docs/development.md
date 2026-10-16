@@ -41,18 +41,16 @@ tests. Seeded fleet simulations and exhaustive membership/mutant checks remain
 in full operations qualification; their module registry rejects missing or
 renamed assignments. No production clocks or thresholds change.
 
-Full PR jobs select affected product/shared/operations/infrastructure families.
-The same helper selection is used for full PR checks: documentation runs only
-link validation, and operations run their affected consumers. Service qualification
-selects every helper and restores exhaustive scaler tiers. Shared library changes expand
-through reverse dependencies, while unknown paths
-request complete coverage. `Full checks complete` verifies that every selected
-job succeeded and unrelated jobs were skipped. On main, each selected service
-family publishes independently after its full family suites, shared tests, operations and infrastructure checks pass. Selection
-compares against that family's last qualified ancestor; missing ancestry broadens
-coverage. Whole-repository regression checks follow asynchronously. Test builds
-use `release-fast`;
-deployment binaries retain fat LTO and native/q48/CUDA isolation.
+Only fast checks run automatically for pushes and PRs. Full regression runs
+nightly or on explicit dispatch, and service qualification is dispatch-only.
+Qualification runs common helper, shared and infrastructure gates once, then
+qualifies each requested service independently. A failed service blocks its own
+artifacts. `Full checks complete` rejects failures or unexpected skips. Release
+and hardware qualification remain separate from fast feedback.
+
+Before landing a dependency/toolchain upgrade, dispatch **Prepare fast
+validation** on its branch. Cold preparation and hosted cache priming run
+separately from main CI. A main push preempts fast preparation.
 
 ## Build and monitor ownership
 

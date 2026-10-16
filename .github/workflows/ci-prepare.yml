@@ -1,0 +1,50 @@
+name: Prepare fast validation
+
+# Explicit cold/dependency validation before landing an upgrade. A main push
+# preempts this work on the fast runner rather than queueing behind it.
+on:
+  workflow_dispatch:
+    inputs:
+      stress:
+        description: Repeat each encrypted HTTP and recovery smoke 50 times
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: fast-refs/heads/main
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -Dwarnings -C target-cpu=x86-64-v3
+  CFLAGS: -mpclmul
+  CXXFLAGS: -mpclmul
+
+jobs:
+  prepare:
+    name: Prepare and validate cold fast units
+    runs-on: ${{ fromJSON(vars.WALLET_PIR_FAST_RUNNER || '"ubuntu-24.04"') }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/rust-setup
+        with:
+          lane: fast
+          scope: affected
+      - name: Compile fast units
+        run: umask 022 && python3 tools/ci/fast.py --all --compile-only
+      - name: Validate prepared units
+        run: umask 022 && python3 tools/ci/fast.py --all
+      - name: Repeat independent HTTP and recovery checks
+        if: inputs.stress
+        run: umask 022 && python3 tools/ci/integration_tests.py --tier fast --smoke-only --repeat 50
+      - name: Report Cargo cache reuse
+        if: always()
+        continue-on-error: true
+        run: umask 022 && python3 tools/ci/cargo_cache.py report

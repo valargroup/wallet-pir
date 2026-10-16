@@ -134,6 +134,28 @@ class QualificationTests(unittest.TestCase):
                 jobs = [j for j in complete_jobs('receiver') if j != missing]
                 self.assertFalse(release.service_jobs(jobs, 'receiver'))
 
+    def test_common_gates_are_required_once_and_service_gates_remain_independent(self):
+        common_names = ['Select full checks', 'Full checks complete', 'Validate selected helper checks',
+                        'Validate Enhance infrastructure',
+                        'Validate transparent elastic infrastructure']
+        common = [dict(name='Common / '+n, status='completed', conclusion='success') for n in common_names]
+        service_names = {'receiver': ['Receiver lint and tests'], 'transparent': ['Transparent lint', 'Transparent tests'],
+                         'enhance': ['Enhance lint', 'Enhance tests'], 'ops': []}
+        for family, names in service_names.items():
+            required = ['Select full checks', 'Full checks complete', 'Build candidate release artifacts',
+                        'Prepare qualified release artifacts', *names]
+            own = [dict(name=q.FAMILIES[family]+' / '+n, status='completed', conclusion='success') for n in required]
+            shared = ([dict(name='Shared / '+n, status='completed', conclusion='success') for n in
+                       ['Select full checks', 'Shared lint and tests', 'Full checks complete']] if family != 'ops' else [])
+            jobs = common + shared + own + [job('enhance' if family != 'enhance' else 'receiver', conclusion='failure')]
+            if family == 'ops':
+                jobs.append(dict(name='Shared / Shared lint and tests', status='completed', conclusion='failure'))
+            self.assertTrue(release.service_jobs(jobs, family))
+            for gate in common + shared + own:
+                for outcome in ['failure', 'skipped', 'cancelled']:
+                    changed = [{**j, 'conclusion': outcome} if j == gate else j for j in jobs]
+                    self.assertFalse(release.service_jobs(changed, family), (family, gate['name'], outcome))
+
     def test_resolution_accepts_only_completed_service_and_digest(self):
         for digest in ['sha256:' + 'c' * 64, '', 'invalid']:
             with self.subTest(digest=digest), tempfile.TemporaryDirectory() as directory:

@@ -4,7 +4,6 @@ import argparse
 import json
 import os
 from pathlib import Path
-import subprocess
 import sys
 import tempfile
 import urllib.error
@@ -66,13 +65,20 @@ def selection(repo, sha, requested='affected'):
     return result
 
 
-def checks(family):
-    groups = {'ops', 'enhance_infra', 'transparent_infra'} if family == 'ops' else {
-        'ops', 'shared', family, 'transparent_infra' if family == 'transparent' else 'enhance_infra'}
+def checks(family, service_only=False):
+    if family == 'common':
+        groups = {'ops', 'enhance_infra', 'transparent_infra'}
+    elif family == 'shared':
+        groups = {'shared'}
+    elif service_only:
+        groups = set() if family == 'ops' else {family}
+    else:
+        groups = {'ops', 'enhance_infra', 'transparent_infra'} if family == 'ops' else {
+            'ops', 'shared', family, 'transparent_infra' if family == 'transparent' else 'enhance_infra'}
     with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
         for group in sorted(FULL_GROUPS):
             out.write(f'{group}={str(group in groups).lower()}\n')
-        out.write(f'helpers={json.dumps(sorted(HELPERS))}\n')
+        out.write(f'helpers={json.dumps(sorted(HELPERS) if 'ops' in groups else [])}\n')
 
 
 def verify(family, sha, output):
@@ -114,7 +120,8 @@ def main():
     select.add_argument('--sha', required=True)
     select.add_argument('--family', choices=['affected', 'all', *FAMILIES], default='affected')
     check = sub.add_parser('checks')
-    check.add_argument('--family', choices=FAMILIES, required=True)
+    check.add_argument('--family', choices=[*FAMILIES, 'common', 'shared'], required=True)
+    check.add_argument('--service-only', action='store_true')
     for command in ('build', 'assemble', 'verify'):
         child = sub.add_parser(command)
         child.add_argument('--family', choices=FAMILIES, required=True)
@@ -131,7 +138,7 @@ def main():
             for family, value in result.items():
                 out.write(f'{family}={str(value["selected"]).lower()}\n')
     elif args.command == 'checks':
-        checks(args.family)
+        checks(args.family, args.service_only)
     elif args.command == 'verify':
         verify(args.family, args.sha, args.output)
     elif args.command == 'build':

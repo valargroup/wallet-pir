@@ -19,9 +19,9 @@ Rust feedback runs library and binary unit tests serially in `release-fast`, so 
 service fixtures share the fast runner’s 6-GiB ceiling without overlapping their
 crypto allocations. The package-qualified full-geometry/cache, multi-unit preparation, RPC publication
 and real HTTP retry cases run only in full CI;
-`tools/ci/slow-tests.json` records the exact names and reasons. Binary unit tests run as well as library targets. When the Enhance server is selected, fast CI also
+`tools/ci/slow-tests.json` records the exact names and reasons. Binary unit tests run as well as library targets. For affected packages, fast CI also
 runs the integration targets classified as `fast` in
-[`tools/ci/enhance-tests.json`](../tools/ci/enhance-tests.json). The remaining
+[`tools/ci/integration-tests.json`](../tools/ci/integration-tests.json). The remaining
 integration targets, doctests, binary unit tests and all-feature lint run in
 **CI full**, nightly or on request. The aggregate completion check fails if a
 selected job fails or is skipped. This avoids compiling every integration target just
@@ -29,7 +29,7 @@ to exclude its tests at runtime. Affected helper
 checks run concurrently with Rust; selected operations suites run in
 four parallel make slots, and failures in any task fail fast CI.
 
-Every Enhance server integration target must be classified exactly once.
+Every workspace integration target must be classified exactly once.
 `make check-tools` validates the registry against manifests and integration source files without invoking Rust, rejecting new
 unclassified targets and stale entries. Full CI runs both tiers serially, including
 the real-crypto `packing_http` path; it clears `QUALIFY_*` overrides so that CI uses
@@ -44,7 +44,7 @@ main revision captured by dispatch; newer pushes do not cancel manual runs.
 
 Receiver, Transparent, Enhance/Status and the operations package qualify
 independently, using the existing full family suites, shared tests and helper
-checks. Cheap helper checks precede native work on the fast pool. Operations archives
+checks. Common helper, shared-library and infrastructure checks run once per qualification, before service-specific native work. Helpers run on hosted runners to reserve the fast queue for main. Operations archives
 assemble on hosted runners without Rust, so they never queue behind native tests. Candidate release builds may run
 alongside testing in separate target lanes; candidate archives are uploaded under
 an ineligible name and re-verified before qualified publication. Each family
@@ -174,6 +174,45 @@ A restored cache can only save work. Cargo still checks every unit; a fresh
 checkout's workspace sources are newer than cached outputs, so workspace crates
 rebuild on hosted runners, while unchanged third-party units can be fresh.
 A missing cache is a separately measured cold build; it does not relax main validation or its deadline.
+
+## Cold preparation and representative latency
+
+Dispatch **Prepare fast validation** on a dependency/toolchain upgrade branch
+before landing it. It compiles and validates the same fast units using the fast
+runner's cache. Main pushes preempt preparation; preparation cannot cancel a
+running main check. Main rejects an entirely empty cache with an explicit
+preparation error instead of spending its three-minute budget on native builds.
+Cargo still validates dependencies and rebuilds changed units on every run.
+The optional `stress` input repeats each family's encrypted HTTP/recovery smoke
+50 times with fresh service state and no test retries. It remains preemptible
+and does not publish release artifacts.
+
+Fast coverage includes an encrypted HTTP smoke for Receiver, Transparent and
+Enhance. Transparent checks a nonzero row against public source bytes, refuses
+malformed input before preparation, and repeats after a cache restore and
+corruption. Enhance verifies encrypted records after draining the old listener
+and reopening durable coordinator state. Listener readiness/shutdown use bound
+sockets and completion signals, without timing sleeps. Full suites retain the
+larger publication, failover, geometry and independent-reference campaigns.
+
+Wallet walk fixtures cache their immutable manifests, returning owned copies
+for mutation cases. Full Transparent wallet suites also reuse verified public
+runtime snapshots in a bounded, temporary directory owned by the test runner;
+services, wallets and mutable stores remain fresh. Explicit cold/corruption
+cases use their own cache directories. No client secrets are cached.
+
+To assess the target using completed main runs:
+
+```sh
+python3 tools/ci/timings.py --workflow ci.yml --limit 100 --slo
+```
+
+This needs at least 20 representative runs, coverage of all service families,
+shared changes, operations and docs, and a p95 below 180 seconds. Workflow-only,
+canceled, cold and unknown-cache samples cannot qualify the target. Failed runs
+remain visible. Warm means Cargo reported no third-party compilation; workspace
+source can still rebuild. Queueing and final job cleanup count. A missing sample
+population is an unqualified target, not a measured guarantee.
 
 ## Prepared-artifact deployment
 

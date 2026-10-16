@@ -42,34 +42,53 @@ jobs:
           FAMILY: ${{ inputs.family || 'affected' }}
         run: python3 tools/ci/qualification.py select --sha "$GITHUB_SHA" --family "$FAMILY"
 
+  common:
+    name: Common
+    needs: select
+    uses: ./.github/workflows/ci-full.yml
+    with:
+      family: common
+
+  shared:
+    name: Shared
+    needs: select
+    if: needs.select.outputs.receiver == 'true' || needs.select.outputs.transparent == 'true' || needs.select.outputs.enhance == 'true'
+    uses: ./.github/workflows/ci-full.yml
+    with:
+      family: shared
+
   ops:
     name: Operations
-    needs: select
+    needs: [select, common]
     if: needs.select.outputs.ops == 'true'
     uses: ./.github/workflows/ci-full.yml
     with:
       family: ops
+      service-only: true
 
   receiver:
     name: Receiver
-    needs: select
+    needs: [select, common, shared]
     if: needs.select.outputs.receiver == 'true'
     uses: ./.github/workflows/ci-full.yml
     with:
       family: receiver
+      service-only: true
 
   transparent:
     name: Transparent
-    needs: select
+    needs: [select, common, shared]
     if: needs.select.outputs.transparent == 'true'
     uses: ./.github/workflows/ci-full.yml
     with:
       family: transparent
+      service-only: true
 
   enhance:
     name: Enhance
-    needs: select
+    needs: [select, common, shared]
     if: needs.select.outputs.enhance == 'true'
     uses: ./.github/workflows/ci-full.yml
     with:
       family: enhance
+      service-only: true

@@ -177,8 +177,8 @@ def plan(packages, paths, *, all_checks=False):
         else:
             groups.add('enhance')
     # Changing CI orchestration needs exhaustive helper/selector checks, but
-    # recompiling unchanged Rust here duplicates the full qualification that
-    # still runs for every family. Manifests, build scripts and unknown inputs
+    # recompiling unchanged Rust does not validate this orchestration.
+    # Manifests, build scripts and unknown inputs
     # retain their broad native checks.
     tooling = lambda path: path.startswith(('tools/ci/', 'tools/tests/', '.github/workflows/ci',
                                            '.github/actions/rust-setup/'))
@@ -201,7 +201,7 @@ def changed_paths(base='', head='HEAD', *, local=True, root=ROOT):
 
 
 
-def rust_checks(selected, *, features='', test='', test_target='', offline=False):
+def rust_checks(selected, *, features='', test='', test_target='', offline=False, compile_only=False):
     if not selected:
         return
     metadata = json.loads(subprocess.check_output(['cargo', 'metadata', '--locked', '--no-deps', '--format-version', '1', *(['--offline'] if offline else [])], cwd=ROOT, **inherited_fds()))
@@ -233,6 +233,8 @@ def rust_checks(selected, *, features='', test='', test_target='', offline=False
         feature_args = ['--features', enabled] if enabled else []
         command = ['cargo', 'test', *options, *feature_args, '-p', name, *kinds]
         run([*command, '--no-run'], stage=f'compile:{name}')
+        if compile_only:
+            continue
         listing = subprocess.check_output([*command, '--', '--list'], cwd=ROOT, text=True, **inherited_fds())
         discovered = {line.removesuffix(': test') for line in listing.splitlines() if line.endswith(': test')}
         if test_target and not discovered:
@@ -245,11 +247,31 @@ def rust_checks(selected, *, features='', test='', test_target='', offline=False
             raise ValueError(f'{name}: test filter matched no tests: {test}')
         args = ['--', *([test] if test else []), *sum((['--skip', n] for n in slow if not test), [])]
         run([*command, *args], env=dict(os.environ, RUST_TEST_THREADS='1'), stage=f'tests:{name}')
-    if 'enhance-pir-server' in selected and not test and not test_target and not features:
-        command = ['python3', 'tools/ci/enhance_tests.py', '--tier', 'fast']
-        if offline:
-            command.append('--offline')
-        run(command, stage='integration:enhance-fast')
+    if not test and not test_target and not features:
+        # Packages without integration targets need no executable selection.
+        from integration_tests import inventory
+        classified = inventory()
+        command = ['python3', 'tools/ci/integration_tests.py', '--tier', 'fast']
+        for name in selected:
+            if name in classified and classified[name]['fast']:
+                command.extend(['--package', name])
+        if len(command) > 4:
+            if offline:
+                command.append('--offline')
+            if compile_only:
+                command.append('--compile-only')
+            run(command, stage='integration:fast')
+
+
+def feedback_selection(selected, paths):
+    coverage = json.loads((ROOT / 'tools/ci/full-packages.json').read_text())
+    families = {family for family, names in coverage.items()
+                if set(names) & set(selected['packages'])}
+    category = ('shared' if 'shared' in families or len(families) > 1 else next(iter(families))) if families else (
+        'ci' if not paths or any(path.startswith(('tools/ci/', 'tools/tests/', '.github/')) for path in paths) else
+        'docs' if set(selected['helpers']) <= {'check-docs'} else 'ops')
+    return {'category': category, 'families': sorted(families - {'shared'}),
+            'package_count': len(selected['packages'])}
 
 
 def main():
@@ -264,6 +286,7 @@ def main():
     parser.add_argument('--test-target', default='')
     parser.add_argument('--offline', action='store_true')
     parser.add_argument('--select-only', action='store_true')
+    parser.add_argument('--compile-only', action='store_true', help='prepare fast Rust units without running tests')
     parser.add_argument('--github-output', action='store_true')
     args = parser.parse_args()
     packages = workspace_packages()
@@ -274,6 +297,8 @@ def main():
         if unknown:
             parser.error(f'unknown workspace packages: {sorted(unknown)}')
         selected = {'packages': sorted(set(args.package)), 'helpers': [], 'groups': [], 'reasons': ['explicit package check']}
+    if not args.select_only and __name__ == '__main__':
+        print('CI_SELECTION ' + json.dumps(feedback_selection(selected, paths)), flush=True)
     print(json.dumps(selected, indent=2), flush=True)
     if args.github_output:
         with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
@@ -287,11 +312,11 @@ def main():
     run(['python3', 'tools/ci/workflow_paths.py'], stage='workflow-paths')
     with local_target(ROOT, enabled=bool(selected['packages'])), ThreadPoolExecutor(max_workers=4) as pool:
         futures = []
-        if selected['helpers']:
+        if selected['helpers'] and not args.compile_only:
             helper_env = dict(os.environ, OFFLINE='1') if args.offline else os.environ.copy()
             futures.append(pool.submit(run, ['make', '-j4', *selected['helpers']],
                                        env=helper_env, stage='helpers'))
-        futures.append(pool.submit(rust_checks, selected['packages'], features=args.features, test=args.test, test_target=args.test_target, offline=args.offline))
+        futures.append(pool.submit(rust_checks, selected['packages'], features=args.features, test=args.test, test_target=args.test_target, offline=args.offline, compile_only=args.compile_only))
         errors = []
         for future in futures:
             try:

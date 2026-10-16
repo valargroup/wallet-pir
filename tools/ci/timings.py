@@ -19,6 +19,8 @@ from datetime import datetime, timezone
 import json
 import math
 import os
+from pathlib import Path
+import sys
 import subprocess
 import urllib.error
 import urllib.request
@@ -38,16 +40,13 @@ SETUP = ('Set up job', 'Run actions/checkout', 'Run ./.github/actions/rust-setup
          'Record restored', 'Run hashicorp/setup-terraform')
 
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'ops/lib'))
+from wallet_pir_ops.github_api import api as github_api  # noqa: E402
+
+
 def api(path):
-    token = os.environ.get('GH_TOKEN') or os.environ.get('GITHUB_TOKEN')
-    if token:
-        request = urllib.request.Request(
-            os.environ.get('GITHUB_API_URL', 'https://api.github.com') + '/' + path,
-            headers={'Authorization': 'Bearer ' + token, 'Accept': 'application/vnd.github+json',
-                     'X-GitHub-Api-Version': '2022-11-28'})
-        with urllib.request.urlopen(request, timeout=30) as response:
-            return json.load(response)
-    return json.loads(subprocess.check_output(['gh', 'api', path]))
+    # Best-effort reporting must fit the short gate's remaining time budget.
+    return github_api(path, timeout=3, attempts=2)
 
 
 class _DropAuthOnRedirect(urllib.request.HTTPRedirectHandler):
@@ -85,7 +84,7 @@ def cache_records(log):
     """Sanitized CI_CACHE_*, CI_CARGO_ARTIFACTS and CI_STAGE_REPORT records from a job log."""
     records = []
     for line in (log or '').splitlines():
-        for tag in ('CI_CACHE_IDENTITY', 'CI_CACHE_RESTORE', 'CI_CACHE_REPORT', 'CI_CARGO_ARTIFACTS', 'CI_STAGE_REPORT'):
+        for tag in ('CI_SELECTION', 'CI_CACHE_IDENTITY', 'CI_CACHE_RESTORE', 'CI_CACHE_REPORT', 'CI_CARGO_ARTIFACTS', 'CI_STAGE_REPORT'):
             marker = line.find(tag + ' {')
             if marker >= 0:
                 try:
@@ -125,7 +124,8 @@ def report(repo, run_id, records=False):
     # a new attempt is requested, including its wait for a runner.
     started = run['run_started_at'] if attempt > 1 else run['created_at']
     now = datetime.now(timezone.utc).isoformat()
-    result = {'run': run_id, 'attempt': attempt, 'definitions': DEFINITIONS, 'timing_start': started, 'sha': run['head_sha'], 'status': run['status'], 'jobs': []}
+    result = {'run': run_id, 'attempt': attempt, 'definitions': DEFINITIONS, 'timing_start': started, 'sha': run['head_sha'], 'status': run['status'], 'event': run.get('event'),
+              'branch': run.get('head_branch'), 'conclusion': run.get('conclusion'), 'jobs': []}
     for job in jobs:
         if not job.get('started_at'):
             continue
@@ -154,6 +154,43 @@ def report(repo, run_id, records=False):
     return result
 
 
+def feedback_slo(rows, target=180):
+    """Qualify representative warm main pushes, never workflow-only or cold runs."""
+    eligible, excluded, failures, covered = [], [], [], set()
+    required = {'transparent', 'enhance', 'receiver', 'shared', 'docs', 'ops'}
+    for row in rows:
+        if row.get('event') != 'push' or row.get('branch') != 'main':
+            excluded.append({'run': row['run'], 'reason': 'not a main push'})
+            continue
+        if row.get('conclusion') == 'cancelled':
+            excluded.append({'run': row['run'], 'reason': 'cancelled'})
+            continue
+        if not row.get('complete') or row.get('conclusion') != 'success':
+            failures.append(row['run'])
+            continue
+        jobs = [job for job in row['jobs'] if job['name'] == 'Fast checks']
+        records = jobs[0].get('cache_records') or [] if len(jobs) == 1 else []
+        selections = [r for r in records if r['type'] == 'CI_SELECTION']
+        if len(selections) != 1 or selections[0]['category'] == 'ci':
+            excluded.append({'run': row['run'], 'reason': 'missing selection evidence or workflow-only change'})
+            continue
+        selection = selections[0]
+        if selection.get('package_count', len(selection['families'])):
+            builds = [r for r in records if r['type'] == 'CI_CARGO_ARTIFACTS']
+            if len(builds) != 1 or builds[0].get('third_party', {}).get('compiled') != 0:
+                excluded.append({'run': row['run'], 'reason': 'cold or unknown dependency compilation'})
+                continue
+        covered.update(selection['families'])
+        covered.add(selection['category'])
+        eligible.append({'run': row['run'], 'sha': row['sha'], 'seconds': row['dispatch_seconds'],
+                         'category': selection['category']})
+    p95 = percentile95([row['seconds'] for row in eligible])
+    return {'target_seconds': target, 'samples': eligible, 'sample_count': len(eligible),
+            'p95_seconds': p95, 'missing_categories': sorted(required-covered),
+            'failed_or_incomplete_runs': failures, 'excluded': excluded,
+            'accepted': p95 is not None and p95 < target and not (required-covered) and not failures}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--repo', default=os.environ.get('GITHUB_REPOSITORY', 'valargroup/wallet-pir'))
@@ -162,18 +199,27 @@ def main():
     group.add_argument('--workflow')
     parser.add_argument('--limit', type=int, default=20)
     parser.add_argument('--cache-records', action='store_true', help='read job logs for sanitized cache/stage records')
+    parser.add_argument('--slo', action='store_true', help='qualify warm main feedback with selection/cache evidence; needs 20 representative runs')
     args = parser.parse_args()
+    if args.slo and not args.workflow:
+        parser.error('--slo requires --workflow')
     if args.run:
         result = report(args.repo, args.run, args.cache_records)
     else:
         runs = api(f'repos/{args.repo}/actions/workflows/{args.workflow}/runs?status=completed&per_page={args.limit}')['workflow_runs']
-        rows = [report(args.repo, r['id'], args.cache_records) for r in runs if r['conclusion'] == 'success']
-        result = {'workflow': args.workflow, 'successful_runs': len(rows),
+        rows = [report(args.repo, r['id'], args.cache_records or args.slo) for r in runs
+                if args.slo or r['conclusion'] == 'success']
+        result = {'workflow': args.workflow, 'successful_runs': sum(r.get('conclusion') == 'success' for r in rows),
                   'p95_dispatch_seconds': percentile95([r['dispatch_seconds'] for r in rows]), 'runs': rows}
+    if args.slo:
+        result['slo'] = feedback_slo(rows)
     print(json.dumps(result, indent=2))
     if os.environ.get('GITHUB_STEP_SUMMARY'):
         with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as out:
             out.write('\n## Actions timing evidence\n\nMeasured through the reporting step; final cleanup is excluded.\n\n```json\n' + json.dumps(result, indent=2) + '\n```\n')
+
+    if args.slo and not result['slo']['accepted']:
+        raise SystemExit(1)
 
 
 if __name__ == '__main__':
