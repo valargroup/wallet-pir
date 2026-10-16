@@ -4870,7 +4870,7 @@ dependencies = [
 [[package]]
 name = "zakura-pir-native"
 version = "0.0.1-rc1"
-source = "git+https://github.com/zakura-core/wallet-libraries.git?rev=bf3c560ba71e4ed6c4601bf30e196f102a20010a#bf3c560ba71e4ed6c4601bf30e196f102a20010a"
+source = "git+https://github.com/zakura-core/wallet-libraries.git?rev=a2b3b389e71875b39a397598e4c1c92680571230#a2b3b389e71875b39a397598e4c1c92680571230"
 dependencies = [
  "ipir-sp",
  "rand 0.8.5",
@@ -4934,25 +4934,25 @@ dependencies = [
 [[package]]
 name = "zakura-receiver-crypto"
 version = "0.0.1-rc0"
-source = "git+https://github.com/zakura-core/wallet-libraries.git?rev=bf3c560ba71e4ed6c4601bf30e196f102a20010a#bf3c560ba71e4ed6c4601bf30e196f102a20010a"
+source = "git+https://github.com/zakura-core/wallet-libraries.git?rev=a2b3b389e71875b39a397598e4c1c92680571230#a2b3b389e71875b39a397598e4c1c92680571230"
 
 [[package]]
 name = "zakura-receiver-directory"
 version = "0.0.1-rc0"
-source = "git+https://github.com/zakura-core/wallet-libraries.git?rev=bf3c560ba71e4ed6c4601bf30e196f102a20010a#bf3c560ba71e4ed6c4601bf30e196f102a20010a"
+source = "git+https://github.com/zakura-core/wallet-libraries.git?rev=a2b3b389e71875b39a397598e4c1c92680571230#a2b3b389e71875b39a397598e4c1c92680571230"
 dependencies = [
  "bitcoin",
  "serde",
  "serde_json",
  "sha2 0.10.9",
  "thiserror 2.0.18",
- "zakura-receiver-crypto 0.0.1-rc0 (git+https://github.com/zakura-core/wallet-libraries.git?rev=bf3c560ba71e4ed6c4601bf30e196f102a20010a)",
+ "zakura-receiver-crypto 0.0.1-rc0 (git+https://github.com/zakura-core/wallet-libraries.git?rev=a2b3b389e71875b39a397598e4c1c92680571230)",
 ]
 
 [[package]]
 name = "zakura-receiver-pir"
 version = "0.0.1-rc0"
-source = "git+https://github.com/zakura-core/wallet-libraries.git?rev=bf3c560ba71e4ed6c4601bf30e196f102a20010a#bf3c560ba71e4ed6c4601bf30e196f102a20010a"
+source = "git+https://github.com/zakura-core/wallet-libraries.git?rev=a2b3b389e71875b39a397598e4c1c92680571230#a2b3b389e71875b39a397598e4c1c92680571230"
 dependencies = [
  "hex",
  "rand 0.8.5",
@@ -4960,7 +4960,7 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "thiserror 2.0.18",
- "zakura-pir-native 0.0.1-rc1 (git+https://github.com/zakura-core/wallet-libraries.git?rev=bf3c560ba71e4ed6c4601bf30e196f102a20010a)",
+ "zakura-pir-native 0.0.1-rc1 (git+https://github.com/zakura-core/wallet-libraries.git?rev=a2b3b389e71875b39a397598e4c1c92680571230)",
  "zakura-receiver-directory",
 ]
 
