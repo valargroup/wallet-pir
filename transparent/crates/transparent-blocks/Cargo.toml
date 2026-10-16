@@ -11,8 +11,8 @@ prost = "0.13"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
-transparent-events = { package = "zakura-transparent-events", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "1b0cda2e09c1e496889b2d85962321a8df750fea" }
-zakura-pir-transparent = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "1b0cda2e09c1e496889b2d85962321a8df750fea", default-features = false, features = ["engine"] }
+transparent-events = { package = "zakura-transparent-events", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "2bfe585c86eb8567ff328cad44ae63ab6d5984fa" }
+zakura-pir-transparent = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "2bfe585c86eb8567ff328cad44ae63ab6d5984fa", default-features = false, features = ["engine"] }
 
 [build-dependencies]
 prost-build = "0.13"
