@@ -17,13 +17,15 @@
 //! refused at load rather than served as a PIR fault.
 //!
 //! A revision already verified by the previous snapshot, or staged ahead of
-//! its seal, is taken over without re-reading only when the new directory
-//! hard-links the same files (device, inode and length). Claiming the same
-//! digest never skips verification.
+//! its seal, is taken over without re-reading only when every segment of the
+//! new directory resolves to the very file this process hashed, unmodified
+//! since ([`crate::shardset::FileStamp`]). Claiming the same digest never
+//! skips verification. Display runtimes are keyed by revision digest, so the
+//! revision, not the segment, is the unit a later publication can inherit.
 
 use super::{kind, runtime_key, serves, DisplayRole};
 use crate::runtime::disk::ShippedRuntimes;
-use crate::shardset::{LoadError, SegmentSource};
+use crate::shardset::{LoadError, SegmentSource, VerificationClock, VerificationReport};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashSet};
 use std::fs::File;
@@ -158,9 +160,23 @@ impl DisplayRevision {
 
     /// Verifies every segment against the manifest, then every row, and
     /// returns the revision holding its sources.
-    pub fn verify_tables(mut self) -> Result<Self, LoadError> {
+    pub fn verify_tables(self) -> Result<Self, LoadError> {
+        self.verify_tables_reusing(None, &mut VerificationReport::default())
+    }
+
+    /// Verifies the revision, taking over any segment `earlier` — a held
+    /// revision with this digest — proved as the very file now published.
+    /// Rows are re-checked unless every segment was taken over, in which case
+    /// `earlier` checked these exact files under this exact manifest.
+    pub(crate) fn verify_tables_reusing(
+        mut self,
+        earlier: Option<&Self>,
+        report: &mut VerificationReport,
+    ) -> Result<Self, LoadError> {
+        let earlier = earlier.filter(|earlier| earlier.digest == self.digest && earlier.held());
         let geometry = self.geometry;
         let shard_id = self.manifest.shard_id;
+        let hashed_before = report.segments_hashed;
         let mut buckets = Vec::new();
         for table in self.manifest.tables() {
             let published = self
@@ -180,17 +196,25 @@ impl DisplayRevision {
                         geometry.name,
                     )));
                 }
-                let source = SegmentSource {
-                    path: self.dir.join(table.file_name(index)),
+                let source = SegmentSource::published(
+                    self.dir.join(table.file_name(index)),
                     rows,
                     row_bytes,
-                    sha256: segment.sha256.clone(),
-                    zero_from_row: rows,
-                };
-                source.verify()?;
+                    segment.sha256.clone(),
+                    rows,
+                )
+                .verify_or_reuse(
+                    earlier.and_then(|earlier| earlier.segment(table, index as u32)),
+                    report,
+                    false,
+                )?;
                 sources.push(source);
             }
             buckets.push(sources);
+        }
+        if earlier.is_some() && report.segments_hashed == hashed_before {
+            self.buckets = buckets;
+            return Ok(self);
         }
 
         // Canonical rows, bucket membership, each entry's one row,
@@ -199,8 +223,8 @@ impl DisplayRevision {
             sources
                 .iter()
                 .map(|source| {
-                    File::open(&source.path).map_err(|error| LoadError::Io {
-                        path: source.path.clone(),
+                    File::open(source.path()).map_err(|error| LoadError::Io {
+                        path: source.path().to_path_buf(),
                         source: error,
                     })
                 })
@@ -214,6 +238,7 @@ impl DisplayRevision {
         let records: Vec<u64> = self.manifest.buckets.iter().map(|b| b.records).collect();
         let seeds = self.manifest.placement_seeds();
         let width = geometry.directory_row_bytes;
+        let mut row_checked = 0u64;
         display::verify_rows(
             shard_id,
             geometry,
@@ -230,33 +255,14 @@ impl DisplayRevision {
                 let mut bytes = vec![0; width];
                 file.read_exact(&mut bytes)
                     .map_err(|error| txid::Error(error.to_string()))?;
+                row_checked += width as u64;
                 Ok(bytes)
             },
         )
         .map_err(|error| invalid(format!("display shard {shard_id}: {}", error.0)))?;
+        report.bytes_row_checked += row_checked;
         self.buckets = buckets;
         Ok(self)
-    }
-
-    /// Takes over `old`'s verified sources when `dir` hard-links the same
-    /// files; `None` when any file differs.
-    fn relink(old: &Self, dir: &Path) -> Option<Self> {
-        use std::os::unix::fs::MetadataExt;
-        if !old.held() {
-            return None;
-        }
-        let mut revision = old.clone();
-        revision.dir = dir.to_path_buf();
-        for source in revision.buckets.iter_mut().flatten() {
-            let next = dir.join(source.path.file_name()?);
-            let a = std::fs::metadata(&source.path).ok()?;
-            let b = std::fs::metadata(&next).ok()?;
-            if a.dev() != b.dev() || a.ino() != b.ino() || a.len() != b.len() {
-                return None;
-            }
-            source.path = next;
-        }
-        Some(revision)
     }
 }
 
@@ -280,6 +286,8 @@ pub struct DisplaySet {
     /// The publication directory, when the publisher shipped runtimes as
     /// plain files beside its revisions; see [`ShippedRuntimes`].
     pub shipped: Option<ShippedRuntimes>,
+    /// What loading this set spent on verification.
+    verification: VerificationReport,
 }
 
 impl DisplaySet {
@@ -341,17 +349,17 @@ impl DisplaySet {
             }
         }
 
-        let hold = |revision: DisplayRevision| -> Result<DisplayRevision, LoadError> {
-            let held = previous
-                .and_then(|set| set.held(&revision.digest))
-                .into_iter()
-                .chain(staged.iter().copied())
-                .filter(|old| old.digest == revision.digest)
-                .find_map(|old| DisplayRevision::relink(old, &revision.dir));
-            match held {
-                Some(held) => Ok(held),
-                None => revision.verify_tables(),
-            }
+        let clock = VerificationClock::start();
+        let mut verification = VerificationReport::default();
+        // Staged revisions first: one staged ahead of its seal was verified
+        // most recently, and a previous snapshot's copy may be older.
+        let mut hold = |revision: DisplayRevision| -> Result<DisplayRevision, LoadError> {
+            let earlier = staged
+                .iter()
+                .copied()
+                .chain(previous.and_then(|set| set.held(&revision.digest)))
+                .find(|old| old.digest == revision.digest && old.held());
+            revision.verify_tables_reusing(earlier, &mut verification)
         };
 
         let mut revisions = Vec::with_capacity(map.shards.len());
@@ -445,6 +453,7 @@ impl DisplaySet {
             .enumerate()
             .map(|(index, revision)| (revision.digest.clone(), index))
             .collect();
+        verification.finish(&clock);
         Ok(Self {
             map,
             map_json,
@@ -456,7 +465,14 @@ impl DisplaySet {
             by_digest,
             excess,
             shipped,
+            verification,
         })
+    }
+
+    /// What loading this set spent proving its tables, and what it took
+    /// over from the revisions it was given.
+    pub fn verification(&self) -> &VerificationReport {
+        &self.verification
     }
 
     /// The index chunk with this digest, its base shard id and bytes.
@@ -605,7 +621,83 @@ mod tests {
             DisplaySet::open_reusing(&next, 3, Some(&owner), &[], DisplayRole::ArchiveOwner)
                 .unwrap();
         let held = reused.held(&shards[0].digest).unwrap();
-        assert!(held.buckets[0][0].path.starts_with(&next));
+        assert!(held.buckets[0][0].path().starts_with(&next));
+    }
+
+    /// Moves every file under `dir` a minute into the past, as for files
+    /// published well before a worker loads them.
+    fn age(dir: &Path) {
+        let past = std::time::SystemTime::now() - std::time::Duration::from_secs(60);
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                age(&path);
+            } else {
+                File::options()
+                    .write(true)
+                    .open(&path)
+                    .unwrap()
+                    .set_modified(past)
+                    .unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn held_revisions_carry_their_verification_into_a_new_candidate() {
+        use std::os::unix::fs::FileExt;
+        let root = tempfile::tempdir().unwrap();
+        let (dir, shards) = publication(root.path());
+        age(root.path());
+        let (next, _) = synth::write_candidate(root.path(), &params(), &shards, "c1").unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        let first = DisplaySet::open(&dir, 3, DisplayRole::Combined).unwrap();
+        let report = first.verification();
+        assert_eq!(report.segments_reused, 0);
+        assert_eq!(report.segments_hashed, 2);
+        assert!(report.bytes_row_checked > 0);
+
+        // The same files under a new candidate: nothing is read again, rows
+        // included, and the sources name the candidate.
+        let second =
+            DisplaySet::open_reusing(&next, 3, Some(&first), &[], DisplayRole::Combined).unwrap();
+        let report = second.verification();
+        assert_eq!((report.segments_hashed, report.bytes_hashed), (0, 0));
+        assert_eq!(report.segments_reused, 2);
+        assert_eq!(report.bytes_row_checked, 0);
+        std::fs::remove_dir_all(&dir).unwrap();
+        for revision in second.revisions() {
+            for (table, segment) in revision.targets() {
+                let source = revision.segment(table, segment).unwrap();
+                assert!(source.path().starts_with(&next));
+                source.load().unwrap();
+            }
+        }
+        // Collection changes link counts and ctime; refresh verification before
+        // checking the separate in-place-write case below.
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        let second =
+            DisplaySet::open_reusing(&next, 3, Some(&second), &[], DisplayRole::Combined).unwrap();
+
+        // An in-place write voids the evidence: the archive is hashed and its
+        // rows checked again, and a changed byte is refused.
+        let segment = next.join(&shards[0].digest).join("directory-0.0.bin");
+        let original = std::fs::read(&segment).unwrap();
+        let file = File::options().write(true).open(&segment).unwrap();
+        file.write_all_at(&original[..8], 0).unwrap();
+        let third =
+            DisplaySet::open_reusing(&next, 3, Some(&second), &[], DisplayRole::Combined).unwrap();
+        assert_eq!(third.verification().segments_hashed, 1);
+        assert!(third.verification().bytes_row_checked > 0);
+        file.write_all_at(&[original[100] ^ 1], 100).unwrap();
+        assert!(
+            DisplaySet::open_reusing(&next, 3, Some(&second), &[], DisplayRole::Combined).is_err()
+        );
+
+        // A restart holds nothing and verifies everything.
+        file.write_all_at(&original[100..101], 100).unwrap();
+        let restarted = DisplaySet::open(&next, 3, DisplayRole::Combined).unwrap();
+        assert_eq!(restarted.verification().segments_hashed, 2);
     }
 
     #[test]

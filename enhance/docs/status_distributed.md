@@ -77,12 +77,17 @@ installs the forwarding-only `status-control` key with explicit `permitopen`
 (8481, 8482, 8484) and `permitlisten` (8495) restrictions. The CUDA worker
 remains an optional build (`--features cuda`, `--cuda`) and is not deployed.
 
-### Supervised control sessions (not deployed)
+### Supervised control sessions
 
-`wallet-pir-control-sessions.service` is the intended replacement for
-`status-control-tunnel` and `status-query-tunnel`. It is
-[the shared control-session supervisor](../../docs/control-sessions.md), and it
-is not installed on the coordinator. `ops/deploy/control-sessions.status.example.json`
+`wallet-pir-control-sessions.service` replaces `status-control-tunnel` and
+`status-query-tunnel`. It is
+[the shared control-session supervisor](../../docs/control-sessions.md). The
+Status baselines retained on 2026-10-09 and 2026-10-10 show the controller
+ordered after it, with a drop-in stating that the tunnels run under it since
+2026-09-30; that is dated evidence, not a current check. No record shows the
+restricted `wallet-pir-control` account or the fault drill of
+[rollout step 1](../../docs/control-sessions.md#rollout-order), so treat those
+as not adopted. `ops/deploy/control-sessions.status.example.json`
 carries the two tunnels' forwards unchanged: 8481, 8482 and 8495 on one master
 with compression, and 8492 to 8484 on another. It keeps the same
 forwarding-only account, key and known-hosts file, and `ServerAliveCountMax 4`.

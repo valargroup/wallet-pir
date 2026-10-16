@@ -299,6 +299,24 @@ class IntegrityTests(unittest.TestCase):
                 self.assertIn('path: release-bundles/%s/%s.tar.gz' % (kind, kind), job)
             self.assertEqual(build[:4], ['cargo', 'build', '--locked', '--release'])
 
+    def test_workflows_invoke_only_scripts_that_exist(self):
+        import re
+        for workflow in sorted((ROOT / '.github/workflows').glob('*.yml')):
+            for path in re.findall(r'(?<![\w/$.-])((?:ops|tools|enhance|transparent|receiver)/[\w./-]+\.(?:sh|py))',
+                                   workflow.read_text()):
+                self.assertTrue((ROOT / path).is_file(), '%s invokes missing %s' % (workflow.name, path))
+
+    def test_operations_package_is_published_without_rust(self):
+        workflow = (ROOT / '.github/workflows/ci-full.yml').read_text()
+        build = workflow.split('\n  build:\n', 1)[1].split('\n  release:\n', 1)[0]
+        release = workflow.split('\n  release:\n', 1)[1].split('\n  release-cuda:\n', 1)[0]
+        self.assertIn("if: inputs.family == 'ops'", build)
+        self.assertIn('qualification.py assemble --family ops', build)
+        self.assertIn("if: inputs.family != 'ops'", build)
+        self.assertIn('qualification.py verify --family', release)
+        self.assertIn('name: wallet-pir-ops-${{ github.sha }}', release)
+        self.assertIn('wallet-pir-ops', load('release').ON_REQUEST)
+
     def test_release_native_does_not_use_checkout_local_target(self):
         workflow = (ROOT / '.github/workflows/ci-full.yml').read_text()
         self.assertIn('lane: release-native', workflow)

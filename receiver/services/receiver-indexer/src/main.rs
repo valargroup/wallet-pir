@@ -5,6 +5,7 @@ use clap::Parser;
 use receiver_directory::snapshot::{Snapshot, MAX_ROWS};
 use receiver_indexer::{
     blocks::{MAX_RECEIVER_BATCH_BLOCKS, MAX_RECEIVER_CONCURRENCY},
+    canonical::{check_serving, freshest, is_canonical},
     near::{Explorer, Reads},
     verify,
 };
@@ -107,6 +108,16 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    if std::env::args().nth(1).as_deref() == Some("serve-publication") {
+        // Serves what an operator stages; never indexes, opens no database and reads
+        // no partner key. See `receiver_indexer::serve_publication`.
+        tracing_subscriber::fmt()
+            .with_writer(std::io::stderr)
+            .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
+            .init();
+        let args = receiver_indexer::serve_publication::Args::parse_from(std::env::args().skip(1));
+        return receiver_indexer::serve_publication::main(args).await;
+    }
     if std::env::args().nth(1).as_deref() == Some("probe") {
         let args = receiver_indexer::probe::Args::parse_from(std::env::args().skip(1));
         std::process::exit(if receiver_indexer::probe::run(args).await {
@@ -175,21 +186,12 @@ async fn main() -> Result<()> {
         "receiver PIR listening; waiting for a canonical publication"
     );
     // Canonical checks continue while indexing, proofs and PIR preparation are in progress.
-    let guard_publications = publications.clone();
-    let guard_nodes = nodes.clone();
-    let poll_seconds = args.poll_seconds;
-    let guard = tokio::spawn(async move {
-        loop {
-            let checked = async {
-                let (tip, rpc) = freshest(&guard_nodes, genesis).await?;
-                check_serving(&guard_publications, &rpc, genesis, tip).await
-            };
-            if let Err(error) = checked.await {
-                warn!(%error, "canonical validation deferred; still serving");
-            }
-            tokio::time::sleep(Duration::from_secs(poll_seconds)).await;
-        }
-    });
+    let guard = tokio::spawn(receiver_indexer::canonical::guard(
+        publications.clone(),
+        nodes.clone(),
+        genesis,
+        Duration::from_secs(args.poll_seconds),
+    ));
     if let Some(key) = args.near_key.clone() {
         let path = args.data_dir.join(PROVIDERS);
         let since = args
@@ -248,40 +250,6 @@ async fn shutdown() {
     {
         let _ = tokio::signal::ctrl_c().await;
     }
-}
-
-/// The node on `genesis`'s network with the highest tip, which runs a whole pass, and
-/// its tip (see [`NodeClient::ranked`]).
-async fn freshest(nodes: &[NodeClient], genesis: [u8; 32]) -> Result<(u64, NodeClient)> {
-    Ok(NodeClient::ranked(nodes, genesis).await?.swap_remove(0))
-}
-
-/// Revokes every session once `rpc`, a node at tip `tip`, shows a served anchor is off
-/// its chain, unless a revocation or rotation stopped serving that anchor during the
-/// check (see [`Publications::revoke_serving`]). A failed request, a node behind an
-/// anchor or one no longer on `genesis`'s network proves nothing, so sessions keep
-/// serving.
-async fn check_serving(
-    publications: &Publications,
-    rpc: &NodeClient,
-    genesis: [u8; 32],
-    tip: u64,
-) -> Result<()> {
-    let (epoch, anchors) = publications.serving();
-    if anchors.is_empty() {
-        return Ok(());
-    }
-    for (height, hash) in anchors {
-        if u64::from(height) <= tip && !is_canonical(rpc, height, hash).await? {
-            // Ranking read the genesis earlier, and an endpoint can be repointed.
-            rpc.check_network(genesis).await?;
-            if publications.revoke_serving(epoch, (height, hash)) {
-                warn!(height, "revoked noncanonical receiver sessions");
-            }
-            break;
-        }
-    }
-    Ok(())
 }
 
 /// The publication [`refresh`] last activated, with what it was built from.
@@ -591,11 +559,6 @@ fn unix_now() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .expect("clock after 1970")
         .as_secs() as i64
-}
-
-/// Whether `hash` is the node's canonical block at `height`.
-async fn is_canonical(rpc: &NodeClient, height: u32, hash: [u8; 32]) -> Result<bool> {
-    Ok(rpc.block_hash(u64::from(height)).await? == hash)
 }
 
 #[cfg(test)]

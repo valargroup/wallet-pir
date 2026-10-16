@@ -25,11 +25,113 @@ use tower::ServiceExt;
 pub const ASSIGNMENT_CHANGED: &str =
     "this publication is already held under a different assignment for this worker";
 
+/// Why a publication command was refused, by what the controller must do.
+///
+/// Internal: the control socket carries only the text, as it always has, so
+/// no reply changes shape. The kind is what the private status report shows.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Refusal {
+    /// The supplied publication or assignment does not verify. Retrying the
+    /// same input cannot succeed.
+    InvalidSource(String),
+    /// Building or warming runtimes failed. The input verified; the
+    /// publication may prepare on retry or on another worker.
+    Runtime(String),
+    /// The worker cannot take the candidate as asked: its budget, or a
+    /// conflicting hold of the same publication.
+    Admission(String),
+    /// The predecessor or the chain moved on while the command waited or ran.
+    Superseded(String),
+}
+
+impl Refusal {
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::InvalidSource(_) => "invalid_source",
+            Self::Runtime(_) => "runtime",
+            Self::Admission(_) => "admission",
+            Self::Superseded(_) => "superseded",
+        }
+    }
+
+    pub fn message(&self) -> &str {
+        match self {
+            Self::InvalidSource(message)
+            | Self::Runtime(message)
+            | Self::Admission(message)
+            | Self::Superseded(message) => message,
+        }
+    }
+}
+
+impl std::fmt::Display for Refusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.message())
+    }
+}
+
+impl From<Refusal> for String {
+    fn from(refusal: Refusal) -> Self {
+        refusal.message().to_string()
+    }
+}
+
+/// How the most recent preparation ended, for the private status report.
+/// In memory only: a restart reports none rather than a stale outcome.
+#[derive(Clone, Debug, Serialize)]
+pub(crate) struct PreparationOutcome {
+    map_sha256: String,
+    outcome: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    verification: Option<crate::shardset::VerificationReport>,
+    finished_unix: u64,
+}
+
+impl PreparationOutcome {
+    pub(crate) fn new<T>(
+        map_sha256: String,
+        outcome: &Result<T, Refusal>,
+        verification: Option<crate::shardset::VerificationReport>,
+    ) -> Self {
+        let finished_unix = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |since| since.as_secs());
+        let (outcome, error) = match outcome {
+            Ok(_) => ("prepared", None),
+            Err(refusal) => (refusal.kind(), Some(refusal.message().to_string())),
+        };
+        Self {
+            map_sha256,
+            outcome,
+            error,
+            verification,
+            finished_unix,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Publication {
     pub directory: PathBuf,
     pub assignment: Option<PathBuf>,
     pub map_sha256: String,
+    /// Where the runtimes its publisher prepared were staged, when they were:
+    /// plain files beside the revision directories, tried before a restore
+    /// or build. Absent, the worker produces every runtime itself. Recorded
+    /// with the active publication, so a restart is offered them too.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtimes: Option<PathBuf>,
+}
+
+impl Publication {
+    /// The prepared runtimes this publication offers, if any.
+    pub fn shipped(&self) -> Option<crate::runtime::disk::ShippedRuntimes> {
+        self.runtimes
+            .clone()
+            .map(crate::runtime::disk::ShippedRuntimes::new)
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -84,6 +186,7 @@ struct Inner {
     invalid: RwLock<BTreeSet<String>>,
     candidate: tokio::sync::Mutex<Option<Candidate>>,
     preparing: RwLock<Option<Preparing>>,
+    last_preparation: RwLock<Option<PreparationOutcome>>,
     config: ServiceConfig,
     options: LoadOptions,
     record: PathBuf,
@@ -114,6 +217,7 @@ impl LiveService {
             invalid: RwLock::new(invalid),
             candidate: tokio::sync::Mutex::new(None),
             preparing: RwLock::new(None),
+            last_preparation: RwLock::new(None),
             config,
             options,
             record,
@@ -123,6 +227,159 @@ impl LiveService {
             epoch: std::sync::atomic::AtomicU64::new(0),
         })))
     }
+    /// Loads, builds and warms a candidate publication. Refusals are typed by
+    /// what the controller must do about them; the control socket carries
+    /// only their text, exactly as before.
+    async fn prepare(
+        &self,
+        expected: String,
+        publication: Publication,
+    ) -> Result<serde_json::Value, Refusal> {
+        let epoch = self.0.epoch.load(std::sync::atomic::Ordering::Acquire);
+        // What this worker's own row of the requested assignment
+        // digests to. A publication already held under another row
+        // must be refused, not reported prepared: the durable active
+        // record names the assignment file, and a restart would load
+        // rows no prepare ever checked.
+        let requested = match (&self.0.options.scope, &publication.assignment) {
+            (LoadScope::Assigned { worker_id, .. }, Some(path)) => Some(
+                Assignment::load(path)
+                    .and_then(|assignment| assignment.worker_digest(worker_id))
+                    .map_err(|e| Refusal::InvalidSource(e.to_string()))?,
+            ),
+            _ => None,
+        };
+        let held_as_requested = |set: &ShardSet| {
+            set.scope().map(|scope| &scope.worker_assignment_sha256) == requested.as_ref()
+        };
+        let old = {
+            let active = self.0.active.read().unwrap();
+            if active.publication.map_sha256 == publication.map_sha256 && active.state.is_warm() {
+                if !held_as_requested(active.state.set()) {
+                    return Err(Refusal::Admission(ASSIGNMENT_CHANGED.into()));
+                }
+                return Ok(serde_json::json!({"prepared":publication.map_sha256}));
+            }
+            if active.publication.map_sha256 != expected {
+                return Err(Refusal::Superseded("active predecessor changed".into()));
+            }
+            active.state.clone()
+        };
+        if let Some(candidate) = self.0.candidate.lock().await.as_ref().filter(|c| {
+            c.publication.map_sha256 == publication.map_sha256
+                && c.state.is_warm()
+                && c.epoch == epoch
+        }) {
+            if !held_as_requested(candidate.state.set()) {
+                return Err(Refusal::Admission(ASSIGNMENT_CHANGED.into()));
+            }
+            return Ok(serde_json::json!({"prepared":publication.map_sha256}));
+        }
+        let prepare_started = std::time::Instant::now();
+        *self.0.preparing.write().unwrap() = Some(Preparing {
+            digest: publication.map_sha256.clone(),
+            started: prepare_started,
+            phase: "loading",
+        });
+        let _preparing = PreparingGuard(&self.0.preparing);
+        // Release an obsolete candidate's pins before reserving anew.
+        *self.0.candidate.lock().await = None;
+        let mut options = self.0.options.clone();
+        match (&options.scope, &publication.assignment) {
+            (LoadScope::Assigned { worker_id, .. }, Some(path)) => {
+                options.scope = LoadScope::Assigned {
+                    worker_id: worker_id.clone(),
+                    assignment: Arc::new(
+                        Assignment::load(path)
+                            .map_err(|e| Refusal::InvalidSource(e.to_string()))?,
+                    ),
+                };
+            }
+            (LoadScope::Whole, None) => {}
+            _ => {
+                return Err(Refusal::InvalidSource(
+                    "candidate must preserve assignment mode".into(),
+                ))
+            }
+        }
+        let directory = publication.directory.clone();
+        let digest = publication.map_sha256.clone();
+        let shipped = publication.shipped();
+        let config = self.0.config;
+        let loading_started = std::time::Instant::now();
+        let (next, verification) = tokio::task::spawn_blocking(move || {
+            tracing::info!(map = %digest, queue_seconds = loading_started.elapsed().as_secs_f64(), "publication loading task started");
+            let eviction_started = std::time::Instant::now();
+            old.evict_unpinned();
+            tracing::info!(map = %digest, seconds = eviction_started.elapsed().as_secs_f64(), "publication runtime eviction finished");
+            let open_started = std::time::Instant::now();
+            let set = ShardSet::open_reusing(&directory, &options, Some(old.set()))
+                .map_err(|e| Refusal::InvalidSource(e.to_string()))?;
+            let verification = set.verification().clone();
+            tracing::info!(
+                map = %digest,
+                seconds = open_started.elapsed().as_secs_f64(),
+                segments_hashed = verification.segments_hashed,
+                segments_reused = verification.segments_reused,
+                bytes_hashed = verification.bytes_hashed,
+                page_bytes_hashed = verification.page_bytes_hashed,
+                bytes_reused = verification.bytes_reused,
+                verify_cpu_micros = verification.cpu_micros,
+                "publication shard loading finished"
+            );
+            if set.map_digest != digest {
+                return Err(Refusal::InvalidSource("candidate map digest mismatch".into()));
+            }
+            if set.map.genesis_hash != old.set().map.genesis_hash
+                || set.map.start_height != old.set().map.start_height
+                || set.map.seal != old.set().map.seal
+            {
+                return Err(Refusal::InvalidSource(
+                    "candidate changes publication identity".into(),
+                ));
+            }
+            let build_started = std::time::Instant::now();
+            let state = ServiceState::build_reusing(set, config, None, Some(&old), shipped);
+            tracing::info!(map = %digest, seconds = build_started.elapsed().as_secs_f64(), succeeded = state.is_ok(), "publication service construction finished");
+            state
+                .map(|state| (state, verification))
+                .map_err(Refusal::Runtime)
+        })
+        .await
+        .map_err(|e| Refusal::Runtime(e.to_string()))??;
+        let loading_seconds = loading_started.elapsed().as_secs_f64();
+        let warming_started = std::time::Instant::now();
+        self.0.preparing.write().unwrap().as_mut().unwrap().phase = "warming";
+        next.spawn_prewarm()
+            .await
+            .map_err(|e| Refusal::Runtime(e.to_string()))?;
+        let warming_seconds = warming_started.elapsed().as_secs_f64();
+        tracing::info!(map = %publication.map_sha256, loading_seconds, warming_seconds, "publication preparation stages");
+        if self.0.epoch.load(std::sync::atomic::Ordering::Acquire) != epoch {
+            return Err(Refusal::Superseded("reorg invalidated preparation".into()));
+        }
+        if !next.is_warm() {
+            return Err(Refusal::Admission(
+                "candidate did not become completely warm within the shared budget".into(),
+            ));
+        }
+        let [loading, warming, total] = &next.metrics().prepare_seconds;
+        loading.observe(std::time::Duration::from_secs_f64(loading_seconds));
+        warming.observe(std::time::Duration::from_secs_f64(warming_seconds));
+        total.observe(prepare_started.elapsed());
+        let preparation = next.preparation();
+        tracing::info!(map = %publication.map_sha256, %preparation, "publication runtimes produced");
+        *self.0.candidate.lock().await = Some(Candidate {
+            prepared_at: std::time::Instant::now(),
+            state: next,
+            publication: publication.clone(),
+            epoch,
+        });
+        Ok(
+            serde_json::json!({"prepared":publication.map_sha256,"loading_seconds":loading_seconds,"warming_seconds":warming_seconds,"runtimes":preparation,"verification":verification}),
+        )
+    }
+
     pub fn router(&self) -> Router {
         let telemetry = self.0.active.read().unwrap().state.metrics().http.clone();
         Router::new()
@@ -186,14 +443,14 @@ impl LiveService {
             .map_err(|e| e.to_string())?;
         }
         if matches!(command, Command::Status) {
-            let candidate = self.0.candidate.try_lock().ok().and_then(|c| c.as_ref().map(|c| serde_json::json!({"map_sha256":c.publication.map_sha256,"age_seconds":c.prepared_at.elapsed().as_secs_f64(),"epoch":c.epoch,"warm":c.state.is_warm() && c.epoch == self.0.epoch.load(std::sync::atomic::Ordering::Acquire)})));
+            let candidate = self.0.candidate.try_lock().ok().and_then(|c| c.as_ref().map(|c| serde_json::json!({"map_sha256":c.publication.map_sha256,"age_seconds":c.prepared_at.elapsed().as_secs_f64(),"epoch":c.epoch,"warm":c.state.is_warm() && c.epoch == self.0.epoch.load(std::sync::atomic::Ordering::Acquire),"runtimes":c.state.preparation()})));
             let preparing = self.0.preparing.read().unwrap().as_ref().map(|p| serde_json::json!({"map_sha256":p.digest,"age_seconds":p.started.elapsed().as_secs_f64(),"phase":p.phase}));
             let active = self.0.active.read().unwrap();
             let retired = self.0.retired.read().unwrap();
             let revisions:std::collections::BTreeMap<_,_>=std::iter::once(&*active).chain(retired.iter()).flat_map(|a|a.state.set().revisions().iter())
                 .map(|s|(s.digest.clone(),serde_json::json!({"digest":s.digest,"end_height":s.manifest.end_height,"terminal_block_hash":s.manifest.terminal_block_hash}))).collect();
             return Ok(
-                serde_json::json!({"active":active.publication,"warm":active.state.is_warm(),"invalidated":active.state.is_invalidated(),"revoked_revisions":self.0.invalid.read().unwrap().len(),"preparing":preparing,"retired_snapshots":retired.len(),"candidate":candidate,"revisions":revisions.into_values().collect::<Vec<_>>()}),
+                serde_json::json!({"active":active.publication,"warm":active.state.is_warm(),"invalidated":active.state.is_invalidated(),"revoked_revisions":self.0.invalid.read().unwrap().len(),"preparing":preparing,"last_preparation":self.0.last_preparation.read().unwrap().clone(),"retired_snapshots":retired.len(),"candidate":candidate,"revisions":revisions.into_values().collect::<Vec<_>>()}),
             );
         }
         let _operation = self.0.operations.clone().lock_owned().await;
@@ -202,126 +459,16 @@ impl LiveService {
                 expected,
                 publication,
             } => {
-                let epoch = self.0.epoch.load(std::sync::atomic::Ordering::Acquire);
-                // What this worker's own row of the requested assignment
-                // digests to. A publication already held under another row
-                // must be refused, not reported prepared: the durable active
-                // record names the assignment file, and a restart would load
-                // rows no prepare ever checked.
-                let requested = match (&self.0.options.scope, &publication.assignment) {
-                    (LoadScope::Assigned { worker_id, .. }, Some(path)) => Some(
-                        Assignment::load(path)
-                            .and_then(|assignment| assignment.worker_digest(worker_id))
-                            .map_err(|e| e.to_string())?,
-                    ),
-                    _ => None,
-                };
-                let held_as_requested = |set: &ShardSet| {
-                    set.scope().map(|scope| &scope.worker_assignment_sha256) == requested.as_ref()
-                };
-                let old = {
-                    let active = self.0.active.read().unwrap();
-                    if active.publication.map_sha256 == publication.map_sha256
-                        && active.state.is_warm()
-                    {
-                        if !held_as_requested(active.state.set()) {
-                            return Err(ASSIGNMENT_CHANGED.into());
-                        }
-                        return Ok(serde_json::json!({"prepared":publication.map_sha256}));
-                    }
-                    if active.publication.map_sha256 != expected {
-                        return Err("active predecessor changed".into());
-                    }
-                    active.state.clone()
-                };
-                if let Some(candidate) = self.0.candidate.lock().await.as_ref().filter(|c| {
-                    c.publication.map_sha256 == publication.map_sha256
-                        && c.state.is_warm()
-                        && c.epoch == epoch
-                }) {
-                    if !held_as_requested(candidate.state.set()) {
-                        return Err(ASSIGNMENT_CHANGED.into());
-                    }
-                    return Ok(serde_json::json!({"prepared":publication.map_sha256}));
-                }
-                let prepare_started = std::time::Instant::now();
-                *self.0.preparing.write().unwrap() = Some(Preparing {
-                    digest: publication.map_sha256.clone(),
-                    started: prepare_started,
-                    phase: "loading",
-                });
-                let _preparing = PreparingGuard(&self.0.preparing);
-                // Release an obsolete candidate's pins before reserving anew.
-                *self.0.candidate.lock().await = None;
-                let mut options = self.0.options.clone();
-                match (&options.scope, &publication.assignment) {
-                    (LoadScope::Assigned { worker_id, .. }, Some(path)) => {
-                        options.scope = LoadScope::Assigned {
-                            worker_id: worker_id.clone(),
-                            assignment: Arc::new(
-                                Assignment::load(path).map_err(|e| e.to_string())?,
-                            ),
-                        };
-                    }
-                    (LoadScope::Whole, None) => {}
-                    _ => return Err("candidate must preserve assignment mode".into()),
-                }
-                let directory = publication.directory.clone();
                 let digest = publication.map_sha256.clone();
-                let config = self.0.config;
-                let loading_started = std::time::Instant::now();
-                let next = tokio::task::spawn_blocking(move || {
-                    tracing::info!(map = %digest, queue_seconds = loading_started.elapsed().as_secs_f64(), "publication loading task started");
-                    let eviction_started = std::time::Instant::now();
-                    old.evict_unpinned();
-                    tracing::info!(map = %digest, seconds = eviction_started.elapsed().as_secs_f64(), "publication runtime eviction finished");
-                    let open_started = std::time::Instant::now();
-                    let set = ShardSet::open_reusing(&directory, &options, Some(old.set()))
-                        .map_err(|e| e.to_string())?;
-                    tracing::info!(map = %digest, seconds = open_started.elapsed().as_secs_f64(), "publication shard loading finished");
-                    if set.map_digest != digest {
-                        return Err("candidate map digest mismatch".into());
-                    }
-                    if set.map.genesis_hash != old.set().map.genesis_hash
-                        || set.map.start_height != old.set().map.start_height
-                        || set.map.seal != old.set().map.seal
-                    {
-                        return Err("candidate changes publication identity".into());
-                    }
-                    let build_started = std::time::Instant::now();
-                    let state = ServiceState::build_reusing(set, config, None, Some(&old));
-                    tracing::info!(map = %digest, seconds = build_started.elapsed().as_secs_f64(), succeeded = state.is_ok(), "publication service construction finished");
-                    state
-                })
-                .await
-                .map_err(|e| e.to_string())??;
-                let loading_seconds = loading_started.elapsed().as_secs_f64();
-                let warming_started = std::time::Instant::now();
-                self.0.preparing.write().unwrap().as_mut().unwrap().phase = "warming";
-                next.spawn_prewarm().await.map_err(|e| e.to_string())?;
-                let warming_seconds = warming_started.elapsed().as_secs_f64();
-                tracing::info!(map = %publication.map_sha256, loading_seconds, warming_seconds, "publication preparation stages");
-                if self.0.epoch.load(std::sync::atomic::Ordering::Acquire) != epoch {
-                    return Err("reorg invalidated preparation".into());
-                }
-                if !next.is_warm() {
-                    return Err(
-                        "candidate did not become completely warm within the shared budget".into(),
-                    );
-                }
-                let [loading, warming, total] = &next.metrics().prepare_seconds;
-                loading.observe(std::time::Duration::from_secs_f64(loading_seconds));
-                warming.observe(std::time::Duration::from_secs_f64(warming_seconds));
-                total.observe(prepare_started.elapsed());
-                *self.0.candidate.lock().await = Some(Candidate {
-                    prepared_at: std::time::Instant::now(),
-                    state: next,
-                    publication: publication.clone(),
-                    epoch,
-                });
-                Ok(
-                    serde_json::json!({"prepared":publication.map_sha256,"loading_seconds":loading_seconds,"warming_seconds":warming_seconds}),
-                )
+                let outcome = self.prepare(expected, publication).await;
+                let verification = outcome
+                    .as_ref()
+                    .ok()
+                    .and_then(|reply| reply.get("verification"))
+                    .and_then(|report| serde_json::from_value(report.clone()).ok());
+                *self.0.last_preparation.write().unwrap() =
+                    Some(PreparationOutcome::new(digest, &outcome, verification));
+                outcome.map_err(String::from)
             }
             Command::Activate {
                 expected,
@@ -444,27 +591,11 @@ impl LiveService {
                     let disk_freed_bytes = disk_pruned.unwrap_or(0);
                     let disk_seconds = disk_started.elapsed().as_secs_f64();
                     let directories_started = std::time::Instant::now();
-                    // Only controller-created, digest-named generations are ours.
-                    // Keep the newest three unused directories across restarts too.
-                    let mut unused: Vec<_> = std::fs::read_dir(root)
-                        .map_err(|e| e.to_string())?
-                        .filter_map(Result::ok)
-                        .filter(|e| {
-                            e.file_name().to_str().is_some_and(|s| {
-                                s.len() == 64 && s.bytes().all(|c| c.is_ascii_hexdigit())
-                            }) && e.file_type().is_ok_and(|t| t.is_dir())
-                                && !keep.contains(&e.path())
-                        })
-                        .collect();
-                    unused.sort_by_key(|e| {
-                        std::cmp::Reverse(e.metadata().and_then(|m| m.modified()).ok())
-                    });
-                    for entry in unused.into_iter().skip(3) {
-                        std::fs::remove_dir_all(entry.path()).map_err(|e| e.to_string())?;
-                    }
+                    let source_collection_deferred = !collect_publications(&root, &keep)
+                        .map_err(|e| e.to_string())?;
                     let directory_seconds = directories_started.elapsed().as_secs_f64();
-                    tracing::info!(snapshot_seconds, disk_seconds, directory_seconds, disk_freed_bytes, disk_collection_deferred, "publication collection stages");
-                    Ok(serde_json::json!({"collected":true,"disk_freed_bytes":disk_freed_bytes,"disk_collection_deferred":disk_collection_deferred,"snapshot_seconds":snapshot_seconds,"disk_seconds":disk_seconds,"directory_seconds":directory_seconds}))
+                    tracing::info!(snapshot_seconds, disk_seconds, directory_seconds, disk_freed_bytes, disk_collection_deferred, source_collection_deferred, "publication collection stages");
+                    Ok(serde_json::json!({"collected":true,"source_collection_deferred":source_collection_deferred,"disk_freed_bytes":disk_freed_bytes,"disk_collection_deferred":disk_collection_deferred,"snapshot_seconds":snapshot_seconds,"disk_seconds":disk_seconds,"directory_seconds":directory_seconds}))
                 })
                 .await
                 .map_err(|e| format!("collection task failed: {e}"))?
@@ -558,4 +689,128 @@ async fn dispatch(State(live): State<LiveService>, request: Request) -> Response
         return refused();
     }
     response
+}
+
+/// Collect unused publications and then revisions no remaining publication
+/// references. Staging uses the same file lock for linking and rsync. Defer
+/// rather than blocking control commands behind a slow transfer.
+fn collect_publications(root: &Path, keep: &BTreeSet<PathBuf>) -> std::io::Result<bool> {
+    use std::fs::{self, OpenOptions, TryLockError};
+    let lock = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(root.join(".sources.lock"))?;
+    match lock.try_lock() {
+        Ok(()) => {}
+        Err(TryLockError::WouldBlock) => return Ok(false),
+        Err(TryLockError::Error(error)) => return Err(error),
+    }
+    let digest = |name: &std::ffi::OsStr| {
+        name.to_str().is_some_and(|s| {
+            s.len() == 64
+                && s.bytes()
+                    .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
+        })
+    };
+    let mut publications = Vec::new();
+    for entry in fs::read_dir(root)? {
+        let entry = entry?;
+        if digest(&entry.file_name()) && entry.file_type()?.is_dir() {
+            publications.push(entry);
+        }
+    }
+    publications.sort_by_key(|e| std::cmp::Reverse(e.metadata().and_then(|m| m.modified()).ok()));
+    let mut unused = 0;
+    let mut referenced = BTreeSet::new();
+    for publication in publications {
+        if !keep.contains(&publication.path()) {
+            unused += 1;
+            if unused > 3 {
+                fs::remove_dir_all(publication.path())?;
+                continue;
+            }
+        }
+        for revision in fs::read_dir(publication.path())? {
+            let revision = revision?;
+            // A malformed or partially staged link cannot make a referenced
+            // revision disappear. Loading it still requires full validation.
+            if digest(&revision.file_name()) {
+                referenced.insert(revision.file_name());
+            }
+        }
+    }
+    let catalog = root.join(".sources");
+    if fs::symlink_metadata(&catalog).is_ok_and(|m| m.is_dir()) {
+        for entry in fs::read_dir(catalog)? {
+            let entry = entry?;
+            if digest(&entry.file_name())
+                && entry.file_type()?.is_dir()
+                && !referenced.contains(&entry.file_name())
+            {
+                fs::remove_dir_all(entry.path())?;
+            }
+        }
+    }
+    Ok(true)
+}
+
+#[cfg(test)]
+mod collection_tests {
+    use super::*;
+    #[test]
+    fn collection_keeps_referenced_sources_and_defers_during_staging() {
+        let root = tempfile::tempdir().unwrap();
+        let catalog = root.path().join(".sources");
+        std::fs::create_dir(&catalog).unwrap();
+        let revision = "a".repeat(64);
+        let orphan = "b".repeat(64);
+        std::fs::create_dir(catalog.join(&revision)).unwrap();
+        std::fs::create_dir(catalog.join(&orphan)).unwrap();
+        let mut keep = BTreeSet::new();
+        for n in 0..8 {
+            let publication = root.path().join(format!("{n:064x}"));
+            std::fs::create_dir(&publication).unwrap();
+            std::os::unix::fs::symlink(
+                format!("../.sources/{revision}"),
+                publication.join(&revision),
+            )
+            .unwrap();
+            if n == 0 {
+                keep.insert(publication);
+            }
+        }
+        let lock = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(root.path().join(".sources.lock"))
+            .unwrap();
+        lock.lock().unwrap();
+        assert!(!collect_publications(root.path(), &keep).unwrap());
+        assert!(catalog.join(&orphan).exists());
+        drop(lock);
+        assert!(collect_publications(root.path(), &keep).unwrap());
+        assert!(catalog.join(&revision).exists());
+        assert!(!catalog.join(&orphan).exists());
+        assert!(keep.iter().next().unwrap().exists());
+        assert_eq!(
+            std::fs::read_dir(root.path())
+                .unwrap()
+                .filter_map(Result::ok)
+                .filter(|e| e.file_name().to_str().is_some_and(|s| s.len() == 64))
+                .count(),
+            4
+        );
+        for entry in std::fs::read_dir(root.path()).unwrap() {
+            let entry = entry.unwrap();
+            if entry.file_name().to_str().is_some_and(|s| s.len() == 64) {
+                std::fs::remove_dir_all(entry.path()).unwrap();
+            }
+        }
+        collect_publications(root.path(), &BTreeSet::new()).unwrap();
+        assert!(!catalog.join(&revision).exists());
+    }
 }

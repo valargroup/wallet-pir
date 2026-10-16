@@ -22,7 +22,7 @@ fn main() {
     assert_eq!(domain.shard.logical_rows, 32768);
     let start = Instant::now();
     let mut cpu = Engine::new(directory.path());
-    let cpu_eval = cpu.prepare(domain.clone(), records).unwrap();
+    let (cpu_eval, _) = cpu.prepare(domain.clone(), records).unwrap();
     println!("cpu_build_ms={:.3}", start.elapsed().as_secs_f64() * 1000.0);
     let backend = MatvecConfig {
         matvec_backend: Backend::Cuda,
@@ -31,19 +31,19 @@ fn main() {
     backend.validate().unwrap();
     let start = Instant::now();
     let mut gpu = Engine::with_backend(directory.path(), backend);
-    let gpu_eval = gpu
+    let (gpu_eval, _) = gpu
         .prepare(domain.clone(), |_, _| panic!("load existing artifacts"))
         .unwrap();
     println!(
         "gpu_reload_prepare_ms={:.3}, units={}, host_database_bytes={}",
         start.elapsed().as_secs_f64() * 1000.0,
-        gpu_eval.units.len(),
+        gpu_eval.units().len(),
         gpu.live_bytes()
     );
-    let reused = gpu
+    let (reused, _) = gpu
         .prepare(domain, |_, _| panic!("reuse immutable units"))
         .unwrap();
-    for (a, b) in gpu_eval.units.iter().zip(&reused.units) {
+    for (a, b) in gpu_eval.units().iter().zip(reused.units()) {
         assert!(Arc::ptr_eq(a, b));
     }
     drop(reused);

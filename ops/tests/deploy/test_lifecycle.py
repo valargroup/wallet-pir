@@ -59,6 +59,43 @@ class LifecycleTests(Fleet):
         self.assertEqual(self.fake.log, [])
 
 
+class ReadOnlyStatusTests(Fleet):
+    def test_status_reads_only_selected_targets_and_reports_unreachable_ones(self):
+        self.enhance_fleet()
+        output = []
+        code = cli.main(['--inventory', str(self.inventory_path), '--state-dir', str(self.state), '--json',
+                         'status', 'enhance', '--only', 'worker'], executor=self.fake, out=output.append)
+        result = json.loads(output[0])
+        self.assertEqual((code, [t['host'] for t in result['targets']]), (0, ['worker-01', 'worker-02']))
+        def unreachable(host, unit):
+            raise RuntimeError('ssh: connect to host worker-02: timed out')
+        self.fake.probe_unit, original = unreachable, self.fake.probe_unit
+        output.clear()
+        cli.main(['--inventory', str(self.inventory_path), '--state-dir', str(self.state), '--json',
+                  'status', 'enhance', '--only', 'worker@worker-02'], executor=self.fake, out=output.append)
+        self.fake.probe_unit = original
+        self.assertIn('timed out', json.loads(output[0])['targets'][0]['error'])
+        self.assertEqual(self.fake.log, [])
+
+    def test_ancillary_status_covers_every_unit_read_only(self):
+        inventory = json.loads(self.inventory_path.read_text())
+        inventory['ancillary'] = {'edge': {'host': 'coordinator', 'unit': 'caddy.service', 'kind': 'routing',
+                                           'consumers': ['enhance']},
+                                  'gone': {'host': 'worker-01', 'unit': 'missing.service', 'kind': 'routing',
+                                           'consumers': ['enhance']}}
+        self.inventory_path.write_text(json.dumps(inventory))
+        self.fake.install('coordinator', 'caddy.service', '[Service]\nExecStart=/usr/bin/caddy run\n',
+                          files={'/usr/bin/caddy': b'caddy'})
+        self.fake.log.clear()
+        output = []
+        code = cli.main(['--inventory', str(self.inventory_path), 'ancillary-status'],
+                        executor=self.fake, out=output.append)
+        units = {u['name']: u for u in json.loads(output[0])['ancillary']}
+        self.assertEqual((code, units['edge']['active_state'], units['gone']['load_state']),
+                         (0, 'active', 'not-found'))
+        self.assertEqual(self.fake.log, [])
+
+
 class FleetViewTests(unittest.TestCase):
     def test_one_view_covers_each_product_without_ssh(self):
         fleet = ConfiguredFleet.load(ROOT / 'enhance/ops/deploy/deploy-inventory.example.json')
@@ -70,8 +107,9 @@ class FleetViewTests(unittest.TestCase):
 
     def test_two_products_cannot_own_the_same_host_unit(self):
         fleet = ConfiguredFleet.load(ROOT / 'enhance/ops/deploy/deploy-inventory.example.json')
-        fleet.inventory.services['transparent-history']['roles']['worker'][0]['unit'] = 'enhance-pir-worker.service'
-        with self.assertRaisesRegex(ValueError, 'two services own'):
+        worker = fleet.inventory.services['transparent-history']['roles']['worker'][0]
+        worker.update(host='worker-01', unit='enhance-pir-worker.service')
+        with self.assertRaisesRegex(ValueError, 'both own enhance-pir-worker.service'):
             fleet.describe()
 
 

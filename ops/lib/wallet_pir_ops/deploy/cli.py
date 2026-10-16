@@ -95,6 +95,35 @@ Transparent schema recipes run on the pinned coordinator under the same lock.
       Every mutation holds the production lock, journals prior bytes and prints the
       rollback command.
 
+  transparent-binary-{plan,preflight,baseline,status} --request F --request-sha256 H
+  transparent-binary-deploy --request F --request-sha256 H [--binary F] [--skip-exact-check]
+  transparent-binary-rollback --request F --request-sha256 H [--transaction ID]
+      Worker or controller binary upgrade (the request's component) of the current
+      v12 history or 4k8 display fleet (transparent/ops/lib/binary_upgrade.py).
+      Publication identity is pinned, current map and assignment come from the
+      controller, all re-checked under the lock, after every restart and after
+      rollback; history's continuous load is paused and re-pinned.
+
+  worker-report SERVICE [--only ROLE[@HOST]]
+      Read-only private report from existing endpoints: process, executable,
+      assigned and loaded publication, preparation, readiness axes.
+  fleet [--complete]
+      Configured roles and ancillary units; --complete also requires the whole fleet.
+  ancillary-status NAME
+      Read-only systemd state of one shared routing or supervision unit.
+
+  ops-package-{plan,preflight} --sha REV --ci-run-id N --fleet F [--known-hosts F] [--archive F] [--host H]
+  ops-package-install ...same... --expect-plan-sha256 H
+  ops-package-status [--host H]
+  ops-package-reconcile [--transaction ID] [--archive F] [--fleet F] [--known-hosts F]
+  ops-package-rollback [--transaction ID]
+      Install the operations package on the coordinator as root-owned
+      /opt/wallet-pir-ops/releases/<sha> selected by the `current` link, with the
+      operator inventory /etc/wallet-pir/fleet.json and optional public host-key pins
+      /etc/wallet-pir/known_hosts. The archive is the wallet-pir-ops-<sha> artifact of
+      full-CI run N on main, downloaded through gh; a local --archive must equal it.
+      Journaled under the production lock; never touches a unit.
+
 The inventory (hosts, SSH, lock) is --inventory or WALLET_PIR_DEPLOY_INVENTORY.
 """
 
@@ -196,6 +225,24 @@ def run_release(command, args, service, inventory, executor, deployer, out):
     return 1 if command == 'preflight' and result.problems else 0
 
 
+def external_workers(args, service, inventory):
+    """Whether a command touches only a product's role-mode external workers.
+
+    Product services keep their recipes for publications and every other role;
+    the shared engine may install, verify and roll back an external worker's
+    rendered unit, which never carries publication authority.
+    """
+    from .transaction import Journal
+    if args.command == 'rollback':
+        journal = Journal.load(args.state_dir, service.name, args.transaction)
+        return journal is not None and all(service.roles[r['role']].mode == 'role' for r in journal.hosts)
+    only = getattr(args, 'only', None)
+    if not only:
+        return False
+    selected = descriptors.select(descriptors.targets(service, inventory), only)
+    return all(t.role.mode == 'role' for t in selected)
+
+
 def parser():
     top = argparse.ArgumentParser(prog='wallet-pir-deploy.py', description=USAGE,
                                   formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -205,7 +252,31 @@ def parser():
     top.add_argument('--state-dir', default=str(default_state_dir()))
     top.add_argument('--baseline', help='baseline file (default <state-dir>/baselines/<service>.json)')
     commands = top.add_subparsers(dest='command', required=True)
-    commands.add_parser('fleet', help='read configured hosts and roles; makes no host connections')
+    command = commands.add_parser('fleet', help='read configured hosts and roles; makes no host connections')
+    command.add_argument('--complete', action='store_true',
+                         help='also require every registered service, role, responsibility and ancillary kind')
+    command = commands.add_parser('ancillary-status', help='read-only state of ancillary units')
+    command.add_argument('name', nargs='?', help='one ancillary unit (default: all)')
+    for name in ('ops-package-plan', 'ops-package-preflight', 'ops-package-install'):
+        command = commands.add_parser(name)
+        command.add_argument('--sha', required=True, help='full source revision of the package')
+        command.add_argument('--ci-run-id', type=int,
+                             help='the successful full-CI run on main whose wallet-pir-ops-<sha> artifact installs')
+        command.add_argument('--archive', help='a local copy; accepted only if it equals the artifact\'s archive')
+        command.add_argument('--fleet', required=True, help='the complete operator inventory to install')
+        command.add_argument('--known-hosts', help='reviewed public host-key pins for /etc/wallet-pir/known_hosts')
+        command.add_argument('--host', help='coordinator inventory host (default: the remote lock host)')
+        if name == 'ops-package-install':
+            command.add_argument('--expect-plan-sha256', required=True)
+    for name in ('ops-package-status', 'ops-package-reconcile', 'ops-package-rollback'):
+        command = commands.add_parser(name)
+        command.add_argument('--host', help='coordinator inventory host (default: the remote lock host)')
+        if name != 'ops-package-status':
+            command.add_argument('--transaction')
+        if name == 'ops-package-reconcile':
+            command.add_argument('--archive', help='the planned archive (default: this runner\'s artifact copy)')
+            command.add_argument('--fleet', help='the planned inventory, if it is not yet installed')
+            command.add_argument('--known-hosts', help='the planned host-key pins, if not yet installed')
     transparent_cli().register(commands)
     for name in ('plan', 'preflight', 'deploy'):
         command = commands.add_parser(name)
@@ -233,15 +304,73 @@ def parser():
     command.add_argument('service')
     command.add_argument('--transaction')
     command.add_argument('--force', action='store_true', help='restore even if unit files changed after the transaction')
+    command = commands.add_parser('worker-report', help='read-only private report of workers from their endpoints')
+    command.add_argument('service')
+    command.add_argument('--only', action='append', metavar='ROLE[@HOST]')
     for name in ('status', 'capture-baseline'):
         command = commands.add_parser(name)
         command.add_argument('service')
         if name == 'capture-baseline':
             command.add_argument('--output')
+        command.add_argument('--only', action='append', metavar='ROLE[@HOST]',
+                             help='only these targets (repeatable)')
     return top
 
 
-def main(argv=None, executor=None, out=print, **options):
+def run_package(args, inventory, executor, layout, github, out):
+    """One `ops-package-*` command; see `package.Package`."""
+    from . import package
+    log = (lambda message: None) if args.json else out
+    target = package.Package(inventory, executor, args.state_dir, args.host, layout, out=log,
+                             inventory_path=args.inventory, github=github)
+    command = args.command[len('ops-package-'):]
+    inputs = {}
+    if command in ('plan', 'preflight', 'install'):
+        inputs = {'run_id': args.ci_run_id, 'archive': args.archive, 'known_hosts': args.known_hosts}
+    if command in ('plan', 'preflight'):
+        if command == 'plan':
+            target.ex.check_identity(target.host)
+            plan, problems, _ = target.build_plan(args.sha, args.fleet, **inputs)
+        else:
+            plan, problems = target.preflight(args.sha, args.fleet, **inputs)
+        digest = package.durable.digest(plan)
+        install = target.command('ops-package-install', '--sha', args.sha, '--fleet', args.fleet,
+                                 *(['--ci-run-id', str(args.ci_run_id)] if args.ci_run_id else []),
+                                 *(['--known-hosts', args.known_hosts] if args.known_hosts else []),
+                                 '--expect-plan-sha256', digest)
+        if args.json:
+            out(json.dumps({'operation': args.command, 'plan': plan, 'plan_sha256': digest,
+                            'problems': problems, 'install': install}, sort_keys=True))
+        else:
+            target.describe(plan, problems)
+            out('plan sha256: ' + digest)
+            out('install: ' + install)
+        return 1 if command == 'preflight' and problems else 0
+    if command == 'status':
+        result = target.status()
+        if args.json:
+            out(json.dumps(result, sort_keys=True))
+        return 0
+    if command == 'install':
+        journal = target.install(args.sha, args.fleet, args.expect_plan_sha256, **inputs)
+    elif command == 'reconcile':
+        journal = target.reconcile(args.transaction, args.archive, args.fleet, args.known_hosts)
+    else:
+        journal = target.rollback(args.transaction)
+    result = {'operation': args.command, 'transaction': journal.id if journal else None,
+              'phase': journal.status if journal else 'no-op',
+              'rollback': journal and target.command('ops-package-rollback', '--transaction', journal.id),
+              'status': target.command('ops-package-status')}
+    if args.json:
+        out(json.dumps(result, sort_keys=True))
+    else:
+        out('status: ' + result['status'])
+        if journal and journal.status == 'committed':
+            out('rollback: ' + result['rollback'])
+    return 0
+
+
+def main(argv=None, executor=None, out=print, package_layout=None, package_github=None, **options):
     """`executor` and `options` (passed to `Deployer`) let tests substitute a fake fleet and clock."""
     args = parser().parse_args(argv)
     def error_result(message, phase='failed'):
@@ -252,11 +381,14 @@ def main(argv=None, executor=None, out=print, **options):
             out('error: ' + message)
     try:
         from ..bundle import check_installed
-        product_command = args.command.startswith(('schema-', 'txid-display-'))
+        product_command = args.command.startswith(('schema-', 'txid-display-', 'transparent-binary-', 'ops-package-'))
         mutation = (args.command in ('deploy', 'rollback') or getattr(args, 'stage', False)
                     or product_command and not args.command.endswith(('-plan', '-preflight', '-status', '-summary', '-recipe')))
-        check_installed(mutation=mutation, revision=getattr(args, 'sha', None))
-        if args.command.startswith(('schema-', 'txid-display-')):
+        # A clean installed package may install a newer package revision; every
+        # binary change still names the same source revision as the package.
+        package_command = args.command.startswith('ops-package-')
+        check_installed(mutation=mutation, revision=None if package_command else getattr(args, 'sha', None))
+        if args.command.startswith(('schema-', 'txid-display-', 'transparent-binary-')):
             if args.json:
                 raise DeployError('product recipes already provide their own JSON receipts; omit --json')
             return transparent_cli().dispatch(args, executor=executor, out=out, **options)
@@ -264,17 +396,48 @@ def main(argv=None, executor=None, out=print, **options):
             raise DeployError('pass --inventory or set WALLET_PIR_DEPLOY_INVENTORY')
         if args.command == 'fleet':
             from ..fleet import Fleet
-            out(json.dumps(Fleet.load(args.inventory, args.descriptors).describe(), sort_keys=True))
+            out(json.dumps(Fleet.load(args.inventory, args.descriptors).describe(args.complete), sort_keys=True))
             return 0
+        if package_command:
+            inventory = descriptors.load_inventory(args.inventory)
+            return run_package(args, inventory, executor or SSHExecutor(inventory), package_layout, package_github, out)
+        if args.command == 'ancillary-status':
+            inventory = descriptors.load_inventory(args.inventory)
+            names = [args.name] if args.name else sorted(inventory.ancillary)
+            unknown = [n for n in names if n not in inventory.ancillary]
+            if unknown:
+                raise DeployError('unknown ancillary unit %r; known: %s' % (unknown[0], sorted(inventory.ancillary)))
+            executor = executor or SSHExecutor(inventory)
+            results = []
+            for name in names:
+                entry = inventory.ancillary[name]
+                # Every unit is reported; an unreachable host is a result, not an omission.
+                try:
+                    state = executor.probe_unit(entry['host'], entry['unit'])
+                    observed = {'active_state': state['active_state'], 'load_state': state['load_state'],
+                                'binary_sha256': state['exe_sha256']}
+                except (RemoteError, OSError, subprocess.TimeoutExpired, ValueError) as error:
+                    observed = {'error': str(error)}
+                results.append({'name': name, 'host': entry['host'], 'unit': entry['unit'],
+                                'consumers': entry.get('consumers'), **observed})
+            out(json.dumps(results[0] if args.name else {'ancillary': results}, sort_keys=True))
+            return 1 if any('error' in r for r in results) else 0
         log = (lambda message: None) if args.json else out
         services = descriptors.load_descriptors(args.descriptors)
         if args.service not in services:
             raise DeployError('unknown service %r; known: %s' % (args.service, sorted(services)))
         service = services[args.service]
-        if service.driver != 'binary' and args.command != 'status':
+        inventory = descriptors.load_inventory(args.inventory)
+        if args.command == 'worker-report':
+            from .. import worker_report
+            executor = executor or SSHExecutor(inventory)
+            selected = descriptors.select(descriptors.targets(service, inventory), args.only)
+            out(json.dumps({'service': service.name, 'workers': worker_report.collect(service, selected, executor)},
+                           sort_keys=True))
+            return 0
+        if service.driver != 'binary' and args.command != 'status' and not external_workers(args, service, inventory):
             raise DeployError('%s uses the %s product recipes; ordinary binary deployment cannot change its publications'
                               % (service.name, service.driver))
-        inventory = descriptors.load_inventory(args.inventory)
         executor = executor or SSHExecutor(inventory)
         if args.command in ('plan', 'preflight', 'deploy'):
             groups = artifact_groups(args, service, inventory)

@@ -42,7 +42,23 @@ attest removes it at once.
 
 Receiver has no controller or lease either: one process indexes and serves, and
 its canonical guard revokes every session when an anchor it still serves leaves
-the chain.
+the chain. In `serve-publication` mode the operator's local publication record
+takes the indexer's place as the source of what to serve; the process verifies
+each record and its anchor before activating it, and the same guard applies.
+
+## Preparation and refusal kinds
+
+Each product classifies why a preparation or control command did not complete,
+internally, as invalid source (the input does not verify), runtime (restoring
+or building failed on verified input), admission (budget or a conflicting
+hold) or superseded (the predecessor, epoch or record moved on). The wire is
+unchanged: Enhance workers still answer 507 or 503 with the same text,
+Transparent control replies carry the same `error` string, and Receiver's
+public refusals below are untouched. The kind appears only in private reports
+(`preparation` on Enhance worker health, `last_preparation` in Transparent
+control status, `publication.refusal` on Receiver health) and in the
+operations `worker-report`, which keeps process, identity, publication,
+preparation and readiness separate and never infers encrypted correctness.
 
 ## Publication identity
 

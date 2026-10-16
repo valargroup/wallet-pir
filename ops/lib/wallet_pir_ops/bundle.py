@@ -17,10 +17,13 @@ from .paths import ROOT
 
 SCHEMA = 'wallet-pir-operations-v1'
 PREFIXES = ('ops/lib/', 'ops/scripts/', 'ops/deploy/', 'ops/infra/',
-            'enhance/ops/deploy/', 'enhance/ops/scripts/',
+            'enhance/ops/deploy/', 'enhance/ops/scripts/', 'enhance/ops/lib/',
             'transparent/ops/lib/', 'transparent/ops/scripts/', 'transparent/ops/deploy/',
-            'transparent/ops/scaler/', 'transparent/ops/systemd/', 'receiver/ops/digitalocean/')
+            'transparent/ops/scaler/', 'transparent/ops/systemd/', 'receiver/ops/digitalocean/',
+            'receiver/ops/lib/', 'receiver/ops/deploy/')
 EXACT = {'transparent/__init__.py', 'transparent/ops/__init__.py',
+         'enhance/__init__.py', 'enhance/ops/__init__.py',
+         'receiver/__init__.py', 'receiver/ops/__init__.py',
          'tools/ci/release.py', 'docs/operations.md'}
 EXTENSIONS = {'.py', '.sh', '.toml', '.service', '.timer', '.in', '.caddy', '.tf', '.tftpl', '.yaml'}
 MAX_BYTES = 32 * 1024 * 1024
@@ -28,7 +31,13 @@ REQUIRED = {'ops/scripts/wallet-pir-deploy.py', 'ops/scripts/wallet-pir-roles.py
             'ops/scripts/wallet-pir-bundle.py', 'ops/deploy/services.toml',
             'ops/lib/wallet_pir_ops/__init__.py', 'ops/lib/wallet_pir_ops/deploy/host_helper.py',
             'ops/lib/wallet_pir_ops/release.py', 'transparent/ops/lib/deploy_cli.py',
-            'transparent/ops/lib/roles.py', 'receiver/ops/digitalocean/service.toml'}
+            'transparent/ops/lib/roles.py', 'receiver/ops/digitalocean/service.toml',
+            'enhance/ops/lib/roles.py', 'receiver/ops/lib/roles.py'}
+
+
+def mode(name):
+    """Permission bits of a packaged file: scripts and modules executable, the rest read-only."""
+    return 0o755 if name.endswith(('.py', '.sh')) else 0o644
 
 
 def allowed(name):
@@ -74,10 +83,17 @@ def assemble(destination, revision, *, root=ROOT):
     if revision != head:
         raise ValueError('operations revision does not match the source checkout')
     dirty = bool(subprocess.check_output(['git', 'status', '--porcelain'], cwd=root))
-    files = contents(root)
+    return write_archive(destination, revision, contents(root), dirty)
+
+
+def write_archive(destination, revision, files, dirty):
+    """The archive of `files` labelled with `revision`; `assemble` supplies a checkout's files."""
+    # `qualification` describes this integrity artifact only. Full-CI provenance
+    # and product qualification are separate records that never live in it.
     manifest = {'schema': SCHEMA, 'source_revision': revision, 'source_dirty': dirty,
                 'qualification': 'unqualified', 'files': {
                     name: hashlib.sha256(data).hexdigest() for name, data in sorted(files.items())}}
+    files = dict(files)
     files['operations.json'] = (json.dumps(manifest, sort_keys=True, indent=2) + '\n').encode()
     if sum(map(len, files.values())) > MAX_BYTES:
         raise ValueError('operations release exceeds its size bound')
@@ -85,7 +101,7 @@ def assemble(destination, revision, *, root=ROOT):
         for name, data in sorted(files.items()):
             member = tarfile.TarInfo(name)
             member.size = len(data)
-            member.mode = 0o755 if name.endswith(('.py', '.sh')) else 0o644
+            member.mode = mode(name)
             archive.addfile(member, io.BytesIO(data))
     return manifest
 
@@ -112,7 +128,8 @@ def verify(archive_path, revision):
                 raise ValueError('duplicate operations manifest field')
             result[key] = value
         return result
-    manifest = json.loads(payload.pop('operations.json'), object_pairs_hook=unique)
+    raw = payload.pop('operations.json')
+    manifest = json.loads(raw, object_pairs_hook=unique)
     if (not isinstance(manifest, dict) or set(manifest) !=
             {'schema', 'source_revision', 'source_dirty', 'qualification', 'files'}
             or manifest['schema'] != SCHEMA or manifest['source_revision'] != revision
@@ -123,7 +140,15 @@ def verify(archive_path, revision):
     for name, data in payload.items():
         if hashlib.sha256(data).hexdigest() != manifest['files'][name]:
             raise ValueError('operations checksum mismatch: ' + name)
+    payload['operations.json'] = raw
     return manifest, payload
+
+
+def planned_files(archive_path, revision):
+    """`(manifest, {name: [sha256, mode]}, bytes)` of a verified archive, its manifest included."""
+    manifest, payload = verify(archive_path, revision)
+    files = {name: [hashlib.sha256(data).hexdigest(), mode(name)] for name, data in payload.items()}
+    return manifest, files, sum(map(len, payload.values()))
 
 
 def extract(archive_path, destination, revision):
@@ -135,8 +160,7 @@ def extract(archive_path, destination, revision):
         path = destination / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(data)
-        path.chmod(0o755 if name.endswith(('.py', '.sh')) else 0o644)
-    (destination / 'operations.json').write_text(json.dumps(manifest, sort_keys=True, indent=2) + '\n')
+        path.chmod(mode(name))
     return manifest
 
 
@@ -169,14 +193,27 @@ def check_installed(*, mutation=False, revision=None, root=ROOT):
         raise ValueError('binary and operations releases must name the same source revision')
 
 
+def self_check(revision, root=ROOT):
+    """This unpacked release, where it is, holds exactly its manifest's files for `revision`."""
+    if not (root / 'operations.json').is_file():
+        raise ValueError('not an unpacked operations release: %s' % root)
+    check_installed(root=root, revision=revision)
+    return json.loads((root / 'operations.json').read_text())
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('command', choices=('assemble', 'verify', 'extract'))
+    parser.add_argument('command', choices=('assemble', 'verify', 'extract', 'self-check'),
+                        help='self-check verifies the unpacked release this script belongs to')
     parser.add_argument('--sha', required=True)
-    parser.add_argument('--archive', required=True, type=Path)
+    parser.add_argument('--archive', type=Path)
     parser.add_argument('--output', type=Path)
     args = parser.parse_args(argv)
-    if args.command == 'assemble':
+    if args.command == 'self-check':
+        result = self_check(args.sha)
+    elif args.archive is None:
+        parser.error('%s requires --archive' % args.command)
+    elif args.command == 'assemble':
         result = assemble(args.archive, args.sha)
     elif args.command == 'verify':
         result, _ = verify(args.archive, args.sha)

@@ -20,6 +20,19 @@ Use fresh controller, worker, hint and cache directories. A schema-11 canonical
 journal may be copied while stopped and validated; older-width journals must be
 re-ingested. Never open v6 controller or worker state with the v7 binary.
 
+## Node RPC policy
+
+The current source reads the node through wallet-libraries' server-only
+`zakura-server-chain` adapter. Enhance and Status read their RPC cookie when the
+client is constructed and report HTTP 401 as an invalid cookie. Each request has
+a 120-second total deadline, including connection establishment and reading the
+body, with no separate connection timeout. Each whole response, including a
+batch, is limited to 64 MiB even without Content-Length. A valid large batch can
+exceed this deliberate cap and fail; the transport does not retry, split batches
+or fall back to another endpoint. Batch results are returned in request order.
+These are source policies; the deployed release is established by its transaction
+and artifact receipt.
+
 ## Build and local validation
 
 ```sh
@@ -57,6 +70,19 @@ and `exercise` clients read the same variable and attach the header. Set it on
 all roles together, or on none: a worker with the token and a coordinator
 without it stops publication. Unset keeps the previous behaviour. Provide the
 value through the unit's environment file, never on the command line.
+
+### Worker preparation outcomes and refusals
+
+A worker's preparation reports how it produced each unit's runtime: reused
+live, restored from its verified artifact, or rebuilt from staged rows bound to
+the committed digest. Its private `/internal/health` carries the latest
+`preparation` (generation, unit counts, or the refusal), in memory only.
+Control refusals are classified once, as invalid source, runtime, memory,
+admission or superseded, and reach the coordinator with the same statuses and
+text as before: 507 for a reservation that does not fit, 503 otherwise. An
+operator-added worker is the `enhance.external-worker` role
+([operations](../../docs/operations.md#external-workers)); it serves only after
+the coordinator activates it and a packing router lists it.
 
 ### Query ingress uploads
 

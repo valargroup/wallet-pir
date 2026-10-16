@@ -129,8 +129,8 @@ def continuation(before, after):
                     'publication tail did not advance monotonically')
 
 
-def assignment_digest(assignment):
-    """Match the native Assignment declaration order, independent of JSON formatting."""
+def canonical_assignment(assignment):
+    """The native Assignment in declaration order, independent of JSON formatting."""
     def ordered(value, keys):
         require(isinstance(value, dict) and set(value) == set(keys), 'assignment fields differ from native version 1')
         return {k:value[k] for k in keys}
@@ -141,7 +141,24 @@ def assignment_digest(assignment):
     canonical['workers'] = [ordered(w, ('id','role','replica_group','upstream','cache_bytes','shards',
                                       'estimated_resident_bytes')) for w in assignment['workers']]
     require(canonical['schema'] == 'transparent-assignment-v1', 'unsupported native assignment version')
-    return hashlib.sha256(json.dumps(canonical, ensure_ascii=False, separators=(',',':')).encode()).hexdigest()
+    return canonical
+
+
+def canonical_sha256(value):
+    return hashlib.sha256(json.dumps(value, ensure_ascii=False, separators=(',',':')).encode()).hexdigest()
+
+
+def assignment_digest(assignment):
+    """Native `Assignment::digest`."""
+    return canonical_sha256(canonical_assignment(assignment))
+
+
+def worker_assignment_digest(assignment, worker_id):
+    """Native `Assignment::worker_digest`: the publication identity and one worker's entry."""
+    canonical = canonical_assignment(assignment)
+    worker = [w for w in canonical['workers'] if w['id'] == worker_id]
+    require(len(worker) == 1, 'the assignment names no single worker %s' % worker_id)
+    return canonical_sha256(['transparent-worker-assignment-v1', canonical['schema'], canonical['set'], worker[0]])
 
 
 class Routing:

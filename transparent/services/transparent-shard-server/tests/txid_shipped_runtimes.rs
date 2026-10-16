@@ -153,7 +153,7 @@ async fn a_recent_replica_serves_shipped_runtimes_and_falls_back_per_file() {
         let rows = source.load().unwrap();
         let local = TableRuntime::build(&shared, &rows).unwrap();
         let key = runtime_key(&recent.digest, *table, *segment);
-        let shipped = view.load(&key, &shared, &source.sha256).unwrap();
+        let shipped = view.load(&key, &shared, source.sha256()).unwrap();
         assert_eq!(shipped.public_params, local.public_params);
         assert_eq!(shipped.public_params_epoch, local.public_params_epoch);
         shipped.self_check(&shared, &rows).unwrap();

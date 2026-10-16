@@ -4,8 +4,10 @@
 //! as receiver directory revisions. The binary is `receiver-directory`; see
 //! `receiver/README.md`.
 pub mod blocks;
+pub mod canonical;
 pub mod near;
 pub mod probe;
+pub mod serve_publication;
 pub mod verify;
 
 /// A response body over its bound, or a failed read.

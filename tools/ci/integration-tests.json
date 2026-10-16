@@ -27,7 +27,8 @@
   "receiver-indexer": {
     "fast": [],
     "full": [
-      "indexer"
+      "indexer",
+      "serve_publication"
     ]
   },
   "receiver-pir-server": {
@@ -90,7 +91,8 @@
       "wallet_anchor",
       "wallet_continuation",
       "wallet_recut",
-      "wallet_sync"
+      "wallet_sync",
+      "verification_reuse"
     ]
   }
 }

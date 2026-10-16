@@ -88,6 +88,19 @@ proof. An uncertain preparation refuses further actions until
 `schema-reconcile-resume-prepare-reconcile` observes its owner gone and either
 its exact completion receipt or complete coordinator quiescence.
 
+## Node RPC policy
+
+The JSON-RPC path uses wallet-libraries' server-only `zakura-server-chain`
+adapter. It reads the RPC cookie when constructed, maps HTTP 401 to an invalid
+cookie, and allows 120 seconds for the whole request, including connecting and
+reading the body. There is no separate connection timeout. The whole response,
+including a batch, is limited to 64 MiB with or without Content-Length. Valid
+large historical-transaction batches can exceed this cap and fail; there is no
+automatic retry, splitting or endpoint fallback. Valid batch replies are matched
+by integer ID and returned in request order. Chain interpretation, canonical
+checks and the direct RocksDB reader remain in the library's chain adapter.
+These source policies do not identify the release currently deployed.
+
 ## Target configuration
 
 | Parameter | Recent | Archive |
@@ -411,6 +424,31 @@ regression. Record peak RSS/cgroup memory, disk use, errors and warm/cold filesy
 cache state alongside phase timings. See [remaining work](remaining-work.md) for
 open rollout gates and [evidence](../evidence/README.md) for recorded measurements.
 
+### Verification carried across revisions
+
+Workers and the publisher each verify the tables they hold; a restart
+verifies everything again. Within a running process, a candidate publication
+inherits verification from the publication it replaces, per table segment:
+only when the candidate's segment is the same committed segment (runtime
+identity — the revision digest for a directory, the chained child identity
+for a page shard — table kind, index, digest and geometry) and resolves to the
+very file the process hashed, by device, inode, length, modification time and
+change time sampled before and after hashing, with both filesystem clocks older
+than the read by more than a timestamp tick. Creating or removing hard links
+changes change time and conservatively requires hashing again; a restored
+modification time cannot hide an in-place write. Files already linked before
+verification can carry their verification into another revision. The
+candidate's sources name its own links, so collecting the old publication
+breaks no read. A replaced file, an in-place write, a missing file or a file
+written just before it was hashed is verified in full; cold builds and cache
+restores still re-check their sources. Display revisions inherit whole, by
+digest, and skip their row checks only when every segment is inherited. Each
+load reports segments and bytes hashed and inherited, row-check bytes, wall and
+thread CPU time; `prepare` replies and the control `status` (`last_preparation`)
+carry it, with the refusal kind (`invalid_source`, `runtime`, `admission`,
+`superseded`) when a prepare fails. The on-disk runtime and publication formats
+are unchanged.
+
 ## Ingest, infrastructure and aging
 
 The journal's start height is persistent identity, not a resume cursor. Read metadata before starting ingestion; a genesis journal requires `start_height=0`. A mismatched start can set the old journal aside. Keep the workflow mismatch guard and resume from committed next height. Publication uses the read-only journal-opening path.
@@ -498,7 +536,18 @@ held by a request. An old reader does not prevent collection of other idle
 snapshots. The server releases its startup snapshot after launching prewarm;
 private control status reports `retired_snapshots` so a growing backlog is
 visible. Three superseded normal tail revisions may also accompany the current set.
-Immutable files are shared by hard link rather than copied per block.
+History workers stage under `worker_root/workers/<worker-id>/`. Each revision
+is transferred once into `.sources/<manifest-digest>`; publication directories
+contain relative links to those revisions. Creating or collecting a publication
+therefore leaves table inode timestamps unchanged, allowing verification reuse.
+The worker accepts only links to this sibling catalog with a real revision
+directory, then performs its normal manifest and table verification. Staging and
+collection share `.sources.lock`; collection defers during a transfer and removes
+catalog revisions only after no retained publication references them. Worker
+namespaces keep one worker's collection from deleting another worker's sources.
+The first publication may seed the catalog from the prior layout by hard link;
+that operation requires fresh verification once. Prior-layout directories remain
+available for rollback and are not removed by the new namespace's collection.
 
 A reorg affecting served coverage withdraws it before rebuilding. A fork
 strictly above served coverage may retain that coverage only after the fleet
@@ -3791,3 +3840,69 @@ in the evidence.
 This plan does not build a frozen-prefix lineage, per-height geometry, a second
 display archive owner, client changes beyond the split map, or any wallet
 change.
+
+## Binary upgrades of the current v12 history and 4k8 display fleets
+
+`ops/scripts/wallet-pir-deploy.py transparent-binary-{plan,preflight,baseline,deploy,status,rollback}
+--request F --request-sha256 H` (`transparent/ops/lib/binary_upgrade.py`) changes one component's
+executable per transaction through the shared engine: immutable `releases/<binary sha256>` staging,
+the managed ExecStart drop-in, the production lock, the service's journal sequence and touched-target
+rollback. The request's `component` is `workers` (staged under the service root, for example
+`/opt/transparent-publisher`) or `controller` (staged under `<service root>/controller` with the
+controller's current executable name; a controller running the worker executable refuses). Worker
+and controller transactions are separate artifacts; a rollback refuses a transaction of the other
+component. `baseline` records both components.
+
+- **Release identity** is the request's `release.git_sha` and `release.binary_sha256`; a mutating
+  command also requires the installed operations package to name that Git revision.
+- **Publication identity** is pinned separately: v12 `publication.source_sha` (the controller's
+  `source_sha`, for example `fb90519b`), or the 4k8 display `root` (run mode takes no `--geometry`;
+  `<root>/display-root.json`, pinned under `controller.files`, fixes txid-4k8); the controller's
+  normalized effective unit (every setting and argument, ExecStart binary abstracted, so it holds
+  across a controller upgrade) and the digests of its configuration, `fleet.json` and fleet script;
+  each worker's `worker_id` and `role` (display: `role` `combined`), cache/limit unit properties and
+  argument pairs.
+- **Current authority.** The controller's map advances during a rollout, so nothing map-dependent is
+  pinned. A worker's `map_sha256` must equal the controller's current map (history `/v1/status`
+  `map_sha256` with phase `serving`; display `published.map_sha256` with phase `running`, `halted`
+  null and `stalled` false), read before and after the worker. For history, the worker's
+  `assignment_sha256`, `worker_assignment_sha256`, `replica_group`, `role` and `assigned_shards`
+  must match the controller's `<fleet.json state_dir>/<map_sha256>.assignment.json` (native
+  `Assignment::digest` and `worker_digest`, recomputed in declaration order); `warm_runtimes` must
+  equal `target_runtimes` with no `prewarm_failed`. Display workers must be `ready`, `warm` and
+  report `covered_through`.
+- History refuses unless the controller holds `follow_journal: false`, the full-v3 journal, the
+  full-v12 publication root and no `ship_runtimes`. Display refuses unless its controller runs
+  `--root <root>` without `--geometry`.
+- Worker readiness uses the existing product warmup budgets: 1,800 seconds for history
+  (`upgrade-transparent-fleet.py`) and 7,200 seconds for the 4k8 Display request. Full warm
+  readiness remains required; the generic binary engine's 180-second default is insufficient
+  for the documented archive restore times.
+- **Continuous load.** History requests pin `load.host`, `load.resume_after_upgrade` and the `pins.json` digest of
+  `/srv/transparent-activity/canonical-load/v12`, whose `transparent-v2-5qps-continuous.service`
+  latches on any worker hash other than its pins (it reads them once at start). Under the lock, a
+  `latched.json` refuses, and the pins must name exactly the request's worker IDs and the binaries
+  they run. A worker transaction stops the load before the first restart; after commit it writes
+  pins naming the new binary atomically (journaled with both digests) and starts the load when
+  `resume_after_upgrade` is true. This preserves the requested running state across a failed
+  attempt and a successful retry; use false to keep an intentionally paused observer stopped. A failed transaction, including an observer restart failure, rolls the workers back and leaves the
+  load stopped with pins naming the restored binaries; an explicit rollback re-pins to the restored binaries and leaves the load stopped
+  until the exact-answer gate passes. The latch and incident records are never removed. Monitoring
+  is not ready while the pins name a binary the workers no longer run. Display has no load
+  (`load: null`); a controller transaction does not touch the load.
+- Supported topology only: history workers exactly `transparent-v12-archive.service` and
+  `transparent-v12-recent.service` with the `transparent-v12-publish-controller.service` controller;
+  display worker exactly `transparent-txid-display-worker.service` with
+  `transparent-txid-display-k8-controller.service`. External workers or other units refuse.
+- The checks run in preflight, under the lock before any change, after every restart (a changed
+  identity or an unhealthy controller fails the transaction and rolls back every touched target) and
+  after rollback. Explicit rollback keeps the configuration and unit-contract checks while allowing
+  an unhealthy process to be restored; existing incident latches are preserved and keep the load stopped.
+  Publications, assignments, journals and routing are never written; unit drift
+  beyond the binary refuses. Shipping stays disabled for history.
+- Tests: `transparent/ops/tests/test_binary_upgrade.py`, run by `make check-ops-deploy` through
+  `ops/tests/deploy/test_transparent_binary_upgrade.py`.
+
+Configure the inventory's `exact_check` with the product's encrypted independent-answer probe.
+Deployment runs it after restart and rolls back on failure. After the continuous load resumes,
+verify its health and run the existing public query gate before declaring the rollout complete.

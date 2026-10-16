@@ -6,6 +6,19 @@ M4–M6 are open.** This records observed progress, not a new live fleet health
 check. [Remaining work](remaining-work.md) is the authoritative outstanding
 checklist; [deployment](deployment.md) owns operating targets.
 
+## Prepared history runtimes
+
+The publisher can prepare segment runtimes and transfer only the files assigned
+to each worker. Workers verify source tables and prepared runtimes through the
+same cache operation used for local restore or build. Rejected or missing
+runtimes fall back to verified local preparation; corrupt sources fail.
+
+`ship_runtimes` defaults to `false`. Performance qualification and production
+adoption remain open: CPU, query latency, activation delay and freshness must
+pass together before a reviewed deployment plan enables shipping. See
+[remaining work](remaining-work.md#prepared-history-runtimes) and the
+[design](architecture.md#prepared-history-runtimes).
+
 ## Wallet API v1 retired, 2026-10-13
 
 `/v1/*` on `https://transparent-pir.valargroup.dev` answers 410 since 17:13:50 UTC.

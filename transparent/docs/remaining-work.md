@@ -1143,9 +1143,32 @@ by default; v2 does not enable it.
   at lower priority, and keep rsync's receiver work off the query threads.
 - [ ] Pin the self-check's any-row claim with a test where rows B differ from
   rows A in one row only; use `rand::rng` for the sampled row and say why it must
-  be unpredictable to the publisher.
-- [ ] Count a refused shipped file once per slot on an `Overloaded` retry.
+  be unpredictable to the publisher. The one-row test now exists for history
+  runtimes (`a_prepared_runtime_one_row_off_is_refused_and_the_sync_stays_exact`),
+  through the same `TableRuntime::self_check`; the sampled row's randomness is
+  unchanged.
+- [x] Count a refused shipped file once per slot on an `Overloaded` retry: the
+  cache now remembers a refusal until its production operation ends
+  (`a_refusal_is_counted_once_across_admission_retries`).
 - [ ] Document in `txid-display.md` that the prebuild runs before
   `deliver_invalidations` (a reorg's stale window grows by `prebuild_ms`) and that
   archive owners receive the recent runtimes at seal boundaries; correct the bench
   README's 48 loads to run 2's 50.
+
+## Prepared history runtimes
+
+Runtime shipping is implemented and off by default; see
+[status](status.md#prepared-history-runtimes) and the
+[design](architecture.md#prepared-history-runtimes).
+
+- [ ] Qualify worker CPU, query latency, activation delay and freshness together
+  with identical fixtures and query schedules on an uncontaminated allocation.
+  Passing source tests or a lower worker CPU figure alone does not qualify shipping.
+- [ ] Before measuring again, take the publisher's preparation off the publication's
+  critical path (offer the candidate as soon as its tail runtimes are ready, or prepare
+  while the fleet stages) and rerun the same six arms, ideally where the measured CPU
+  groups see no other work. Accept only on the original criteria.
+- [ ] Only after an accepted measurement: a reviewed adoption plan through the locked
+  deploy tool (`plan`/`preflight`), Roman's confirmation, then the fleet adapter on the
+  coordinator before `ship_runtimes`. Measure the real network transfer then; the local
+  benchmark makes no claim about it.

@@ -161,6 +161,12 @@ async def run(args, data=None, timeout=25, file_output=False):
     return out
 
 
+def transfer_bytes(stats):
+    """Bytes an rsync `--stats` run sent, or None when it did not say."""
+    match = re.search(rb'^Total bytes sent: ([0-9,.]+)', stats or b'', re.MULTILINE)
+    return int(re.sub(rb'[,.]', b'', match.group(1))) if match else None
+
+
 class Fleet:
     def __init__(self, config, *, read_only=False):
         self.read_only = read_only
@@ -210,6 +216,8 @@ class Fleet:
                 for field in ['id', 'ssh_host', 'upstream']:
                     if not re.fullmatch(r'[A-Za-z0-9_.:-]+', worker[field]):
                         raise ValueError(f'invalid roster {field}')
+                if worker['id'] in {'.', '..'}:
+                    raise ValueError('invalid roster id')
                 if 'control_socket' in worker and not re.fullmatch(r'/[A-Za-z0-9_./-]+', worker['control_socket']):
                     raise ValueError('invalid roster control_socket')
         except (OSError, ValueError, KeyError, TypeError) as error:
@@ -575,7 +583,10 @@ class Fleet:
     async def stage(self, worker, req, assignment):
         source = Path(req['directory']).resolve(strict=True)
         digest = req['map_sha256']
-        remote_dir = self.c.get('worker_root', '/srv/transparent-pir/publications') + '/' + digest
+        worker_root = self.c.get('worker_root', '/srv/transparent-pir/publications') + '/workers/' + worker['id']
+        remote_dir = worker_root + '/' + digest
+        sources = worker_root + '/.sources'
+        staging_lock = worker_root + '/.sources.lock'
         remote_assignment = remote_dir + '/assignment.json'
         async with self.lock('worker-' + worker['id'], wait=False):
             async with self.stage_timing(worker, req, 'status'):
@@ -588,29 +599,60 @@ class Fleet:
                 await self.control(worker, {'operation':'collect'})
             if worker['id'] in self.managed_ids():
                 self.job(worker, req, 'transferring')
+            # Runtimes the publisher prepared beside the publication, when
+            # it offers them: only those of this worker's shards are listed.
+            runtimes = bool(req.get('runtimes'))
+            if runtimes and Path(req['runtimes']).resolve(strict=True) != source:
+                raise ValueError('prepared runtimes must be files of the publication directory')
             async with self.stage_timing(worker, req, 'inventory'):
                 files = (await run([self.c['assign_binary'], 'files', '--shard-dir', source,
-                                    '--assignment', assignment, '--worker-id', worker['id']])).decode().splitlines()
-            # Only hard-link the digest directories this worker is assigned.
-            # This also preserves inode identity for worker verification reuse.
+                                    '--assignment', assignment, '--worker-id', worker['id']]
+                                   + (['--runtimes'] if runtimes else []))).decode().splitlines()
+            # Each worker stores a revision once. Publication links reference
+            # it without changing table ctime and invalidating verified sources.
             directories = sorted({f.split('/')[0] for f in files if '/' in f})
-            commands = ['set -eu', 'mkdir -p ' + shlex.quote(remote_dir)]
+            commands = ['set -eu', 'mkdir -p ' + shlex.quote(remote_dir) + ' ' + shlex.quote(sources)]
             for d in directories:
                 if not re.fullmatch('[0-9a-f]{64}', d):
                     raise ValueError('unexpected artifact path')
-                old, new = str(Path(before['directory']) / d), remote_dir + '/' + d
-                # Two workers on one host stage into the same publication
-                # directory, so the other may create it first; rsync below
-                # completes whatever a concurrent link left unfinished.
-                commands.append(f'if [ ! -e {shlex.quote(new)} ] && [ -d {shlex.quote(old)} ]; then cp -al {shlex.quote(old)} {shlex.quote(new)} 2>/dev/null || [ -d {shlex.quote(new)} ]; fi')
+                old = str(Path(before['directory']) / d)
+                stored, link = sources + '/' + d, remote_dir + '/' + d
+                relative = '../.sources/' + d
+                # Seeding from the previous layout changes ctime once. The
+                # first prepare re-verifies it; later publications only link
+                # the directory, never the individual source files.
+                commands.append(f'if [ ! -e {shlex.quote(stored)} ] && [ -d {shlex.quote(old)} ]; then cp -al {shlex.quote(old)}/. {shlex.quote(stored)}; fi')
+                commands.append(f'if [ -L {shlex.quote(link)} ]; then [ "$(readlink {shlex.quote(link)})" = {shlex.quote(relative)} ]; else ln -s {shlex.quote(relative)} {shlex.quote(link)}; fi')
+            # A runtime file is named by its identity and never rewritten, so
+            # one the active publication already holds is that file: link it
+            # rather than transfer it again. A sealed shard's runtimes then
+            # cross the network once, not at every publication.
+            for f in files:
+                if '/' in f or not f.endswith('.runtime'):
+                    continue
+                if not re.fullmatch('[0-9a-f]{64}-[0-9a-f]{64}[.]runtime', f):
+                    raise ValueError('unexpected runtime path')
+                old, new = str(Path(before['directory']) / f), remote_dir + '/' + f
+                commands.append(f'if [ ! -e {shlex.quote(new)} ] && [ -f {shlex.quote(old)} ]; then ln {shlex.quote(old)} {shlex.quote(new)} 2>/dev/null || [ -f {shlex.quote(new)} ]; fi')
             async with self.stage_timing(worker, req, 'hardlink'):
-                await self.ssh(worker['ssh_host'], 'sh -s', ('\n'.join(commands)+'\n').encode())
-            with tempfile.NamedTemporaryFile(mode='w') as listing:
-                listing.write('\n'.join(files)+'\n'); listing.flush()
-                async with self.stage_timing(worker, req, 'transfer'):
-                    await run(['rsync', '-a', '--ignore-existing', '--files-from', listing.name,
-                               '-e', shlex.join(self.transfer_ssh_args(worker['ssh_host'])), str(source)+'/',
-                               'root@'+worker['ssh_host']+':'+remote_dir+'/'], file_output=True)
+                await self.ssh(worker['ssh_host'], 'mkdir -p ' + shlex.quote(worker_root) + ' && flock -x ' + shlex.quote(staging_lock) + ' sh -s', ('\n'.join(commands)+'\n').encode())
+            transferred = 0
+            # Separate revision files from map/runtime files so rsync never
+            # traverses a publication link or replaces it with a directory.
+            # The same lock protects transfers and worker collection.
+            for nested, destination in [(True, sources), (False, remote_dir)]:
+                selected = [f for f in files if ('/' in f) == nested]
+                if not selected:
+                    continue
+                with tempfile.NamedTemporaryFile(mode='w') as listing:
+                    listing.write('\n'.join(selected)+'\n'); listing.flush()
+                    async with self.stage_timing(worker, req, 'transfer'):
+                        transfer = await run(['rsync', '-a', '--ignore-existing', '--stats', '--files-from', listing.name,
+                                              '--rsync-path', 'flock -x ' + shlex.quote(staging_lock) + ' rsync',
+                                              '-e', shlex.join(self.transfer_ssh_args(worker['ssh_host'])), str(source)+'/',
+                                              'root@'+worker['ssh_host']+':'+destination+'/'], file_output=True)
+                sent = transfer_bytes(transfer)
+                transferred = transferred + sent if transferred is not None and sent is not None else None
             # One assignment per publication, written once. A worker's durable
             # active record points at this file, so replacing it would change
             # what a later restart loads without any prepare observing it.
@@ -621,11 +663,19 @@ class Fleet:
             async with self.stage_timing(worker, req, 'assignment'):
                 await self.ssh(worker['ssh_host'], write_once, assignment.read_bytes())
             publication = {'directory': remote_dir, 'assignment': remote_assignment, 'map_sha256': digest}
+            if runtimes:
+                publication['runtimes'] = remote_dir
             if worker['id'] in self.managed_ids():
                 self.job(worker, req, 'warming')
             async with self.stage_timing(worker, req, 'prepare'):
-                await self.control(worker, {'operation':'prepare','expected':before['map_sha256'],'publication':publication})
-            return {'expected':before['map_sha256'], 'publication':publication}
+                reply = await self.control(worker, {'operation':'prepare','expected':before['map_sha256'],'publication':publication})
+            # What this worker's preparation cost: bytes this transfer
+            # actually sent, and how its runtimes were produced.
+            print(json.dumps({'event':'worker_prepared','worker':worker['id'],'map_sha256':digest,
+                              'transferred_bytes':transferred,
+                              'runtimes':(reply or {}).get('runtimes')}), file=sys.stderr)
+            return {'expected':before['map_sha256'], 'publication':publication,
+                    'transferred_bytes':transferred, 'runtimes':(reply or {}).get('runtimes')}
 
     async def prepare(self, req):
         digest = req['map_sha256']

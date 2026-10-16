@@ -483,6 +483,73 @@ class RollbackTests(Fleet):
         self.assertEqual(self.restarts(), [('worker-01', 'enhance-pir-worker.service')])
         self.assertEqual(self.running('worker-01', 'enhance-pir-worker.service'), OLD_SHA)
 
+    def test_rollback_retries_readiness_without_restarting_the_restored_process(self):
+        self.enhance_fleet()
+        deployer = self.deployer(only=['worker@worker-01'])
+        deployer.deploy(NEW_SHA, self.binary, retire_historical=True)
+        self.fake.unhealthy.add(('worker-01', OLD_SHA))
+        with self.assertRaisesRegex(DeployError, 'rollback incomplete'):
+            deployer.rollback()
+        self.fake.log.clear()
+        # The authority may remain unavailable across more than one retry.
+        with self.assertRaisesRegex(DeployError, 'rollback incomplete'):
+            deployer.rollback()
+        self.assertEqual(self.fake.log, [], 'retry must leave the preparing process running')
+        self.assertEqual(Journal.load(self.state, 'enhance').status, 'rollback-failed')
+        with self.assertRaisesRegex(DeployError, 'finish it with rollback'):
+            deployer.deploy(NEW_SHA, self.binary)
+        self.fake.unhealthy.clear()
+        self.assertEqual(deployer.rollback().status, 'rolled-back')
+        self.assertEqual(self.fake.log, [], 'successful retry only observes readiness')
+
+    def test_rollback_restart_receipt_cannot_cover_changed_state(self):
+        for changed in ('files', 'reload', 'inactive', 'executable', 'invocation'):
+            with self.subTest(changed=changed):
+                self.setUp()
+                self.enhance_fleet()
+                deployer = self.deployer(only=['worker@worker-01'])
+                journal = deployer.deploy(NEW_SHA, self.binary, retire_historical=True)
+                self.fake.unhealthy.add(('worker-01', OLD_SHA))
+                with self.assertRaises(DeployError):
+                    deployer.rollback()
+                record = journal.hosts[0]
+                state = self.fake.host('worker-01').units[record['unit']]
+                if changed == 'files':
+                    change = next(c for c in record['changes'] if c['new'] is not None)
+                    self.fake.put('worker-01', change['path'], change['new'])
+                    self.fake._reload('worker-01')
+                elif changed == 'reload':
+                    fragment = '/etc/systemd/system/' + record['unit']
+                    self.fake.put('worker-01', fragment, self.fake.read('worker-01', fragment) + '\n# reload required\n')
+                elif changed == 'inactive':
+                    state['active'] = 'inactive'
+                elif changed == 'executable':
+                    state['exe'] = NEW_SHA
+                else:
+                    state['invocation_id'] = 'f' * 32
+                self.fake.unhealthy.clear()
+                self.fake.log.clear()
+                self.assertEqual(deployer.rollback().status, 'rolled-back')
+                self.assertEqual(self.restarts(), [('worker-01', record['unit'])])
+
+    def test_a_lost_rollback_restart_reply_does_not_create_a_receipt(self):
+        self.enhance_fleet()
+        deployer = self.deployer(only=['worker@worker-01'])
+        deployer.deploy(NEW_SHA, self.binary, retire_historical=True)
+        original = self.fake.systemctl
+
+        def lost(host, *args):
+            original(host, *args)
+            if args[0] == 'restart':
+                raise OSError('restart reply lost')
+
+        with mock.patch.object(self.fake, 'systemctl', side_effect=lost):
+            with self.assertRaises(DeployError):
+                deployer.rollback()
+        self.fake.log.clear()
+        self.assertEqual(deployer.rollback().status, 'rolled-back')
+        self.assertEqual(self.restarts(), [('worker-01', 'enhance-pir-worker.service')])
+
     def test_runner_crash_mid_deploy_is_recovered_by_rollback(self):
         deployer = self.enhance_fleet()
 
@@ -692,8 +759,8 @@ class ReceiverTests(Fleet):
         template = self.dir / 'receiver-pir.service.in'
         template.write_text(RECEIVER_TEMPLATE.read_text().replace('--concurrency 12', '--concurrency 16'))
         service = SERVICES['receiver']
-        changed = dataclasses.replace(service, roles={'server': dataclasses.replace(service.roles['server'],
-                                                                                    template=template)})
+        changed = dataclasses.replace(service, roles={**service.roles, 'server': dataclasses.replace(
+            service.roles['server'], template=template)})
         deployer = self.deployer('receiver', service=changed)
         self.fake.log.clear()
         # The same, already staged binary: only the arguments change, and the
@@ -873,9 +940,12 @@ class UnitTests(unittest.TestCase):
         for name, service in SERVICES.items():
             keys = [t.key for t in descriptors.targets(service, inventory)]
             self.assertEqual(len(keys), len(set(keys)))
-        self.assertEqual(SERVICES['enhance'].order, ('worker', 'packing-router', 'query-ingress', 'coordinator'))
-        self.assertEqual(SERVICES['status'].order, ('worker', 'router', 'controller'))
-        self.assertEqual(SERVICES['receiver'].order, ('server',))
+        self.assertEqual(SERVICES['enhance'].order,
+                         ('worker', 'external-worker', 'packing-router', 'query-ingress', 'coordinator'))
+        self.assertEqual(SERVICES['status'].order, ('worker', 'external-worker', 'router', 'controller'))
+        self.assertEqual(SERVICES['receiver'].order, ('server', 'serve-publication'))
+        # External workers are optional additions, rendered whole by their product.
+        self.assertTrue(all(r.optional == (r.mode == 'role') for s in SERVICES.values() for r in s.roles.values()))
         self.assertEqual(SERVICES['receiver'].artifact_kinds, ('receiver-pir',))
         self.assertIn('receiver-directory', cli.load_release().BINARIES['receiver-pir'])
         (server,) = descriptors.targets(SERVICES['receiver'], inventory)
@@ -883,7 +953,8 @@ class UnitTests(unittest.TestCase):
 
     def test_only_a_template_role_can_own_its_unit(self):
         self.assertTrue(SERVICES['receiver'].roles['server'].owns_unit)
-        self.assertFalse(any(role.owns_unit for name in ('enhance', 'status') for role in SERVICES[name].roles.values()))
+        self.assertFalse(any(role.owns_unit for name in ('enhance', 'status') for role in SERVICES[name].roles.values()
+                             if role.mode != 'role'))
         text = (DEPLOY / 'deploy.toml').read_text().replace('template = "', 'template = "%s/' % DEPLOY)
         text += (ROOT / 'receiver/ops/digitalocean/service.toml').read_text().replace(
             'template = "receiver-pir.service.in"', 'template = "'+str(RECEIVER_TEMPLATE)+'"')

@@ -49,6 +49,7 @@
 //! free budget that is not free.
 
 pub mod disk;
+pub mod prepare;
 
 use crate::metrics::Metrics;
 use crate::shardset::{SegmentSource, Table};
@@ -863,7 +864,18 @@ pub struct RuntimeCache {
     prewarm_concurrency: usize,
     metrics: Arc<Metrics>,
     disk: Option<disk::DiskCache>,
+    /// Shipped files refused by a production operation that then could not
+    /// be admitted to restore or build, by key and shipped directory. Its
+    /// admission retry goes straight to restore or build, so one operation
+    /// loads, and counts, a refused file once. Cleared for a key when its
+    /// operation produces the runtime or fails for good.
+    refused_shipped: Mutex<std::collections::HashSet<(RuntimeKey, std::path::PathBuf)>>,
 }
+
+/// Refusals [`RuntimeCache::refused_shipped`] keeps for operations still
+/// retrying admission; past this the record is cleared, so a retry that
+/// never came cannot grow it. A cleared operation may count once more.
+const REFUSALS_KEPT: usize = 4096;
 
 impl RuntimeCache {
     pub fn new(budget: u64, build_slots: usize, metrics: Arc<Metrics>) -> Self {
@@ -880,6 +892,7 @@ impl RuntimeCache {
             prewarm_concurrency: build_slots.max(1),
             metrics,
             disk: None,
+            refused_shipped: Mutex::new(std::collections::HashSet::new()),
         }
     }
 
@@ -971,8 +984,13 @@ impl RuntimeCache {
                     Ok((runtime, how)) => {
                         self.settle(&key, &slot, runtime.held_bytes());
                         *produced.lock().expect("produced") = *how;
+                        self.end_operation(&key);
                     }
-                    Err(_) => Metrics::incr(&self.metrics.build_failures),
+                    Err(CacheError::Overloaded) => Metrics::incr(&self.metrics.build_failures),
+                    Err(CacheError::Failed(_)) => {
+                        Metrics::incr(&self.metrics.build_failures);
+                        self.end_operation(&key);
+                    }
                 }
                 result.map(|(runtime, _)| runtime)
             })
@@ -1022,17 +1040,35 @@ impl RuntimeCache {
         let fallback = match shipped {
             None => false,
             Some(shipped) => {
-                match self
-                    .load_shipped(&key, &shared, &source, &pin, shipped)
-                    .await?
+                let refusal = (key.clone(), shipped.directory().to_path_buf());
+                if self
+                    .refused_shipped
+                    .lock()
+                    .expect("refusals")
+                    .contains(&refusal)
                 {
-                    Ok((runtime, check_micros)) => {
-                        return Ok((Arc::new(runtime), Produced::Shipped { check_micros }))
-                    }
-                    Err(error) => {
-                        Metrics::incr(&self.metrics.shipped_fallbacks);
-                        tracing::warn!(key = ?key, %error, "shipped runtime refused; producing it here");
-                        true
+                    // An admission retry of the operation that refused this
+                    // file: already counted, and not loaded again.
+                    true
+                } else {
+                    match self
+                        .load_shipped(&key, &shared, &source, &pin, shipped)
+                        .await?
+                    {
+                        Ok((runtime, check_micros)) => {
+                            return Ok((Arc::new(runtime), Produced::Shipped { check_micros }))
+                        }
+                        Err(error) => {
+                            let mut refused = self.refused_shipped.lock().expect("refusals");
+                            if refused.len() >= REFUSALS_KEPT {
+                                refused.clear();
+                            }
+                            refused.insert(refusal);
+                            drop(refused);
+                            Metrics::incr(&self.metrics.shipped_fallbacks);
+                            tracing::warn!(key = ?key, %error, "shipped runtime refused; producing it here");
+                            true
+                        }
                     }
                 }
             }
@@ -1064,7 +1100,7 @@ impl RuntimeCache {
                     let _permit = permit;
                     let _pin = restore_pin;
                     let started = std::time::Instant::now();
-                    let restored = disk.load(&restore_key, &restore_shared, &restore_source.sha256);
+                    let restored = disk.load(&restore_key, &restore_shared, restore_source.sha256());
                     tracing::debug!(key = ?restore_key, seconds = started.elapsed().as_secs_f64(), hit = restored.is_ok(), stage = "disk_restore", "runtime stage");
                     match restored {
                         Ok(runtime) => {
@@ -1149,7 +1185,7 @@ impl RuntimeCache {
                 let work = (runtime.clone(), pin, memory, PendingSave(metrics.clone()));
                 tokio::task::spawn_blocking(move || {
                     let save_started = std::time::Instant::now();
-                    if let Err(error) = disk.save(&key, &shared, &source.sha256, &work.0) {
+                    if let Err(error) = disk.save(&key, &shared, source.sha256(), &work.0) {
                         Metrics::incr(&metrics.disk_write_failures);
                         tracing::warn!(%error, "runtime cache write failed; runtime remains servable");
                     }
@@ -1196,7 +1232,7 @@ impl RuntimeCache {
             let _memory = memory;
             let _pin = pin;
             let started = std::time::Instant::now();
-            let runtime = match shipped.load(&key, &shared, &source.sha256) {
+            let runtime = match shipped.load(&key, &shared, source.sha256()) {
                 Ok(runtime) => runtime,
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                     return Ok(Err(format!(
@@ -1236,6 +1272,15 @@ impl RuntimeCache {
         })
         .await
         .map_err(|error| CacheError::Failed(error.to_string()))?
+    }
+
+    /// Forgets the shipped refusals of `key`'s production operation, which
+    /// has produced the runtime or failed for good.
+    fn end_operation(&self, key: &RuntimeKey) {
+        self.refused_shipped
+            .lock()
+            .expect("refusals")
+            .retain(|(refused, _)| refused != key);
     }
 
     /// Finds or creates the slot for `key`, reserving `need` bytes if it is new.
@@ -1596,22 +1641,22 @@ pub(crate) mod tests {
         let built = TableRuntime::build(&shared, &rows).unwrap().held_bytes();
         let bound = shared.reserved_bytes();
         assert!(built < bound, "an empty table is built below its bound");
-        let source = SegmentSource {
-            path: dir.path().join("table.bin"),
-            rows: table.rows(geometry),
-            row_bytes: table.row_bytes(geometry),
-            sha256: hex::encode(Sha256::digest(&rows)),
-            zero_from_row: table.rows(geometry),
-        };
+        let source = SegmentSource::published(
+            dir.path().join("table.bin"),
+            table.rows(geometry),
+            table.row_bytes(geometry),
+            hex::encode(Sha256::digest(&rows)),
+            table.rows(geometry),
+        );
         assert!(std::process::Command::new("mkfifo")
-            .arg(&source.path)
+            .arg(source.path())
             .status()
             .unwrap()
             .success());
         let (opened_tx, opened_rx) = tokio::sync::oneshot::channel();
         let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
         let writer = {
-            let (path, rows) = (source.path.clone(), rows.clone());
+            let (path, rows) = (source.path().to_path_buf(), rows.clone());
             std::thread::spawn(move || {
                 let mut file = std::fs::File::create(path).unwrap();
                 let _ = opened_tx.send(());
@@ -1644,8 +1689,8 @@ pub(crate) mod tests {
         assert_eq!(held, built);
         assert_eq!(cache.resident_bytes(), held);
         assert_eq!(Metrics::get(&metrics.resident_bytes), held);
-        std::fs::remove_file(&source.path).unwrap();
-        std::fs::write(&source.path, &rows).unwrap();
+        std::fs::remove_file(source.path()).unwrap();
+        std::fs::write(source.path(), &rows).unwrap();
         let second = cache.get(key(1), shared.clone(), source).await.unwrap();
         assert_eq!(cache.resident_bytes(), held + second.get().held_bytes());
         assert!(cache.resident_bytes() <= cache.budget());

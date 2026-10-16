@@ -1,4 +1,5 @@
 {
+  "example": "Sanitized complete shape: documentation addresses and placeholders. It is not the live fleet and records nothing observed.",
   "lock": {
     "type": "remote",
     "host": "coordinator"
@@ -12,7 +13,8 @@
   },
   "hosts": {
     "coordinator": {
-      "address": "192.0.2.10"
+      "address": "192.0.2.10",
+      "machine_id": "0123456789abcdef0123456789abcdef"
     },
     "worker-01": {
       "address": "192.0.2.15"
@@ -27,13 +29,23 @@
       "address": "192.0.2.19",
       "user": "paperspace",
       "sudo": true,
-      "jump": "coordinator"
+      "jump": "coordinator",
+      "accelerator": "cuda"
     },
     "status-01": {
       "address": "192.0.2.17"
     },
     "receiver-01": {
       "address": "192.0.2.18"
+    },
+    "transparent-router-01": {
+      "address": "192.0.2.20"
+    },
+    "transparent-v12-01": {
+      "address": "192.0.2.21"
+    },
+    "transparent-txid-k8-01": {
+      "address": "192.0.2.22"
     }
   },
   "services": {
@@ -188,19 +200,30 @@
       "roles": {
         "worker": [
           {
-            "host": "worker-01",
-            "unit": "transparent-v12-shard-server.service",
+            "host": "transparent-v12-01",
+            "unit": "transparent-v12-archive.service",
             "vars": {
-              "listen": "192.0.2.15:8097"
+              "listen": "192.0.2.21:8093"
+            }
+          },
+          {
+            "host": "transparent-v12-01",
+            "unit": "transparent-v12-recent.service",
+            "vars": {
+              "listen": "192.0.2.21:8193"
             }
           }
         ],
         "controller": [
           {
             "host": "coordinator",
+            "unit": "transparent-v12-publish-controller.service",
             "vars": {
-              "listen": "127.0.0.1:8096"
-            }
+              "listen": "192.0.2.10:8096"
+            },
+            "responsibilities": [
+              "journal-writer"
+            ]
           }
         ]
       }
@@ -209,23 +232,95 @@
       "roles": {
         "worker": [
           {
-            "host": "worker-02",
-            "unit": "transparent-txid-display-4k8-worker.service",
+            "host": "transparent-txid-k8-01",
+            "unit": "transparent-txid-display-worker.service",
             "vars": {
-              "listen": "192.0.2.16:8501"
+              "listen": "192.0.2.22:8095"
             }
           }
         ],
         "controller": [
           {
             "host": "coordinator",
-            "unit": "transparent-txid-display-4k8-controller.service",
+            "unit": "transparent-txid-display-k8-controller.service",
             "vars": {
-              "listen": "127.0.0.1:8500"
-            }
+              "listen": "127.0.0.1:8098"
+            },
+            "responsibilities": [
+              "journal-writer"
+            ]
           }
         ]
       }
+    }
+  },
+  "ancillary": {
+    "coordinator-edge": {
+      "host": "coordinator",
+      "unit": "caddy.service",
+      "kind": "routing",
+      "consumers": [
+        "enhance"
+      ]
+    },
+    "control-sessions": {
+      "host": "coordinator",
+      "unit": "wallet-pir-control-sessions.service",
+      "kind": "supervision",
+      "consumers": [
+        "status"
+      ]
+    },
+    "transparent-public-router": {
+      "host": "transparent-router-01",
+      "unit": "caddy.service",
+      "kind": "routing",
+      "consumers": [
+        "transparent-history",
+        "transparent-display"
+      ]
+    },
+    "transparent-v12-origin": {
+      "host": "transparent-v12-01",
+      "unit": "caddy.service",
+      "kind": "routing",
+      "consumers": [
+        "transparent-history"
+      ]
+    },
+    "transparent-display-site": {
+      "host": "transparent-txid-k8-01",
+      "unit": "caddy.service",
+      "kind": "routing",
+      "consumers": [
+        "transparent-display"
+      ]
+    },
+    "receiver-edge": {
+      "host": "receiver-01",
+      "unit": "caddy.service",
+      "kind": "routing",
+      "consumers": [
+        "receiver"
+      ]
+    }
+  },
+  "retired_hosts": {
+    "transparent-recent-01": {
+      "retired": "2026-10-14",
+      "evidence": "transparent/evidence/v1-sunset-2026-10-13/README.md"
+    },
+    "transparent-recent-02": {
+      "retired": "2026-10-14",
+      "evidence": "transparent/evidence/v1-sunset-2026-10-13/README.md"
+    },
+    "transparent-archive-03": {
+      "retired": "2026-10-14",
+      "evidence": "transparent/evidence/v1-sunset-2026-10-13/README.md"
+    },
+    "transparent-txid-display-01": {
+      "retired": "2026-10-14",
+      "evidence": "transparent/evidence/v1-sunset-2026-10-13/README.md"
     }
   }
 }

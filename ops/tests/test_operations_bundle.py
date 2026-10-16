@@ -60,6 +60,18 @@ class OperationsBundleTests(unittest.TestCase):
             result = subprocess.run([sys.executable, str(destination / 'ops/scripts' / script), '--help'],
                                     cwd=self.root, env=environment, capture_output=True, text=True, timeout=15)
             self.assertEqual(result.returncode, 0, result.stderr)
+        # Every external worker renders from the relocated package alone.
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from worker_settings import SETTINGS
+        for (service, role), settings in SETTINGS.items():
+            path = self.root / ('settings-%s.json' % service)
+            path.write_text(json.dumps(settings))
+            result = subprocess.run([sys.executable, str(destination / 'ops/scripts/wallet-pir-roles.py'),
+                                     '--service', service, '--role', role, '--settings', str(path),
+                                     '--release', '/opt/example/releases/x'],
+                                    cwd=self.root, env=environment, capture_output=True, text=True, timeout=15)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn('/opt/example/releases/x/', json.loads(result.stdout)['unit'])
         registry = descriptors.load_descriptors(destination / 'ops/deploy/services.toml')
         self.assertEqual(set(registry), {'enhance', 'status', 'receiver', 'transparent-history', 'transparent-display'})
         self.assertTrue(all(r.template is None or r.template.is_relative_to(destination.resolve())
