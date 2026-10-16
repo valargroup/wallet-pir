@@ -86,16 +86,7 @@ def check_sha(sha):
         raise ValueError('release revision must be a full lowercase commit SHA')
 
 
-def api(path):
-    token = os.environ.get('GH_TOKEN') or os.environ.get('GITHUB_TOKEN')
-    if token:
-        request = urllib.request.Request(
-            os.environ.get('GITHUB_API_URL', 'https://api.github.com') + '/' + path,
-            headers={'Authorization': 'Bearer ' + token, 'Accept': 'application/vnd.github+json',
-                     'X-GitHub-Api-Version': '2022-11-28'})
-        with urllib.request.urlopen(request, timeout=30) as response:
-            return json.load(response)
-    return json.loads(subprocess.check_output(['gh', 'api', path]))
+from .github_api import api  # noqa: E402
 
 
 def qualified(run, sha):
@@ -128,20 +119,33 @@ def service_run(run, sha, repo):
 def service_jobs(jobs, family, cuda=False):
     prefix = {'ops': 'Operations', 'receiver': 'Receiver', 'transparent': 'Transparent',
               'enhance': 'Enhance'}[family]
-    names = ['Select full checks', 'Validate selected helper checks', 'Full checks complete']
-    names += (['Prepare native CUDA release artifact (Ubuntu 22.04)'] if cuda else
-              ['Build candidate release artifacts', 'Prepare qualified release artifacts'])
-    if family != 'ops':
-        names.append('Shared lint and tests')
-    names += {'ops': ['Validate Enhance infrastructure', 'Validate transparent elastic infrastructure'],
-              'receiver': ['Receiver lint and tests', 'Validate Enhance infrastructure'],
-              'enhance': ['Enhance lint', 'Enhance tests', 'Validate Enhance infrastructure'],
-              'transparent': ['Transparent lint', 'Transparent tests', 'Validate transparent elastic infrastructure']}[family]
-    for name in names:
-        matching = [job for job in jobs if job.get('name') == f'{prefix} / {name}']
+    common = any(job.get('name', '').startswith('Common / ') for job in jobs)
+    required = [f'{prefix} / {name}' for name in (
+        ['Select full checks', 'Full checks complete'] +
+        (['Prepare native CUDA release artifact (Ubuntu 22.04)'] if cuda else
+         ['Build candidate release artifacts', 'Prepare qualified release artifacts']))]
+    service = {'ops': [], 'receiver': ['Receiver lint and tests'],
+               'enhance': ['Enhance lint', 'Enhance tests'],
+               'transparent': ['Transparent lint', 'Transparent tests']}[family]
+    required += [f'{prefix} / {name}' for name in service]
+    infrastructure = (['Validate Enhance infrastructure', 'Validate transparent elastic infrastructure']
+                      if common or family == 'ops' else
+                      ['Validate transparent elastic infrastructure' if family == 'transparent'
+                       else 'Validate Enhance infrastructure'])
+    shared = ['Shared lint and tests'] if not common and family != 'ops' else []
+    if common and family != 'ops':
+        required += [f'Shared / {name}' for name in
+                     ['Select full checks', 'Shared lint and tests', 'Full checks complete']]
+    common_prefix = 'Common' if common else prefix
+    required += [f'{common_prefix} / {name}' for name in (
+        ['Select full checks', 'Full checks complete'] if common else []) +
+        ['Validate selected helper checks', *shared, *infrastructure]]
+    for name in set(required):
+        matching = [job for job in jobs if job.get('name') == name]
         if (len(matching) != 1 or matching[0].get('status') != 'completed'
                 or matching[0].get('conclusion') != 'success'):
             return False
+
     return True
 
 

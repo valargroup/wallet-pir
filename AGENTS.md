@@ -41,7 +41,7 @@ demo workspace is independent. Preserve existing Cargo package and binary names.
   `make check-fast` scope for the change; watch main CI in the background and
   fix or revert promptly if the push turns it red.
 - `make prepare-dev` installs a pre-push guard that refuses a push to `main`
-  while main's last finished service-qualification run failed. Fix or revert that
+  while main's last finished fast CI run failed. Fix or revert that
   failure first; push the fix itself with `WALLET_PIR_PUSH_ON_RED=1`.
 - Production changes go through `ops/scripts/wallet-pir-deploy.py`
   (`plan`/`preflight` first), which holds the production lock. Do not mutate

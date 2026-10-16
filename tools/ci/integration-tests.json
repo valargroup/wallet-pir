@@ -1,0 +1,135 @@
+{
+  "receiver-directory": {
+    "fast": [],
+    "full": [
+      "directory"
+    ]
+  },
+  "receiver-pir": {
+    "fast": [
+      "golden"
+    ],
+    "full": []
+  },
+  "receiver-indexer": {
+    "fast": [],
+    "full": [
+      "indexer"
+    ]
+  },
+  "receiver-pir-server": {
+    "fast": [
+      "ci_smoke"
+    ],
+    "full": [
+      "http"
+    ]
+  },
+  "pir-native": {
+    "fast": [],
+    "full": [
+      "dithered",
+      "golden",
+      "p8"
+    ]
+  },
+  "enhance-pir": {
+    "fast": [],
+    "full": [
+      "routing_contract",
+      "v7_contract"
+    ]
+  },
+  "transparent-blocks": {
+    "fast": [],
+    "full": [
+      "recovery"
+    ]
+  },
+  "transparent-filter": {
+    "fast": [
+      "bip158_vectors",
+      "golden_envelope"
+    ],
+    "full": [
+      "independent_crosscheck"
+    ]
+  },
+  "transparent-txid-client": {
+    "fast": [],
+    "full": [
+      "map_bytes"
+    ]
+  },
+  "transparent-wallet": {
+    "fast": [],
+    "full": [
+      "birthday_to_balance"
+    ]
+  },
+  "transparent-wallet-store": {
+    "fast": [
+      "schema_upgrade",
+      "store_semantics"
+    ],
+    "full": []
+  },
+  "enhance-pir-server": {
+    "fast": [
+      "boundary_recovery_model",
+      "record_layout",
+      "schema11_cutover",
+      "ci_smoke"
+    ],
+    "full": [
+      "canonical_record",
+      "enhance_wallet_native",
+      "http",
+      "matvec_config",
+      "note_recovery",
+      "packing_http",
+      "rpc",
+      "status_wallet"
+    ]
+  },
+  "transparent-filter-server": {
+    "fast": [],
+    "full": [
+      "compact",
+      "service_round_trip",
+      "shard_filters"
+    ]
+  },
+  "transparent-shard-server": {
+    "fast": [
+      "ci_smoke"
+    ],
+    "full": [
+      "assignment",
+      "geometry_costs",
+      "operator_payloads",
+      "revisions_and_cache",
+      "round_trip",
+      "txid_client",
+      "txid_sharded",
+      "txid_shipped_runtimes",
+      "wallet_anchor",
+      "wallet_continuation",
+      "wallet_recut",
+      "wallet_sync"
+    ]
+  },
+  "transparent-loadtest": {
+    "fast": [],
+    "full": [
+      "simulation"
+    ]
+  },
+  "transparent-regression": {
+    "fast": [],
+    "full": [
+      "parent_filters",
+      "runner"
+    ]
+  }
+}

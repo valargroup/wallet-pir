@@ -2,7 +2,11 @@
   "transparent-shard-server": {
     "runtime::disk::tests::restored_runtimes_answer_identically_at_deployed_geometries": "Exercises full deployed PIR geometries; release qualification owns this integration case.",
     "runtime::disk::cache_integration_tests::blocked_snapshot_does_not_delay_serving_or_release_owned_memory": "Builds real PIR runtime/cache snapshots and verifies serving during blocked persistence.",
-    "runtime::disk::cache_integration_tests::restart_coalesces_restore_and_corruption_falls_back_without_losing_budget": "Builds/restores real runtime snapshots and corrupts cache files to verify recovery."
+    "runtime::disk::cache_integration_tests::restart_coalesces_restore_and_corruption_falls_back_without_losing_budget": "Builds/restores real runtime snapshots and corrupts cache files to verify recovery.",
+    "runtime::tests::trailing_zero_blocks_leave_the_published_masks_unchanged": "Measured about 27s in warm CI: compares five full-table products with independent masks across every zero-tail boundary. Full qualification retains every oracle; fast masks and nonzero encrypted HTTP checks remain.",
+    "runtime::tests::the_batched_hint_runtime_is_the_reference_runtime": "Measured about 22s in warm CI: compares independent full cryptographic preprocessing and answers over four deployed shapes. Full qualification retains all shapes; fast native oracles and encrypted HTTP checks remain.",
+    "runtime::disk::shipped_tests::refused_shipped_files_fall_back_to_a_counted_local_build": "Measured about 25s in warm CI: repeatedly rebuilds full runtimes for malformed shipped files. Full qualification retains the refusal matrix; fast HTTP smoke checks cold, restored and corrupt-cache recovery.",
+    "runtime::disk::shipped_tests::the_self_check_refuses_a_database_its_preprocessing_was_not_built_from": "Measured about 21s in warm CI: builds independent full runtimes to reject a mismatched shipped database. Full qualification retains the mismatch oracle; fast HTTP checks verify decoded nonzero source bytes and corrupt-cache fallback."
   },
   "transparent-wallet": {
     "http::observation_tests::opt_in_retries_are_bounded_and_account_for_every_response": {
@@ -24,7 +28,9 @@
     "txid_display::controller::tests::verify_reproduces_a_running_root": "Measured 10.5s locally: five complete re-bootstraps of a display root (queued, running, after a reorg, and two tampered records); full CI retains the comparison.",
     "txid_display::controller::tests::restart_resumes_without_touching_sealed_files": "Measured 5.5s locally: four controller recoveries that re-verify every sealed 16 MiB revision from disk; full CI retains the complete test.",
     "txid_display::controller::tests::command_adapters_ship_then_relay_control": "Measured 3.8s locally: one adapter subprocess per ship and control call across several publications; full CI retains the transport test.",
-    "txid_display::controller::tests::the_window_drops_oldest_archives_and_keeps_the_rest": "Measured 4.6s locally: two bootstraps and a stepped run across several window drops; full CI retains the complete test."
+    "txid_display::controller::tests::the_window_drops_oldest_archives_and_keeps_the_rest": "Measured 4.6s locally: two bootstraps and a stepped run across several window drops; full CI retains the complete test.",
+    "publication::tests::block_by_block_publication_equals_a_fresh_build": "Measured about 33s in warm CI: rebuilds 22 incremental publications and an independent fresh oracle. Full qualification retains the campaign; fast unit checks and the real HTTP smoke retain bounded publication/request coverage.",
+    "txid_display::controller::tests::shipped_runtimes_go_out_with_each_candidate_and_go_with_it": "Measured about 37s in warm CI: prepares and ships real cryptographic runtimes across candidate changes. Full qualification retains shipping and cleanup assertions; fast runtime and HTTP checks retain cold preparation and cache recovery."
   },
   "enhance-pir-server": {
     "runtime::tests::partial_preparation_failure_preserves_published_and_retries": "Real multi-unit cryptographic preparation and independent evaluation; full CI retains the complete test.",
@@ -40,5 +46,9 @@
   "pir-apm": {
     "fleet::integration_tests::failed_and_slow_workers_do_not_block_pages_or_good_samples": "Real HTTP stalled-worker timeout and scrape isolation; full CI retains real-time integration coverage.",
     "packing_fleet::tests::discovery_pages_and_failed_scrapes_preserve_last_valid_sample": "Real HTTP stalled-worker timeout and scrape isolation; full CI retains real-time integration coverage."
+  },
+  "transparent-shard": {
+    "build::tests::a_reorg_reproduces_everything_sealed_below_it": "Measured about 24s in warm CI: rebuilds and compares the entire sealed chain after a fork. Full qualification retains the independent rebuild; bounded reorg/publication and wallet transition checks remain fast.",
+    "build::tests::sealed_shards_are_byte_stable_under_tail_growth": "Measured about 12s in warm CI: repeatedly rebuilds full sealed tables through tail growth. Full qualification retains every byte comparison; bounded publication and schema/layout checks remain fast."
   }
 }

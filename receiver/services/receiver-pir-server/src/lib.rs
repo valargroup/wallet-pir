@@ -2,6 +2,11 @@
 #[cfg(test)]
 #[path = "../../../crates/receiver-directory/tests/common/mod.rs"]
 mod common;
+#[cfg(test)]
+extern crate self as receiver_pir_server;
+#[cfg(test)]
+#[path = "../tests/common/prepared.rs"]
+mod prepared;
 pub mod publication;
 use axum::{
     body::Bytes,
@@ -279,8 +284,7 @@ mod tests {
             &[],
         )
         .unwrap();
-        let publication =
-            Publication::verified(receiver_pir::server::Server::new(snapshot).unwrap(), None);
+        let publication = crate::prepared::prepare(snapshot, None).unwrap();
         let mut header = MAGIC.to_vec();
         header.extend(publication.id);
         let exact = query_bytes(receiver_pir::MIN_ROWS).unwrap();
@@ -406,5 +410,35 @@ mod tests {
         assert_eq!(revoked.status(), StatusCode::GONE);
         assert_eq!(revoked.headers()[header::CACHE_CONTROL], "no-store");
         task.abort();
+    }
+}
+
+#[cfg(test)]
+mod fixture_cache_tests {
+    use super::*;
+    use receiver_directory::snapshot::Snapshot;
+    fn snapshot() -> Snapshot {
+        Snapshot::build(common::manifest(receiver_pir::MIN_ROWS), &[], &[]).unwrap()
+    }
+    #[test]
+    fn reused_public_rows_do_not_share_reports_or_hide_corruption() {
+        let first = prepared::prepare(snapshot(), None).unwrap();
+        let second = prepared::prepare(snapshot(), None).unwrap();
+        assert!(std::ptr::eq(
+            first.server.public().as_ptr(),
+            second.server.public().as_ptr()
+        ));
+        let changed = first.with_report(serde_json::json!({"fixture": "changed"}));
+        assert!(changed.report.is_some());
+        assert!(second.report.is_none());
+        let mut corrupt = snapshot();
+        corrupt.data[0] ^= 1;
+        assert!(prepared::prepare(corrupt, None).is_err());
+        let mut corrupt = snapshot();
+        corrupt.filters.push(1);
+        assert!(prepared::prepare(corrupt, None).is_err());
+        let mut corrupt = snapshot();
+        corrupt.manifest.end_height = 0;
+        assert!(prepared::prepare(corrupt, None).is_err());
     }
 }

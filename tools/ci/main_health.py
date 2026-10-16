@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
-"""Pre-push guard: refuse a push to main while main's latest finished service qualification run failed.
+"""Pre-push guard: refuse a push to main while main's latest finished fast CI run failed.
 
-Commits go straight to main and service qualification runs after the push, so a red main is
+Commits go straight to main and fast CI runs after the push, so a red main is
 only noticed by whoever watches it. On 2026-10-12 and 2026-10-14 main stayed
 red for about eight hours each while further pushes landed on top. This guard
 shows the failing jobs to the next pusher. Push the fix or revert with
 WALLET_PIR_PUSH_ON_RED=1. When GitHub cannot be asked, it warns and allows.
 """
 import argparse
+from datetime import datetime
 import json
 import os
 from pathlib import Path
@@ -15,7 +16,7 @@ import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[2]
-WORKFLOW = 'Qualify services'
+WORKFLOW = 'CI'
 OVERRIDE = 'WALLET_PIR_PUSH_ON_RED'
 MARKER = '# wallet-pir red-main guard'
 HOOK = f'''#!/bin/sh
@@ -34,15 +35,35 @@ def gh(*args):
     return json.loads(result.stdout)
 
 
-def latest_finished(runs):
-    """Newest run that passed or failed; cancelled and running ones say nothing about main."""
-    return next((r for r in runs if r.get('status') == 'completed' and r.get('conclusion') in ('success', 'failure')), None)
+def deadline_cancelled(job):
+    """Actions represents a job deadline as cancelled, like a superseded run."""
+    if job.get('name') != 'Fast checks' or job.get('conclusion') != 'cancelled':
+        return False
+    try:
+        start = datetime.fromisoformat(job['startedAt'].replace('Z', '+00:00'))
+        end = datetime.fromisoformat(job['completedAt'].replace('Z', '+00:00'))
+    except (KeyError, ValueError, TypeError):
+        return False
+    return (end - start).total_seconds() >= 180
+
+
+def latest_finished(runs, jobs_for=None):
+    """Skip superseded work, but never mistake a deadline cancellation for green."""
+    for run in runs:
+        if run.get('status') != 'completed':
+            continue
+        if run.get('conclusion') in ('success', 'failure', 'timed_out'):
+            return run
+        if run.get('conclusion') == 'cancelled' and jobs_for and any(
+                deadline_cancelled(job) for job in jobs_for(run['databaseId'])):
+            return run
+    return None
 
 
 def failing_steps(jobs):
-    return [f"{job['name']}: {step['name']}" for job in jobs if job.get('conclusion') == 'failure'
-            for step in job.get('steps', []) if step.get('conclusion') == 'failure'] \
-        or [job['name'] for job in jobs if job.get('conclusion') == 'failure']
+    return [f"{job['name']}: {step['name']}" for job in jobs if job.get('conclusion') in ('failure', 'timed_out', 'cancelled')
+            for step in job.get('steps', []) if step.get('conclusion') in ('failure', 'timed_out', 'cancelled')] \
+        or [job['name'] for job in jobs if job.get('conclusion') in ('failure', 'timed_out', 'cancelled')]
 
 
 def pushes_main(lines):
@@ -55,12 +76,17 @@ def pushes_main(lines):
 
 
 def verdict(runs, jobs_for, override=False):
-    """(allowed, message) for main's service qualification history, newest first."""
-    run = latest_finished(runs)
+    """(allowed, message) for main's fast validation history, newest first."""
+    cached_jobs = {}
+    def jobs(identifier):
+        if identifier not in cached_jobs:
+            cached_jobs[identifier] = jobs_for(identifier)
+        return cached_jobs[identifier]
+    run = latest_finished(runs, jobs)
     if run is None or run['conclusion'] == 'success':
         return True, ''
     lines = [f"main is red: {WORKFLOW} failed at {run['headSha'][:8]} ({run.get('url', '')})"]
-    lines += [f'  {step}' for step in failing_steps(jobs_for(run['databaseId']))]
+    lines += [f'  {step}' for step in failing_steps(jobs(run['databaseId']))]
     if override:
         return True, '\n'.join(lines + [f'{OVERRIDE}=1: pushing the fix or revert.'])
     return False, '\n'.join(lines + [

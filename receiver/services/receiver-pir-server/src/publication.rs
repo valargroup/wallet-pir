@@ -238,7 +238,7 @@ mod tests {
         manifest.salt[0] = salt;
         manifest.end_hash = [hash; 32];
         let snapshot = receiver_directory::snapshot::Snapshot::build(manifest, &[], &[]).unwrap();
-        Publication::verified(Server::new(snapshot).unwrap(), None)
+        crate::prepared::prepare(snapshot, None).unwrap()
     }
 
     /// A check that found an anchor off the chain revokes only while its epoch is
@@ -281,7 +281,7 @@ mod tests {
         let mut newer = crate::common::manifest(receiver_pir::MIN_ROWS);
         (newer.end_height, newer.end_hash) = (102, [2; 32]);
         let snapshot = receiver_directory::snapshot::Snapshot::build(newer, &[], &[]).unwrap();
-        let newer = Publication::verified(Server::new(snapshot).unwrap(), None);
+        let newer = crate::prepared::prepare(snapshot, None).unwrap();
         assert!(publications.publish(newer, 0));
         let ended = Instant::now()
             .checked_sub(Duration::from_millis(1))

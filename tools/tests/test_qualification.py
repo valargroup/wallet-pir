@@ -49,6 +49,14 @@ def complete_jobs(family):
 
 
 class QualificationTests(unittest.TestCase):
+    def test_qualification_rejects_dirty_candidates_before_publication(self):
+        def extract(_archive, destination, _sha, _kind):
+            destination.mkdir()
+            (destination / 'candidate.json').write_text(json.dumps({'source_dirty': True}))
+        with patch.object(q.release, 'extract', side_effect=extract):
+            with self.assertRaisesRegex(ValueError, 'candidate source was dirty'):
+                q.verify('enhance', SHA, Path('/unused'))
+
     def test_expensive_checks_can_be_cancelled_when_a_new_commit_arrives(self):
         workflow = (ROOT / '.github/workflows/ci-full.yml').read_text()
         for name in ['transparent-lint', 'transparent-test', 'enhance-lint',
@@ -86,23 +94,35 @@ class QualificationTests(unittest.TestCase):
                 for result in ['failure', 'skipped', 'cancelled', 'queued']:
                     self.assertFalse(permitted({**passed, gate: result}), (name, gate, result))
 
-    def test_only_obsolete_automatic_main_regressions_are_cancelled(self):
-        runs = [{'id': i, 'event': event, 'head_branch': branch, 'head_sha': sha, 'status': status}
-                for i, (event, branch, sha, status) in enumerate([
-                    ('push', 'main', BASE, 'queued'), ('workflow_run', 'main', BASE, 'in_progress'),
-                    ('workflow_dispatch', 'main', BASE, 'in_progress'),
-                    ('pull_request', 'feature', BASE, 'in_progress'), ('push', 'main', SHA, 'in_progress'),
-                    ('push', 'main', BASE, 'completed')])]
-        with patch.object(release, 'api', return_value={'workflow_runs': runs}), \
-                patch.dict(os.environ, GH_TOKEN='fixture-not-a-credential'), \
-                patch.object(q.urllib.request, 'urlopen') as request:
-            q.cancel_regressions(REPO, SHA)
-        self.assertEqual([call.args[0].full_url.rsplit('/', 2)[-2] for call in request.call_args_list], ['0', '1'])
+    def test_main_has_a_separate_runner_setting_from_legacy_branch_workflows(self):
+        workflow = (ROOT / '.github/workflows/ci.yml').read_text()
+        routing = next(line for line in workflow.splitlines() if 'runs-on:' in line)
+        self.assertIn("github.ref == 'refs/heads/main'", routing)
+        self.assertIn("github.event_name != 'pull_request'", routing)
+        self.assertIn('vars.WALLET_PIR_MAIN_RUNNER', routing)
+        self.assertNotIn('vars.WALLET_PIR_FAST_RUNNER', workflow)
+        preparation = (ROOT / '.github/workflows/ci-prepare.yml').read_text()
+        self.assertIn('vars.WALLET_PIR_MAIN_RUNNER', preparation)
+
+    def test_only_fast_validation_runs_on_main_pushes(self):
+        # Parse trigger structure so adding a comment mentioning "push" cannot
+        # accidentally change which workflows this assertion covers.
+        def events(name):
+            workflow = (ROOT / '.github/workflows' / name).read_text()
+            triggers = workflow.split('\non:\n', 1)[1].split('\npermissions:', 1)[0]
+            return set(re.findall(r'^  ([a-z_]+):', triggers, re.M))
+        self.assertIn('push', events('ci.yml'))
+        self.assertEqual(set(events('ci-qualify.yml')), {'workflow_dispatch'})
+        for name in ['ci-full.yml', 'ci-cache.yml']:
+            self.assertNotIn('push', events(name))
+            self.assertNotIn('workflow_run', events(name))
+            self.assertIn('schedule', events(name))
+            self.assertIn('workflow_dispatch', events(name))
 
     def test_ci_only_feedback_does_not_compile_unchanged_rust_but_full_coverage_remains(self):
         packages = q.workspace_packages()
         for paths in [['tools/ci/fast.py', 'ops/lib/wallet_pir_ops/release.py'],
-                      ['.github/workflows/ci-qualify.yml']]:
+                      ['.github/workflows/ci-qualify.yml'], ['.gitignore']]:
             result = q.plan(packages, paths)
             self.assertEqual(result['packages'], [])
             self.assertEqual(set(result['groups']), q.FULL_GROUPS)
@@ -131,6 +151,28 @@ class QualificationTests(unittest.TestCase):
             with self.subTest(missing=missing['name']):
                 jobs = [j for j in complete_jobs('receiver') if j != missing]
                 self.assertFalse(release.service_jobs(jobs, 'receiver'))
+
+    def test_common_gates_are_required_once_and_service_gates_remain_independent(self):
+        common_names = ['Select full checks', 'Full checks complete', 'Validate selected helper checks',
+                        'Validate Enhance infrastructure',
+                        'Validate transparent elastic infrastructure']
+        common = [dict(name='Common / '+n, status='completed', conclusion='success') for n in common_names]
+        service_names = {'receiver': ['Receiver lint and tests'], 'transparent': ['Transparent lint', 'Transparent tests'],
+                         'enhance': ['Enhance lint', 'Enhance tests'], 'ops': []}
+        for family, names in service_names.items():
+            required = ['Select full checks', 'Full checks complete', 'Build candidate release artifacts',
+                        'Prepare qualified release artifacts', *names]
+            own = [dict(name=q.FAMILIES[family]+' / '+n, status='completed', conclusion='success') for n in required]
+            shared = ([dict(name='Shared / '+n, status='completed', conclusion='success') for n in
+                       ['Select full checks', 'Shared lint and tests', 'Full checks complete']] if family != 'ops' else [])
+            jobs = common + shared + own + [job('enhance' if family != 'enhance' else 'receiver', conclusion='failure')]
+            if family == 'ops':
+                jobs.append(dict(name='Shared / Shared lint and tests', status='completed', conclusion='failure'))
+            self.assertTrue(release.service_jobs(jobs, family))
+            for gate in common + shared + own:
+                for outcome in ['failure', 'skipped', 'cancelled']:
+                    changed = [{**j, 'conclusion': outcome} if j == gate else j for j in jobs]
+                    self.assertFalse(release.service_jobs(changed, family), (family, gate['name'], outcome))
 
     def test_resolution_accepts_only_completed_service_and_digest(self):
         for digest in ['sha256:' + 'c' * 64, '', 'invalid']:
