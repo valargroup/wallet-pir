@@ -27,6 +27,8 @@ SHA256 = re.compile('^[0-9a-f]{64}$')
 PRODUCTS = {
     'transparent-history': {
         'workers': ('transparent-v12-archive.service', 'transparent-v12-recent.service'),
+        # Existing product upgrade budget, not the binary engine's generic 180 seconds.
+        'worker_warm_seconds': 1800,
         'controller': 'transparent-v12-publish-controller.service',
         'config': '/opt/transparent-publisher/v12/controller.json',
         # Values the controller configuration must hold; a single journal
@@ -46,6 +48,7 @@ PRODUCTS = {
     },
     'transparent-display': {
         'workers': ('transparent-txid-display-worker.service',),
+        'worker_warm_seconds': 7200,
         'controller': 'transparent-txid-display-k8-controller.service',
         # Run mode takes no --geometry: root/display-root.json pins txid-4k8,
         # so the request pins that file's digest under controller.files.
@@ -89,8 +92,9 @@ def validate(request):
     if product['load'] is None:
         require(load is None, '%s has no continuous load to coordinate; load must be null' % request['service'])
     else:
-        require(isinstance(load, dict) and set(load) == {'host', 'pins_sha256'} and isinstance(load['host'], str)
-                and bool(SHA256.match(load['pins_sha256'] or '')), 'load is {host, pins_sha256}')
+        require(isinstance(load, dict) and set(load) == {'host', 'pins_sha256', 'resume_after_upgrade'} and isinstance(load['host'], str)
+                and bool(SHA256.match(load['pins_sha256'] or '')) and type(load['resume_after_upgrade']) is bool,
+                'load is {host, pins_sha256, resume_after_upgrade}')
     release = request['release']
     require(isinstance(release, dict) and set(release) == {'git_sha', 'binary_sha256'}, 'release is {git_sha, binary_sha256}')
     require(bool(GIT.match(release['git_sha'])), 'release.git_sha is a full 40-digit revision')
@@ -156,6 +160,8 @@ class Upgrade:
                               % (self.product['controller'], self.request['controller']['host']))
         self.controller = controllers[0]
         self.controller_url = self.controller.url(self.controller.role.health)
+        workers = [dataclasses.replace(t, role=dataclasses.replace(t.role, ready_timeout=self.product['worker_warm_seconds']))
+                   for t in workers]
         self.workers = workers
         return workers
 
@@ -381,6 +387,13 @@ class UpgradeDeployer(Deployer):
                 return False, '; '.join(problems)
         return ok, reason
 
+    def wait_verified(self, record, expected):
+        # Use the product's existing cold-start budget for both new transactions
+        # and recovery of a transaction whose generic worker deadline was shorter.
+        if record['role'] == 'worker':
+            record = {**record, 'verify': {**record['verify'], 'timeout': self.upgrade.product['worker_warm_seconds']}}
+        return super().wait_verified(record, expected)
+
     def schema_fence(self):
         super().schema_fence()
         if self.operation == 'rollback':
@@ -448,12 +461,12 @@ class UpgradeDeployer(Deployer):
             host = self.upgrade.request['load']['host']
             try:
                 pins = self.repin_load(journal)
-                if self.load_was_active:
+                if self.upgrade.request['load']['resume_after_upgrade']:
                     # restart starts the stopped unit; it re-reads the new pins.
                     self.ex.systemctl(host, 'restart', unit)
                     self.out('monitoring: %s started with pins %s' % (unit, json.dumps(pins, sort_keys=True)))
                 else:
-                    self.out('monitoring: %s was not running and stays stopped; pins %s' % (unit, json.dumps(pins, sort_keys=True)))
+                    self.out('monitoring: %s stays stopped as requested; pins %s' % (unit, json.dumps(pins, sort_keys=True)))
             except BaseException as error:
                 # The worker checks passed, but monitoring is part of this rollout.
                 # Keep the lock while restoring workers and their pins. Preserve
