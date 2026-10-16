@@ -19,7 +19,11 @@ CI tooling changes run tool tests and workflow contracts; they retain broad full
 qualification without starting unrelated operations fixtures in fast feedback.
 Documentation-only changes run documentation checks without installing Rust.
 Operations-only changes run helper checks without compiling Rust. Main compares against
-the last successful main fast run, so canceled or failed runs cannot leave unchecked changes behind.
+the last successful main fast run or a newer completed full fast preparation on
+main's ancestry. Preparation reuse requires successful compile and validation
+steps from the same successful attempt and the canonical repository/workflow.
+Partial diagnostic dispatches, canceled or skipped validation, unrelated branches
+and stale ancestry cannot leave unchecked changes behind.
 
 Rust feedback compiles sequentially in `release-fast`, then CI executes at most
 two Cargo-reported unit test programs concurrently. Cases within each program stay
