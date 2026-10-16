@@ -8,19 +8,16 @@
 //! that wants a single endpoint has that too.
 
 pub mod admission;
-pub mod assignment;
 pub mod control;
 pub mod display;
-mod filecache;
-pub mod memory;
-pub mod metrics;
-pub mod prebuild;
-mod prewarm;
-pub mod procmem;
+use transparent_server_backend::prewarm;
 mod request;
 pub mod router;
-pub mod runtime;
 pub mod service;
-pub mod shardset;
 
 pub mod live;
+
+// Retain the service library paths used by existing tools.
+pub use transparent_server_backend::{
+    assignment, memory, metrics, prebuild, procmem, runtime, shardset,
+};

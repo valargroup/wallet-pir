@@ -93,11 +93,25 @@ and local evidence only.
 | Shard protocol | `wallet-libraries/zakura/transparent-shard` | Geometry registry, script tags, placement, deterministic packing, choice tables, manifests and sealing |
 | Native PIR profile | `wallet-libraries/zakura/transparent-native` over `wallet-libraries/zakura/pir-native` | Transparent's seeds and scheme identity over the two-mask ReinspiRING helpers all three products share |
 | Ingest, census, publish | `transparent/services/transparent-filter-server` | Resolve events, persist journal, seal and build shards, serve filters |
+| Server backend | `transparent/crates/transparent-server-backend` | Verify publications, prepare native runtimes, bound memory and cache persisted or shipped runtimes |
 | Retrieval service | `transparent/services/transparent-shard-server` | Verify publication, bound runtime cache, revision-addressed setup/query |
 | Wallet | `wallet-libraries/zakura/pir-transparent/src/engine` | Local matching, private retrieval, validation, ledger replay |
 | Wallet store | `wallet-libraries/zakura/pir-transparent/src/engine_store.rs` | Reference durable store on SQLite |
 | Comparison baseline | `transparent/crates/transparent-blocks`, `transparent/services/transparent-block-server` | Pinned compact-block datasets for benchmark comparison; not a lightwalletd implementation |
 | Deployment | `ops/` and `.github/workflows/` | Build, distribute, preflight and activate artifacts |
+
+The publisher and query worker share the server backend, which has no node or
+RocksDB dependency. The publisher owns chain ingestion and publication lifecycle;
+the query service owns HTTP routes, admission, refusals and worker control. Their
+production processes remain separate so publication can prepare a new revision
+without sharing the query worker's CPU, memory limit or restart lifecycle.
+Existing query-library paths re-export the moved backend types for tooling.
+
+The query worker serves maps and range filters at the same paths as the public
+filter origin. Wallets can use one origin or configure separate public and
+private origins. This does not change what a query discloses or provide a new
+privacy guarantee. The block server is a frozen benchmark dataset service, not
+an additional service a PIR wallet must contact.
 
 ## Public membership filters
 

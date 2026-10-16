@@ -47,9 +47,8 @@ struct Cli {
     /// and this service ingests and serves the former with or without a set.
     /// Given one, it also answers `/v2/filters/shards` and each shard's range
     /// filter -- the public half a wallet needs before it can decide which
-    /// shards are worth a private query. The private retrieval service holds
-    /// the same filters and refuses to serve them, so that a wallet never
-    /// fetches public bytes from the origin it makes private requests to.
+    /// shards are worth a private query. The retrieval service also serves
+    /// these bytes; this listener offers a separate public origin.
     #[arg(long)]
     shard_dir: Option<PathBuf>,
     /// Open `--shard-dir`, print its identity as JSON, and exit without

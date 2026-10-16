@@ -294,7 +294,7 @@ async fn main() -> Result<(), BoxError> {
             let settings = Settings {
                 trust_sealed,
                 ship_runtimes: ship_runtimes.then_some(
-                    transparent_shard_server::display::prebuild::build_shipped
+                    transparent_server_backend::display::prebuild::build_shipped
                         as controller::Prebuild,
                 ),
                 max_recent_records,

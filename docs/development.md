@@ -119,6 +119,18 @@ head changes invalidate completion. Monitor records preserve ownership and
 results; automatic agent wake requires a verified runtime mechanism. Avoid
 foreground polling and duplicate broad local/CI checks.
 
+For Transparent PIR runtime or artifact changes, start with
+`make check-package PACKAGE=transparent-server-backend`. For HTTP handling and
+worker control, use `make check-package PACKAGE=transparent-shard-server`.
+These packages do not pull in the publisher's chain reader or RocksDB, including
+when compiling their tests. Publisher-to-worker shipping tests live in the
+publisher package; select them with
+`make check-package PACKAGE=transparent-filter-server TEST_TARGET=txid_shipped_runtimes`.
+The existing `make transparent-txid-demo` command still exercises confirmed raw
+blocks through extraction, publication and encrypted retrieval. Add `OFFLINE=1`
+once dependencies are fetched. Finish a change with `make check-fast BASE=<sha>`
+and `make check-hygiene BASE=<sha>`; manifest edits broaden affected checks.
+
 ## Timing evidence
 
 `CHECK_STAGE` records identify helpers, formatting, compilation and test phases.

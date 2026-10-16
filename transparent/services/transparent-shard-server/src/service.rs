@@ -583,7 +583,7 @@ impl ServiceState {
             prunable_revisions: inner.set.prunable().len() as u64,
             cache_budget_bytes: inner.cache.budget(),
             warm_runtimes: inner.warm.count.load(Ordering::Acquire),
-            work_memory_reserved_bytes: inner.cache.work_memory.reserved_bytes(),
+            work_memory_reserved_bytes: inner.cache.work_memory().reserved_bytes(),
             process_rss_bytes: crate::procmem::process_rss_bytes(),
             process_cpu: crate::procmem::process_cpu(),
             cgroup_memory_bytes: crate::procmem::cgroup_memory_bytes(),
@@ -602,7 +602,7 @@ impl ServiceState {
     fn worker(&self) -> Worker<'_> {
         Worker {
             admission: &self.inner.admission,
-            work_memory: &self.inner.cache.work_memory,
+            work_memory: self.inner.cache.work_memory(),
             metrics: &self.inner.metrics,
             max_query_bytes: self.max_query_bytes(),
             map_digest: &self.inner.set.map_digest,
@@ -768,7 +768,7 @@ async fn health(State(state): State<ServiceState>) -> Response {
         },
         "warm_runtimes": inner.warm.count.load(Ordering::Acquire),
         "prewarm_operations_total": Metrics::get(&inner.metrics.warm_runtimes),
-        "work_memory_reserved_bytes": inner.cache.work_memory.reserved_bytes(),
+        "work_memory_reserved_bytes": inner.cache.work_memory().reserved_bytes(),
         "target_runtimes": inner.warm.target,
         "binary_sha256": pir_control::binary_sha256(),
         "incarnation": pir_control::Identity::process().incarnation,

@@ -19,6 +19,7 @@
     "transparent-blocks",
     "transparent-block-server",
     "transparent-filter-server",
+    "transparent-server-backend",
     "transparent-shard-server",
     "transparent-loadtest",
     "transparent-measure",

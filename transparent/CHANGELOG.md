@@ -9,6 +9,11 @@ Covers the crates a wallet uses to recover transparent history over PIR:
 
 ## Unreleased
 
+- Publishers and query workers share one server backend for publication loading,
+  native runtime preparation and bounded caches. Query-worker tests no longer
+  depend on chain ingestion or RocksDB. Existing executables, wallet routes and
+  wire formats are unchanged; the compact-block benchmark remains separate.
+
 - Service tests and tools consume wallet-libraries’ canonical recovery engine
   and SQLite store. The duplicated wallet crates have been removed; production
   router HTTP interoperability tests remain in this repository.

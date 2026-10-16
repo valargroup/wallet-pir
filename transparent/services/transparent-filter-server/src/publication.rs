@@ -1118,7 +1118,7 @@ mod tests {
         assert!(b.join(&before.shards[1].manifest_digest).exists());
         let repeated = publish(&options(&b, None), &journal, zero).unwrap();
         assert_eq!(after, repeated);
-        transparent_shard_server::shardset::ShardSet::open(&b, 3).unwrap();
+        transparent_server_backend::shardset::ShardSet::open(&b, 3).unwrap();
     }
     /// A block where a few busy scripts receive several times, so events are
     /// pushed out of the directory every block, and a new script appears.
@@ -1211,7 +1211,7 @@ mod tests {
                 &small,
             )
             .unwrap();
-            transparent_shard_server::shardset::ShardSet::open(&output, 3).unwrap();
+            transparent_server_backend::shardset::ShardSet::open(&output, 3).unwrap();
             if let Some(before) = &previous {
                 // A sealed page shard of the open directory shard that the
                 // last candidate published is the same file in this one.
@@ -1308,7 +1308,7 @@ mod tests {
                 &small,
             )
             .unwrap();
-            transparent_shard_server::shardset::ShardSet::open(&output, 3).unwrap();
+            transparent_server_backend::shardset::ShardSet::open(&output, 3).unwrap();
             for entry in before
                 .shards
                 .iter()
@@ -1374,7 +1374,7 @@ mod tests {
             .unwrap()
             .expect("a grown tail takes the option");
         assert_eq!(u64::from(table.keys()), tail.occupancy.scripts);
-        transparent_shard_server::shardset::ShardSet::open(&b, 3).unwrap();
+        transparent_server_backend::shardset::ShardSet::open(&b, 3).unwrap();
 
         // A fresh set under `sealed` tables its sealed shards and not its tail.
         let c = root.path().join("c");
@@ -1388,7 +1388,7 @@ mod tests {
                 entry.shard_id
             );
         }
-        transparent_shard_server::shardset::ShardSet::open(&c, 3).unwrap();
+        transparent_server_backend::shardset::ShardSet::open(&c, 3).unwrap();
     }
     /// A publication under the v2 range profile names it everywhere and
     /// loads; continuing a set published under another profile is refused.
@@ -1416,7 +1416,7 @@ mod tests {
             .unwrap();
             assert_eq!(manifest.profile, transparent_filter::RANGE_PROFILE_V2.name);
         }
-        transparent_shard_server::shardset::ShardSet::open(&v2, 3).unwrap();
+        transparent_server_backend::shardset::ShardSet::open(&v2, 3).unwrap();
 
         let mut continued = options(&root.path().join("v2-continued"), Some(&v1));
         continued.range_profile = transparent_filter::RANGE_PROFILE_V2.name.into();
@@ -1646,7 +1646,7 @@ mod tests {
             replacement.shards[0].manifest_digest
         );
         assert_eq!(replacement.shards[0].revision, 0);
-        transparent_shard_server::shardset::ShardSet::open(&b, 3).unwrap();
+        transparent_server_backend::shardset::ShardSet::open(&b, 3).unwrap();
         // Original immutable artifact remains exactly the original map.
         let old: transparent_filter::ShardMap =
             serde_json::from_slice(&std::fs::read(a.join("shards.json")).unwrap()).unwrap();

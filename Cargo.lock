@@ -3594,12 +3594,14 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "transparent-blocks",
+ "transparent-server-backend",
  "transparent-shard-server",
  "zakura-server-chain",
  "zakura-transparent-events",
  "zakura-transparent-filter",
  "zakura-transparent-native",
  "zakura-transparent-shard",
+ "zakura-transparent-txid-client",
 ]
 
 [[package]]
@@ -3667,6 +3669,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "transparent-server-backend"
+version = "0.1.0-rc.4"
+dependencies = [
+ "hex",
+ "ipir-sp",
+ "memmap2",
+ "pir-observability",
+ "rayon",
+ "reinspiring",
+ "rustix 1.1.4",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "sysinfo",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "zakura-transparent-events",
+ "zakura-transparent-filter",
+ "zakura-transparent-native",
+ "zakura-transparent-shard",
+]
+
+[[package]]
 name = "transparent-shard-server"
 version = "0.1.0-rc.4"
 dependencies = [
@@ -3676,13 +3703,11 @@ dependencies = [
  "hex",
  "http-body",
  "ipir-sp",
- "memmap2",
  "pir-control",
  "pir-observability",
  "rayon",
  "reinspiring",
  "reqwest",
- "rustix 1.1.4",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -3694,7 +3719,7 @@ dependencies = [
  "tower-http 0.5.2",
  "tracing",
  "tracing-subscriber",
- "transparent-filter-server",
+ "transparent-server-backend",
  "zakura-pir-transparent",
  "zakura-transparent-events",
  "zakura-transparent-filter",

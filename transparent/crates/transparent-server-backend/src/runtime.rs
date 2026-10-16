@@ -856,7 +856,7 @@ struct Inner {
 
 /// A byte-bounded, single-flight cache of prepared runtimes.
 pub struct RuntimeCache {
-    pub(crate) work_memory: Arc<crate::memory::WorkMemory>,
+    work_memory: Arc<crate::memory::WorkMemory>,
     inner: Mutex<Inner>,
     budget: u64,
     build_slots: Arc<tokio::sync::Semaphore>,
@@ -902,6 +902,11 @@ impl RuntimeCache {
         self.prewarm_concurrency = self.prewarm_concurrency.max(restores);
         self.disk = disk;
         self
+    }
+
+    /// The allocation budget shared by runtime construction and admitted queries.
+    pub fn work_memory(&self) -> &Arc<crate::memory::WorkMemory> {
+        &self.work_memory
     }
 
     pub fn prewarm_concurrency(&self) -> usize {
@@ -1409,7 +1414,8 @@ impl RuntimeCache {
         );
     }
 
-    pub(crate) fn prune_disk(
+    /// Prune unused persisted runtimes while retaining the caller's active keys.
+    pub fn prune_disk(
         &self,
         keep: &std::collections::HashSet<String>,
     ) -> Result<Option<u64>, String> {

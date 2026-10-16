@@ -9,13 +9,11 @@
 //! every shard to find the ones holding its history, which is the cost the
 //! design exists to avoid.
 //!
-//! These bytes are served here rather than by the shard retrieval service, and
-//! that separation is deliberate. `transparent-shard-server` loads every
-//! `filter.bin` only to check it against its manifest digest and refuses to
-//! serve it: a wallet that fetched public bytes from the same origin it makes
-//! private requests to would correlate the two by construction. So the private
-//! service holds them and will not hand them out, and this service, which never
-//! sees a private request, does.
+//! The shard retrieval service also serves these public bytes at the same
+//! paths. This service provides a separate public origin for wallets that
+//! choose different network paths for public downloads and private queries.
+//! A wallet can instead use the retrieval service for both. Separate origins
+//! alone do not prevent an operator from correlating requests.
 //!
 //! Everything here is immutable once published, so the set is read once at
 //! startup and held. A shard's filter is a few hundred kilobytes and the whole

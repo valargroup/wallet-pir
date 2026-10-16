@@ -64,6 +64,31 @@ class SelectionTests(unittest.TestCase):
 class BoundaryTests(unittest.TestCase):
     """The Common/node and wallet-libraries dependency boundary; see tools/ci/boundary.py."""
 
+    def test_transparent_workers_and_backend_do_not_pull_in_the_publisher(self):
+        packages = {package['name']: package for package in boundary.manifests()
+                    if not package['preserved']}
+        backend = 'transparent-server-backend'
+        worker = 'transparent-shard-server'
+        publisher = 'transparent-filter-server'
+        self.assertIn(backend, boundary.PURE)
+        publisher_dependencies = {edge['name'] for edge in packages[publisher]['dependencies']
+                                  if edge['kind'] == 'dependencies'}
+        self.assertIn(backend, publisher_dependencies)
+        self.assertNotIn(worker, publisher_dependencies)
+        for entry in (backend, worker):
+            pending, reached = [entry], set()
+            while pending:
+                name = pending.pop()
+                if name in reached:
+                    continue
+                reached.add(name)
+                # Include test/build/target dependencies: focused worker tests
+                # must not bring chain ingestion and RocksDB back into the build.
+                pending.extend(edge['name'] for edge in packages.get(name, {}).get('dependencies', []))
+            self.assertIn(backend, reached)
+            self.assertNotIn(publisher, reached)
+            self.assertNotIn('zakura-server-chain', reached)
+
     def test_nested_checkouts_are_excluded_but_new_local_manifests_are_checked(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

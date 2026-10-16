@@ -1,13 +1,4 @@
 {
-  "transparent-shard-server": {
-    "runtime::disk::tests::restored_runtimes_answer_identically_at_deployed_geometries": "Exercises full deployed PIR geometries; release qualification owns this integration case.",
-    "runtime::disk::cache_integration_tests::blocked_snapshot_does_not_delay_serving_or_release_owned_memory": "Builds real PIR runtime/cache snapshots and verifies serving during blocked persistence.",
-    "runtime::disk::cache_integration_tests::restart_coalesces_restore_and_corruption_falls_back_without_losing_budget": "Builds/restores real runtime snapshots and corrupts cache files to verify recovery.",
-    "runtime::tests::trailing_zero_blocks_leave_the_published_masks_unchanged": "Measured about 27s in warm CI: compares five full-table products with independent masks across every zero-tail boundary. Full qualification retains every oracle; fast masks and nonzero encrypted HTTP checks remain.",
-    "runtime::tests::the_batched_hint_runtime_is_the_reference_runtime": "Measured about 22s in warm CI: compares independent full cryptographic preprocessing and answers over four deployed shapes. Full qualification retains all shapes; fast native oracles and encrypted HTTP checks remain.",
-    "runtime::disk::shipped_tests::refused_shipped_files_fall_back_to_a_counted_local_build": "Measured about 25s in warm CI: repeatedly rebuilds full runtimes for malformed shipped files. Full qualification retains the refusal matrix; fast HTTP smoke checks cold, restored and corrupt-cache recovery.",
-    "runtime::disk::shipped_tests::the_self_check_refuses_a_database_its_preprocessing_was_not_built_from": "Measured about 21s in warm CI: builds independent full runtimes to reject a mismatched shipped database. Full qualification retains the mismatch oracle; fast HTTP checks verify decoded nonzero source bytes and corrupt-cache fallback."
-  },
   "transparent-filter-server": {
     "controller::tests::rpc_follow_publishes_empty_blocks_and_recovers_a_sealed_reorg": "Runs RPC follow, real publication/fleet subprocesses and reorg cancellation end to end.",
     "txid_display::controller::tests::incremental_stepping_reproduces_bootstrap": "Measured 7.7s locally: about 40 full 2,048-row display shard builds (16 MiB each) across three bootstraps and two stepped runs; full CI retains the equivalence check.",
@@ -36,5 +27,14 @@
   "transparent-shard": {
     "build::tests::a_reorg_reproduces_everything_sealed_below_it": "Measured about 24s in warm CI: rebuilds and compares the entire sealed chain after a fork. Full qualification retains the independent rebuild; bounded reorg/publication and wallet transition checks remain fast.",
     "build::tests::sealed_shards_are_byte_stable_under_tail_growth": "Measured about 12s in warm CI: repeatedly rebuilds full sealed tables through tail growth. Full qualification retains every byte comparison; bounded publication and schema/layout checks remain fast."
+  },
+  "transparent-server-backend": {
+    "runtime::disk::tests::restored_runtimes_answer_identically_at_deployed_geometries": "Exercises full deployed PIR geometries; release qualification owns this integration case.",
+    "runtime::disk::cache_integration_tests::blocked_snapshot_does_not_delay_serving_or_release_owned_memory": "Builds real PIR runtime/cache snapshots and verifies serving during blocked persistence.",
+    "runtime::disk::cache_integration_tests::restart_coalesces_restore_and_corruption_falls_back_without_losing_budget": "Builds/restores real runtime snapshots and corrupts cache files to verify recovery.",
+    "runtime::tests::trailing_zero_blocks_leave_the_published_masks_unchanged": "Measured about 27s in warm CI: compares five full-table products with independent masks across every zero-tail boundary. Full qualification retains every oracle; fast masks and nonzero encrypted HTTP checks remain.",
+    "runtime::tests::the_batched_hint_runtime_is_the_reference_runtime": "Measured about 22s in warm CI: compares independent full cryptographic preprocessing and answers over four deployed shapes. Full qualification retains all shapes; fast native oracles and encrypted HTTP checks remain.",
+    "runtime::disk::shipped_tests::refused_shipped_files_fall_back_to_a_counted_local_build": "Measured about 25s in warm CI: repeatedly rebuilds full runtimes for malformed shipped files. Full qualification retains the refusal matrix; fast HTTP smoke checks cold, restored and corrupt-cache recovery.",
+    "runtime::disk::shipped_tests::the_self_check_refuses_a_database_its_preprocessing_was_not_built_from": "Measured about 21s in warm CI: builds independent full runtimes to reject a mismatched shipped database. Full qualification retains the mismatch oracle; fast HTTP checks verify decoded nonzero source bytes and corrupt-cache fallback."
   }
 }

@@ -121,7 +121,7 @@ struct Inner {
     membership: Option<PathBuf>,
     /// The last candidate whose runtimes were prepared, as verified then: the
     /// next one's unchanged tables are its hard links and are not read again.
-    prepared_set: std::sync::Mutex<Option<transparent_shard_server::shardset::ShardSet>>,
+    prepared_set: std::sync::Mutex<Option<transparent_server_backend::shardset::ShardSet>>,
     /// Runtime preparation outcomes since this process started.
     runtime_preparations: AtomicU64,
     runtime_preparation_failures: AtomicU64,
@@ -990,7 +990,7 @@ async fn prepare_runtimes(
     directory: &Path,
     epoch: u64,
 ) -> Result<serde_json::Value, BoxError> {
-    use transparent_shard_server::shardset::{LoadOptions, ShardSet};
+    use transparent_server_backend::shardset::{LoadOptions, ShardSet};
     let mut retained = vec![authority
         .0
         .active
@@ -1022,11 +1022,11 @@ async fn prepare_runtimes(
         // may a worker.
         let options = LoadOptions {
             prune_excess: true,
-            ..LoadOptions::whole(transparent_shard_server::shardset::DEFAULT_RETAIN_REVISIONS)
+            ..LoadOptions::whole(transparent_server_backend::shardset::DEFAULT_RETAIN_REVISIONS)
         };
         match ShardSet::open_reusing(&directory, &options, previous.as_ref()) {
             Ok(set) => {
-                let prepared = transparent_shard_server::prebuild::prepare_publication(
+                let prepared = transparent_server_backend::prebuild::prepare_publication(
                     &set, &directory, &retained, &stop,
                 );
                 (Some(set), prepared.map_err(|e| e.to_string()))
@@ -1864,7 +1864,8 @@ print(json.dumps({'ok':True,'upstreams':[],'workers':{},'retained_publication':b
             .find(|r| r["operation"] == "prepare")
             .expect("a prepare request");
         assert_eq!(prepare["runtimes"], serde_json::json!(first.directory));
-        let set = transparent_shard_server::shardset::ShardSet::open(&first.directory, 3).unwrap();
+        let set =
+            transparent_server_backend::shardset::ShardSet::open(&first.directory, 3).unwrap();
         let files = runtime_files(&first.directory);
         assert_eq!(
             files.len(),

@@ -1591,8 +1591,8 @@ fn shipped_files(candidate: &Path) -> BTreeSet<String> {
 /// manifests' files; and collection removes a candidate with its files.
 #[tokio::test(flavor = "multi_thread")]
 async fn shipped_runtimes_go_out_with_each_candidate_and_go_with_it() {
-    use transparent_shard_server::display::prebuild::build_shipped;
-    use transparent_shard_server::display::set::DisplayRevision;
+    use transparent_server_backend::display::prebuild::build_shipped;
+    use transparent_server_backend::display::set::DisplayRevision;
     let temp = tempfile::tempdir().unwrap();
     let journal = temp.path().join("journal");
     fixture::write_journal(&journal, 100, 125, 0);

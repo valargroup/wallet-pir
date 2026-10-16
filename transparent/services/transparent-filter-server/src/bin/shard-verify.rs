@@ -19,8 +19,8 @@ use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 use transparent_filter::BlockHash;
 use transparent_filter_server::events::EventStore;
+use transparent_server_backend::shardset::{ShardSet, DEFAULT_RETAIN_REVISIONS};
 use transparent_shard::build::build_directory_shard;
-use transparent_shard_server::shardset::{ShardSet, DEFAULT_RETAIN_REVISIONS};
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 

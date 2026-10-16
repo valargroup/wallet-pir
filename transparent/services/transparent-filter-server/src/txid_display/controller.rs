@@ -42,13 +42,13 @@ use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use transparent_filter::BlockHash;
+use transparent_server_backend::display::prebuild::Shipped;
+use transparent_server_backend::runtime::disk::ShippedRuntimes;
 use transparent_shard::display::{
     height_counts, plan_seals, recent_start, window_start, DisplayManifest, DisplayMap,
     DisplayMapEntry, DisplaySealParams,
 };
 use transparent_shard::manifest::PublishedRevision;
-use transparent_shard_server::display::prebuild::Shipped;
-use transparent_shard_server::runtime::disk::ShippedRuntimes;
 
 const MAX_BACKOFF: Duration = Duration::from_secs(30);
 /// Command-adapter workers are asked to collect every this many cycles.
@@ -62,7 +62,7 @@ const LAG_ALERT_EVERY: Duration = Duration::from_secs(60);
 pub const INVALIDATE_FILE: &str = "invalidate.json";
 
 /// Builds a revision's runtimes into a candidate directory; see
-/// [`transparent_shard_server::display::prebuild::build_shipped`].
+/// [`transparent_server_backend::display::prebuild::build_shipped`].
 pub type Prebuild = fn(&Path, &Path) -> Result<Vec<Shipped>, String>;
 
 pub struct Settings {

@@ -6,7 +6,9 @@ use std::{
     time::Duration,
 };
 
-pub(crate) async fn retry<T, F, Fut>(
+/// Retry transient cache pressure within the supplied warming budget.
+/// Cancellation and non-capacity failures stop without another attempt.
+pub async fn retry<T, F, Fut>(
     cancelled: &AtomicBool,
     budget: Duration,
     mut get: F,

@@ -59,7 +59,7 @@ WALLET_LIBRARIES = 'github.com/zakura-core/wallet-libraries'
 PURE = {
     'receiver-pir-server',
     'pir-observability', 'pir-control', 'enhance-pir', 'transparent-blocks',
-    'transparent-shard-server',
+    'transparent-shard-server', 'transparent-server-backend',
 }
 RECEIVER = {'receiver-pir-server'}
 CODEC = 'zakura-receiver-crypto'

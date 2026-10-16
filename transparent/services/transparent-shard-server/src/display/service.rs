@@ -527,7 +527,7 @@ impl DisplayState {
             prunable_revisions: inner.set.excess.len() as u64,
             cache_budget_bytes: inner.runtime.cache.budget(),
             warm_runtimes: inner.warm.count.load(Ordering::Acquire),
-            work_memory_reserved_bytes: inner.runtime.cache.work_memory.reserved_bytes(),
+            work_memory_reserved_bytes: inner.runtime.cache.work_memory().reserved_bytes(),
             process_rss_bytes: crate::procmem::process_rss_bytes(),
             process_cpu: crate::procmem::process_cpu(),
             cgroup_memory_bytes: crate::procmem::cgroup_memory_bytes(),
@@ -539,7 +539,7 @@ impl DisplayState {
         let runtime = &self.inner.runtime;
         Worker {
             admission: &runtime.admission,
-            work_memory: &runtime.cache.work_memory,
+            work_memory: runtime.cache.work_memory(),
             metrics: &runtime.metrics,
             max_query_bytes: self.max_query_bytes(),
             map_digest: &self.inner.set.map_digest,
@@ -607,7 +607,7 @@ async fn health(State(state): State<DisplayState>) -> Response {
             "runtimes_built": cache.entries(),
             "warm_runtimes": inner.warm.count.load(Ordering::Acquire),
             "target_runtimes": inner.warm.target,
-            "work_memory_reserved_bytes": cache.work_memory.reserved_bytes(),
+            "work_memory_reserved_bytes": cache.work_memory().reserved_bytes(),
             "binary_sha256": pir_control::binary_sha256(),
             "incarnation": pir_control::Identity::process().incarnation,
             "started_unix": pir_control::Identity::process().started_unix,
@@ -988,53 +988,4 @@ async fn query_inner(
         Ok(handles)
     };
     answer_query(worker, request, query, acquire).await
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::memory::WorkMemory;
-    use crate::runtime::tests::GENESIS_RUNTIMES;
-    use crate::runtime::SharedParams;
-    use crate::shardset::Table;
-    use std::sync::Arc;
-    use transparent_shard::display::TXID_2K8;
-
-    /// The combined display worker runs under `MemoryMax=48G` and holds every
-    /// archive runtime and the recent one. Admission allows
-    /// `current + held + new <= 0.9 * max`; a cold build holds four times a
-    /// table's reservation and each query twice. While the recent table is
-    /// rebuilt with every genesis runtime resident, a burst of concurrent
-    /// lookups, one query each, must be admitted, or every rebuild would
-    /// refuse lookups with 503.
-    #[test]
-    fn a_recent_rebuild_admits_concurrent_lookups_on_the_combined_worker() {
-        let shared = SharedParams::build_display(&TXID_2K8, Table::TxDirectory).unwrap();
-        let reserved = shared.reserved_bytes();
-        assert_eq!(
-            reserved, 151_171_248,
-            "a 2,048-row, four-block display table"
-        );
-        let limit = 48u64 << 30;
-        // Charged memory with a build in flight: every resident runtime at its
-        // built size and 1 GiB for the process.
-        let current = GENESIS_RUNTIMES as u64 * shared.held_bytes() + (1 << 30);
-        let memory = Arc::new(WorkMemory::default());
-        let sample = Some((current, Some(limit)));
-        let build = memory.reserve_at(4 * reserved, sample).expect("build");
-        let queries: Vec<_> = (0..16)
-            .map(|i| {
-                memory
-                    .reserve_at(2 * reserved, sample)
-                    .unwrap_or_else(|| panic!("query {i}"))
-            })
-            .collect();
-        drop((build, queries));
-        assert_eq!(memory.reserved_bytes(), 0);
-        // The headroom is real but not unbounded.
-        let mut held = Vec::new();
-        while let Some(query) = memory.reserve_at(2 * reserved, sample) {
-            held.push(query);
-            assert!(held.len() < 1_000, "admission never refuses");
-        }
-    }
 }

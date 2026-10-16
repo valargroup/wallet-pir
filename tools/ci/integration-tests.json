@@ -58,7 +58,8 @@
       "compact",
       "event_codec_bounds",
       "service_round_trip",
-      "shard_filters"
+      "shard_filters",
+      "txid_shipped_runtimes"
     ]
   },
   "transparent-loadtest": {
@@ -87,7 +88,6 @@
       "round_trip",
       "txid_client",
       "txid_sharded",
-      "txid_shipped_runtimes",
       "wallet_anchor",
       "wallet_continuation",
       "wallet_recut",
