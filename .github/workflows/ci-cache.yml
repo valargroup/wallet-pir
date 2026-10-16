@@ -1,10 +1,7 @@
 name: Prime hosted Cargo caches
 
-# Main CI full runs on the trusted persistent build runner, so it never saves
-# the hosted caches that PR full jobs can restore. This main-only workflow
-# saves them from main code. It is not a gate: it runs no tests, does not affect
-# CI full's conclusion or artifacts, and only compiles when the exact entry for
-# a compatibility identity is missing.
+# Main uses a persistent fast runner. PR feedback uses hosted runners, whose
+# dependency cache is prepared separately here without running any tests.
 
 on:
   schedule:
@@ -29,20 +26,10 @@ jobs:
   prime:
     # Only main entries are readable by PRs; a branch dispatch would only
     # populate its own ref.
-    if: github.ref == 'refs/heads/main' && vars.WALLET_PIR_BUILD_RUNNER != ''
-    name: Prime ${{ matrix.lane }} ${{ matrix.scope }}
+    if: github.ref == 'refs/heads/main'
+    name: Prime hosted feedback cache
     runs-on: ubuntu-24.04
     timeout-minutes: 90
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - {lane: full-lint, scope: transparent, command: --group transparent --lint}
-          - {lane: full-lint, scope: enhance, command: --group enhance --lint}
-          - {lane: full-test, scope: transparent, command: --group transparent --compile-only}
-          - {lane: full-test, scope: enhance, command: --group enhance --compile-only}
-          - {lane: full-test, scope: shared, command: --group shared --compile-only}
-          - {lane: full-test, scope: receiver, command: --group receiver --compile-only}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -50,21 +37,12 @@ jobs:
       - id: setup
         uses: ./.github/actions/rust-setup
         with:
-          lane: ${{ matrix.lane }}
-          scope: ${{ matrix.scope }}
+          lane: fast
+          scope: affected
           lookup-only: 'true'
-      - name: Compile the units PR full jobs use
+      - name: Compile hosted feedback units without running tests
         if: steps.setup.outputs.cache-hit != 'true'
-        env:
-          COMMAND: ${{ matrix.command }}
-        run: |
-          # shellcheck disable=SC2086
-          python3 tools/ci/full_packages.py $COMMAND
-          if [[ "$COMMAND" == '--group shared --compile-only' ]]; then
-            python3 tools/ci/full_packages.py --group shared --lint
-          elif [[ "$COMMAND" == '--group receiver --compile-only' ]]; then
-            python3 tools/ci/full_packages.py --group receiver --lint
-          fi
+        run: python3 tools/ci/fast.py --all --compile-only
       - name: Report Cargo cache reuse
         if: always()
         continue-on-error: true

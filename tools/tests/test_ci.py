@@ -811,11 +811,18 @@ class CacheWorkflowTests(unittest.TestCase):
         self.assertNotIn('pull_request', prime)
         self.assertNotIn('save-if', full + prime)
 
-    def test_primed_identity_matches_pr_full_jobs(self):
+    def test_primed_identity_matches_hosted_feedback(self):
         def flags(text):
             env = text.split('\nenv:\n', 1)[1].split('\n\n', 1)[0]
             return {key: value for key, value in re.findall(r'^  (\w+): (.+)$', env, re.M) if key in ('RUSTFLAGS', 'CFLAGS', 'CXXFLAGS')}
-        self.assertEqual(flags(self.workflows['ci-cache.yml']), flags(self.workflows['ci-full.yml']))
+        self.assertEqual(flags(self.workflows['ci-cache.yml']), flags(self.workflows['ci.yml']))
+
+    def test_hosted_priming_prepares_feedback_instead_of_unused_full_pr_caches(self):
+        prime = self.workflows['ci-cache.yml']
+        self.assertIn('lane: fast', prime)
+        self.assertIn('scope: affected', prime)
+        self.assertIn('tools/ci/fast.py --all --compile-only', prime)
+        self.assertNotIn('full_packages.py', prime)
 
     def test_cuda_cache_identity_sees_the_build_script_flags(self):
         script = (ROOT / 'tools/ci/build-cuda.sh').read_text()
