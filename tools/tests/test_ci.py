@@ -86,6 +86,25 @@ class BoundaryTests(unittest.TestCase):
                 self.assertEqual(len(boundary.violations(packages, [])), 1, (kind, name))
                 self.assertEqual(boundary.violations(packages, [f'svc -> {name}']), [])
 
+    def test_preserved_demo_workspaces_are_checked_for_direct_edges(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'Cargo.toml').write_text('[workspace]\nmembers = []\n')
+            demo = root / 'demos/legacy'
+            (demo / 'tree').mkdir(parents=True)
+            (demo / 'Cargo.toml').write_text(
+                '[workspace]\nmembers = ["tree"]\n[workspace.dependencies]\n'
+                'orchard = { package = "zakura-orchard", version = "3" }\n')
+            (demo / 'tree/Cargo.toml').write_text(
+                '[package]\nname = "tree"\nversion = "0.1.0"\n'
+                '[dev-dependencies]\norchard = { workspace = true }\n')
+            packages = boundary.manifests(root)
+            self.assertEqual([p['preserved'] for p in packages], [True])
+            problems = boundary.violations(packages, [])
+            self.assertEqual(len(problems), 1)
+            self.assertIn('demos/legacy/tree/Cargo.toml: dev-dependencies on Common package zakura-orchard',
+                          problems[0])
+
     def test_library_adapters_and_pir_cryptography_are_not_common(self):
         packages = [{'name': 'svc', 'manifest': 'svc/Cargo.toml', 'dependencies': [
             self.edge('zakura-receiver-crypto', git='https://github.com/zakura-core/wallet-libraries.git'),

@@ -63,22 +63,37 @@ PURE = {
 RECEIVER = {'receiver-directory', 'receiver-pir', 'receiver-pir-server'}
 CODEC = 'zakura-receiver-crypto'
 # Preserved sources outside the active product: legacy demos and retained evidence.
+# They are still checked for direct Common and node edges, which includes the
+# manually buildable legacy demo workspace; only the pure-package rules skip them.
 EXCLUDED = ('demos/', 'enhance/crates/transparent-spend-pir/', 'evidence/',
             'enhance/evidence/', 'transparent/evidence/', 'receiver/evidence/', 'target/')
 
 
+def shared_dependencies(path, root):
+    """The [workspace.dependencies] of the nearest workspace enclosing `path`."""
+    for directory in path.parents:
+        manifest = directory / 'Cargo.toml'
+        if manifest.exists():
+            workspace = tomllib.loads(manifest.read_text()).get('workspace')
+            if workspace is not None:
+                return workspace.get('dependencies', {})
+        if directory == root:
+            break
+    return {}
+
+
 def manifests(root=ROOT):
-    """Every package manifest in scope, with its direct dependencies of every kind."""
-    workspace = tomllib.loads((root / 'Cargo.toml').read_text()).get('workspace', {})
-    shared = workspace.get('dependencies', {})
+    """Every package manifest, with its direct dependencies of every kind and whether
+    it lies in a preserved (EXCLUDED) tree."""
     packages = []
     for path in sorted(root.rglob('Cargo.toml')):
         relative = path.relative_to(root).as_posix()
-        if relative.startswith(EXCLUDED) or '/target/' in relative:
+        if relative.startswith('target/') or '/target/' in relative:
             continue
         data = tomllib.loads(path.read_text())
         if 'package' not in data:
             continue
+        shared = shared_dependencies(path, root)
         dependencies = []
         tables = [('', data)] + [(f'target.{t}.', v) for t, v in data.get('target', {}).items()]
         for prefix, table in tables:
@@ -92,7 +107,8 @@ def manifests(root=ROOT):
                                          'default-features': value.get('default-features', True),
                                          'features': value.get('features', [])})
         packages.append({'name': data['package']['name'], 'manifest': relative,
-                         'dependencies': dependencies})
+                         'dependencies': dependencies,
+                         'preserved': relative.startswith(EXCLUDED)})
     return packages
 
 
@@ -108,7 +124,8 @@ def violations(packages, allowed):
                 if edge not in allowed:
                     problems.append(f"{package['manifest']}: {dependency['kind']} on "
                                     f"{'Common' if name in COMMON else 'node'} package {name}")
-            if (package['name'] in PURE and WALLET_LIBRARIES in dependency['git']
+            if (package['name'] in PURE and not package.get('preserved')
+                    and WALLET_LIBRARIES in dependency['git']
                     and not (package['name'] == 'receiver-directory' and name == CODEC
                              and dependency['kind'] == 'dependencies'
                              and dependency.get('default-features') is False
