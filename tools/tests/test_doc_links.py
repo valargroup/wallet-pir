@@ -1,5 +1,7 @@
 """Exercise link checks on a working tree with relocations and cached deletions."""
 from pathlib import Path
+import hashlib
+import json
 import shutil
 import subprocess
 import tempfile
@@ -58,6 +60,25 @@ class DocumentationLinks(unittest.TestCase):
         result = self.check()
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("1 broken link", result.stderr)
+
+    def test_captured_oracle_bytes_remain_independent_of_a_cargo_package(self):
+        root = CHECKER.parents[1]
+        capture = root / 'transparent/evidence/prewarm-hint-assurance-2026-10-04'
+        manifest = json.loads((capture / 'manifest.json').read_text())
+        expected = {
+            'batched_hint_kat.py': '99a2736eabc253d2c1cfe573eb0e1925cf745362fe5e4a178ea5af1db7315fe3',
+            'batched_hint_kat.json': 'fde5f38a601777e86d17ba0766ad34a83986a360718984ae18de5d380342ebdb',
+        }
+        directory = root / 'transparent/crates/transparent-native'
+        for name, digest in expected.items():
+            source = directory / 'testdata' / name
+            relative = source.relative_to(root).as_posix()
+            self.assertEqual(manifest['sources']['source_sha256'][relative], digest)
+            self.assertEqual(hashlib.sha256(source.read_bytes()).hexdigest(), digest)
+        self.assertIn('`2bb5c0299eb752b68a5ad5fad9b156b046bef8c9`',
+                      (capture / 'results.md').read_text())
+        self.assertEqual({p.relative_to(directory).as_posix() for p in directory.rglob('*') if p.is_file()},
+                         {'README.md', 'testdata/batched_hint_kat.py', 'testdata/batched_hint_kat.json'})
 
     def test_history_url_is_not_a_local_path(self):
         self.write("docs/README.md", "[history](https://example.invalid/revision/old.md)\n")
