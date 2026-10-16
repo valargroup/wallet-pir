@@ -19,8 +19,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time", "signal"] }
-transparent-events = { path = "../../crates/transparent-events" }
-transparent-filter = { path = "../../crates/transparent-filter" }
+transparent-events = { package = "zakura-transparent-events", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "8ed1c44561995582febe0b9bd172e1c45014cf9b" }
+transparent-filter = { package = "zakura-transparent-filter", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "8ed1c44561995582febe0b9bd172e1c45014cf9b" }
 transparent-wallet = { path = "../../crates/transparent-wallet", features = ["reqwest"] }
 transparent-wallet-store = { path = "../../crates/transparent-wallet-store" }
 
@@ -30,7 +30,7 @@ sysinfo = "0.36"
 tokio = { version = "1", features = ["net", "io-util"] }
 tempfile = "3"
 axum = "0.7"
-transparent-shard = { path = "../../crates/transparent-shard" }
+transparent-shard = { package = "zakura-transparent-shard", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "8ed1c44561995582febe0b9bd172e1c45014cf9b" }
 transparent-shard-server = { path = "../../services/transparent-shard-server" }
 
 [build-dependencies]

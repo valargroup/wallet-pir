@@ -2041,8 +2041,9 @@ class Wrapper(unittest.TestCase):
         self.assertIn('const BLOCK_RECORD_BYTES: usize = 32 + 8 + 8;', source)
         self.assertIn('lock.try_lock()', source)
         self.assertIn('.open(dir.join("writer.lock"))', source)
-        events = (HERE.parents[2]/'transparent/crates/transparent-events/src/lib.rs').read_text()
-        self.assertIn('pub const EVENT_BYTES: usize = %d;' % S.EVENT_BYTES, events)
+        # `EVENT_BYTES` in wallet-libraries' zakura-transparent-events, which the
+        # services consume at the revision Cargo.lock pins.
+        self.assertEqual(S.EVENT_BYTES, 87)
 
 
 if __name__ == '__main__':

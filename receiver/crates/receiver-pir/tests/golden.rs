@@ -43,7 +43,9 @@ fn the_protocol_reproduces_its_pinned_bytes() {
     let id = server.manifest().id().unwrap();
 
     // `RPQ1`, the session ID, a nonce, then the packing key and the selection.
-    let masks = pir_native::public_query_masks(seed(b"query-masks", MIN_ROWS), rows, cols).unwrap();
+    let masks = pir_native::P16
+        .public_query_masks(seed(b"query-masks", MIN_ROWS), rows, cols)
+        .unwrap();
     let setup = NativeSetup::new(pir_native::params(), seed(b"packing-setup", MIN_ROWS));
     let mut rng = ChaCha20Rng::from_seed([21; 32]);
     let secret = NativeSecret::sample(&pir_native::params(), &mut rng);

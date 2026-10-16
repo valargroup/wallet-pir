@@ -150,7 +150,7 @@ wallets outside our own. Standing up a second independent operator is what would
 change it; nothing in the client needs to change to take advantage.
 
 The crate implements the BIP 157 filter-header chain construction
-(`filter_header` in `transparent/crates/transparent-filter/src/digest.rs`), but this service
+(`filter_header` in `wallet-libraries/zakura/transparent-filter/src/digest.rs`), but this service
 does not publish a header chain. Its coverage starts at Ironwood activation
 (3,428,143), not at genesis, and an all-zero predecessor part-way up the chain
 is not a genesis-derived header chain; calling it one would overstate what it

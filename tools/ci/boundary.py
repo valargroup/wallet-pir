@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 """Dependency boundary between wallet-pir and the Zakura chain and wallet libraries.
 
-wallet-pir owns PIR algorithms, protocol framing and serving. Dependencies run
+wallet-libraries owns the canonical PIR primitive and protocol packages
+(`CANONICAL`); wallet-pir owns serving, stores and operations. Dependencies run
 one way: wallet-pir may consume wallet-libraries; wallet-libraries never consumes
 wallet-pir packages. The receiver framing packages use only the library-owned
 wire codec, with cryptography disabled.
 
 No manifest may declare a direct dependency of any kind on a Zakura Common or
 node package except the ratcheted allowlist. Pure PIR packages may use only the
-explicit receiver codec adapter from wallet-libraries. Their normal/build graphs
+canonical PIR packages and the explicit receiver codec adapter from
+wallet-libraries. Their normal/build graphs
 must contain no Common or node packages. Cargo unifies features in whole-workspace
 metadata, where the indexer enables receiver cryptography: the resolved check
 therefore also resolves a fresh standalone receiver consumer with crypto disabled.
@@ -55,13 +57,18 @@ WALLET_LIBRARIES = 'github.com/zakura-core/wallet-libraries'
 # Protocol framing packages that must not acquire chain or wallet behaviour.
 PURE = {
     'receiver-directory', 'receiver-pir', 'receiver-pir-server',
-    'pir-observability', 'pir-native', 'pir-control', 'enhance-pir',
-    'transparent-events', 'transparent-blocks', 'transparent-filter',
-    'transparent-native', 'transparent-shard', 'transparent-txid-client',
+    'pir-observability', 'pir-control', 'enhance-pir', 'transparent-blocks',
     'transparent-wallet', 'transparent-wallet-store', 'transparent-shard-server',
 }
 RECEIVER = {'receiver-directory', 'receiver-pir', 'receiver-pir-server'}
 CODEC = 'zakura-receiver-crypto'
+# The canonical PIR primitive and protocol packages wallet-libraries owns. A pure
+# package may consume them; their own graphs are checked like the package's.
+CANONICAL = {
+    'zakura-pir-native', 'zakura-transparent-native', 'zakura-transparent-events',
+    'zakura-transparent-filter', 'zakura-transparent-shard',
+    'zakura-transparent-txid-client',
+}
 # Preserved sources outside the active product: legacy demos and retained evidence.
 EXCLUDED = ('demos/', 'enhance/crates/transparent-spend-pir/', 'evidence/',
             'enhance/evidence/', 'transparent/evidence/', 'receiver/evidence/', 'target/')
@@ -109,6 +116,7 @@ def violations(packages, allowed):
                     problems.append(f"{package['manifest']}: {dependency['kind']} on "
                                     f"{'Common' if name in COMMON else 'node'} package {name}")
             if (package['name'] in PURE and WALLET_LIBRARIES in dependency['git']
+                    and name not in CANONICAL
                     and not (package['name'] == 'receiver-directory' and name == CODEC
                              and dependency['kind'] == 'dependencies'
                              and dependency.get('default-features') is False
@@ -146,7 +154,8 @@ def resolved_violations(metadata, *, workspace_unified=False):
             codec = package['name'] in RECEIVER and library and target['name'] == CODEC
             through_codec = through_codec or codec
             if current != root_id:
-                if (target['name'] in NODE or (library and not codec)
+                if (target['name'] in NODE
+                        or (library and not codec and target['name'] not in CANONICAL)
                         or (target['name'] in COMMON
                             and not (workspace_unified and through_codec))):
                     problems.add(f"{package['name']}: resolves {target['name']}")

@@ -30,7 +30,9 @@ pub fn query_masks(shard: u64) -> Vec<Vec<u64>> {
 }
 /// Domain-separated first-dimension masks for a `rows` by `cols` database.
 pub fn public_query_masks(seed: [u8; 32], rows: usize, cols: usize) -> Vec<Vec<u64>> {
-    pir_native::public_query_masks(seed, rows, cols).unwrap()
+    pir_native::P16
+        .public_query_masks(seed, rows, cols)
+        .unwrap()
 }
 pub fn prepare(shard: u64, rows: usize, target: usize) -> Result<(NativeSecret, Vec<u8>), String> {
     if rows > 32768 {

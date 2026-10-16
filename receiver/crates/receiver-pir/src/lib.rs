@@ -140,7 +140,8 @@ fn profile(rows: u32) -> Result<&'static Profile, Error> {
             };
             Profile {
                 rows: rows as usize,
-                masks: pir_native::public_query_masks(seed(b"query-masks"), rows as usize, COLS)
+                masks: pir_native::P16
+                    .public_query_masks(seed(b"query-masks"), rows as usize, COLS)
                     .expect("supported receiver PIR geometry"),
                 setup: NativeSetup::new(pir_native::params(), seed(b"packing-setup")),
             }

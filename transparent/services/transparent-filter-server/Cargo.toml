@@ -78,10 +78,10 @@ tokio = { version = "1", features = ["full"] }
 tower-http = { version = "0.5", features = ["limit", "trace"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-transparent-events = { path = "../../crates/transparent-events" }
-transparent-filter = { path = "../../crates/transparent-filter" }
-transparent-native = { path = "../../crates/transparent-native" }
-transparent-shard = { path = "../../crates/transparent-shard" }
+transparent-events = { package = "zakura-transparent-events", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "8ed1c44561995582febe0b9bd172e1c45014cf9b" }
+transparent-filter = { package = "zakura-transparent-filter", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "8ed1c44561995582febe0b9bd172e1c45014cf9b" }
+transparent-native = { package = "zakura-transparent-native", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "8ed1c44561995582febe0b9bd172e1c45014cf9b" }
+transparent-shard = { package = "zakura-transparent-shard", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "8ed1c44561995582febe0b9bd172e1c45014cf9b" }
 transparent-shard-server = { path = "../transparent-shard-server" }
 zakura-chain = { git = "https://github.com/zakura-core/zakura.git", rev = "83738c07468bee30a7db8a8d678cb27bf60094f4" }
 # Pinned to the same revision as `zakura-chain`, and it must stay that way: this

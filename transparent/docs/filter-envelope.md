@@ -6,8 +6,8 @@ Status: specification of the implemented format. Versioned separately from
 BIP 158: the envelope may change without any filter byte changing, and a filter
 byte may never change because the envelope did.
 
-The reference implementation is `transparent/crates/transparent-filter/src/envelope.rs`, and
-`transparent/crates/transparent-filter/tests/golden_envelope.rs` pins the bytes below.
+The reference implementation is `wallet-libraries/zakura/transparent-filter/src/envelope.rs`, and
+`wallet-libraries/zakura/transparent-filter/tests/golden_envelope.rs` pins the bytes below.
 
 ## Conventions
 
@@ -64,7 +64,7 @@ against wallet-owned state rather than anything in the batch:
 - every record's height and hash match the wallet's **own** accepted chain;
 - every filter passes full BIP 158 validation before any match result is used.
 
-`check_batch` in `transparent/crates/transparent-filter/src/client.rs` performs these.
+`check_batch` in `wallet-libraries/zakura/transparent-filter/src/client.rs` performs these.
 
 ## What a request may contain
 

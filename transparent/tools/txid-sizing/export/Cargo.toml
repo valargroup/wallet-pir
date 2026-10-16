@@ -14,9 +14,9 @@ serde = { version = "1", features = ["derive"] }
 tempfile = "3"
 sha2 = "0.10"
 thiserror = "2"
-transparent-events = { path = "../../../crates/transparent-events" }
-transparent-filter = { path = "../../../crates/transparent-filter" }
-transparent-shard = { path = "../../../crates/transparent-shard" }
+transparent-events = { package = "zakura-transparent-events", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "8ed1c44561995582febe0b9bd172e1c45014cf9b" }
+transparent-filter = { package = "zakura-transparent-filter", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "8ed1c44561995582febe0b9bd172e1c45014cf9b" }
+transparent-shard = { package = "zakura-transparent-shard", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "8ed1c44561995582febe0b9bd172e1c45014cf9b" }
 zakura-chain = { git = "https://github.com/zakura-core/zakura.git", rev = "83738c07468bee30a7db8a8d678cb27bf60094f4" }
 
 [profile.release-fast]

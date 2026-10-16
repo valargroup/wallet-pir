@@ -88,10 +88,10 @@ and local evidence only.
 
 | Component | Source | Responsibility |
 |---|---|---|
-| Events | `transparent/crates/transparent-events` | Canonical 87-byte chain event record |
-| Filters | `transparent/crates/transparent-filter` | Range filter profiles, keying, encoding and validation |
-| Shard protocol | `transparent/crates/transparent-shard` | Geometry registry, script tags, placement, deterministic packing, choice tables, manifests and sealing |
-| Native PIR profile | `transparent/crates/transparent-native` over `shared/pir-native` | Transparent's seeds and scheme identity over the two-mask ReinspiRING helpers all three products share |
+| Events | `wallet-libraries/zakura/transparent-events` | Canonical 87-byte chain event record |
+| Filters | `wallet-libraries/zakura/transparent-filter` | Range filter profiles, keying, encoding and validation |
+| Shard protocol | `wallet-libraries/zakura/transparent-shard` | Geometry registry, script tags, placement, deterministic packing, choice tables, manifests and sealing |
+| Native PIR profile | `wallet-libraries/zakura/transparent-native` over `wallet-libraries/zakura/pir-native` | Transparent's seeds and scheme identity over the two-mask ReinspiRING helpers all three products share |
 | Ingest, census, publish | `transparent/services/transparent-filter-server` | Resolve events, persist journal, seal and build shards, serve filters |
 | Retrieval service | `transparent/services/transparent-shard-server` | Verify publication, bound runtime cache, revision-addressed setup/query |
 | Wallet | `transparent/crates/transparent-wallet` | Local matching, private retrieval, validation, ledger replay |
@@ -359,10 +359,10 @@ display row of 8,192 bytes four. The 16-bit m29 profile that Enhance and Status 
 (p = 2^16, a two-digit key with 19-bit digits, 29-bit masks, 44-bit dithered or 49-bit
 nearest queries, 22-bit responses) serves no table built from `main`; `/v1/` releases
 still serve it.
-The helpers are the root `shared/pir-native` crate, which Enhance and Status use too; it
-defines both profiles (`P8`, `P16`) and its golden test pins the 16-bit bytes. It has no
-Cargo features, so depending on it cannot switch the q48 Enhance binaries, which only
-`enhance-pir/native-reinspiring` does. `transparent/crates/transparent-native` re-exports
+The helpers are wallet-libraries' `zakura/pir-native` crate (`zakura-pir-native`), which Enhance and Status use too; it
+defines both profiles (`P8`, `P16`) and its golden test pins the 16-bit bytes. Its one
+Cargo feature, `test-server`, adds a test fixture only, so depending on it cannot switch the q48 Enhance binaries, which only
+`enhance-pir/native-reinspiring` does. `wallet-libraries/zakura/transparent-native` re-exports
 it and adds Transparent's per-geometry seeds, `NativeScheme`, `TableProfile` and
 `profile_for`, which picks the profile from the table name.
 

@@ -11,12 +11,12 @@ name = "transparent_wallet_store"
 path = "src/lib.rs"
 
 [dependencies]
-transparent-shard = { version = "=0.1.0-rc.4", path = "../transparent-shard" }
+transparent-shard = { package = "zakura-transparent-shard", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "8ed1c44561995582febe0b9bd172e1c45014cf9b" }
 hex = "0.4"
 rusqlite = { version = "0.37", features = ["bundled"] }
 serde_json = "1"
 thiserror = "2"
-transparent-events = { version = "=0.1.0-rc.4", path = "../transparent-events" }
+transparent-events = { package = "zakura-transparent-events", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "8ed1c44561995582febe0b9bd172e1c45014cf9b" }
 transparent-wallet = { version = "=0.1.0-rc.4", path = "../transparent-wallet" }
 
 [dev-dependencies]

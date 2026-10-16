@@ -24,7 +24,7 @@ cuda = ["ipir-sp/cuda", "dep:simplepir-kernel"]
 pir-control = { path = "../../../shared/pir-control", features = ["admission"] }
 rayon="1"
 reinspiring = { version = "=0.1.3-rc.1", optional = true }
-pir-native = { path = "../../../shared/pir-native", optional = true }
+pir-native = { package = "zakura-pir-native", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "8ed1c44561995582febe0b9bd172e1c45014cf9b", optional = true }
 simplepir-kernel = { version = "=0.1.0-rc.4", optional = true, features = ["cuda"] }
 axum = "0.7"
 base64 = "0.22"

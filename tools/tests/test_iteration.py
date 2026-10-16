@@ -139,7 +139,7 @@ class PlannerTests(unittest.TestCase):
         groups = full.inventory()
         for group in groups:
             self.assertIn('--group ' + group, workflow)
-        for name in ['pir-control', 'pir-observability', 'pir-monitor', 'transparent-native']:
+        for name in ['pir-control', 'pir-observability', 'pir-monitor', 'transparent-blocks']:
             command = next(command for group in groups for command in full.commands(group, groups) if '-p' in command and name in command)
             self.assertIn('tools/ci/full-test.sh', command)
         self.assertIn('needs: [complete]', workflow)
