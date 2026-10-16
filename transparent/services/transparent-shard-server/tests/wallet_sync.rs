@@ -3264,6 +3264,7 @@ async fn a_corrupt_directory_row_fails_one_entry_and_the_sync_finishes() {
         ));
         assert!(report.failed_entries.contains(&FailedEntry {
             shard_id: 2,
+            revision_digest: map.shards[2].manifest_digest.clone(),
             script: script(1).as_slice().to_vec(),
             failures: 1,
         }));
@@ -3305,7 +3306,9 @@ async fn a_corrupt_entry_is_asked_three_times_then_held() {
         let report = report.unwrap();
         let failures = attempt.min(3);
         assert_eq!(
-            store.entry_failures(2, script(1).as_slice()).unwrap(),
+            store
+                .entry_failures(2, &map.shards[2].manifest_digest, script(1).as_slice())
+                .unwrap(),
             failures,
             "attempt {attempt}"
         );
@@ -3392,7 +3395,12 @@ async fn a_corrupt_page_row_fails_one_walk_with_the_honest_transcript() {
         let (store, (retried, _)) =
             sync_recorded(dir.path(), &base, &map, store, &wallet, concurrency, None).await;
         assert!(retried.unwrap().failed_entries[0].failures == 2);
-        assert_eq!(store.entry_failures(1, script(3).as_slice()).unwrap(), 2);
+        assert_eq!(
+            store
+                .entry_failures(1, &map.shards[1].manifest_digest, script(3).as_slice())
+                .unwrap(),
+            2
+        );
     }
 }
 
@@ -3529,7 +3537,12 @@ async fn a_bad_link_owes_dummies_and_keeps_the_honest_transcript() {
         assert_eq!(report.failed_entries.len(), 1);
         assert_eq!(report.failed_entries[0].shard_id, 1);
         assert_eq!(report.failed_entries[0].script, script(4).as_slice());
-        assert_eq!(store.entry_failures(1, script(4).as_slice()).unwrap(), 1);
+        assert_eq!(
+            store
+                .entry_failures(1, &map.shards[1].manifest_digest, script(4).as_slice())
+                .unwrap(),
+            1
+        );
     }
 }
 
@@ -3634,11 +3647,17 @@ async fn an_overload_after_a_failed_entry_retries_with_the_honest_transcript() {
             report.failed_entries,
             vec![FailedEntry {
                 shard_id: 1,
+                revision_digest: map.shards[1].manifest_digest.clone(),
                 script: script(2).as_slice().to_vec(),
                 failures: 1,
             }]
         );
-        assert_eq!(store.entry_failures(1, script(2).as_slice()).unwrap(), 1);
+        assert_eq!(
+            store
+                .entry_failures(1, &map.shards[1].manifest_digest, script(2).as_slice())
+                .unwrap(),
+            1
+        );
     }
 }
 
@@ -3671,7 +3690,12 @@ async fn a_reply_failing_its_binding_or_epoch_fails_the_request_not_an_entry() {
         "{:?}",
         result.err()
     );
-    assert_eq!(store.entry_failures(2, script(1).as_slice()).unwrap(), 0);
+    assert_eq!(
+        store
+            .entry_failures(2, &map.shards[2].manifest_digest, script(1).as_slice())
+            .unwrap(),
+        0
+    );
 
     let (store, (result, _)) = sync_recorded(
         dir.path(),
@@ -3691,7 +3715,12 @@ async fn a_reply_failing_its_binding_or_epoch_fails_the_request_not_an_entry() {
         "{:?}",
         result.err()
     );
-    assert_eq!(store.entry_failures(2, script(1).as_slice()).unwrap(), 0);
+    assert_eq!(
+        store
+            .entry_failures(2, &map.shards[2].manifest_digest, script(1).as_slice())
+            .unwrap(),
+        0
+    );
     let set_digest = store.set_identity().unwrap().unwrap().digest();
     let key = |shard: usize| SetupKey {
         set_digest: set_digest.clone(),
@@ -3731,7 +3760,12 @@ async fn a_corrupt_manifest_still_stops_the_sync() {
     )
     .await;
     assert!(result.is_err(), "a corrupt manifest is refused");
-    assert_eq!(store.entry_failures(2, script(1).as_slice()).unwrap(), 0);
+    assert_eq!(
+        store
+            .entry_failures(2, &map.shards[2].manifest_digest, script(1).as_slice())
+            .unwrap(),
+        0
+    );
 }
 
 /// A malformed shard map still stops the sync before anything is read.

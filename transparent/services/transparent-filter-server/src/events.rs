@@ -734,7 +734,7 @@ mod tests {
         let mut journal = store(dir.path());
         let valid = receive(START as u32, 1);
         journal
-            .append_block(START, hash(START), &[valid.clone()])
+            .append_block(START, hash(START), std::slice::from_ref(&valid))
             .unwrap();
         journal.commit().unwrap();
         let names = ["events.bin", "blocks.bin", "checkpoint.bin"];
