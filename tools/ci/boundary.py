@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import tempfile
 import sys
@@ -72,9 +73,22 @@ def manifests(root=ROOT):
     workspace = tomllib.loads((root / 'Cargo.toml').read_text()).get('workspace', {})
     shared = workspace.get('dependencies', {})
     packages = []
-    for path in sorted(root.rglob('Cargo.toml')):
+    paths = []
+    for directory, children, files in os.walk(root):
+        directory = Path(directory)
+        # A nested checkout belongs to another source snapshot. Prune before
+        # descending, including linked worktrees whose .git is a file.
+        if directory != root and '.git' in (*children, *files):
+            children[:] = []
+            continue
+        children[:] = sorted(child for child in children
+                             if child not in {'.git', 'target'}
+                             and not (directory / child).relative_to(root).as_posix().startswith(EXCLUDED))
+        if 'Cargo.toml' in files:
+            paths.append(directory / 'Cargo.toml')
+    for path in sorted(paths):
         relative = path.relative_to(root).as_posix()
-        if relative.startswith(EXCLUDED) or '/target/' in relative:
+        if relative.startswith(EXCLUDED):
             continue
         data = tomllib.loads(path.read_text())
         if 'package' not in data:

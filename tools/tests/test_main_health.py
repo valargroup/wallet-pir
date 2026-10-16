@@ -63,6 +63,9 @@ class MainHealthTest(unittest.TestCase):
              'steps': [{'name': 'Validate transparent filter inputs', 'conclusion': 'failure'}]},
             {'name': 'Shared tests', 'conclusion': 'success', 'steps': []}]
 
+    def test_development_pushes_follow_fast_ci_not_release_qualification(self):
+        self.assertEqual(main_health.WORKFLOW, 'CI')
+
     def test_only_pushes_that_move_main_are_checked(self):
         self.assertTrue(main_health.pushes_main([f'refs/heads/main {"c" * 40} refs/heads/main {"d" * 40}']))
         self.assertFalse(main_health.pushes_main([f'refs/heads/x {"c" * 40} refs/heads/x {ZERO}']))

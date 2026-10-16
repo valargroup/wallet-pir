@@ -9,12 +9,8 @@ on:
       family:
         type: string
         required: true
-  workflow_run:
-    workflows: [Qualify services]
-    types: [completed]
-    branches: [main]
-  pull_request:
-    branches: [main]
+  schedule:
+    - cron: '17 4 * * *'
   workflow_dispatch:
 
 permissions:
@@ -39,7 +35,6 @@ defaults:
 jobs:
   select:
     name: Select full checks
-    if: github.event_name != 'workflow_run' || (github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.conclusion != 'cancelled')
     runs-on: ubuntu-24.04
     outputs:
       enhance: ${{ steps.affected.outputs.enhance }}
@@ -53,13 +48,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          ref: ${{ github.sha }}
       - name: Select affected full suites
         id: affected
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
           FAMILY: ${{ inputs.family }}
-          SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
           GH_TOKEN: ${{ github.token }}
         run: |
           umask 022
@@ -71,8 +65,6 @@ jobs:
             [[ "$BASE" =~ ^[0-9a-f]{40}$ ]]
             git fetch --no-tags --depth=1 origin "$BASE"
             python3 tools/ci/fast.py --committed-only --base "$BASE" --select-only --github-output
-          elif [[ "$GITHUB_EVENT_NAME" == workflow_run ]]; then
-            python3 tools/ci/qualification.py background --sha "$SOURCE_SHA"
           else
             python3 tools/ci/fast.py --all --select-only --github-output
           fi
@@ -92,7 +84,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          ref: ${{ github.sha }}
       - uses: ./.github/actions/rust-setup
         with:
           lane: full-lint
@@ -124,7 +116,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          ref: ${{ github.sha }}
       - uses: ./.github/actions/rust-setup
         with:
           lane: full-test
@@ -146,7 +138,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          ref: ${{ github.sha }}
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.14.8
@@ -177,7 +169,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          ref: ${{ github.sha }}
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.14.8
@@ -199,7 +191,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          ref: ${{ github.sha }}
       - name: Read repository Rust toolchain
         id: helper-toolchain
         run: umask 022 && python3 -c 'import os,tomllib; t=tomllib.load(open("rust-toolchain.toml","rb"))["toolchain"]["channel"]; print("toolchain="+t, file=open(os.environ["GITHUB_OUTPUT"],"a"))'
@@ -302,7 +294,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          ref: ${{ github.sha }}
       - uses: ./.github/actions/rust-setup
         with:
           lane: full-lint
@@ -329,7 +321,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          ref: ${{ github.sha }}
       - uses: ./.github/actions/rust-setup
         with:
           lane: full-test
@@ -377,7 +369,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          ref: ${{ github.sha }}
       - uses: ./.github/actions/rust-setup
         with:
           lane: full-test
@@ -398,7 +390,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          ref: ${{ github.sha }}
       - uses: ./.github/actions/rust-setup
         with:
           lane: full-test

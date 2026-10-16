@@ -64,6 +64,19 @@ class SelectionTests(unittest.TestCase):
 class BoundaryTests(unittest.TestCase):
     """The Common/node and wallet-libraries dependency boundary; see tools/ci/boundary.py."""
 
+    def test_nested_checkouts_are_excluded_but_new_local_manifests_are_checked(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'Cargo.toml').write_text('[workspace]\n')
+            for name in ['new', 'target/cached', '.claude/worktrees/old']:
+                path = root / name
+                path.mkdir(parents=True)
+                (path / 'Cargo.toml').write_text('[package]\nname="example"\n[dependencies]\nzakura-chain="1"\n')
+            (root / '.claude/worktrees/old/.git').write_text('gitdir: elsewhere')
+            packages = boundary.manifests(root)
+            self.assertEqual([p['manifest'] for p in packages], ['new/Cargo.toml'])
+            self.assertTrue(boundary.violations(packages, set()))
+
     def edge(self, name, kind='dependencies', git=''):
         return {'name': name, 'kind': kind, 'git': git}
 

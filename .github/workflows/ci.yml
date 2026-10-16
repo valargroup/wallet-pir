@@ -31,7 +31,8 @@ jobs:
     # This pool is separate from release builders and has no production access.
     # Fork PRs always use disposable hosted runners.
     runs-on: ${{ fromJSON((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && vars.WALLET_PIR_FAST_RUNNER || '"ubuntu-24.04"') }}
-    timeout-minutes: 30
+    # Cold preparation is explicit; main must fail promptly rather than wait.
+    timeout-minutes: ${{ github.event_name == 'push' && 3 || 30 }}
     steps:
       - uses: actions/checkout@v4
         with:

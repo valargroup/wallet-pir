@@ -86,18 +86,20 @@ class QualificationTests(unittest.TestCase):
                 for result in ['failure', 'skipped', 'cancelled', 'queued']:
                     self.assertFalse(permitted({**passed, gate: result}), (name, gate, result))
 
-    def test_only_obsolete_automatic_main_regressions_are_cancelled(self):
-        runs = [{'id': i, 'event': event, 'head_branch': branch, 'head_sha': sha, 'status': status}
-                for i, (event, branch, sha, status) in enumerate([
-                    ('push', 'main', BASE, 'queued'), ('workflow_run', 'main', BASE, 'in_progress'),
-                    ('workflow_dispatch', 'main', BASE, 'in_progress'),
-                    ('pull_request', 'feature', BASE, 'in_progress'), ('push', 'main', SHA, 'in_progress'),
-                    ('push', 'main', BASE, 'completed')])]
-        with patch.object(release, 'api', return_value={'workflow_runs': runs}), \
-                patch.dict(os.environ, GH_TOKEN='fixture-not-a-credential'), \
-                patch.object(q.urllib.request, 'urlopen') as request:
-            q.cancel_regressions(REPO, SHA)
-        self.assertEqual([call.args[0].full_url.rsplit('/', 2)[-2] for call in request.call_args_list], ['0', '1'])
+    def test_only_fast_validation_runs_on_main_pushes(self):
+        # Parse trigger structure so adding a comment mentioning "push" cannot
+        # accidentally change which workflows this assertion covers.
+        def events(name):
+            workflow = (ROOT / '.github/workflows' / name).read_text()
+            triggers = workflow.split('\non:\n', 1)[1].split('\npermissions:', 1)[0]
+            return set(re.findall(r'^  ([a-z_]+):', triggers, re.M))
+        self.assertIn('push', events('ci.yml'))
+        self.assertEqual(set(events('ci-qualify.yml')), {'workflow_dispatch'})
+        for name in ['ci-full.yml', 'ci-cache.yml']:
+            self.assertNotIn('push', events(name))
+            self.assertNotIn('workflow_run', events(name))
+            self.assertIn('schedule', events(name))
+            self.assertIn('workflow_dispatch', events(name))
 
     def test_ci_only_feedback_does_not_compile_unchanged_rust_but_full_coverage_remains(self):
         packages = q.workspace_packages()

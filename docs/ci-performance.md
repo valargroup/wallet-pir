@@ -1,6 +1,6 @@
 # CI and deployment latency
 
-The target is **30 seconds from workflow creation to fast checks completing**
+The target is **three minutes from main push to fast checks completing**
 for routine changes on warm runners, and **two minutes from deployment dispatch
 to healthy service** when an exact-SHA qualified artifact is already available.
 Cold builds, dependency/toolchain changes, initial data preparation, schema
@@ -23,8 +23,7 @@ and real HTTP retry cases run only in full CI;
 runs the integration targets classified as `fast` in
 [`tools/ci/enhance-tests.json`](../tools/ci/enhance-tests.json). The remaining
 integration targets, doctests, binary unit tests and all-feature lint run in
-**CI full**. PRs select affected product, shared, operations and infrastructure
-families; main qualifies affected service families. The aggregate completion check fails if a
+**CI full**, nightly or on request. The aggregate completion check fails if a
 selected job fails or is skipped. This avoids compiling every integration target just
 to exclude its tests at runtime. Affected helper
 checks run concurrently with Rust; selected operations suites run in
@@ -52,12 +51,18 @@ an ineligible name and re-verified before qualified publication. Each family
 publishes immediately after its required checks pass. Failure in another family
 cannot authorize or prevent that publication. CPU artifacts do not wait for CUDA.
 
-Whole-repository **CI full** follows automatic service qualification in the
-background, at the triggering source revision. New main pushes cancel obsolete
-automatic qualification and regression work; pinned manual runs and production
-deployments retain separate concurrency groups. Full PR checks remain affected
-checks. No tests are removed or newly ignored, and hardware qualification remains
-a separate deployment gate.
+Only **CI / Fast checks** runs automatically on main pushes and PRs. The main
+job has a three-minute execution ceiling; queueing also counts toward the latency
+target. A timeout is a failure, never evidence of successful fast validation.
+The pre-push health guard follows this workflow, rather than long qualification.
+
+Whole-repository **CI full** runs nightly at 04:17 UTC and on explicit dispatch.
+**Qualify services** is dispatch-only and pins its main revision. It retains
+full service suites and exact-SHA artifact checks; a green fast gate cannot
+replace it. Hosted cache priming runs nightly at 03:37 UTC or on request, without
+launching qualification or holding the main result open. Dependency/toolchain
+validation and cold preparation belong before landing an upgrade. Unexpected
+missing prerequisites must fail visibly rather than skip required tests.
 
 To reproduce selection without running tests:
 
@@ -168,7 +173,7 @@ PRs) or the Enhance native/CUDA feature checks; those units compile in the job.
 A restored cache can only save work. Cargo still checks every unit; a fresh
 checkout's workspace sources are newer than cached outputs, so workspace crates
 rebuild on hosted runners, while unchanged third-party units can be fresh.
-A missing cache is a valid cold build.
+A missing cache is a separately measured cold build; it does not relax main validation or its deadline.
 
 ## Prepared-artifact deployment
 
