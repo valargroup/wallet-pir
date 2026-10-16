@@ -48,6 +48,21 @@ class IntegrationTests(unittest.TestCase):
                 self.assertEqual(run.call_count, 1)
                 self.assertIn('--no-run', run.call_args.args[0])
 
+    def test_fast_compiles_every_program_before_one_reclaim_and_preserves_each_run(self):
+        registry = {p: {'fast': ['smoke'], 'full': []} for p in ['a', 'b']}
+        with patch.object(tests, 'inventory', return_value=registry), \
+                patch.object(tests, 'run') as run, \
+                patch.object(tests, 'target_features', return_value=[]), \
+                patch.object(tests.subprocess, 'check_output', side_effect=['case: test\n', ''] * 2):
+            tests.execute(['a', 'b'], 'fast')
+        commands = [call.args[0] for call in run.call_args_list]
+        self.assertEqual([command[:3] for command in commands[:2]], [['cargo', 'test', '--no-run']] * 2)
+        self.assertEqual(commands[2], ['python3', 'tools/ci/reclaim-build-cache.py'])
+        self.assertEqual([command[command.index('-p') + 1] for command in commands[3:]], ['a', 'b'])
+        self.assertTrue(all('--no-run' not in command for command in commands[3:]))
+        cache = run.call_args_list[3].kwargs['env']['WALLET_PIR_TEST_RUNTIME_CACHE']
+        self.assertFalse(Path(cache).exists())
+
     def test_discovery_includes_explicit_and_directory_targets_and_respects_autotests(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

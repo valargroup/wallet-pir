@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import subprocess
 import tomllib
+import tempfile
 
 from fast import ROOT, workspace_packages
 from stage import run, inherited_fds
@@ -74,6 +75,7 @@ def target_features(package, names):
 def execute(packages, tier, *, offline=False, compile_only=False, smoke_only=False, repeat=1):
     registry = inventory()
     env = {k: v for k, v in dict(os.environ, RUST_TEST_THREADS='1').items() if not k.startswith('QUALIFY_')}
+    prepared = []
     for package in sorted(packages):
         if package not in registry or (tier == 'fast' and not registry[package]['fast']):
             continue
@@ -86,24 +88,32 @@ def execute(packages, tier, *, offline=False, compile_only=False, smoke_only=Fal
         args = cargo_args(package, tiers, tier) + features + (['--offline'] if offline else [])
         if compile_only:
             run(['cargo', 'test', '--no-run', *args], env=env, stage=f'compile:integration-{package}')
+        elif tier == 'fast':
+            run(['cargo', 'test', '--no-run', *args], env=env, stage=f'compile:integration-{package}')
+            for target in tiers['fast']:
+                single = cargo_args(package, {'fast': [target], 'full': []}, 'fast') + features + (['--offline'] if offline else [])
+                enabled = subprocess.check_output(['cargo', 'test', *single, '--', '--list'],
+                                                  cwd=ROOT, env=env, text=True, **inherited_fds(env))
+                ignored = subprocess.check_output(['cargo', 'test', *single, '--', '--ignored', '--list'],
+                                                  cwd=ROOT, env=env, text=True, **inherited_fds(env))
+                names = lambda output: {line[:-6] for line in output.splitlines() if line.endswith(': test')}
+                if not names(enabled) - names(ignored):
+                    raise ValueError(f'{package}/{target}: no enabled, unignored fast tests')
+            prepared.append((package, args))
         else:
-            if tier == 'fast':
-                run(['cargo', 'test', '--no-run', *args], env=env, stage=f'compile:integration-{package}')
-                for target in tiers['fast']:
-                    single = cargo_args(package, {'fast': [target], 'full': []}, 'fast') + features + (['--offline'] if offline else [])
-                    enabled = subprocess.check_output(['cargo', 'test', *single, '--', '--list'],
-                                                      cwd=ROOT, env=env, text=True, **inherited_fds(env))
-                    ignored = subprocess.check_output(['cargo', 'test', *single, '--', '--ignored', '--list'],
-                                                      cwd=ROOT, env=env, text=True, **inherited_fds(env))
-                    names = lambda output: {line[:-6] for line in output.splitlines() if line.endswith(': test')}
-                    if not names(enabled) - names(ignored):
-                        raise ValueError(f'{package}/{target}: no enabled, unignored fast tests')
             run(['bash', 'tools/ci/full-test.sh', *args], env=env, stage=f'integration:{package}')
-            for attempt in range(1, repeat):
-                run(['cargo', 'test', *args], env=env, stage=f'tests:{package}-recovery-{attempt + 1}')
-            if tier == 'full':
-                run(['cargo', 'test', '--locked', '--profile', 'release-fast', '-p', package,
-                     '--doc', *(['--offline'] if offline else [])], env=env, stage=f'doctests:{package}')
+            run(['cargo', 'test', '--locked', '--profile', 'release-fast', '-p', package,
+                 '--doc', *(['--offline'] if offline else [])], env=env, stage=f'doctests:{package}')
+    if prepared:
+        # One complete compile boundary and one reclaim, rather than a whole
+        # build-cache scan and duplicate no-run build for every small program.
+        run(['python3', 'tools/ci/reclaim-build-cache.py'], env=env, stage='reclaim')
+        with tempfile.TemporaryDirectory(prefix='wallet-pir-test-runtime-') as cache:
+            env = dict(env, WALLET_PIR_TEST_RUNTIME_CACHE=cache)
+            for package, args in prepared:
+                run(['cargo', 'test', *args], env=env, stage=f'integration:{package}')
+                for attempt in range(1, repeat):
+                    run(['cargo', 'test', *args], env=env, stage=f'tests:{package}-recovery-{attempt + 1}')
 
 
 def main():
