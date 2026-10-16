@@ -15,8 +15,7 @@ ipir = ["dep:ipir-sp", "dep:inspiring"]
 [dependencies]
 witness-types = { path = "../witness-types" }
 pir-types = { path = "../../shared/pir-types" }
-orchard = { package = "zakura-orchard", version = "1.0", default-features = false }
-incrementalmerkletree = "0.8.2"
+zakura-receiver-crypto = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "54e2b9d360bbe1ad6edb14a301194fde04a4e765" }
 ypir = { package = "valar-ypir", git = "https://github.com/valargroup/ypir.git", branch = "valar/artifact", default-features = false }
 ipir-sp = { git = "https://github.com/valargroup/ipir-sp.git", rev = "e875404cef33661906ab60af236dfb327e6b28b1", optional = true }
 inspiring = { git = "https://github.com/valargroup/ipir-sp.git", rev = "e875404cef33661906ab60af236dfb327e6b28b1", optional = true }

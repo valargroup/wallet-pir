@@ -27,9 +27,8 @@
 use chain_ingest::LwdClient;
 use commitment_ingest::extract_commitments;
 use commitment_tree_db::CommitmentTreeDb;
-use incrementalmerkletree::{Hashable, Level};
-use orchard::tree::MerkleHashOrchard;
 use witness_types::*;
+use zakura_receiver_crypto::witness;
 
 const LWD_ENDPOINT: &str = "https://us.zec.stardust.rest:443";
 /// `ShieldedProtocol::ironwood` in the lightwalletd service definition.
@@ -37,25 +36,20 @@ const IRONWOOD_PROTOCOL: i32 = 2;
 const BATCH_SIZE: u64 = 10_000;
 const FRONTIER_BLOCKS: u64 = 200;
 
-// ── Independent Sinsemilla helpers ──────────────────────────────────────
-//
-// These reimplement the hash operations WITHOUT using commitment_tree_db
-// internals, providing an independent cross-check of the tree's hashing.
-
+// These helpers use library-owned hashing without commitment_tree_db internals.
+// The layout and reconstruction cross-check remains independent; the library's
+// own tests check the hash operation against Common and retained protocol vectors.
 fn sinsemilla_combine(level: u8, left: &Hash, right: &Hash) -> Hash {
-    let l = Option::from(MerkleHashOrchard::from_bytes(left)).expect("invalid left hash");
-    let r = Option::from(MerkleHashOrchard::from_bytes(right)).expect("invalid right hash");
-    <MerkleHashOrchard as Hashable>::combine(Level::from(level), &l, &r).to_bytes()
+    witness::combine(level, left, right).expect("invalid Merkle node bytes")
 }
 
 fn compute_empty_roots() -> Vec<Hash> {
     let mut roots = Vec::with_capacity(TREE_DEPTH + 1);
-    let mut current = MerkleHashOrchard::empty_leaf();
-    roots.push(current.to_bytes());
+    let mut current = witness::empty_root(0).unwrap();
+    roots.push(current);
     for level in 0..TREE_DEPTH {
-        current =
-            <MerkleHashOrchard as Hashable>::combine(Level::from(level as u8), &current, &current);
-        roots.push(current.to_bytes());
+        current = sinsemilla_combine(level as u8, &current, &current);
+        roots.push(current);
     }
     roots
 }
@@ -326,7 +320,7 @@ async fn verify_shard_root_against_mainnet() {
         "\nshard {target_shard} root MISMATCH — Sinsemilla hash chain is incorrect!\n  \
          computed:  {}\n  canonical: {}\n\n\
          This means the commitment tree does NOT match the canonical Ironwood tree.\n\
-         Check: MerkleHashOrchard::combine levels, empty_root sentinels, leaf ordering, \
+         Check: library combine levels, empty_root sentinels, leaf ordering, \
          and that ingest reads CompactTx.ironwoodActions rather than .actions.",
         hex::encode(computed_root),
         hex::encode(canonical_root)
