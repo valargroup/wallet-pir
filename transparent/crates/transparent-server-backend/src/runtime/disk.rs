@@ -1138,9 +1138,15 @@ mod cache_integration_tests {
         let (release_tx, release_rx) = std::sync::mpsc::channel();
         let path = source.path().to_path_buf();
         let writer = std::thread::spawn(move || {
-            let mut file = File::create(path).unwrap();
+            let mut file = File::create(&path).unwrap();
             let _ = opened_tx.send(());
             if release_rx.recv().is_ok() {
+                // Verification now requires a regular file's identity. Restore
+                // the named source before releasing the pipe, so its post-read
+                // identity retry can open and verify that source without waiting
+                // for another pipe writer that will never arrive.
+                fs::remove_file(&path).unwrap();
+                fs::write(&path, &rows).unwrap();
                 file.write_all(&rows).unwrap();
             }
             rows
