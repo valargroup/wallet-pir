@@ -493,7 +493,7 @@ jobs:
 
   release:
     name: Prepare qualified release artifacts
-    if: inputs.family != '' && github.event_name != 'pull_request' && github.event_name != 'workflow_run' && github.ref == 'refs/heads/main'
+    if: ${{ !cancelled() && needs.complete.result == 'success' && needs.build.result == 'success' && inputs.family != '' && github.event_name != 'pull_request' && github.event_name != 'workflow_run' && github.ref == 'refs/heads/main' }}
     needs: [complete, build]
     runs-on: ubuntu-24.04
     steps:
@@ -592,7 +592,7 @@ jobs:
 
   release-cuda:
     name: Prepare native CUDA release artifact (Ubuntu 22.04)
-    if: inputs.family == 'enhance' && github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    if: ${{ !cancelled() && needs.complete.result == 'success' && inputs.family == 'enhance' && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
     needs: [complete]
     runs-on: ubuntu-24.04
     timeout-minutes: 120

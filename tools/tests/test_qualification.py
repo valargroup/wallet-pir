@@ -3,6 +3,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
@@ -48,6 +49,34 @@ def complete_jobs(family):
 
 
 class QualificationTests(unittest.TestCase):
+    def test_publication_survives_skipped_other_families_but_requires_its_gates(self):
+        workflow = (ROOT / '.github/workflows/ci-full.yml').read_text()
+        for name, gates in [('release', ['complete', 'build']), ('release-cuda', ['complete'])]:
+            job = workflow.split(f'\n  {name}:\n', 1)[1]
+            expression = re.search(r'^    if: (.+)$', job, re.M).group(1)
+
+            def permitted(results, cancelled=False):
+                # GitHub implicitly adds success() without a status function;
+                # an unrelated skipped ancestor then skips this job as well.
+                if not re.search(r'\b(always|cancelled|success|failure)\(', expression):
+                    return False
+                condition = expression.removeprefix('${{').removesuffix('}}').strip()
+                condition = condition.replace('!cancelled()', repr(not cancelled)).replace('always()', 'True')
+                condition = condition.replace('&&', ' and ').replace('||', ' or ')
+                values = {'inputs.family': 'enhance' if name == 'release-cuda' else 'receiver',
+                          'github.event_name': 'push', 'github.ref': 'refs/heads/main'}
+                values.update({f'needs.{gate}.result': result for gate, result in results.items()})
+                for key, value in values.items():
+                    condition = condition.replace(key, repr(value))
+                return eval(condition, {'__builtins__': {}}, {})
+
+            passed = dict.fromkeys(gates, 'success')
+            self.assertTrue(permitted(passed), name)
+            self.assertFalse(permitted(passed, cancelled=True), name)
+            for gate in gates:
+                for result in ['failure', 'skipped', 'cancelled', 'queued']:
+                    self.assertFalse(permitted({**passed, gate: result}), (name, gate, result))
+
     def test_only_obsolete_automatic_main_regressions_are_cancelled(self):
         runs = [{'id': i, 'event': event, 'head_branch': branch, 'head_sha': sha, 'status': status}
                 for i, (event, branch, sha, status) in enumerate([
