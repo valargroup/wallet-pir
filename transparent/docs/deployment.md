@@ -3851,13 +3851,18 @@ component. `baseline` records both components.
 - History refuses unless the controller holds `follow_journal: false`, the full-v3 journal, the
   full-v12 publication root and no `ship_runtimes`. Display refuses unless its controller runs
   `--root <root>` without `--geometry`.
-- **Continuous load.** History requests pin `load.host` and the `pins.json` digest of
+- Worker readiness uses the existing product warmup budgets: 1,800 seconds for history
+  (`upgrade-transparent-fleet.py`) and 7,200 seconds for the 4k8 Display request. Full warm
+  readiness remains required; the generic binary engine's 180-second default is insufficient
+  for the documented archive restore times.
+- **Continuous load.** History requests pin `load.host`, `load.resume_after_upgrade` and the `pins.json` digest of
   `/srv/transparent-activity/canonical-load/v12`, whose `transparent-v2-5qps-continuous.service`
   latches on any worker hash other than its pins (it reads them once at start). Under the lock, a
   `latched.json` refuses, and the pins must name exactly the request's worker IDs and the binaries
   they run. A worker transaction stops the load before the first restart; after commit it writes
-  pins naming the new binary atomically (journaled with both digests) and starts the load again if
-  it was running. A failed transaction, including an observer restart failure, rolls the workers back and leaves the
+  pins naming the new binary atomically (journaled with both digests) and starts the load when
+  `resume_after_upgrade` is true. This preserves the requested running state across a failed
+  attempt and a successful retry; use false to keep an intentionally paused observer stopped. A failed transaction, including an observer restart failure, rolls the workers back and leaves the
   load stopped with pins naming the restored binaries; an explicit rollback re-pins to the restored binaries and leaves the load stopped
   until the exact-answer gate passes. The latch and incident records are never removed. Monitoring
   is not ready while the pins name a binary the workers no longer run. Display has no load

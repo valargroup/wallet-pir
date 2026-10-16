@@ -144,7 +144,7 @@ class HistoryUpgrade(Harness):
             'workers': {'worker@v12:' + u: {'ready_identity': {'worker_id': IDS[u], 'role': ready(u, MAP)['role']},
                                             'limits': {'MemoryMax': '8G'}, 'args': ['--cache-bytes', '64']}
                         for u in WORKERS},
-            'load': {'host': 'coordinator', 'pins_sha256': self.fake.sha256('coordinator', LOAD_ROOT + '/pins.json')},
+            'load': {'host': 'coordinator', 'pins_sha256': self.fake.sha256('coordinator', LOAD_ROOT + '/pins.json'), 'resume_after_upgrade': True},
         }
 
     def running(self):
@@ -155,6 +155,28 @@ class HistoryUpgrade(Harness):
 
     def load_active(self):
         return self.fake.probe_unit('coordinator', LOAD_UNIT)['active_state'] == 'active'
+
+    def test_archive_restore_uses_the_product_warmup_budget(self):
+        self.run_cli('baseline')
+        http_get = self.fake.http_get
+        polls = [0]
+        def cold_restore(host, url, timeout=5):
+            current = self.fake.probe_unit('v12', 'transparent-v12-archive.service')['exe_sha256']
+            if host == 'v12' and ':8093/' in url and url.endswith('/v1/ready') and current == sha256(NEW) and polls[0] < 110:
+                polls[0] += 1
+                return 503, json.dumps({'ready': False, 'reason': 'prewarming'})
+            return http_get(host, url, timeout)
+        self.fake.http_get = cold_restore
+        code, lines = self.run_cli('deploy', '--binary', str(self.binary), '--skip-exact-check')
+        self.assertEqual(code, 0, lines)
+        self.assertEqual(set(self.running().values()), {sha256(NEW)})
+
+    def test_successful_retry_resumes_the_requested_observer(self):
+        self.run_cli('baseline')
+        self.fake.systemctl('coordinator', 'stop', LOAD_UNIT)
+        code, lines = self.run_cli('deploy', '--binary', str(self.binary), '--skip-exact-check')
+        self.assertEqual(code, 0, lines)
+        self.assertTrue(self.load_active(), 'the request restores the observer after a successful retry')
 
     def test_worker_upgrade_pauses_and_repins_load_then_rolls_back(self):
         self.assertEqual(self.run_cli('baseline')[0], 0)
