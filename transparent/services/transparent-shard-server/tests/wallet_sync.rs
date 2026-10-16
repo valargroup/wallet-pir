@@ -29,7 +29,7 @@ use transparent_filter::{BlockHash, ScriptBytes, SealParameters, ShardMap};
 use transparent_shard::build::{BuiltChild, BuiltDirectory};
 use transparent_shard::layout::{Geometry, DECOUPLED_2K_8K, DECOUPLED_32K_32K};
 use transparent_shard::manifest::ShardManifest;
-use transparent_shard_server::service::router;
+use transparent_shard_server::service::{router, ServiceConfig, ServiceState};
 use transparent_shard_server::shardset::{ShardSet, DEFAULT_RETAIN_REVISIONS};
 use zakura_pir_transparent::engine::client::Table;
 use zakura_pir_transparent::engine::http::{HttpOptions, HttpShardTransport};
