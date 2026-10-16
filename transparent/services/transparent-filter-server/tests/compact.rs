@@ -65,7 +65,10 @@ fn raw_shielded_and_transparent_fields_round_trip_through_protoc() {
     assert_eq!(compact.vtx.iter().map(|t| t.vin.len()).sum::<usize>(), 0);
     assert_eq!(transparent.iter().map(|t| t.inputs.len()).sum::<usize>(), 0);
     assert_eq!(compact.vtx.iter().map(|t| t.vout.len()).sum::<usize>(), 4);
-    assert_eq!(transparent.iter().map(|t| t.outputs.len()).sum::<usize>(), 4);
+    assert_eq!(
+        transparent.iter().map(|t| t.outputs.len()).sum::<usize>(),
+        4
+    );
     assert!(compact
         .vtx
         .iter()
