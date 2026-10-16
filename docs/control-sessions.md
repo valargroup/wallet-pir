@@ -5,8 +5,8 @@ SSH masters that carry restricted forwards. This page describes source; each
 product's deployment and status documents record what runs.
 
 Recorded state, not a live check: the Status baselines retained with the
-[2026-10-09](../enhance/evidence/production-deploy-06a972db-2026-10-09/README.md)
-and [2026-10-10](../enhance/evidence/production-deploy-9d2cbda0-2026-10-10/README.md)
+[2026-10-09](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/enhance/evidence/production-deploy-06a972db-2026-10-09/README.md)
+and [2026-10-10](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/enhance/evidence/production-deploy-9d2cbda0-2026-10-10/README.md)
 deploys show the Status controller ordered after
 `wallet-pir-control-sessions.service`, through a drop-in stating that the Status
 tunnels run under it since 2026-09-30. The shared supervisor was therefore
