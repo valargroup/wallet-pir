@@ -1,5 +1,8 @@
 """Read exact parser provenance from the executable that performs the export."""
 import hashlib
+from contextlib import contextmanager
+import shutil
+import tempfile
 import json
 from pathlib import Path
 import re
@@ -39,3 +42,16 @@ def require_same(binary, expected):
     """Refuse a replacement between verification and evidence publication."""
     if read(binary) != expected:
         raise ValueError("export binary identity changed during evidence preparation")
+
+
+@contextmanager
+def executable_snapshot(binary, expected):
+    """Execute verified, privately owned bytes even if the source path is replaced."""
+    with tempfile.TemporaryDirectory(prefix="txid-export-") as directory:
+        snapshot = Path(directory) / "export"
+        with Path(binary).open("rb") as source, snapshot.open("xb") as target:
+            shutil.copyfileobj(source, target)
+        snapshot.chmod(0o500)
+        if read(snapshot) != expected:
+            raise ValueError("export binary identity changed before extraction")
+        yield snapshot

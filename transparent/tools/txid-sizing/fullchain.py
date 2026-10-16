@@ -178,7 +178,18 @@ def bundles(cache):
                 if hashlib.sha256(raw).hexdigest()!=row["raw_sha256"]: raise ValueError("raw bundle checksum mismatch")
         yield (raw_path,rows)
 
-def extract_bundle(cache,binary,bundle,rows,status):
+def extract_bundle(cache,binary,bundle,rows,status,identity):
+    # The live acquisition can take long enough for a rebuild to replace the
+    # pathname. Check before any database writer starts, then execute a private
+    # verified copy so a replacement between the check and exec cannot win.
+    source_info.require_same(binary,identity)
+    with source_info.executable_snapshot(binary,identity) as executable:
+        result=_extract_bundle(cache,executable,bundle,rows,status)
+    source_info.require_same(binary,identity)
+    return result
+
+
+def _extract_bundle(cache,binary,bundle,rows,status):
     db_path=cache/"census.sqlite"
     process=subprocess.Popen([str(binary),"--census",str(db_path)],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,bufsize=1)
     started=time.monotonic();count=0
@@ -208,6 +219,8 @@ def extract_bundle(cache,binary,bundle,rows,status):
         return dict(blocks=count,seconds=time.monotonic()-started)
     finally:
         if process.poll() is None: process.terminate();process.wait()
+        for stream in (process.stdin,process.stdout,process.stderr):
+            if stream is not None: stream.close()
 
 def parser_revision(binary):
     """The node parser compiled into this export binary, distinct from its adapter."""
@@ -247,11 +260,11 @@ def scan(cache,binary,status,evidence):
     started=time.monotonic(); scanned=0
     for bundle,rows in sorted(bundles(cache),key=lambda p:min(r["height"] for r in p[1])):
         if digest(binary)!=identity["binary_sha256"]: raise ValueError("export binary changed during scan")
-        receipt=extract_bundle(cache,binary,bundle,rows,status);scanned+=receipt["blocks"]
+        receipt=extract_bundle(cache,binary,bundle,rows,status,identity);scanned+=receipt["blocks"]
         if digest(binary)!=identity["binary_sha256"]: raise ValueError("export binary changed during scan")
     def snapshot():
         if digest(binary)!=identity["binary_sha256"]: raise ValueError("export binary changed during scan")
-        with sqlite3.connect(cache/"census.sqlite") as db:
+        with closing(sqlite3.connect(cache/"census.sqlite")) as db:
             last=db.execute("SELECT height,hash FROM blocks ORDER BY height DESC LIMIT 1").fetchone()
             counts=db.execute("SELECT count(*),min(height),max(height) FROM blocks").fetchone()
             txids=db.execute("SELECT count(*) FROM txids").fetchone()[0]
@@ -287,7 +300,7 @@ def scan(cache,binary,status,evidence):
                     if (height-lo)%500==0:
                         atomic_json(status,dict(summary=f'Full-chain raw acquisition at height {height}; parsed through {lo-1}',eta="measuring",needs_you="",state="working"))
             rows=[json.loads(line) for line in manifest.read_text().splitlines()]
-            extract_bundle(cache,binary,bundle,rows,status)
+            extract_bundle(cache,binary,bundle,rows,status,identity)
             current=snapshot()
             elapsed=time.monotonic()-started
             rate=(current["scanned_blocks"]-initial)/elapsed
