@@ -372,7 +372,14 @@ class UpgradeDeployer(Deployer):
         verify = record['verify']
         if record['role'] == 'worker' and verify.get('ready_url'):
             record = {**record, 'verify': {**verify, 'health': verify['ready_url'], 'ready_url': None}}
-        return super().check(record, expected)
+        ok, reason = super().check(record, expected)
+        if ok and record['role'] == 'controller':
+            # A listening status endpoint can precede publication restoration.
+            # Keep polling within the existing role deadline until authority is ready.
+            _, problems = self.upgrade.authority_problems(self.ex)
+            if problems:
+                return False, '; '.join(problems)
+        return ok, reason
 
     def schema_fence(self):
         super().schema_fence()

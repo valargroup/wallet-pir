@@ -518,6 +518,21 @@ class DisplayUpgrade(Harness):
         self.assertEqual(code, 1, lines)
         self.assertEqual(self.fake.probe_unit('gpu', DISPLAY_WORKER)['exe_sha256'], sha256(OLD))
 
+    def test_controller_waits_for_starting_to_become_published(self):
+        self.run_cli('baseline')
+        self.write_request(component='controller')
+        shape = self.fake.health_shapes[('coordinator', DISPLAY_CONTROLLER)]
+        probes = [0]
+        def starting(ready_, exe):
+            if exe == sha256(CTRL_NEW) and probes[0] < 4:
+                probes[0] += 1
+                return {'phase': 'starting'}
+            return shape(ready_, exe)
+        self.fake.health_shapes[('coordinator', DISPLAY_CONTROLLER)] = starting
+        code, lines = self.run_cli('deploy', '--binary', str(self.controller_binary), '--skip-exact-check')
+        self.assertEqual(code, 0, lines)
+        self.assertEqual(self.fake.probe_unit('coordinator', DISPLAY_CONTROLLER)['exe_sha256'], sha256(CTRL_NEW))
+
     def test_display_controller_upgrade_keeps_run_arguments(self):
         self.run_cli('baseline')
         self.write_request(component='controller')
