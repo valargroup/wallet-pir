@@ -45,7 +45,7 @@ class SurveyTests(unittest.TestCase):
         self.assertIsNone(f["0.99"]["approximate_ci95_bytes"][1])
 
     def test_rpc_oracle_detects_scripts_amounts_eligibility_and_identity(self):
-        data=json.loads((Path(__file__).resolve().parents[3]/"transparent/evidence/txid-sizing/canonical-sample.json").read_text())
+        data=json.loads((Path(__file__).resolve().parent/"fixtures/canonical-sample.json").read_text())
         r=copy.deepcopy(next(r for r in data["records"] if r["coinbase"]))
         r["transaction_index"]=0
         tx=dict(txid=bytes.fromhex(r["txid_internal"])[::-1].hex(),vin=[dict(coinbase="00")],

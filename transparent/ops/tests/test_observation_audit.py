@@ -339,11 +339,9 @@ class AuditTest(unittest.TestCase):
 
     def test_the_real_failed_bundle_fails(self):
         # The strongest check available: a real observation with a known verdict.
-        bundle = ROOT / ('transparent/evidence/'
-                         'productionize-m1-http-retry-2026-09-12/'
+        bundle = ROOT / ('transparent/ops/fixtures/observation/'
                          'failed-observation-20260912T003121Z.tar.gz')
-        if not bundle.exists():
-            self.skipTest('failed observation bundle not present')
+        self.assertTrue(bundle.is_file(), 'the independent failed observation fixture is required')
         import tarfile
         with tempfile.TemporaryDirectory() as tmp:
             with tarfile.open(bundle) as archive:

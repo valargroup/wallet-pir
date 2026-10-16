@@ -7,7 +7,7 @@ import analyze as a
 import geometry as g
 
 ROOT = Path(__file__).resolve().parents[3]
-EVIDENCE = ROOT / "transparent/evidence/txid-sizing"
+EVIDENCE = Path(__file__).resolve().parent / "fixtures"
 
 
 def record(size=1):
