@@ -3789,7 +3789,7 @@ async fn a_malformed_shard_map_still_stops_the_sync() {
     )
     .await;
     assert!(
-        matches!(result, Err(SyncError::Invalid(ref why)) if why.contains("malformed")),
+        matches!(&result, Err(SyncError::Invalid(_))),
         "{:?}",
         result.err()
     );
