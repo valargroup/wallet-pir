@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Verify sanitized artifacts and deterministic report regeneration offline."""
+import argparse
 import hashlib
 import json
 import subprocess
@@ -20,9 +21,11 @@ def verify_source_pins(root,pins,revision):
             raise ValueError("retained source pin mismatch: "+name)
 
 
-def main():
+def main(argv=None):
     root=Path(__file__).resolve().parents[3]
-    evidence=root/"transparent/evidence/txid-sizing"
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--evidence", type=Path, required=True, help="Explicit retained or restored run directory")
+    evidence = parser.parse_args(argv).evidence
     for line in (evidence/"SHA256SUMS").read_text().splitlines():
         digest,name=line.split("  ",1)
         if hashlib.sha256((evidence/name).read_bytes()).hexdigest()!=digest:

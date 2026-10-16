@@ -4,7 +4,7 @@ These are analysis helpers for the display-v1 record, not a production codec,
 migration, or PIR client. Display v2 replaced that record on `main`; the Rust
 exporter builds against v1 at revision `a368f19b52330186dbf56f49066b2b03b4da368a`.
 Read the [findings](../../../docs/transparent-txid-sizing-and-anonymity-findings.md)
-and [source/discovery pins](../../evidence/txid-sizing/sources.json) before interpreting
+and [source/discovery pins](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/txid-sizing/sources.json) before interpreting
 results. `UNQUALIFIED` is intentional. No secrets or encrypted query bodies are inputs.
 
 ## Coordinator journal census
@@ -18,6 +18,11 @@ are verified at their original Git revisions rather than against evolving code.
 ## Reproduce on this hub
 
 Run in the assigned wallet-pir checkout through its existing `../../tool-exec`.
+Run data defaults to ignored `.local-pir/runs/transparent/txid-sizing/`.
+Tests use the frozen independent input in `fixtures/`; historical report bundles
+remain at `archive/pre-hygiene-2026-10-16`. To reproduce a complete historical
+report, use that original checkout and its source pins. The current verifier
+requires an explicit restored run directory and rejects mismatched source bytes.
 Use the pinned Zakura source cache or a scratch directory containing the 41 exact
 public text vectors named by `sources.json`. Raw inputs remain immutable in the
 pinned upstream Git commit and the existing read-only cache. `fetch_vectors.py`
@@ -26,8 +31,10 @@ with `--fetch`; it never contacts a production node. The exporter records both
 text and decoded-block checksums, block hashes, inclusion counts and exclusions.
 
 ```bash
+mkdir -p .local-pir/runs/transparent/txid-sizing
+git show c00c2101e85fb9518ef8509f4478ed097ce49814:transparent/evidence/txid-sizing/sources.json > .local-pir/runs/transparent/txid-sizing/sources.json
 ../../tool-exec --repo wallet-pir -- python3 transparent/tools/txid-sizing/fetch_vectors.py \
-  transparent/evidence/txid-sizing/sources.json /tmp/txid-sizing-vectors --fetch
+  .local-pir/runs/transparent/txid-sizing/sources.json /tmp/txid-sizing-vectors --fetch
 ../../tool-exec --repo wallet-pir -- cargo run --locked --offline --profile release-fast \
   --manifest-path transparent/tools/txid-sizing/export/Cargo.toml -- \
   /tmp/txid-sizing-vectors /tmp/txid-sizing-canonical.json
@@ -37,7 +44,7 @@ text and decoded-block checksums, block hashes, inclusion counts and exclusions.
   /tmp/txid-sizing-geometry.json
 ../../tool-exec --repo wallet-pir -- python3 -m unittest discover \
   -s transparent/tools/txid-sizing -p "test_*.py"
-../../tool-exec --repo wallet-pir -- python3 transparent/tools/txid-sizing/verify_evidence.py
+../../tool-exec --repo wallet-pir -- python3 transparent/tools/txid-sizing/verify_evidence.py --evidence /path/to/restored-run
 ```
 
 Omit `--fetch` to verify an existing source directory offline. Cargo needs its
@@ -137,7 +144,8 @@ New acquisition follows the required height/hash pin followed by raw block fetch
 on the same session and shared request ceiling. The fixed anchor remains height 3,502,662,
 `0000000000228603173bfeb3650b51ceb92b1ac6b8b6392fa1fa9e9bac3acf7f`.
 Raw binary bundles, per-block checksums, SQLite state and checkpoints live in
-`/home/ai-dev/.cache/wallet-pir-census/`; only sanitized receipts belong in Git.
+`/home/ai-dev/.cache/wallet-pir-census/`; progress stays in local output; the scanner never stages, commits or pushes it.
+Only deliberately promoted essential evidence belongs in Git.
 
 The Rust exporter's `--census DATABASE` mode checks canonical raw parsing,
 height/parent continuity, mainnet genesis and coinbase placement. It resolves

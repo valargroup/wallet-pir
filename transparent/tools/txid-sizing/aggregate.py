@@ -108,6 +108,7 @@ def follow(cache,status,evidence):
                 time.sleep(3)
         report=aggregate.report(full=next_height==ANCHOR_HEIGHT+1)
         atomic_json(cache/'aggregate-report.json',report)
+        evidence.mkdir(parents=True, exist_ok=True)
         atomic_json(evidence/'full-chain-aggregates.json',report)
     finally:aggregate.close()
     atomic_json(cache/'aggregate-checkpoint.json',dict(scanned_blocks=next_height,database_sha256=digest(cache/'aggregates.sqlite'),report_sha256=digest(cache/'aggregate-report.json')))
@@ -117,5 +118,5 @@ if __name__=='__main__':
     import argparse
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('cache',type=Path);parser.add_argument('--status',type=Path,required=True)
-    parser.add_argument('--evidence',type=Path,default=Path('transparent/evidence/txid-sizing'))
+    parser.add_argument('--evidence',type=Path,default=Path('.local-pir/runs/transparent/txid-sizing'))
     args=parser.parse_args();follow(args.cache,args.status,args.evidence)

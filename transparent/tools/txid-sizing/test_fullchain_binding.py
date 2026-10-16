@@ -117,13 +117,15 @@ else:
             def blocks(self,start,stop):yield 1,b'public block'
         original_popen=subprocess.Popen;original_run=subprocess.run
         writers=[]
+        publications=[]
         def launch(args,*extra,**kwargs):
             if '--census' in args:
                 writers.append(Path(args[0]));self.write_binary('B')
             return original_popen(args,*extra,**kwargs)
         def command(args,*extra,**kwargs):
-            # The scan's existing publication commands must not touch Git in this fixture.
-            if args[0]=='git':return subprocess.CompletedProcess(args,0)
+            if args[0]=='git':
+                publications.append(args)
+                return subprocess.CompletedProcess(args,0)
             return original_run(args,*extra,**kwargs)
         with patch.object(fullchain,'ANCHOR_HEIGHT',1),patch.object(fullchain,'ANCHOR_HASH',anchor), \
                 patch.object(fullchain,'bundles',return_value=[]),patch.object(fullchain,'Pipeline',Pipeline), \
@@ -132,6 +134,7 @@ else:
                 patch.object(fullchain.subprocess,'run',side_effect=command):
             gateway.return_value.__enter__.return_value.return_value={'result':anchor}
             report=fullchain.scan(self.cache,self.binary,self.root/'status.json',self.evidence)
+        self.assertEqual(publications, [], "a completed census saves local progress without publishing it to Git")
         self.assertEqual(len(writers),1)
         self.assertNotEqual(writers[0],self.binary)
         with closing(sqlite3.connect(database)) as db:

@@ -259,6 +259,7 @@ def scan(cache,binary,status,evidence):
             raise ValueError("checkpoint census source differs")
     else:
         require_empty_census(cache/"census.sqlite")
+    evidence.mkdir(parents=True, exist_ok=True)
     def snapshot():
         # Every writer is bound to this verified identity before it starts.
         # Inspecting the mutable pathname after a commit could strand valid
@@ -321,9 +322,6 @@ def scan(cache,binary,status,evidence):
             print(json.dumps(dict(height=current["last_height"],blocks_per_second=rate,remaining_hours=hours)),flush=True)
             if hours>72:
                 raise RuntimeError(f"Measured end-to-end {rate:.2f} blocks/s projects {hours:.1f}h, exceeding 72h")
-            subprocess.run(["git","add",str(evidence/"full-chain-checkpoint.json")],check=True)
-            subprocess.run(["git","commit","-m",f'Census checkpoint through height {current["last_height"]}'],check=True)
-            subprocess.run(["git","push","origin","HEAD"],check=True)
             # The active task checks the inbox between batches (about four minutes).
             inbox=status.parent/"inbox"
             if inbox.exists() and any(inbox.iterdir()):
@@ -335,7 +333,7 @@ def scan(cache,binary,status,evidence):
 if __name__=="__main__":
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument("cache",type=Path);parser.add_argument("--status",type=Path,required=True)
-    parser.add_argument("--binary",type=Path);parser.add_argument("--evidence",type=Path,default=Path("transparent/evidence/txid-sizing"))
+    parser.add_argument("--binary",type=Path);parser.add_argument("--evidence",type=Path,default=Path(".local-pir/runs/transparent/txid-sizing"))
     args=parser.parse_args()
     try:
         if args.binary:
