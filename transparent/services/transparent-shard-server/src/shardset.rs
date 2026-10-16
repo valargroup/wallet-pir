@@ -1583,6 +1583,28 @@ mod tests {
         SegmentSource::published(path, 2, 16, hex::encode(Sha256::digest(&bytes)), 2)
     }
 
+    /// Waits until a change made now gets a later ctime than `path` has.
+    ///
+    /// Filesystems take ctime from a coarse clock, so an unlink or write in
+    /// the tick of the previous change leaves the stamp unchanged.
+    fn next_timestamp_tick(path: &Path) {
+        use std::os::unix::fs::MetadataExt;
+        let ctime = |path: &Path| {
+            let meta = std::fs::metadata(path).unwrap();
+            (meta.ctime(), meta.ctime_nsec())
+        };
+        let last = ctime(path);
+        let probe = path.with_extension("tick");
+        loop {
+            let _ = std::fs::remove_file(&probe);
+            std::fs::write(&probe, []).unwrap();
+            if ctime(&probe) > last {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+    }
+
     #[test]
     fn collecting_a_hard_link_rechecks_the_complete_source() {
         let dir = tempfile::tempdir().unwrap();
@@ -1594,6 +1616,7 @@ mod tests {
             .verify_stamped_observing(|| {
                 reads += 1;
                 if reads == 1 {
+                    next_timestamp_tick(source.path());
                     std::fs::remove_file(&link).unwrap();
                 }
             })
@@ -1617,6 +1640,7 @@ mod tests {
             reads += 1;
             let mut changed = [0u8; 32];
             changed[0] = 1;
+            next_timestamp_tick(source.path());
             std::fs::write(source.path(), changed).unwrap();
         });
         assert!(
@@ -1637,6 +1661,7 @@ mod tests {
         let mut reads = 0;
         let result = source.verify_stamped_observing(|| {
             reads += 1;
+            next_timestamp_tick(source.path());
             if link.exists() {
                 std::fs::remove_file(&link).unwrap();
             } else {
