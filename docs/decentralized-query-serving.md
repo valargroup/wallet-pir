@@ -104,6 +104,25 @@ incremental synchronization by reusing unchanged artifacts. Include the material
 needed for evaluation and response packing. A mirror may deliver identical bytes
 without gaining authority to publish or declare them current.
 
+Use request/response over HTTPS for the first synchronization protocol. Query
+servers poll a small authenticated current-state record, fetch an immutable
+manifest when its publication changes, and download only missing artifacts.
+Support conditional requests, bounded timeouts, jitter and retry backoff. Choose
+refresh intervals from each product's freshness budget, allowing time for transfer,
+verification and loading; do not impose one interval on every product.
+
+Current-state reconciliation must let a node recover after downtime without
+receiving every intermediate update. It includes the publication and applicable
+revocation/recovery state. Deltas require an exact verified base; a full snapshot
+remains available when that base is missing. A failed poll or unchanged HTTP
+response must not extend expired serving authority.
+
+Keep artifact retrieval, verification and activation independent of how an update
+is detected. Subscriptions or streaming notifications may later wake the same
+reconciliation path if measurements justify them. They are outside the first
+version, which requires no subscriber registration or publisher-owned per-node
+delivery queue.
+
 Preserve product-specific reorg, revocation and freshness behavior. Publication
 identity is separate from download location; downloaded material is separate from
 authority to serve it. Products that currently require controller renewal retain
@@ -252,7 +271,8 @@ protocols.
 Add interfaces with their consumers in the owning phase:
 
 - **Publication source:** authenticated revision discovery and immutable artifact
-  retrieval.
+  retrieval through request/response HTTPS, initially using polling and conditional
+  requests for current state.
 - **Local publication manager:** synchronization, validation, activation,
   retirement and status.
 - **Execution interface:** equivalent serving semantics for embedded evaluation
@@ -298,6 +318,10 @@ independent correctness oracles. Exercise:
   wrong networks, coverage gaps and local versus forwarded holdings.
 - Forged, expired, replayed and withdrawn announcements; coverage changes after a
   reorg; stale readiness; and loss of a provider or bootstrap directory.
+- Publication polling with unchanged responses, timeouts and retry backoff,
+  recovery after missed revisions, and unavailable delta bases. Qualify up to 100
+  consumers, including simultaneous bootstrap and continued updates under query
+  load; retain product-specific freshness and authority gates.
 
 Measure startup and update cost, steady-state memory, disk, synchronization
 bandwidth and query performance together. Include packing costs, temporary
@@ -316,6 +340,8 @@ routing information those protocols expose. This plan adds no new privacy claim.
 Start with explicitly approved publishers and configured peers, then introduce
 discovery under operator-controlled admission policy. Direct provider endpoints
 must keep working without automatic discovery or permissionless registration.
+Start publication synchronization with request/response polling; subscriptions
+remain an optional later optimization of update detection.
 Keep wallet protocols, record layouts, session identities, validation and
 persisted formats unchanged. Introduce no new consensus mechanism, incentive
 system, PIR primitive or universal ingestion framework.
