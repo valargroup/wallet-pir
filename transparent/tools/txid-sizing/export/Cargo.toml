@@ -14,16 +14,16 @@ serde = { version = "1", features = ["derive"] }
 tempfile = "3"
 sha2 = "0.10"
 thiserror = "2"
-transparent-events = { package = "zakura-transparent-events", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "6e80973d4be4204a6f9f1db771f021fe8511086b" }
-transparent-filter = { package = "zakura-transparent-filter", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "6e80973d4be4204a6f9f1db771f021fe8511086b" }
-transparent-shard = { package = "zakura-transparent-shard", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "6e80973d4be4204a6f9f1db771f021fe8511086b" }
+transparent-events = { package = "zakura-transparent-events", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "aab460222a9f38f1f9f70f0d2f04ba9ac977b2ea" }
+transparent-filter = { package = "zakura-transparent-filter", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "aab460222a9f38f1f9f70f0d2f04ba9ac977b2ea" }
+transparent-shard = { package = "zakura-transparent-shard", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "aab460222a9f38f1f9f70f0d2f04ba9ac977b2ea" }
 # Transaction and block reads through the server adapter, at the revision the
 # services pin.
-zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "6e80973d4be4204a6f9f1db771f021fe8511086b" }
+zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "aab460222a9f38f1f9f70f0d2f04ba9ac977b2ea" }
 
 [dev-dependencies]
 # Raw synthetic blocks for the shared extractor's tests.
-zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "6e80973d4be4204a6f9f1db771f021fe8511086b", features = ["testing"] }
+zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "aab460222a9f38f1f9f70f0d2f04ba9ac977b2ea", features = ["testing"] }
 
 [profile.release-fast]
 inherits = "release"

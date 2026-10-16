@@ -6,7 +6,7 @@ license = "MIT"
 description = "The receiver indexer's SQLite coverage store and provider store"
 
 [dependencies]
-receiver-directory = { package = "zakura-receiver-directory", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "6e80973d4be4204a6f9f1db771f021fe8511086b" }
+receiver-directory = { package = "zakura-receiver-directory", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "aab460222a9f38f1f9f70f0d2f04ba9ac977b2ea" }
 rusqlite = { version = "0.37", features = ["bundled"] }
 sha2 = "0.10"
 serde = { version = "1", features = ["derive"] }
