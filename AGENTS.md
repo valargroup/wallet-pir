@@ -6,6 +6,7 @@ demo workspace is independent. Preserve existing Cargo package and binary names.
 
 ## Iteration and validation
 
+- Keep routine PR and main fast feedback under three minutes; retain full service qualification separately.
 - Batch edits, then use `make check-fast BASE=<comparison-sha>` for affected
   checks. This includes committed, staged, unstaged and untracked changes.
   `make check-package PACKAGE=<name> TEST=<filter> FEATURES=<features>` selects

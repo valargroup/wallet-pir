@@ -104,7 +104,7 @@ class QualificationTests(unittest.TestCase):
         preparation = (ROOT / '.github/workflows/ci-prepare.yml').read_text()
         self.assertIn('vars.WALLET_PIR_MAIN_RUNNER', preparation)
 
-    def test_only_fast_validation_runs_on_main_pushes(self):
+    def test_only_fast_validation_and_dependency_cache_priming_run_on_main_pushes(self):
         # Parse trigger structure so adding a comment mentioning "push" cannot
         # accidentally change which workflows this assertion covers.
         def events(name):
@@ -113,11 +113,23 @@ class QualificationTests(unittest.TestCase):
             return set(re.findall(r'^  ([a-z_]+):', triggers, re.M))
         self.assertIn('push', events('ci.yml'))
         self.assertEqual(set(events('ci-qualify.yml')), {'workflow_dispatch'})
-        for name in ['ci-full.yml', 'ci-cache.yml']:
+        for name in ['ci-full.yml']:
             self.assertNotIn('push', events(name))
             self.assertNotIn('workflow_run', events(name))
             self.assertIn('schedule', events(name))
             self.assertIn('workflow_dispatch', events(name))
+        self.assertEqual(events('ci-cache.yml'), {'push', 'schedule', 'workflow_dispatch'})
+        prime = (ROOT / '.github/workflows/ci-cache.yml').read_text()
+        self.assertIn('    paths:\n', prime)
+        self.assertIn('branches: [main]', prime)
+        self.assertIn('--all --compile-only', prime)
+        self.assertNotIn('needs:', prime)
+
+    def test_pr_and_main_feedback_share_the_three_minute_ceiling(self):
+        workflow = (ROOT / '.github/workflows/ci.yml').read_text()
+        self.assertIn("timeout-minutes: ${{ github.event_name == 'workflow_dispatch' && 30 || 3 }}", workflow)
+        self.assertIn("inputs.hosted && 'hosted-'", workflow)
+        self.assertIn('!inputs.hosted', workflow)
 
     def test_ci_only_feedback_does_not_compile_unchanged_rust_but_full_coverage_remains(self):
         packages = q.workspace_packages()

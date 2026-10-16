@@ -4,6 +4,17 @@ name: Prime hosted Cargo caches
 # dependency cache is prepared separately here without running any tests.
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - Cargo.toml
+      - Cargo.lock
+      - '**/Cargo.toml'
+      - rust-toolchain.toml
+      - '.cargo/**'
+      - .github/actions/rust-setup/action.yml
+      - tools/ci/cargo_cache.py
+      - .github/workflows/ci-cache.yml
   schedule:
     - cron: '37 3 * * *'
   workflow_dispatch:
@@ -14,7 +25,7 @@ permissions:
 
 concurrency:
   group: prime-cargo-cache
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always

@@ -1,6 +1,6 @@
 # CI and deployment latency
 
-The target is **three minutes from main push to fast checks completing**
+The target is **under three minutes from PR update or main push to fast checks completing**
 for routine changes on warm runners, and **two minutes from deployment dispatch
 to healthy service** when an exact-SHA qualified artifact is already available.
 Cold builds, dependency/toolchain changes, initial data preparation, schema
@@ -12,6 +12,11 @@ not measured guarantees; hosted fallback and cold fleet warming can exceed them.
 `CI / Fast checks` runs on pushes and PRs. It selects changed workspace packages
 and their transitive reverse dependencies. Deleted files are included; build
 configuration, dependency manifests and unknown paths select the whole workspace.
+Workspace-only membership and local lockfile changes select the changed packages
+and their consumers. External dependency, profile, resolver, inherited-setting,
+removed-member and unrecognized changes retain complete workspace coverage.
+CI tooling changes run tool tests and workflow contracts; they retain broad full
+qualification without starting unrelated operations fixtures in fast feedback.
 Documentation-only changes run documentation checks without installing Rust.
 Operations-only changes run helper checks without compiling Rust. Main compares against
 the last successful main fast run, so canceled or failed runs cannot leave unchecked changes behind.
@@ -53,15 +58,17 @@ an ineligible name and re-verified before qualified publication. Each family
 publishes immediately after its required checks pass. Failure in another family
 cannot authorize or prevent that publication. CPU artifacts do not wait for CUDA.
 
-Only **CI / Fast checks** runs automatically on main pushes and PRs. The main
-job has a three-minute execution ceiling; queueing also counts toward the latency
+Only **CI / Fast checks** validates automatically on main pushes and PRs.
+Dependency cache priming runs independently on relevant main changes.
+Both PR and main feedback have a three-minute execution ceiling; queueing also counts toward the latency
 target. A timeout is a failure, never evidence of successful fast validation.
 The pre-push health guard follows this workflow, rather than long qualification.
 
 Whole-repository **CI full** runs nightly at 04:17 UTC and on explicit dispatch.
 **Qualify services** is dispatch-only and pins its main revision. It retains
 full service suites and exact-SHA artifact checks; a green fast gate cannot
-replace it. Hosted cache priming runs nightly at 03:37 UTC or on request, without
+replace it. Hosted cache priming runs after main dependency/build-configuration
+changes, nightly at 03:37 UTC or on request, without
 launching qualification or holding the main result open. Dependency/toolchain
 validation and cold preparation belong before landing an upgrade. Unexpected
 missing prerequisites must fail visibly rather than skip required tests.
@@ -77,6 +84,12 @@ changes and untracked files; `--all` selects every package. CI passes
 `--committed-only`. See [development workflow](development.md).
 The workflow fetches only the current checkout and comparison commit, rather than
 all historical evidence and build artifacts in repository history.
+
+For a hosted timing replay, dispatch `CI` on main with `hosted=true` and
+`comparison-base` set to the parent of a representative change. This uses the
+hosted PR environment without occupying or canceling main's reserved queue.
+Manual diagnostic runs allow cold-build measurement beyond the routine ceiling;
+they do not qualify the latency target merely by completing successfully.
 
 ## Warm runners
 
@@ -163,9 +176,15 @@ Cargo tracks source, lockfile, features and profile changes inside a lane.
 Prune unused lane directories only while the runner is idle. Do not share
 writable caches between trust boundaries.
 
-Hosted jobs restore one exact key, `v1-wallet-pir-<lane>-<scope>-<identity>-Linux-x64`,
-with no partial fallback to another identity. Lanes, scopes, CPU, native CPU and
-Ubuntu 22.04 CUDA builds therefore never share entries. GitHub scopes a PR's saves
+Hosted fast jobs partition by compiler, native tools, OS/ABI, flags, Cargo
+configuration, lane, scope and profiles. Within that partition, rust-cache adds
+its environment/manifest/lock hashes and can fall back to another dependency
+revision. Cargo rechecks every unit; a fallback is recorded as `hit-compatible`
+only when build fingerprints were actually restored. The action does not expose
+the exact restored ref for these suffixed keys, so reports leave it unknown.
+Other hosted lanes retain exact keys and no cross-identity fallback. Lanes,
+scopes, CPU, native CPU and Ubuntu 22.04 CUDA builds never share entries.
+GitHub scopes a PR's saves
 to its merge ref; a PR restores its own entry first and otherwise main's. Main
 never reads PR entries. Because main uses persistent targets, the separate
 [Prime hosted Cargo caches](../.github/workflows/ci-cache.yml) workflow warms
