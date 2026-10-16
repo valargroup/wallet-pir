@@ -24,8 +24,19 @@ CONFIG = {'data_dir': '/srv/transparent-activity/full-v3/journal', 'follow_journ
 GIT = '1' * 40
 
 
+MAP, NEXT_MAP = 'ab' * 32, 'ac' * 32
+
+
 def identity(unit):
-    return {'publication_sha256': 'ab' * 32, 'assignment': unit.split('-')[2].split('.')[0]}
+    """The pinned ownership fields of a real v12 ready response."""
+    archive = 'archive' in unit
+    return {'worker_id': 'v12-archive' if archive else 'v12-recent', 'role': 'archive-owner' if archive else 'recent-replica',
+            'replica_group': 'g0', 'assigned_shards': [0, 1] if archive else [1], 'assignment_sha256': 'a1' * 32,
+            'worker_assignment_sha256': ('b1' if archive else 'b2') * 32}
+
+
+def ready(unit, current):
+    return {**identity(unit), 'map_sha256': current, 'warm_runtimes': 2, 'target_runtimes': 2, 'prewarm_failed': 0}
 
 
 class BinaryUpgrade(unittest.TestCase):
@@ -35,17 +46,23 @@ class BinaryUpgrade(unittest.TestCase):
         self.state, self.binary = root / 'state', root / 'next'
         self.binary.write_bytes(NEW)
         self.fake = FakeFleet()
-        self.shift = {}  # unit -> identity a restarted NEW worker reports instead
+        self.shift = {}  # unit -> fields a restarted NEW worker reports instead
+        self.map = [MAP]  # the controller's current map; advances during the rollout
+        ready_body = ready
         for unit, listen in WORKERS.items():
             self.fake.install('v12', unit, '[Service]\nExecStart=%s serve --listen %s --cache-bytes 64\nMemoryMax=8G\n'
                               % (SERVER, listen), files={SERVER: OLD})
             for path in ('/v1/health', '/v1/ready'):
                 self.fake.endpoints[('v12', 'http://%s%s' % (listen, path))] = unit
             self.fake.health_shapes[('v12', unit)] = lambda ready, exe, unit=unit: {
-                'ready': ready, **(self.shift.get(unit) if exe == sha256(NEW) and unit in self.shift else identity(unit))}
+                'ready': ready, **ready_body(unit, self.map[0]),
+                **(self.shift.get(unit, {}) if exe == sha256(NEW) else {})}
         self.fake.install('coordinator', CONTROLLER, '[Service]\nExecStart=/usr/local/bin/controller --config %s\n' % CONFIG_PATH,
                           files={CONFIG_PATH: json.dumps(CONFIG), FLEET: '{"assignments": []}', SCRIPT: '#!python',
                                  '/usr/local/bin/controller': b'controller'})
+        self.fake.endpoints[('coordinator', 'http://10.142.0.3:8096/v1/status')] = CONTROLLER
+        self.fake.health_shapes[('coordinator', CONTROLLER)] = lambda ready, exe: {'phase': 'serving',
+                                                                                    'map_sha256': self.map[0]}
         self.inventory = root / 'inventory.json'
         self.inventory.write_text(json.dumps({
             'lock': {'type': 'remote', 'host': 'coordinator'}, 'ssh': {'mode': 'config'},
@@ -111,7 +128,11 @@ class BinaryUpgrade(unittest.TestCase):
         cases = {
             'source': lambda r: r['publication'].update(source_sha='ff27d649'),
             'assignment': lambda r: r['workers']['worker@v12:transparent-v12-recent.service']['ready_identity'].update(
-                assignment='archive'),
+                worker_assignment_sha256='b1' * 32),
+            'role': lambda r: r['workers']['worker@v12:transparent-v12-recent.service']['ready_identity'].update(
+                role='archive-owner'),
+            'invented field': lambda r: r['workers']['worker@v12:transparent-v12-recent.service']['ready_identity'].update(
+                publication_sha256='ab' * 32),
             'fleet bytes': lambda r: r['controller']['files'].update({FLEET: '0' * 64}),
             'budget': lambda r: r['workers']['worker@v12:transparent-v12-archive.service']['limits'].update(MemoryMax='9G'),
         }
@@ -134,7 +155,7 @@ class BinaryUpgrade(unittest.TestCase):
 
     def test_identity_change_after_restart_rolls_back_every_touched_worker(self):
         self.run_cli('baseline')
-        self.shift['transparent-v12-recent.service'] = {'publication_sha256': 'cd' * 32, 'assignment': 'recent'}
+        self.shift['transparent-v12-recent.service'] = {'worker_assignment_sha256': 'cd' * 32}
         code, lines = self.run_cli('deploy', '--binary', str(self.binary), '--skip-exact-check')
         self.assertEqual(code, 1)
         self.assertTrue(any('publication identity changed' in line for line in lines), lines)
@@ -142,6 +163,35 @@ class BinaryUpgrade(unittest.TestCase):
         code, lines = self.run_cli('status')
         self.assertEqual(code, 0, lines)
         self.assertTrue(any('rolled-back' in line for line in lines), lines)
+
+    def test_controller_map_advancing_mid_rollout_is_the_authority(self):
+        self.run_cli('baseline')
+        shape = self.fake.health_shapes[('v12', 'transparent-v12-recent.service')]
+        def advancing(ready_, exe):
+            self.map[0] = NEXT_MAP if exe == sha256(NEW) else self.map[0]
+            return shape(ready_, exe)
+        self.fake.health_shapes[('v12', 'transparent-v12-recent.service')] = advancing
+        code, lines = self.run_cli('deploy', '--binary', str(self.binary), '--skip-exact-check')
+        self.assertEqual(code, 0, lines)
+        # A worker that keeps serving a stale map after the controller moved on refuses.
+        self.shift['transparent-v12-archive.service'] = {'map_sha256': MAP}
+        code, lines = self.run_cli('status')
+        self.assertEqual(code, 1)
+        self.assertTrue(any('controller current is' in line for line in lines), lines)
+
+    def test_unready_or_malformed_responses_refuse(self):
+        self.run_cli('baseline')
+        for name, change in {'prewarm': {'prewarm_failed': 1}, 'cold': {'warm_runtimes': 1}}.items():
+            with self.subTest(name):
+                shape = ready
+                self.fake.health_shapes[('v12', 'transparent-v12-archive.service')] = (
+                    lambda r, exe, change=change: {**shape('transparent-v12-archive.service', self.map[0]), **change})
+                self.assertEqual(self.run_cli('preflight', '--binary', str(self.binary))[0], 1)
+        self.fake.health_shapes[('coordinator', CONTROLLER)] = lambda r, exe: {'phase': 'serving'}
+        code, lines = self.run_cli('preflight', '--binary', str(self.binary))
+        self.assertEqual(code, 1)
+        self.assertTrue(any('no current map_sha256' in line for line in lines), lines)
+        self.assertEqual(set(self.running().values()), {sha256(OLD)})
 
     def test_staged_release_bytes_are_immutable(self):
         release = '/opt/transparent-publisher/releases/%s/transparent-shard-server' % sha256(NEW)
