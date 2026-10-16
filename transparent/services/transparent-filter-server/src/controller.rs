@@ -1742,7 +1742,7 @@ print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('re
         });
         let cookie = root.path().join("cookie");
         std::fs::write(&cookie, "fixture:fixture").unwrap();
-        let client = ZakuraClient::from_cookie_file(format!("http://{address}"), &cookie).unwrap();
+        let client = crate::zakura::connect(format!("http://{address}"), &cookie).unwrap();
         let journal_dir = root.path().join("journal");
         let mut journal = EventStore::open(
             &journal_dir,
