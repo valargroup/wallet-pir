@@ -1,12 +1,56 @@
 #!/usr/bin/env python3
 """Check local Markdown targets and heading anchors with one cached file scan."""
 from pathlib import Path
+import hashlib
+import json
 import re
 import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
 LINK = re.compile(r'\]\(([^)\n]+)\)')
 HEADING = re.compile(r'^#{1,6} +(.+)$', re.MULTILINE)
+
+
+# These links belong to an immutable assurance capture. Resolve only its two
+# removed oracle files at the exact tested source recorded in results.md, and
+# verify their bytes against the capture's original manifest.
+HISTORICAL_REPOSITORY = 'https://github.com/valargroup/wallet-pir.git'
+HISTORICAL_SOURCES = {
+    'transparent/evidence/prewarm-hint-assurance-2026-10-04/README.md': (
+        '2bb5c0299eb752b68a5ad5fad9b156b046bef8c9',
+        frozenset({
+            'transparent/crates/transparent-native/testdata/batched_hint_kat.py',
+            'transparent/crates/transparent-native/testdata/batched_hint_kat.json',
+        })),
+}
+
+
+def historical_source_exists(document, resolved):
+    capture = HISTORICAL_SOURCES.get(document)
+    if capture is None:
+        return False
+    revision, targets = capture
+    try:
+        source = resolved.relative_to(ROOT.resolve()).as_posix()
+        if source not in targets:
+            return False
+        bundle = (ROOT / document).parent
+        if f'`{revision}`' not in (bundle / 'results.md').read_text():
+            return False
+        expected = json.loads((bundle / 'manifest.json').read_text())['sources']['source_sha256'][source]
+        # CI checks out a shallow tree. Fetch only this policy's fixed captured
+        # revision from the owning repository, never a ref or URL from Markdown.
+        present = subprocess.run(['git', 'cat-file', '-e', f'{revision}^{{commit}}'],
+                                 cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if present.returncode:
+            print(f'check-doc-links: fetching captured source {revision}', flush=True)
+            subprocess.run(['git', 'fetch', '--no-tags', '--depth=1', HISTORICAL_REPOSITORY, revision],
+                           cwd=ROOT, check=True, timeout=30, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        blob = subprocess.check_output(['git', 'show', f'{revision}:{source}'],
+                                       cwd=ROOT, stderr=subprocess.DEVNULL)
+        return hashlib.sha256(blob).hexdigest() == expected
+    except (ValueError, OSError, KeyError, TypeError, subprocess.SubprocessError):
+        return False
 
 
 def slug(text):
@@ -36,7 +80,7 @@ def main():
                 continue
             path, _, fragment = target.partition('#')
             resolved = (file.parent / path if path else file).resolve()
-            if not resolved.exists():
+            if not resolved.exists() and not (not fragment and historical_source_exists(name, resolved)):
                 broken.append(f"{name}: missing target '{target}'")
             elif fragment and resolved.suffix == '.md':
                 if resolved not in headings:
