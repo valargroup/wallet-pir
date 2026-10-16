@@ -59,14 +59,13 @@ fn raw_shielded_and_transparent_fields_round_trip_through_protoc() {
     frame.extend(bytes);
     let independent: CompactBlock = decode(&frame, "identity").unwrap().remove(0);
     assert_eq!(independent, compact);
-    assert_eq!(
-        compact.vtx.iter().map(|t| t.vin.len()).sum::<usize>(),
-        transparent.iter().map(|t| t.inputs.len()).sum::<usize>()
-    );
-    assert_eq!(
-        compact.vtx.iter().map(|t| t.vout.len()).sum::<usize>(),
-        transparent.iter().map(|t| t.outputs.len()).sum::<usize>()
-    );
+    // Fixed counts, read with the node's own block parser: the block's five
+    // transactions spend no transparent input and pay four transparent outputs.
+    // The compact block and the library's transparent parts must both match them.
+    assert_eq!(compact.vtx.iter().map(|t| t.vin.len()).sum::<usize>(), 0);
+    assert_eq!(transparent.iter().map(|t| t.inputs.len()).sum::<usize>(), 0);
+    assert_eq!(compact.vtx.iter().map(|t| t.vout.len()).sum::<usize>(), 4);
+    assert_eq!(transparent.iter().map(|t| t.outputs.len()).sum::<usize>(), 4);
     assert!(compact
         .vtx
         .iter()

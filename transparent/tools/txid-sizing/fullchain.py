@@ -231,7 +231,8 @@ def scan(cache,binary,status,evidence):
         value=dict(schema="txid-full-chain-checkpoint-v1",anchor_height=ANCHOR_HEIGHT,anchor_hash=ANCHOR_HASH,
             scanned_blocks=counts[0],last_height=last[0],last_hash=last[1],transactions=txids,
             database_sha256=digest(cache/"census.sqlite"),binary_sha256=digest(binary),
-            parser_sha="af944f5194ef2e9921bc96af017629450375013c",
+            # Blocks are parsed by wallet-libraries' zakura-server-chain at the export's pin.
+            parser_sha="4c5e779524b08644ef7fd6055456078c29edc87e",
             extractor_sha256=digest(Path("transparent/services/transparent-filter-server/src/extract.rs")),
             census_source_sha256=digest(Path("transparent/tools/txid-sizing/export/src/census.rs")),
             coverage="INCOMPLETE" if counts[0]!=ANCHOR_HEIGHT+1 else "FULL_CHAIN")

@@ -13,7 +13,6 @@ use transparent_filter_server::ingest;
 use transparent_filter_server::service::{router, Phase, ServiceState};
 use transparent_filter_server::shard_filters::ShardFilters;
 use transparent_filter_server::store::FilterStore;
-use transparent_filter_server::zakura::NodeClient;
 
 #[derive(Parser, Clone)]
 #[command(

@@ -150,6 +150,11 @@ coinbase non-applicable fees stay distinct. Normal extraction uses the existing
 extractor and shared value-balance fee logic. Compact codec sizes remain
 analysis proposals, separate from implemented display-v1.
 
+Checkpoints written before the export read blocks through wallet-libraries'
+`zakura-server-chain` record the earlier extractor and census sources, so a
+resume refuses them (`checkpoint extractor differs`); the raw bundles remain valid
+and the census must be rescanned from them.
+
 The retained raw preflight reached 44.51 blocks/s; this is acquisition throughput,
 not full-chain completion. The verified resume checkpoint contains 27,812 parsed blocks, an incomplete
 prefix. Full coverage and anonymity conclusions remain unqualified until the

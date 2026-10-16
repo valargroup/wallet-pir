@@ -53,8 +53,7 @@ async fn main() -> Result<(), Error> {
         }
     }
     let genesis = display(&fetch(&state, &rpc, 0).await?.hash());
-    if display(&fetch(&state, &rpc, c.anchor_height).await?.hash()) != c.anchor_hash
-    {
+    if display(&fetch(&state, &rpc, c.anchor_height).await?.hash()) != c.anchor_hash {
         return Err("accepted anchor does not match node".into());
     }
     std::fs::create_dir_all(&c.out_dir)?;
@@ -136,8 +135,7 @@ async fn main() -> Result<(), Error> {
             );
         }
     }
-    if display(&fetch(&state, &rpc, c.anchor_height).await?.hash()) != c.anchor_hash
-    {
+    if display(&fetch(&state, &rpc, c.anchor_height).await?.hash()) != c.anchor_hash {
         return Err("node anchor changed during export".into());
     }
     manifest.complete = true;

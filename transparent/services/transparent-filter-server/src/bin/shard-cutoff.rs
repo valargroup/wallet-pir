@@ -143,7 +143,9 @@ impl Headers for RpcHeaders {
             .ok_or_else(|| format!("header time {seconds} at {height} is out of range").into())
     }
     fn hash(&mut self, height: u64) -> Result<String, BoxError> {
-        Ok(self.runtime.block_on(self.client.block_hash_display(height))?)
+        Ok(self
+            .runtime
+            .block_on(self.client.block_hash_display(height))?)
     }
     fn label(&self) -> &'static str {
         "rpc"

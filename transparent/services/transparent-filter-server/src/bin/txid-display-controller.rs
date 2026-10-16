@@ -11,7 +11,6 @@ use transparent_filter_server::txid_display::{
     serving::WorkersFile,
     source::{open_writer, LiveSource, ReplaySource, Source},
 };
-use transparent_filter_server::zakura::NodeClient;
 use transparent_shard::display::DisplaySealParams;
 
 #[derive(Parser)]

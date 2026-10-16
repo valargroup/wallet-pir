@@ -19,11 +19,14 @@
 //!
 //! # Coverage
 //!
-//! A secondary instance sees the primary's flushed data, so it trails the tip
-//! by whatever is still in the primary's memtable, and it does not see the
-//! non-finalized state at all. For a backfill of buried history that is
-//! irrelevant. Near the tip it means a height can be briefly absent, which
-//! surfaces as [`StateError::MissingBlock`] rather than as a wrong answer.
+//! The reader is a snapshot of what the node had committed when it opened, and
+//! it does not see the non-finalized state at all. For a backfill of buried
+//! history that is irrelevant. Near the tip it means a height can be absent,
+//! which surfaces as [`MissingBlock`] rather than as a wrong answer. A long
+//! backfill reopens the reader periodically; see
+//! `zakura_server_chain::transparent::state`.
+//!
+//! [`MissingBlock`]: zakura_server_chain::transparent::ExtractError::MissingBlock
 
 use crate::extract::index;
 use crate::ingest::BuiltEvents;

@@ -196,7 +196,12 @@ impl LiveSource {
                 .ok_or_else(|| transient("missing journal block"))?
                 .block_hash;
             if ancestor <= tip
-                && self.rpc.block_hash_display(ancestor).await.map_err(transient)? == ours.to_display_hex()
+                && self
+                    .rpc
+                    .block_hash_display(ancestor)
+                    .await
+                    .map_err(transient)?
+                    == ours.to_display_hex()
             {
                 break ours;
             }
@@ -264,7 +269,11 @@ impl LiveSource {
         let built = build_fetched_block_events(&self.rpc, &mut self.outputs, height, fetched, true)
             .await
             .map_err(transient)?;
-        if self.rpc.block_hash_display(height).await.map_err(transient)?
+        if self
+            .rpc
+            .block_hash_display(height)
+            .await
+            .map_err(transient)?
             != built.block_hash.to_display_hex()
         {
             return Err(transient("block became noncanonical during extraction"));
