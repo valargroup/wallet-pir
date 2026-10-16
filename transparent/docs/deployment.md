@@ -3828,12 +3828,18 @@ ExecStart drop-in, the production lock, journals and touched-target rollback.
 - **Release identity** is the request's `release.git_sha` and `release.binary_sha256`; a mutating
   command also requires the installed operations package to name that Git revision.
 - **Publication identity** is pinned separately: v12 `publication.source_sha` (the controller's
-  `source_sha`, for example `fb90519b`), or the 4k8 display `geometry` and `publication_root`; the
-  controller's effective unit bytes and the digests of its configuration, `fleet.json` and fleet
-  script; each worker's ready identity fields, cache/limit unit properties and argument pairs.
+  `source_sha`, for example `fb90519b`), or the 4k8 display `root` (run mode takes no `--geometry`;
+  `<root>/display-root.json`, pinned under `controller.files`, fixes txid-4k8); the controller's
+  normalized effective unit (ExecStart binary abstracted) and the digests of its configuration, `fleet.json` and fleet
+  script; each worker's ownership fields (history: `worker_id`, `role`, `replica_group`, `assigned_shards`,
+  `assignment_sha256`, `worker_assignment_sha256`; display: `role` `combined`), cache/limit unit
+  properties and argument pairs. A worker's `map_sha256` must equal the controller's current map
+  (`/v1/status` `map_sha256` with phase `serving`, or display `published.map_sha256` with phase
+  `running`, no halt, not stalled), read before and after the worker; history also requires
+  `warm_runtimes == target_runtimes` and no `prewarm_failed`, display `ready` and `warm`.
 - History refuses unless the controller holds `follow_journal: false`, the full-v3 journal, the
   full-v12 publication root and no `ship_runtimes`. Display refuses unless its controller runs
-  `--geometry txid-4k8`.
+  `--root <root>` without `--geometry`.
 - Supported topology only: history workers exactly `transparent-v12-archive.service` and
   `transparent-v12-recent.service` with the `transparent-v12-publish-controller.service` controller;
   display worker exactly `transparent-txid-display-worker.service` with
@@ -3843,5 +3849,6 @@ ExecStart drop-in, the production lock, journals and touched-target rollback.
   Controllers, publications, assignments, journals and routing are never written; unit drift beyond
   the binary refuses.
 
-Not covered: controller or fleet-script upgrades, and confirmation that the live ready endpoints
-expose the pinned identity fields. The display path has no fixture test yet.
+Not covered yet: controller executable upgrades, pausing and re-pinning the continuous load
+(`pins.json`) — stop the load observers by hand before a worker deploy and do not treat monitoring
+as ready while the old pin is live — and a display fixture test.
