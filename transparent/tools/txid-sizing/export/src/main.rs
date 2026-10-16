@@ -45,7 +45,7 @@ fn main() -> Result<(), AnyError> {
         if args.len() != 2 {
             return Err("usage: txid-sizing-export --source-info".into());
         }
-        println!("{}", source_info::executing()?);
+        println!("{}", source_info::Executing::capture()?.into_identity());
         return Ok(());
     }
     if args.get(1).map(String::as_str) == Some("--shape-stream") {

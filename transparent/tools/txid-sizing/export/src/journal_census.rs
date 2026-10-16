@@ -658,6 +658,11 @@ pub fn collect(args: &[String]) -> Result<Value, AnyError> {
     let dir = Path::new(&args[0]);
     let end: u64 = args[1].parse()?;
     let derive_anchor = args[2] == "--anchor-from-journal";
+    // Identify the executing reader before locking or reading the journal;
+    // every identity in the output is this one capture.
+    crate::source_info::test_barrier("before-capture")?;
+    let reader = crate::source_info::Executing::capture()?;
+    crate::source_info::test_barrier("after-capture")?;
     // Hold a shared lock throughout. Never race an ingest, truncate or create a
     // source file; the existing writer holds its exclusive lock until stopped.
     let lock = File::open(dir.join("writer.lock"))?;
@@ -847,7 +852,7 @@ pub fn collect(args: &[String]) -> Result<Value, AnyError> {
     .into_iter()
     .map(|(name, bytes)| (name, hex::encode(Sha256::digest(bytes))))
     .collect();
-    let reader_identity = crate::source_info::executing()?;
+    let reader_identity = reader.identity();
     let source = json!({"start_height":0,"anchor_height":end,"anchor_hash_display":expected,"anchor_hash_external_expectation":!derive_anchor,"journal_version":store.version(),
             "journal_covered_through":store.covered_through(),"era_boundaries":ERAS,"checkpoint_hex":hex::encode(checkpoint),
             "block_membership_sha256":hex::encode(digest.finalize()),
@@ -857,7 +862,7 @@ pub fn collect(args: &[String]) -> Result<Value, AnyError> {
             "compiled_reader_identity":reader_identity,
             "journal_ingest_parser_identity":Value::Null,
             "compiled_source_file_sha256":pins,
-            "binary_sha256":hex::encode(Sha256::digest(std::fs::read(std::env::current_exe()?)?)),"ingest_executable_and_source_pin":Value::Null});
+            "binary_sha256":reader.binary_sha256(),"ingest_executable_and_source_pin":Value::Null});
     let measurement = json!({"elapsed_seconds":start.elapsed().as_secs_f64(),"partial_archive_records":partial_archive_records,"distinct_display_records":n,"committed_blocks":end+1,
             "total_chain_transactions":Value::Null,"shielded_only_exclusions":Value::Null,
             "inventory_limit":"Display sidecars cannot reveal excluded shielded-only transactions. Attach the ingest's independent canonical transaction/exclusion receipt; no exclusion count is inferred from events or empty sidecars."});

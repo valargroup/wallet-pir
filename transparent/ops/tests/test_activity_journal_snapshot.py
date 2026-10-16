@@ -2041,9 +2041,11 @@ class Wrapper(unittest.TestCase):
         self.assertIn('const BLOCK_RECORD_BYTES: usize = 32 + 8 + 8;', source)
         self.assertIn('lock.try_lock()', source)
         self.assertIn('.open(dir.join("writer.lock"))', source)
-        # `EVENT_BYTES` in wallet-libraries' zakura-transparent-events, which the
-        # services consume at the revision Cargo.lock pins.
+        # Fixed byte-boundary fixtures. Agreement of both bounds with the pinned
+        # zakura-transparent-events codec is checked against the compiled
+        # constants by transparent/tools/txid-sizing/export/tests/codec_bounds.rs.
         self.assertEqual(S.EVENT_BYTES, 87)
+        self.assertEqual(S.MAX_EVENT_BYTES, 103)
 
 
 if __name__ == '__main__':
