@@ -57,7 +57,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         setup.polys(),
     )?;
     let preprocessing_ms = start.elapsed().as_secs_f64() * 1000.0;
-    let packing = build_pack_preprocessed_blocks(&rlwe, &prepared.crs_blocks)?;
+    let packing = build_pack_preprocessed_blocks(&rlwe, prepared.crs_blocks())?;
     let top = TopKeyImages::build(&rlwe);
     let public_bytes = published_c1_rows(&packing, rlwe.q);
     let public = recover_published_c1(&public_bytes, rlwe.d, params.instances, rlwe.q);
@@ -76,7 +76,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         query_bytes = 28 + serialize_packing_keys(&rlwe, &keys)?.len() + query.len();
         let start = Instant::now();
         let coefficients = deserialize_first_dim_query(&rlwe, &params, &query)?;
-        let intermediate = cached.runtime.evaluate(&rlwe, &coefficients)?;
+        let intermediate = cached.runtime().evaluate(&rlwe, &coefficients)?;
         let packed = pack_intermediate_blocks(&intermediate, &keys, &top, &packing)?;
         let response = serialize_rlwe_response_bodies(&packed, params.q_prime_1);
         let elapsed = start.elapsed().as_secs_f64() * 1000.0;

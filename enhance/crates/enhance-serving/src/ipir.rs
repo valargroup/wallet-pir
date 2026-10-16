@@ -171,17 +171,40 @@ pub struct ShardRuntime {
 }
 
 /// Offline preparation owns CRS only until it has been durably persisted.
+///
+/// A prepared shard is a candidate: building it checks only the shard's
+/// structure (layout, row width). [`PreparedShard::persist`] turns it into a
+/// [`CachedShard`] that a worker may serve; fields stay private so the CRS and
+/// runtime cannot be swapped between those steps.
 pub struct PreparedShard {
-    pub runtime: ShardRuntime,
-    pub crs_blocks: Vec<CrsBlock>,
+    runtime: ShardRuntime,
+    crs_blocks: Vec<CrsBlock>,
 }
 
 /// Retained worker state: query database plus a small pinned publication handle.
+///
+/// Built only by persisting or loading a verified artifact; readers borrow its
+/// parts immutably.
 pub struct CachedShard {
-    pub runtime: ShardRuntime,
-    pub publication: PublicationArtifact,
+    runtime: ShardRuntime,
+    publication: PublicationArtifact,
     /// Monotonic load order, so a worker can pick the newest runtime of a shard.
-    pub prepared_at: u64,
+    prepared_at: u64,
+}
+
+impl CachedShard {
+    pub fn runtime(&self) -> &ShardRuntime {
+        &self.runtime
+    }
+
+    pub fn publication(&self) -> &PublicationArtifact {
+        &self.publication
+    }
+
+    /// Monotonic load order, so a worker can pick the newest runtime of a shard.
+    pub fn prepared_at(&self) -> u64 {
+        self.prepared_at
+    }
 }
 
 fn next_prepared_at() -> u64 {
@@ -403,6 +426,14 @@ impl ShardRuntime {
 }
 
 impl PreparedShard {
+    pub fn runtime(&self) -> &ShardRuntime {
+        &self.runtime
+    }
+
+    pub fn crs_blocks(&self) -> &[CrsBlock] {
+        &self.crs_blocks
+    }
+
     pub fn build(
         layout: &DatabaseLayout,
         shard_id: u64,

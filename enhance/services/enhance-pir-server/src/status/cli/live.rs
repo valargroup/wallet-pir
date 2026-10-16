@@ -30,14 +30,15 @@ async fn revalidate_candidate(
     // snapshot. Keep its original timestamp so freshness is never renewed by
     // rows that were not prepared from the newer observation.
     let canonical = rpc
-        .block_hash(u64::from(candidate.manifest.anchor_height))
+        .block_hash(u64::from(candidate.manifest().anchor_height))
         .await?;
-    Ok(accept_candidate_observation(
-        &mut candidate.manifest,
-        verified,
-        canonical,
-        status::now_ms(),
-    )?)
+    let mut manifest = candidate.manifest().clone();
+    let unchanged =
+        accept_candidate_observation(&mut manifest, verified, canonical, status::now_ms())?;
+    if unchanged {
+        *candidate = candidate.reobserved(manifest.observed_ms);
+    }
+    Ok(unchanged)
 }
 
 fn accept_candidate_observation(
@@ -121,10 +122,10 @@ pub async fn serve_live(config: LiveConfig) -> Result<(), AnyError> {
                 continue;
             }
         };
-        authority.commit(&candidate.manifest)?;
+        authority.commit(candidate.manifest())?;
         println!(
             "{}",
-            json!({"phase":"live_initial_publication","generation":number,"recovery_epoch":epoch,"preparation":stats,"anchor_height":candidate.manifest.anchor_height,"source_unchanged":unchanged,"source_observed_ms":candidate.manifest.observed_ms,"queryable_ms":status::now_ms()})
+            json!({"phase":"live_initial_publication","generation":number,"recovery_epoch":epoch,"preparation":stats,"anchor_height":candidate.manifest().anchor_height,"source_unchanged":unchanged,"source_observed_ms":candidate.manifest().observed_ms,"queryable_ms":status::now_ms()})
         );
         break Controller::new(candidate);
     };
@@ -155,21 +156,17 @@ pub async fn serve_live(config: LiveConfig) -> Result<(), AnyError> {
             }
         };
         let previous = controller.current();
-        if matches_manifest(&observed.snapshot, &previous.manifest)
+        if matches_manifest(&observed.snapshot, previous.manifest())
             && observed
                 .observed_ms
-                .saturating_sub(previous.manifest.observed_ms)
+                .saturating_sub(previous.manifest().observed_ms)
                 < UNCHANGED_REAFFIRM_MS
         {
             continue;
         }
         let (number, epoch) = authority.next_identity()?;
-        let candidate = if matches_manifest(&observed.snapshot, &previous.manifest) {
-            let mut candidate = (*previous).clone();
-            candidate.manifest.generation = number;
-            candidate.manifest.recovery_epoch = epoch;
-            candidate.manifest.observed_ms = observed.observed_ms;
-            candidate
+        let candidate = if matches_manifest(&observed.snapshot, previous.manifest()) {
+            previous.reidentified(number, epoch, observed.observed_ms)
         } else {
             let snapshot = observed.snapshot;
             let previous = previous.clone();
@@ -220,14 +217,14 @@ pub async fn serve_live(config: LiveConfig) -> Result<(), AnyError> {
             );
             candidate
         };
-        if candidate.manifest.fresh(status::now_ms()).is_err() {
+        if candidate.manifest().fresh(status::now_ms()).is_err() {
             continue;
         }
-        authority.commit(&candidate.manifest)?;
+        authority.commit(candidate.manifest())?;
         controller.activate(candidate)?;
         println!(
             "{}",
-            json!({"phase":"live_publication","generation":number,"recovery_epoch":epoch,"source_observed_ms":controller.current().manifest.observed_ms,"queryable_ms":status::now_ms()})
+            json!({"phase":"live_publication","generation":number,"recovery_epoch":epoch,"source_observed_ms":controller.current().manifest().observed_ms,"queryable_ms":status::now_ms()})
         );
     }
     for job in jobs {

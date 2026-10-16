@@ -237,7 +237,7 @@ impl Evaluation {
             let start = spec.local_row_start as usize;
             let end = start + spec.allocated_rows as usize;
             let partial = unit
-                .runtime
+                .runtime()
                 .evaluate(rlwe(), &coefficients[start..end])
                 .map_err(|e| EvaluationError::Unavailable(e.to_string()))?;
             add_intermediate_assign_mod(&mut answer, &partial, modulus())
@@ -251,7 +251,7 @@ impl Evaluation {
         let mut combined: Option<Vec<CrsBlock>> = None;
         for unit in &self.units {
             let blocks = read_crs_blocks(
-                unit.publication.reader(),
+                unit.publication().reader(),
                 params.db_cols / rlwe().d,
                 rlwe().d,
             )
@@ -523,7 +523,7 @@ impl Engine {
             .iter()
             .filter_map(|(id, unit)| {
                 unit.upgrade()
-                    .map(|u| (id.clone(), u.runtime.server.db().len() as u64 * 2))
+                    .map(|u| (id.clone(), u.runtime().server.db().len() as u64 * 2))
             })
             .collect()
     }
@@ -1026,13 +1026,13 @@ mod tests {
             &setup,
         )
         .unwrap();
-        assert_eq!(evaluation.hint().unwrap(), monolithic.crs_blocks);
+        assert_eq!(evaluation.hint().unwrap(), monolithic.crs_blocks().to_vec());
         for target in [0, 8191, 8192, 10239, 16383] {
             let mut query = vec![0; 16384];
             query[target] = modulus() - 1;
             assert_eq!(
                 evaluation.evaluate(&query).unwrap(),
-                monolithic.runtime.evaluate(rlwe(), &query).unwrap()
+                monolithic.runtime().evaluate(rlwe(), &query).unwrap()
             );
         }
     }
@@ -1097,8 +1097,8 @@ mod tests {
         for (left, right) in plain.units.iter().zip(&b_in_tail.units) {
             let mut left_hint = Vec::new();
             let mut right_hint = Vec::new();
-            std::io::Read::read_to_end(&mut left.publication.reader(), &mut left_hint).unwrap();
-            std::io::Read::read_to_end(&mut right.publication.reader(), &mut right_hint).unwrap();
+            std::io::Read::read_to_end(&mut left.publication().reader(), &mut left_hint).unwrap();
+            std::io::Read::read_to_end(&mut right.publication().reader(), &mut right_hint).unwrap();
             assert_eq!(left_hint, right_hint, "B partial hints differ");
         }
 

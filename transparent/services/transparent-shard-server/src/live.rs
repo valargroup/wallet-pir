@@ -175,8 +175,17 @@ struct Preparing {
     started: std::time::Instant,
     phase: &'static str,
 }
-struct PreparingGuard<'a>(&'a RwLock<Option<Preparing>>);
-impl Drop for PreparingGuard<'_> {
+/// Records a preparation in progress for status reports, and clears the
+/// record however the preparation ends. Shared by the shard and display
+/// publication owners.
+pub(crate) struct PreparingGuard<'a, T>(&'a RwLock<Option<T>>);
+impl<'a, T> PreparingGuard<'a, T> {
+    pub(crate) fn record(slot: &'a RwLock<Option<T>>, preparing: T) -> Self {
+        *slot.write().unwrap() = Some(preparing);
+        Self(slot)
+    }
+}
+impl<T> Drop for PreparingGuard<'_, T> {
     fn drop(&mut self) {
         *self.0.write().unwrap() = None;
     }
@@ -276,12 +285,14 @@ impl LiveService {
             return Ok(serde_json::json!({"prepared":publication.map_sha256}));
         }
         let prepare_started = std::time::Instant::now();
-        *self.0.preparing.write().unwrap() = Some(Preparing {
-            digest: publication.map_sha256.clone(),
-            started: prepare_started,
-            phase: "loading",
-        });
-        let _preparing = PreparingGuard(&self.0.preparing);
+        let _preparing = PreparingGuard::record(
+            &self.0.preparing,
+            Preparing {
+                digest: publication.map_sha256.clone(),
+                started: prepare_started,
+                phase: "loading",
+            },
+        );
         // Release an obsolete candidate's pins before reserving anew.
         *self.0.candidate.lock().await = None;
         let mut options = self.0.options.clone();

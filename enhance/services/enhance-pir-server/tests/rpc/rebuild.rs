@@ -265,7 +265,7 @@ async fn rebuild_resumes_and_coordinator_adopts_only_fee_repairs() {
             }
             journal.append_block(&block).unwrap();
         }
-        assert_eq!(journal.records.tree_size(), 10);
+        assert_eq!(journal.tree_size(), 10);
     }
     for position in 0..10 {
         check(&read_record(&live, position), position, false);

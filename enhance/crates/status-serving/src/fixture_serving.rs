@@ -18,22 +18,21 @@ impl Controller {
     /// Requires an explicit oracle digest so a failed source poll cannot renew freshness.
     pub fn reaffirm_fixture(&self, expected: Hash) -> Result<(), Error> {
         let mut views = self.views.write().unwrap();
-        if views.active.manifest.rows_digest != expected {
+        if views.active.manifest().rows_digest != expected {
             return Err(Error::Malformed);
         }
-        if now_ms() / 1000 == views.active.manifest.observed_ms / 1000 {
+        if now_ms() / 1000 == views.active.manifest().observed_ms / 1000 {
             return Ok(());
         }
         views
             .retained
-            .retain(|old| old.manifest.fresh(now_ms()).is_ok());
+            .retain(|old| old.manifest().fresh(now_ms()).is_ok());
         // A one-second observation cadence needs enough retained identities to
         // cover the full freshness window while admitted requests finish.
         if views.retained.len() >= (MAX_AGE_MS / 1000 + 2) as usize {
             return Err(Error::Unavailable);
         }
-        let mut next = (*views.active).clone();
-        next.manifest.observed_ms = now_ms();
+        let next = views.active.reobserved(now_ms());
         let old = views.active.clone();
         views.retained.push(old);
         views.active = Arc::new(next);
