@@ -59,7 +59,7 @@ checkpoints are unchanged), and `reused-pages` (106 to 647 events) and
 `recent-birthday` share no height with v10, because all their checkpoints follow
 the cutoff or anchor; the 46-checkpoint check covers them. The public production regression then passed all
 11 cases and 79 syncs against this fixture, with no failed or retried request.
-See the [evidence](../../../evidence/regression-fixture-v11-2026-10-09/README.md)
+See the [evidence](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/regression-fixture-v11-2026-10-09/README.md)
 for the export, comparison and regression records.
 
 ## Pinning
@@ -83,9 +83,9 @@ case at 3,473,686 with tier cutoff 3,262,749: 11 cases, 46 checkpoints and 68
 sync calls, journal-derived on 2026-09-08 from the coordinator's committed
 genesis journal and its full-chain candidate publication.
 
-On 2026-09-28 `mainnet.json` was re-exported from the unchanged version-2 journal for schema v10 (86 shards, publication through 3,499,341). The full public production regression passed all 11 cases and 68 checkpoints before installing this fixture. Cases and every checkpoint expectation are identical to v9; the explicit [same-anchor comparison](../../../evidence/v10-cutover-2026-09-28/publication/qualification/fixture-compare-same-anchor.json) verifies that boundary. Its exporter source was `8e69ea75b1e0071e3b978b0c78cc0487377f9e82`; executable SHA-256 `fe959884f896efaa267fab1a9a16d7df12187d9d2854b23637508d892be32be9`. See the [production regression](../../../evidence/v10-cutover-2026-09-28/regression/report.json).
+On 2026-09-28 `mainnet.json` was re-exported from the unchanged version-2 journal for schema v10 (86 shards, publication through 3,499,341). The full public production regression passed all 11 cases and 68 checkpoints before installing this fixture. Cases and every checkpoint expectation are identical to v9; the explicit [same-anchor comparison](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/v10-cutover-2026-09-28/publication/qualification/fixture-compare-same-anchor.json) verifies that boundary. Its exporter source was `8e69ea75b1e0071e3b978b0c78cc0487377f9e82`; executable SHA-256 `fe959884f896efaa267fab1a9a16d7df12187d9d2854b23637508d892be32be9`. See the [production regression](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/v10-cutover-2026-09-28/regression/report.json).
 
-Earlier on the same day, `mainnet.json` was re-exported by `regression-export` from the version-2 journal against the served schema v9 map (139 shards), with the same case specification. Cases, checkpoints and events are byte-identical to the previous fixture; the map binding, accepted headers and source changed ([comparison](../../../evidence/v9-cutover-2026-09-28/fixture-compare.json)). The previous v7-bound fixture is in Git history before this change.
+Earlier on the same day, `mainnet.json` was re-exported by `regression-export` from the version-2 journal against the served schema v9 map (139 shards), with the same case specification. Cases, checkpoints and events are byte-identical to the previous fixture; the map binding, accepted headers and source changed ([comparison](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/v9-cutover-2026-09-28/fixture-compare.json)). The previous v7-bound fixture is in Git history before this change.
 
 Before that, event records in `mainnet.json` were rewritten on 2026-09-28 from the 96-byte
 codec to the 87-byte codec. Scripts, anchors, balances, UTXOs, spends and
@@ -98,7 +98,7 @@ working-tree build based on `290dc62`; the fixture says this explicitly rather
 than attributing the exporter to a released commit. The exporter executable SHA-256
 was `7299923484234160297c7f347287cf883f318bcd93ce533694a6988b5d133038`. The publication file checksum
 and canonical served-map checksum are separate fields. The source publication
-is the one documented in the [publication evidence](../../../evidence/publication-2026-09-08/README.md).
+is the one documented in the [publication evidence](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/publication-2026-09-08/README.md).
 
 The initial candidate pool came from the existing seeded workload sample.
 Selection checked full histories before assigning labels: an assumed-unused

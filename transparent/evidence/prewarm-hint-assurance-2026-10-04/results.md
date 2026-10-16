@@ -7,9 +7,9 @@ Before each run, page cache in the task's own cgroup was released with
 
 | Command | Result |
 |---|---|
-| `cargo test --locked --profile release-fast -p transparent-native -p transparent-shard-server --lib --test round_trip --test revisions_and_cache` | pass: 15, 52, 18 (2 ignored, pre-existing) and 18 tests; 4 min 40 s; [focused.log](focused.log) |
+| `cargo test --locked --profile release-fast -p transparent-native -p transparent-shard-server --lib --test round_trip --test revisions_and_cache` | pass: 15, 52, 18 (2 ignored, pre-existing) and 18 tests; 4 min 40 s; [focused.log](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/prewarm-hint-assurance-2026-10-04/focused.log) |
 | `cargo clippy --locked --profile release-fast -p transparent-native -p transparent-shard-server --all-targets -- -D warnings` | pass, at the same source |
-| `make check-fast BASE=4c85b6c20ced1e2077245491e77d3afc98bfd644` | exit 0, every stage passed; 31 min 47 s; run once; [check-fast.log](check-fast.log) (stage and test-result lines) |
+| `make check-fast BASE=4c85b6c20ced1e2077245491e77d3afc98bfd644` | exit 0, every stage passed; 31 min 47 s; run once; [check-fast.log](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/prewarm-hint-assurance-2026-10-04/check-fast.log) (stage and test-result lines) |
 
 An earlier focused run at `576e756f` failed two disk-cache tests on cgroup
-memory admission. That run is kept in [focused-first-run.log](focused-first-run.log).
+memory admission. That run is kept in [focused-first-run.log](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/prewarm-hint-assurance-2026-10-04/focused-first-run.log).

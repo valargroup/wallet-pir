@@ -1,50 +1,59 @@
-# Evidence
+# Evidence retention
 
-- [Transparent recovery](../transparent/evidence/README.md): accepted milestones, correctness, fleet and filter measurements.
-- [Enhance](../enhance/evidence/README.md): reported performance and preflight results, with provenance limits.
-- [Receiver directory](../receiver/evidence/README.md): mainnet indexing, backfill, encrypted lookup and publication cache runs.
+- [Enhance and Status](../enhance/evidence/README.md)
+- [Transparent history and txid display](../transparent/evidence/README.md)
+- [Receiver directory](../receiver/evidence/README.md)
 
-## Retention and historical paths
+## Current evidence
 
-Retain acceptance results, relevant failed attempts, unresolved incidents and the
-raw inputs, configuration, source identities and logs needed to interpret them.
-Superseded diagnostics can be deleted after dependency review; document the reason
-and source revision in the [cleanup ledger](../docs/cleanup-2026-09-14.md).
+Keep concise decision and acceptance notes, essential certificates and independent
+oracle provenance. Retain the relevant failed attempts and limitations with every
+claim. A result is bound to its source revision, configuration, workload and
+measurement conditions; source code and historical captures do not establish
+present deployment or qualification.
 
-Retained raw files are immutable. A correction is a new note or run, not a rewritten
-measurement. Dated failures remain failures even if a later attempt succeeds.
-Navigation in Markdown may be updated when files move.
+Essential captured files are immutable. Corrections are new notes or captures,
+never edited measurements. Verify the current raw proofs from the repository root:
 
-[Historical path mappings](historical-paths.json) map old repository locations to
-this layout. Paths and commands inside captured JSON, logs, scripts, source manifests
-and archives describe the original checkout or capture host; do not rewrite them.
-Use the recorded source revision to reproduce a historical run. Links to removed
-investigations point to immutable Git history and provide context, not current
-instructions. The top-level [SHA256SUMS](SHA256SUMS) records the retained raw bytes
-at cleanup; run `shasum -a 256 -c evidence/SHA256SUMS` from the repository root.
-Per-run checksums use their run directory as the base. Where navigation edits
-changed a checksummed Markdown note, `SHA256SUMS` now hashes that note's current
-bytes and the untouched capture manifest is kept as `SHA256SUMS.original`.
-The M3 September 10 README already disagreed with its capture checksum before
-cleanup; this pre-existing documentation mismatch is not a raw-data change.
-The other six changed document digests reflect navigation edits. All 632 original
-non-Markdown artifacts, including those five capture manifests, retain their bytes.
-A source manifest identifies historical source, not the current tree.
+```sh
+shasum -a 256 -c evidence/SHA256SUMS
+```
 
-## Required run metadata
+## Historical runs
 
-Every new run directory must include a machine-readable manifest and short results note:
+The complete pre-cleanup tree is pinned by the published tag
+`archive/pre-hygiene-2026-10-16`, commit
+`c00c2101e85fb9518ef8509f4478ed097ce49814`.
+[Browse the original evidence](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/evidence/README.md), including
+original checksum manifests, logs, inputs, failed runs and experiment sources.
+A retained note's historical link uses this full commit and original path.
+Retrieve individual files without restoring the whole tree:
 
-- Run id, UTC time, source/tool commit, exact command/flags and dependency/build profile.
-- Backend/crates, schema, named geometry and row dimensions, seal policy, packing/key-reuse mode.
-- Network/genesis, journal identity, inclusive height range, anchor hash/time, cutoff height/algorithm, event and script counts.
-- Actual host SKU, region, CPU model/sharing, RAM, storage, OS; client device and network.
-- Workload definition, script-to-wallet grouping, concurrency and duration, repetitions, filter/setup/runtime cache state and revision churn.
-- Raw outputs, failures/timeouts/incomplete counts, query and completed-sync rates, latency distribution, memory and disk peaks.
-- Separate upload, response, setup, filters and transport bytes; decimal GB versus binary GiB; measured versus projected values and formulas.
-- Comparison baseline with identical coverage/workload, limitations and acceptance result.
+```sh
+git show c00c2101e85fb9518ef8509f4478ed097ce49814:<original-path>
+```
 
+All raw files retained in the current tree match their pre-cleanup bytes. Raw
+captures and paths inside them were not rewritten. The current `SHA256SUMS`
+lists only current proofs; original full-run checksums remain in the archive.
+See the [cleanup ledger](../docs/cleanup-2026-09-14.md) for the removal boundary.
 
-Distinguish measurements, derived arithmetic, projections and deployment decisions.
-Never infer wallet capacity from isolated scan bandwidth, add tier percentiles,
-or omit failed/incomplete work from a rate or latency denominator.
+## New development runs
+
+Write exploratory scripts and generated output under ignored `.local-pir/`, or
+retain temporary CI diagnostics as CI artifacts. They do not belong in commits.
+Promote a script into a maintained tool with tests only when it has a reusable
+consumer. Consumed fixtures belong beside their tests or tools, with independent
+provenance and checksums where required.
+
+Promote evidence only when it supports an acceptance decision, a correctness or
+security argument, an unresolved incident, or a design decision still governing
+code. Keep one concise note with exact source/build identity, command and flags,
+relevant configuration and host/workload conditions, expected and actual results,
+failures, limitations, and links or hashes for the proof needed to check the claim.
+Preserve immutable raw inputs needed to interpret the claim; do not rely only on
+an expiring CI artifact. Add bounded allowances with a reason in
+`tools/ci/hygiene.toml` for essential data and include its digest in `SHA256SUMS`.
+Do not add complete inventories, copied source trees, task reports or repeated
+terminal captures when they add no necessary evidence. See the
+[development workflow](../docs/development.md#keep-changes-focused).

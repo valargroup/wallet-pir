@@ -1,2 +1,0 @@
-Filesystem      Size  Used Avail Use% Mounted on
-/dev/sda        1.0T  577G  447G  57% /srv/zakura

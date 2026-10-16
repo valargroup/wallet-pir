@@ -12,7 +12,7 @@ status producer distinguishes these states. HTTP readiness, assignment, release,
 all workers and every independently canonical advertised anchor remain required.
 Control and HTTP observations are retained privately before refusal. Initial
 candidate prewarm, all phase bounds and all final qualification gates remain
-unchanged and open. [Evidence](../evidence/activity-metadata-2026-09-30/attempt12-warm-refusal-cold-rollback-6f37db70.json).
+unchanged and open. [Evidence](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/activity-metadata-2026-09-30/attempt12-warm-refusal-cold-rollback-6f37db70.json).
 
 Attempt 11 passed candidate preparation and activation, then the closed startup
 guard refused a real publication error: the cloned predecessor roster pinned
@@ -24,7 +24,7 @@ requires pinned archive ranges to cover the qualified map exactly, rejecting
 stale ranges, gaps, overlap, foreign shards, invalid endpoints and changed roles.
 The private generator derives this fleet's single owner's range from the
 checksum-verified qualified v11 map. Corrected cutover and all final gates remain
-open. [Evidence](../evidence/activity-metadata-2026-09-30/attempt11-archive-roster-refusal-cold-rollback-7bdbcbb9.json).
+open. [Evidence](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/activity-metadata-2026-09-30/attempt11-archive-roster-refusal-cold-rollback-7bdbcbb9.json).
 
 Attempt 10 passed candidate preparation and independent worker activation, but
 canonical verification failed with HTTP 503. Automatic cold rollback passed in
@@ -36,7 +36,7 @@ with pinned unit/PID/binary, no restart/OOM, 20% resource floors and both public
 origins still withdrawn. It is bounded to 300 seconds inside the unchanged
 canonical phase; all full canonical gates still follow. Actual corrected cutover
 and all final qualification remain open.
-[Evidence](../evidence/activity-metadata-2026-09-30/attempt10-canonical-refusal-cold-rollback-9164c2c7.json).
+[Evidence](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/activity-metadata-2026-09-30/attempt10-canonical-refusal-cold-rollback-9164c2c7.json).
 
 Attempt 9 completed the remote v11 cutover and exact private/both canonical
 query proofs, but continuous publication failed: operations inputs used `v2`
@@ -48,7 +48,7 @@ rollback transport timeout remain failures, separately reconciled against the
 remote journal. The service-input guard now binds the canonical profile from the
 reviewed publication geometry and rejects shorthand/foreign names. Corrected
 redeployment and every final sustained/freshness/capacity/lifecycle gate remain
-open. [Evidence](../evidence/activity-metadata-2026-09-30/attempt9-cutover-freshness-failure-cold-rollback-57e71be1.json).
+open. [Evidence](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/activity-metadata-2026-09-30/attempt9-cutover-freshness-failure-cold-rollback-57e71be1.json).
 
 
 Updated 2026-09-28. This owns milestone definitions, execution order and the
@@ -58,7 +58,7 @@ numbers are reconciled below rather than retained as a second release checklist.
 
 ## Transparent operations after the 2026-10-09 redeploy
 
-The [2026-10-09 redeploy](../evidence/fleet-redeploy-2026-10-09/README.md) moved the
+The [2026-10-09 redeploy](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/fleet-redeploy-2026-10-09/README.md) moved the
 history workers and the controller to `a317455e`. Operations source now pins those
 bytes, and the adapter the reconciler runs, for v11 schema operations
 ([deployment](deployment.md#portable-activity-worker-executables)). These items remain;
@@ -93,7 +93,7 @@ the last two were found during the redeploy.
     attribution pins move to the new source.
 - [ ] Re-pin the version-1 portable executables to full CI 38011976059 at `9d2cbda0`,
   which production runs since the
-  [`9d2cbda0` redeploy](../evidence/fleet-redeploy-9d2cbda0-2026-10-10/README.md):
+  [`9d2cbda0` redeploy](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/fleet-redeploy-9d2cbda0-2026-10-10/README.md):
   `transparent-shard-server` `6ab86d6a…`, `shard-control` `ff3c0264…` and
   `transparent-publish-controller` `6041ea47…`, with `controller.json` `source_sha`
   `9d2cbda0`. The pinned `a317455e` bytes would install older executables.
@@ -246,14 +246,14 @@ and txid clients built from this source send 44 bits whenever a service advertis
 scheme they reproduce, so deploying these servers moves current clients to 44 bits with
 no further switch; older clients keep sending 49
 ([architecture](architecture.md#pir-scheme)). History and txid display serve them since
-2026-10-09 ([deploy](../evidence/fleet-redeploy-06a972db-2026-10-09/README.md); now on
-`9d2cbda0`, [redeploy](../evidence/fleet-redeploy-9d2cbda0-2026-10-10/README.md)).
+2026-10-09 ([deploy](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/fleet-redeploy-06a972db-2026-10-09/README.md); now on
+`9d2cbda0`, [redeploy](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/fleet-redeploy-9d2cbda0-2026-10-10/README.md)).
 
 - [x] Before deploying them, certify every served segment at both widths: 49-bit nearest,
   as today, and 44-bit dithered (`native_certificate --query-rounding dithered`), at the
   unchanged floors `{archive-wide-pages: 83, otherwise: 128}`. The `native-certificates`
   gate and its certifier pin must move to ipir-sp `d76e61a`'s `certify_native.py`, which
-  reads dithered reports; the [screen](../evidence/dithered-query-2026-10-09/README.md)
+  reads dithered reports; the [screen](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/dithered-query-2026-10-09/README.md)
   has the shape-level margins.
   All 608 segments served at 3,512,212 passed at both widths
   ([certificates](../evidence/served-segment-certificates-2026-10-09/README.md)).
@@ -271,7 +271,7 @@ persistence counters before the next guarded preparation attempt. The transactio
 passed. Earlier cold failures remain failed. Complete bounded locked candidate
 runtime-cache preparation before another independent activation attempt; a
 successful v11 redeployment and every sustained/lifecycle acceptance gate remain
-open. [Evidence](../evidence/activity-metadata-2026-09-30/attempt7-cache-reader-failure-cold-rollback-762e81f3.json).
+open. [Evidence](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/activity-metadata-2026-09-30/attempt7-cache-reader-failure-cold-rollback-762e81f3.json).
 
 Actual transaction `transparent-schema-20261001T112410Z-15d5de8189d2-c99edc`
 started after locked preflight on 2026-10-01 at 11:24 UTC. All five complete v10
@@ -280,13 +280,13 @@ capture's repeated native verification. Remote owners subsequently completed and
 exited. Recovery restored v10 bytes and services, then failed warm verification:
 authority had restarted publication before workers were proved. Public origins
 remain guarded; the transaction is `rollback-failed`. The 15-minute recovery
-acceptance was missed and must be rerun. The [reviewed recovery repair](../evidence/activity-metadata-2026-09-30/interrupted-cutover-recovery-repair-focused.json)
+acceptance was missed and must be rerun. The [reviewed recovery repair](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/activity-metadata-2026-09-30/interrupted-cutover-recovery-repair-focused.json)
 preserves original recipe/baseline bytes and all failures. Its focused check
 passed; source staging and actual repaired recovery are still pending. This is
 not a completed v11 deployment.
 
 Owner: this implementation chat. Scope is wallet-pir and zakura-core/wallet-libraries;
-Vizor, sending and distribution remain excluded. [Starting observations](../evidence/activity-metadata-2026-09-30/README.md).
+Vizor, sending and distribution remain excluded. [Starting observations](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/activity-metadata-2026-09-30/README.md).
 
 - [x] Isolate both repositories at the recorded source bases.
 - [x] Provision and mount the selected 250 GiB coordinator volume, preserving v10 state.
@@ -295,18 +295,18 @@ Vizor, sending and distribution remain excluded. [Starting observations](../evid
 - [x] Establish nonempty HTTP SQLite recovery and exact 5 QPS / 20 QPS prototype gates.
 - [x] Backfill a separate genesis-to-anchor v3 journal through 3500738.
   The frozen ingester and independent guard completed successfully; checkpoint
-  and terminal evidence are [retained](../evidence/activity-metadata-2026-09-30/full-ingestion-publication-start.json).
+  and terminal evidence are [retained](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/activity-metadata-2026-09-30/full-ingestion-publication-start.json).
 - [x] Complete full v11 publication and artifact verification.
   The original wrapper owner PID 1876447 terminated successfully at 05:14 UTC:
   all artifacts and four journal rebuilds passed, with 90 shards and measured
-  allocation retained in [terminal evidence](../evidence/activity-metadata-2026-09-30/full-publication-terminal.json).
+  allocation retained in [terminal evidence](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/activity-metadata-2026-09-30/full-publication-terminal.json).
   Preserve `/srv/transparent-activity/full-v11/preparation`; do not rebuild it.
 - [x] Complete actual full-publication native correctness certificates at the approved security floors.
-  All 180 distinct table segments passed; [terminal evidence](../evidence/activity-metadata-2026-09-30/full-native-certificates-801d7a62.json)
+  All 180 distinct table segments passed; [terminal evidence](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/activity-metadata-2026-09-30/full-native-certificates-801d7a62.json)
   retains the exact result and source/table pins. Installed setup/public hash agreement remains a cutover gate.
 - [x] Complete independent sampled raw-chain metadata comparisons for the full publication.
   Seventeen blocks, including the three densest and the fixed anchor, matched
-  all 52,550 journal events. [Evidence](../evidence/activity-metadata-2026-09-30/full-chain-oracle-801d7a62.json)
+  all 52,550 journal events. [Evidence](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/activity-metadata-2026-09-30/full-chain-oracle-801d7a62.json)
   retains raw calls and four adaptive batch-size refusals. Sampled real-chain
   coverage includes Sprout, Sapling and Ironwood; Orchard fixture coverage and
   canonical wallet recovery remain separate gates.
@@ -322,7 +322,7 @@ Vizor, sending and distribution remain excluded. [Starting observations](../evid
   and router at `ccbfd35f`, after reproducing and correcting OpenSSH's closing
   of inherited descriptors. The keeper retained coordinator locks across parent
   exit; every remote lock and interruption fence passed before reconciliation.
-  [Evidence](../evidence/activity-metadata-2026-09-30/ssh-lock-qualified-ccbfd35f.json)
+  [Evidence](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/activity-metadata-2026-09-30/ssh-lock-qualified-ccbfd35f.json)
   is scoped to this boundary. Complete nonempty samples and coordinator inputs
   are ready. The user authorized proceeding with pending operations CI while retaining
   passing native CI and exact provenance; finish fresh source staging and actual
@@ -498,8 +498,8 @@ Scope and reproducible acceptance command: [txid display](txid-display.md).
 - [x] Pass frozen confirmed-vector native HTTP retrieval and internal negative controls.
 - [x] Pass codec/fragment bounds, multi-segment native retrieval and sidecar restart/reorg tests.
 - [x] Repin to the landed metadata source and pass the final integrated native gates.
-- [x] Retain the [stable-source native report](../evidence/txid-display-2026-10-01/README.md).
-- [x] Pass the [focused repository check](../evidence/txid-display-2026-10-01/fast-check.json).
+- [x] Retain the [stable-source native report](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/txid-display-2026-10-01/README.md).
+- [x] Pass the [focused repository check](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/txid-display-2026-10-01/fast-check.json).
 - [x] Rebase onto verified main and push only this completed server change.
 - [ ] Finish post-push main CI follow-up; report inherited lint failures separately.
 - [ ] Qualify and implement the later wallet-libraries/Vizor integration at pinned revisions.
@@ -544,7 +544,7 @@ Design: [txid display](txid-display.md). Roman's decisions:
   one-query layout.
 - [x] v2 cutover, 2026-10-08: production serves v2 from height 1 on a dedicated
   archive host; v1 is retired and its data deleted
-  ([status](status.md#txid-display-v2-in-production-from-genesis-2026-10-08)).
+  ([status](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/docs/status.md#txid-display-v2-in-production-from-genesis-2026-10-08)).
 - [ ] Ingest phase (after the code is accepted), measured on a development host
   first:
   - a v2x genesis journal ingested by another session on 2026-10-08 is
@@ -573,7 +573,7 @@ client or map of the old layout is supported.
 - [x] Code on `main`: format, placement, seal rule and window, controller,
   worker, wallet client, tooling and ops request keys (`recent_window`).
 - [x] Gates measured on a development host
-  ([evidence](../evidence/txid-display-2k8-gates-2026-10-11/README.md)):
+  ([evidence](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/txid-display-2k8-gates-2026-10-11/README.md)):
   placement census from the live map, recent rebuild time against
   `txid-2k`, runtime memory, and the native demo with one query per lookup.
 - [x] Placement census over the genesis journal itself: the site's 2026-10-12
@@ -595,7 +595,7 @@ N=1 buckets; no paid infrastructure; commit to `main`.
 
 - [x] Format, seal rule, controller, display worker, reference client, load and
   bandwidth tools, and the `txid-display-*` deploy commands, with package and ops tests.
-- [x] [Local evidence](../evidence/txid-display-tiered-2026-10-05/README.md):
+- [x] [Local evidence](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/txid-display-tiered-2026-10-05/README.md):
   seals and window drops reproduced by `verify`, 0 audit violations, all lookups
   exact, metered bytes equal computed, recent bench and bucket ablation.
 - [x] Main CI green at `d191f86b` (CI full run 37388223909);
@@ -605,13 +605,13 @@ N=1 buckets; no paid infrastructure; commit to `main`.
 - [x] Production change applied with `archive_target` 40,000 and N=1 buckets.
 - [x] Deployed in order on 2026-10-06: W0 baseline, `stage`, `ingest-start`, `firewall`,
   `router-hook`, `bootstrap`, `workers`, `route`, `measure-start`, `controller`
-  ([status](status.md#tiered-txid-display-in-production-2026-10-07)).
+  ([status](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/docs/status.md#tiered-txid-display-in-production-2026-10-07)).
 - [x] Synchronous wallet client crate `transparent-txid-client` with
   in-process transcript, error and tamper tests
   ([wallet client](txid-display.md#wallet-client)).
 - [ ] Measure each criterion live and write the production results
-  ([evidence](../evidence/txid-display-tiered-2026-10-07/README.md),
-  [status](status.md#tiered-txid-display-in-production-2026-10-07)):
+  ([evidence](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/txid-display-tiered-2026-10-07/README.md),
+  [status](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/docs/status.md#tiered-txid-display-in-production-2026-10-07)):
   - [ ] anonymity: at least 10,000 real txids per queried (shard, bucket); report page-count classes
     (v1 only; v2 entries have none);
   - [x] recent rebuild: at most 20 s from block to serving over at least 300 live blocks, p50 and max.
@@ -632,7 +632,7 @@ N=1 buckets; no paid infrastructure; commit to `main`.
 Plan and change sheet:
 [deployment](deployment.md#txid-display-backfill-below-3407001-proposed).
 Sizing:
-[evidence](../evidence/txid-display-backfill-sizing-2026-10-07/README.md).
+[evidence](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/txid-display-backfill-sizing-2026-10-07/README.md).
 Roman chose a genesis floor. Without a cutover, the live 24-archive window
 starts dropping archives around mid-December 2026.
 
@@ -644,12 +644,12 @@ starts dropping archives around mid-December 2026.
   (`transparent-txid-display-genesis-ingest`), stopped at about 20:00 UTC
   after it latched history's load on coordinator disk headroom. The partial
   journal moved to a dedicated 150 GB volume at `/srv/txid-display-genesis`
-  ([status](status.md#tiered-txid-display-in-production-2026-10-07)) and
+  ([status](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/docs/status.md#tiered-txid-display-in-production-2026-10-07)) and
   completed at 22:56:45 UTC: 3,508,674 blocks. The
-  [census](../evidence/txid-display-genesis-census-2026-10-07/README.md) found a
+  [census](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/txid-display-genesis-census-2026-10-07/README.md) found a
   sidecar for every committed block. Remaining: a spot check.
 - [x] Layout analysis on real data
-  ([census](../evidence/txid-display-genesis-census-2026-10-07/README.md)).
+  ([census](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/txid-display-genesis-census-2026-10-07/README.md)).
   Today's `txid-2k` needs 1,325 runtimes and 51.8 GiB, not 850 and 33.2 GiB.
   Shared and smaller page tables do not reach 64 GB; only 80,000-record
   archives before NU6 do.
@@ -664,7 +664,7 @@ starts dropping archives around mid-December 2026.
   (source only; no release carries them yet).
 - [x] Code: split display map, on `main` beside the unchanged full map (source
   only; no release carries it yet); measured in
-  [status](status.md#split-txid-display-map-2026-10-07). After a 409 it costs
+  [status](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/docs/status.md#split-txid-display-map-2026-10-07). After a 409 it costs
   about 1.1 KB gzipped at 426 entries, not 0.5 KB.
 - [ ] Code: ops caps, `workers --replace-active` and the new archive host;
   Terraform resource; full CI and a release (G2).
@@ -723,9 +723,9 @@ material or expose secrets in diagnostics; sending stays disabled in UI and API.
 
 | Milestone | Current disposition | Next dependency |
 |---|---|---|
-| M0 — Baseline | Accepted; [evidence](../evidence/productionize-m0-2026-09-09/README.md) | None |
+| M0 — Baseline | Accepted; [evidence](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/productionize-m0-2026-09-09/README.md) | None |
 | M1 — Fleet | Accepted under the revised six-hour requirement; [decision and raw samples](../evidence/productionize-m1-six-hour-acceptance-2026-09-13/README.md) | Later freshness incident belongs to M5 |
-| M2 — Recovery app | Accepted; [evidence](../evidence/productionize-m2-2026-09-09/README.md) | Distribution is M6 |
+| M2 — Recovery app | Accepted; [evidence](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/productionize-m2-2026-09-09/README.md) | Distribution is M6 |
 | M3 — Correctness | Public regression, fixture and native real-wallet comparisons passed; application/lifecycle acceptance incomplete | Finish the concrete work below before authoritative opt-in PIR |
 | M4 — Incremental benefit | Open | M3 |
 | M5 — Capacity and recovery | Open | M1 + M3 |
@@ -739,7 +739,7 @@ after M3; this ordering does not itself authorize parallel agents.
 
 ## M3 — Finish the release-candidate validation
 
-The [frozen-executable public regression](../evidence/productionize-m3-suite-fix-2026-09-13/README.md)
+The [frozen-executable public regression](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/productionize-m3-suite-fix-2026-09-13/README.md)
 passed all eleven cases. Its original five failures and every repaired-run HTTP
 attempt are preserved; this public-fixture subgate no longer blocks M3.
 
@@ -758,7 +758,7 @@ attempt are preserved; this public-fixture subgate no longer blocks M3.
   validation profile. Compare exact events, UTXOs and history with independent
   reconstruction at the same accepted anchor. Verify a partial/unavailable
   result never appears synchronized and sending remains disabled. The
-  [existing real-wallet run](../evidence/productionize-m3-private-wallet-2026-09-13/README.md)
+  [existing real-wallet run](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/productionize-m3-private-wallet-2026-09-13/README.md)
   exercised the library and bindings, not application screens.
 - [ ] Start from a profile with a committed nonempty transparent ledger; observe
   direct request activity, kill during that activity, reopen and resume, then
@@ -767,7 +767,7 @@ attempt are preserved; this public-fixture subgate no longer blocks M3.
   not this stronger lifecycle condition. Keep fault injection against controlled
   infrastructure; do not manipulate mainnet.
 - [ ] Reconcile the final release candidate with the
-  [fixture correctness/review record](../evidence/productionize-m3-2026-09-10/README.md)
+  [fixture correctness/review record](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/productionize-m3-2026-09-10/README.md)
   and [adapter contract](wallet-adapter.md). Confirm discovery, imported and
   unsupported scripts, fork/reorg and persistence coverage still apply after the
   client change. Publish a requirement-by-requirement M3 acceptance decision.
@@ -799,7 +799,7 @@ balance source. Review against the [adapter contract](wallet-adapter.md).
   concurrent Amsterdam reference workload. Capture actual bytes in both directions, time,
   CPU, sampled memory, writes, cache conditions, errors and incomplete work.
 - [ ] Publish exact ledger equality and the disposition of each regression.
-  The [80-recovery comparison](../evidence/block-comparison-2026-09-09/README.md)
+  The [80-recovery comparison](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/block-comparison-2026-09-09/README.md)
   supports derived additional-payload savings only; it does not close this gate.
 
 **Definition of done:** combined and PIR workflows recover identical transparent
@@ -880,8 +880,8 @@ capacity, outage limitations, trust assumptions and excluded features.
 
 The compact codec, byte-weighted directory placement, greedy page packing and
 restart-safe fragment validation are implemented and deployed. The version-2
-journal remains unchanged. [Layout evidence](../evidence/compact-layout-2026-09-28/README.md)
-records the storage work; [cutover evidence](../evidence/v10-cutover-2026-09-28/README.md)
+journal remains unchanged. [Layout evidence](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/compact-layout-2026-09-28/README.md)
+records the storage work; [cutover evidence](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/v10-cutover-2026-09-28/README.md)
 records production source, failed attempts, public checks and bounded load.
 
 - [x] Build a separate v10 full-chain publication, verify every emitted table and
@@ -917,7 +917,7 @@ geometry all change every manifest, and runtime cache keys include the revision,
 so they ride one republication and one cold rebuild of every runtime, archive
 included. A v9 publication also breaks any client built before it, including the
 wallet-libraries transparent branches. The
-[cluster qualification baseline](../evidence/cluster-qualification-2026-09-28/README.md)
+[cluster qualification baseline](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/cluster-qualification-2026-09-28/README.md)
 is the acceptance gate for each step below.
 
 - [x] Build a candidate full publication into a new directory on the coordinator:
@@ -925,7 +925,7 @@ is the acceptance gate for each step below.
   `--directory-choice all` on every shard, both tiers. Verify with `shard-verify`,
   real placement and exact replay against the journal, and verify every choice
   route at load. Decide whether provisional tails carry tables.
-- [ ] (Skipped on 2026-09-28 at the operator's request; the production rollout measured 866–1,187 s cold per archive owner, see the [cutover evidence](../evidence/v9-cutover-2026-09-28/README.md).) Rehearse the cold rebuild on bench copies of one archive owner and one
+- [ ] (Skipped on 2026-09-28 at the operator's request; the production rollout measured 866–1,187 s cold per archive owner, see the [cutover evidence](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/v9-cutover-2026-09-28/README.md).) Rehearse the cold rebuild on bench copies of one archive owner and one
   recent replica. Measure rebuild time and peak memory per role; that is what
   sizes the maintenance window for the rollout.
 - [x] Deploy the candidate: continuous publisher on the v2 profile, fixed-publication
@@ -962,7 +962,7 @@ None of these block the recovery beta, and none has an implementation decision.
   policy. Archive restore latency, admission, eviction and churn are unmeasured,
   which is what a rolling warm window would depend on.
 - [ ] Decide bulk-history isolation. The
-  [census](../evidence/bulk-isolation-census-2026-09-28/README.md) shows that
+  [census](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/bulk-isolation-census-2026-09-28/README.md) shows that
   separating long histories would turn fourteen recent shards into five, but the
   gain mostly disappears under `recent-4k-8k`, and a public small/bulk table
   choice reveals a history-size class. It needs that privacy review, bulk geometry
@@ -1038,9 +1038,11 @@ unavailable/incomplete state, cancellation and measurements. Reuse
 in Flutter. Keep compact scanning/oracle adapters benchmark-only. No PIR wire
 format, geometry change or existing-database migration is required.
 
-Each milestone produces an immutable bundle under `transparent/evidence/` containing exact
-source/configuration identities, commands, expected/actual outcomes, raw failures,
-metrics coverage and a pass/fail result. For private wallet trials publish only
+Each milestone retains a concise acceptance note and its essential immutable
+proof under `transparent/evidence/`, with source/configuration identities,
+commands, expected/actual outcomes, failures, metrics coverage and a pass/fail
+result. Generated run output stays outside Git unless it is necessary proof;
+existing historical raw bundles remain accessible by pinned Git revision. For private wallet trials publish only
 sanitized evidence; never commit wallet secrets or private histories. Code changes
 run repository-required checks. Wallet changes additionally run native tests,
 generated-binding checks, Flutter tests and a macOS release build. Documentation
@@ -1049,7 +1051,7 @@ changes run `make check-docs`.
 
 ## Service-quality rollout follow-up (2026-09-29)
 
-- [x] Superseded 2026-09-29 at the owner's request: the six-hour / 300-block telemetry canary and gated five-worker rollout were stopped, and recent replicas were rolled to `dbeb3960` without the soak (see [replica membership](../evidence/replica-membership-2026-09-29/README.md)). Archive owners still run the predecessor binary and need a maintenance-window upgrade.
+- [x] Superseded 2026-09-29 at the owner's request: the six-hour / 300-block telemetry canary and gated five-worker rollout were stopped, and recent replicas were rolled to `dbeb3960` without the soak (see [replica membership](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/replica-membership-2026-09-29/README.md)). Archive owners still run the predecessor binary and need a maintenance-window upgrade.
 - [ ] Complete full-fleet observation; retain failures and exact-query/configuration provenance.
 - [x] Superseded 2026-10-13: v1 is no longer monitored; the shadow review and
   activation moved to [Transparent monitoring on /v2](#transparent-monitoring-on-v2).
@@ -1076,14 +1078,14 @@ only on the owner's explicit go-ahead.
   publisher scripts reading the inventory. Gate: the planner reproduces the live
   assignment; enroll, drain and retire a recent replica on a bench fleet under
   load.
-- [x] **1b. Recent tier from four to two.** Done 2026-09-29: two replicas passed at 20.9 QPS (p99 53 ms); recent-03/04 destroyed ([evidence](../evidence/recent-floor-2026-09-29/README.md)). Drain recent-03 and recent-04, run
+- [x] **1b. Recent tier from four to two.** Done 2026-09-29: two replicas passed at 20.9 QPS (p99 53 ms); recent-03/04 destroyed ([evidence](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/recent-floor-2026-09-29/README.md)). Drain recent-03 and recent-04, run
   20 QPS on the pair (p99 < 2 s, p50 < 700 ms), then retire them and reduce
   `transparent_recent_count`; cancel the drains if the gate fails. Standing gate:
   2 of 2 routed in at least 99% of blocks over 24 hours.
 - [x] **2. Elastic recent provisioning.** Validated 2026-09-29: recent-05 created, bootstrapped and routed, then drained and destroyed by the actuator. A recent-only isolated Terraform root
   following the Enhance `enhance-v4` pattern, a journaled actuator and a saved-plan
   validator that refuses archive and production-root addresses.
-- [x] **3. Automatic recent failure replacement** Validated 2026-09-29: a stopped elastic replica was replaced make-before-break by the scaler and actuator ([evidence](../evidence/elastic-recent-validation-2026-09-29/README.md)). (make-before-break) and
+- [x] **3. Automatic recent failure replacement** Validated 2026-09-29: a stopped elastic replica was replaced make-before-break by the scaler and actuator ([evidence](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/elastic-recent-validation-2026-09-29/README.md)). (make-before-break) and
   capacity-forecast alerts in APM, shadow before active.
 - [x] **4. Recent load autoscaler** Validated 2026-09-29 under a low-capacity validation policy (scale-out under load, scale-in after it); production policy in `act` since 14:35 UTC. from a capacity model measured on a bench fleet:
   observe, recommend and act-dry before act.
@@ -1101,7 +1103,7 @@ Open observation gates for Track A:
   replica; the production value (10) is conservative, not a measured limit.
 - [x] Upgrade archive owners (still `0ece0ae1`) in a maintenance window.
   Superseded 2026-09-29: the archive moved to one owner on `a704616c` without
-  maintenance ([evidence](../evidence/archive-consolidation-2026-09-29/README.md)).
+  maintenance ([evidence](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/archive-consolidation-2026-09-29/README.md)).
 
 ## Single archive owner (2026-09-29)
 
@@ -1111,7 +1113,7 @@ shards 0–76; the single-copy availability risk is accepted in
 
 - [x] Named archive owners in Terraform, `repartition`/`restore`, standby tool,
   cutover, and the combined 20 QPS measurement on both topologies
-  ([evidence](../evidence/archive-consolidation-2026-09-29/README.md)).
+  ([evidence](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/archive-consolidation-2026-09-29/README.md)).
 - [x] Remove `transparent-pir-archive-01` and `-02` after the owner confirms:
   stopped, names dropped from `transparent_archive_names`, destroyed through a
   saved plan of exactly two destroys and one project change (2026-09-30).
@@ -1123,7 +1125,7 @@ shards 0–76; the single-copy availability risk is accepted in
 
 ## Txid display shipped runtimes
 
-From the [2026-10-08 deploy](../evidence/txid-display-shipped-runtimes-2026-10-08/README.md)
+From the [2026-10-08 deploy](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/txid-display-shipped-runtimes-2026-10-08/README.md)
 and the review of `6b8c5c91..d993bc75`. The change is on `main` (`229b9eb9`) and off
 by default; v2 does not enable it.
 

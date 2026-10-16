@@ -40,7 +40,7 @@ The floor is 128 for every table.
 
 Every table meets 128 bits at both widths; the lowest is 163 (archive directory,
 all-0xffff, 49-bit nearest). The figures sit beside the
-[2026-10-09 dithered screen](../dithered-query-2026-10-09/README.md) for the same
+[2026-10-09 dithered screen](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/dithered-query-2026-10-09/README.md) for the same
 row counts under v11 names (archive-32k 171/171 nearest, 177/177 dithered;
 recent-8k pages 261/270 and 243/251), as expected: the shapes are the same and
 only the seeds moved.

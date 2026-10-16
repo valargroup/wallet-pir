@@ -1,6 +1,0 @@
-Mon Oct 12 16:29:29 UTC 2026
-d9b6271ff9a214be48100d18c721f12ab08ace9655429ba7300b1e30d898ffbd  transparent-publish-controller
-MainPID=3510956
-ExecMainStartTimestamp=Mon 2026-10-12 16:29:29 UTC
-ExecStart={ path=/opt/transparent-publisher/v12/releases/322c4f07/bin/transparent-publish-controller ; argv[]=/opt/transparent-publisher/v12/releases/322c4f07/bin/transparent-publish-controller --conf
-ActiveState=active

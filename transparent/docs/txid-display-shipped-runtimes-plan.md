@@ -160,7 +160,7 @@ Background and measurements:
 ## Built and benched, 2026-10-07
 
 Implemented through the benchmarks; the deploy below has not started.
-[Bench evidence](../evidence/txid-display-shipped-runtimes-bench-2026-10-07/README.md),
+[Bench evidence](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/txid-display-shipped-runtimes-bench-2026-10-07/README.md),
 [design as built](txid-display.md#shipped-recent-runtimes). Where source or
 measurement differed from this plan:
 - The controller copied only `built`, `reused` and `seconds` from a prepare

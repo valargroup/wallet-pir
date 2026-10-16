@@ -21,11 +21,11 @@ server publishes.
 
 | Item | Value |
 |---|---|
-| Tables | Active v12 staging publication `d1e449175fe1ddc5…`, copied with `rsync` from `transparent-pir-v12-01:/srv/transparent-pir/v12/publications/`; heights 0–3,515,568, tip `00000000001a05a5…0626375e`, mainnet. All 241 table files matched their manifest SHA-256. 12 archive directories and 174 archive page tables (`decoupled-32k-32k`, 32,768 rows), 25 recent directories (`decoupled-2k-8k`, 2,048 rows) and 30 recent page tables (8,192 rows); [raw/tables.tsv](raw/tables.tsv). |
+| Tables | Active v12 staging publication `d1e449175fe1ddc5…`, copied with `rsync` from `transparent-pir-v12-01:/srv/transparent-pir/v12/publications/`; heights 0–3,515,568, tip `00000000001a05a5…0626375e`, mainnet. All 241 table files matched their manifest SHA-256. 12 archive directories and 174 archive page tables (`decoupled-32k-32k`, 32,768 rows), 25 recent directories (`decoupled-2k-8k`, 2,048 rows) and 30 recent page tables (8,192 rows); [raw/tables.tsv](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/p8-trial-2026-10-12/raw/tables.tsv). |
 | Tool | `transparent/services/transparent-shard-server/examples/p8_trial.rs` at `52a2045c`, the commit adding this directory on top of `af491534` (removed once the 8-bit profile was served, since its baseline variant measured the 16-bit history tables); ipir-sp and reinspiring `v0.1.0-rc.7`; `release-fast`, `RUSTFLAGS=-C target-cpu=native`, rustc 1.97.1. |
 | Checker | ipir-sp `v0.1.0-rc.7` `reinspiring/tools/security/certify_native.py`, SHA-256 `eb4e5799…dd64918`, with its `src/native_gaussian_cdf.txt`. |
 | Host | Temporary DigitalOcean `m-8vcpu-64gb-intel` in ams3 (8 vCPU Intel Xeon Gold 6548N, AVX-512 VNNI and VBMI; 62 GiB; Ubuntu 24.04.5, kernel 6.8), deleted after the run. Staging runs the `m-8vcpu-64gb` size (Xeon Platinum 8358), which ams3 could not provision; both variants ran on this one host, so the comparison is like for like, but absolute times may differ from staging. |
-| Commands | [run.sh](run.sh) then [run_parallel.py](run_parallel.py), see Method; [summarize.py](summarize.py) wrote [raw/summary.md](raw/summary.md) and [raw/summary.json](raw/summary.json). |
+| Commands | [run.sh](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/p8-trial-2026-10-12/run.sh) then [run_parallel.py](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/p8-trial-2026-10-12/run_parallel.py), see Method; [summarize.py](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/p8-trial-2026-10-12/summarize.py) wrote [raw/summary.md](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/p8-trial-2026-10-12/raw/summary.md) and [raw/summary.json](raw/summary.json). |
 
 ## Method
 
@@ -55,9 +55,9 @@ table four processes at a time. So:
   times from the parallel phase ran four at a time and are not build timings.
 
 Killing the serial run cut off one in-flight process, which left a broken-pipe
-panic in [raw/stderr.log](raw/stderr.log); no result was recorded for it, and
+panic in [raw/stderr.log](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/p8-trial-2026-10-12/raw/stderr.log); no result was recorded for it, and
 the parallel phase redid that work. Raw per-run lines are in
-[raw/results.jsonl](raw/results.jsonl); reports and checker verdicts are in
+[raw/results.jsonl](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/p8-trial-2026-10-12/raw/results.jsonl); reports and checker verdicts are in
 [raw/raw-reports.tar.gz](raw/raw-reports.tar.gz).
 
 ## Results

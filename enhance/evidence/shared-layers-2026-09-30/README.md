@@ -15,7 +15,7 @@ through the coordinator (`ssh.config_file` inventory; the inventory stays
 outside the repository).
 
 - `capture-baseline` recorded every Enhance and Status unit
-  ([enhance](raw/capture-baseline-enhance.txt), [status](raw/capture-baseline-status.txt)).
+  ([enhance](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/enhance/evidence/shared-layers-2026-09-30/raw/capture-baseline-enhance.txt), [status](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/enhance/evidence/shared-layers-2026-09-30/raw/capture-baseline-status.txt)).
   The coordinator unit is `enhance-pir-coordinator.service`; roles run from
   `/opt/wallet-pir/releases/<rev>/native/` under stacks of up to 13 drop-ins.
 - The first plan showed the managed drop-in would have lost to those stacks, so
@@ -23,13 +23,13 @@ outside the repository).
   them and shadows them.
 - `plan` with the router's running binary: workers, router and ingress
   unchanged; only the coordinator, on another binary (`b6857a65…`), would
-  restart ([plan](raw/plan-enhance-running-router-binary.txt)). Status: worker
+  restart ([plan](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/enhance/evidence/shared-layers-2026-09-30/raw/plan-enhance-running-router-binary.txt)). Status: worker
   and router unchanged, controller on another binary
-  ([plan](raw/plan-status-running-role-binary.txt)).
+  ([plan](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/enhance/evidence/shared-layers-2026-09-30/raw/plan-status-running-role-binary.txt)).
 - `preflight --only` with the running binaries planned no restart for the
   Enhance workers, router and ingress
-  ([preflight](raw/preflight-enhance-workers-router-ingress.txt)) or the Status
-  worker and router ([preflight](raw/preflight-status-roles.txt)). The live Status
+  ([preflight](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/enhance/evidence/shared-layers-2026-09-30/raw/preflight-enhance-workers-router-ingress.txt)) or the Status
+  worker and router ([preflight](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/enhance/evidence/shared-layers-2026-09-30/raw/preflight-status-roles.txt)). The live Status
   role units match their templates.
 
 The router's only preferred worker is a GPU worker at `10.250.90.3`, outside
@@ -49,7 +49,7 @@ on that host. Soak batch 83 (21:51:51–22:01:56) covers the reload: Status
 - **Scaler budget** (`55291f11`): the actuator refused a replace request that the
   scaler then retried, and both requests were charged, so `destroys_left` read -1.
   Deployed to the coordinator's scaler at 21:51 UTC; it read 0 at the next cycle
-  ([status](raw/scaler-status-after-fix.json)).
+  ([status](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/enhance/evidence/shared-layers-2026-09-30/raw/scaler-status-after-fix.json)).
 - **Host sampler** (`a8c83991`): its static list still named removed members and
   sampled archive-03 at 10.142.0.7 as `transparent-pir-recent-03`. It now builds
   worker targets from the roster every cycle; deployed and verified fresh for all
@@ -77,8 +77,8 @@ answers with no errors, unstarted arrivals or latency-gate failures (Enhance p99
 147–173 ms, Status p99 65–103 ms). All 138 batches since the run started:
 1,656,000/1,656,000 on each product. The APM restart falls after the last
 captured batch; it is not on the query path. Batches:
-[soak-continuous-batches.jsonl](raw/soak-continuous-batches.jsonl), run
-manifest: [soak-continuous-manifest.json](raw/soak-continuous-manifest.json).
+[soak-continuous-batches.jsonl](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/enhance/evidence/shared-layers-2026-09-30/raw/soak-continuous-batches.jsonl), run
+manifest: [soak-continuous-manifest.json](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/enhance/evidence/shared-layers-2026-09-30/raw/soak-continuous-manifest.json).
 
 ## Not done here
 

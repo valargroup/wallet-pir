@@ -1,6 +1,0 @@
-6.8.0-142-generic
-PRETTY_NAME="Ubuntu 24.04.5 LTS"
-CPU(s):                                  8
-Model name:                              INTEL(R) XEON(R) GOLD 6548N
-BIOS Model name:                         pc-i440fx-6.1  CPU @ 2.0GHz
-Mem:           64303       30032       27790           4        7148       34270

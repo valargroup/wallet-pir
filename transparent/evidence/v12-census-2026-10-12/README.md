@@ -12,14 +12,14 @@ archive and recent tiers. It covers the two layouts Roman chose:
 |---|---|
 | Journal | v2 journal on the coordinator, `/srv/zakura/transparent-event-data-v2`, read-only; it covers heights 0–3,505,130 |
 | Census range | heights 0–3,505,000 inclusive; anchor `000000000022cfabf3b73ebe48abcffd0a343a959dbc8dc7625ee1aaf751299a` |
-| Tool | `shard-census`, `release-fast`, built on the coordinator from `e29cda78` (branch `v12/decoupled-pages`), sha256 in [raw/BIN.sha256](raw/BIN.sha256); Rust 1.97.1 |
-| Runs | [raw/run.sh](raw/run.sh), both layouts in parallel under `nice -n 19 ionice -c3`. Archive took 17 min 54 s with 0.9 GB RSS; recent took 10 min 40 s with 0.3 GB RSS. |
+| Tool | `shard-census`, `release-fast`, built on the coordinator from `e29cda78` (branch `v12/decoupled-pages`), sha256 in [raw/BIN.sha256](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/v12-census-2026-10-12/raw/BIN.sha256); Rust 1.97.1 |
+| Runs | [raw/run.sh](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/v12-census-2026-10-12/raw/run.sh), both layouts in parallel under `nice -n 19 ionice -c3`. Archive took 17 min 54 s with 0.9 GB RSS; recent took 10 min 40 s with 0.3 GB RSS. |
 | Sample | `transparent/evidence/workload-sample-2026-09-08/sample.json` |
 
 A first attempt used anchor 3,514,700. It failed at once because that height is
 past the journal's end. Its empty outputs were not kept.
 
-[raw/extra-2k/](raw/extra-2k/) holds the extra decoupled 2k/8k runs from the
+[raw/extra-2k/](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/v12-census-2026-10-12/raw/extra-2k) holds the extra decoupled 2k/8k runs from the
 prototype gate: the recent window and catch-up anchors. They were copied
 unchanged from the hub's `decoupled-pages-census/extra-2k/`, except that the
 large text outputs (over 100 kB, and the per-anchor census and pairs files)

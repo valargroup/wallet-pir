@@ -19,9 +19,9 @@ The cutover took `/v2` history metadata down for about 11 minutes (below).
   own log recorded 4,505 and 4,507. No setup downloads arrived; a wallet would have
   needed them before querying. The router keeps no access log, so the counts come from
   each worker's `pir_http_arrivals_total`, read through the router
-  ([start](raw/traffic/g0-start.txt), [end](raw/traffic/g0-end.txt),
-  [delta](raw/traffic/g0-delta.txt), [load log count](raw/traffic/g0-load.txt),
-  [script](raw/traffic/g0.sh)). The `txid-2k` site's own traffic was not counted.
+  ([start](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/v1-sunset-2026-10-13/raw/traffic/g0-start.txt), [end](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/v1-sunset-2026-10-13/raw/traffic/g0-end.txt),
+  [delta](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/v1-sunset-2026-10-13/raw/traffic/g0-delta.txt), [load log count](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/v1-sunset-2026-10-13/raw/traffic/g0-load.txt),
+  [script](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/v1-sunset-2026-10-13/raw/traffic/g0.sh)). The `txid-2k` site's own traffic was not counted.
 
 ## What changed
 
@@ -32,13 +32,13 @@ shell that inlines one route file per version
 - `/v1/*` answers 410 with `{"error":"api_version_retired","retired":"/v1","use":"/v2"}`;
 - `/v2/*` routes are byte-identical to the previous `api-v2` import.
 
-Files: [rendered router](raw/coordinator/v1-sunset-20261013/router-shell.caddy),
-[previous router](raw/coordinator/v1-sunset-20261013/router-Caddyfile), and its
-[config](raw/coordinator/opt/transparent-public-router/router.json).
+Files: [rendered router](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/v1-sunset-2026-10-13/raw/coordinator/v1-sunset-20261013/router-shell.caddy),
+[previous router](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/v1-sunset-2026-10-13/raw/coordinator/v1-sunset-20261013/router-Caddyfile), and its
+[config](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/v1-sunset-2026-10-13/raw/coordinator/opt/transparent-public-router/router.json).
 
 **Coordinator (17:13:47–17:13:49).** These units were stopped and disabled
-([log](raw/coordinator/v1-sunset-20261013.log),
-[state before](raw/coordinator/v1-sunset-20261013/units-before.txt)):
+([log](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/v1-sunset-2026-10-13/raw/coordinator/v1-sunset-20261013.log),
+[state before](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/v1-sunset-2026-10-13/raw/coordinator/v1-sunset-20261013/units-before.txt)):
 - `transparent-5qps-continuous` (the v11 load);
 - `transparent-fleet-actuator.timer`;
 - `transparent-fleet-scaler`;
@@ -51,7 +51,7 @@ Files: [rendered router](raw/coordinator/v1-sunset-20261013/router-shell.caddy),
 journal `/srv/transparent-activity/full-v3/journal`, which the v12 controller only
 followed. The v12 controller now writes it:
 - `follow_journal` is false in `/opt/transparent-publisher/v12/controller.json`;
-- the drop-in [journal-writer.conf](raw/coordinator/etc/systemd/system/transparent-v12-publish-controller.service.d/journal-writer.conf)
+- the drop-in [journal-writer.conf](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/v1-sunset-2026-10-13/raw/coordinator/etc/systemd/system/transparent-v12-publish-controller.service.d/journal-writer.conf)
   makes the journal writable under the unit's `ProtectSystem=strict`.
 
 The `txid-4k8` controller writes its own journal (`journal-v3`) and was not touched.
@@ -59,7 +59,7 @@ The `txid-4k8` controller writes its own journal (`journal-v3`) and was not touc
 **v1 workers (17:26:18–17:26:24).** `transparent-shard-server` was stopped and disabled
 on recent-01 (10.142.0.10), recent-02 (10.142.0.8) and archive-03 (10.142.0.7), and
 `transparent-txid-display-worker` on txid-display-01 (10.142.0.6)
-([log](raw/coordinator/v1-sunset-20261013/workers-stopped.txt)). The droplets are kept
+([log](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/v1-sunset-2026-10-13/raw/coordinator/v1-sunset-20261013/workers-stopped.txt)). The droplets are kept
 until 48 hours have passed, for rollback.
 
 ## Incident: `/v2` history metadata down 17:13:49–about 17:24:45
@@ -77,7 +77,7 @@ publisher returned no metadata, so `/v2/shards/init` and `/v2/filters/shards` an
 - **Recovery.** v12 went back to follower (the saved `controller.json`), and
   `/v2/shards/init` answered 200 at about 17:24:45. With no writer, the journal stayed
   at 3,516,585. The drop-in was then added, and v12 restarted as writer at 17:25:15
-  ([script](raw/coordinator/v12-writer.sh), [log](raw/coordinator/v12-writer.log)). It
+  ([script](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/v1-sunset-2026-10-13/raw/coordinator/v12-writer.sh), [log](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/v1-sunset-2026-10-13/raw/coordinator/v12-writer.log)). It
   caught up to the node (3,516,595) and published a new map. It published 3,516,596
   on its own by 17:27.
 - **What would have caught it.** Before giving a follower the writer role, check the
@@ -89,13 +89,13 @@ APM was in shadow for every Transparent family, so no alert fired.
 ## `/v2` load gate and continuous load (18:59–19:10 UTC)
 
 **Continuous load.** `transparent-v2-5qps-continuous` replaces the v11 load
-([unit](raw/load/etc/systemd/system/transparent-v2-5qps-continuous.service)). It runs
+([unit](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/v1-sunset-2026-10-13/raw/load/etc/systemd/system/transparent-v2-5qps-continuous.service)). It runs
 `transparent-quality-load.py` from `c9262e84` with these settings:
 - `--api v2` against the public origin;
 - the v12 fleet and publisher (`10.142.0.3:8096`);
-- both v12 workers pinned to binary `b89ebae3…` ([pins](raw/load/srv/transparent-activity/canonical-load/v12/pins.json)).
+- both v12 workers pinned to binary `b89ebae3…` ([pins](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/v1-sunset-2026-10-13/raw/load/srv/transparent-activity/canonical-load/v12/pins.json)).
 
-Its fixture ([fixture.json](raw/load/srv/transparent-activity/canonical-load/v12/fixture.json),
+Its fixture ([fixture.json](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/v1-sunset-2026-10-13/raw/load/srv/transparent-activity/canonical-load/v12/fixture.json),
 sha256 `2136cf13…`) was exported by `activity-query-fixture.py` from `c9262e84`. It holds
 233 sealed tables from the 3,516,596 publication: 21 recent directory, 26 recent page,
 12 archive directory and 174 archive page tables. `rate-query` was built from
@@ -104,8 +104,8 @@ sha256 `2136cf13…`) was exported by `activity-query-fixture.py` from `c9262e84
 
 **Gate.** It had the same shape as the accepted 2026-09-29 gates: three 7 QPS
 `rate-query` clients for 600 s on the coordinator, on top of the continuous 5 QPS load
-([script](raw/load/root/v2-gate.sh), [clients](raw/load/srv/transparent-activity/v2-gate-20261013-run2/),
-[summary](raw/load/summary.txt)).
+([script](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/v1-sunset-2026-10-13/raw/load/root/v2-gate.sh), [clients](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/v1-sunset-2026-10-13/raw/load/srv/transparent-activity/v2-gate-20261013-run2),
+[summary](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/v1-sunset-2026-10-13/raw/load/summary.txt)).
 
 | | Queries | Rate | p50 | p99 | max | Errors / missed |
 |---|---|---|---|---|---|---|
@@ -128,14 +128,14 @@ After about 22 hours of clean `/v2` serving, Roman ended the 48-hour rollback wi
 early and approved the saved plan.
 - **Applied:** 4 droplets destroyed (recent-01, recent-02, archive-03, txid-display-01),
   plus txid-display-01's project entry; the wallet project was updated
-  ([plan](raw/destroy/plan.txt), [apply](raw/destroy/apply.txt)).
+  ([plan](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/v1-sunset-2026-10-13/raw/destroy/plan.txt), [apply](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/v1-sunset-2026-10-13/raw/destroy/apply.txt)).
 - **Check after apply:** a full plan showed "No changes"
-  ([after](raw/destroy/plan-after.txt)). `/v2` served throughout.
+  ([after](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/v1-sunset-2026-10-13/raw/destroy/plan-after.txt)). `/v2` served throughout.
 - **Rejected first plan.** The first plan also removed the shared worker firewall's 8095
   rule, which still admits the public router to the `/v2` txid host. That host's own
   firewall admits 8095 only from the coordinator. The plan was discarded unapplied and
   `transparent_txid_display_port_enabled` stays `true`
-  ([rejected plan](raw/destroy/plan-rejected-8095.txt)).
+  ([rejected plan](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/v1-sunset-2026-10-13/raw/destroy/plan-rejected-8095.txt)).
 - **Variables now set:** `transparent_recent_count = 0` and `transparent_archive_names = []`
   in `/etc/enhance-pir/production.tfvars`, and
   `transparent_txid_display_archive_count = 0`. The originals are in
@@ -145,7 +145,7 @@ There is no rollback to v1 any more.
 
 ## Rollback (until 2026-10-14; no longer possible)
 
-Within 48 hours, [v1-sunset-rollback.sh](raw/coordinator/v1-sunset-rollback.sh)
+Within 48 hours, [v1-sunset-rollback.sh](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/v1-sunset-2026-10-13/raw/coordinator/v1-sunset-rollback.sh)
 restores:
 - the previous router file;
 - v12 as follower (remove the drop-in as well);

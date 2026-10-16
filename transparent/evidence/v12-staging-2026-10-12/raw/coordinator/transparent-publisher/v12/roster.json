@@ -1,8 +1,0 @@
-[
-  {"id": "transparent-pir-v12-archive", "role": "archive-owner", "archive_range": [0, 11], "intent": "enrolled", "origin": "static",
-   "ssh_host": "10.142.0.9", "upstream": "10.142.0.9:8093", "cache_bytes": 47244640256, "build_slots": 1, "memory_max": "48G",
-   "control_socket": "/run/transparent-pir/v12-archive.sock"},
-  {"id": "transparent-pir-v12-recent", "role": "recent-replica", "replica_group": "recent", "intent": "enrolled", "origin": "static",
-   "ssh_host": "10.142.0.9", "upstream": "10.142.0.9:8193", "cache_bytes": 6442450944, "build_slots": 1, "memory_max": "8G",
-   "control_socket": "/run/transparent-pir/v12-recent.sock"}
-]

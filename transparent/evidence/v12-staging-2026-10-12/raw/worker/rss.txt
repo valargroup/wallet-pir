@@ -1,2 +1,0 @@
-29888244 /opt/transparent-pir/v12/bin/transparent-shard-server --listen 0.0.0.0:8093 --sha
-3008656 /opt/transparent-pir/v12/bin/transparent-shard-server --listen 0.0.0.0:8193 --shar

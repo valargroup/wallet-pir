@@ -5,7 +5,7 @@ v2 map was certified at 49-bit nearest and 44-bit dithered query rounding before
 `06a972db` (which advertises the dithered schemes) was deployed to either service.
 This closes the per-snapshot gate in
 [remaining work](../../docs/remaining-work.md#dithered-44-bit-queries-deployed-2026-10-09);
-the [shape screen](../dithered-query-2026-10-09/README.md) only covered synthetic tables.
+the [shape screen](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/dithered-query-2026-10-09/README.md) only covered synthetic tables.
 
 All 608 segments meet their floors at both widths. [results.json](results.json) has one
 row per segment; `summarize.py` fails if any segment lacks a width, a report binds
@@ -24,7 +24,7 @@ certificate, or a table has more than one setup.
 On the tightest table, archive-wide pages, dithering raises every segment's bound: the
 five lowest are 95–105 bits at 49 nearest and 120–133 at 44 dithered. The checker's
 default `--require-bits 128` makes it exit nonzero for 14 of these reports (12 nearest,
-2 dithered, all 95–127 bits); [certify-failures.txt](certify-failures.txt) lists them.
+2 dithered, all 95–127 bits); [certify-failures.txt](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/served-segment-certificates-2026-10-09/certify-failures.txt) lists them.
 The floor for this table is 83, which `summarize.py` applies.
 
 ## What ran
@@ -33,15 +33,15 @@ The floor for this table is 83, which `summarize.py` applies.
   91 shards), txid display tip 3,512,212, cycle 1,528 (`inputs/txid-active.json`,
   426 shards). The history `map_sha256` (`9ec3faeb…`) is not the SHA-256 of
   `shards.json` (`64f892c1…`); for txid display they are equal. Both are recorded.
-- [run.sh](run.sh) on `roman-ipir-bench-8vcpu` (8 vCPU Xeon Platinum 8358, 31 GiB,
+- [run.sh](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/served-segment-certificates-2026-10-09/run.sh) on `roman-ipir-bench-8vcpu` (8 vCPU Xeon Platinum 8358, 31 GiB,
   Ubuntu 24.04, ams3) streamed each segment from the coordinator under
   `ionice -c3 nice -n19`, checked the manifest digest and the segment's SHA-256, then ran
   `native_certificate segment --query-rounding nearest|dithered`. 21:54:48–22:58:55 UTC.
-  The unsealed tips went first; [native.log](native.log) has per-report time and RSS
+  The unsealed tips went first; [native.log](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/served-segment-certificates-2026-10-09/native.log) has per-report time and RSS
   (at most 7.8 s).
 - History shard 89 (sealed, revision 901, `5a6a8eac…`) failed to fetch in that run
-  ([failures.tsv](failures.tsv)): its candidate directory had been pruned before the
-  sealed pass. [rerun-89.sh](rerun-89.sh) fetched the same manifest digest from the
+  ([failures.tsv](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/served-segment-certificates-2026-10-09/failures.tsv)): its candidate directory had been pruned before the
+  sealed pass. [rerun-89.sh](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/served-segment-certificates-2026-10-09/rerun-89.sh) fetched the same manifest digest from the
   then-active publication (height 3,512,274, `inputs/history-active-rerun-89.json`) and
   certified both of its segments.
 - Tool: `native_certificate` example of `transparent-shard-server` at `06a972db`,

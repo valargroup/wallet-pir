@@ -14,12 +14,12 @@ recorded 300 public and 300 replica canonical block observations in that window
 
 ## Evidence and scope
 
-- [Complete closed observation](observation.tar.gz), copied read-only from the
+- [Complete closed observation](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/productionize-m1-six-hour-acceptance-2026-09-13/observation.tar.gz), copied read-only from the
   coordinator's `/opt/transparent-publisher-build/caddy-http-retry-20260912/observation`.
   Includes unmodified launch provenance, worker samples, query logs and failure.
-- [Prior stage results](prior-stages.tar.gz): canary and corrected fleet upgrade,
+- [Prior stage results](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/productionize-m1-six-hour-acceptance-2026-09-13/prior-stages.tar.gz): canary and corrected fleet upgrade,
   both `passed: true`, with the same worker binary digest as all six observed workers.
-- [Per-worker six-hour summary](six-hour-summary.json): select each monitor's
+- [Per-worker six-hour summary](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/productionize-m1-six-hour-acceptance-2026-09-13/six-hour-summary.json): select each monitor's
   `start` timestamp through `start + 21600 seconds`, inclusive, from
   `samples.ndjson`; count `block_visible` and `canary_block_visible`, take their
   maximum `seconds`, and inspect every `worker` sample's memory and service identity.
@@ -46,8 +46,8 @@ operations `0e2c003`, Caddy 2.11.4 and monitor/configuration digests are retaine
 in `observation/provenance.json`. The canary roster digest matches observation
 provenance. The upgrade's thin result contains the binary and all six worker
 names but no roster digest; the original
-[upgrade and recovery record](../productionize-m1-deferred-collection-2026-09-11/README.md)
-and [router qualification](../productionize-m1-http-retry-2026-09-12/README.md)
+[upgrade and recovery record](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/productionize-m1-deferred-collection-2026-09-11/README.md)
+and [router qualification](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/productionize-m1-http-retry-2026-09-12/README.md)
 retain the broader deployment provenance.
 
 ## Later failure and disposition

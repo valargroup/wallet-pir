@@ -8,7 +8,7 @@ row queries. The September 24, 2026 rollout deployed EPQ7 query ingress, a dedic
 8 GiB packing router and a two-worker pool with replication factor two. The
 coordinator retains public session metadata and immutable artifacts, with zero
 resident serving packing objects in this mode. See the
-[rollout evidence](../evidence/architecture2-2026-09-24/README.md) and
+[rollout evidence](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/enhance/evidence/architecture2-2026-09-24/README.md) and
 [qualification](qualification.md) for measured limits and outstanding gates.
 
 ## Data and query path
@@ -76,7 +76,7 @@ Workers run one evaluation per admitted query, without waiting to collect a
 batch. On the tested 8 GiB x86 workers, singleton scans completed 458 of 480
 queries at 16 offered QPS with 2.4-second p99 latency; experimental batches
 completed 416 with 10.5-second p99. The
-[Linux comparison](../evidence/batching-linux-2026-09-24/README.md) records the
+[Linux comparison](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/enhance/evidence/batching-linux-2026-09-24/README.md) records the
 hardware and workload. Batching needs a demonstrated gain on the intended
 hardware before it becomes part of the serving path.
 
@@ -396,7 +396,7 @@ at a time and packed under a fleet-wide slot count; its sampled cgroup peak was 
 
 ### Packing measurements and assignment limits
 
-The [packing-budget experiment](../evidence/packing-budget-2026-09-24/README.md)
+The [packing-budget experiment](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/enhance/evidence/packing-budget-2026-09-24/README.md)
 measured the production packing component at frozen commit `a3c7626` under Linux
 cgroup caps. An independently allocated object retained about 689 MiB of live heap.
 Ten objects could be constructed under an 8 GiB cap; constructing the eleventh was
@@ -460,7 +460,7 @@ coverage adds replica selection, one retry on explicit rejection, no ambiguous
 replay, three-worker pool publication without extra packing copies, controller
 heartbeat expiry, explicit revocation and guarded response release.
 
-The [September 24 rollout](../evidence/architecture2-2026-09-24/README.md) records
+The [September 24 rollout](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/enhance/evidence/architecture2-2026-09-24/README.md) records
 86 passing server library tests, eight passing HTTP regression tests and two passing
 pool-expansion tooling tests; three large capacity scenarios remained explicitly
 ignored. The physical fixture used 600,000 records, eight publications, four

@@ -6,8 +6,8 @@ operating targets, and the [contract](contract.md) defines the completeness, pri
 and failure requirements all of it serves. Source establishes implementation and never establishes a deployment. The source
 history schema is `transparent-shard-v12`; the [October 13 retirement
 record](../evidence/v1-sunset-2026-10-13/README.md) records v2 history/display serving
-and the journal handover. The older v10 [cutover](../evidence/v10-cutover-2026-09-28/README.md)
-and [compact-layout analysis](../evidence/compact-layout-2026-09-28/README.md) are
+and the journal handover. The older v10 [cutover](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/v10-cutover-2026-09-28/README.md)
+and [compact-layout analysis](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/compact-layout-2026-09-28/README.md) are
 historical inputs. Shared operating procedures are in the [fleet guide](../../docs/operations.md).
 
 ## Data and recovery
@@ -413,8 +413,8 @@ Correctness certificates for this mode are snapshot-specific. The shard server's
 at 125 bits or more with the one-digit key, under trial seeds; the served seeds need their
 own certificates. `native_certificate` derives display tables under display's native
 schema. The 16-bit display tables' screens are the
-[correctness screen](../evidence/native-certificate-2026-09-28/README.md) and the
-[dithered query screen](../evidence/dithered-query-2026-10-09/README.md).
+[correctness screen](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/native-certificate-2026-09-28/README.md) and the
+[dithered query screen](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/dithered-query-2026-10-09/README.md).
 
 ## The wallet's walk
 

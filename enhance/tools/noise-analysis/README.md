@@ -17,7 +17,7 @@ The standalone lockfile pins research dependencies. The current candidate uses
 P16Q48 (`6f74a2d7`) with an explicitly selected `2^-78` full-query correctness
 target and production protocol v6. Historical q46 and q49 inputs keep their
 original `2^-128` target; the verifier binds each target to its exact dependency
-revision and query precision. See the [candidate evidence](../../evidence/p16-q48-2026-09-23/README.md).
+revision and query precision. See the [candidate evidence](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/enhance/evidence/p16-q48-2026-09-23/README.md).
 On Linux use `RUSTFLAGS="-C target-cpu=native"` to exercise
 the accelerated runtime-selected worker kernel against the portable monolithic
 reference. On ARM the portable worker path is selected.

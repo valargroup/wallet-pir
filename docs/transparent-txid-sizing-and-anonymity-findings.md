@@ -72,7 +72,7 @@ projection covered acquisition, not final rechecking. Even raw-only whole-chain
 RPC has a 21.62h rate-ceiling lower bound; the two-read hash-pin/raw protocol in
 the source-gate artifact has a 43.24h bound, excluding latency/extraction. Only a
 bulk/local scan could meet the complete-population aspiration within this budget.
-[Source gate](../transparent/evidence/txid-sizing/day-source-gate.json) records the
+[Source gate](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/txid-sizing/day-source-gate.json) records the
 early decision to use a finite whole-range sample.
 
 Fixed anchor: height **3,502,662**, hash
@@ -84,7 +84,7 @@ full-chain consensus validation or the live node executable SHA.
 Seed: `wallet-pir/one-day/shape-v1/` followed by the anchor hash. Python 3.12.3
 selects 1,024 blocks uniformly without replacement in each disjoint stratum.
 Exact selected heights and inclusion probabilities are retained in
-[day-plan.json](../transparent/evidence/txid-sizing/day-plan.json). The strata
+[day-plan.json](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/txid-sizing/day-plan.json). The strata
 cover every height 0 through the anchor; all selected transactions are included.
 Era subdomains inside the broad NU6 stratum retain their original selection
 weights. The recent stratum is deliberately oversampled, never given equal
@@ -229,7 +229,7 @@ The recommendation concerns the complete genesis-to-anchor population, not
 a promise above 80% for every subdomain. NU5 noncoinbase worst-fee coverage
 estimates **81.64%**, with pointwise interval **79.52–83.76%**. Coinbase is
 99.71% globally, noncoinbase 90.32–90.89%. The full machine-readable
-[analysis](../transparent/evidence/txid-sizing/day-analysis.json) reports all
+[analysis](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/txid-sizing/day-analysis.json) reports all
 seven cutoffs, output/fragment counts and frontiers by era and coinbase/noncoinbase,
 with uncertainty. Those domain totals use original design weights, including
 NU6.3’s two source strata.
@@ -338,7 +338,7 @@ no exhaustive hardware/concurrency/recovery exercise ran here.
 A row query uploads its query body once; segment evaluations multiply response
 bodies and work, **not uploads**. Body estimates exclude HTTP/TLS/setup discovery
 overhead. The scan-byte proxy is not CPU time or latency.
-[Geometry evidence](../transparent/evidence/txid-sizing/day-geometry.json) includes
+[Geometry evidence](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/txid-sizing/day-geometry.json) includes
 all seven cutoff sweeps and smaller/larger row alternatives, fee bounds and
 explicit assumptions. Broad/hash overflow can reduce work substantially, but
 the observed joint classes become narrower and remain unqualified.
@@ -349,13 +349,13 @@ This isolated task branch starts at wallet-pir **4ce39fbb7f605d94d08a9cdb0f0f2d6
 Canonical parser: Zakura **af944f5194ef2e9921bc96af017629450375013c**.
 Exporter release-fast binary SHA256:
 `54fa6f2ae2caf4105d2d8d85581171f8ba5092e3abd67ed61a5783cc9b47115c`.
-[Build pins](../transparent/evidence/txid-sizing/day-parser-build-pins.json) name
+[Build pins](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/txid-sizing/day-parser-build-pins.json) name
 the resolved parser source-file hashes, rustc 1.97.1 and Python 3.12.3.
-[Day source pins](../transparent/evidence/txid-sizing/day-sources.json),
-[receipt](../transparent/evidence/txid-sizing/day-receipt.json.gz),
-[compact statistics](../transparent/evidence/txid-sizing/day-statistics.json.gz),
-[bootstrap](../transparent/evidence/txid-sizing/day-bootstrap.json) and
-[checksums](../transparent/evidence/txid-sizing/SHA256SUMS) pin every input/output,
+[Day source pins](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/txid-sizing/day-sources.json),
+[receipt](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/txid-sizing/day-receipt.json.gz),
+[compact statistics](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/txid-sizing/day-statistics.json.gz),
+[bootstrap](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/txid-sizing/day-bootstrap.json) and
+[checksums](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/txid-sizing/SHA256SUMS) pin every input/output,
 raw frame, canonical-record inventory and final summary. The node executable
 SHA is unavailable through the allowed interface; parser pins do not attest it.
 
@@ -369,21 +369,21 @@ checks their pinned checksums; only compact sanitized statistics/inventories
 are checked in. No private wallet facts, secrets or encrypted queries are retained.
 
 PR #124 head **7d46f7618b94f2a889dcfebd5b3dc9229bd98b5a** and its original
-[vector source pins](../transparent/evidence/txid-sizing/sources.json),
-[canonical data](../transparent/evidence/txid-sizing/canonical-sample.json),
-[analysis](../transparent/evidence/txid-sizing/analysis.json) and
-[geometry controls](../transparent/evidence/txid-sizing/geometry-projections.json)
+[vector source pins](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/txid-sizing/sources.json),
+[canonical data](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/txid-sizing/canonical-sample.json),
+[analysis](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/txid-sizing/analysis.json) and
+[geometry controls](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/txid-sizing/geometry-projections.json)
 are retained unchanged. Original wallet-pir source was
 **ccbfd35fc21935f8a6878f93d288cc3107ea90e2**, metadata dependency
 **3cfbc4848b92b1385b9215174251f8e51fbfa804**. Its 41 convenience vectors
 (354,315 raw bytes, 134 eligible, only 60 prevout-resolvable, 74 missing-parent
 exclusions) are conformance oracles, never pooled into these estimates. The
-[new parent-free conformance receipt](../transparent/evidence/txid-sizing/day-vector-validation.json)
+[new parent-free conformance receipt](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/txid-sizing/day-vector-validation.json)
 includes all 134 eligible records, preserves the known 60, checks independent
 bytes/flags/outputs and refuses wrong hash/height/trailing bytes.
 
 The old 0–30,811 prefix, raw cache and
-[resume checkpoint/receipt](../transparent/evidence/txid-sizing/resume-receipt.json)
+[resume checkpoint/receipt](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/txid-sizing/resume-receipt.json)
 remain untouched and biased, not representative sample evidence. The historical
 73.38h projection/72h stop is retained only as provenance, not an instruction
 or prerequisite. Replacement work addresses #124’s eligibility, probability

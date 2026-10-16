@@ -9,9 +9,9 @@ CUDA build `bc9f91cf…`. Status was not changed.
 
 | Transaction | Targets | Exact answers |
 |---|---|---|
-| `enhance-20261011T185451Z-538137e74744-e144a8` | worker-01 | 120/120, p50 90 ms, p99 149 ms ([json](raw/exact-worker-01.json)) |
-| `enhance-20261011T190032Z-538137e74744-0b4388` | worker-02, packing router, query ingress, coordinator | 120/120, p50 89 ms, p99 129 ms ([json](raw/exact-final.json)) |
-| `enhance-20261011T191808Z-bc9f91cfcb38-7fe75d` | GPU worker (`enhance-pir-native-cuda`) | 120/120, p50 120 ms, p99 148 ms ([json](raw/exact-gpu.json)) |
+| `enhance-20261011T185451Z-538137e74744-e144a8` | worker-01 | 120/120, p50 90 ms, p99 149 ms ([json](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/enhance/evidence/production-deploy-eae5641a-2026-10-11/raw/exact-worker-01.json)) |
+| `enhance-20261011T190032Z-538137e74744-0b4388` | worker-02, packing router, query ingress, coordinator | 120/120, p50 89 ms, p99 129 ms ([json](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/enhance/evidence/production-deploy-eae5641a-2026-10-11/raw/exact-final.json)) |
+| `enhance-20261011T191808Z-bc9f91cfcb38-7fe75d` | GPU worker (`enhance-pir-native-cuda`) | 120/120, p50 120 ms, p99 148 ms ([json](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/enhance/evidence/production-deploy-eae5641a-2026-10-11/raw/exact-gpu.json)) |
 
 The GPU worker reports the CUDA backend on device 0. After its restart the
 publication of generation 14531 went out without it, so the packing router had no

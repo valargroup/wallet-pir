@@ -1,6 +1,0 @@
-2026-10-13T02:56:30Z
-ExecStart={ path=/opt/transparent-txid-display-k8/releases/e1f9415852b596595f34641da5ea18834fee4276/transparent-txid-server ; argv[]=/opt/transparent-txid-display-k8/releases/e1f9415852b596595f34641da5ea18834fee4276/transparent-txid-server --listen 10.142.0.18:8095 --role combined --cache-bytes 34359738368 --build-slots 2 --query-slots 8 --retain-revisions 2 --control-socket /run/transparent-txid-display/control.sock --active-record /opt/transparent-txid-display/worker/active.json --collect-root /srv/transparent-txid-display/publications --collect-root /srv/transparent-txid-display/staged --runtime-cache-dir /srv/transparent-txid-display/runtime-cache --runtime-cache-max-bytes 42949672960 ; ignore_errors=no ; start_time=[Tue 2026-10-13 02:41:52 UTC] ; stop_time=[n/a] ; pid=18942 ; code=(null) ; status=0/0 }
-MemoryCurrent=17010802688
-MemoryPeak=17182138368
-MemoryMax=51539607552
-ActiveEnterTimestamp=Tue 2026-10-13 02:41:52 UTC

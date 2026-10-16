@@ -1,6 +1,6 @@
 # Parent-filter evaluation
 
-This implements an opt-in experiment. The user subsequently approved [production artifact hosting](../evidence/parent-filters-production-2026-09-08/README.md); the full paired performance benchmark remains incomplete. Recent catch-up bandwidth is the primary objective. The existing mixed-20 synthetic weights are secondary; these are not wallet population frequencies.
+This implements an opt-in experiment. The user subsequently approved [production artifact hosting](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/parent-filters-production-2026-09-08/README.md); the full paired performance benchmark remains incomplete. Recent catch-up bandwidth is the primary objective. The existing mixed-20 synthetic weights are secondary; these are not wallet population frequencies.
 
 ## Reproduce
 
@@ -80,4 +80,4 @@ Opting in accepts disclosure of probable activity in coarse chain intervals thro
 
 ## Recorded experiment
 
-The [2026-09-08 evidence](../evidence/parent-filters-2026-09-08/README.md) contains the complete full-journal offline sweep, frozen finalists, stress results and HTTP validation outcome.
+The [2026-09-08 evidence](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/parent-filters-2026-09-08/README.md) contains the complete full-journal offline sweep, frozen finalists, stress results and HTTP validation outcome.

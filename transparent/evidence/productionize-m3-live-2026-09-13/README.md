@@ -5,8 +5,8 @@ M3 remains open. No event, UTXO, balance or history mismatch was reported; cases
 that failed transport did not complete all required comparisons.
 
 Subsequent work: the user supplied a validation wallet and birthday; its
-[native recovery and resume comparison](../productionize-m3-private-wallet-2026-09-13/README.md)
-is recorded separately. The [suite correction and new run](../productionize-m3-suite-fix-2026-09-13/README.md)
+[native recovery and resume comparison](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/productionize-m3-private-wallet-2026-09-13/README.md)
+is recorded separately. The [suite correction and new run](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/productionize-m3-suite-fix-2026-09-13/README.md)
 retain their own source and binary identity. The failures and missing-input notes
 below describe this initial capture, not the current milestone checklist.
 
@@ -22,7 +22,7 @@ does not erase the observed public-path failures.
 PIR source `e98286bf345718b29e22ef81076cd22633405d83`, containing the corrected
 sealed-prefix/tail pinning runner. Wallet source `7937d48df` in the existing
 `wallet-libraries-m3-correctness` worktree; no wallet source changes.
-[Provenance](provenance.json) binds runner, frozen fixture and rebuilt release
+[Provenance](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/productionize-m3-live-2026-09-13/provenance.json) binds runner, frozen fixture and rebuilt release
 bridge hashes. Documentation changes in the PIR working tree were not compiled
 into the runner. The fixture was not re-cut, weakened or replaced.
 
@@ -35,7 +35,7 @@ independently reduced expected ledger state and accepted headers at its frozen
 anchor, 3,473,686; it does not prove fresh node-consensus validation or indexer
 completeness. Both public origins returned identical map bytes at preflight,
 with served tail ending at 3,482,264. The runner's own pin observations are in
-[report.json](report.json). All eleven cases were attempted sequentially with
+[report.json](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/productionize-m3-live-2026-09-13/report.json). All eleven cases were attempted sequentially with
 the existing request and case deadlines.
 
 ## Results
@@ -59,14 +59,14 @@ repeat and independent fresh-final recovery. For example, small-active completed
 its continuation and repeat stages before failing fresh-final, but is still a
 failed case. No failed case is removed from the denominator.
 
-[Raw bundle](regression-raw.tar.gz) retains per-case reports and stdout/stderr
+[Raw bundle](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/productionize-m3-live-2026-09-13/regression-raw.tar.gz) retains per-case reports and stdout/stderr
 for these synthetic groupings of public scripts. The 839 MiB complete bundle,
 including SQLite stores, remains locally at
 `/tmp/transparent-m3-live-20260913/regression-complete-with-stores.tar.gz`;
-the original stores also remain under that directory’s `regression/` tree. [JUnit](junit.xml)
-and [command log](regression-command.log) retain the overall failure.
+the original stores also remain under that directory’s `regression/` tree. [JUnit](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/productionize-m3-live-2026-09-13/junit.xml)
+and [command log](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/productionize-m3-live-2026-09-13/regression-command.log) retain the overall failure.
 A follow-up public probe at 18:56:56 UTC returned HTTP 200 for init, map and
-filters ([probe](availability-after-failure.json)); it establishes recovery at
+filters ([probe](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/productionize-m3-live-2026-09-13/availability-after-failure.json)); it establishes recovery at
 that sample, not the cause or absence of further interruptions. Later cases
 still encountered transport failures. There was no automatic rerun to obtain a
 passing result and no retry/deadline policy was changed.

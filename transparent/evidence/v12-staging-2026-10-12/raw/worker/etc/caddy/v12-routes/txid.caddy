@@ -1,6 +1,0 @@
-# Staging only: txid display stays on the production service.
-handle /v1/txid/* {
-	reverse_proxy https://transparent-pir.valargroup.dev {
-		header_up Host {upstream_hostport}
-	}
-}

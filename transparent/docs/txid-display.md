@@ -285,7 +285,7 @@ Source:
 - the `txid-display-*` deploy commands.
 
 The v1 publication has run in production beside history since 2026-10-06
-([status](status.md#tiered-txid-display-in-production-2026-10-07)), unaccepted.
+([status](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/docs/status.md#tiered-txid-display-in-production-2026-10-07)), unaccepted.
 The code on `main` no longer builds or reads v1. Serving v2 needs a fresh
 journal and lineage; the gates are in [remaining work](remaining-work.md).
 
@@ -350,8 +350,8 @@ does that work once instead and ships the result with the candidate.
   answers for that database. Wallets see the same published masks, digests,
   epochs and answers as from a local build, and the wire format is unchanged.
 
-[Pre-deploy bench](../evidence/txid-display-shipped-runtimes-bench-2026-10-07/README.md);
-[production deploy and measurement, 2026-10-08](../evidence/txid-display-shipped-runtimes-2026-10-08/README.md):
+[Pre-deploy bench](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/txid-display-shipped-runtimes-bench-2026-10-07/README.md);
+[production deploy and measurement, 2026-10-08](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/txid-display-shipped-runtimes-2026-10-08/README.md):
 the worker's build CPU and query interference went away as designed, and the
 80 MiB copy per block became the block-to-serving tail on the private network.
 
@@ -556,7 +556,7 @@ What remains to measure for v2 is in [remaining work](remaining-work.md):
 Placement, certificates, runtime memory, rebuild and query time of the served
 `txid-4k8` tables are in the
 [4k8 evidence](../evidence/txid-display-4k8-2026-10-13/README.md); those of
-`txid-2k8` in the [gate evidence](../evidence/txid-display-2k8-gates-2026-10-11/README.md)
+`txid-2k8` in the [gate evidence](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/txid-display-2k8-gates-2026-10-11/README.md)
 and the [8-bit evidence](../evidence/txid-display-p8-2026-10-13/README.md).
 
 The journal census in `transparent/tools/txid-sizing` measured v2x journals.
@@ -619,7 +619,7 @@ A pass establishes server protocol and retrieval evidence. It does not
 establish production capacity, cryptographic release readiness, wallet recovery
 or Vizor correctness. Production deployment requires separate approval.
 
-The v2 run at `9557d843`: [native demo evidence](../evidence/txid-display-v2-2026-10-08/README.md).
+The v2 run at `9557d843`: [native demo evidence](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/txid-display-v2-2026-10-08/README.md).
 
 ## Wallet stage
 

@@ -1,6 +1,6 @@
 # Prewarm hint assurance, 2026-10-04
 
-This follows [the prewarm hint record](../prewarm-hint-2026-10-03/README.md),
+This follows [the prewarm hint record](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/prewarm-hint-2026-10-03/README.md),
 which review rejected on assurance, not on a confirmed wrong output. It is a
 source and test change on the development hub. No timing was re-measured:
 recent-worker numbers are the earlier record's, and nothing here is a
@@ -96,7 +96,7 @@ encrypted-query equivalence test at recent-8k
 
 ## Mutations
 
-[mutations.log](mutations.log) records each mutation applied singly, its tests
+[mutations.log](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/prewarm-hint-assurance-2026-10-04/mutations.log) records each mutation applied singly, its tests
 run, then restored with `git checkout`. These ran before two clippy-only edits:
 a `Hint` type alias and `is_multiple_of` in tests. Neither changes semantics.
 
@@ -111,7 +111,7 @@ a `Hint` type alias and `is_multiple_of` in tests. Neither changes semantics.
 
 ## Validation
 
-Results of the focused suite, clippy and `make check-fast` are in [results.md](results.md). [SHA256SUMS](SHA256SUMS) covers the retained logs and the manifest.
+Results of the focused suite, clippy and `make check-fast` are in [results.md](results.md). [SHA256SUMS](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/prewarm-hint-assurance-2026-10-04/SHA256SUMS) covers the retained logs and the manifest.
 
 **First failure.** The first focused run failed two disk-cache integration
 tests with `CacheError::Overloaded`:
@@ -122,7 +122,7 @@ The cache admits builds and restores against live cgroup usage. The task
 cgroup held 11.1 of 12 GiB, mostly page cache from the preceding builds. After
 `memory.reclaim` on the task's own cgroup, both passed at the same source,
 along with the other five `runtime::disk` tests. The failure is recorded in
-[focused-first-run.log](focused-first-run.log).
+[focused-first-run.log](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/prewarm-hint-assurance-2026-10-04/focused-first-run.log).
 
 ## Limits
 

@@ -1,21 +1,19 @@
-# Receiver directory evidence
+# Receiver evidence
 
-Each run directory holds a results note (`README.md`), a machine-readable
-`manifest.json` and a `SHA256SUMS` over its files; run `shasum -a 256 -c SHA256SUMS`
-inside it. These are historical development runs, not release qualification. Only
-the files listed in each run's `SHA256SUMS` were retained, so any detail, check,
-log, attempt history or environment fact not in those files cannot be re-verified.
-Cited commits live on development branches and may not resolve later.
+These records support only their recorded source, workload and acceptance limits.
+No live verification was performed during repository cleanup. Current contracts,
+operating targets and open gates belong in the product documentation.
 
-- [Batched backfill](batched-backfill-2026-09-26/README.md): concurrent batched
-  block reads 13.8 times faster than sequential ones under the test profile, with
-  identical publication digests, over a bounded mainnet range holding the known
-  NEAR refund.
-- [Receiver to Enhance integration](receiver-pir-2026-09-26/README.md): an
-  encrypted lookup of the full publication recovered the refund, then an Enhance
-  query authenticated its output (q48 protocol).
-- [Publication cache](publication-cache-2026-09-28/README.md): cached witness
-  preparation and a tip-to-HTTP publication time of 12.4 seconds, locally.
-- [Deployment record](deployment-2026-10-08/README.md): a point-in-time inventory,
-  not a development run, of the live Droplet, DNS record, absent cloud firewall,
-  host service and public session on 2026-10-08.
+| Retained decision record | Scope |
+|---|---|
+| [Batched backfill measurement](batched-backfill-2026-09-26/README.md) | Bounded mainnet backfill comparison with equal publication digests. |
+| [Receiver to Enhance integration](receiver-pir-2026-09-26/README.md) | Encrypted receiver lookup followed by authenticated Enhance recovery. |
+| [Receiver publication cache](publication-cache-2026-09-28/README.md) | Bounded witness-cache correctness and publication timing. |
+| [Receiver deployment record](deployment-2026-10-08/README.md) | Point-in-time infrastructure and service capture; no qualification claim. |
+
+Essential certificate outputs and oracle provenance remain in the tree, unchanged.
+Their digests are in the shared [SHA256SUMS](../../evidence/SHA256SUMS).
+Supporting raw captures, earlier runs and experiment scripts remain available
+in the [complete pre-cleanup evidence index](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/receiver/evidence/README.md).
+Follow the [retention policy](../../evidence/README.md); an old deployment record
+does not establish current service health or qualification.

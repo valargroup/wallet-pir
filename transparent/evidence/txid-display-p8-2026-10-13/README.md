@@ -23,13 +23,13 @@ service, unit or configuration changed.
 
 | Item | Value |
 |---|---|
-| Tables | Served map `633d46af77efe287…` ([raw/inputs/txid-shards.json](raw/inputs/txid-shards.json), whose SHA-256 is the map digest), the worker's active publication at 01:14 UTC. 189 sealed archives (shards 0–188, heights 1–3,506,111, 90,000–90,422 entries each) and the recent shard 189 (heights 3,499,159–3,515,819, 90,011 entries; its window reaches back into the newest archive). `txid-2k8` geometry, one bucket, one 2,048 × 8,192 B segment (16 MiB) per table. Copied from `/srv/transparent-txid-display/publications/<map>/` to scratch at 01:14:06–01:14:11 UTC; every manifest digest and segment SHA-256 matched the map ([raw/inputs/plan.tsv](raw/inputs/plan.tsv)). |
-| Served masks | `GET /v2/txid/{archive,recent}/shards/<id>/revisions/<digest>/setup/directory-0/0` on the worker for all 190 tables ([raw/inputs/served-setup.tsv](raw/inputs/served-setup.tsv)); each certificate was run with `--public-sha256` of that response and refuses to report if its rebuilt masks differ. |
-| Source | The 8-bit tree synced to `roman-dev-2:/root/wallet-pir-txid-p8` (no Git metadata). Its profile, display, runtime and residency sources equal `c50c91dd`; `3e705bb3`, the deployed release, differs from them only by formatting (`270ef60b`). `release-fast`, `--target x86_64-unknown-linux-gnu`, `RUSTFLAGS=-C target-cpu=x86-64-v4 -C target-feature=+pclmulqdq,+aes` (the repository's `target-cpu=native` would have targeted the build host, which lacks AVX-512; the kernels pick AVX-512 at run time either way), rustc 1.97.1, ipir-sp and reinspiring `v0.1.0-rc.7` (`35069f1e`). Binary digests: [raw/binaries.sha256](raw/binaries.sha256). |
-| Tools | `native_certificate segment --geometry txid-2k8 --table txdirectory`, with the one-line fix in [native_certificate-screens.patch](native_certificate-screens.patch) (see Failed first run); the same fix is in the source from the commit that adds this directory; `shard-residency`; `hint_bench --runtime-only`; and [p8_query_bench.rs](p8_query_bench.rs), a scratch example written for this run and not committed. |
+| Tables | Served map `633d46af77efe287…` ([raw/inputs/txid-shards.json](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/txid-display-p8-2026-10-13/raw/inputs/txid-shards.json), whose SHA-256 is the map digest), the worker's active publication at 01:14 UTC. 189 sealed archives (shards 0–188, heights 1–3,506,111, 90,000–90,422 entries each) and the recent shard 189 (heights 3,499,159–3,515,819, 90,011 entries; its window reaches back into the newest archive). `txid-2k8` geometry, one bucket, one 2,048 × 8,192 B segment (16 MiB) per table. Copied from `/srv/transparent-txid-display/publications/<map>/` to scratch at 01:14:06–01:14:11 UTC; every manifest digest and segment SHA-256 matched the map ([raw/inputs/plan.tsv](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/txid-display-p8-2026-10-13/raw/inputs/plan.tsv)). |
+| Served masks | `GET /v2/txid/{archive,recent}/shards/<id>/revisions/<digest>/setup/directory-0/0` on the worker for all 190 tables ([raw/inputs/served-setup.tsv](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/txid-display-p8-2026-10-13/raw/inputs/served-setup.tsv)); each certificate was run with `--public-sha256` of that response and refuses to report if its rebuilt masks differ. |
+| Source | The 8-bit tree synced to `roman-dev-2:/root/wallet-pir-txid-p8` (no Git metadata). Its profile, display, runtime and residency sources equal `c50c91dd`; `3e705bb3`, the deployed release, differs from them only by formatting (`270ef60b`). `release-fast`, `--target x86_64-unknown-linux-gnu`, `RUSTFLAGS=-C target-cpu=x86-64-v4 -C target-feature=+pclmulqdq,+aes` (the repository's `target-cpu=native` would have targeted the build host, which lacks AVX-512; the kernels pick AVX-512 at run time either way), rustc 1.97.1, ipir-sp and reinspiring `v0.1.0-rc.7` (`35069f1e`). Binary digests: [raw/binaries.sha256](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/txid-display-p8-2026-10-13/raw/binaries.sha256). |
+| Tools | `native_certificate segment --geometry txid-2k8 --table txdirectory`, with the one-line fix in [native_certificate-screens.patch](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/txid-display-p8-2026-10-13/native_certificate-screens.patch) (see Failed first run); the same fix is in the source from the commit that adds this directory; `shard-residency`; `hint_bench --runtime-only`; and [p8_query_bench.rs](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/txid-display-p8-2026-10-13/p8_query_bench.rs), a scratch example written for this run and not committed. |
 | Checker | ipir-sp `v0.1.0-rc.7` `reinspiring/tools/security/certify_native.py`, SHA-256 `eb4e5799…dd64918`, with its `src/native_gaussian_cdf.txt` (`4c6e3f51…c2266`), run as `certify_native.py --require-bits 50 <report>`. |
 | Host | `transparent-pir-txid-k8-01`: DigitalOcean 8 vCPU Intel Xeon Gold 6548N (AVX-512 VNNI and VBMI), 62.8 GiB, Ubuntu 24.04.5, kernel 6.8.0-142, shared with the live combined txid worker (`MemoryMax` 48G, `CPUQuota` 600%, cache budget 32 GiB) serving 190 runtimes; no released wallet uses the site. Host load average 0.5–2.6 during the timings. |
-| Commands | [measure.sh](measure.sh), then [setup_fetch.py](setup_fetch.py) and [certify.sh](certify.sh), then [summarize.py](summarize.py). They ran in `/root/txid-p8-measure` on the host, where `inputs/` is what is here [raw/inputs/](raw/inputs/). |
+| Commands | [measure.sh](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/txid-display-p8-2026-10-13/measure.sh), then [setup_fetch.py](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/txid-display-p8-2026-10-13/setup_fetch.py) and [certify.sh](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/txid-display-p8-2026-10-13/certify.sh), then [summarize.py](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/txid-display-p8-2026-10-13/summarize.py). They ran in `/root/txid-p8-measure` on the host, where `inputs/` is what is here [raw/inputs/](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/txid-display-p8-2026-10-13/raw/inputs). |
 
 ## Certificates
 
@@ -48,9 +48,9 @@ most 35,057 MiB (34.2 GiB, 55%) of 62.8 GiB.
 
 Every report is `p_bits` 8, one-digit 27-bit gadget, 22-bit published masks,
 28-bit dithered query, 10-bit response. The lowest three were archives 160
-(247), 109 (248) and 20 (250). Per table: [raw/results.tsv](raw/results.tsv);
-totals: [raw/summary.json](raw/summary.json); every report and verdict:
-[raw/reports-and-verdicts.tar.gz](raw/reports-and-verdicts.tar.gz).
+(247), 109 (248) and 20 (250). Per table: [raw/results.tsv](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/txid-display-p8-2026-10-13/raw/results.tsv);
+totals: [raw/summary.json](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/txid-display-p8-2026-10-13/raw/summary.json); every report and verdict:
+[raw/reports-and-verdicts.tar.gz](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/txid-display-p8-2026-10-13/raw/reports-and-verdicts.tar.gz).
 
 A certificate covers that snapshot's bytes. The archives are sealed and keep
 these certificates; the recent shard is rebuilt every block, so its figure is
@@ -60,7 +60,7 @@ one sample of a table that changes.
 
 The first certification run failed on all 16 tables it reached, before any
 report was written: `native_certificate` panicked with `selected precision
-screen` ([raw/failed-first-run/native.log](raw/failed-first-run/native.log)).
+screen` ([raw/failed-first-run/native.log](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/txid-display-p8-2026-10-13/raw/failed-first-run/native.log)).
 For each table it had already passed the served-mask check. The tool called
 reinspiring's `build_two_mask_analyzed`, whose noise analysis only screens
 published-mask widths 27–32 bits, so the 8-bit profile's 22-bit masks had no
@@ -68,13 +68,13 @@ screen to select. ipir-sp's own 8-bit analysis screens 16–32 bits for these
 profiles. The patch passes that range for 8-bit tables and keeps the old one
 otherwise; it changes which widths are analysed, not how. The patched binary
 is `76e3f487…`; the failed one was `fd665179…`
-([raw/build-binaries.sha256](raw/build-binaries.sha256)). **The tool in the
+([raw/build-binaries.sha256](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/txid-display-p8-2026-10-13/raw/build-binaries.sha256)). **The tool in the
 synced tree still has this bug and needs the same fix before it is committed.**
 
 ## Held memory
 
 The live worker is itself the measurement. Its `/metrics` and systemd
-accounting, read before and after the timings ([raw/worker/](raw/worker/)):
+accounting, read before and after the timings ([raw/worker/](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/txid-display-p8-2026-10-13/raw/worker)):
 
 | | Measured | Per runtime |
 |---|---:|---:|
@@ -83,14 +83,14 @@ accounting, read before and after the timings ([raw/worker/](raw/worker/)):
 | cgroup `MemoryCurrent` (peak since start) | 30.02 GB = 27.96 GiB (28.30 GiB) | 58% of the 48G `MemoryMax` |
 
 `shard-residency --geometry txid-2k8 --table txdirectory --runtimes 12`
-([raw/residency/](raw/residency/txid-2k8-txdirectory-12.txt)) plans
+([raw/residency/](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/txid-display-p8-2026-10-13/raw/residency/txid-2k8-txdirectory-12.txt)) plans
 144.17 MiB and reserves 144.17 MiB per runtime. Runtimes 8, 11 and 12 each
 added 144.00–144.25 MiB of RSS; the others ranged 72–201 MiB as the allocator
 settled, so its 162.5 MiB slope over 12 runtimes overstates the steady cost.
 The live worker's figure is the one to use.
 
 Against the 16-bit `txid-2k8` runtime of the
-[2026-10-11 gates](../txid-display-2k8-gates-2026-10-11/README.md#runtime-memory)
+[2026-10-11 gates](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/txid-display-2k8-gates-2026-10-11/README.md#runtime-memory)
 (80.04 MiB measured, 80.09 MiB planned; 15.2 GiB planned for 191 runtimes),
 an 8-bit runtime holds 1.80× as much: 27.96 GiB for the same 191. The table
 bytes are the same; the growth is packing data, as the
@@ -101,7 +101,7 @@ found for history tables.
 
 `hint_bench --runtime-only --geometry txid-2k8 --repeats 10
 txdirectory=<recent table>` with `TRANSPARENT_BUILD_THREADS=4`, three rounds
-([raw/rebuild/](raw/rebuild/)), on the served recent table rather than a
+([raw/rebuild/](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/txid-display-p8-2026-10-13/raw/rebuild)), on the served recent table rather than a
 synthetic one. This is `TableRuntime::build`, what the worker runs for each new
 recent revision.
 
@@ -120,11 +120,11 @@ themselves to nice 10 whatever the parent's niceness, as in the worker.
 
 ## Server time per query
 
-[`p8_query_bench`](p8_query_bench.rs) builds one runtime from a served table,
+[`p8_query_bench`](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/txid-display-p8-2026-10-13/p8_query_bench.rs) builds one runtime from a served table,
 then times `TableRuntime::evaluate` (parse plus answer, the worker's per-query
 work) for 40 fresh client queries one at a time and 40 two at a time, on the
 default 8-thread query pool. Every answer decoded to the table's row
-([raw/query/](raw/query/)).
+([raw/query/](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/txid-display-p8-2026-10-13/raw/query)).
 
 | Table | One at a time p50 / p95 / max | Two at a time p50 / p95 / max |
 |---|---:|---:|

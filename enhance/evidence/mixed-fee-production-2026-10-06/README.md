@@ -6,8 +6,8 @@ historical record it had published without such a fee was regenerated from chain
 and is served again. Source `2474cdbb` (full CI green), CI artifact
 `enhance-pir-native-2474cdbb…` (`release`, `x86-64-v3`, `native-reinspiring`,
 archive SHA-256 `add6035a9a46…eddc8`, binary `cfeaa3baa40e…6cc60`). The code and its
-local tests are in [mixed-fee-publication-2026-10-06](../mixed-fee-publication-2026-10-06/README.md).
-Metadata is in [manifest.json](manifest.json), checksums in [SHA256SUMS](SHA256SUMS).
+local tests are in [mixed-fee-publication-2026-10-06](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/enhance/evidence/mixed-fee-publication-2026-10-06/README.md).
+Metadata is in [manifest.json](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/enhance/evidence/mixed-fee-production-2026-10-06/manifest.json), checksums in [SHA256SUMS](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/enhance/evidence/mixed-fee-production-2026-10-06/SHA256SUMS).
 
 This repairs published data only. Wallets that already stored a transaction without
 a fee need their own retry and backfill in the wallet library; this deployment does
@@ -17,28 +17,28 @@ not change any existing wallet database.
 
 The live journal (one unsealed shard, 695,249 records through 3508462) had 381,333
 records without a fee, in 47,428 of 51,056 non-empty blocks. An independent oracle
-([tools/record_oracle.py](tools/record_oracle.py)) rebuilds each 653-byte record only
+([tools/record_oracle.py](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/enhance/evidence/mixed-fee-production-2026-10-06/tools/record_oracle.py)) rebuilds each 653-byte record only
 from the node's verbose JSON RPC (Ironwood ciphertexts, `cv`, `outCiphertext`,
 `vin` spent-output values via `getrawtransaction`, `vout`, and every pool's
 `valueBalanceZat`), without zakura-chain or Enhance code. On 500 live blocks
 (3506524–3506724 and 300 random) it agreed with every non-fee byte of 4,164 records;
 2,466 differed only in the fee fields
-([baseline-live-compare.json](raw/baseline-live-compare.json)).
+([baseline-live-compare.json](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/enhance/evidence/mixed-fee-production-2026-10-06/raw/baseline-live-compare.json)).
 
 ## Rebuild (no downtime)
 
 `preflight --stage --only coordinator` installed the binary beside the running one
-([preflight](raw/preflight-stage.txt)). `rebuild-journal` then ran on the
+([preflight](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/enhance/evidence/mixed-fee-production-2026-10-06/raw/preflight-stage.txt)). `rebuild-journal` then ran on the
 coordinator against its local node while production kept serving: 80,480 blocks
 in 1,550 s, 24,209 spent-output transactions fetched in 5,550 batches, 108,178
-cache and 1,918 same-block hits ([log](raw/rebuild.log.gz)). Its
-[receipt](raw/rebuild-receipt.json) `3508622-ddbb96b832e22e2f` covers heights
+cache and 1,918 same-block hits ([log](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/enhance/evidence/mixed-fee-production-2026-10-06/raw/rebuild.log.gz)). Its
+[receipt](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/enhance/evidence/mixed-fee-production-2026-10-06/raw/rebuild-receipt.json) `3508622-ddbb96b832e22e2f` covers heights
 through 3508622, tree size 696,096: 374,853 records gained a fee and 7,027 kept none.
 
 The oracle then compared the staged journal over all of 3506524–3506724, 2,000
 random non-empty blocks and every block still holding a fee-absent record: 60,570
 records in 5,028 blocks were byte-identical, and all 7,027 fee-absent records belong
-to coinbase transactions ([staged-compare.json](raw/staged-compare.json)).
+to coinbase transactions ([staged-compare.json](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/enhance/evidence/mixed-fee-production-2026-10-06/raw/staged-compare.json)).
 
 ## Cutover
 
@@ -50,16 +50,16 @@ monitor were put in shadow alert mode for the window.
 
 `wallet-pir-deploy.py deploy enhance --archive … --sha 2474cdbb… --kind
 enhance-pir-native --only coordinator --skip-exact-check` committed transaction
-`enhance-20261006T194503Z-cfeaa3baa40e-219a4e` ([output](raw/deploy.txt),
-[journal](raw/deploy-transaction.json)). Only the coordinator restarted; workers,
+`enhance-20261006T194503Z-cfeaa3baa40e-219a4e` ([output](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/enhance/evidence/mixed-fee-production-2026-10-06/raw/deploy.txt),
+[journal](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/enhance/evidence/mixed-fee-production-2026-10-06/raw/deploy-transaction.json)). Only the coordinator restarted; workers,
 packing router, query ingress and the GPU worker kept `397d8ba9…`.
 
 - 19:45:33Z restart; 19:45:35Z the coordinator adopted the staged journal and kept
   the previous one as `enhance.before-rebuild-3508622-ddbb96b832e22e2f`
-  ([log](raw/coordinator-journal-1945-1948.log.gz)). It caught up to 3508665 with
+  ([log](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/enhance/evidence/mixed-fee-production-2026-10-06/raw/coordinator-journal-1945-1948.log.gz)). It caught up to 3508665 with
   the fixed code.
 - Public `/v1/enhance/init` answered 502 for four seconds (19:45:33–37); Status was
-  unaffected ([probe](raw/public-probe-1944-1950.txt)). Queries go through the
+  unaffected ([probe](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/enhance/evidence/mixed-fee-production-2026-10-06/raw/public-probe-1944-1950.txt)). Queries go through the
   query ingress, which did not restart.
 - Generation 9839, the first with repaired content, was published by 19:47:25Z.
   The coordinator logged no warning or error after the restart.
@@ -68,11 +68,11 @@ packing router, query ingress and the GPU worker kept `397d8ba9…`.
 
 | Check | Result |
 | --- | --- |
-| Running coordinator executable | `cfeaa3baa40e…`, ready ([status](raw/status-after.txt)) |
-| Public exact answers, regenerated 28-record oracle | 120/120 correct, p99 133 ms ([json](raw/exact-new.json)) |
-| Same check with the previous oracle | 77/120 "incorrect": served bytes now carry the fees ([json](raw/exact-old.json)) |
-| Live journal vs independent oracle, 3506524–3506724 and every block ingested after the deploy (3508623–3508670) | 1,024/1,024 records identical; 988 with fees (559 mixed), 36 coinbase without ([json](raw/live-after-compare.json)) |
-| Public PIR queries over those 1,024 records | 1,194/1,200 exact, 0 incorrect; 6 `coverage` errors for positions in blocks not yet published ([json](raw/exact-window.json)) |
+| Running coordinator executable | `cfeaa3baa40e…`, ready ([status](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/enhance/evidence/mixed-fee-production-2026-10-06/raw/status-after.txt)) |
+| Public exact answers, regenerated 28-record oracle | 120/120 correct, p99 133 ms ([json](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/enhance/evidence/mixed-fee-production-2026-10-06/raw/exact-new.json)) |
+| Same check with the previous oracle | 77/120 "incorrect": served bytes now carry the fees ([json](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/enhance/evidence/mixed-fee-production-2026-10-06/raw/exact-old.json)) |
+| Live journal vs independent oracle, 3506524–3506724 and every block ingested after the deploy (3508623–3508670) | 1,024/1,024 records identical; 988 with fees (559 mixed), 36 coinbase without ([json](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/enhance/evidence/mixed-fee-production-2026-10-06/raw/live-after-compare.json)) |
+| Public PIR queries over those 1,024 records | 1,194/1,200 exact, 0 incorrect; 6 `coverage` errors for positions in blocks not yet published ([json](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/enhance/evidence/mixed-fee-production-2026-10-06/raw/exact-window.json)) |
 | Publication | generations 9839→9846 within nine minutes, APM lag 0–2 blocks |
 | Workers and router | ready; CPU workers 1.2–1.6 GiB (unchanged); router eligible worker is the preferred GPU worker |
 | Alerting | monitor canary correct on the new oracle; APM and monitor back to `active`; no APM incident firing |

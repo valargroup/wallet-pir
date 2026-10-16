@@ -10,24 +10,24 @@ no production host touched.**
 | Item | Value |
 |---|---|
 | Source | `v12/decoupled-pages` at `b255c1ed` (the commit that adds this directory adds only it, the sample-recovery example and docs) |
-| Journal | the recent slice of the v3 journal, heights 3,262,749–3,473,686 (210,938 blocks, 4,185,700 events), anchor `0000000000755137…0be1d`, on the hub at `ai-dev/evidence/decoupled-pages-journal/recent`; provenance in [the step-1 census](../decoupled-pages-prototype-2026-10-11/README.md). Linked into a scratch directory, never written. |
-| Parent block | 3,262,748 = `0000000000b5d4b7…99b4176a`, as recorded by [continuous-publication-2026-09-08](../continuous-publication-2026-09-08/) |
-| Workload | the frozen [2026-09-08 sample](../workload-sample-2026-09-08/README.md), restricted by [slice-sample.py](slice-sample.py) to the 716 wallets whose whole range lies in the slice (not kept: `python3 slice-sample.py ../workload-sample-2026-09-08/sample.json 3262749 sample-recent-slice.json`, run from this directory, regenerates it byte for byte, sha256 `71bc628bdee60a1f4fb0ed035cd6c53b658becd772c1cc0b1a5a287864c3e399`); restore-old and unused start at genesis and are out, and so are 14 small-active and 110 reused-tail wallets that begin before the slice |
-| Digests | the sample's digests are over an older event codec; `sample-redigest` re-derived them from the slice and refused unless every wallet's event count was unchanged: all 716 counts equal ([sample-recent-slice-redigested.json.gz](sample-recent-slice-redigested.json.gz)) |
-| Command | [run.sh](run.sh) `SLICE WORK`, `release-fast`, rustc 1.97.1, on roman-dev-2 |
+| Journal | the recent slice of the v3 journal, heights 3,262,749–3,473,686 (210,938 blocks, 4,185,700 events), anchor `0000000000755137…0be1d`, on the hub at `ai-dev/evidence/decoupled-pages-journal/recent`; provenance in [the step-1 census](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/decoupled-pages-prototype-2026-10-11/README.md). Linked into a scratch directory, never written. |
+| Parent block | 3,262,748 = `0000000000b5d4b7…99b4176a`, as recorded by [continuous-publication-2026-09-08](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/continuous-publication-2026-09-08) |
+| Workload | the frozen [2026-09-08 sample](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/workload-sample-2026-09-08/README.md), restricted by [slice-sample.py](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/v12-offline-e2e-2026-10-12/slice-sample.py) to the 716 wallets whose whole range lies in the slice (not kept: `python3 slice-sample.py ../workload-sample-2026-09-08/sample.json 3262749 sample-recent-slice.json`, run from this directory, regenerates it byte for byte, sha256 `71bc628bdee60a1f4fb0ed035cd6c53b658becd772c1cc0b1a5a287864c3e399`); restore-old and unused start at genesis and are out, and so are 14 small-active and 110 reused-tail wallets that begin before the slice |
+| Digests | the sample's digests are over an older event codec; `sample-redigest` re-derived them from the slice and refused unless every wallet's event count was unchanged: all 716 counts equal ([sample-recent-slice-redigested.json.gz](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/v12-offline-e2e-2026-10-12/sample-recent-slice-redigested.json.gz)) |
+| Command | [run.sh](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/v12-offline-e2e-2026-10-12/run.sh) `SLICE WORK`, `release-fast`, rustc 1.97.1, on roman-dev-2 |
 
 ## Results
 
-**Publication** ([publication.json](publication.json), [publish.log](publish.log),
-[shards.json](shards.json)). `shard-publish` at `decoupled-2k-8k` with
+**Publication** ([publication.json](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/v12-offline-e2e-2026-10-12/publication.json), [publish.log](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/v12-offline-e2e-2026-10-12/publish.log),
+[shards.json](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/v12-offline-e2e-2026-10-12/shards.json)). `shard-publish` at `decoupled-2k-8k` with
 `--directory-choice all`, as production publishes: 8 directory shards (7
 sealed, sealed by directory bytes, plus the tail) holding 11 page shards, in
 42 s with 309 MB peak RSS. `shard-verify` loaded the set, checked range,
 anchor and map, and rebuilt 6 of the 8 directory shards from the journal at
 their published page-shard boundaries: filter, directory and every page shard
-byte-identical ([verify.json](verify.json)).
+byte-identical ([verify.json](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/v12-offline-e2e-2026-10-12/verify.json)).
 
-**Recovery** ([wallets.ndjson.gz](wallets.ndjson.gz), [results.json](results.json)).
+**Recovery** ([wallets.ndjson.gz](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/v12-offline-e2e-2026-10-12/wallets.ndjson.gz), [results.json](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/v12-offline-e2e-2026-10-12/results.json)).
 `sample_recovery` (an example of `transparent-loadtest`) synced each wallet
 once from its `required_from` into a fresh store, eight at a time, against
 the local `transparent-shard-server`, using the wallet crate's HTTP adapters
@@ -41,8 +41,8 @@ All 4 min 33 s, client peak RSS 264 MB.
 Bills: every byte a wallet's sync moved (map, filters, manifests with choice
 tables, setups, queries both ways), MB p50 / p95 / p99, against the census's
 one-shot bill for the same wallets
-([decoupled 2k/8k census log](../v12-census-2026-10-12/raw/extra-2k/), priced by
-[bill-table.py](../decoupled-pages-prototype-2026-10-11/bill-table.py)):
+([decoupled 2k/8k census log](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/v12-census-2026-10-12/raw/extra-2k), priced by
+[bill-table.py](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/decoupled-pages-prototype-2026-10-11/bill-table.py)):
 
 | Class | Wallets | Measured | Census | Page queries p50 / max |
 |---|---:|---|---|---|
@@ -65,7 +65,7 @@ server suite, not measured here.
 Production publishes under `zcash-transparent-range-v2`, while `shard-publish`
 defaults to v1. The same slice was republished with `--range-profile
 zcash-transparent-range-v2` (otherwise as `run.sh`) and recovered the same way
-by the same binaries at the same commit ([v2/](v2/)): **716 of 716 wallets
+by the same binaries at the same commit ([v2/](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/v12-offline-e2e-2026-10-12/v2)): **716 of 716 wallets
 exact**, the map and every manifest naming the v2 profile. Bills fall with the
 smaller filters, MB p50 / p95 / p99:
 
@@ -93,7 +93,7 @@ The census bills above assume v1 filters, so the comparison is made at v1.
 
 ## Stored form
 
-[run.sh](run.sh) writes its outputs uncompressed. Before this directory was
+[run.sh](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/v12-offline-e2e-2026-10-12/run.sh) writes its outputs uncompressed. Before this directory was
 merged, `sample-recent-slice-redigested.json`, `server-metrics.txt` and both
 `wallets.ndjson` files were gzipped (`gzip -n -9`) with their bytes unchanged,
 and `sample-recent-slice.json` was dropped because `slice-sample.py`

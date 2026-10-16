@@ -39,9 +39,9 @@ two worker replicas served the shard. All measured and warmup answers matched
 the canonical journal oracle. The test ran against the database size and
 configuration recorded at its start, not a fixed-size synthetic fixture.
 
-See the [dated measurement record](enhance/evidence/query-admission-production-2026-09-23/README.md)
+See the [dated measurement record](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/enhance/evidence/query-admission-production-2026-09-23/README.md)
 for commands, raw reports and limitations. The
-[older reported result](enhance/evidence/reported-performance/README.md)
+[older reported result](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/enhance/evidence/reported-performance/README.md)
 remains available for historical context. The
 [APM dashboard](https://enhance-pir.valargroup.dev/apm/) shows live fleet performance.
 

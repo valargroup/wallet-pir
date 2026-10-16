@@ -225,7 +225,7 @@ after inspecting the new hosts and preparing the pinned bootstrap policy.
 Compare the watcher trace with the placement trace to confirm no earlier request,
 the exact crossing, registration of both replicas before the new shard appears,
 and published shard movement. Keep private traces outside Git and retain their
-digests in a sanitized summary. The [live threshold campaign](../../../../../enhance/evidence/architecture-v4-live-threshold-2026-09-23/README.md)
+digests in a sanitized summary. The [live threshold campaign](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/enhance/evidence/architecture-v4-live-threshold-2026-09-23/README.md)
 shows the expected sequence and the observed RAM and query results.
 
 ## Spaces state locking

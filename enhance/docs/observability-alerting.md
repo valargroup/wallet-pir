@@ -261,7 +261,7 @@ manifest and logs for the exact scope of completed checks.
 
 ## Publication incident investigation and restarted observations
 
-The [2026-09-26 investigation](../evidence/observability-fix-2026-09-26/README.md)
+The [2026-09-26 investigation](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/enhance/evidence/observability-fix-2026-09-26/README.md)
 records the issues, corrections, tests, and new observation window. Its deployment
 manifest supersedes the original shadow start time. Earlier evidence remains
 retained; incident/outbox databases are not cleared. The updated observer retains

@@ -1,1 +1,0 @@
-receiver-pir.valargroup.dev. 300 IN	A	161.35.182.172

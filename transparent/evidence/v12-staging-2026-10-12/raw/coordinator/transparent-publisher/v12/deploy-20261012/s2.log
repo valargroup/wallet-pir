@@ -1,8 +1,0 @@
-assignment 23bf3fdb836c5c1f2094a6ce7f4c590f5869f172079cb1d5caa946e9e117b220 written to /opt/transparent-publisher/v12/state/1261e06fb7aee008b41bebc3fe53c7007f1ff5d84bb4a7cd56065e7f43fa611f.assignment.json
-  transparent-pir-v12-archive archive-owner     12 shards   37455613104 bytes reserved of   47244640256 cache  0-11
-  transparent-pir-v12-recent recent-replica    22 shards    4381189304 bytes reserved of    6442450944 cache  12-33
-transparent-pir-v12-archive files 81
-transparent-pir-v12-recent files 91
-25G	/srv/transparent-pir/v12/publications/1261e06fb7aee008b41bebc3fe53c7007f1ff5d84bb4a7cd56065e7f43fa611f
-36
-S2_DONE

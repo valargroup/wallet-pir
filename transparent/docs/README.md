@@ -55,9 +55,9 @@ they are not current instructions. Follow the [retention rules](../../evidence/R
 
 ## Compact layout
 
-Schema v10 is deployed; the [SSH cutover and public checks](../evidence/v10-cutover-2026-09-28/README.md) record the verified production state. See the
+Schema v10 is deployed; the [SSH cutover and public checks](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/v10-cutover-2026-09-28/README.md) record the verified production state. See the
 [architecture](architecture.md#private-record-layout),
-[storage evidence](../evidence/compact-layout-2026-09-28/README.md) and
+[storage evidence](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/compact-layout-2026-09-28/README.md) and
 [qualification gates](remaining-work.md#schema-v10-qualification-and-republication).
 The journal remains version 2.
 
@@ -71,4 +71,4 @@ what remains unpublished or unmeasured is tracked in
 [remaining work](remaining-work.md). Their raw measurements keep their own dated
 evidence directories, and the review text itself is in Git history at `b693cfde`.
 
-[Parent-filter evaluation](parent-filter-evaluation.md) documents the isolated hierarchy benchmark, recent-first selection rule, and explicit opt-in privacy change. The later [production artifact rollout](../evidence/parent-filters-production-2026-09-08/README.md) records HTTPS verification and the bounded production recovery canary.
+[Parent-filter evaluation](parent-filter-evaluation.md) documents the isolated hierarchy benchmark, recent-first selection rule, and explicit opt-in privacy change. The later [production artifact rollout](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/parent-filters-production-2026-09-08/README.md) records HTTPS verification and the bounded production recovery canary.

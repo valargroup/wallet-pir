@@ -13,7 +13,7 @@ validates the answer against its own chain context.
 - [Deployment](deployment.md): fresh-state release and coordinated cutover.
 - [Qualification](qualification.md): dated results and open production gates.
 - [Changelog](../CHANGELOG.md): Enhance PIR release history.
-- [Evidence](../evidence/README.md): retained raw runs and provenance.
+- [Evidence](../evidence/README.md): key decision records, proofs and historical provenance.
 
 Status PIR has its own controller, router and worker roles in production deployment
 records, with source in the Enhance package. Its [architecture](architecture_status.md),

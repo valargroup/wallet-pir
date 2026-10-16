@@ -402,7 +402,7 @@ the actual loaded canary.
 
 ## Latest productionization validation
 
-The [September 13 frozen-executable run](../evidence/productionize-m3-suite-fix-2026-09-13/README.md)
+The [September 13 frozen-executable run](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/productionize-m3-suite-fix-2026-09-13/README.md)
 passed all eleven deployed cases under the documented bounded retry policy.
 Its evidence preserves the original failures, the exact source/binary identity,
 full repository checks and every HTTP attempt. Application-level M3 closure and

@@ -7,9 +7,9 @@ This is an isolated backend experiment for the [status architecture](architectur
 It adds no external wallet integration and enables no status routes in the
 production server. The `status-pir` binary is a dedicated entry point.
 
-The [September 25 GPU run](../evidence/status-backend-2026-09-25/README.md)
+The [September 25 GPU run](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/enhance/evidence/status-backend-2026-09-25/README.md)
 is historical v1 evidence. Its timings cannot qualify compact v2. Current
-[compact v2 measurements](../evidence/status-compact-v2-2026-09-25/README.md)
+[compact v2 measurements](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/enhance/evidence/status-compact-v2-2026-09-25/README.md)
 cover CPU/CUDA interoperability and private live publication, with public
 release blockers recorded explicitly.
 
@@ -116,7 +116,7 @@ On the coordinator host, `probe-live` selects a txid from a canonical block,
 checks the manifest anchor independently through RPC, and verifies the encrypted
 answer without logging the txid or query body. It can target an isolated
 loopback `serve-live` listener with `--origin` and needs the same local RPC
-cookie path. The [SSH trial](../evidence/status-live-trial-2026-09-25/README.md)
+cookie path. The [SSH trial](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/enhance/evidence/status-live-trial-2026-09-25/README.md)
 records the first deployed synthetic load and live encrypted checks.
 
 The 64-block `--window-blocks` default suits source inspection. Every source
@@ -130,7 +130,7 @@ does not establish the production publication cadence.
 
 The synthetic single-process `status-pir serve` deployment and its APM tunnel
 ran on the Paperspace P4000 and were retired with that host on 2026-09-27; see
-[CPU Status host](../evidence/status-cpu-host-2026-09-27/README.md). To repeat
+[CPU Status host](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/enhance/evidence/status-cpu-host-2026-09-27/README.md). To repeat
 the fixture experiment, run `status-pir serve --entries 1572864 --state-dir <dir>`
 on an isolated host. It listens only on loopback: coordinator/ingress 8380,
 worker 8381, router 8382, and APM 8383. This is not a production template.

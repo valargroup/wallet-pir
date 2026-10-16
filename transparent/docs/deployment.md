@@ -123,7 +123,7 @@ Use one 2 vCPU / 4 GiB routing host initially. This is a single point of failure
 The accepted recent tier is two full copies; four hosts was a load target, not a
 requirement. Two replicas passed the 20 QPS gate at 20.9 QPS, p99 53 ms, with
 runtime construction in its own low-priority pool
-([evidence](../evidence/recent-floor-2026-09-29/README.md)). Elastic copies are
+([evidence](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/recent-floor-2026-09-29/README.md)). Elastic copies are
 added and removed by the actuator from `ops/infra/digitalocean/transparent/worker-pool/`
 (one droplet and project entry per member, its own state and host lock), never
 by the production root; the scaler decides within `scaler/policy.json`
@@ -195,7 +195,7 @@ Do not publish `archive-32k` as the selected target: uniform-chain evidence favo
 
 ## Sizing and availability
 
-Uniform full-chain `archive-wide` evidence is 162 shards and 57.1 decimal GB plaintext. Applying measured c-8 per-shard RSS gives approximately 93.2 GiB prepared residency, or 81 shards / 46.6 GiB per half. This is a sizing proxy, not the mixed-tier census. The mixed-tier archive is 77 shards (0–76). A single-owner prototype on 2026-09-29 reserved 41.35 GiB of its 48 GiB cache for all of them at planning headroom 0.05 (the live adapter's; 0.15 refuses it), with about 36 GiB resident. One owner therefore holds the whole archive: 48 GiB runtime cache in RAM, 96 GiB on disk, `MemoryMax` 56G, `MemoryHigh` 48 GiB, one build slot. In production (`transparent-pir-archive-03`, worker `a704616c`) it runs at 34.1 GiB RSS with 52% of host memory available, and at about 20 archive queries/s uses 1.4 of 8 cores and 12% of its query slots, with the same per-query evaluation time (about 11 ms) as the two-owner split ([evidence](../evidence/archive-consolidation-2026-09-29/README.md)).
+Uniform full-chain `archive-wide` evidence is 162 shards and 57.1 decimal GB plaintext. Applying measured c-8 per-shard RSS gives approximately 93.2 GiB prepared residency, or 81 shards / 46.6 GiB per half. This is a sizing proxy, not the mixed-tier census. The mixed-tier archive is 77 shards (0–76). A single-owner prototype on 2026-09-29 reserved 41.35 GiB of its 48 GiB cache for all of them at planning headroom 0.05 (the live adapter's; 0.15 refuses it), with about 36 GiB resident. One owner therefore holds the whole archive: 48 GiB runtime cache in RAM, 96 GiB on disk, `MemoryMax` 56G, `MemoryHigh` 48 GiB, one build slot. In production (`transparent-pir-archive-03`, worker `a704616c`) it runs at 34.1 GiB RSS with 52% of host memory available, and at about 20 archive queries/s uses 1.4 of 8 cores and 12% of its query slots, with the same per-query evaluation time (about 11 ms) as the two-owner split ([evidence](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/archive-consolidation-2026-09-29/README.md)).
 
 Retain space for the current assignment, candidate publication and rollback artifacts plus at least 20% disk headroom. The publisher needs independent peak-RSS and temporary-disk measurements; census RSS is not publisher RSS. Do not duplicate immutable sealed bytes per tail revision unnecessarily.
 
@@ -250,7 +250,7 @@ publication until the new ones activate.
    `restore` is no longer possible.
 
 Combined 20 QPS results (2026-09-29, 10 minutes each on top of the continuous
-5 QPS load, two recent replicas, every query exact, [evidence](../evidence/archive-consolidation-2026-09-29/README.md)):
+5 QPS load, two recent replicas, every query exact, [evidence](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/archive-consolidation-2026-09-29/README.md)):
 
 | Topology | Mixed 3 × 7 QPS: p50 / p99 | Archive-only 4 × 5 QPS: p50 / p99 |
 |---|---|---|
@@ -264,9 +264,9 @@ checks that path first.
 ## Proposed wallet objectives from the 2026-09-08 fleet series
 
 Proposed, not adopted: they come from three repetitions of the load series
-against the activated fleet ([r1](../evidence/runs/fleet-series-2026-09-08-r1/README.md),
-[r2](../evidence/runs/fleet-series-2026-09-08-r2/README.md),
-[r3](../evidence/runs/fleet-series-2026-09-08-r3/README.md)) at 8 and 32
+against the activated fleet ([r1](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/runs/fleet-series-2026-09-08-r1/README.md),
+[r2](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/runs/fleet-series-2026-09-08-r2/README.md),
+[r3](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/runs/fleet-series-2026-09-08-r3/README.md)) at 8 and 32
 concurrent wallets from a client inside the VPC over plain HTTP, and a
 wallet over the internet pays TLS and its own client work on top. The 128-
 and 512-wallet steps are not yet cleanly measured (owner restarts by hand
@@ -565,7 +565,7 @@ policy at boot. The observer verifies the loaded hook, current mount and helper
 hash; the full-fleet gate requires that same helper identity. Upgrade rollback
 restores the saved discard setting without reverting unrelated mount options.
 This policy is qualified initially on a single worker; see the
-[bounded disk-stall experiment](../evidence/productionize-m1-shoup-reduction-2026-09-11/README.md).
+[bounded disk-stall experiment](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/productionize-m1-shoup-reduction-2026-09-11/README.md).
 
 Run `transparent/ops/scripts/observe-transparent-hardening.py` on the coordinator with the
 expected worker binary digest and release `soak-query` executable. Its defaults
@@ -698,7 +698,7 @@ It records each caught failure and recovery and includes all elapsed time in
 freshness. HTTP rejection, certificate validation failures, arbitrary TLS alerts,
 timeouts and malformed content are not retried. Routing withdrawal and exactness
 checks remain mandatory. The result records monitor identity and retry policy.
-See [qualification evidence](../evidence/productionize-m1-http-retry-2026-09-12/README.md)
+See [qualification evidence](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/productionize-m1-http-retry-2026-09-12/README.md)
 and [status](status.md) for deployment state.
 
 ## Opt-in archive parent filters
@@ -709,7 +709,7 @@ The public bundle contains only `archive-wide.json` and `artifacts/<sha256>.bin`
 
 The coordinator Caddy template routes `/v1/filters/parents/*` to `/srv/transparent-parent-filters/public` with a five-minute HTTP cache lifetime. Point that symlink to the staged immutable release atomically. When first adding the route, preserve existing routing, validate the candidate Caddyfile before installation, save the predecessor, reload Caddy, and verify the manifest and every parent digest through public HTTPS. Restore the predecessor on activation failure. Do not restart the PIR fleet to publish static parent artifacts.
 
-The bundle is tied to exact sealed child revisions. Refresh it after archive membership or revisions change; wallets reject stale parent descriptors and fall back to children. To withdraw a release, unlink its public symlink after checking the current target. Existing validated client caches can remain usable for unchanged child revisions. See the [production evidence](../evidence/parent-filters-production-2026-09-08/README.md) for the deployed release, canary and rollback record.
+The bundle is tied to exact sealed child revisions. Refresh it after archive membership or revisions change; wallets reject stale parent descriptors and fall back to children. To withdraw a release, unlink its public symlink after checking the current target. Existing validated client caches can remain usable for unchanged child revisions. See the [production evidence](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/parent-filters-production-2026-09-08/README.md) for the deployed release, canary and rollback record.
 
 Reference clients opt in with `HttpFilterSource::with_parent_experiment(manifest_url, "archive-wide".into())`; loadtest scenarios use `experimental_parent_manifests.archive-wide`. Hosting the bundle does not change already-installed wallet applications. No script-count bypass is enabled.
 
@@ -1441,7 +1441,7 @@ fat-LTO release identity. Worker server/control instead use a checksummed
 `transparent-publisher` bundle from comprehensive main CI.
 
 - **Selected now:** the bundle of the morning
-  [2026-10-09 redeploy](../evidence/fleet-redeploy-2026-10-09/README.md), full CI
+  [2026-10-09 redeploy](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/fleet-redeploy-2026-10-09/README.md), full CI
   37921342549 at `a317455e9feecdd2639d5348188c6a2341819a4d`, built with
   `-C target-cpu=x86-64-v3`: `transparent-shard-server` (`34ba7ebb…`) and
   `shard-control` (`9208555a…`). Version-1 products also install its
@@ -1450,7 +1450,7 @@ fat-LTO release identity. Worker server/control instead use a checksummed
   Production has since moved on: since 2026-10-10 the workers run `9d2cbda0`'s
   `transparent-shard-server` (`6ab86d6a…`) and `shard-control` (`ff3c0264…`), and the
   coordinator its `transparent-publish-controller` (`6041ea47…`) with `source_sha`
-  `9d2cbda0` ([redeploy](../evidence/fleet-redeploy-9d2cbda0-2026-10-10/README.md)).
+  `9d2cbda0` ([redeploy](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/fleet-redeploy-9d2cbda0-2026-10-10/README.md)).
 - **Still 12ce on the coordinator:** filter, `shard-assign` and `shard-control`.
 - **Staged for the 2026-10-03 cutover:** CI 36819961986 at `80c94f32`
   (`6db1fa05…`, `6dfe78fa…`). Its native Rust, Cargo and toolchain inputs
@@ -3174,7 +3174,7 @@ locked survey must run freshly before any production effect.
 Deployed qualification uses `activity_quality_shadow.py` to observe the running
 coordinator APM independently of files describing desired configuration. It pins
 the existing `pir-apm` executable to the artifact in
-[the shared-layer manifest](../../enhance/evidence/shared-layers-2026-09-30/manifest.json)
+[the shared-layer manifest](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/enhance/evidence/shared-layers-2026-09-30/manifest.json)
 (source `aeaee4b7`, CI `36678333148`). It requires the exact systemd main PID,
 start ticks, boot, executable path and cgroup, a bounded executable hash, and
 exactly one explicit `PIR_APM_QUALITY_ALERT_MODE=shadow` entry in that process's
@@ -3361,7 +3361,7 @@ Vizor `main` already ships the `txid-2k` client.
 Prepared, not run: Roman approves and runs it. Nothing below is deployed until
 [status](status.md) records it. The layout and its gates are in
 [txid display](txid-display.md#lookup-one-row-of-one-table-per-bucket) and the
-[gate evidence](../evidence/txid-display-2k8-gates-2026-10-11/README.md).
+[gate evidence](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/txid-display-2k8-gates-2026-10-11/README.md).
 
 **Target.** A fresh display lineage from height 1, bootstrapped from the v2x
 genesis journal (`/srv/txid-display-genesis/journal-v2x`) into a new root,
@@ -3381,7 +3381,7 @@ This is a direct cutover: the fleet has no users, so no client of the
 new one.
 
 **Request.** `request-v6.json` in the
-[evidence](../evidence/txid-display-2k8-gates-2026-10-11/deploy/README.md) is
+[evidence](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/txid-display-2k8-gates-2026-10-11/deploy/README.md) is
 the combined request with the new controller keys and paths. Its `release`,
 `source_sha` and `baseline` are filled from the CI run of the merged commit
 and from `txid-display-preflight`, as for the previous requests.
@@ -3440,9 +3440,9 @@ recent window. The figures below are the `txid-2k` proposal as made.
 
 Proposed on 2026-10-07; nothing here is approved or deployed. The serving
 target stays as recorded in
-[status](status.md#tiered-txid-display-in-production-2026-10-07). Roman chose
+[status](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/docs/status.md#tiered-txid-display-in-production-2026-10-07). Roman chose
 a **genesis** coverage floor. Counts, formulas and measurements come from the
-[sizing evidence](../evidence/txid-display-backfill-sizing-2026-10-07/README.md),
+[sizing evidence](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/txid-display-backfill-sizing-2026-10-07/README.md),
 including its genesis addendum. Open gates are in
 [remaining work](remaining-work.md#txid-display-backfill-below-3407001-proposed-2026-10-07).
 
@@ -3453,7 +3453,7 @@ one transaction left out, and it is unspendable.
 
 ### Recommendation
 
-The [genesis journal census](../evidence/txid-display-genesis-census-2026-10-07/README.md)
+The [genesis journal census](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/txid-display-genesis-census-2026-10-07/README.md)
 measured page demand on real data and settled the layout question. Old
 archives hold many more large transactions than the live ones, so their page
 tables need up to 9 segments of 2,048 rows rather than one. The earlier
@@ -3517,7 +3517,7 @@ genesis configuration needs a 44G `MemoryMax` at cutover plus a year.
 ### Measured runtime memory
 
 `shard-residency`, extended to display geometries, built six runtimes of each
-table on roman-dev-2 ([raw output](../evidence/txid-display-backfill-sizing-2026-10-07/residency)).
+table on roman-dev-2 ([raw output](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/txid-display-backfill-sizing-2026-10-07/residency)).
 The steady increments match the four-byte-word size rather than the
 reservation:
 
@@ -3546,7 +3546,7 @@ disk-cache entries on archive-03.
 
 ### Host and memory options for genesis
 
-From the [census layout analysis](../evidence/txid-display-genesis-census-2026-10-07/README.md#per-era-options):
+From the [census layout analysis](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/txid-display-genesis-census-2026-10-07/README.md#per-era-options):
 426 archives at cutover, plus one year of growth at 63.7 seals a year. "Usable"
 means the host's memory minus the 20% floor and 1.5 GiB for the system: 49.7G
 at 64 GB and 100.9G at 128 GB.
@@ -3610,7 +3610,7 @@ Estimate: 2–4 days. The cold 4-page lookup stays above 300 KB, as it already
 does today.
 
 The split is built on `main` and not deployed
-([measurements](status.md#split-txid-display-map-2026-10-07)). At 426 entries
+([measurements](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/docs/status.md#split-txid-display-map-2026-10-07)). At 426 entries
 it costs 4.8 KB gzipped cold and 1.1 KB after a 409; the recent map's 14 chunk
 digests make the refetch about twice the 0.5 KB sized above. Workers keep
 serving `/v1/txid/shards` unchanged beside it.
@@ -3724,7 +3724,7 @@ follows the swap without downtime, as
    port 8095 from the router.
 5. **`shard-residency`** reads display geometries. Done with code item 1: the
    measurement's
-   [patch](../evidence/txid-display-backfill-sizing-2026-10-07/residency/shard-residency-display.patch)
+   [patch](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/txid-display-backfill-sizing-2026-10-07/residency/shard-residency-display.patch)
    is on `main`, and the tool also prints each runtime's charge after the
    true-up.
 
@@ -3738,7 +3738,7 @@ the Terraform wrapper, holding the production lock and recording its rollback.
 | P0 Preflight, read-only | Read archive-03's display disk-cache entry lengths to confirm four-byte runtimes on real tables. Read the coordinator's free disk, `df -i` and node state, and record the history W0 baseline. | minutes | none |
 | P1 Provision (spend) | Terraform plan and apply for the display-archive host and its firewall rule. | about 30 min | Terraform destroy of the new resources |
 | P2 `deploy --phase stage` | Install the release carrying code items 1–3 on the coordinator, the new host and recent-01. | minutes | `rollback` of the transaction |
-| P3 Ingest from 0 | **Done** at 22:56:45 UTC on 2026-10-07 into `/srv/txid-display-genesis/journal`: 3,508,674 blocks and 17,024,724 display records ([census](../evidence/txid-display-genesis-census-2026-10-07/README.md)). The census found a sidecar for every committed block, with exactly one coinbase each. Remaining: a spot check against independently decoded transactions. | done | none; the journal is inert |
+| P3 Ingest from 0 | **Done** at 22:56:45 UTC on 2026-10-07 into `/srv/txid-display-genesis/journal`: 3,508,674 blocks and 17,024,724 display records ([census](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/txid-display-genesis-census-2026-10-07/README.md)). The census found a sidecar for every committed block, with exactly one coinbase each. Remaining: a spot check against independently decoded transactions. | done | none; the journal is inert |
 | P4 `bootstrap --start-height 1 --through-height <journal end>`, then `verify` | Publish about 425 archives into a new root on the coordinator and reproduce every sealed digest. | about 15–40 min | none needed; the new root is unused |
 | P5 Cutover, in one maintenance window | `stop` withdraws `/v1/txid/` and stops the old controller. `workers --replace-active` runs on the new host, then recent-01. `route` names the new archive upstream. The `controller` phase starts on the new root and catches up. | about 45–75 min of display 503, dominated by the cold prepare of 1,325 runtimes, unless the new host prepares before `stop`; history untouched | restore the old route, worker records and controller; `stop` withdraws in under 60 s |
 | P6 `measure-start` | 20 QPS with samples spread from height 1 to the tip. | the existing criteria's duration | `measure-stop` |

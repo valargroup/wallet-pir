@@ -1,8 +1,0 @@
-transparent-5qps-continuous.service active enabled
-transparent-fleet-actuator.timer active enabled
-transparent-fleet-scaler.service active enabled
-transparent-replica-reconciler.service active enabled
-transparent-control-sessions.service active enabled
-transparent-publish-controller.service active enabled
-transparent-txid-display-controller.service active enabled
-transparent-v12-publish-controller.service active enabled

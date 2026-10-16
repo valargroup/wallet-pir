@@ -1,6 +1,6 @@
 # Qualification and current status
 
-Latest rollout: [architecture update 2](../evidence/architecture2-2026-09-24/README.md)
+Latest rollout: [architecture update 2](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/enhance/evidence/architecture2-2026-09-24/README.md)
 is deployed directly over SSH with dedicated packing, query ingress and two-worker
 pool placement. Its physical 8-GiB router and initial public-wallet checks passed;
 see that evidence for measured limits and sustained-run status. The historical
@@ -19,13 +19,13 @@ these results. The full six-hour qualification remains outstanding.
 | Evidence | Recorded result | Limit |
 |---|---|---|
 | [V7 SSH deployment and focused validation](../evidence/immutable-v7-2026-09-24/README.md) | Correct public wallet/native answers; 35 publications and 24,506 correct background answers; rollback and restart | Memory/swap and short-run p99 gates failed; six-hour qualification outstanding |
-| [Protocol-v6 production cutover](../evidence/protocol-v6-production-2026-09-23/README.md) | Two ready replicas and exact-answer public checks after cutover | No full CI or sustained qualification; eight-way load hit the two-query admission limit |
-| [Schema-11 interoperability](../evidence/schema11-suffix-2026-09-23/README.md) | Suffix record and wallet checks | Local; no fleet qualification |
-| [Production deployment](../evidence/architecture-v4-production-2026-09-23/README.md) | Exact answers, replicated publication, failover, restart, repair, and rollback rehearsal | Previous candidate; short load and a worker sampling gap |
-| [Active campaign](../evidence/architecture-v4-production-2026-09-23/README.md) | Six hours, 320 publications, 225,939 correct background answers | Worker-1 sample gap prevents uninterrupted hardware qualification |
-| [Sealed preparation failure and retry](../evidence/architecture-v4-sealed-deadline-2026-09-23/README.md) | Failure retained; bounded preparation timeout deployed; retry began measurement | No completed sealed qualification claimed by this record |
-| [Full-size HTTP tests](../evidence/architecture-v4-worker-disk-2026-09-23/README.md) | Consolidation, loan/return, retained queries, reorgs, and disk sampling | Local host, not production memory qualification |
-| [Capacity baseline](../evidence/schema9-worker-capacity-2026-09-22/REPORT.md) | Historical sealed-shard measurements | Different schema and host; does not qualify seven sealed shards |
+| [Protocol-v6 production cutover](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/enhance/evidence/protocol-v6-production-2026-09-23/README.md) | Two ready replicas and exact-answer public checks after cutover | No full CI or sustained qualification; eight-way load hit the two-query admission limit |
+| [Schema-11 interoperability](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/enhance/evidence/schema11-suffix-2026-09-23/README.md) | Suffix record and wallet checks | Local; no fleet qualification |
+| [Production deployment](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/enhance/evidence/architecture-v4-production-2026-09-23/README.md) | Exact answers, replicated publication, failover, restart, repair, and rollback rehearsal | Previous candidate; short load and a worker sampling gap |
+| [Active campaign](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/enhance/evidence/architecture-v4-production-2026-09-23/README.md) | Six hours, 320 publications, 225,939 correct background answers | Worker-1 sample gap prevents uninterrupted hardware qualification |
+| [Sealed preparation failure and retry](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/enhance/evidence/architecture-v4-sealed-deadline-2026-09-23/README.md) | Failure retained; bounded preparation timeout deployed; retry began measurement | No completed sealed qualification claimed by this record |
+| [Full-size HTTP tests](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/enhance/evidence/architecture-v4-worker-disk-2026-09-23/README.md) | Consolidation, loan/return, retained queries, reorgs, and disk sampling | Local host, not production memory qualification |
+| [Capacity baseline](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/enhance/evidence/schema9-worker-capacity-2026-09-22/REPORT.md) | Historical sealed-shard measurements | Different schema and host; does not qualify seven sealed shards |
 
 Open gates are worker memory/swap and admission calibration, latency during
 publication and routing refresh, the supported canonical burst envelope, and

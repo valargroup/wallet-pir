@@ -19,7 +19,7 @@ The Rust encoder is built with
 Pass `target/release/transparent-filter-cli` to the Python tools' `--cli` argument.
 This service-owned adapter calls the canonical filter library.
 
-[Retained baselines](../../evidence/baselines/README.md) preserve
+[Retained baselines](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/transparent/evidence/baselines/README.md) preserve
 samples, schemas and results. Old commands describe their recorded checkout;
 use this directory for the current equivalent tools. Historical Bloom accounting
 does not define the wallet's supported-script or privacy contract.

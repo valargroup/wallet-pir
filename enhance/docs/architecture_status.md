@@ -2,10 +2,10 @@
 
 Production deployment records include a separate `status-pir` controller, router
 and worker on the native v3 profile; see [deployment](deployment.md) and the
-[October 10 record](../evidence/production-deploy-9d2cbda0-2026-10-10/README.md).
+[October 10 record](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/enhance/evidence/production-deploy-9d2cbda0-2026-10-10/README.md).
 The [fleet operator guide](../../docs/operations.md) owns shared operating procedures.
 The [synthetic backend](status_backend.md) and
-[v2 measurements](../evidence/status-compact-v2-2026-09-25/README.md) describe their
+[v2 measurements](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/enhance/evidence/status-compact-v2-2026-09-25/README.md) describe their
 recorded modes and cannot qualify the native v3 release. The
 [distributed topology](status_distributed.md) and product qualification gates
 still separate deployment evidence from sustained capacity assurance.
@@ -315,7 +315,7 @@ state, even if that delays retirement indefinitely for an old candidate.
 The controller's `window_blocks` is the most canonical blocks the source
 retains; published coverage is that many blocks or fewer. The live controller
 has used 4,096 blocks, about 3.6 days at the measured 75.5-second spacing, since
-the [September 27 change](../evidence/status-window-4096-2026-09-27/README.md).
+the [September 27 change](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/enhance/evidence/status-window-4096-2026-09-27/README.md).
 That value is `MAX_INSPECTION_BLOCKS` in
 `enhance/services/enhance-pir-server/src/status/source.rs`, a cap from the
 read-only inspection source that `RollingWindow` applies to every caller. The
@@ -421,7 +421,7 @@ and source observation age are exposed separately.
 ### Incremental preparation
 
 Full rebuilds are not the ordinary publication path. The existing
-[P4000 measurement](../evidence/cuda-p4000-2026-09-24/README.md) reports 27.81
+[P4000 measurement](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/enhance/evidence/cuda-p4000-2026-09-24/README.md) reports 27.81
 seconds for fresh CPU preparation and 8.94 seconds for GPU preparation from
 artifacts. Those different paths do not establish status-update performance
 against the twenty-second target.
@@ -588,7 +588,7 @@ Target a separate Valargroup Paperspace AMS1 host matching the recorded P4000
 class: 8 GiB VRAM, eight vCPUs, approximately 29 GiB host RAM, and at least the
 existing 48 GiB root-disk class. This specifies the intended hardware class;
 provider availability and the actual machine must be verified at provisioning.
-The [hardware manifest](../evidence/cuda-p4000-2026-09-24/manifest.json) records
+The [hardware manifest](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/enhance/evidence/cuda-p4000-2026-09-24/manifest.json) records
 the reference machine, rather than a general capacity guarantee.
 
 Budget combined router and worker memory: active/candidate packing material,

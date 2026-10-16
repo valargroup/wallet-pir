@@ -1,103 +1,24 @@
-# Enhance PIR evidence
+# Enhance evidence
 
-The [qualification page](../docs/qualification.md) states what the retained
-runs support and what remains open. This index points to decision evidence;
-the [catalog](catalog.md) lists every retained run. Results are bound to their
-recorded source and binary hashes. Historical `v4` names identify the captured
-release and must not be read as current source paths.
+These records support only their recorded source, workload and acceptance limits.
+No live verification was performed during repository cleanup. Current contracts,
+operating targets and open gates belong in the product documentation.
 
-## Development tooling
+| Retained decision record | Scope |
+|---|---|
+| [Enhance production deploy of `eae5641a`, 2026-10-11](production-deploy-eae5641a-2026-10-11/README.md) | Latest linked Enhance/Status deployment observation; no fresh fleet verification. |
+| [Mixed-transaction fee repair in production — October 6, 2026](mixed-fee-production-2026-10-06/README.md) | Mixed-transaction fee repair, independent answers and rollout interruption. |
+| [Shared layers: production checks and fixes — 2026-09-30](shared-layers-2026-09-30/README.md) | Shared operations and monitoring fixes with scoped correctness observations. |
+| [Production soak and fixes — 2026-09-27](prod-soak-2026-09-27/README.md) | Six-hour diagnostic load and findings; remaining qualification is explicit. |
+| [Native two-mask correctness certificates — 2026-09-26](native-certificate-2026-09-26/README.md) | Conditional native correctness certificates and their inputs. |
+| [Dithered 44-bit query screen for Enhance and Status, 2026-10-09](dithered-query-2026-10-09/README.md) | Query-width certificates and checker reports for the native shapes. |
+| [Enhance v7 implementation and SSH deployment — September 24, 2026](immutable-v7-2026-09-24/README.md) | Published baseline, cache/publication behavior and qualification limits. |
+| [Native ReinspiRING production trial — 2026-09-25](reinspiring-production-trial-2026-09-25/README.md) | Native backend trial, failures and limitations. |
+| [Worker artifact cache reclaim — September 24, 2026](worker-cache-reclaim-2026-09-24/README.md) | Worker cache reclamation investigation and its unresolved limits. |
 
-- [Development-speed follow-up to PR 122](development-speed-2026-09-30/README.md) —
-  exact-SHA CI verification, automatic local Cargo leases, actual concurrent
-  checks and comparable warm feedback measurements; separate from qualification.
-- [CI Cargo cache identity and reuse](ci-cache-reuse-2026-10-01/README.md) —
-  cold, restore and workflow/env-only CI runs with sanitized restore status and
-  Cargo's own fresh/compiled unit counts; primed-main comparison pending
-  integration; no savings claimed.
-
-## Current protocol and release inputs
-
-- [Enhance and Status production deploy of `9d2cbda0`](production-deploy-9d2cbda0-2026-10-10/README.md) —
-  every role on the release that also accepts query-row prefixes; exact answers
-  120/120 twice and Status probe 1,200/1,200.
-- [Enhance and Status production deploy of `06a972db`](production-deploy-06a972db-2026-10-09/README.md) —
-  all eight roles on the full-CI release that also accepts 44-bit dithered queries
-  (nothing advertises them); exact answers 120/120 and Status probe 1,200/1,200 after;
-  one interrupted transaction finished by rollback and redeploy.
-- [Mixed-transaction fee repair in production](mixed-fee-production-2026-10-06/README.md) —
-  coordinator-only deploy of `2474cdbb`, historical records rebuilt from chain and
-  adopted (374,853 records gained exact fees), independent-oracle and public
-  exact-answer acceptance, four seconds of coordinator-route 502s.
-- [Mixed-transaction fee publication](mixed-fee-publication-2026-10-06/README.md) —
-  exact whole-transaction fees for Ironwood transactions with transparent, Sapling
-  or Orchard parts; offline journal rebuild and verified coordinator adoption;
-  local tests only, no production journal repaired.
-
-- [Shared layers: production checks and fixes](shared-layers-2026-09-30/README.md) —
-  read-only deploy-CLI runs against production, Status control-account
-  hardening, three alert fixes and the APM on a CI-built binary, with no
-  Enhance or Status restart; 696,000/696,000 correct on each product during the
-  changes.
-
-- [Production soak and fixes](prod-soak-2026-09-27/README.md) —
-  six-hour joint 20 QPS load; 432,000/432,000 Enhance and 0 incorrect Status
-  answers; thirteen findings fixed on `main`, open items listed.
-
-- [Status window raised to 4,096 blocks](status-window-4096-2026-09-27/README.md) —
-  live coverage of 4,096 blocks with 32,331 entries (2.1% of admission);
-  12,000/12,000 correct at 20 QPS for 10 minutes.
-
-- [Status on a CPU droplet](status-cpu-host-2026-09-27/README.md) —
-  live Status router and worker moved off the P4000; 36,000/36,000 correct at
-  20 QPS for 30 minutes (p50 49 ms, p99 162 ms); not six-hour qualification.
-
-- [Native two-mask production deployment and six-hour load](native-two-mask-production-2026-09-26/README.md) —
-  v9 Enhance and native Status v3 in production: no incorrect answers over six hours
-  (0.03% Enhance 502s, root-caused); not formal qualification.
-
-- [Dithered 44-bit query screen](dithered-query-2026-10-09/README.md) —
-  synthetic Enhance (4,096–32,768 rows) and Status shapes certify 166 bits or
-  more at 44-bit dithered and 158 or more at 49-bit nearest; servers accept both
-  widths; no served snapshot certified.
-
-- [Native two-mask correctness certificates](native-certificate-2026-09-26/README.md) —
-  conditional per-snapshot bounds of 2^-158 (Enhance, worst-case query) and
-  2^-262 or better (Status); no runtime certification or independent review.
-
-- [Synthetic Status PIR backend and APM validation](status-backend-2026-09-25/README.md) —
-  encrypted correctness and fixed-source load passed; the five-second publication
-  target and live-chain integration remain open.
-
-- [Production cleanup deployment (PR #111)](production-cleanup-2026-09-24/README.md) — verified rolling update, unchanged v7 state, and 120/120 correct public smoke answers; not sustained qualification.
-
-- [Optional CUDA worker validation on P4000](cuda-p4000-2026-09-24/README.md) — GPU integration correctness and composed-domain matrix benchmark; not fleet qualification.
-
-- [V7 SSH deployment, wallet interop and focused validation](immutable-v7-2026-09-24/README.md) — functional checks passed; memory/swap and short-run p99 qualification gates remain open.
-
-- [Q48 precision qualification](p16-q48-2026-09-23/README.md)
-- [Schema-11/v5 wallet interoperability (q46 predecessor)](schema11-suffix-2026-09-23/README.md)
-- [Canonical record oracle](architecture-v4-canonical-record-2026-09-23/README.md)
-  and [authenticated note recovery](architecture-v4-note-recovery-2026-09-23/README.md)
-- [Clean release candidate](architecture-v4-clean-candidate-2026-09-23/README.md)
-  and [integrated regression](architecture-v4-integrated-regression-2026-09-23/README.md)
-
-## Production and qualification
-
-- [Packing-router memory limits under 4/7/8 GiB caps](packing-budget-2026-09-24/README.md)
-
-- [Adaptive batching on isolated 8 GiB Linux workers](batching-linux-2026-09-24/README.md)
-  and [earlier local batching comparison](batching-local-2026-09-24/README.md)
-- [Isolated worker expansion at the forecast threshold](architecture-v4-live-threshold-2026-09-23/README.md)
-- [Protocol-v6 direct SSH cutover and exact-answer checks](protocol-v6-production-2026-09-23/README.md)
-- [Direct production deployment and active campaign](architecture-v4-production-2026-09-23/README.md)
-- [Sealed cold-preparation failure and retry](architecture-v4-sealed-deadline-2026-09-23/README.md)
-- [Full-size correctness and disk sizing](architecture-v4-worker-disk-2026-09-23/README.md)
-- [Historical worker capacity](schema9-worker-capacity-2026-09-22/REPORT.md)
-  and [public baseline](public-baseline-2026-09-14/README.md)
-
-Keep production decisions, unique failures, qualification inputs, and their raw
-provenance. The [cleanup ledger](../../docs/cleanup-2026-09-23.md) records
-superseded diagnostic bundles removed after reference review. Retained raw files
-are immutable; new corrections belong in a new note or run. Follow the
-[shared evidence requirements](../../evidence/README.md) for future captures.
+Essential certificate outputs and oracle provenance remain in the tree, unchanged.
+Their digests are in the shared [SHA256SUMS](../../evidence/SHA256SUMS).
+Supporting raw captures, earlier runs and experiment scripts remain available
+in the [complete pre-cleanup evidence index](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/enhance/evidence/README.md).
+Follow the [retention policy](../../evidence/README.md); an old deployment record
+does not establish current service health or qualification.
