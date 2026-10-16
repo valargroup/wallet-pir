@@ -695,11 +695,13 @@ fn recover(job: &Job) -> Result<Value> {
             .events()?
             .into_iter()
             .filter(|e| u64::from(e.event.height()) < job.wallet.required_from)
-            .map(|e| SeedEvent {
-                script: hex::encode(e.script),
-                event: hex::encode(e.event.to_bytes()),
+            .map(|e| {
+                Ok(SeedEvent {
+                    script: hex::encode(e.script),
+                    event: hex::encode(e.event.to_bytes()?),
+                })
             })
-            .collect();
+            .collect::<Result<_>>()?;
         fs::write(
             &job.seed_path,
             serde_json::to_vec(&Seed {

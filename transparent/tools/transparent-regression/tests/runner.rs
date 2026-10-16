@@ -17,7 +17,7 @@ async fn executable_checks_frozen_checkpoints_and_reports_publication_drift() {
         .iter()
         .flatten()
         .filter(|(s, _)| *s == script(3))
-        .map(|(s, e)| EventRecord::new(s.as_slice(), e))
+        .map(|(s, e)| EventRecord::new(s.as_slice(), e).unwrap())
         .collect::<Vec<_>>();
     let heights = [FIRST + SPAN + 10, FIRST + SPAN + 35, FIRST + SPAN + 90];
     let headers = (FIRST - 1..=map.shards.last().unwrap().end_height)

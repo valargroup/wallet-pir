@@ -81,6 +81,30 @@ fn publish(dir: &Path, corrupt: bool) {
 }
 
 #[test]
+fn unsupported_map_metadata_is_rejected_before_reading_filters() {
+    for unknown_profile in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        publish(dir.path(), false);
+        let path = dir.path().join("shards.json");
+        let mut map: ShardMap = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        if unknown_profile {
+            map.profile = "unregistered-range-profile".into();
+        } else {
+            map.range_envelope_version = transparent_filter::RANGE_ENVELOPE_VERSION + 1;
+        }
+        map.check_shape().unwrap(); // The structure alone cannot qualify the protocol.
+        for entry in &map.shards {
+            std::fs::remove_dir_all(dir.path().join(&entry.manifest_digest)).unwrap();
+        }
+        std::fs::write(path, serde_json::to_vec(&map).unwrap()).unwrap();
+        assert!(matches!(
+            ShardFilters::open(dir.path()),
+            Err(transparent_filter_server::shard_filters::ShardFilterError::Invalid(_))
+        ));
+    }
+}
+
+#[test]
 fn a_filter_that_does_not_match_its_published_digest_is_refused() {
     let dir = tempfile::tempdir().unwrap();
     publish(dir.path(), true);

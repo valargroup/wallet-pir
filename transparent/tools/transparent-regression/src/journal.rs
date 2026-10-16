@@ -162,7 +162,7 @@ mod tests {
             coinbase: true,
         });
         let mut record = vec![1, 0, 0x51];
-        record.extend_from_slice(&event.to_bytes());
+        record.extend_from_slice(&event.to_bytes().unwrap());
         let committed = record.len() as u64;
         record.extend_from_slice(b"uncommitted event suffix");
         std::fs::write(dir.path().join("events.bin"), &record).unwrap();

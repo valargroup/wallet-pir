@@ -71,9 +71,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             json!({"database": path, "schema": identity.shard_schema,
             "set_identity": identity.digest(), "anchor": store.anchor()?, "pending": store.pending()?.len(),
             "last_commit": store.last_commit()?, "summaries": summaries,
-            "events": events.iter().map(|event| json!({"script": hex::encode(&event.script),
-                "bytes": hex::encode(event.event.to_bytes()), "shard_id": event.shard_id,
-                "revision": event.revision_digest})).collect::<Vec<_>>()})
+            "events": events.iter().map(|event| Ok(json!({"script": hex::encode(&event.script),
+                "bytes": hex::encode(event.event.to_bytes()?), "shard_id": event.shard_id,
+                "revision": event.revision_digest}))).collect::<Result<Vec<_>, Box<dyn std::error::Error>>>()?})
         );
     }
     Ok(())

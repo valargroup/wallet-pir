@@ -48,7 +48,7 @@ fn main() -> Result<(), Error> {
     }
     let raw = std::fs::read(&a.map)?;
     let map: ShardMap = serde_json::from_slice(&raw)?;
-    map.check_shape()?;
+    map.validate_supported()?;
     let specs: Vec<Spec> = serde_json::from_slice(&std::fs::read(&a.cases)?)?;
     if specs.is_empty() {
         return Err("empty case specifications".into());
@@ -81,7 +81,7 @@ fn main() -> Result<(), Error> {
                 events
                     .get_mut(&hex::encode(script.as_slice()))
                     .unwrap()
-                    .push(EventRecord::new(script.as_slice(), &event));
+                    .push(EventRecord::new(script.as_slice(), &event)?);
             }
         }
         if h % 250_000 == 0 {

@@ -502,7 +502,7 @@ pub fn publish_with(
     if !reorg && previous_dir != &cli.output && previous_dir.exists() {
         link_superseded_tails(previous_dir, &cli.output, &map.shards, store)?;
     }
-    map.check_shape()
+    map.validate_supported()
         .map_err(|error| format!("the published map is malformed: {error}"))?;
     // Written last, and atomically. The map is what names every shard, so a
     // truncated one is a set that cannot be loaded at all; and until it names
@@ -1007,7 +1007,7 @@ impl ValidatePrevious for transparent_filter::ShardMap {
         range_profile: &str,
         policy_of: &dyn Fn(&Geometry) -> DecoupledPolicy,
     ) -> Result<Self, BoxError> {
-        self.check_shape()?;
+        self.validate_supported()?;
         if self.genesis_hash != store.genesis_hash()
             || self.start_height != store.start_height()
             || self.network != transparent_filter::NETWORK

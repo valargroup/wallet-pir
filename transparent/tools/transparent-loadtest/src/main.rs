@@ -382,7 +382,7 @@ fn store_digest<S: WalletStore>(
     events.dedup();
     let mut hasher = Sha256::new();
     for event in &events {
-        hasher.update(event.to_bytes());
+        hasher.update(event.to_bytes()?);
     }
     Ok((hex::encode(hasher.finalize()), events.len() as u64))
 }

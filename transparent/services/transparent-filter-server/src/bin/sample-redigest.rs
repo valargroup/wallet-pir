@@ -124,7 +124,7 @@ fn main() -> Result<(), BoxError> {
         }
         let mut hasher = Sha256::new();
         for event in &events {
-            hasher.update(event.to_bytes());
+            hasher.update(event.to_bytes()?);
         }
         let digest = hex::encode(hasher.finalize());
         if client["expected_digest"].as_str() != Some(digest.as_str()) {

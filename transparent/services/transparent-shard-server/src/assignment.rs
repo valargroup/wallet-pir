@@ -281,6 +281,8 @@ impl Assignment {
 
     /// The assignment describes exactly this map.
     pub fn check_against(&self, map: &ShardMap, map_sha256: &str) -> Result<(), AssignmentError> {
+        map.check_supported_format()
+            .map_err(AssignmentError::Invalid)?;
         let invalid = |message: String| Err(AssignmentError::Invalid(message));
         if self.set.map_sha256 != map_sha256 {
             return invalid(format!(

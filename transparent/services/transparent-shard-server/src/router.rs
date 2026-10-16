@@ -81,6 +81,7 @@ pub fn plan(
     headroom: f64,
     generated_by: GeneratedBy,
 ) -> Result<Assignment, PlanError> {
+    map.check_supported_format().map_err(PlanError::Invalid)?;
     if !(0.0..1.0).contains(&headroom) {
         return Err(PlanError::Invalid("headroom must be in [0, 1)".into()));
     }
@@ -488,6 +489,7 @@ pub fn files_for(
     assignment: &Assignment,
     worker_id: &str,
 ) -> Result<Vec<String>, PlanError> {
+    map.check_supported_format().map_err(PlanError::Invalid)?;
     let scope = assignment
         .scope_for(worker_id)
         .map_err(|error| PlanError::Invalid(error.to_string()))?;

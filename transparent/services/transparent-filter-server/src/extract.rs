@@ -673,7 +673,10 @@ mod tests {
         let mut previous = MapPreviousOutputs::default();
         previous.scripts.insert(spent, p2pkh(7));
         for (_, event) in events_of(&transactions, &mut previous) {
-            assert_eq!(TransparentEvent::from_bytes(&event.to_bytes()), Ok(event));
+            assert_eq!(
+                TransparentEvent::from_bytes(&event.to_bytes().unwrap()),
+                Ok(event)
+            );
         }
     }
 

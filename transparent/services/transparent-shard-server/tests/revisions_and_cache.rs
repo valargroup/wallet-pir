@@ -225,6 +225,48 @@ fn one_runtime(table: Table) -> u64 {
 /// A republished tail leaves its predecessor on disk. That is what the
 /// publisher writes by design, and the loader used to refuse to start on it.
 #[test]
+fn unsupported_map_metadata_is_rejected_before_revision_loading_or_reuse() {
+    let original = tempfile::tempdir().unwrap();
+    let (digest, scripts) = write_revision(original.path(), FIRST + 2, 0, "");
+    let valid = write_map(original.path(), &digest, FIRST + 2, 0, scripts);
+    let options = transparent_shard_server::shardset::LoadOptions::whole(DEFAULT_RETAIN_REVISIONS);
+    let previous = ShardSet::open_with(original.path(), &options).unwrap();
+    let previous_json = previous.map_json.clone();
+    for unknown_profile in [false, true] {
+        let candidate = tempfile::tempdir().unwrap();
+        let mut map = valid.clone();
+        if unknown_profile {
+            map.profile = "unregistered-range-profile".into();
+        } else {
+            map.range_envelope_version = transparent_filter::RANGE_ENVELOPE_VERSION + 1;
+        }
+        map.check_shape().unwrap();
+        std::fs::write(
+            candidate.path().join("shards.json"),
+            serde_json::to_vec(&map).unwrap(),
+        )
+        .unwrap();
+        // No revision directories exist: unsupported metadata must be the first refusal.
+        for reuse in [None, Some(&previous)] {
+            let result = ShardSet::open_reusing(candidate.path(), &options, reuse);
+            match result {
+                Err(transparent_shard_server::shardset::LoadError::Invalid(error)) => {
+                    assert!(error.starts_with("shard map is malformed:"), "{error}");
+                }
+                _ => panic!("unsupported map must fail before revision loading"),
+            }
+        }
+        assert_eq!(previous.map_json, previous_json);
+        assert_eq!(previous.map.profile, valid.profile);
+        assert_eq!(
+            previous.map.range_envelope_version,
+            valid.range_envelope_version
+        );
+    }
+    assert!(ShardSet::open_reusing(original.path(), &options, Some(&previous)).is_ok());
+}
+
+#[test]
 fn a_set_holding_a_superseded_revision_loads() {
     let dir = tempfile::tempdir().unwrap();
     let (old, new) = two_revisions(dir.path());

@@ -79,7 +79,7 @@ impl ShardFilters {
                 path: map_path,
                 source,
             })?;
-        map.check_shape().map_err(|error| {
+        map.validate_supported().map_err(|error| {
             ShardFilterError::Invalid(format!("shard map is malformed: {error}"))
         })?;
 

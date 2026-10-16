@@ -25,7 +25,7 @@ fn sample(path: &Path, map: &ShardMap, tags: &[u32], wrong: bool) {
     let clients: Vec<_> = tags.iter().map(|tag| {
         let mut events: Vec<_> = chain.iter().flatten().filter(|(s,_)|*s==common::script(*tag)).map(|(_,e)|*e).collect();
         events.sort_by_key(|e|e.sort_key()); events.dedup();
-        let mut digest=Sha256::new(); for event in &events {digest.update(event.to_bytes());}
+        let mut digest=Sha256::new(); for event in &events {digest.update(event.to_bytes().unwrap());}
         json!({"class":"test","scripts":[hex::encode(common::script(*tag).as_slice())],"required_from":common::FIRST,"expected_digest":if wrong {"incorrect".into()} else {hex::encode(digest.finalize())},"journal_events":events.len()})
     }).collect();
     let tip = map.shards.last().unwrap();
@@ -456,7 +456,7 @@ async fn catch_up_seeds_prior_history_and_keeps_measurement_separate() {
     assert_eq!(events.len(), 1);
     let mut hash = Sha256::new();
     for event in &events {
-        hash.update(event.to_bytes());
+        hash.update(event.to_bytes().unwrap());
     }
     sample["clients"][0]["required_from"] = json!(from);
     sample["clients"][0]["expected_digest"] = json!(hex::encode(hash.finalize()));
@@ -582,7 +582,7 @@ async fn preparation_cap_does_not_reduce_measured_wave_concurrency() {
         events.dedup();
         let mut hash = Sha256::new();
         for event in &events {
-            hash.update(event.to_bytes());
+            hash.update(event.to_bytes().unwrap());
         }
         client["required_from"] = json!(from);
         client["expected_digest"] = json!(hex::encode(hash.finalize()));
@@ -672,7 +672,7 @@ async fn historical_sample_keeps_its_target_on_a_newer_publication() {
         events.dedup();
         let mut hash = Sha256::new();
         for event in &events {
-            hash.update(event.to_bytes());
+            hash.update(event.to_bytes().unwrap());
         }
         client["required_from"] = json!(from);
         client["expected_digest"] = json!(hex::encode(hash.finalize()));
@@ -1056,7 +1056,7 @@ async fn block_backend_matches_oracle_with_network_and_offline_scanning() {
         .collect();
     let mut hash = Sha256::new();
     for event in &remaining {
-        hash.update(event.to_bytes());
+        hash.update(event.to_bytes().unwrap());
     }
     caught_up["clients"][0]["journal_events"] = json!(remaining.len());
     caught_up["clients"][0]["expected_digest"] = json!(hex::encode(hash.finalize()));

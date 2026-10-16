@@ -374,7 +374,7 @@ impl EventStore {
             buffer.extend_from_slice(&length.to_le_bytes());
             buffer.extend_from_slice(script.as_slice());
             event.validate_metadata()?;
-            let raw = event.to_bytes();
+            let raw = event.to_bytes()?;
             buffer.extend_from_slice(&(raw.len() as u16).to_le_bytes());
             buffer.extend_from_slice(&raw);
         }
@@ -416,6 +416,7 @@ impl EventStore {
         if height != self.next_height() {
             return Err(EventStoreError::Invariant("display append height".into()));
         }
+        transparent_events::check_transaction_consistency(events.iter().map(|(_, event)| event))?;
         crate::display_journal::validate_events(records, events)?;
         let (oversized, ordinary): (Vec<_>, Vec<_>) =
             events.iter().cloned().partition(|(script, _)| {
@@ -725,6 +726,56 @@ mod tests {
         assert_eq!(store.covered_through(), Some(START));
         assert_eq!(store.events_stored(), 2);
         assert_eq!(store.events_at(START).unwrap(), Some(block));
+    }
+
+    #[test]
+    fn invalid_event_metadata_leaves_journal_bytes_and_coverage_unchanged() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut journal = store(dir.path());
+        let valid = receive(START as u32, 1);
+        journal
+            .append_block(START, hash(START), &[valid.clone()])
+            .unwrap();
+        journal.commit().unwrap();
+        let names = ["events.bin", "blocks.bin", "checkpoint.bin"];
+        let before: Vec<_> = names
+            .iter()
+            .map(|name| std::fs::read(dir.path().join(name)).unwrap())
+            .collect();
+        let invalid = receive(START as u32 + 1, 2);
+        let invalid = (
+            invalid.0,
+            invalid
+                .1
+                .with_metadata(Some(transparent_events::TransactionMetadata {
+                    fee: transparent_events::FeeState::NotApplicable,
+                    transparent_input_count: 1,
+                    has_shielded_components: false,
+                })),
+        );
+        assert!(invalid.1.to_bytes().is_err());
+        assert!(journal
+            .append_block(
+                START + 1,
+                hash(START + 1),
+                &[receive(START as u32 + 1, 3), invalid.clone()]
+            )
+            .is_err());
+        assert!(journal
+            .append_block_with_display(START + 1, hash(START + 1), &[invalid], &[])
+            .is_err());
+        assert_eq!(journal.covered_through(), Some(START));
+        assert_eq!(journal.events_at(START).unwrap(), Some(vec![valid]));
+        assert_eq!(journal.events_stored(), 1);
+        assert!(!dir.path().join(crate::display_journal::V2X_DIR).exists());
+        for (name, bytes) in names.iter().zip(before) {
+            assert_eq!(std::fs::read(dir.path().join(name)).unwrap(), bytes);
+        }
+        journal
+            .append_block(START + 1, hash(START + 1), &[receive(START as u32 + 1, 4)])
+            .unwrap();
+        journal.commit().unwrap();
+        assert_eq!(journal.covered_through(), Some(START + 1));
     }
 
     /// A height with no supported activity is a fact, not an absence of

@@ -69,7 +69,7 @@ fn agrees(
     served: &transparent_filter::ShardMap,
 ) -> Result<()> {
     served
-        .check_shape()
+        .validate_supported()
         .map_err(anyhow::Error::msg)
         .context("served map is malformed")?;
     if SetIdentity::of(pinned) != SetIdentity::of(served) {

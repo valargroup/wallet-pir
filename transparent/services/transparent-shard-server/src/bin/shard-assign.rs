@@ -103,7 +103,7 @@ enum Command {
 fn read_map(shard_dir: &std::path::Path) -> Result<(ShardMap, String), BoxError> {
     let raw = std::fs::read(shard_dir.join("shards.json"))?;
     let map: ShardMap = serde_json::from_slice(&raw)?;
-    map.check_shape()?;
+    map.validate_supported()?;
     let served = serde_json::to_vec(&map)?;
     Ok((map, hex::encode(Sha256::digest(&served))))
 }

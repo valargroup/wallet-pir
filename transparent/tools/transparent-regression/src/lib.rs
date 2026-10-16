@@ -20,11 +20,11 @@ impl EventRecord {
     pub fn decode(&self) -> Result<TransparentEvent> {
         Ok(TransparentEvent::from_bytes(&hex::decode(&self.event)?)?)
     }
-    pub fn new(script: &[u8], event: &TransparentEvent) -> Self {
-        Self {
+    pub fn new(script: &[u8], event: &TransparentEvent) -> Result<Self> {
+        Ok(Self {
             script: hex::encode(script),
-            event: hex::encode(event.to_bytes()),
-        }
+            event: hex::encode(event.to_bytes()?),
+        })
     }
 }
 
@@ -160,7 +160,7 @@ pub fn actual(store: &impl WalletStore) -> Result<Snapshot> {
         .events()?
         .iter()
         .map(|e| EventRecord::new(&e.script, &e.event))
-        .collect::<Vec<_>>();
+        .collect::<Result<Vec<_>>>()?;
     events.sort();
     Ok(Snapshot {
         events,
@@ -175,7 +175,7 @@ pub fn validate(f: &Fixture) -> Result<()> {
     if f.schema != SCHEMA || f.cases.is_empty() {
         bail!("unsupported or empty fixture");
     }
-    f.map.check_shape().map_err(anyhow::Error::msg)?;
+    f.map.validate_supported().map_err(anyhow::Error::msg)?;
     let mut ids = BTreeSet::new();
     for case in &f.cases {
         if case.id.is_empty()
@@ -270,6 +270,25 @@ mod tests {
     use super::*;
     use transparent_events::{ReceiveEvent, SpendEvent, Txid};
     #[test]
+    fn invalid_metadata_cannot_be_exported_as_a_frozen_event_record() {
+        let invalid =
+            transparent_events::TransparentEvent::Receive(transparent_events::ReceiveEvent {
+                height: 1,
+                txid: transparent_events::Txid([1; 32]),
+                transaction_index: 0,
+                output_index: 0,
+                value: 7,
+                coinbase: false,
+                metadata: Some(transparent_events::TransactionMetadata {
+                    fee: transparent_events::FeeState::NotApplicable,
+                    transparent_input_count: 1,
+                    has_shielded_components: false,
+                }),
+            });
+        assert!(EventRecord::new(&[0x51], &invalid).is_err());
+    }
+
+    #[test]
     fn reference_keeps_zero_balance_history_and_bounds_spends_by_anchor() {
         let script = hex::decode(format!("a914{}87", "11".repeat(20))).unwrap();
         let receive = TransparentEvent::Receive(ReceiveEvent {
@@ -291,8 +310,8 @@ mod tests {
             spent_output_index: 0,
         });
         let records = vec![
-            EventRecord::new(&script, &spend),
-            EventRecord::new(&script, &receive),
+            EventRecord::new(&script, &spend).unwrap(),
+            EventRecord::new(&script, &receive).unwrap(),
         ];
         let before = reference(&records, 9).unwrap();
         assert!(before.events.is_empty());

@@ -20,7 +20,7 @@ fn main() -> Result<()> {
     }
     let journal = journal::EventStore::open_existing(&args[1])?;
     let map: ShardMap = serde_json::from_slice(&fs::read(&args[2])?)?;
-    map.check_shape().map_err(anyhow::Error::msg)?;
+    map.validate_supported().map_err(anyhow::Error::msg)?;
     if map.genesis_hash != journal.genesis_hash() {
         bail!("genesis mismatch");
     }

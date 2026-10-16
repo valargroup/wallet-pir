@@ -797,7 +797,7 @@ impl ShardSet {
             path: dir.join("shards.json"),
             source,
         })?;
-        map.check_shape()
+        map.validate_supported()
             .map_err(|error| LoadError::Invalid(format!("shard map is malformed: {error}")))?;
 
         // Serialized here, once, so what is served and what is digested are the

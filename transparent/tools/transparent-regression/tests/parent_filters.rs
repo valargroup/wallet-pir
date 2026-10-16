@@ -280,7 +280,7 @@ async fn parent_negatives_restart_import_and_corrupt_fallback_recover_exactly() 
         &all.iter()
             .flatten()
             .filter(|(s, _)| (1..=3).any(|t| script(t) == *s))
-            .map(|(s, e)| transparent_regression::EventRecord::new(s.as_slice(), e))
+            .map(|(s, e)| transparent_regression::EventRecord::new(s.as_slice(), e).unwrap())
             .collect::<Vec<_>>(),
         map.shards.last().unwrap().end_height,
     )
