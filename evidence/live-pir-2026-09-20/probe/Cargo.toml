@@ -5,7 +5,7 @@ edition = "2021"
 [workspace]
 [dependencies]
 enhance-pir = { path = "../../../enhance/crates/enhance-pir" }
-zakura-pir-transparent = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "6e80973d4be4204a6f9f1db771f021fe8511086b", default-features = false, features = ["engine", "reqwest"] }
+transparent-wallet = { path = "../../../transparent/crates/transparent-wallet", features = ["reqwest"] }
 serde_json = "1"
 sha2 = "0.10"
 hex = "0.4"
