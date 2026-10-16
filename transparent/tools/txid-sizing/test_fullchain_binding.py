@@ -96,13 +96,87 @@ else:
                 self.write_binary('B')  # Swap after the snapshot's verification, just before exec.
             return original_popen(args,*extra,**kwargs)
         with patch.object(fullchain.subprocess,'Popen',side_effect=launch):
-            with self.assertRaisesRegex(ValueError,'binary identity changed'):
-                fullchain.extract_bundle(self.cache,self.binary,bundle,rows,self.root/'status.json',compiled)
+            receipt=fullchain.extract_bundle(self.cache,self.binary,bundle,rows,self.root/'status.json',compiled)
+        self.assertEqual(receipt['blocks'],1)
         self.assertEqual(len(writers),1)
         self.assertFalse(writers[0].exists())  # Private execution bytes are cleaned after the child exits.
         with closing(sqlite3.connect(database)) as db:
             self.assertEqual(db.execute('SELECT height,parser FROM blocks ORDER BY height').fetchall(),[(0,'A'),(1,'A')])
             self.assertEqual(db.execute("SELECT count(*) FROM txids WHERE parser='B'").fetchone()[0],0)
+
+    def test_live_writer_replacement_preserves_a_checkpoint_that_can_be_reopened(self):
+        compiled=source_info.read(self.binary);original_bytes=self.binary.read_bytes()
+        database=self.database();anchor='11'*32
+        checkpoint=dict(database_sha256=hashlib.sha256(database.read_bytes()).hexdigest(),
+                        anchor_hash=anchor,anchor_height=1,binary_sha256=compiled['binary_sha256'],
+                        extractor_sha256='d'*64,census_source_sha256='e'*64)
+        (self.cache/'checkpoint.json').write_text(json.dumps(checkpoint))
+        class Pipeline:
+            hashes={1:anchor}
+            def __init__(self,*args):pass
+            def blocks(self,start,stop):yield 1,b'public block'
+        original_popen=subprocess.Popen;original_run=subprocess.run
+        writers=[]
+        def launch(args,*extra,**kwargs):
+            if '--census' in args:
+                writers.append(Path(args[0]));self.write_binary('B')
+            return original_popen(args,*extra,**kwargs)
+        def command(args,*extra,**kwargs):
+            # The scan's existing publication commands must not touch Git in this fixture.
+            if args[0]=='git':return subprocess.CompletedProcess(args,0)
+            return original_run(args,*extra,**kwargs)
+        with patch.object(fullchain,'ANCHOR_HEIGHT',1),patch.object(fullchain,'ANCHOR_HASH',anchor), \
+                patch.object(fullchain,'bundles',return_value=[]),patch.object(fullchain,'Pipeline',Pipeline), \
+                patch.object(fullchain,'Gateway') as gateway, \
+                patch.object(fullchain.subprocess,'Popen',side_effect=launch), \
+                patch.object(fullchain.subprocess,'run',side_effect=command):
+            gateway.return_value.__enter__.return_value.return_value={'result':anchor}
+            report=fullchain.scan(self.cache,self.binary,self.root/'status.json',self.evidence)
+        self.assertEqual(len(writers),1)
+        self.assertNotEqual(writers[0],self.binary)
+        with closing(sqlite3.connect(database)) as db:
+            self.assertEqual(db.execute('SELECT height,parser FROM blocks ORDER BY height').fetchall(),[(0,'A'),(1,'A')])
+        saved=json.loads((self.cache/'checkpoint.json').read_text())
+        self.assertEqual(saved,report)
+        self.assertEqual(saved['database_sha256'],hashlib.sha256(database.read_bytes()).hexdigest())
+        self.assertEqual(saved['binary_sha256'],compiled['binary_sha256'])
+        self.assertEqual(saved['compiled_reader_identity'],compiled)
+        # The exact verified reader can reopen this committed checkpoint; a
+        # mutable-path rejection must never leave a checksum-stranded database.
+        self.binary.write_bytes(original_bytes)
+        with patch.object(fullchain,'ANCHOR_HEIGHT',1),patch.object(fullchain,'ANCHOR_HASH',anchor), \
+                patch.object(fullchain,'bundles',return_value=[]),patch.object(fullchain,'Gateway') as gateway:
+            gateway.return_value.__enter__.return_value.return_value={'result':anchor}
+            resumed=fullchain.scan(self.cache,self.binary,self.root/'resume.json',self.evidence)
+        self.assertEqual(resumed['database_sha256'],saved['database_sha256'])
+        self.assertEqual(resumed['last_height'],1)
+
+    def test_retained_batch_is_checkpointed_before_rejecting_the_next_rebuilt_reader(self):
+        compiled=source_info.read(self.binary)
+        database=self.database();anchor='22'*32
+        checkpoint=dict(database_sha256=hashlib.sha256(database.read_bytes()).hexdigest(),
+                        anchor_hash=anchor,anchor_height=2,binary_sha256=compiled['binary_sha256'],
+                        extractor_sha256='d'*64,census_source_sha256='e'*64)
+        (self.cache/'checkpoint.json').write_text(json.dumps(checkpoint))
+        batches=[]
+        for height in [1,2]:
+            raw=b'public'+bytes([height]);bundle=self.root/(str(height)+'.raw');bundle.write_bytes(raw)
+            batches.append((bundle,[dict(height=height,offset=0,raw_bytes=len(raw),raw_sha256=hashlib.sha256(raw).hexdigest(),hash=f'{height:02x}'*32)]))
+        original_popen=subprocess.Popen
+        def launch(args,*extra,**kwargs):
+            if '--census' in args:self.write_binary('B')
+            return original_popen(args,*extra,**kwargs)
+        with patch.object(fullchain,'ANCHOR_HEIGHT',2),patch.object(fullchain,'ANCHOR_HASH',anchor), \
+                patch.object(fullchain,'bundles',return_value=batches), \
+                patch.object(fullchain.subprocess,'Popen',side_effect=launch):
+            with self.assertRaisesRegex(ValueError,'binary identity changed'):
+                fullchain.scan(self.cache,self.binary,self.root/'status.json',self.evidence)
+        with closing(sqlite3.connect(database)) as db:
+            self.assertEqual(db.execute('SELECT height,parser FROM blocks ORDER BY height').fetchall(),[(0,'A'),(1,'A')])
+        saved=json.loads((self.cache/'checkpoint.json').read_text())
+        self.assertEqual(saved['last_height'],1)
+        self.assertEqual(saved['database_sha256'],hashlib.sha256(database.read_bytes()).hexdigest())
+        self.assertEqual(saved['binary_sha256'],compiled['binary_sha256'])
 
     def test_replacement_while_copying_is_rejected_before_starting_a_writer(self):
         compiled=source_info.read(self.binary)

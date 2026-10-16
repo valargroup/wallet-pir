@@ -185,7 +185,9 @@ def extract_bundle(cache,binary,bundle,rows,status,identity):
     source_info.require_same(binary,identity)
     with source_info.executable_snapshot(binary,identity) as executable:
         result=_extract_bundle(cache,executable,bundle,rows,status)
-    source_info.require_same(binary,identity)
+    # The writer executed the verified snapshot, not the mutable source path.
+    # Its valid commits must be checkpointed under this identity even if that
+    # source path was rebuilt meanwhile. The next writer checks it again.
     return result
 
 
@@ -257,13 +259,10 @@ def scan(cache,binary,status,evidence):
             raise ValueError("checkpoint census source differs")
     else:
         require_empty_census(cache/"census.sqlite")
-    started=time.monotonic(); scanned=0
-    for bundle,rows in sorted(bundles(cache),key=lambda p:min(r["height"] for r in p[1])):
-        if digest(binary)!=identity["binary_sha256"]: raise ValueError("export binary changed during scan")
-        receipt=extract_bundle(cache,binary,bundle,rows,status,identity);scanned+=receipt["blocks"]
-        if digest(binary)!=identity["binary_sha256"]: raise ValueError("export binary changed during scan")
     def snapshot():
-        if digest(binary)!=identity["binary_sha256"]: raise ValueError("export binary changed during scan")
+        # Every writer is bound to this verified identity before it starts.
+        # Inspecting the mutable pathname after a commit could strand valid
+        # progress before its matching durable checkpoint is written.
         with closing(sqlite3.connect(cache/"census.sqlite")) as db:
             last=db.execute("SELECT height,hash FROM blocks ORDER BY height DESC LIMIT 1").fetchone()
             counts=db.execute("SELECT count(*),min(height),max(height) FROM blocks").fetchone()
@@ -271,13 +270,19 @@ def scan(cache,binary,status,evidence):
             if counts[1]!=0 or counts[0]!=last[0]+1: raise ValueError("noncontinuous database height count")
         value=dict(schema="txid-full-chain-checkpoint-v1",anchor_height=ANCHOR_HEIGHT,anchor_hash=ANCHOR_HASH,
             scanned_blocks=counts[0],last_height=last[0],last_hash=last[1],transactions=txids,
-            database_sha256=digest(cache/"census.sqlite"),binary_sha256=digest(binary),
+            database_sha256=digest(cache/"census.sqlite"),binary_sha256=identity["binary_sha256"],
             parser_sha=identity["node_parser"]["git_revision"],compiled_reader_identity=identity,
             extractor_sha256=identity["compiled_source_file_sha256"]["extractor"],
             census_source_sha256=identity["compiled_source_file_sha256"]["census"],
             coverage="INCOMPLETE" if counts[0]!=ANCHOR_HEIGHT+1 else "FULL_CHAIN")
         atomic_json(checkpoint,value);atomic_json(evidence/"full-chain-checkpoint.json",value)
         return value
+    started=time.monotonic(); scanned=0
+    for bundle,rows in sorted(bundles(cache),key=lambda p:min(r["height"] for r in p[1])):
+        receipt=extract_bundle(cache,binary,bundle,rows,status,identity);scanned+=receipt["blocks"]
+        # Commit the binding before another source-path check can reject a
+        # later batch. This also covers interruption during retained replay.
+        snapshot()
     current=snapshot()
     initial=current["scanned_blocks"]
     started=time.monotonic()
