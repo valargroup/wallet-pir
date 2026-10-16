@@ -1,1 +1,0 @@
-[{"id": "archive-01", "role": "archive-owner", "ssh_host": "unused", "upstream": "127.0.0.1:9", "cache_bytes": 68719476736}, {"id": "recent-01", "role": "recent-replica", "replica_group": "recent", "ssh_host": "unused", "upstream": "127.0.0.1:18401", "cache_bytes": 4294967296}]

@@ -1,1 +1,0 @@
-{"state_dir": "work/arms/pair2-on/fleet", "worker_root": "work/arms/pair2-on/worker/publications", "worker_socket": "work/arms/pair2-on/worker/control.sock", "worker_id": "recent-01", "worker_upstream": "127.0.0.1:18401", "assign_binary": "bin/shard-assign", "roster": "work/arms/pair2-on/roster.json", "log": "work/arms/pair2-on/raw/fleet.jsonl"}

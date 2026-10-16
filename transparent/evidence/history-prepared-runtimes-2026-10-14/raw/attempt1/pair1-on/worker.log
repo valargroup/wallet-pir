@@ -1,3 +1,0 @@
-2026-10-15T01:12:31.759495Z  INFO transparent_shard_server: loaded shard set shards=3 assigned=2 revisions=2 prunable=0 geometries=["decoupled-2k-8k", "decoupled-32k-32k"] map_sha256="413a09794eb36ccdf0a5c879a11077b63790892d9a3c1d6c16a7f4e46bf738f9" worker_id="recent-01" assignment_sha256="514a864be88c3de634344c48cb2acf42af8189541a169fdb379cc65c0e79619e" start=0 covered_through=66637
-2026-10-15T01:12:31.810924Z  INFO transparent_shard_server: serving listen=127.0.0.1:18401 max_query_bytes=128520 readiness=Warm
-2026-10-15T01:12:47.987275Z  INFO transparent_shard_server::service: prewarm finished warm=6 target=6 failed=0 seconds=16.176306232

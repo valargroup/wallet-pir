@@ -1157,15 +1157,13 @@ by default; v2 does not enable it.
 
 ## Prepared history runtimes
 
-Implemented and correctness-tested, off by default; see
-[status](status.md#prepared-history-runtimes-measured-not-accepted-2026-10-14) and the
-[design as built](architecture.md#prepared-history-runtimes).
+Runtime shipping is implemented and off by default; see
+[status](status.md#prepared-history-runtimes) and the
+[design](architecture.md#prepared-history-runtimes).
 
-- [x] Run the six paired arms with the
-  [harness](../evidence/history-prepared-runtimes-2026-10-14/README.md) (2026-10-14, shared
-  development hub): worker CPU −51% to −55% every pair, all answers exact, no refused or
-  built runtime with shipping; **not accepted** on latency, activation delay, freshness
-  and contamination.
+- [ ] Qualify worker CPU, query latency, activation delay and freshness together
+  with identical fixtures and query schedules on an uncontaminated allocation.
+  Passing source tests or a lower worker CPU figure alone does not qualify shipping.
 - [ ] Before measuring again, take the publisher's preparation off the publication's
   critical path (offer the candidate as soon as its tail runtimes are ready, or prepare
   while the fleet stages) and rerun the same six arms, ideally where the measured CPU

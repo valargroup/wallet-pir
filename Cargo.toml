@@ -6,7 +6,6 @@ members = [
     "receiver/services/receiver-pir-server",
     "shared/pir-observability",
     "shared/pir-control",
-    "shared/node-rpc",
     # Protocol libraries, clients and stores.
     "enhance/crates/enhance-pir",
     "transparent/crates/transparent-blocks",

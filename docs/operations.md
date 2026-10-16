@@ -308,10 +308,9 @@ and loaded publication, latest preparation or refusal, and readiness split into
 and preparation live on the root-only socket); encrypted correctness is never
 inferred and needs an exact-answer check. CUDA workers keep their artifact kinds
 and need separate hardware qualification; the CPU rehearsal qualifies no GPU.
-The [2026-10-15 rehearsal](../evidence/external-workers-rehearsal-2026-10-15/README.md)
-ran every role this way from an unpacked package, with its recorded gaps: Status
-exact answers were not demonstrated, and a local executor cannot qualify the
-sandbox.
+The local operator rehearsal exercises staged publications and encrypted lookup
+through the library-owned clients. It does not qualify the production sandbox,
+GPU hardware, or fleet capacity.
 
 ## Qualification and retirement
 
