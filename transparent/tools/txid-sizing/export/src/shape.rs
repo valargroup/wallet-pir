@@ -24,8 +24,8 @@ pub fn run() -> Result<(), AnyError> {
         let frame: Value = serde_json::from_slice(&line)?;
         let height = u32::try_from(frame["height"].as_u64().ok_or("height")?)?;
         let raw = hex::decode(frame["raw_block"].as_str().ok_or("raw block")?)?;
-        let block = FetchedBlock::from_exact_bytes(&raw)
-            .map_err(|e| format!("canonical block: {e}"))?;
+        let block =
+            FetchedBlock::from_exact_bytes(&raw).map_err(|e| format!("canonical block: {e}"))?;
         if display(&block.hash()) != frame["hash"].as_str().ok_or("hash")?
             || block.coinbase_height() != Some(height)
         {

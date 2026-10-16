@@ -30,9 +30,7 @@ pub fn run() -> Result<(), AnyError> {
         }
         let mut previous = Previous(HashMap::new());
         for parent in frame["parents"].as_array().ok_or("parents")? {
-            let tx = read_transaction(&hex::decode(
-                parent["hex"].as_str().ok_or("parent hex")?,
-            )?)?;
+            let tx = read_transaction(&hex::decode(parent["hex"].as_str().ok_or("parent hex")?)?)?;
             if display(&tx.txid) != parent["txid"].as_str().ok_or("parent txid")? {
                 return Err("raw parent hash differs from requested txid".into());
             }
