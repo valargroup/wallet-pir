@@ -62,6 +62,7 @@
   "transparent-loadtest": {
     "fast": [],
     "full": [
+      "service_tools",
       "simulation"
     ]
   },

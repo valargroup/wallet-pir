@@ -3625,6 +3625,7 @@ dependencies = [
  "zakura-transparent-events",
  "zakura-transparent-filter",
  "zakura-transparent-shard",
+ "zakura-transparent-txid-client",
 ]
 
 [[package]]
@@ -4995,7 +4996,9 @@ source = "git+https://github.com/zakura-core/wallet-libraries.git?rev=0a53078e81
 dependencies = [
  "bitcoin",
  "hex",
+ "reqwest",
  "serde",
+ "serde_json",
  "sha2 0.10.9",
  "thiserror 2.0.18",
 ]

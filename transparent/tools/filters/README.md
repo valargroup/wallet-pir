@@ -15,7 +15,9 @@ They are not the private shard retrieval implementation. Read the current
 Run each script with `--help` for inputs. The protobuf helpers require `protoc`
 and the Python protobuf package; their recorded study used protobuf 6.33.5.
 The Rust encoder is built with
-`cargo build --release -p transparent-filter --features cli`.
+`cargo build --release -p transparent-loadtest --bin transparent-filter-cli`.
+Pass `target/release/transparent-filter-cli` to the Python tools' `--cli` argument.
+This service-owned adapter calls the canonical filter library.
 
 [Retained baselines](../../evidence/baselines/README.md) preserve
 samples, schemas and results. Old commands describe their recorded checkout;

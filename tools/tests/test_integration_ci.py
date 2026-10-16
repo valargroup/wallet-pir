@@ -4,6 +4,7 @@ import re
 from pathlib import Path
 import sys
 import tempfile
+import tomllib
 import unittest
 from unittest.mock import patch
 
@@ -32,6 +33,18 @@ class IntegrationTests(unittest.TestCase):
                 for relative in paths:
                     self.assertTrue((source.parent / relative).is_file(),
                                     f'{source.relative_to(ROOT)}: missing {relative}')
+
+    def test_operational_filter_and_txid_canary_targets_are_service_owned(self):
+        directory = ROOT / 'transparent/tools/transparent-loadtest'
+        manifest = tomllib.loads((directory / 'Cargo.toml').read_text())
+        self.assertEqual(manifest['package']['name'], 'transparent-loadtest')
+        for binary in ['transparent-filter-cli', 'txid-quality-canary']:
+            self.assertTrue((directory / 'src/bin' / (binary + '.rs')).is_file(), binary)
+        self.assertIn('client', manifest['dependencies']['transparent-filter']['features'])
+        self.assertEqual(manifest['dependencies']['transparent-txid-client']['package'],
+                         'zakura-transparent-txid-client')
+        registry = json.loads((ROOT / 'tools/ci/integration-tests.json').read_text())
+        self.assertIn('service_tools', registry['transparent-loadtest']['full'])
 
     def test_missing_stale_duplicate_and_malformed_assignments_fail(self):
         for registry in [{}, {'p': {'fast': [], 'full': []}},
