@@ -1,6 +1,8 @@
-"""Worker binary upgrade for the current v12 history and 4k8 display fleets.
+"""Worker or controller binary upgrade for the current v12 history and 4k8 display fleets.
 
-Only the worker executable changes. The release identity is the request's Git
+One transaction changes one component's executable: the workers, or the
+controller (staged under `<service root>/controller`, so a worker binary can
+never be selected as the controller). Only the executable changes. The release identity is the request's Git
 revision and binary digest; the publication identity is everything the
 controller owns (configuration, fleet bytes, source revision, journal, roots)
 plus each worker's ready identity, and it must be identical before, after each
@@ -8,8 +10,10 @@ restart and after rollback. Staging, journals, rollback and the production lock
 are the shared engine's; this module adds only the product refusals. Anything
 outside the supported topology refuses rather than being adapted.
 """
+import dataclasses
 import hashlib
 import json
+import os
 import re
 
 from wallet_pir_ops import durable
@@ -31,10 +35,14 @@ PRODUCTS = {
                           'publication_root': '/srv/transparent-activity/full-v12/publications'},
         'config_absent_or': {'ship_runtimes': False},
         'publication_keys': ('source_sha',),
-        # Ownership a restart must not change; map_sha256 follows the controller.
-        'ready_keys': ('assigned_shards', 'assignment_sha256', 'replica_group', 'role', 'worker_assignment_sha256',
-                       'worker_id'),
+        # Ownership a restart must not change. The map, assignment digests,
+        # replica group and shard count follow the controller's current
+        # `<map>.assignment.json`, which changes with every publication.
+        'ready_keys': ('role', 'worker_id'),
         'roles': ('archive-owner', 'recent-replica'),
+        # The continuous exact-answer load latches on any worker hash other
+        # than its pins; a worker upgrade pauses it and re-pins it.
+        'load': {'unit': 'transparent-v2-5qps-continuous.service', 'root': '/srv/transparent-activity/canonical-load/v12'},
     },
     'transparent-display': {
         'workers': ('transparent-txid-display-worker.service',),
@@ -45,9 +53,11 @@ PRODUCTS = {
         'publication_keys': ('root',),
         'ready_keys': ('role',),
         'roles': ('combined',),
+        'load': None,
     },
 }
-REQUEST_KEYS = {'schema', 'service', 'release', 'publication', 'controller', 'workers'}
+REQUEST_KEYS = {'schema', 'service', 'component', 'release', 'publication', 'controller', 'workers', 'load'}
+COMPONENTS = ('workers', 'controller')
 
 
 def problem_if(condition, message, problems):
@@ -74,6 +84,13 @@ def validate(request):
     require(request['schema'] == SCHEMA, 'schema must be ' + SCHEMA)
     product = PRODUCTS.get(request['service'])
     require(product is not None, 'service must be one of %s' % sorted(PRODUCTS))
+    require(request['component'] in COMPONENTS, 'component must be one of %s' % list(COMPONENTS))
+    load = request['load']
+    if product['load'] is None:
+        require(load is None, '%s has no continuous load to coordinate; load must be null' % request['service'])
+    else:
+        require(isinstance(load, dict) and set(load) == {'host', 'pins_sha256'} and isinstance(load['host'], str)
+                and bool(SHA256.match(load['pins_sha256'] or '')), 'load is {host, pins_sha256}')
     release = request['release']
     require(isinstance(release, dict) and set(release) == {'git_sha', 'binary_sha256'}, 'release is {git_sha, binary_sha256}')
     require(bool(GIT.match(release['git_sha'])), 'release.git_sha is a full 40-digit revision')
@@ -137,8 +154,26 @@ class Upgrade:
         if [(t.host, t.unit) for t in controllers] != [(self.request['controller']['host'], self.product['controller'])]:
             raise DeployError('unsupported topology: controller must be %s on %s'
                               % (self.product['controller'], self.request['controller']['host']))
-        self.controller_url = controllers[0].url(controllers[0].role.health)
+        self.controller = controllers[0]
+        self.controller_url = self.controller.url(self.controller.role.health)
+        self.workers = workers
         return workers
+
+    def component(self, ex):
+        """The targets and service this transaction changes; the controller gets its own release root and name."""
+        workers = self.worker_targets()
+        if self.request['component'] == 'workers':
+            return workers, self.service
+        state = ex.probe_unit(self.controller.host, self.controller.unit)
+        try:
+            binary = units.split_exec(units.exec_start(units.effective(
+                [state['fragment_text'] or ''] + [d['text'] for d in state['drop_ins']])))[1]
+        except units.UnitError as error:
+            raise DeployError('controller ExecStart: %s' % error) from error
+        name = os.path.basename(binary)
+        if name == self.service.binary:
+            raise DeployError('controller runs %s, the worker executable; refusing to select it as the controller' % binary)
+        return [self.controller], dataclasses.replace(self.service, root=self.service.root + '/controller', binary=name)
 
     def controller_problems(self, ex):
         problems = []
@@ -237,6 +272,7 @@ class Upgrade:
                        '%s is not ready and warm' % key, problems)
             problem_if(type(document.get('covered_through')) is not int, '%s has no covered_through' % key, problems)
         else:
+            problems += self.assignment_problems(ex, key, document)
             problem_if(document.get('warm_runtimes') != document.get('target_runtimes'),
                        '%s warm_runtimes %r of target %r' % (key, document.get('warm_runtimes'),
                                                              document.get('target_runtimes')), problems)
@@ -244,32 +280,154 @@ class Upgrade:
                        problems)
         return problems
 
-    def problems(self, ex, targets):
+    def assignment_problems(self, ex, key, document):
+        """History ownership against the controller's assignment for the map the worker serves."""
+        from transparent.ops.lib import activity_schema_routing as routing
+        host, map_sha256 = self.request['controller']['host'], document.get('map_sha256')
+        try:
+            config = json.loads(ex.read(host, self.product['config']) or 'null')
+            fleet = json.loads(ex.read(host, config['fleet_config']) or 'null')
+            path = '%s/%s.assignment.json' % (fleet['state_dir'], map_sha256)
+            assignment = json.loads(ex.read(host, path) or 'null')
+            require_ = assignment['set']['map_sha256'] == map_sha256
+            entry = [w for w in assignment['workers'] if w['id'] == document.get('worker_id')]
+            expected = {'assignment_sha256': routing.assignment_digest(assignment),
+                        'worker_assignment_sha256': routing.worker_assignment_digest(assignment, document.get('worker_id')),
+                        'role': entry[0]['role'], 'replica_group': entry[0]['replica_group'],
+                        'assigned_shards': len(entry[0]['shards'])}
+        except (TypeError, KeyError, IndexError, ValueError) as error:
+            return ['%s: no valid controller assignment for map %r (%s)' % (key, map_sha256, error)]
+        problems = [] if require_ else ['%s: assignment for %s names another map' % (key, map_sha256)]
+        return problems + ['%s ready %s is %r, the controller assignment says %r' % (key, field, document.get(field), value)
+                           for field, value in sorted(expected.items()) if document.get(field) != value]
+
+    def problems(self, ex, targets=None):
         problems = self.controller_problems(ex)
-        for target in targets:
+        for target in self.workers if targets is None else targets:
             problems.extend(self.worker_problems(ex, target))
+        return problems
+
+    def worker_ids(self):
+        return {pinned['ready_identity']['worker_id']: key for key, pinned in self.request['workers'].items()}
+
+    def load_problems(self, ex, check_pin):
+        """No latch, and pins naming exactly the binaries the workers run now."""
+        load, spec = self.request['load'], self.product['load']
+        if load is None:
+            return []
+        host, root = load['host'], spec['root']
+        problems = []
+        problem_if(ex.sha256(host, root + '/latched.json') is not None,
+                   'continuous load has an unresolved critical latch (%s/latched.json)' % root, problems)
+        if check_pin:
+            problem_if(ex.sha256(host, root + '/pins.json') != load['pins_sha256'],
+                       'load pins.json differs from load.pins_sha256', problems)
+        try:
+            pins = json.loads(ex.read(host, root + '/pins.json') or 'null')
+            ids = self.worker_ids()
+            if set(pins) != set(ids):
+                return problems + ['load pins %s, workers are %s' % (sorted(pins), sorted(ids))]
+        except (TypeError, ValueError) as error:
+            return problems + ['load pins.json is unreadable: %s' % error]
+        targets = {t.key: t for t in self.workers}
+        for worker_id, key in sorted(ids.items()):
+            running = ex.probe_unit(targets[key].host, targets[key].unit)['exe_sha256']
+            problem_if(pins[worker_id] != running, 'load pins %s to %s but it runs %s' % (worker_id, pins[worker_id], running),
+                       problems)
         return problems
 
 
 class UpgradeDeployer(Deployer):
-    """The shared engine with the product refusals under its lock and after each restart."""
+    """The shared engine with the product refusals under its lock and after each restart.
 
-    def __init__(self, upgrade, *args, **kwargs):
+    A worker transaction with a continuous load stops the load before the first
+    restart, and after commit writes pins naming the new binary and starts it
+    again. A failed transaction or a rollback leaves the load stopped, its latch
+    and incidents untouched, with pins naming the binaries that run.
+    """
+
+    def __init__(self, upgrade, operation, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.upgrade = upgrade
+        self.operation = operation
+        self.load_was_active = None
 
     def schema_fence(self):
         super().schema_fence()
-        problems = self.upgrade.problems(self.ex, self.targets)
+        problems = self.upgrade.problems(self.ex)
+        problems += self.upgrade.load_problems(self.ex, check_pin=self.operation != 'rollback')
         if problems:
             raise DeployError('product state refused under the lock; nothing was changed:\n  ' + '\n  '.join(problems))
 
+    def pause_load(self, journal):
+        load = self.upgrade.request['load']
+        if load is None or self.load_was_active is not None:
+            return
+        unit = self.upgrade.product['load']['unit']
+        self.load_was_active = self.ex.probe_unit(load['host'], unit)['active_state'] == 'active'
+        journal.event('load paused', host=load['host'], unit=unit, was_active=self.load_was_active)
+        self.ex.systemctl(load['host'], 'stop', unit)
+        if self.ex.sha256(load['host'], self.upgrade.product['load']['root'] + '/latched.json') is not None:
+            raise DeployError('a critical load latch appeared while pausing load')
+        self.out('monitoring: %s stopped for the restarts' % unit)
+
+    def repin_load(self, journal):
+        """Pins naming what the workers run now, written atomically; returns the pins."""
+        load, root = self.upgrade.request['load'], self.upgrade.product['load']['root']
+        targets = {t.key: t for t in self.upgrade.workers}
+        pins = {worker_id: self.ex.probe_unit(targets[key].host, targets[key].unit)['exe_sha256']
+                for worker_id, key in sorted(self.upgrade.worker_ids().items())}
+        data = (json.dumps(pins, indent=2) + '\n').encode()
+        journal.event('load pins', host=load['host'], previous_sha256=self.ex.sha256(load['host'], root + '/pins.json'),
+                      new_sha256=hashlib.sha256(data).hexdigest())
+        self.ex.write(load['host'], root + '/pins.json', data, 0o644)
+        return pins
+
     def activate(self, journal, index, sha):
+        if self.upgrade.request['component'] == 'workers':
+            self.pause_load(journal)
         super().activate(journal, index, sha)
         record = journal.hosts[index]
-        # A restarted worker must come back with the same publication and assignment.
-        problems = self.upgrade.ready_problems(self.ex, record['key'], record['host'],
-                                               record['verify']['ready_url'] or record['verify']['health'])
-        problems += self.upgrade.controller_problems(self.ex)
+        if self.upgrade.request['component'] == 'workers':
+            # A restarted worker must come back owning the controller's current assignment.
+            problems = self.upgrade.ready_problems(self.ex, record['key'], record['host'],
+                                                   record['verify']['ready_url'] or record['verify']['health'])
+            problems += self.upgrade.controller_problems(self.ex)
+        else:
+            # A restarted controller must keep its contract and every worker its current map.
+            problems = self.upgrade.problems(self.ex)
         if problems:
             raise DeployError('publication identity changed after restarting %s: %s' % (record['key'], '; '.join(problems)))
+
+    def _deploy(self, *args, **kwargs):
+        try:
+            journal = super()._deploy(*args, **kwargs)
+        except BaseException:
+            if self.load_was_active is not None:
+                self.out('monitoring: %s left stopped for investigation; pins still name the restored binaries'
+                         % self.upgrade.product['load']['unit'])
+            raise
+        if journal is not None and self.load_was_active is not None:
+            pins = self.repin_load(journal)
+            unit = self.upgrade.product['load']['unit']
+            if self.load_was_active:
+                # restart starts the stopped unit; it re-reads the new pins.
+                self.ex.systemctl(self.upgrade.request['load']['host'], 'restart', unit)
+                self.out('monitoring: %s started with pins %s' % (unit, json.dumps(pins, sort_keys=True)))
+            else:
+                self.out('monitoring: %s was not running and stays stopped; pins %s' % (unit, json.dumps(pins, sort_keys=True)))
+        return journal
+
+    def rollback_journal(self, journal, force=False):
+        component = {(t.host, t.unit) for t in self.targets}
+        if any((r['host'], r['unit']) not in component for r in journal.hosts):
+            raise DeployError('transaction %s changed units outside this request\'s %s component'
+                              % (journal.id, self.upgrade.request['component']))
+        explicit = self.operation == 'rollback' and self.upgrade.request['component'] == 'workers'
+        if explicit:
+            self.pause_load(journal)
+        super().rollback_journal(journal, force)
+        if explicit and self.load_was_active is not None:
+            pins = self.repin_load(journal)
+            self.out('monitoring: %s stays stopped after rollback; pins %s; start it after the exact gate'
+                     % (self.upgrade.product['load']['unit'], json.dumps(pins, sort_keys=True)))

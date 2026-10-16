@@ -192,11 +192,11 @@ def register(commands):
 
     for name in BINARY_UPGRADE:
         command = commands.add_parser('transparent-binary-' + name,
-                                      help='worker binary upgrade of the current v12 history or 4k8 display fleet')
+                                      help='worker or controller binary upgrade of the current v12 history or 4k8 display fleet')
         command.add_argument('--request', required=True)
         command.add_argument('--request-sha256', required=True)
         if name in ('preflight', 'deploy'):
-            command.add_argument('--binary', help='local worker binary; omit when the release is already staged')
+            command.add_argument('--binary', help="local binary of the request's component; omit when already staged")
         if name == 'preflight':
             command.add_argument('--stage', action='store_true',
                                  help='under the lock, upload the immutable release directory and run its self-check')
@@ -455,7 +455,7 @@ def dispatch(args, executor=None, out=print, **options):
 
 
 def binary_upgrade(args, executor, out, **options):
-    """`transparent-binary-*`: the shared engine on the pinned worker set with product refusals."""
+    """`transparent-binary-*`: the shared engine on the request's component with product refusals."""
     from wallet_pir_ops.bundle import check_installed
     from wallet_pir_ops.deploy.engine import file_sha256
     from wallet_pir_ops.deploy.lifecycle import Lifecycle
@@ -473,30 +473,35 @@ def binary_upgrade(args, executor, out, **options):
     inventory = descriptors.load_inventory(args.inventory)
     executor = executor or SSHExecutor(inventory)
     upgrade = module.Upgrade(request, service, inventory)
-    workers = upgrade.worker_targets()
-    deployer = module.UpgradeDeployer(upgrade, service, inventory, executor, args.state_dir, args.baseline,
+    targets, component = upgrade.component(executor)
+    deployer = module.UpgradeDeployer(upgrade, action, component, inventory, executor, args.state_dir, args.baseline,
                                       out=out, **options)
-    deployer.targets = workers
+    # The baseline records both components, so either transaction is covered.
+    deployer.targets = upgrade.workers + [upgrade.controller] if action == 'baseline' else targets
+    workers = upgrade.workers
     sha, binary = release['binary_sha256'], getattr(args, 'binary', None)
     if binary and file_sha256(Path(binary).resolve()) != sha:
         raise DeployError('--binary does not hash to release.binary_sha256')
-    out('release: git %s binary %s; publication: %s' % (release['git_sha'], sha, json.dumps(request['publication'], sort_keys=True)))
+    out('release: %s git %s binary %s as %s; publication: %s'
+        % (request['component'], release['git_sha'], sha, component.release_binary(sha),
+           json.dumps(request['publication'], sort_keys=True)))
     if action == 'status':
         Lifecycle(deployer).status()
-        problems = upgrade.problems(executor, workers)
+        problems = upgrade.problems(executor, workers) + upgrade.load_problems(executor, check_pin=False)
     elif action == 'baseline':
         deployer.capture_baseline()
         problems = []
     elif action == 'rollback':
         Lifecycle(deployer).rollback(args.transaction, args.force)
-        problems = upgrade.problems(executor, workers)
+        problems = upgrade.problems(executor, workers) + upgrade.load_problems(executor, check_pin=False)
     elif action == 'deploy':
         Lifecycle(deployer).deploy(sha, binary, {'request_sha256': args.request_sha256, 'git_sha': release['git_sha']},
                                    skip_exact_check=args.skip_exact_check)
-        problems = upgrade.problems(executor, workers)
+        problems = upgrade.problems(executor, workers) + upgrade.load_problems(executor, check_pin=False)
     else:
         result = Lifecycle(deployer).inspect(action, sha, binary, stage=getattr(args, 'stage', False))
-        problems = list(result.problems) + upgrade.problems(executor, workers)
+        problems = (list(result.problems) + upgrade.problems(executor, workers)
+                    + upgrade.load_problems(executor, check_pin=True))
     for problem in problems:
         out('problem: ' + problem)
     if action in ('plan', 'preflight', 'deploy'):
