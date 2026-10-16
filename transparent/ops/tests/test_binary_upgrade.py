@@ -1,4 +1,8 @@
-"""Worker binary upgrade of the v12 history fleet through the deploy wrapper; only hosts are fake."""
+"""Worker and controller binary upgrades of the v12 history and 4k8 display fleets through the deploy wrapper.
+
+Only hosts are fake. Ready, status, assignment and load bodies have the shapes
+the deployed services produce; the controller's map advances during a rollout.
+"""
 import hashlib
 import json
 from pathlib import Path
@@ -13,56 +17,111 @@ from wallet_pir_ops.deploy import cli, descriptors  # noqa: E402
 from transparent.ops.lib import binary_upgrade  # noqa: E402
 
 OLD, NEW = b'transparent-shard-server v12', b'transparent-shard-server next'
+CTRL_OLD, CTRL_NEW = b'controller v12', b'controller next'
 SERVER = '/usr/local/bin/transparent-shard-server'
+CONTROLLER_BIN = '/usr/local/bin/transparent-publication-controller'
 WORKERS = {'transparent-v12-archive.service': '10.142.0.9:8093', 'transparent-v12-recent.service': '10.142.0.9:8193'}
+IDS = {'transparent-v12-archive.service': 'transparent-v12-archive-01', 'transparent-v12-recent.service': 'transparent-v12-recent-01'}
 CONTROLLER = 'transparent-v12-publish-controller.service'
+LOAD_UNIT, LOAD_ROOT = 'transparent-v2-5qps-continuous.service', '/srv/transparent-activity/canonical-load/v12'
 CONFIG_PATH, FLEET, SCRIPT = ('/opt/transparent-publisher/v12/controller.json', '/opt/transparent-publisher/v12/fleet.json',
                               '/srv/transparent-activity/ops/sources/v12-ff27/transparent/ops/scripts/transparent-live-fleet.py')
+STATE_DIR = '/srv/transparent-activity/full-v12/fleet'
 CONFIG = {'data_dir': '/srv/transparent-activity/full-v3/journal', 'follow_journal': False, 'fleet_command': SCRIPT,
           'fleet_config': FLEET, 'publication_root': '/srv/transparent-activity/full-v12/publications',
           'source_sha': 'fb90519b'}
 GIT = '1' * 40
-
-
 MAP, NEXT_MAP = 'ab' * 32, 'ac' * 32
 
 
-def identity(unit):
-    """The pinned ownership fields of a real v12 ready response."""
-    archive = 'archive' in unit
-    return {'worker_id': 'v12-archive' if archive else 'v12-recent', 'role': 'archive-owner' if archive else 'recent-replica',
-            'replica_group': 'g0', 'assigned_shards': [0, 1] if archive else [1], 'assignment_sha256': 'a1' * 32,
-            'worker_assignment_sha256': ('b1' if archive else 'b2') * 32}
+def assignment(map_sha256):
+    """A native assignment in declaration order, so its canonical bytes are `json.dumps` compact."""
+    return {'schema': 'transparent-assignment-v1',
+            'set': {'shard_schema': 'transparent-shard-v12', 'map_sha256': map_sha256, 'network': 'main',
+                    'genesis_hash': '00' * 32, 'shards': 3, 'start_height': 419200,
+                    'covered_through': 3100000 + (map_sha256 == NEXT_MAP), 'recent_from_shard': 2},
+            'generated_by': {'tool': 'shard-assign', 'source_sha': 'fb90519b', 'generated_at': '2026-10-16T00:00:00Z'},
+            'workers': [{'id': IDS['transparent-v12-archive.service'], 'role': 'archive-owner', 'replica_group': None,
+                         'upstream': WORKERS['transparent-v12-archive.service'], 'cache_bytes': 64, 'shards': [0, 1],
+                         'estimated_resident_bytes': 10},
+                        {'id': IDS['transparent-v12-recent.service'], 'role': 'recent-replica', 'replica_group': 'recent-a',
+                         'upstream': WORKERS['transparent-v12-recent.service'], 'cache_bytes': 64, 'shards': [2],
+                         'estimated_resident_bytes': 5}],
+            'unassigned': []}
 
 
-def ready(unit, current):
-    return {**identity(unit), 'map_sha256': current, 'warm_runtimes': 2, 'target_runtimes': 2, 'prewarm_failed': 0}
+def canonical(value):
+    return hashlib.sha256(json.dumps(value, separators=(',', ':')).encode()).hexdigest()
 
 
-class BinaryUpgrade(unittest.TestCase):
+def ready(unit, map_sha256):
+    """A real v12 `/v1/ready` body for the worker under the assignment of `map_sha256`."""
+    plan = assignment(map_sha256)
+    entry = next(w for w in plan['workers'] if w['id'] == IDS[unit])
+    return {'ready': True, 'map_sha256': map_sha256, 'assignment_sha256': canonical(plan),
+            'worker_assignment_sha256': canonical(['transparent-worker-assignment-v1', plan['schema'], plan['set'], entry]),
+            'worker_id': entry['id'], 'role': entry['role'], 'replica_group': entry['replica_group'],
+            'assigned_shards': len(entry['shards']), 'warm_runtimes': 4, 'target_runtimes': 4, 'prewarm_failed': 0}
+
+
+class Harness(unittest.TestCase):
+    service = None
+
+    def tearDown(self):
+        self.dir.cleanup()
+
+    def run_cli(self, action, *extra, digest=None):
+        lines, now = [], [0.0]
+
+        def sleep(seconds):
+            now[0] += seconds
+        code = cli.main(['--inventory', str(self.inventory), '--state-dir', str(self.state), 'transparent-binary-' + action,
+                         '--request', str(self.request), '--request-sha256',
+                         digest or hashlib.sha256(self.request.read_bytes()).hexdigest(), *extra],
+                        executor=self.fake, out=lines.append, sleep=sleep, clock=lambda: now[0],
+                        lock=lambda: self.fake.hold_lock('coordinator', descriptors.LOCK_PATH))
+        return code, lines
+
+    def write_request(self, change=lambda r: None, component='workers'):
+        request = self.base_request(component)
+        change(request)
+        self.request.write_bytes(json.dumps(request).encode())
+        return hashlib.sha256(self.request.read_bytes()).hexdigest()
+
+
+class HistoryUpgrade(Harness):
     def setUp(self):
         self.dir = tempfile.TemporaryDirectory()
         root = Path(self.dir.name)
-        self.state, self.binary = root / 'state', root / 'next'
+        self.state, self.binary, self.controller_binary = root / 'state', root / 'next', root / 'controller-next'
         self.binary.write_bytes(NEW)
+        self.controller_binary.write_bytes(CTRL_NEW)
         self.fake = FakeFleet()
         self.shift = {}  # unit -> fields a restarted NEW worker reports instead
         self.map = [MAP]  # the controller's current map; advances during the rollout
-        ready_body = ready
+        self.controller_status = {'phase': 'serving'}
         for unit, listen in WORKERS.items():
             self.fake.install('v12', unit, '[Service]\nExecStart=%s serve --listen %s --cache-bytes 64\nMemoryMax=8G\n'
                               % (SERVER, listen), files={SERVER: OLD})
             for path in ('/v1/health', '/v1/ready'):
                 self.fake.endpoints[('v12', 'http://%s%s' % (listen, path))] = unit
-            self.fake.health_shapes[('v12', unit)] = lambda ready, exe, unit=unit: {
-                'ready': ready, **ready_body(unit, self.map[0]),
-                **(self.shift.get(unit, {}) if exe == sha256(NEW) else {})}
-        self.fake.install('coordinator', CONTROLLER, '[Service]\nExecStart=/usr/local/bin/controller --config %s\n' % CONFIG_PATH,
-                          files={CONFIG_PATH: json.dumps(CONFIG), FLEET: '{"assignments": []}', SCRIPT: '#!python',
-                                 '/usr/local/bin/controller': b'controller'})
+            self.fake.health_shapes[('v12', unit)] = lambda ready_, exe, unit=unit: {
+                **ready(unit, self.map[0]), 'ready': ready_, **(self.shift.get(unit, {}) if exe == sha256(NEW) else {})}
+        files = {CONFIG_PATH: json.dumps(CONFIG), FLEET: json.dumps({'state_dir': STATE_DIR, 'roster': '/x'}),
+                 SCRIPT: '#!python', CONTROLLER_BIN: CTRL_OLD}
+        for digest in (MAP, NEXT_MAP):
+            # Formatting differs from the canonical bytes, as the planner writes it.
+            files['%s/%s.assignment.json' % (STATE_DIR, digest)] = json.dumps(assignment(digest), indent=2, sort_keys=True)
+        self.fake.install('coordinator', CONTROLLER, '[Service]\nExecStart=%s --config %s\nMemoryMax=4G\n'
+                          % (CONTROLLER_BIN, CONFIG_PATH), files=files)
         self.fake.endpoints[('coordinator', 'http://10.142.0.3:8096/v1/status')] = CONTROLLER
-        self.fake.health_shapes[('coordinator', CONTROLLER)] = lambda ready, exe: {'phase': 'serving',
-                                                                                    'map_sha256': self.map[0]}
+        self.fake.health_shapes[('coordinator', CONTROLLER)] = lambda ready_, exe: {
+            **self.controller_status, 'map_sha256': self.map[0],
+            **(self.controller_shift if exe == sha256(CTRL_NEW) else {})}
+        self.controller_shift = {}
+        self.fake.install('coordinator', LOAD_UNIT, '[Service]\nExecStart=/usr/bin/python3 transparent-quality-load.py\n',
+                          files={'/usr/bin/python3': b'python', LOAD_ROOT + '/pins.json':
+                                 json.dumps({i: sha256(OLD) for i in IDS.values()})})
         self.inventory = root / 'inventory.json'
         self.inventory.write_text(json.dumps({
             'lock': {'type': 'remote', 'host': 'coordinator'}, 'ssh': {'mode': 'config'},
@@ -74,67 +133,68 @@ class BinaryUpgrade(unittest.TestCase):
         self.request = root / 'request.json'
         self.write_request()
 
-    def tearDown(self):
-        self.dir.cleanup()
-
-    def write_request(self, change=lambda r: None):
+    def base_request(self, component):
         state = self.fake.probe_unit('coordinator', CONTROLLER)
-        request = {
-            'schema': binary_upgrade.SCHEMA, 'service': 'transparent-history',
-            'release': {'git_sha': GIT, 'binary_sha256': sha256(NEW)},
+        return {
+            'schema': binary_upgrade.SCHEMA, 'service': 'transparent-history', 'component': component,
+            'release': {'git_sha': GIT, 'binary_sha256': sha256(NEW if component == 'workers' else CTRL_NEW)},
             'publication': {'source_sha': 'fb90519b'},
             'controller': {'host': 'coordinator', 'unit_sha256': binary_upgrade.unit_digest(state),
                            'files': {p: self.fake.sha256('coordinator', p) for p in (CONFIG_PATH, FLEET, SCRIPT)}},
-            'workers': {'worker@v12:' + u: {'ready_identity': identity(u), 'limits': {'MemoryMax': '8G'},
-                                            'args': ['--cache-bytes', '64']} for u in WORKERS},
+            'workers': {'worker@v12:' + u: {'ready_identity': {'worker_id': IDS[u], 'role': ready(u, MAP)['role']},
+                                            'limits': {'MemoryMax': '8G'}, 'args': ['--cache-bytes', '64']}
+                        for u in WORKERS},
+            'load': {'host': 'coordinator', 'pins_sha256': self.fake.sha256('coordinator', LOAD_ROOT + '/pins.json')},
         }
-        change(request)
-        self.request.write_bytes(json.dumps(request).encode())
-        return hashlib.sha256(self.request.read_bytes()).hexdigest()
-
-    def run_cli(self, action, *extra, digest=None):
-        lines, now = [], [0.0]
-        def sleep(seconds):
-            now[0] += seconds
-        code = cli.main(['--inventory', str(self.inventory), '--state-dir', str(self.state), 'transparent-binary-' + action,
-                         '--request', str(self.request), '--request-sha256',
-                         digest or hashlib.sha256(self.request.read_bytes()).hexdigest(), *extra],
-                        executor=self.fake, out=lines.append, sleep=sleep, clock=lambda: now[0],
-                        lock=lambda: self.fake.hold_lock('coordinator', descriptors.LOCK_PATH))
-        return code, lines
 
     def running(self):
         return {u: self.fake.probe_unit('v12', u)['exe_sha256'] for u in WORKERS}
 
-    def test_upgrade_preserves_publication_and_rolls_back(self):
+    def pins(self):
+        return json.loads(self.fake.read('coordinator', LOAD_ROOT + '/pins.json'))
+
+    def load_active(self):
+        return self.fake.probe_unit('coordinator', LOAD_UNIT)['active_state'] == 'active'
+
+    def test_worker_upgrade_pauses_and_repins_load_then_rolls_back(self):
         self.assertEqual(self.run_cli('baseline')[0], 0)
         self.fake.log.clear()
         code, lines = self.run_cli('preflight', '--binary', str(self.binary))
         self.assertEqual(code, 0, lines)
         self.assertEqual(self.fake.log, [], 'preflight changes nothing')
-        self.assertIn('release: git %s binary %s; publication: {"source_sha": "fb90519b"}' % (GIT, sha256(NEW)), lines)
         code, lines = self.run_cli('deploy', '--binary', str(self.binary), '--skip-exact-check')
         self.assertEqual(code, 0, lines)
         self.assertEqual(set(self.running().values()), {sha256(NEW)})
-        self.assertEqual(self.fake.probe_unit('coordinator', CONTROLLER)['main_pid'] > 0, True)
-        self.assertFalse([m for m in self.fake.mutations('coordinator') if m[1] == 'systemctl'], 'controller untouched')
-        self.assertEqual(self.fake.sha256('v12', '/opt/transparent-publisher/releases/%s/transparent-shard-server' % sha256(NEW)),
-                         sha256(NEW))
+        self.assertFalse([m for m in self.fake.mutations('coordinator') if m[1] == 'systemctl' and CONTROLLER in m[2]],
+                         'controller untouched')
+        self.assertEqual(self.pins(), {i: sha256(NEW) for i in IDS.values()})
+        self.assertTrue(self.load_active())
+        stops = [m for m in self.fake.mutations('coordinator') if m[1] == 'systemctl' and m[2] == ('stop', LOAD_UNIT)]
+        self.assertEqual(len(stops), 1)
+        self.assertEqual(self.fake.sha256('v12', '/opt/transparent-publisher/releases/%s/transparent-shard-server'
+                                          % sha256(NEW)), sha256(NEW))
         code, lines = self.run_cli('rollback')
         self.assertEqual(code, 0, lines)
         self.assertEqual(set(self.running().values()), {sha256(OLD)})
+        self.assertEqual(self.pins(), {i: sha256(OLD) for i in IDS.values()})
+        self.assertFalse(self.load_active(), 'rollback leaves load stopped for the exact gate')
 
-    def test_wrong_source_publication_or_topology_refuses_before_any_change(self):
+    def test_wrong_source_ownership_budget_or_topology_refuses_before_any_change(self):
         cases = {
             'source': lambda r: r['publication'].update(source_sha='ff27d649'),
-            'assignment': lambda r: r['workers']['worker@v12:transparent-v12-recent.service']['ready_identity'].update(
-                worker_assignment_sha256='b1' * 32),
+            'worker id': lambda r: r['workers']['worker@v12:transparent-v12-recent.service']['ready_identity'].update(
+                worker_id=IDS['transparent-v12-archive.service']),
             'role': lambda r: r['workers']['worker@v12:transparent-v12-recent.service']['ready_identity'].update(
                 role='archive-owner'),
             'invented field': lambda r: r['workers']['worker@v12:transparent-v12-recent.service']['ready_identity'].update(
                 publication_sha256='ab' * 32),
+            'frozen digest': lambda r: r['workers']['worker@v12:transparent-v12-recent.service']['ready_identity'].update(
+                worker_assignment_sha256='b1' * 32),
             'fleet bytes': lambda r: r['controller']['files'].update({FLEET: '0' * 64}),
             'budget': lambda r: r['workers']['worker@v12:transparent-v12-archive.service']['limits'].update(MemoryMax='9G'),
+            'load pins': lambda r: r['load'].update(pins_sha256='0' * 64),
+            'no load': lambda r: r.update(load=None),
+            'component': lambda r: r.update(component='router'),
         }
         self.run_cli('baseline')
         for name, change in cases.items():
@@ -148,50 +208,131 @@ class BinaryUpgrade(unittest.TestCase):
         code, lines = self.run_cli('preflight', '--binary', str(self.binary))
         self.assertEqual(code, 1)
         self.assertTrue(any('follow_journal' in line for line in lines), lines)
+        self.fake.put('coordinator', CONFIG_PATH, json.dumps(CONFIG))
         self.write_request(lambda r: r.update(service='transparent-display'))
         self.assertEqual(self.run_cli('preflight')[0], 1)
         self.assertEqual(self.run_cli('preflight', digest='0' * 64)[0], 1)
-        self.assertEqual(self.fake.log, [])
+        self.assertEqual([m for m in self.fake.log if m[1] != 'mkdir'], [])
+        self.assertTrue(self.load_active())
 
-    def test_identity_change_after_restart_rolls_back_every_touched_worker(self):
+    def test_wrong_assignment_scope_refuses(self):
         self.run_cli('baseline')
-        self.shift['transparent-v12-recent.service'] = {'worker_assignment_sha256': 'cd' * 32}
-        code, lines = self.run_cli('deploy', '--binary', str(self.binary), '--skip-exact-check')
+        # A worker reporting the other worker's scope, or an assignment the controller does not hold.
+        for name, fields in {'scope': {'worker_assignment_sha256': ready('transparent-v12-archive.service', MAP)[
+                                 'worker_assignment_sha256']},
+                             'shards': {'assigned_shards': 2}, 'group': {'replica_group': 'recent-b'}}.items():
+            with self.subTest(name):
+                shape = self.fake.health_shapes[('v12', 'transparent-v12-recent.service')]
+                self.fake.health_shapes[('v12', 'transparent-v12-recent.service')] = (
+                    lambda r, exe, fields=fields: {**ready('transparent-v12-recent.service', self.map[0]), **fields})
+                code, lines = self.run_cli('preflight', '--binary', str(self.binary))
+                self.assertEqual(code, 1)
+                self.assertTrue(any('controller assignment says' in line for line in lines), lines)
+                self.fake.health_shapes[('v12', 'transparent-v12-recent.service')] = shape
+        self.fake.remove('coordinator', '%s/%s.assignment.json' % (STATE_DIR, MAP))
+        code, lines = self.run_cli('preflight', '--binary', str(self.binary))
         self.assertEqual(code, 1)
-        self.assertTrue(any('publication identity changed' in line for line in lines), lines)
-        self.assertEqual(set(self.running().values()), {sha256(OLD)})
-        code, lines = self.run_cli('status')
-        self.assertEqual(code, 0, lines)
-        self.assertTrue(any('rolled-back' in line for line in lines), lines)
+        self.assertTrue(any('no valid controller assignment' in line for line in lines), lines)
 
     def test_controller_map_advancing_mid_rollout_is_the_authority(self):
         self.run_cli('baseline')
-        shape = self.fake.health_shapes[('v12', 'transparent-v12-recent.service')]
+        shape = self.fake.health_shapes[('v12', 'transparent-v12-archive.service')]
+
         def advancing(ready_, exe):
-            self.map[0] = NEXT_MAP if exe == sha256(NEW) else self.map[0]
+            # The controller publishes a new map while the first worker restarts.
+            if exe == sha256(NEW):
+                self.map[0] = NEXT_MAP
             return shape(ready_, exe)
-        self.fake.health_shapes[('v12', 'transparent-v12-recent.service')] = advancing
+        self.fake.health_shapes[('v12', 'transparent-v12-archive.service')] = advancing
         code, lines = self.run_cli('deploy', '--binary', str(self.binary), '--skip-exact-check')
         self.assertEqual(code, 0, lines)
         # A worker that keeps serving a stale map after the controller moved on refuses.
-        self.shift['transparent-v12-archive.service'] = {'map_sha256': MAP}
+        self.shift['transparent-v12-recent.service'] = ready('transparent-v12-recent.service', MAP)
         code, lines = self.run_cli('status')
         self.assertEqual(code, 1)
         self.assertTrue(any('controller current is' in line for line in lines), lines)
 
     def test_unready_or_malformed_responses_refuse(self):
         self.run_cli('baseline')
+        archive = 'transparent-v12-archive.service'
         for name, change in {'prewarm': {'prewarm_failed': 1}, 'cold': {'warm_runtimes': 1}}.items():
             with self.subTest(name):
-                shape = ready
-                self.fake.health_shapes[('v12', 'transparent-v12-archive.service')] = (
-                    lambda r, exe, change=change: {**shape('transparent-v12-archive.service', self.map[0]), **change})
+                self.fake.health_shapes[('v12', archive)] = (
+                    lambda r, exe, change=change: {**ready(archive, self.map[0]), **change})
                 self.assertEqual(self.run_cli('preflight', '--binary', str(self.binary))[0], 1)
-        self.fake.health_shapes[('coordinator', CONTROLLER)] = lambda r, exe: {'phase': 'serving'}
-        code, lines = self.run_cli('preflight', '--binary', str(self.binary))
-        self.assertEqual(code, 1)
-        self.assertTrue(any('no current map_sha256' in line for line in lines), lines)
+        self.fake.health_shapes[('v12', archive)] = lambda r, exe: ready(archive, self.map[0])
+        for status in ({'phase': 'serving'}, {'phase': 'preparing', 'map_sha256': MAP}, {'map_sha256': 'not-a-digest'}):
+            with self.subTest(status):
+                self.fake.health_shapes[('coordinator', CONTROLLER)] = lambda r, exe, status=status: status
+                self.assertEqual(self.run_cli('preflight', '--binary', str(self.binary))[0], 1)
         self.assertEqual(set(self.running().values()), {sha256(OLD)})
+
+    def test_identity_change_after_restart_rolls_back_and_leaves_load_stopped(self):
+        self.run_cli('baseline')
+        self.shift['transparent-v12-recent.service'] = {'role': 'archive-owner'}
+        code, lines = self.run_cli('deploy', '--binary', str(self.binary), '--skip-exact-check')
+        self.assertEqual(code, 1)
+        self.assertTrue(any('publication identity changed' in line for line in lines), lines)
+        self.assertEqual(set(self.running().values()), {sha256(OLD)})
+        self.assertEqual(self.pins(), {i: sha256(OLD) for i in IDS.values()})
+        self.assertFalse(self.load_active())
+        self.assertTrue(any('left stopped for investigation' in line for line in lines), lines)
+        code, lines = self.run_cli('status')
+        self.assertEqual(code, 0, lines)
+        self.assertTrue(any('rolled-back' in line for line in lines), lines)
+
+    def test_existing_latch_refuses_and_is_preserved(self):
+        self.run_cli('baseline')
+        self.fake.put('coordinator', LOAD_ROOT + '/latched.json', '{"reason": "incorrect decoded response"}')
+        code, lines = self.run_cli('deploy', '--binary', str(self.binary), '--skip-exact-check')
+        self.assertEqual(code, 1)
+        self.assertTrue(any('critical latch' in line for line in lines), lines)
+        self.assertEqual(self.fake.read('coordinator', LOAD_ROOT + '/latched.json'), '{"reason": "incorrect decoded response"}')
+        self.assertTrue(self.load_active())
+        self.assertEqual(set(self.running().values()), {sha256(OLD)})
+
+    def test_controller_upgrade_is_its_own_transaction(self):
+        self.run_cli('baseline')
+        self.write_request(component='controller')
+        code, lines = self.run_cli('deploy', '--binary', str(self.controller_binary), '--skip-exact-check')
+        self.assertEqual(code, 0, lines)
+        staged = '/opt/transparent-publisher/controller/releases/%s/transparent-publication-controller' % sha256(CTRL_NEW)
+        self.assertEqual(self.fake.sha256('coordinator', staged), sha256(CTRL_NEW))
+        self.assertEqual(self.fake.probe_unit('coordinator', CONTROLLER)['exe_sha256'], sha256(CTRL_NEW))
+        self.assertEqual(set(self.running().values()), {sha256(OLD)}, 'workers untouched')
+        self.assertTrue(self.load_active())
+        self.assertFalse([m for m in self.fake.mutations('v12') if m[1] == 'systemctl'])
+        # The normalized unit pin still holds: only the binary changed.
+        self.assertEqual(self.run_cli('status')[0], 0)
+        code, lines = self.run_cli('rollback')
+        self.assertEqual(code, 0, lines)
+        self.assertEqual(self.fake.probe_unit('coordinator', CONTROLLER)['exe_sha256'], sha256(CTRL_OLD))
+
+    def test_controller_that_restarts_unhealthy_rolls_back(self):
+        self.run_cli('baseline')
+        self.controller_shift = {'phase': 'halted'}
+        self.write_request(component='controller')
+        code, lines = self.run_cli('deploy', '--binary', str(self.controller_binary), '--skip-exact-check')
+        self.assertEqual(code, 1)
+        self.assertTrue(any("controller phase is 'halted'" in line for line in lines), lines)
+        self.assertEqual(self.fake.probe_unit('coordinator', CONTROLLER)['exe_sha256'], sha256(CTRL_OLD))
+
+    def test_worker_binary_is_never_selected_as_controller(self):
+        self.fake.put('coordinator', SERVER, OLD)
+        self.fake.edit('coordinator', '/etc/systemd/system/' + CONTROLLER,
+                       '[Service]\nExecStart=%s --config %s\nMemoryMax=4G\n' % (SERVER, CONFIG_PATH))
+        self.write_request(component='controller')
+        code, lines = self.run_cli('preflight', '--binary', str(self.controller_binary))
+        self.assertEqual(code, 1)
+        self.assertTrue(any('worker executable' in line for line in lines), lines)
+
+    def test_controller_unit_drift_beyond_binary_refuses(self):
+        self.run_cli('baseline')
+        self.write_request(component='controller')
+        self.fake.edit('coordinator', '/etc/systemd/system/%s.d/budget.conf' % CONTROLLER, '[Service]\nMemoryMax=6G\n')
+        code, lines = self.run_cli('deploy', '--binary', str(self.controller_binary), '--skip-exact-check')
+        self.assertEqual(code, 1)
+        self.assertEqual(self.fake.probe_unit('coordinator', CONTROLLER)['exe_sha256'], sha256(CTRL_OLD))
 
     def test_staged_release_bytes_are_immutable(self):
         release = '/opt/transparent-publisher/releases/%s/transparent-shard-server' % sha256(NEW)
@@ -202,6 +343,133 @@ class BinaryUpgrade(unittest.TestCase):
         self.assertTrue(any('immutable release' in line for line in lines), lines)
         self.assertEqual(self.fake.read('v12', release), 'other bytes')
         self.assertEqual(set(self.running().values()), {sha256(OLD)})
+
+
+DISPLAY_WORKER, DISPLAY_CONTROLLER = 'transparent-txid-display-worker.service', 'transparent-txid-display-k8-controller.service'
+DISPLAY_ROOT = '/srv/txid-display-genesis/v4/root'
+DISPLAY_SERVER, DISPLAY_CONTROLLER_BIN = '/usr/local/bin/transparent-txid-server', '/usr/local/bin/txid-display-controller'
+# The deployed run-mode command: geometry comes from root/display-root.json, not a flag.
+DISPLAY_RUN = ('%s run --root %s --journal /srv/txid-display-genesis/journal-v3 '
+               '--workers /opt/transparent-txid-display-k8/workers.json --mode replay-then-live '
+               '--status-listen 127.0.0.1:8098 --rpc-url http://127.0.0.1:8232 --rpc-cookie /root/.cache/zakura/.cookie '
+               '--blocks-per-step 25 --step-interval-ms 2000' % (DISPLAY_CONTROLLER_BIN, DISPLAY_ROOT))
+
+
+class DisplayUpgrade(Harness):
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        root = Path(self.dir.name)
+        self.state, self.binary, self.controller_binary = root / 'state', root / 'next', root / 'controller-next'
+        self.binary.write_bytes(NEW)
+        self.controller_binary.write_bytes(CTRL_NEW)
+        self.fake = FakeFleet()
+        self.map = [MAP]
+        self.worker_shift = {}
+        self.fake.install('gpu', DISPLAY_WORKER, '[Service]\nExecStart=%s serve --listen 10.142.0.20:8094\nMemoryMax=40G\n'
+                          % DISPLAY_SERVER, files={DISPLAY_SERVER: OLD})
+        for path in ('/v1/health', '/v1/ready'):
+            self.fake.endpoints[('gpu', 'http://10.142.0.20:8094' + path)] = DISPLAY_WORKER
+        self.fake.health_shapes[('gpu', DISPLAY_WORKER)] = lambda ready_, exe: {
+            'ready': ready_, 'warm': True, 'role': 'combined', 'map_sha256': self.map[0], 'covered_through': 3100000,
+            **(self.worker_shift if exe == sha256(NEW) else {})}
+        self.install_controller(DISPLAY_RUN)
+        self.fake.endpoints[('coordinator', 'http://127.0.0.1:8098/v1/status')] = DISPLAY_CONTROLLER
+        self.fake.health_shapes[('coordinator', DISPLAY_CONTROLLER)] = lambda ready_, exe: {
+            'phase': 'running', 'halted': None, 'stalled': False, 'published': {'map_sha256': self.map[0]}}
+        self.inventory = root / 'inventory.json'
+        self.inventory.write_text(json.dumps({
+            'lock': {'type': 'remote', 'host': 'coordinator'}, 'ssh': {'mode': 'config'},
+            'hosts': {'gpu': {}, 'coordinator': {}},
+            'services': {'transparent-display': {'roles': {
+                'worker': [{'host': 'gpu', 'unit': DISPLAY_WORKER, 'vars': {'listen': '10.142.0.20:8094'}}],
+                'controller': [{'host': 'coordinator', 'unit': DISPLAY_CONTROLLER,
+                                'vars': {'listen': '127.0.0.1:8098'}}]}}}}))
+        self.request = root / 'request.json'
+        self.write_request()
+
+    def install_controller(self, command):
+        self.fake.install('coordinator', DISPLAY_CONTROLLER, '[Service]\nExecStart=%s\n' % command,
+                          files={DISPLAY_CONTROLLER_BIN: CTRL_OLD,
+                                 DISPLAY_ROOT + '/display-root.json': '{"geometry": "txid-4k8"}'})
+
+    def base_request(self, component):
+        state = self.fake.probe_unit('coordinator', DISPLAY_CONTROLLER)
+        return {
+            'schema': binary_upgrade.SCHEMA, 'service': 'transparent-display', 'component': component,
+            'release': {'git_sha': GIT, 'binary_sha256': sha256(NEW if component == 'workers' else CTRL_NEW)},
+            'publication': {'root': DISPLAY_ROOT},
+            'controller': {'host': 'coordinator', 'unit_sha256': binary_upgrade.unit_digest(state),
+                           'files': {DISPLAY_ROOT + '/display-root.json':
+                                     self.fake.sha256('coordinator', DISPLAY_ROOT + '/display-root.json')}},
+            'workers': {'worker@gpu': {'ready_identity': {'role': 'combined'}, 'limits': {'MemoryMax': '40G'},
+                                       'args': ['--listen', '10.142.0.20:8094']}},
+            'load': None,
+        }
+
+    def test_real_run_mode_controller_without_geometry_passes(self):
+        """Before: the check demanded `--geometry txid-4k8`, which run mode does not take, so this refused."""
+        self.assertEqual(self.run_cli('baseline')[0], 0)
+        code, lines = self.run_cli('preflight', '--binary', str(self.binary))
+        self.assertEqual(code, 0, lines)
+        code, lines = self.run_cli('deploy', '--binary', str(self.binary), '--skip-exact-check')
+        self.assertEqual(code, 0, lines)
+        self.assertEqual(self.fake.probe_unit('gpu', DISPLAY_WORKER)['exe_sha256'], sha256(NEW))
+        self.assertEqual(self.run_cli('rollback')[0], 0)
+        self.assertEqual(self.fake.probe_unit('gpu', DISPLAY_WORKER)['exe_sha256'], sha256(OLD))
+
+    def test_display_refusals(self):
+        self.run_cli('baseline')
+        cases = {
+            'root': lambda r: r['publication'].update(root='/srv/txid-display-genesis/v3/root'),
+            'root file': lambda r: r['controller']['files'].update({DISPLAY_ROOT + '/display-root.json': '0' * 64}),
+            'role': lambda r: r['workers']['worker@gpu']['ready_identity'].update(role='archive-owner'),
+            'load': lambda r: r.update(load={'host': 'coordinator', 'pins_sha256': '0' * 64}),
+        }
+        for name, change in cases.items():
+            with self.subTest(name):
+                self.write_request(change)
+                self.assertEqual(self.run_cli('preflight', '--binary', str(self.binary))[0], 1)
+        self.write_request()
+        for name, status in {'halted': {'halted': 'journal gap'}, 'stalled': {'stalled': True},
+                             'phase': {'phase': 'replaying'}, 'no map': {'published': None}}.items():
+            with self.subTest(name):
+                self.fake.health_shapes[('coordinator', DISPLAY_CONTROLLER)] = lambda r, exe, status=status: {
+                    'phase': 'running', 'halted': None, 'stalled': False, 'published': {'map_sha256': self.map[0]}, **status}
+                self.assertEqual(self.run_cli('preflight', '--binary', str(self.binary))[0], 1)
+        self.fake.health_shapes[('coordinator', DISPLAY_CONTROLLER)] = lambda r, exe: {
+            'phase': 'running', 'halted': None, 'stalled': False, 'published': {'map_sha256': NEXT_MAP}}
+        code, lines = self.run_cli('preflight', '--binary', str(self.binary))
+        self.assertEqual(code, 1)
+        self.assertTrue(any('controller current is' in line for line in lines), lines)
+        self.assertEqual(self.fake.probe_unit('gpu', DISPLAY_WORKER)['exe_sha256'], sha256(OLD))
+
+    def test_controller_passing_geometry_refuses(self):
+        self.install_controller(DISPLAY_RUN + ' --geometry txid-4k8')
+        self.write_request()
+        code, lines = self.run_cli('preflight', '--binary', str(self.binary))
+        self.assertEqual(code, 1)
+        self.assertTrue(any('--geometry' in line for line in lines), lines)
+
+    def test_worker_that_restarts_cold_rolls_back(self):
+        self.run_cli('baseline')
+        self.worker_shift = {'warm': False}
+        code, lines = self.run_cli('deploy', '--binary', str(self.binary), '--skip-exact-check')
+        self.assertEqual(code, 1, lines)
+        self.assertEqual(self.fake.probe_unit('gpu', DISPLAY_WORKER)['exe_sha256'], sha256(OLD))
+
+    def test_display_controller_upgrade_keeps_run_arguments(self):
+        self.run_cli('baseline')
+        self.write_request(component='controller')
+        code, lines = self.run_cli('deploy', '--binary', str(self.controller_binary), '--skip-exact-check')
+        self.assertEqual(code, 0, lines)
+        state = self.fake.probe_unit('coordinator', DISPLAY_CONTROLLER)
+        self.assertEqual(state['exe_sha256'], sha256(CTRL_NEW))
+        staged = '/opt/transparent-txid-display/controller/releases/%s/txid-display-controller' % sha256(CTRL_NEW)
+        self.assertEqual(self.fake.host('coordinator').units[DISPLAY_CONTROLLER]['exec_start'],
+                         DISPLAY_RUN.replace(DISPLAY_CONTROLLER_BIN, staged))
+        self.assertEqual(self.fake.probe_unit('gpu', DISPLAY_WORKER)['exe_sha256'], sha256(OLD))
+        self.assertEqual(self.run_cli('rollback')[0], 0)
+        self.assertEqual(self.fake.probe_unit('coordinator', DISPLAY_CONTROLLER)['exe_sha256'], sha256(CTRL_OLD))
 
 
 if __name__ == '__main__':
