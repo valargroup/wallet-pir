@@ -229,13 +229,26 @@ exercise memory/SQLite parity and legacy progress migration. The regression
 crate tests the oracle independently.
 
 ```sh
-cargo test -p zakura-pir-transparent --features engine-store,engine-conformance,reqwest \
-  --lib --test engine_birthday_to_balance --test engine_store_semantics \
-  --test engine_store_schema_upgrade
+cargo test -p transparent-blocks --test recovery
 cargo test -p transparent-shard-server --test wallet_anchor \
-  --test wallet_continuation --test wallet_sync
+  --test wallet_continuation --test wallet_recut --test wallet_sync
 cargo test -p transparent-regression
 ```
+
+The artifact build selects service workspace targets only. Library-internal
+checks run in wallet-libraries CI at the exact revision pinned by the service:
+primitive/event/shard tests stay with their canonical packages; the engine unit
+and `engine_birthday_to_balance` tests cover the former wallet crate; and
+`engine_store_semantics` plus `engine_store_schema_upgrade` retain the former
+SQLite conformance and migration assertions. The service runs its own block
+recovery, wallet HTTP and regression suites against these library APIs and the
+production router. Cargo cannot run a Git dependency's internal test targets
+from this workspace.
+
+The service-owned `transparent-regression` example `activity-reopen` opens
+retained recovery databases through the canonical SQLite store API. Its binary
+and retained artifact remain named `examples/activity-reopen` in both build
+profiles; no store implementation is copied back into the service.
 
 The accepted-anchor path validates complete retrieved histories for a shard,
 but persists ledger events only through the requested height. Pagination
