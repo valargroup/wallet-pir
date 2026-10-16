@@ -874,8 +874,29 @@ class CacheWorkflowTests(unittest.TestCase):
             ran, primed = full.commands(group, groups), full.commands(group, groups, compile_only=True)
             self.assertEqual(ran[0][2:], primed[0][3:])
             self.assertEqual(primed[0][:3], ['cargo', 'test', '--no-run'])
-            for command in primed[1:]:
-                self.assertIn('--compile-only', command)
+            for ran_command, primed_command in zip(ran[1:], primed[1:], strict=True):
+                if primed_command[:3] == ['cargo', 'test', '--no-run']:
+                    self.assertEqual(primed_command[:3], ['cargo', 'test', '--no-run'])
+                    self.assertEqual(ran_command[2:], primed_command[3:])
+                else:
+                    self.assertIn('--compile-only', primed_command)
+
+    def test_transparent_full_checks_include_the_standalone_exporter(self):
+        full = load_full()
+        groups = {'transparent': ['transparent-filter-server'], 'shared': ['pir-control']}
+        manifest = 'transparent/tools/txid-sizing/export/Cargo.toml'
+        self.assertEqual(full.commands('transparent', groups)[0], [
+            'bash', 'tools/ci/full-test.sh', '--locked', '--profile', 'release-fast',
+            '--manifest-path', manifest,
+        ])
+        self.assertEqual(full.commands('transparent', groups, compile_only=True)[0], [
+            'cargo', 'test', '--no-run', '--locked', '--profile', 'release-fast',
+            '--manifest-path', manifest,
+        ])
+        self.assertEqual(len(full.commands('transparent', groups)), 2)
+        self.assertIn('transparent-filter-server', full.commands('transparent', groups)[1])
+        self.assertEqual(len(full.commands('shared', groups)), 1)
+        self.assertEqual(len(full.commands('transparent', groups, lint=True)), 1)
 
 
 def load_full():

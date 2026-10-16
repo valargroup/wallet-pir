@@ -45,6 +45,12 @@ def commands(group, groups, lint=False, compile_only=False):
     if 'enhance-pir-server' in names:
         result.append(['python3', 'tools/ci/enhance_tests.py', '--tier', 'full',
                        *(['--compile-only'] if compile_only else [])])
+    if group == 'transparent':
+        # This analysis tool has its own workspace. Its journal-reader identity
+        # and compiled-codec contracts run first, so another service test's
+        # failure cannot hide whether those contracts passed on Linux.
+        result.insert(0, [*runner, '--locked', '--profile', 'release-fast',
+                          '--manifest-path', 'transparent/tools/txid-sizing/export/Cargo.toml'])
     return result
 
 
