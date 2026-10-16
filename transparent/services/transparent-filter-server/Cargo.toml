@@ -90,6 +90,7 @@ transparent-server-backend = { path = "../../crates/transparent-server-backend" 
 zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "609cbd309625938ba70c115147a21b4c0db9fdf5", features = ["rocksdb"] }
 
 [dev-dependencies]
+sysinfo = "0.36"
 transparent-shard-server = { path = "../transparent-shard-server" }
 transparent-txid-client = { package = "zakura-transparent-txid-client", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "609cbd309625938ba70c115147a21b4c0db9fdf5", features = ["testing"] }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "json"] }
