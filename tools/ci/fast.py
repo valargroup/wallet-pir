@@ -181,7 +181,7 @@ def plan(packages, paths, *, all_checks=False):
     # recompiling unchanged Rust does not validate this orchestration.
     # Manifests, build scripts and unknown inputs
     # retain their broad native checks.
-    tooling = lambda path: path.startswith(('tools/ci/', 'tools/tests/', '.github/workflows/ci',
+    tooling = lambda path: path == '.gitignore' or path.startswith(('tools/ci/', 'tools/tests/', '.github/workflows/ci',
                                            '.github/actions/rust-setup/'))
     if any(tooling(path) for path in paths):
         selected = select(packages, [path for path in paths if not tooling(path)])

@@ -112,7 +112,7 @@ class QualificationTests(unittest.TestCase):
     def test_ci_only_feedback_does_not_compile_unchanged_rust_but_full_coverage_remains(self):
         packages = q.workspace_packages()
         for paths in [['tools/ci/fast.py', 'ops/lib/wallet_pir_ops/release.py'],
-                      ['.github/workflows/ci-qualify.yml']]:
+                      ['.github/workflows/ci-qualify.yml'], ['.gitignore']]:
             result = q.plan(packages, paths)
             self.assertEqual(result['packages'], [])
             self.assertEqual(set(result['groups']), q.FULL_GROUPS)
