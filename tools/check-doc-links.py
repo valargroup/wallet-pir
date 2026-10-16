@@ -14,7 +14,10 @@ HEADING = re.compile(r'^#{1,6} +(.+)$', re.MULTILINE)
 # These links belong to an immutable assurance capture. Resolve only its two
 # removed oracle files at the exact tested source recorded in results.md, and
 # verify their bytes against the capture's original manifest.
-HISTORICAL_REPOSITORY = 'https://github.com/valargroup/wallet-pir.git'
+HISTORICAL_REPOSITORIES = frozenset({
+    'https://github.com/valargroup/wallet-pir.git',
+    'git@github.com:valargroup/wallet-pir.git',
+})
 HISTORICAL_SOURCES = {
     'transparent/evidence/prewarm-hint-assurance-2026-10-04/README.md': (
         '2bb5c0299eb752b68a5ad5fad9b156b046bef8c9',
@@ -43,9 +46,13 @@ def historical_source_exists(document, resolved):
         present = subprocess.run(['git', 'cat-file', '-e', f'{revision}^{{commit}}'],
                                  cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         if present.returncode:
+            remote = subprocess.check_output(['git', 'remote', 'get-url', 'origin'],
+                                             cwd=ROOT, text=True).strip()
+            if remote not in HISTORICAL_REPOSITORIES:
+                return False
             print(f'check-doc-links: fetching captured source {revision}', flush=True)
-            subprocess.run(['git', 'fetch', '--no-tags', '--depth=1', HISTORICAL_REPOSITORY, revision],
-                           cwd=ROOT, check=True, timeout=30, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run(['git', 'fetch', '--no-tags', '--depth=1', remote, revision],
+                           cwd=ROOT, check=True, stdout=subprocess.DEVNULL)
         blob = subprocess.check_output(['git', 'show', f'{revision}:{source}'],
                                        cwd=ROOT, stderr=subprocess.DEVNULL)
         return hashlib.sha256(blob).hexdigest() == expected

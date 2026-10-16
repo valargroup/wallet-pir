@@ -82,8 +82,9 @@ class DocumentationLinks(unittest.TestCase):
         manifest = {"sources": {"source_sha256": {source: digest}}}
         self.write("evidence/run/manifest.json", json.dumps(manifest))
         policy = {document: (revision, frozenset({source}))}
+        subprocess.run(['git', 'remote', 'add', 'origin', self.root.as_uri()], cwd=self.root, check=True)
         with patch.object(checker, 'ROOT', self.root), patch.object(checker, 'HISTORICAL_SOURCES', policy), \
-                patch.object(checker, 'HISTORICAL_REPOSITORY', str(self.root)):
+                patch.object(checker, 'HISTORICAL_REPOSITORIES', frozenset()):
             def resolves(doc=document, target=source):
                 return checker.historical_source_exists(doc, (self.root / target).resolve())
             self.assertTrue(resolves())
@@ -125,9 +126,11 @@ class DocumentationLinks(unittest.TestCase):
         (bundle / "manifest.json").write_text(json.dumps({"sources": {"source_sha256": {source: digest}}}))
         document = "evidence/run/README.md"
         with patch.object(checker, 'ROOT', shallow), \
-                patch.object(checker, 'HISTORICAL_REPOSITORY', self.root.as_uri()), \
+                patch.object(checker, 'HISTORICAL_REPOSITORIES', frozenset({self.root.as_uri()})), \
                 patch.object(checker, 'HISTORICAL_SOURCES', {document: (revision, frozenset({source}))}), \
                 patch.object(checker.subprocess, 'run', wraps=subprocess.run) as run:
+            with patch.object(checker, 'HISTORICAL_REPOSITORIES', frozenset()):
+                self.assertFalse(checker.historical_source_exists(document, (shallow / source).resolve()))
             self.assertTrue(checker.historical_source_exists(document, (shallow / source).resolve()))
             fetches = [call.args[0] for call in run.call_args_list if call.args[0][:2] == ['git', 'fetch']]
             self.assertEqual(fetches, [['git', 'fetch', '--no-tags', '--depth=1', self.root.as_uri(), revision]])
