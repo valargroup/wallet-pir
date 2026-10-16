@@ -6,13 +6,14 @@
 //! and prints its record and anchor. `lookup ORIGIN OFFSET HASH_BYTE` retrieves the
 //! fixture receiver's payments over encrypted PIR and exits zero only if they are
 //! exactly the two this fixture staged: the oracle is the construction, not the server.
-#[path = "../../../crates/receiver-directory/tests/common/mod.rs"]
+#[path = "../../../crates/receiver-store/tests/common/mod.rs"]
 mod common;
-use receiver_directory::{snapshot::Snapshot, witness::WitnessSnapshot, Hash, Payment};
+use receiver_directory::{snapshot::Snapshot, Hash, Payment};
 use receiver_pir::{
     transport::{DirectoryClient, Transport},
     AcceptedCoverage, Error, MIN_ROWS,
 };
+use zakura_receiver_crypto::witness::WitnessSnapshot;
 
 fn activation() -> u32 {
     receiver_indexer::blocks::ironwood_activation()
@@ -35,7 +36,7 @@ fn payments(offset: u32, hash: Hash) -> Vec<Payment> {
 
 fn publication(offset: u32, hash: Hash) -> (Snapshot, Vec<u8>) {
     let mut manifest = common::manifest(MIN_ROWS);
-    manifest.genesis = zakura_chain::parameters::Network::Mainnet.genesis_hash().0;
+    manifest.genesis = zakura_server_chain::Network::Mainnet.genesis_hash();
     manifest.start_height = activation();
     manifest.end_height = activation() + offset;
     manifest.end_hash = hash;
@@ -52,9 +53,13 @@ fn publication(offset: u32, hash: Hash) -> (Snapshot, Vec<u8>) {
         .collect();
     let snapshot = Snapshot::build(manifest, &records, &[]).unwrap();
     let tree: Vec<Hash> = (1..=8).map(|i| [i; 32]).collect();
-    let proof = WitnessSnapshot::build(&snapshot.manifest, &tree, &[0, 5].into_iter().collect())
-        .unwrap()
-        .encode();
+    let proof = WitnessSnapshot::build(
+        &receiver_indexer::verify::publication(&snapshot.manifest).unwrap(),
+        &tree,
+        &[0, 5].into_iter().collect(),
+    )
+    .unwrap()
+    .encode();
     (snapshot, proof)
 }
 
@@ -111,7 +116,7 @@ async fn main() {
                 "{}",
                 serde_json::json!({"directory": dir, "revision": revision,
                     "end_height": activation() + offset,
-                    "end_hash": zakura_chain::block::Hash(hash).to_string(),
+                    "end_hash": zakura_server_chain::hash::display(&hash),
                     "session": hex::encode(session)})
             );
         }
@@ -119,7 +124,7 @@ async fn main() {
             let origin = &args[2];
             let (offset, hash) = (args[3].parse().expect("OFFSET"), byte(&args[4]));
             let accepted = AcceptedCoverage {
-                genesis: zakura_chain::parameters::Network::Mainnet.genesis_hash().0,
+                genesis: zakura_server_chain::Network::Mainnet.genesis_hash(),
                 required_start: activation(),
                 height: activation() + offset,
                 hash,

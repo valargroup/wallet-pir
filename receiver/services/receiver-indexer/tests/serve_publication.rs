@@ -4,7 +4,6 @@
 mod common;
 use axum::{extract::State, routing::post, Json, Router};
 use receiver_directory::{snapshot::Snapshot, Hash};
-use zakura_receiver_crypto::witness::WitnessSnapshot;
 use receiver_pir::{
     transport::{DirectoryClient, Transport},
     AcceptedCoverage, Error, MIN_ROWS,
@@ -16,6 +15,7 @@ use std::{
     sync::{Arc, Mutex},
     time::Duration,
 };
+use zakura_receiver_crypto::witness::WitnessSnapshot;
 
 fn activation() -> u32 {
     receiver_indexer::blocks::ironwood_activation()
@@ -93,9 +93,13 @@ fn publication(offset: u32, hash: Hash) -> (Snapshot, Vec<u8>) {
         .collect();
     let snapshot = Snapshot::build(manifest, &records, &[]).unwrap();
     let tree: Vec<Hash> = (1..=8).map(|i| [i; 32]).collect();
-    let proof = WitnessSnapshot::build(&receiver_indexer::verify::publication(&snapshot.manifest).unwrap(), &tree, &[0, 5].into_iter().collect())
-        .unwrap()
-        .encode();
+    let proof = WitnessSnapshot::build(
+        &receiver_indexer::verify::publication(&snapshot.manifest).unwrap(),
+        &tree,
+        &[0, 5].into_iter().collect(),
+    )
+    .unwrap()
+    .encode();
     (snapshot, proof)
 }
 

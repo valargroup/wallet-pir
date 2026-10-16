@@ -26,7 +26,7 @@
 //! the publication the record names and that it is internally consistent and anchored
 //! on the canonical chain, not that it holds every payment.
 use crate::canonical::{freshest, is_canonical};
-use zakura_server_chain::NodeClient as ZakuraClient;
+use receiver_directory::Hash;
 use receiver_directory::{
     filter::MAX_FILTERS_BYTES,
     snapshot::{Manifest, Snapshot, ROW_BYTES},
@@ -41,9 +41,9 @@ use std::{
     time::Duration,
 };
 use tracing::{info, warn};
-use receiver_directory::Hash;
-use zakura_server_chain::Network;
 use zakura_receiver_crypto::witness::MAX_WITNESS_BYTES;
+use zakura_server_chain::Network;
+use zakura_server_chain::NodeClient as ZakuraClient;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
@@ -307,11 +307,14 @@ pub fn load(
         Err(e) => return Err(invalid(format!("witness: {e}"))),
     };
     let anchor = (manifest.end_height, manifest.end_hash);
-    let publication = crate::verify::prepare(Snapshot {
-        manifest,
-        data,
-        filters,
-    }, witnesses)
+    let publication = crate::verify::prepare(
+        Snapshot {
+            manifest,
+            data,
+            filters,
+        },
+        witnesses,
+    )
     .map_err(|e| invalid(format!("publication/witness: {e}")))?;
     let report = serde_json::json!({
         "mode": "serve-publication",
