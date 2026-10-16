@@ -23,7 +23,10 @@ package transaction). Install takes the production lock, re-plans and refuses
 unless the plan digest equals the reviewed one. It then runs fixed steps.
 Before each step the runner journal (`transaction.Journal`) and, once it
 exists, the coordinator's transaction directory record the intent; afterwards
-both record completion. A transport failure leaves the outcome unknown:
+both record completion. Every remote mutation verifies lock ownership again;
+losing the lock stops effects and leaves the outcome unknown. Completed steps
+are observed again during recovery, and the selected package and managed files
+are verified before commit. A transport failure leaves the outcome unknown:
 nothing is guessed or undone until `reconcile` (finish) or `rollback` (undo)
 observes the host. Reconcile continues only where each step's observed state
 is exactly its recorded before or after state; anything else is refused.
@@ -580,6 +583,10 @@ class Package:
             if current == plan['prior']['files'][name]:
                 return 'before'
             if current == plan['target']['files'][name]:
+                entry = observed['files'][path] or {}
+                if (entry.get('kind') != 'file' or entry.get('uid') != layout.owner_uid
+                        or entry.get('mode') != (0o600 if name == 'fleet' else 0o644)):
+                    return '%s metadata no longer matches the planned file' % path
                 return 'after'
             return '%s is %s, neither the prior nor the planned file' % (path, current)
         if name == 'select':
@@ -603,6 +610,40 @@ class Package:
             if code:
                 raise PackageError('%s failed on %s (exit %d): %s' % (' '.join(argv[:2]), self.host, code, output[-500:]))
 
+    def locked_effect(self, operation, *arguments):
+        """Each effect uses its own connection; the lock connection must still own the lock."""
+        self.lock.verify()
+        return operation(*arguments)
+
+    def verify_package(self, path, plan):
+        """Check all files, owners and modes before running any package entrypoint."""
+        problems = tree_problems(self.ex.package_tree(self.host, path), plan['package']['files'],
+                                 self.layout.owner_uid)
+        if problems:
+            raise PackageError('%s is not exactly the planned package: %s' % (path, '; '.join(problems[:5])))
+        self.verify_entrypoints(path, plan)
+
+    def verify_target(self, identifier, plan):
+        """A completion marker is a receipt, not proof that its selected files remain unchanged."""
+        observed = self.observe(plan['package']['revision'])
+        problems = self.path_problems(observed)
+        selection = observed['current'] or {}
+        if (selection.get('kind') != 'link' or selection.get('uid') != self.layout.owner_uid
+                or selection.get('target') != plan['target']['selection']):
+            problems.append('the selected release no longer matches the planned selection')
+        for step, path, _ in self.layout.managed():
+            state = observed['files'][path]
+            expected = plan['target']['files'][step]
+            if expected is None:
+                if state is not None:
+                    problems.append('%s appeared outside the recorded plan' % path)
+            elif (state is None or state.get('kind') != 'file' or state.get('sha256') != expected
+                  or state.get('uid') != self.layout.owner_uid or state.get('mode', 0) & 0o022):
+                problems.append('%s no longer matches the planned file' % path)
+        if problems:
+            raise PackageError('; '.join(problems))
+        self.verify_package('%s/%s' % (self.layout.releases, plan['package']['revision']), plan)
+
     def apply(self, identifier, plan, name, archive):
         layout, host = self.layout, self.host
         revision = plan['package']['revision']
@@ -610,42 +651,39 @@ class Package:
         if name == 'record':
             for path, mode in ((layout.root, 0o755), (layout.releases, 0o755), (layout.staging, 0o755),
                                (layout.transactions, 0o700), (directory + '/steps', 0o700)):
-                self.ex.mkdir(host, path, mode)
-            self.ex.write(host, directory + '/record.json', self.record_bytes(identifier, plan), 0o600)
+                self.locked_effect(self.ex.mkdir, host, path, mode)
+            self.locked_effect(self.ex.write, host, directory + '/record.json', self.record_bytes(identifier, plan), 0o600)
             for step, path, copy in layout.managed():
                 if plan['prior']['files'][step] is not None:
                     # The previous file, kept immutable for rollback.
-                    self.ex.package_copy(host, path, '%s/%s' % (directory, copy), plan['prior']['files'][step], 0o600)
-            self.ex.write(host, layout.pointer, self.pointer_bytes(identifier), 0o600)
+                    self.locked_effect(self.ex.package_copy, host, path, '%s/%s' % (directory, copy), plan['prior']['files'][step], 0o600)
+            self.locked_effect(self.ex.write, host, layout.pointer, self.pointer_bytes(identifier), 0o600)
         elif name == 'stage':
             if archive is None:
                 raise PackageError('staging needs the planned archive; pass --archive')
             if file_sha256(archive) != plan['package']['archive_sha256']:
                 raise PackageError('%s is not the planned archive' % archive)
-            self.ex.package_unpack(host, archive, self.staged_path(identifier), plan['package']['archive_sha256'],
+            self.locked_effect(self.ex.package_unpack, host, archive, self.staged_path(identifier), plan['package']['archive_sha256'],
                                    plan['package']['manifest_sha256'])
         elif name == 'verify':
             if plan['prior']['release'] == 'absent':
                 path = self.staged_path(identifier)
             else:
                 path = '%s/%s' % (layout.releases, revision)
-            problems = tree_problems(self.ex.package_tree(host, path), plan['package']['files'], layout.owner_uid)
-            if problems:
-                raise PackageError('%s is not exactly the planned package: %s' % (path, '; '.join(problems[:5])))
-            self.verify_entrypoints(path, plan)
+            self.verify_package(path, plan)
         elif name == 'promote':
-            self.ex.rename(host, self.staged_path(identifier), '%s/%s' % (layout.releases, revision))
+            self.locked_effect(self.ex.rename, host, self.staged_path(identifier), '%s/%s' % (layout.releases, revision))
         elif name in plan['target']['files']:
             data = self.candidates.get(name)
             if data is None or sha256(data) != plan['target']['files'][name]:
                 raise PackageError('finishing needs the planned %s file; pass it again' % name)
             path = self.managed_path(name)
-            self.ex.mkdir(host, str(Path(path).parent), 0o755)
-            self.ex.write(host, path, data, 0o600 if name == 'fleet' else 0o644)
+            self.locked_effect(self.ex.mkdir, host, str(Path(path).parent), 0o755)
+            self.locked_effect(self.ex.write, host, path, data, 0o600 if name == 'fleet' else 0o644)
         elif name == 'select':
-            self.ex.replace_link(host, layout.current, plan['target']['selection'])
+            self.locked_effect(self.ex.replace_link, host, layout.current, plan['target']['selection'])
         elif name == 'commit':
-            self.ex.write(host, directory + '/final.json',
+            self.locked_effect(self.ex.write, host, directory + '/final.json',
                           (json.dumps({'status': 'committed', 'transaction': identifier}) + '\n').encode(), 0o600)
         else:
             raise AssertionError(name)
@@ -659,11 +697,20 @@ class Package:
         for index, name in enumerate(steps):
             self.lock.verify()
             if ('%02d-%s.done.json' % (index, name)) in done:
+                if name == 'verify':
+                    final = '%s/%s' % (self.layout.releases, plan['package']['revision'])
+                    path = final if self.observe(plan['package']['revision'])['release'] is not None else self.staged_path(identifier)
+                    self.verify_package(path, plan)
+                elif name != 'stage' and self.state(identifier, plan, name) != 'after':
+                    raise PackageError('%s: completed effect no longer matches the recorded plan' % name)
+                # Promotion consumes staging; verification above checks its current location.
                 continue
+            if name == 'commit':
+                self.verify_target(identifier, plan)
             state = self.state(identifier, plan, name)
             if state == 'partial' and name == 'stage':
                 journal.event('intent', step='discard-staging')
-                self.ex.remove_tree(self.host, self.staged_path(identifier), self.layout.staging)
+                self.locked_effect(self.ex.remove_tree, self.host, self.staged_path(identifier), self.layout.staging)
                 state = 'before'
             elif state == 'partial' and name == 'record':
                 state = 'before'  # every record write is the same bytes into this transaction's own directory
@@ -672,10 +719,11 @@ class Package:
             if state == 'before':
                 journal.event('intent', step=name)
                 if name != 'record':
-                    self.ex.write(self.host, self.marker(identifier, index, name, 'intent'), b'{}\n', 0o600)
+                    self.locked_effect(self.ex.write, self.host, self.marker(identifier, index, name, 'intent'), b'{}\n', 0o600)
                 self.apply(identifier, plan, name, archive)
-            self.ex.write(self.host, self.marker(identifier, index, name, 'done'), b'{}\n', 0o600)
+            self.locked_effect(self.ex.write, self.host, self.marker(identifier, index, name, 'done'), b'{}\n', 0o600)
             journal.event('done', step=name, observed=state)
+        self.lock.verify()
         journal.set_status('committed')
 
     # --------------------------------------------------------------- install
@@ -842,9 +890,9 @@ class Package:
                 if selection != plan['prior']['selection']:
                     journal.event('intent', step='restore-selection')
                     if plan['prior']['selection'] is None:
-                        self.ex.remove(host, layout.current)
+                        self.locked_effect(self.ex.remove, host, layout.current)
                     else:
-                        self.ex.replace_link(host, layout.current, plan['prior']['selection'])
+                        self.locked_effect(self.ex.replace_link, host, layout.current, plan['prior']['selection'])
                     journal.event('done', step='restore-selection')
                 # The inventory first, then the pins it may name.
                 for step, path, copy in reversed(layout.managed()):
@@ -853,23 +901,24 @@ class Package:
                         continue
                     journal.event('intent', step='restore-' + step)
                     if prior is None:
-                        self.ex.remove(host, path)
+                        self.locked_effect(self.ex.remove, host, path)
                     else:
                         previous = (self.ex.read(host, '%s/%s' % (directory, copy)) or '').encode()
                         if sha256(previous) != prior:
                             raise PackageError('the retained previous %s of %s is missing or altered'
                                                % (path, journal.id))
-                        self.ex.write(host, path, previous, 0o600 if step == 'fleet' else 0o644)
+                        self.locked_effect(self.ex.write, host, path, previous, 0o600 if step == 'fleet' else 0o644)
                     journal.event('done', step='restore-' + step)
                 if self.ex.package_tree(host, self.staged_path(journal.id))['root'] is not None:
                     journal.event('intent', step='discard-staging')
-                    self.ex.remove_tree(host, self.staged_path(journal.id), layout.staging)
+                    self.locked_effect(self.ex.remove_tree, host, self.staged_path(journal.id), layout.staging)
                     journal.event('done', step='discard-staging')
                 if self.ex.package_tree(host, directory)['root'] is not None:
                     journal.event('intent', step='final')
-                    self.ex.write(host, directory + '/final.json',
+                    self.locked_effect(self.ex.write, host, directory + '/final.json',
                                   (json.dumps({'status': 'rolled-back', 'transaction': journal.id}) + '\n').encode(),
                                   0o600)
+                self.lock.verify()
             except TRANSPORT as error:
                 journal.set_status('rollback-unknown', error='%s: %s' % (type(error).__name__, error))
                 raise PackageError('transport failed during rollback (%s); re-run %s'

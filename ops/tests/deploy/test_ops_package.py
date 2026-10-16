@@ -24,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from local_host import LocalHost  # noqa: E402
 from wallet_pir_ops import bundle, durable  # noqa: E402
 from wallet_pir_ops.deploy import cli, descriptors, engine, package  # noqa: E402
-from wallet_pir_ops.deploy.remote import LockHeld  # noqa: E402
+from wallet_pir_ops.deploy.remote import LockHeld, RemoteError  # noqa: E402
 from wallet_pir_ops.deploy.transaction import Journal  # noqa: E402
 
 A, B = 'a' * 40, 'b' * 40
@@ -333,6 +333,73 @@ class InstallTests(PackageCase):
             self.package().install(A, self.fleet, durable.digest(plan), RUNS[A])
         self.assertNotIn('rename', self.host.mutations())
         self.assertIsNone(self.selection())
+
+    def test_rollback_stops_after_losing_its_lock_between_effects(self):
+        for boundary in ('selection', 'fleet', 'final'):
+            with self.subTest(boundary=boundary):
+                self.setUp()
+                journal = self.install()
+                final = self.layout.transaction(journal.id) + '/final.json'
+                effect = {'selection': ('remove', self.layout.current),
+                          'fleet': ('remove', self.layout.fleet), 'final': ('write', final)}[boundary]
+                self.host.log.clear()
+                lost_at = []
+
+                def lose(op, arguments):
+                    if (op, arguments.get('path')) == effect:
+                        self.host.lock.lost = True
+                        lost_at.append(len(self.host.log))
+
+                self.host.after = lose
+                with self.assertRaisesRegex(package.PackageError, 'rollback.*unknown|transport failed during rollback'):
+                    self.package().rollback(journal.id)
+                self.assertEqual(Journal.load(self.state, package.SERVICE).status, 'rollback-unknown')
+                self.assertEqual(lost_at, [len(self.host.log)], 'nothing may mutate after lock loss')
+                if boundary == 'selection':
+                    self.assertEqual(self.fleet_bytes(), self.fleet.read_bytes())
+                    self.assertEqual(json.loads(Path(final).read_text())['status'], 'committed')
+                self.host.after = None
+                self.assertEqual(self.package().rollback(journal.id).status, 'rolled-back')
+
+    def test_reconcile_rechecks_effects_whose_completed_markers_exist(self):
+        cases = [('select', drift) for drift in ('package content', 'package mode', 'extra package file',
+                                                'fleet', 'fleet mode', 'selection')]
+        cases += [('verify', 'package content'), ('promote', 'package content')]
+        for completed, drift in cases:
+            with self.subTest(completed=completed, drift=drift):
+                self.setUp()
+                plan, _, archive = self.plan()
+
+                def interrupt(op, arguments):
+                    if op == 'write' and arguments['path'].endswith('-' + completed + '.done.json'):
+                        raise RemoteError('connection lost after the completed selection marker')
+
+                self.host.after = interrupt
+                with self.assertRaisesRegex(package.PackageError, 'unknown until reconciled'):
+                    self.package().install(A, self.fleet, durable.digest(plan), RUNS[A])
+                self.host.after = None
+                journal = Journal.load(self.state, package.SERVICE)
+                self.assertEqual(journal.status, 'unknown')
+                directory = self.release(A) if self.release(A).exists() else Path(self.layout.staging) / journal.id
+                script = directory / 'ops/scripts/wallet-pir-deploy.py'
+                if drift == 'package content':
+                    script.write_bytes(script.read_bytes() + b'\n# changed after verification\n')
+                elif drift == 'package mode':
+                    script.chmod(0o644)
+                elif drift == 'extra package file':
+                    (self.release(A) / 'unexpected').write_text('external file')
+                elif drift == 'fleet':
+                    Path(self.layout.fleet).write_text('{"changed":true}')
+                elif drift == 'fleet mode':
+                    Path(self.layout.fleet).chmod(0o644)
+                else:
+                    Path(self.layout.current).unlink()
+                    Path(self.layout.current).symlink_to('releases/' + B)
+                self.host.log.clear()
+                with self.assertRaises(package.PackageError):
+                    self.package().reconcile(journal.id, archive, self.fleet)
+                self.assertEqual(self.host.log, [], 'completed effects must be checked before any new effect')
+                self.assertEqual(Journal.load(self.state, package.SERVICE).status, 'refused')
 
     def test_unfinished_transaction_blocks_another_runner_and_this_one(self):
         plan, _, archive = self.plan()
