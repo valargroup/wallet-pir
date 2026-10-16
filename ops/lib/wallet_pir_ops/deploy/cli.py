@@ -95,6 +95,13 @@ Transparent schema recipes run on the pinned coordinator under the same lock.
       Every mutation holds the production lock, journals prior bytes and prints the
       rollback command.
 
+  transparent-binary-{plan,preflight,baseline,status} --request F --request-sha256 H
+  transparent-binary-deploy --request F --request-sha256 H [--binary F] [--skip-exact-check]
+  transparent-binary-rollback --request F --request-sha256 H [--transaction ID]
+      Worker binary upgrade of the current v12 history or 4k8 display fleet
+      (transparent/ops/lib/binary_upgrade.py). Publication identity is pinned and
+      re-checked under the lock, after every restart and after rollback.
+
   worker-report SERVICE [--only ROLE[@HOST]]
       Read-only private report from existing endpoints: process, executable,
       assigned and loaded publication, preparation, readiness axes.
@@ -372,14 +379,14 @@ def main(argv=None, executor=None, out=print, package_layout=None, package_githu
             out('error: ' + message)
     try:
         from ..bundle import check_installed
-        product_command = args.command.startswith(('schema-', 'txid-display-', 'ops-package-'))
+        product_command = args.command.startswith(('schema-', 'txid-display-', 'transparent-binary-', 'ops-package-'))
         mutation = (args.command in ('deploy', 'rollback') or getattr(args, 'stage', False)
                     or product_command and not args.command.endswith(('-plan', '-preflight', '-status', '-summary', '-recipe')))
         # A clean installed package may install a newer package revision; every
         # binary change still names the same source revision as the package.
         package_command = args.command.startswith('ops-package-')
         check_installed(mutation=mutation, revision=None if package_command else getattr(args, 'sha', None))
-        if args.command.startswith(('schema-', 'txid-display-')):
+        if args.command.startswith(('schema-', 'txid-display-', 'transparent-binary-')):
             if args.json:
                 raise DeployError('product recipes already provide their own JSON receipts; omit --json')
             return transparent_cli().dispatch(args, executor=executor, out=out, **options)
