@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Full-chain single-session pipelined acquisition; public inputs stay in cache."""
 import argparse
+from contextlib import closing
 import hashlib
 import json
 import queue
@@ -212,6 +213,20 @@ def parser_revision(binary):
     """The node parser compiled into this export binary, distinct from its adapter."""
     return source_info.read(binary)["node_parser"]["git_revision"]
 
+def require_empty_census(database):
+    """An uncheckpointed database cannot establish which binary wrote its rows."""
+    if not database.exists():
+        return
+    try:
+        with closing(sqlite3.connect(database.resolve().as_uri()+"?mode=ro",uri=True)) as db:
+            tables=db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").fetchall()
+            for (name,) in tables:
+                quoted='"'+name.replace('"','""')+'"'
+                if db.execute('SELECT EXISTS(SELECT 1 FROM '+quoted+' LIMIT 1)').fetchone()[0]:
+                    raise ValueError("census database contains rows without a source-bound checkpoint")
+    except sqlite3.DatabaseError as error:
+        raise ValueError("cannot verify census database without a source-bound checkpoint") from error
+
 def scan(cache,binary,status,evidence):
     cache=cache.resolve();binary=binary.resolve();evidence=evidence.resolve()
     identity=source_info.read(binary)
@@ -227,6 +242,8 @@ def scan(cache,binary,status,evidence):
             raise ValueError("checkpoint extractor differs")
         if saved["census_source_sha256"]!=identity["compiled_source_file_sha256"]["census"]:
             raise ValueError("checkpoint census source differs")
+    else:
+        require_empty_census(cache/"census.sqlite")
     started=time.monotonic(); scanned=0
     for bundle,rows in sorted(bundles(cache),key=lambda p:min(r["height"] for r in p[1])):
         if digest(binary)!=identity["binary_sha256"]: raise ValueError("export binary changed during scan")

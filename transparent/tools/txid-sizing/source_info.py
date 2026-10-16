@@ -33,3 +33,9 @@ def read(binary):
         if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value):
             raise ValueError("missing compiled source hash")
     return identity
+
+
+def require_same(binary, expected):
+    """Refuse a replacement between verification and evidence publication."""
+    if read(binary) != expected:
+        raise ValueError("export binary identity changed during evidence preparation")
