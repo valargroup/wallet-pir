@@ -1,5 +1,6 @@
 """Fast selection must not silently omit a new integration executable."""
 import json
+import re
 from pathlib import Path
 import sys
 import tempfile
@@ -16,6 +17,21 @@ class IntegrationTests(unittest.TestCase):
         registry = tests.inventory()
         for package in ['receiver-pir-server', 'transparent-shard-server', 'enhance-pir-server']:
             self.assertIn('ci_smoke', registry[package]['fast'])
+
+    def test_workspace_rust_literal_module_and_fixture_paths_exist(self):
+        checked = set()
+        for package in tests.workspace_packages():
+            directory = Path(package['manifest_path']).parent
+            for source in directory.rglob('*.rs'):
+                if source in checked:
+                    continue
+                checked.add(source)
+                text = source.read_text()
+                paths = re.findall(r'#\[path\s*=\s*"([^"]+)"\]', text)
+                paths += re.findall(r'include_(?:bytes|str)!\(\s*"([^"]+)"', text)
+                for relative in paths:
+                    self.assertTrue((source.parent / relative).is_file(),
+                                    f'{source.relative_to(ROOT)}: missing {relative}')
 
     def test_missing_stale_duplicate_and_malformed_assignments_fail(self):
         for registry in [{}, {'p': {'fast': [], 'full': []}},
