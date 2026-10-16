@@ -222,6 +222,12 @@ pub fn shard_artifact_dir(artifact_root: &Path, table: DatabaseId, shard_id: u64
 }
 
 impl ShardRuntime {
+    /// Loads a persisted shard for serving.
+    ///
+    /// Checks the artifact's identity (table, layout, shard, rows digest and
+    /// parameters) and sizes, and verifies the database and CRS files against
+    /// the SHA-256 digests recorded at persist time. It does not decide whether
+    /// the shard belongs to a current publication; the publication owner does.
     #[allow(clippy::too_many_arguments)]
     pub fn load_cached(
         artifact_root: &Path,
