@@ -12,7 +12,8 @@ use std::{
 // Only the fixed minimum geometry is retained. Larger geometry campaigns build
 // independently; four entries bound retained database and preprocessing memory.
 const ENTRIES: usize = 4;
-static CACHE: OnceLock<Mutex<VecDeque<([u8; 32], Server)>>> = OnceLock::new();
+type PreparedServers = VecDeque<([u8; 32], Server)>;
+static CACHE: OnceLock<Mutex<PreparedServers>> = OnceLock::new();
 
 pub fn prepare(snapshot: Snapshot, witnesses: Option<Vec<u8>>) -> Result<Publication, Error> {
     if snapshot.manifest.rows != MIN_ROWS || snapshot.data.len() != MIN_ROWS as usize * ROW_BYTES {
