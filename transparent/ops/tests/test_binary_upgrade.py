@@ -308,6 +308,47 @@ class HistoryUpgrade(Harness):
         self.assertEqual(code, 0, lines)
         self.assertEqual(self.fake.probe_unit('coordinator', CONTROLLER)['exe_sha256'], sha256(CTRL_OLD))
 
+    def test_observer_restart_failure_rolls_back_verified_workers(self):
+        self.run_cli('baseline')
+        systemctl = self.fake.systemctl
+        def fail_observer_restart(host, *args):
+            if args == ('restart', LOAD_UNIT):
+                raise RuntimeError('observer restart failed')
+            return systemctl(host, *args)
+        self.fake.systemctl = fail_observer_restart
+        code, lines = self.run_cli('deploy', '--binary', str(self.binary), '--skip-exact-check')
+        self.assertEqual(code, 1, lines)
+        self.assertEqual(set(self.running().values()), {sha256(OLD)})
+        self.assertEqual(self.pins(), {i: sha256(OLD) for i in IDS.values()})
+        self.assertFalse(self.load_active())
+
+    def test_explicit_rollback_recovers_an_unhealthy_controller(self):
+        self.run_cli('baseline')
+        self.write_request(component='controller')
+        self.assertEqual(self.run_cli('deploy', '--binary', str(self.controller_binary), '--skip-exact-check')[0], 0)
+        self.controller_shift = {'phase': 'halted'}
+        code, lines = self.run_cli('rollback')
+        self.assertEqual(code, 0, lines)
+        self.assertEqual(self.fake.probe_unit('coordinator', CONTROLLER)['exe_sha256'], sha256(CTRL_OLD))
+
+    def test_explicit_rollback_preserves_a_latch_while_restoring_workers(self):
+        self.run_cli('baseline')
+        self.assertEqual(self.run_cli('deploy', '--binary', str(self.binary), '--skip-exact-check')[0], 0)
+        self.fake.put('coordinator', LOAD_ROOT + '/latched.json', '{"reason":"wrong answer"}')
+        self.run_cli('rollback')
+        self.assertEqual(set(self.running().values()), {sha256(OLD)})
+        self.assertEqual(self.fake.read('coordinator', LOAD_ROOT + '/latched.json'), '{"reason":"wrong answer"}')
+        self.assertFalse(self.load_active())
+
+    def test_incomplete_ready_body_refuses_before_mutation(self):
+        self.run_cli('baseline')
+        archive = 'transparent-v12-archive.service'
+        for change in [{'ready': False}, {'warm_runtimes': None, 'target_runtimes': None}, {'prewarm_failed': None}]:
+            with self.subTest(change=change):
+                self.fake.health_shapes[('v12', archive)] = lambda r, exe, change=change: {**ready(archive, MAP), **change}
+                self.assertEqual(self.run_cli('preflight', '--binary', str(self.binary))[0], 1)
+        self.assertEqual(set(self.running().values()), {sha256(OLD)})
+
     def test_controller_that_restarts_unhealthy_rolls_back(self):
         self.run_cli('baseline')
         self.controller_shift = {'phase': 'halted'}
@@ -405,6 +446,14 @@ class DisplayUpgrade(Harness):
                                        'args': ['--listen', '10.142.0.20:8094']}},
             'load': None,
         }
+
+    def test_a_pinned_layout_with_another_geometry_refuses(self):
+        self.run_cli('baseline')
+        self.fake.put('coordinator', DISPLAY_ROOT + '/display-root.json', '{"geometry":"txid-2k8"}')
+        self.write_request()
+        code, lines = self.run_cli('preflight', '--binary', str(self.binary))
+        self.assertEqual(code, 1, lines)
+        self.assertTrue(any('txid-4k8' in line for line in lines), lines)
 
     def test_real_run_mode_controller_without_geometry_passes(self):
         """Before: the check demanded `--geometry txid-4k8`, which run mode does not take, so this refused."""

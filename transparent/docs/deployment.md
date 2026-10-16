@@ -3857,8 +3857,8 @@ component. `baseline` records both components.
   `latched.json` refuses, and the pins must name exactly the request's worker IDs and the binaries
   they run. A worker transaction stops the load before the first restart; after commit it writes
   pins naming the new binary atomically (journaled with both digests) and starts the load again if
-  it was running. A failed transaction rolls the workers back and leaves the load stopped with the
-  original pins; an explicit rollback re-pins to the restored binaries and leaves the load stopped
+  it was running. A failed transaction, including an observer restart failure, rolls the workers back and leaves the
+  load stopped with pins naming the restored binaries; an explicit rollback re-pins to the restored binaries and leaves the load stopped
   until the exact-answer gate passes. The latch and incident records are never removed. Monitoring
   is not ready while the pins name a binary the workers no longer run. Display has no load
   (`load: null`); a controller transaction does not touch the load.
@@ -3868,10 +3868,13 @@ component. `baseline` records both components.
   `transparent-txid-display-k8-controller.service`. External workers or other units refuse.
 - The checks run in preflight, under the lock before any change, after every restart (a changed
   identity or an unhealthy controller fails the transaction and rolls back every touched target) and
-  after rollback. Publications, assignments, journals and routing are never written; unit drift
+  after rollback. Explicit rollback keeps the configuration and unit-contract checks while allowing
+  an unhealthy process to be restored; existing incident latches are preserved and keep the load stopped.
+  Publications, assignments, journals and routing are never written; unit drift
   beyond the binary refuses. Shipping stays disabled for history.
 - Tests: `transparent/ops/tests/test_binary_upgrade.py`, run by `make check-ops-deploy` through
   `ops/tests/deploy/test_transparent_binary_upgrade.py`.
 
-The exact-answer gate is not run by this command (`--skip-exact-check`); run it before resuming
-dependent work.
+Configure the inventory's `exact_check` with the product's encrypted independent-answer probe.
+Deployment runs it after restart and rolls back on failure. After the continuous load resumes,
+verify its health and run the existing public query gate before declaring the rollout complete.
