@@ -32,11 +32,11 @@ use transparent_filter_server::events::EventStore;
 use transparent_shard::manifest::ShardManifest;
 use transparent_shard_server::service::{router, ServiceConfig, ServiceState};
 use transparent_shard_server::shardset::{ShardSet, DEFAULT_RETAIN_REVISIONS};
-use transparent_wallet::client::Table;
-use transparent_wallet::ledger::Ledger;
-use transparent_wallet::sync::{sync, GeometryParams, ServiceGeometry};
-use transparent_wallet::transport::{refusal, BoxError, FilterSource, ShardTransport};
 use workload::{ScriptCensus, Workload};
+use zakura_pir_transparent::engine::client::Table;
+use zakura_pir_transparent::engine::ledger::Ledger;
+use zakura_pir_transparent::engine::sync::{sync, GeometryParams, ServiceGeometry};
+use zakura_pir_transparent::engine::transport::{refusal, BoxError, FilterSource, ShardTransport};
 
 /// Incremental transparent bytes a shielded-scanning wallet downloads, measured
 /// over 1,152 blocks in the mainnet study.
@@ -297,8 +297,8 @@ struct TableShare {
     query_download: u64,
 }
 
-impl From<transparent_wallet::TableCharges> for TableShare {
-    fn from(charges: transparent_wallet::TableCharges) -> Self {
+impl From<zakura_pir_transparent::engine::TableCharges> for TableShare {
+    fn from(charges: zakura_pir_transparent::engine::TableCharges) -> Self {
         Self {
             segments_opened: charges.segments_opened,
             queries: charges.queries,
@@ -455,8 +455,8 @@ async fn main() -> Result<(), BoxError> {
                 &mut transport,
                 &scripts,
                 birthday,
-                &transparent_wallet::StaticChain::from_map(&map),
-                &transparent_wallet::Anchor {
+                &zakura_pir_transparent::engine::StaticChain::from_map(&map),
+                &zakura_pir_transparent::engine::Anchor {
                     height: map.shards.last().unwrap().end_height,
                     hash: map.shards.last().unwrap().terminal_block_hash.clone(),
                 },

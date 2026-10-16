@@ -224,12 +224,14 @@ The [accepted-anchor HTTP tests](../../transparent/services/transparent-shard-se
 cover arbitrary endpoints, overlap, restart, bounded pagination, changed targets,
 future-only discovery, and rollback within a shard. The existing wallet HTTP
 suites retain geometry, segment, revision, malformed-response and overload
-coverage. The [store tests](../../transparent/crates/transparent-wallet-store/tests/store_semantics.rs)
+coverage. The [store tests](https://github.com/zakura-core/wallet-libraries/blob/6e80973d4be4204a6f9f1db771f021fe8511086b/zakura/pir-transparent/tests/engine_store_semantics.rs)
 exercise memory/SQLite parity and legacy progress migration. The regression
 crate tests the oracle independently.
 
 ```sh
-cargo test -p transparent-wallet -p transparent-wallet-store --all-features
+cargo test -p zakura-pir-transparent --features engine-store,engine-conformance,reqwest \
+  --lib --test engine_birthday_to_balance --test engine_store_semantics \
+  --test engine_store_schema_upgrade
 cargo test -p transparent-shard-server --test wallet_anchor \
   --test wallet_continuation --test wallet_sync
 cargo test -p transparent-regression

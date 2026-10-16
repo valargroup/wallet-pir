@@ -1,6 +1,6 @@
 use transparent_blocks::{dataset::*, proto::*, scan::Scanner};
-use transparent_wallet::store::{Anchor, ScriptEntry, ScriptOrigin};
-use transparent_wallet::{MemoryStore, WalletStore};
+use zakura_pir_transparent::engine::store::{Anchor, ScriptEntry, ScriptOrigin};
+use zakura_pir_transparent::engine::{MemoryStore, WalletStore};
 fn blocks() -> Vec<CompactBlock> {
     let script = vec![0x76, 0xa9, 0x14, 1];
     vec![

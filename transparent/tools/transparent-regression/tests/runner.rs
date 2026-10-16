@@ -5,7 +5,7 @@ use common::*;
 use sha2::{Digest, Sha256};
 use transparent_regression::{reference, Case, Checkpoint, EventRecord, Fixture, SCHEMA};
 use transparent_shard::layout::DECOUPLED_2K_8K;
-use transparent_wallet::Anchor;
+use zakura_pir_transparent::engine::Anchor;
 #[tokio::test(flavor = "multi_thread")]
 async fn executable_checks_frozen_checkpoints_and_reports_publication_drift() {
     let all = chain();

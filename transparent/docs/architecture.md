@@ -94,8 +94,8 @@ and local evidence only.
 | Native PIR profile | `wallet-libraries/zakura/transparent-native` over `wallet-libraries/zakura/pir-native` | Transparent's seeds and scheme identity over the two-mask ReinspiRING helpers all three products share |
 | Ingest, census, publish | `transparent/services/transparent-filter-server` | Resolve events, persist journal, seal and build shards, serve filters |
 | Retrieval service | `transparent/services/transparent-shard-server` | Verify publication, bound runtime cache, revision-addressed setup/query |
-| Wallet | `transparent/crates/transparent-wallet` | Local matching, private retrieval, validation, ledger replay |
-| Wallet store | `transparent/crates/transparent-wallet-store` | Reference durable store on SQLite |
+| Wallet | `wallet-libraries/zakura/pir-transparent/src/engine` | Local matching, private retrieval, validation, ledger replay |
+| Wallet store | `wallet-libraries/zakura/pir-transparent/src/engine_store.rs` | Reference durable store on SQLite |
 | Comparison baseline | `transparent/crates/transparent-blocks`, `transparent/services/transparent-block-server` | Pinned compact-block datasets for benchmark comparison; not a lightwalletd implementation |
 | Deployment | `ops/` and `.github/workflows/` | Build, distribute, preflight and activate artifacts |
 
@@ -431,7 +431,7 @@ because which pages a script needs is known only after its directory entry decod
 Concurrency 1 is the sequential walk. Requests sent ahead for shards the walk does not
 reach, because it stopped or refreshed the map first, are sent but unused. No query is
 skipped because an unrelated response happened to mention a watched script. Source:
-`transparent/crates/transparent-wallet/src/sync/ahead.rs`.
+`wallet-libraries/zakura/pir-transparent/src/engine/sync/ahead.rs`.
 
 ## Serving and publication
 
@@ -569,7 +569,7 @@ bits, and a map may declare at most 65,536 superseded entries across all its re-
 (`MAX_SUPERSEDED`), far above any real publication, so a hostile map cannot make wallets
 store or scan an unbounded list. The checks themselves cannot overflow on hostile values.
 
-A wallet (`transparent-wallet` `sync/manifest.rs`) keeps its history across a declared re-cut:
+A wallet (`zakura-pir-transparent::engine`, `engine/sync/manifest.rs`) keeps its history across a declared re-cut:
 
 - Stored sealed coverage is looked up by the height it starts at, not by shard id. It stays
   good while the map publishes that revision there, or declares exactly that revision

@@ -12,8 +12,7 @@ serde_json = "1"
 sha2 = "0.10"
 transparent-events = { package = "zakura-transparent-events", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "6e80973d4be4204a6f9f1db771f021fe8511086b" }
 transparent-filter = { package = "zakura-transparent-filter", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "6e80973d4be4204a6f9f1db771f021fe8511086b" }
-transparent-wallet = { path = "../../crates/transparent-wallet", features = ["reqwest"] }
-transparent-wallet-store = { path = "../../crates/transparent-wallet-store" }
+zakura-pir-transparent = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "6e80973d4be4204a6f9f1db771f021fe8511086b", default-features = false, features = ["engine-store", "reqwest"] }
 
 [dev-dependencies]
 axum = "0.7"

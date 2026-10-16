@@ -48,15 +48,15 @@ def main():
         ['cargo', 'build', '--locked', '--profile', args.profile,
          '-p', 'transparent-shard-server', '--example', 'rate-query', '--example', 'native_certificate'],
         ['cargo', 'test', '--locked', '--profile', args.profile,
-         '-p', 'transparent-events', '--lib'],
+         '-p', 'zakura-transparent-events', '--lib'],
         ['cargo', 'test', '--locked', '--profile', args.profile,
-         '-p', 'transparent-shard', '--lib', 'compact'],
+         '-p', 'zakura-transparent-shard', '--lib', 'compact'],
         ['cargo', 'test', '--locked', '--profile', args.profile,
-         '-p', 'transparent-wallet-store', '--lib'],
+         '-p', 'zakura-pir-transparent', '--features', 'engine-store', '--lib', 'engine_store::'],
         ['cargo', 'test', '--locked', '--profile', args.profile,
-         '-p', 'transparent-wallet-store', '--test', 'store_semantics', 'metadata'],
+         '-p', 'zakura-pir-transparent', '--features', 'engine-store,engine-conformance', '--test', 'engine_store_semantics', 'metadata'],
         ['cargo', 'build', '--locked', '--profile', args.profile,
-         '-p', 'transparent-wallet-store', '--example', 'activity-reopen'],
+         '-p', 'zakura-pir-transparent', '--features', 'engine-store', '--example', 'engine-store-reopen'],
         ['cargo', 'test', '--locked', '--profile', args.profile,
          '-p', 'transparent-filter-server', '--lib', 'extract::'],
         ['cargo', 'test', '--locked', '--profile', args.profile,
@@ -68,7 +68,7 @@ def main():
     ]
     commands.extend([
         ['cargo', 'test', '--locked', '--profile', args.profile, '-p', 'transparent-filter-server', '--bin', 'journal-convert-v1'],
-        ['cargo', 'test', '--locked', '--profile', args.profile, '-p', 'transparent-wallet', '--features', 'reqwest', '--lib', 'http::'],
+        ['cargo', 'test', '--locked', '--profile', args.profile, '-p', 'zakura-pir-transparent', '--features', 'reqwest', '--lib', 'engine::http::'],
         ['cargo', 'test', '--locked', '--profile', args.profile, '-p', 'pir-apm', '--lib'],
     ])
     if args.profile == 'release':
@@ -76,7 +76,7 @@ def main():
         # or start sustained qualification inside this production artifact build.
         commands = commands[:2] + [
             ['cargo', 'build', '--locked', '--profile', args.profile,
-             '-p', 'transparent-wallet-store', '--example', 'activity-reopen'],
+             '-p', 'zakura-pir-transparent', '--features', 'engine-store', '--example', 'engine-store-reopen'],
         ]
     stages = []
     failure = None
@@ -97,7 +97,9 @@ def main():
                      'transparent-shard-server',
                      'transparent-filter-server', 'transparent-loadtest', 'transparent-measure',
                      'examples/rate-query', 'examples/native_certificate', 'examples/activity-reopen']:
-            path = args.target / args.profile / name
+            # Keep the retained artifact name used by recovery evidence consumers.
+            built_name = 'examples/engine-store-reopen' if name == 'examples/activity-reopen' else name
+            path = args.target / args.profile / built_name
             retained = args.evidence / 'artifacts' / name
             retained.parent.mkdir(parents=True, exist_ok=True)
             if retained.exists():

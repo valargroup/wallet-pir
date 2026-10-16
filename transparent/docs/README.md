@@ -33,7 +33,7 @@ The contract governs intended behavior; code establishes implementation; deploym
 
 ## Product boundaries
 
-Active transparent recovery uses `wallet-libraries/zakura/transparent-events`, `wallet-libraries/zakura/transparent-filter`, `wallet-libraries/zakura/transparent-shard`, `wallet-libraries/zakura/transparent-txid-client`, `transparent/crates/transparent-wallet`, `transparent/crates/transparent-wallet-store`, `transparent/services/transparent-filter-server`, and `transparent/services/transparent-shard-server`.
+Active transparent recovery uses `wallet-libraries/zakura/transparent-events`, `wallet-libraries/zakura/transparent-filter`, `wallet-libraries/zakura/transparent-shard`, `wallet-libraries/zakura/transparent-txid-client`, `wallet-libraries/zakura/pir-transparent` (`engine` and `engine_store`), `transparent/services/transparent-filter-server`, and `transparent/services/transparent-shard-server`.
 
 Validation tools live under `transparent/tools/`: load tests, regression fixtures, and the
 current-shard `transparent-measure` command used by the backfill workflow.

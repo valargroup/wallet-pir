@@ -9,8 +9,6 @@ members = [
     # Protocol libraries, clients and stores.
     "enhance/crates/enhance-pir",
     "transparent/crates/transparent-blocks",
-    "transparent/crates/transparent-wallet",
-    "transparent/crates/transparent-wallet-store",
     # Services and operational dashboard.
     "enhance/services/enhance-pir-server",
     "enhance/services/pir-apm",

@@ -9,7 +9,7 @@ use std::{
     sync::{mpsc, Arc, Mutex},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
-use transparent_wallet::{
+use zakura_pir_transparent::engine::{
     client::{Table, TableClient},
     http::{HttpOptions, HttpShardTransport},
     transport::{BoxError, ShardTransport},
@@ -348,9 +348,9 @@ mod tests {
     fn application_errors_are_never_retried() {
         let wrong: BoxError = "decoded row differs from independent plaintext oracle".into();
         assert!(!retryable_transport(&wrong));
-        let protocol: BoxError = Box::new(transparent_wallet::client::ClientError::Response(
-            "bad epoch".into(),
-        ));
+        let protocol: BoxError = Box::new(
+            zakura_pir_transparent::engine::client::ClientError::Response("bad epoch".into()),
+        );
         assert!(!retryable_transport(&protocol));
     }
     #[test]

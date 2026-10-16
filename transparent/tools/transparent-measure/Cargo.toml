@@ -19,4 +19,4 @@ transparent-filter = { package = "zakura-transparent-filter", git = "https://git
 transparent-filter-server = { path = "../../services/transparent-filter-server" }
 transparent-shard = { package = "zakura-transparent-shard", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "6e80973d4be4204a6f9f1db771f021fe8511086b" }
 transparent-shard-server = { path = "../../services/transparent-shard-server" }
-transparent-wallet = { path = "../../crates/transparent-wallet" }
+zakura-pir-transparent = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "6e80973d4be4204a6f9f1db771f021fe8511086b", default-features = false, features = ["engine"] }

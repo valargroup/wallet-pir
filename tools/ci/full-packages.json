@@ -16,8 +16,6 @@
     "receiver-store"
   ],
   "transparent": [
-    "transparent-wallet",
-    "transparent-wallet-store",
     "transparent-blocks",
     "transparent-block-server",
     "transparent-filter-server",

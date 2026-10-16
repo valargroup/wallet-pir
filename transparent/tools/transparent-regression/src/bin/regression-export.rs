@@ -10,7 +10,7 @@ use std::{
 use transparent_filter::ShardMap;
 use transparent_regression::journal::EventStore;
 use transparent_regression::{reference, validate, Case, Checkpoint, EventRecord, Fixture, SCHEMA};
-use transparent_wallet::Anchor;
+use zakura_pir_transparent::engine::Anchor;
 
 type Error = Box<dyn std::error::Error + Send + Sync>;
 #[derive(Parser)]
