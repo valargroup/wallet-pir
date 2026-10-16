@@ -98,9 +98,11 @@ Transparent schema recipes run on the pinned coordinator under the same lock.
   transparent-binary-{plan,preflight,baseline,status} --request F --request-sha256 H
   transparent-binary-deploy --request F --request-sha256 H [--binary F] [--skip-exact-check]
   transparent-binary-rollback --request F --request-sha256 H [--transaction ID]
-      Worker binary upgrade of the current v12 history or 4k8 display fleet
-      (transparent/ops/lib/binary_upgrade.py). Publication identity is pinned and
-      re-checked under the lock, after every restart and after rollback.
+      Worker or controller binary upgrade (the request's component) of the current
+      v12 history or 4k8 display fleet (transparent/ops/lib/binary_upgrade.py).
+      Publication identity is pinned, current map and assignment come from the
+      controller, all re-checked under the lock, after every restart and after
+      rollback; history's continuous load is paused and re-pinned.
 
   worker-report SERVICE [--only ROLE[@HOST]]
       Read-only private report from existing endpoints: process, executable,

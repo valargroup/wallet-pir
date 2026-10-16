@@ -3818,37 +3818,60 @@ This plan does not build a frozen-prefix lineage, per-height geometry, a second
 display archive owner, client changes beyond the split map, or any wallet
 change.
 
-## Worker binary upgrade of the current v12 history and 4k8 display fleets
+## Binary upgrades of the current v12 history and 4k8 display fleets
 
 `ops/scripts/wallet-pir-deploy.py transparent-binary-{plan,preflight,baseline,deploy,status,rollback}
---request F --request-sha256 H` (`transparent/ops/lib/binary_upgrade.py`) changes only worker
-executables through the shared engine: immutable `releases/<binary sha256>` staging, the managed
-ExecStart drop-in, the production lock, journals and touched-target rollback.
+--request F --request-sha256 H` (`transparent/ops/lib/binary_upgrade.py`) changes one component's
+executable per transaction through the shared engine: immutable `releases/<binary sha256>` staging,
+the managed ExecStart drop-in, the production lock, the service's journal sequence and touched-target
+rollback. The request's `component` is `workers` (staged under the service root, for example
+`/opt/transparent-publisher`) or `controller` (staged under `<service root>/controller` with the
+controller's current executable name; a controller running the worker executable refuses). Worker
+and controller transactions are separate artifacts; a rollback refuses a transaction of the other
+component. `baseline` records both components.
 
 - **Release identity** is the request's `release.git_sha` and `release.binary_sha256`; a mutating
   command also requires the installed operations package to name that Git revision.
 - **Publication identity** is pinned separately: v12 `publication.source_sha` (the controller's
   `source_sha`, for example `fb90519b`), or the 4k8 display `root` (run mode takes no `--geometry`;
   `<root>/display-root.json`, pinned under `controller.files`, fixes txid-4k8); the controller's
-  normalized effective unit (ExecStart binary abstracted) and the digests of its configuration, `fleet.json` and fleet
-  script; each worker's ownership fields (history: `worker_id`, `role`, `replica_group`, `assigned_shards`,
-  `assignment_sha256`, `worker_assignment_sha256`; display: `role` `combined`), cache/limit unit
-  properties and argument pairs. A worker's `map_sha256` must equal the controller's current map
-  (`/v1/status` `map_sha256` with phase `serving`, or display `published.map_sha256` with phase
-  `running`, no halt, not stalled), read before and after the worker; history also requires
-  `warm_runtimes == target_runtimes` and no `prewarm_failed`, display `ready` and `warm`.
+  normalized effective unit (every setting and argument, ExecStart binary abstracted, so it holds
+  across a controller upgrade) and the digests of its configuration, `fleet.json` and fleet script;
+  each worker's `worker_id` and `role` (display: `role` `combined`), cache/limit unit properties and
+  argument pairs.
+- **Current authority.** The controller's map advances during a rollout, so nothing map-dependent is
+  pinned. A worker's `map_sha256` must equal the controller's current map (history `/v1/status`
+  `map_sha256` with phase `serving`; display `published.map_sha256` with phase `running`, `halted`
+  null and `stalled` false), read before and after the worker. For history, the worker's
+  `assignment_sha256`, `worker_assignment_sha256`, `replica_group`, `role` and `assigned_shards`
+  must match the controller's `<fleet.json state_dir>/<map_sha256>.assignment.json` (native
+  `Assignment::digest` and `worker_digest`, recomputed in declaration order); `warm_runtimes` must
+  equal `target_runtimes` with no `prewarm_failed`. Display workers must be `ready`, `warm` and
+  report `covered_through`.
 - History refuses unless the controller holds `follow_journal: false`, the full-v3 journal, the
   full-v12 publication root and no `ship_runtimes`. Display refuses unless its controller runs
   `--root <root>` without `--geometry`.
+- **Continuous load.** History requests pin `load.host` and the `pins.json` digest of
+  `/srv/transparent-activity/canonical-load/v12`, whose `transparent-v2-5qps-continuous.service`
+  latches on any worker hash other than its pins (it reads them once at start). Under the lock, a
+  `latched.json` refuses, and the pins must name exactly the request's worker IDs and the binaries
+  they run. A worker transaction stops the load before the first restart; after commit it writes
+  pins naming the new binary atomically (journaled with both digests) and starts the load again if
+  it was running. A failed transaction rolls the workers back and leaves the load stopped with the
+  original pins; an explicit rollback re-pins to the restored binaries and leaves the load stopped
+  until the exact-answer gate passes. The latch and incident records are never removed. Monitoring
+  is not ready while the pins name a binary the workers no longer run. Display has no load
+  (`load: null`); a controller transaction does not touch the load.
 - Supported topology only: history workers exactly `transparent-v12-archive.service` and
   `transparent-v12-recent.service` with the `transparent-v12-publish-controller.service` controller;
   display worker exactly `transparent-txid-display-worker.service` with
   `transparent-txid-display-k8-controller.service`. External workers or other units refuse.
-- The checks run in preflight, under the lock before any change, after every worker restart (a
-  changed identity fails the transaction and rolls back every touched worker) and after rollback.
-  Controllers, publications, assignments, journals and routing are never written; unit drift beyond
-  the binary refuses.
+- The checks run in preflight, under the lock before any change, after every restart (a changed
+  identity or an unhealthy controller fails the transaction and rolls back every touched target) and
+  after rollback. Publications, assignments, journals and routing are never written; unit drift
+  beyond the binary refuses. Shipping stays disabled for history.
+- Tests: `transparent/ops/tests/test_binary_upgrade.py`, run by `make check-ops-deploy` through
+  `ops/tests/deploy/test_transparent_binary_upgrade.py`.
 
-Not covered yet: controller executable upgrades, pausing and re-pinning the continuous load
-(`pins.json`) — stop the load observers by hand before a worker deploy and do not treat monitoring
-as ready while the old pin is live — and a display fixture test.
+The exact-answer gate is not run by this command (`--skip-exact-check`); run it before resuming
+dependent work.
