@@ -365,6 +365,15 @@ class UpgradeDeployer(Deployer):
         self.operation = operation
         self.load_was_active = None
 
+    def check(self, record, expected):
+        # Worker /health is diagnostic; /ready owns the readiness fields.
+        # Use the endpoint already captured in the transaction for both
+        # activation and rollback, without changing its recorded unit or URLs.
+        verify = record['verify']
+        if record['role'] == 'worker' and verify.get('ready_url'):
+            record = {**record, 'verify': {**verify, 'health': verify['ready_url'], 'ready_url': None}}
+        return super().check(record, expected)
+
     def schema_fence(self):
         super().schema_fence()
         if self.operation == 'rollback':
