@@ -28,7 +28,7 @@ except NameError:
     from wallet_pir_ops import ancillary_baseline as _ANCILLARY
 
 CHUNK = 1 << 20
-SHOW = 'LoadState,ActiveState,SubState,MainPID,NeedDaemonReload,FragmentPath,DropInPaths'
+SHOW = 'LoadState,ActiveState,SubState,MainPID,InvocationID,NeedDaemonReload,FragmentPath,DropInPaths'
 
 
 def sha256(path):
@@ -123,6 +123,7 @@ def probe_unit(unit):
         'active_state': properties.get('ActiveState', ''),
         'sub_state': properties.get('SubState', ''),
         'main_pid': pid,
+        'invocation_id': properties.get('InvocationID') or None,
         'need_daemon_reload': properties.get('NeedDaemonReload') == 'yes',
         'fragment_path': fragment,
         'fragment_text': read(fragment) if fragment else None,

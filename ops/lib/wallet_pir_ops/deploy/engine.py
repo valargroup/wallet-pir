@@ -595,6 +595,24 @@ class Deployer:
                 conflicts.append('%s: %s changed since the transaction' % (record['key'], change['path']))
         return conflicts
 
+    def restored_process_running(self, journal, record, expected):
+        """Only an acknowledged restoration restart can be reused after readiness times out."""
+        receipt = next((event for event in reversed(journal.data['events'])
+                        if event['message'] in ('restore process started', 'restore process reset')
+                        and event.get('target') == record['key']), None)
+        if receipt is None or receipt['message'] != 'restore process started':
+            return False
+        state = self.ex.probe_unit(record['host'], record['unit'])
+        if (state['active_state'] != 'active' or state['exe_sha256'] != expected
+                or state.get('need_daemon_reload') or not state.get('invocation_id')
+                or state['invocation_id'] != receipt.get('invocation_id')
+                or receipt.get('exe_sha256') != expected):
+            return False
+        # Observe before rewriting: restored bytes alone cannot prove which
+        # configuration the currently running process started with.
+        return all(self.ex.sha256(record['host'], change['path']) == change['previous_sha256']
+                   for change in record['changes'])
+
     def restore(self, journal, index):
         record = journal.hosts[index]
         host, unit = record['host'], record['unit']
@@ -602,18 +620,32 @@ class Deployer:
         journal.set_phase(index, 'restoring')
         if record['action'] == 'install':
             return self.uninstall(journal, index)
-        for change in reversed(record['changes']):
-            if change['previous'] is None:
-                self.ex.remove(host, change['path'])
-            else:
-                self.ex.mkdir(host, os.path.dirname(change['path']), 0o755)
-                self.ex.write(host, change['path'], change['previous'].encode(), 0o644)
-        self.ex.systemctl(host, 'daemon-reload')
         expected = record['previous']['exe_sha256']
-        state = self.ex.probe_unit(host, unit)
-        if record.get('restart_issued') or state['active_state'] != 'active' or state['exe_sha256'] != expected:
-            self.ex.systemctl(host, 'restart', unit)
+        if not self.restored_process_running(journal, record, expected):
+            # A lost restart reply must remain uncertain. Invalidate any older
+            # receipt before effects, and persist completion before readiness.
+            journal.event('restore process reset', target=record['key'])
+            for change in reversed(record['changes']):
+                self.lock.verify()
+                if change['previous'] is None:
+                    self.ex.remove(host, change['path'])
+                else:
+                    self.ex.mkdir(host, os.path.dirname(change['path']), 0o755)
+                    self.lock.verify()
+                    self.ex.write(host, change['path'], change['previous'].encode(), 0o644)
+            self.lock.verify()
+            self.ex.systemctl(host, 'daemon-reload')
+            state = self.ex.probe_unit(host, unit)
+            if record.get('restart_issued') or state['active_state'] != 'active' or state['exe_sha256'] != expected:
+                self.lock.verify()
+                self.ex.systemctl(host, 'restart', unit)
+                state = self.ex.probe_unit(host, unit)
+                if (state['active_state'] == 'active' and state['exe_sha256'] == expected
+                        and state.get('invocation_id')):
+                    journal.event('restore process started', target=record['key'],
+                                  exe_sha256=expected, invocation_id=state['invocation_id'])
         self.wait_verified(record, expected)
+        self.lock.verify()
         journal.set_phase(index, 'restored')
         self.out('%s: restored %s' % (record['key'], expected))
 

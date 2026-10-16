@@ -42,6 +42,7 @@ class FakeLock:
 class FakeFleet(Executor):
     def __init__(self):
         self.hosts = {}
+        self.invocations = 0
         self.log = []
         self.runs = []
         self.observer = None
@@ -121,7 +122,9 @@ class FakeFleet(Executor):
         if (host, unit) in self.failing_restart or binary not in h.files or any(p not in h.files for p in required):
             state.update(active='failed', pid=0, exe=None, exec_start=None)
         else:
-            state.update(active='active', pid=state['pid'] + 1000, exe=sha256(h.files[binary]), exec_start=command)
+            self.invocations += 1
+            state.update(active='active', pid=state['pid'] + 1000, exe=sha256(h.files[binary]),
+                         exec_start=command, invocation_id='%032x' % self.invocations)
 
     # ----------------------------------------------------------- executor
 
@@ -145,7 +148,7 @@ class FakeFleet(Executor):
                 'main_pid': state['pid'], 'need_daemon_reload': self._disk(host, unit) != state['loaded'],
                 'fragment_path': paths[0], 'fragment_text': self.read(host, paths[0]),
                 'drop_ins': [{'path': path, 'text': self.read(host, path)} for path in paths[1:]],
-                'exe_sha256': state['exe']}
+                'exe_sha256': state['exe'], 'invocation_id': state.get('invocation_id')}
 
     def sha256(self, host, path):
         data = self.host(host).files.get(path)

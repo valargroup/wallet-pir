@@ -202,6 +202,13 @@ refusals before uploading anything. Deployment holds the existing production loc
 records effects in the existing journal and retains the existing rollback rules.
 After deployment, report status and the rollback command from that product's runbook.
 
+If restoration restarted a process but readiness timed out, rerun rollback. The
+journal retains the acknowledged systemd invocation. Recovery can keep that same
+process preparing when the restored files and loaded unit still match; it repeats
+the full readiness and product authority checks before marking restoration done.
+A lost restart reply, changed files or a different invocation requires another
+restart. The receipt alone never establishes readiness.
+
 Transparent history and display appear in the same role view and process status,
 but their mutation drivers remain product recipes: `schema-*` and
 `txid-display-*`. Ordinary binary deploys refuse those services because changing

@@ -5,7 +5,9 @@ One JSON file per transaction under the state directory (default
 it describes, plus a `latest-<service>.json` pointer. A host record's `phase`
 moves `pending -> backing-up -> installing -> restarting -> verifying ->
 verified`; from `installing` on the host is *touched* and a rollback restores
-it. Rollback moves a touched host through `restoring -> restored`.
+it. Rollback moves a touched host through `restoring -> restored`. An acknowledged
+restoration restart records its systemd invocation identity; a readiness retry
+can observe that same process without restarting its cold preparation.
 
 The journal holds everything a rollback needs (previous unit text, previous
 executable digest, readiness checks), so it works from this file alone even if
