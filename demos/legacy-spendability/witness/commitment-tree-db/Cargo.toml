@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 witness-types = { path = "../witness-types" }
-zakura-receiver-crypto = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "0c110882ad6d36c9d3ad811903abdf37b13d35d5" }
+zakura-receiver-crypto = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "a2a013dbb4bb35f61468825cc0ef703fb537a0ef" }
 xxhash-rust = { version = "0.8", features = ["xxh64"] }
 thiserror = "2"
 tracing = "0.1"
