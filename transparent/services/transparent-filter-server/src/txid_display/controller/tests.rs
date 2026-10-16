@@ -1400,7 +1400,6 @@ mod live {
     //! Live follow against a mock node, as `controller.rs`'s RPC fixture.
     use super::*;
     use crate::txid_display::source::{LiveSource, ReplaySource};
-    use crate::zakura::NodeClient;
     use axum::{extract::State, routing::post, Json, Router};
 
     type Chain = Arc<RwLock<Vec<Vec<u8>>>>;
