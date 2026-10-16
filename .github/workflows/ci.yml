@@ -40,9 +40,11 @@ jobs:
       - name: Fetch comparison revision
         env:
           BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           umask 022
           set -euo pipefail
+          BASE=$(python3 tools/ci/feedback_base.py)
           if [[ -n "$BASE" && "$BASE" != 0000000000000000000000000000000000000000 ]]; then
             [[ "$BASE" =~ ^[0-9a-f]{40}$ ]]
             git fetch --no-tags --depth=1 origin "$BASE"
@@ -51,8 +53,8 @@ jobs:
       - name: Select affected packages
         id: affected
         env:
-          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
-        run: umask 022 && python3 tools/ci/fast.py --committed-only --base "$BASE" --select-only --github-output
+          BASE: ${{ env.FAST_BASE }}
+        run: umask 022 && TMPDIR="$RUNNER_TEMP" python3 tools/ci/fast.py --committed-only --base "$BASE" --select-only --github-output
       - uses: ./.github/actions/rust-setup
         if: steps.affected.outputs.rust == 'true'
         with:
@@ -63,8 +65,8 @@ jobs:
         run: umask 022 && python3 tools/ci/cargo_cache.py require-warm --lane fast
       - name: Run affected fast checks
         env:
-          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
-        run: umask 022 && python3 tools/ci/fast.py --committed-only --base "$BASE"
+          BASE: ${{ env.FAST_BASE }}
+        run: umask 022 && TMPDIR="$RUNNER_TEMP" python3 tools/ci/fast.py --committed-only --base "$BASE" --unit-jobs 2
       - name: Report Cargo cache reuse
         if: always() && steps.affected.outputs.rust == 'true'
         continue-on-error: true

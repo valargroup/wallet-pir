@@ -13,11 +13,13 @@ not measured guarantees; hosted fallback and cold fleet warming can exceed them.
 and their transitive reverse dependencies. Deleted files are included; build
 configuration, dependency manifests and unknown paths select the whole workspace.
 Documentation-only changes run documentation checks without installing Rust.
-Operations-only changes run helper checks without compiling Rust.
+Operations-only changes run helper checks without compiling Rust. Main compares against
+the last successful main fast run, so canceled or failed runs cannot leave unchecked changes behind.
 
-Rust feedback runs library and binary unit tests serially in `release-fast`, so independent
-service fixtures share the fast runner’s 6-GiB ceiling without overlapping their
-crypto allocations. The package-qualified full-geometry/cache, multi-unit preparation, RPC publication
+Rust feedback compiles sequentially in `release-fast`, then CI executes at most
+two Cargo-reported unit test programs concurrently. Cases within each program stay
+serial, preserving process-local immutable public fixtures within the fast runner’s
+6-GiB ceiling. Local focused checks default to one program at a time. The package-qualified full-geometry/cache, multi-unit preparation, RPC publication
 and real HTTP retry cases run only in full CI;
 `tools/ci/slow-tests.json` records the exact names and reasons. Binary unit tests run as well as library targets. For affected packages, fast CI also
 runs the integration targets classified as `fast` in

@@ -63,6 +63,14 @@ def cargo_args(package, tiers, tier):
     return args + [arg for name in sorted(names) for arg in ('--test', name)]
 
 
+def target_features(package, names):
+    manifest = next(p['manifest_path'] for p in workspace_packages() if p['name'] == package)
+    data = tomllib.loads(Path(manifest).read_text())
+    features = {feature for target in data.get('test', []) if target['name'] in names
+                for feature in target.get('required-features', [])}
+    return ['--features', ','.join(sorted(features))] if features else []
+
+
 def execute(packages, tier, *, offline=False, compile_only=False, smoke_only=False, repeat=1):
     registry = inventory()
     env = {k: v for k, v in dict(os.environ, RUST_TEST_THREADS='1').items() if not k.startswith('QUALIFY_')}
@@ -74,14 +82,15 @@ def execute(packages, tier, *, offline=False, compile_only=False, smoke_only=Fal
             if 'ci_smoke' not in tiers['fast']:
                 continue
             tiers = {'fast': ['ci_smoke'], 'full': []}
-        args = cargo_args(package, tiers, tier) + (['--offline'] if offline else [])
+        features = target_features(package, tiers['fast'] if tier == 'fast' else tiers['fast'] + tiers['full'])
+        args = cargo_args(package, tiers, tier) + features + (['--offline'] if offline else [])
         if compile_only:
             run(['cargo', 'test', '--no-run', *args], env=env, stage=f'compile:integration-{package}')
         else:
             if tier == 'fast':
                 run(['cargo', 'test', '--no-run', *args], env=env, stage=f'compile:integration-{package}')
                 for target in tiers['fast']:
-                    single = cargo_args(package, {'fast': [target], 'full': []}, 'fast') + (['--offline'] if offline else [])
+                    single = cargo_args(package, {'fast': [target], 'full': []}, 'fast') + features + (['--offline'] if offline else [])
                     enabled = subprocess.check_output(['cargo', 'test', *single, '--', '--list'],
                                                       cwd=ROOT, env=env, text=True, **inherited_fds(env))
                     ignored = subprocess.check_output(['cargo', 'test', *single, '--', '--ignored', '--list'],

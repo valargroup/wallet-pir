@@ -8,6 +8,7 @@ use receiver_directory::{
     store::{IndexedBlock, Store},
     Error, Payment, RawRecord, ReceiverBytes, RECORD_BYTES,
 };
+#[cfg(not(test))]
 use receiver_pir::server::Server;
 use receiver_pir_server::Publication;
 use zakura_receiver_crypto::{
@@ -121,7 +122,14 @@ pub fn prepare(
     witnesses: Option<Vec<u8>>,
 ) -> Result<Publication, receiver_pir::Error> {
     check_publication(&snapshot, witnesses.as_deref())?;
-    Ok(Publication::verified(Server::new(snapshot)?, witnesses))
+    #[cfg(test)]
+    {
+        crate::prepared::prepare(snapshot, witnesses)
+    }
+    #[cfg(not(test))]
+    {
+        Ok(Publication::verified(Server::new(snapshot)?, witnesses))
+    }
 }
 
 #[cfg(test)]

@@ -2,7 +2,7 @@
 #[path = "../../../crates/receiver-directory/tests/common/mod.rs"]
 mod common;
 use common::{manifest, receiver, record};
-use receiver_directory::{snapshot::Snapshot, RawRecord};
+use receiver_directory::snapshot::Snapshot;
 use receiver_pir::{
     server::Server,
     transport::{DirectoryClient, Transport},

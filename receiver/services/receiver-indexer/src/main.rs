@@ -24,6 +24,23 @@ use tracing_subscriber::EnvFilter;
 use zakura_receiver_crypto::witness::WitnessCache;
 use zakura_server_chain::{Network, NodeClient};
 
+#[cfg(test)]
+#[path = "../../receiver-pir-server/tests/common/prepared.rs"]
+mod prepared;
+
+// Verification still runs for every attempt. Unit fixtures may reuse only the
+// public preprocessing of byte-identical, previously validated inputs.
+#[cfg(test)]
+fn prepare_snapshot(
+    snapshot: Snapshot,
+    witnesses: Option<Vec<u8>>,
+) -> std::result::Result<receiver_pir_server::Publication, receiver_pir::Error> {
+    verify::check_publication(&snapshot, witnesses.as_deref())?;
+    prepared::prepare(snapshot, witnesses)
+}
+#[cfg(not(test))]
+use receiver_indexer::verify::prepare as prepare_snapshot;
+
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
 /// The provider database's file in `--data-dir`; see [`ProviderStore::open`].
@@ -491,7 +508,7 @@ async fn refresh(
     let started = std::time::Instant::now();
     let end_height = snapshot.manifest.end_height;
     let publication =
-        tokio::task::spawn_blocking(move || verify::prepare(snapshot, witnesses)).await??;
+        tokio::task::spawn_blocking(move || prepare_snapshot(snapshot, witnesses)).await??;
     log_stage("pir_prepare", started);
     let started = std::time::Instant::now();
     let anchor = publication.manifest();
@@ -659,7 +676,7 @@ mod tests {
         let mut manifest = super::common::manifest(receiver_pir::MIN_ROWS);
         manifest.end_hash = [hash; 32];
         let snapshot = Snapshot::build(manifest, &[], &[]).unwrap();
-        verify::prepare(snapshot, None).unwrap()
+        prepare_snapshot(snapshot, None).unwrap()
     }
 
     /// A check that finds an anchor off the chain after a revocation and a new

@@ -38,12 +38,12 @@ jobs:
           lane: fast
           scope: affected
       - name: Compile fast units
-        run: umask 022 && python3 tools/ci/fast.py --all --compile-only
+        run: umask 022 && TMPDIR="$RUNNER_TEMP" python3 tools/ci/fast.py --all --compile-only
       - name: Validate prepared units
-        run: umask 022 && python3 tools/ci/fast.py --all
+        run: umask 022 && TMPDIR="$RUNNER_TEMP" python3 tools/ci/fast.py --all --unit-jobs 2
       - name: Repeat independent HTTP and recovery checks
         if: inputs.stress
-        run: umask 022 && python3 tools/ci/integration_tests.py --tier fast --smoke-only --repeat 50
+        run: umask 022 && TMPDIR="$RUNNER_TEMP" python3 tools/ci/integration_tests.py --tier fast --smoke-only --repeat 50
       - name: Report Cargo cache reuse
         if: always()
         continue-on-error: true

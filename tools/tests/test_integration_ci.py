@@ -26,6 +26,10 @@ class IntegrationTests(unittest.TestCase):
             with self.subTest(registry=registry), self.assertRaises(ValueError):
                 tests.validate({'p': {'smoke'}}, registry)
 
+    def test_the_receiver_oracle_enables_its_declared_server_feature(self):
+        self.assertEqual(tests.target_features('receiver-pir', ['golden']), ['--features', 'server'])
+        self.assertEqual(tests.target_features('enhance-pir-server', ['ci_smoke']), [])
+
     def test_fast_never_compiles_the_campaign_target(self):
         tiers = {'fast': ['smoke'], 'full': ['campaign']}
         self.assertEqual(tests.cargo_args('p', tiers, 'fast')[-2:], ['--test', 'smoke'])
@@ -37,6 +41,7 @@ class IntegrationTests(unittest.TestCase):
         for listing in [('', ''), ('case: test\n', 'case: test\n')]:
             with self.subTest(listing=listing), patch.object(tests, 'inventory', return_value=registry), \
                     patch.object(tests, 'run') as run, \
+                    patch.object(tests, 'target_features', return_value=[]), \
                     patch.object(tests.subprocess, 'check_output', side_effect=listing):
                 with self.assertRaisesRegex(ValueError, 'no enabled, unignored'):
                     tests.execute(['p'], 'fast')

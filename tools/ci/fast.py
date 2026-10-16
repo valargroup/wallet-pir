@@ -13,6 +13,7 @@ import re
 import subprocess
 import sys
 import tomllib
+import tempfile
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools/ci"))
@@ -201,7 +202,7 @@ def changed_paths(base='', head='HEAD', *, local=True, root=ROOT):
 
 
 
-def rust_checks(selected, *, features='', test='', test_target='', offline=False, compile_only=False):
+def rust_checks(selected, *, features='', test='', test_target='', offline=False, compile_only=False, unit_jobs=1):
     if not selected:
         return
     metadata = json.loads(subprocess.check_output(['cargo', 'metadata', '--locked', '--no-deps', '--format-version', '1', *(['--offline'] if offline else [])], cwd=ROOT, **inherited_fds()))
@@ -210,6 +211,7 @@ def rust_checks(selected, *, features='', test='', test_target='', offline=False
     if offline:
         options += ['--offline']
     registry = json.loads((ROOT / 'tools/ci/slow-tests.json').read_text())
+    programs = []
     for package in metadata['packages']:
         name = package['name']
         if name not in selected:
@@ -232,10 +234,18 @@ def rust_checks(selected, *, features='', test='', test_target='', offline=False
         enabled = features or ','.join(sorted((required & {'cli'}) | classified_features))
         feature_args = ['--features', enabled] if enabled else []
         command = ['cargo', 'test', *options, *feature_args, '-p', name, *kinds]
-        run([*command, '--no-run'], stage=f'compile:{name}')
+        executables = run([*command, '--no-run'], stage=f'compile:{name}',
+                          collect_tests=unit_jobs > 1 and not compile_only)
         if compile_only:
             continue
-        listing = subprocess.check_output([*command, '--', '--list'], cwd=ROOT, text=True, **inherited_fds())
+        if unit_jobs > 1:
+            if not executables:
+                raise ValueError(f'{name}: Cargo reported no test executables')
+            listing = ''.join(subprocess.check_output([binary, '--list'],
+                              cwd=Path(package['manifest_path']).parent, text=True,
+                              **inherited_fds()) for binary in executables)
+        else:
+            listing = subprocess.check_output([*command, '--', '--list'], cwd=ROOT, text=True, **inherited_fds())
         discovered = {line.removesuffix(': test') for line in listing.splitlines() if line.endswith(': test')}
         if test_target and not discovered:
             raise ValueError(f'{name}: {test_target} has no enabled tests; select its required FEATURES')
@@ -246,7 +256,20 @@ def rust_checks(selected, *, features='', test='', test_target='', offline=False
         if test and not any(test in name for name in discovered):
             raise ValueError(f'{name}: test filter matched no tests: {test}')
         args = ['--', *([test] if test else []), *sum((['--skip', n] for n in slow if not test), [])]
-        run([*command, *args], env=dict(os.environ, RUST_TEST_THREADS='1'), stage=f'tests:{name}')
+        if unit_jobs > 1:
+            programs.extend({'executable': binary, 'directory': str(Path(package['manifest_path']).parent),
+                             'package': name, 'version': package['version'], 'args': args[1:]}
+                            for binary in executables)
+        else:
+            run([*command, *args], env=dict(os.environ, RUST_TEST_THREADS='1'), stage=f'tests:{name}')
+    if programs:
+        # Cargo writers finish before bounded execution of their exact reported binaries.
+        run(['python3', 'tools/ci/reclaim-build-cache.py'], stage='reclaim')
+        with tempfile.TemporaryDirectory(prefix='wallet-pir-unit-plan-') as directory:
+            path = Path(directory) / 'programs.json'
+            path.write_text(json.dumps(programs))
+            run(['python3', 'tools/ci/unit_tests.py', str(path), '--jobs', str(unit_jobs)],
+                stage='tests:unit-programs')
     if not test and not test_target and not features:
         # Packages without integration targets need no executable selection.
         from integration_tests import inventory
@@ -286,9 +309,13 @@ def main():
     parser.add_argument('--test-target', default='')
     parser.add_argument('--offline', action='store_true')
     parser.add_argument('--select-only', action='store_true')
+    parser.add_argument('--unit-jobs', type=int, choices=(1, 2), default=1,
+                        help='bounded concurrent test programs, after sequential Cargo builds')
     parser.add_argument('--compile-only', action='store_true', help='prepare fast Rust units without running tests')
     parser.add_argument('--github-output', action='store_true')
     args = parser.parse_args()
+    if args.unit_jobs > 1 and (args.features or args.test or args.test_target):
+        parser.error('--unit-jobs requires the standard fast unit selection')
     packages = workspace_packages()
     paths = changed_paths(args.base, args.head, local=not args.committed_only)
     selected = plan(packages, paths, all_checks=args.all or (args.committed_only and (not args.base or set(args.base) == {'0'})))
@@ -316,7 +343,7 @@ def main():
             helper_env = dict(os.environ, OFFLINE='1') if args.offline else os.environ.copy()
             futures.append(pool.submit(run, ['make', '-j4', *selected['helpers']],
                                        env=helper_env, stage='helpers'))
-        futures.append(pool.submit(rust_checks, selected['packages'], features=args.features, test=args.test, test_target=args.test_target, offline=args.offline, compile_only=args.compile_only))
+        futures.append(pool.submit(rust_checks, selected['packages'], features=args.features, test=args.test, test_target=args.test_target, offline=args.offline, compile_only=args.compile_only, unit_jobs=args.unit_jobs))
         errors = []
         for future in futures:
             try:

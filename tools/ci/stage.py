@@ -8,6 +8,7 @@ also emit JSON messages: rendered diagnostics go to stderr, other output passes
 through, and each compiler-artifact is logged with its `fresh` flag only.
 """
 import json
+from contextlib import nullcontext
 import os
 import signal
 import threading
@@ -40,12 +41,12 @@ def with_messages(command):
     return [*command[:subcommand + 1], '--message-format=json-diagnostic-rendered-ansi', *command[subcommand + 1:]]
 
 
-def relay(process, log, stage):
+def relay(process, log, stage, executables=None):
     """Pass non-message output through; log sanitized compiler-artifact records."""
     sys.path.insert(0, str(ROOT / 'tools/ci'))
     from cargo_cache import artifact_unit
     command = uuid.uuid4().hex[:12]
-    with open(log, 'a') as out:
+    with (open(log, 'a') if log else nullcontext(None)) as out:
         for line in process.stdout:
             message = None
             if line.startswith('{'):
@@ -60,6 +61,11 @@ def relay(process, log, stage):
                 sys.stderr.write((message.get('message') or {}).get('rendered') or '')
                 sys.stderr.flush()
             elif (unit := artifact_unit(message)) is not None:
+                if (executables is not None and message.get('profile', {}).get('test')
+                        and message.get('executable')):
+                    executables.append(message['executable'])
+                if out is None:
+                    continue
                 out.write(json.dumps({**unit, 'stage': stage, 'command': command}) + '\n')
 
 
@@ -114,7 +120,7 @@ def install_cancellation():
             signal.signal(sig, cancel)
 
 
-def run(command, *, env=None, stage='helper'):
+def run(command, *, env=None, stage='helper', cwd=ROOT, collect_tests=False):
     global _SPAWNING
     install_cancellation()
     identifier = uuid.uuid4().hex[:12]
@@ -125,7 +131,10 @@ def run(command, *, env=None, stage='helper'):
     start = time.monotonic()
     print('+ ' + ' '.join(command), flush=True)
     log = os.environ.get(ARTIFACT_LOG)
-    messages = with_messages(command) if log else None
+    messages = with_messages(command) if log or collect_tests else None
+    executables = []
+    if collect_tests and not messages:
+        raise ValueError("test executable collection requires a Cargo build command")
     with _PROCESS_LOCK:
         if _CANCELLED:
             raise SystemExit(128 + _CANCELLED)
@@ -133,7 +142,7 @@ def run(command, *, env=None, stage='helper'):
         # group has an owner record. Worker-thread construction holds the lock.
         _SPAWNING = True
         try:
-            process = subprocess.Popen(messages or command, cwd=ROOT, env=child,
+            process = subprocess.Popen(messages or command, cwd=cwd, env=child,
                                        stdout=subprocess.PIPE if messages else None,
                                        text=True, errors='replace', start_new_session=owns_group,
                                        **inherited_fds(child))
@@ -145,7 +154,7 @@ def run(command, *, env=None, stage='helper'):
     try:
         with process:
             if messages:
-                relay(process, log, stage)
+                relay(process, log, stage, executables if collect_tests else None)
             process.wait()
         result = subprocess.CompletedProcess(messages or command, process.returncode)
     finally:
@@ -163,6 +172,8 @@ def run(command, *, env=None, stage='helper'):
         with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as out:
             out.write(f'| {stage} | {elapsed:.2f}s | {result.returncode} |\n')
     result.check_returncode()
+    if collect_tests:
+        return list(dict.fromkeys(executables))
 
 
 
