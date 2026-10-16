@@ -3135,7 +3135,7 @@ dependencies = [
 [[package]]
 name = "zakura-receiver-crypto"
 version = "0.0.1-rc0"
-source = "git+https://github.com/zakura-core/wallet-libraries.git?rev=0a53078e8105165eda76c916ba9266ce29f71412#0a53078e8105165eda76c916ba9266ce29f71412"
+source = "git+https://github.com/zakura-core/wallet-libraries.git?rev=16081ed2edd2f69252d5e8760c5970903319663a#16081ed2edd2f69252d5e8760c5970903319663a"
 dependencies = [
  "incrementalmerkletree",
  "thiserror",
@@ -3206,7 +3206,7 @@ dependencies = [
 [[package]]
 name = "zakura-server-chain"
 version = "0.0.1-rc0"
-source = "git+https://github.com/zakura-core/wallet-libraries.git?rev=0a53078e8105165eda76c916ba9266ce29f71412#0a53078e8105165eda76c916ba9266ce29f71412"
+source = "git+https://github.com/zakura-core/wallet-libraries.git?rev=16081ed2edd2f69252d5e8760c5970903319663a#16081ed2edd2f69252d5e8760c5970903319663a"
 dependencies = [
  "axum",
  "hex",
@@ -3258,7 +3258,7 @@ dependencies = [
 [[package]]
 name = "zakura-transparent-events"
 version = "0.0.1-rc0"
-source = "git+https://github.com/zakura-core/wallet-libraries.git?rev=0a53078e8105165eda76c916ba9266ce29f71412#0a53078e8105165eda76c916ba9266ce29f71412"
+source = "git+https://github.com/zakura-core/wallet-libraries.git?rev=16081ed2edd2f69252d5e8760c5970903319663a#16081ed2edd2f69252d5e8760c5970903319663a"
 dependencies = [
  "hex",
  "thiserror",
@@ -3267,7 +3267,7 @@ dependencies = [
 [[package]]
 name = "zakura-transparent-filter"
 version = "0.0.1-rc0"
-source = "git+https://github.com/zakura-core/wallet-libraries.git?rev=0a53078e8105165eda76c916ba9266ce29f71412#0a53078e8105165eda76c916ba9266ce29f71412"
+source = "git+https://github.com/zakura-core/wallet-libraries.git?rev=16081ed2edd2f69252d5e8760c5970903319663a#16081ed2edd2f69252d5e8760c5970903319663a"
 dependencies = [
  "bitcoin",
  "hex",
@@ -3279,7 +3279,7 @@ dependencies = [
 [[package]]
 name = "zakura-transparent-shard"
 version = "0.0.1-rc0"
-source = "git+https://github.com/zakura-core/wallet-libraries.git?rev=0a53078e8105165eda76c916ba9266ce29f71412#0a53078e8105165eda76c916ba9266ce29f71412"
+source = "git+https://github.com/zakura-core/wallet-libraries.git?rev=16081ed2edd2f69252d5e8760c5970903319663a#16081ed2edd2f69252d5e8760c5970903319663a"
 dependencies = [
  "base64 0.22.1",
  "hex",
