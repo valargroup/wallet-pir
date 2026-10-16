@@ -79,7 +79,7 @@ jobs:
 
   transparent-lint:
     needs: [select, validate-ops]
-    if: always() && needs.select.result == 'success' && (needs.validate-ops.result == 'success' || needs.validate-ops.result == 'skipped') && needs.select.outputs.transparent == 'true'
+    if: ${{ !cancelled() && needs.select.result == 'success' && (needs.validate-ops.result == 'success' || needs.validate-ops.result == 'skipped') && needs.select.outputs.transparent == 'true' }}
     name: Transparent lint
     runs-on: ${{ fromJSON(github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.WALLET_PIR_BUILD_RUNNER || '"ubuntu-24.04"') }}
     timeout-minutes: 60
@@ -112,7 +112,7 @@ jobs:
 
   transparent-test:
     needs: [select, validate-ops]
-    if: always() && needs.select.result == 'success' && (needs.validate-ops.result == 'success' || needs.validate-ops.result == 'skipped') && needs.select.outputs.transparent == 'true'
+    if: ${{ !cancelled() && needs.select.result == 'success' && (needs.validate-ops.result == 'success' || needs.validate-ops.result == 'skipped') && needs.select.outputs.transparent == 'true' }}
     name: Transparent tests
     runs-on: ${{ fromJSON(github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.WALLET_PIR_BUILD_RUNNER || '"ubuntu-24.04"') }}
     timeout-minutes: 60
@@ -292,7 +292,7 @@ jobs:
 
   enhance-lint:
     needs: [select, validate-ops]
-    if: always() && needs.select.result == 'success' && (needs.validate-ops.result == 'success' || needs.validate-ops.result == 'skipped') && needs.select.outputs.enhance == 'true'
+    if: ${{ !cancelled() && needs.select.result == 'success' && (needs.validate-ops.result == 'success' || needs.validate-ops.result == 'skipped') && needs.select.outputs.enhance == 'true' }}
     name: Enhance lint
     runs-on: ${{ fromJSON(github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.WALLET_PIR_BUILD_RUNNER || '"ubuntu-24.04"') }}
     timeout-minutes: 60
@@ -315,7 +315,7 @@ jobs:
 
   enhance-test:
     needs: [select, validate-ops]
-    if: always() && needs.select.result == 'success' && (needs.validate-ops.result == 'success' || needs.validate-ops.result == 'skipped') && needs.select.outputs.enhance == 'true'
+    if: ${{ !cancelled() && needs.select.result == 'success' && (needs.validate-ops.result == 'success' || needs.validate-ops.result == 'skipped') && needs.select.outputs.enhance == 'true' }}
     name: Enhance tests
     runs-on: ${{ fromJSON(github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.WALLET_PIR_BUILD_RUNNER || '"ubuntu-24.04"') }}
     timeout-minutes: 60
@@ -369,7 +369,7 @@ jobs:
   shared-test:
     name: Shared lint and tests
     needs: [select, validate-ops]
-    if: always() && needs.select.result == 'success' && (needs.validate-ops.result == 'success' || needs.validate-ops.result == 'skipped') && needs.select.outputs.shared == 'true'
+    if: ${{ !cancelled() && needs.select.result == 'success' && (needs.validate-ops.result == 'success' || needs.validate-ops.result == 'skipped') && needs.select.outputs.shared == 'true' }}
     runs-on: ${{ fromJSON(github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.WALLET_PIR_BUILD_RUNNER || '"ubuntu-24.04"') }}
     timeout-minutes: 60
     env:
@@ -392,7 +392,7 @@ jobs:
   receiver-test:
     name: Receiver lint and tests
     needs: [select, validate-ops]
-    if: always() && needs.select.result == 'success' && (needs.validate-ops.result == 'success' || needs.validate-ops.result == 'skipped') && needs.select.outputs.receiver == 'true'
+    if: ${{ !cancelled() && needs.select.result == 'success' && (needs.validate-ops.result == 'success' || needs.validate-ops.result == 'skipped') && needs.select.outputs.receiver == 'true' }}
     runs-on: ${{ fromJSON(github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.WALLET_PIR_BUILD_RUNNER || '"ubuntu-24.04"') }}
     timeout-minutes: 60
     steps:

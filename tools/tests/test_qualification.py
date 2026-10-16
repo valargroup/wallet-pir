@@ -49,6 +49,15 @@ def complete_jobs(family):
 
 
 class QualificationTests(unittest.TestCase):
+    def test_expensive_checks_can_be_cancelled_when_a_new_commit_arrives(self):
+        workflow = (ROOT / '.github/workflows/ci-full.yml').read_text()
+        for name in ['transparent-lint', 'transparent-test', 'enhance-lint',
+                     'enhance-test', 'shared-test', 'receiver-test']:
+            job = workflow.split(f'\n  {name}:\n', 1)[1]
+            expression = re.search(r'^    if: (.+)$', job, re.M).group(1)
+            self.assertIn('!cancelled()', expression, name)
+            self.assertNotIn('always()', expression, name)
+
     def test_publication_survives_skipped_other_families_but_requires_its_gates(self):
         workflow = (ROOT / '.github/workflows/ci-full.yml').read_text()
         for name, gates in [('release', ['complete', 'build']), ('release-cuda', ['complete'])]:
