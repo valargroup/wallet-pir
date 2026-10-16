@@ -24,7 +24,7 @@ cuda = ["ipir-sp/cuda", "dep:simplepir-kernel"]
 pir-control = { path = "../../../shared/pir-control", features = ["admission"] }
 rayon="1"
 reinspiring = { version = "=0.1.3-rc.1", optional = true }
-pir-native = { package = "zakura-pir-native", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "8ed1c44561995582febe0b9bd172e1c45014cf9b", optional = true }
+pir-native = { package = "zakura-pir-native", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "8d260c1acd54d2ee65b858a961119f17d9cc7e20", optional = true }
 simplepir-kernel = { version = "=0.1.0-rc.4", optional = true, features = ["cuda"] }
 axum = "0.7"
 base64 = "0.22"
@@ -50,12 +50,12 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Node reads, Enhance extraction, fees and Status chain reads, pinned to an exact
 # wallet-libraries revision.
-zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "5293d937ac8e369d2f75910e68617319b61554ce" }
+zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "8d260c1acd54d2ee65b858a961119f17d9cc7e20" }
 
 [dev-dependencies]
-zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "5293d937ac8e369d2f75910e68617319b61554ce", features = ["testing"] }
+zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "8d260c1acd54d2ee65b858a961119f17d9cc7e20", features = ["testing"] }
 # Independent wallet Enhance client, which is native-only.
-zakura-pir-enhance = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "5293d937ac8e369d2f75910e68617319b61554ce", default-features = false }
+zakura-pir-enhance = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "8d260c1acd54d2ee65b858a961119f17d9cc7e20", default-features = false }
 simplepir-kernel = "=0.1.0-rc.4"
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
