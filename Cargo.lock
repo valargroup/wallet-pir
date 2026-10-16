@@ -2596,7 +2596,7 @@ dependencies = [
  "sha2 0.10.9",
  "tempfile",
  "thiserror 2.0.18",
- "zakura-receiver-crypto",
+ "zakura-receiver-crypto 0.0.1-rc0 (git+https://github.com/zakura-core/wallet-libraries.git?rev=513537bec79ea834a5eb145c3e01883fc3dfda5e)",
 ]
 
 [[package]]
@@ -2618,7 +2618,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
- "zakura-receiver-crypto",
+ "zakura-receiver-crypto 0.0.1-rc0 (git+https://github.com/zakura-core/wallet-libraries.git?rev=513537bec79ea834a5eb145c3e01883fc3dfda5e)",
  "zakura-server-chain",
 ]
 
@@ -2652,6 +2652,8 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "tokio",
+ "zakura-receiver-directory",
+ "zakura-receiver-pir",
 ]
 
 [[package]]
@@ -4844,13 +4846,25 @@ dependencies = [
  "thiserror 2.0.18",
  "url",
  "zakura-pir-enhance-types",
- "zakura-pir-native",
+ "zakura-pir-native 0.0.1-rc1 (git+https://github.com/zakura-core/wallet-libraries.git?rev=513537bec79ea834a5eb145c3e01883fc3dfda5e)",
 ]
 
 [[package]]
 name = "zakura-pir-enhance-types"
 version = "0.0.1-rc1"
 source = "git+https://github.com/zakura-core/wallet-libraries.git?rev=513537bec79ea834a5eb145c3e01883fc3dfda5e#513537bec79ea834a5eb145c3e01883fc3dfda5e"
+
+[[package]]
+name = "zakura-pir-native"
+version = "0.0.1-rc1"
+source = "git+https://github.com/zakura-core/wallet-libraries.git?rev=114af0b32b338e08bc98b159b7e65334593cbb15#114af0b32b338e08bc98b159b7e65334593cbb15"
+dependencies = [
+ "ipir-sp",
+ "rand 0.8.5",
+ "rand_chacha 0.3.1",
+ "rayon",
+ "reinspiring",
+]
 
 [[package]]
 name = "zakura-pir-native"
@@ -4905,6 +4919,11 @@ dependencies = [
 [[package]]
 name = "zakura-receiver-crypto"
 version = "0.0.1-rc0"
+source = "git+https://github.com/zakura-core/wallet-libraries.git?rev=114af0b32b338e08bc98b159b7e65334593cbb15#114af0b32b338e08bc98b159b7e65334593cbb15"
+
+[[package]]
+name = "zakura-receiver-crypto"
+version = "0.0.1-rc0"
 source = "git+https://github.com/zakura-core/wallet-libraries.git?rev=513537bec79ea834a5eb145c3e01883fc3dfda5e#513537bec79ea834a5eb145c3e01883fc3dfda5e"
 dependencies = [
  "incrementalmerkletree",
@@ -4913,6 +4932,34 @@ dependencies = [
  "zakura-note-encryption",
  "zakura-orchard",
  "zakura-protocol",
+]
+
+[[package]]
+name = "zakura-receiver-directory"
+version = "0.0.1-rc0"
+source = "git+https://github.com/zakura-core/wallet-libraries.git?rev=114af0b32b338e08bc98b159b7e65334593cbb15#114af0b32b338e08bc98b159b7e65334593cbb15"
+dependencies = [
+ "bitcoin",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 2.0.18",
+ "zakura-receiver-crypto 0.0.1-rc0 (git+https://github.com/zakura-core/wallet-libraries.git?rev=114af0b32b338e08bc98b159b7e65334593cbb15)",
+]
+
+[[package]]
+name = "zakura-receiver-pir"
+version = "0.0.1-rc0"
+source = "git+https://github.com/zakura-core/wallet-libraries.git?rev=114af0b32b338e08bc98b159b7e65334593cbb15#114af0b32b338e08bc98b159b7e65334593cbb15"
+dependencies = [
+ "hex",
+ "rand 0.8.5",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 2.0.18",
+ "zakura-pir-native 0.0.1-rc1 (git+https://github.com/zakura-core/wallet-libraries.git?rev=114af0b32b338e08bc98b159b7e65334593cbb15)",
+ "zakura-receiver-directory",
 ]
 
 [[package]]
@@ -4987,7 +5034,7 @@ dependencies = [
  "tokio",
  "tracing",
  "zakura-chain",
- "zakura-receiver-crypto",
+ "zakura-receiver-crypto 0.0.1-rc0 (git+https://github.com/zakura-core/wallet-libraries.git?rev=513537bec79ea834a5eb145c3e01883fc3dfda5e)",
  "zakura-state",
 ]
 
