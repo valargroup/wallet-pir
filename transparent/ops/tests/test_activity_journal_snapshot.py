@@ -2042,8 +2042,8 @@ class Wrapper(unittest.TestCase):
         self.assertIn('lock.try_lock()', source)
         self.assertIn('.open(dir.join("writer.lock"))', source)
         # Fixed byte-boundary fixtures. Agreement of both bounds with the pinned
-        # zakura-transparent-events codec is checked against the compiled
-        # constants by transparent/tools/txid-sizing/export/tests/codec_bounds.rs.
+        # zakura-transparent-events codec runs in the filter server's registered
+        # event_codec_bounds integration test, as well as the exporter's test.
         self.assertEqual(S.EVENT_BYTES, 87)
         self.assertEqual(S.MAX_EVENT_BYTES, 103)
 

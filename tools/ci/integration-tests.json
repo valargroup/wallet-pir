@@ -55,6 +55,7 @@
     "fast": [],
     "full": [
       "compact",
+      "event_codec_bounds",
       "service_round_trip",
       "shard_filters"
     ]
