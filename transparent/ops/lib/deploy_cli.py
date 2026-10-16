@@ -8,6 +8,7 @@ import asyncio
 from importlib import import_module
 import json
 from pathlib import Path
+import shlex
 import subprocess
 import sys
 
@@ -18,6 +19,7 @@ from wallet_pir_ops.deploy.engine import DeployError
 TXID_DISPLAY = ('plan', 'preflight', 'deploy', 'status', 'stop', 'rollback', 'retire', 'ingest-start',
                 'ingest-status', 'ingest-stop', 'bootstrap', 'verify', 'measure-start', 'measure-stop')
 TXID_DISPLAY_PHASES = ('stage', 'workers', 'route', 'controller')
+BINARY_UPGRADE = ('plan', 'preflight', 'baseline', 'deploy', 'status', 'rollback')
 
 
 def register(commands):
@@ -188,8 +190,27 @@ def register(commands):
             command.add_argument('--start-height', type=int)
             command.add_argument('--through-height', type=int)
 
+    for name in BINARY_UPGRADE:
+        command = commands.add_parser('transparent-binary-' + name,
+                                      help='worker binary upgrade of the current v12 history or 4k8 display fleet')
+        command.add_argument('--request', required=True)
+        command.add_argument('--request-sha256', required=True)
+        if name in ('preflight', 'deploy'):
+            command.add_argument('--binary', help='local worker binary; omit when the release is already staged')
+        if name == 'preflight':
+            command.add_argument('--stage', action='store_true',
+                                 help='under the lock, upload the immutable release directory and run its self-check')
+        if name == 'deploy':
+            command.add_argument('--skip-exact-check', action='store_true')
+        if name == 'rollback':
+            command.add_argument('--transaction')
+            command.add_argument('--force', action='store_true')
+
+
 
 def dispatch(args, executor=None, out=print, **options):
+    if args.command.startswith('transparent-binary-'):
+        return binary_upgrade(args, executor, out, **options)
     if args.command.startswith('schema-lock-'):
         module = import_module('transparent.ops.lib.activity_lock_qualification')
         if args.command == 'schema-lock-remote':
@@ -431,3 +452,55 @@ def dispatch(args, executor=None, out=print, **options):
                         out('rollback: '+shlex.join(command))
         return 0
     raise DeployError("unknown Transparent operation: " + args.command)
+
+
+def binary_upgrade(args, executor, out, **options):
+    """`transparent-binary-*`: the shared engine on the pinned worker set with product refusals."""
+    from wallet_pir_ops.bundle import check_installed
+    from wallet_pir_ops.deploy.engine import file_sha256
+    from wallet_pir_ops.deploy.lifecycle import Lifecycle
+    from wallet_pir_ops.deploy.remote import SSHExecutor
+    module = import_module('transparent.ops.lib.binary_upgrade')
+    action = args.command.removeprefix('transparent-binary-')
+    if not args.inventory:
+        raise DeployError('pass --inventory or set WALLET_PIR_DEPLOY_INVENTORY')
+    request = module.load_request(args.request, args.request_sha256)
+    release = request['release']
+    if action in ('deploy', 'rollback') or getattr(args, 'stage', False):
+        # Every binary change names the installed operations package's revision.
+        check_installed(mutation=True, revision=release['git_sha'])
+    service = descriptors.load_descriptors(args.descriptors)[request['service']]
+    inventory = descriptors.load_inventory(args.inventory)
+    executor = executor or SSHExecutor(inventory)
+    upgrade = module.Upgrade(request, service, inventory)
+    workers = upgrade.worker_targets()
+    deployer = module.UpgradeDeployer(upgrade, service, inventory, executor, args.state_dir, args.baseline,
+                                      out=out, **options)
+    deployer.targets = workers
+    sha, binary = release['binary_sha256'], getattr(args, 'binary', None)
+    if binary and file_sha256(Path(binary).resolve()) != sha:
+        raise DeployError('--binary does not hash to release.binary_sha256')
+    out('release: git %s binary %s; publication: %s' % (release['git_sha'], sha, json.dumps(request['publication'], sort_keys=True)))
+    if action == 'status':
+        Lifecycle(deployer).status()
+        problems = upgrade.problems(executor, workers)
+    elif action == 'baseline':
+        deployer.capture_baseline()
+        problems = []
+    elif action == 'rollback':
+        Lifecycle(deployer).rollback(args.transaction, args.force)
+        problems = upgrade.problems(executor, workers)
+    elif action == 'deploy':
+        Lifecycle(deployer).deploy(sha, binary, {'request_sha256': args.request_sha256, 'git_sha': release['git_sha']},
+                                   skip_exact_check=args.skip_exact_check)
+        problems = upgrade.problems(executor, workers)
+    else:
+        result = Lifecycle(deployer).inspect(action, sha, binary, stage=getattr(args, 'stage', False))
+        problems = list(result.problems) + upgrade.problems(executor, workers)
+    for problem in problems:
+        out('problem: ' + problem)
+    if action in ('plan', 'preflight', 'deploy'):
+        out('rollback: ' + shlex.join([sys.executable, str(ROOT / 'ops/scripts/wallet-pir-deploy.py'), '--inventory',
+                                       args.inventory, '--state-dir', args.state_dir, 'transparent-binary-rollback',
+                                       '--request', args.request, '--request-sha256', args.request_sha256]))
+    return 1 if problems else 0
