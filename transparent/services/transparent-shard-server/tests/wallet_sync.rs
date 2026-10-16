@@ -3931,7 +3931,7 @@ async fn prepared_and_built_runtimes_answer_identically_at_populated_empty_and_b
                 // runtime.
                 let files: Vec<Vec<u8>> = (0..segments)
                     .map(|segment| {
-                        std::fs::read(&shard.segment(table, segment).unwrap().path()).unwrap()
+                        std::fs::read(shard.segment(table, segment).unwrap().path()).unwrap()
                     })
                     .collect();
                 let populated = files

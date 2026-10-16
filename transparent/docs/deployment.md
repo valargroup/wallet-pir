@@ -536,7 +536,18 @@ held by a request. An old reader does not prevent collection of other idle
 snapshots. The server releases its startup snapshot after launching prewarm;
 private control status reports `retired_snapshots` so a growing backlog is
 visible. Three superseded normal tail revisions may also accompany the current set.
-Immutable files are shared by hard link rather than copied per block.
+History workers stage under `worker_root/workers/<worker-id>/`. Each revision
+is transferred once into `.sources/<manifest-digest>`; publication directories
+contain relative links to those revisions. Creating or collecting a publication
+therefore leaves table inode timestamps unchanged, allowing verification reuse.
+The worker accepts only links to this sibling catalog with a real revision
+directory, then performs its normal manifest and table verification. Staging and
+collection share `.sources.lock`; collection defers during a transfer and removes
+catalog revisions only after no retained publication references them. Worker
+namespaces keep one worker's collection from deleting another worker's sources.
+The first publication may seed the catalog from the prior layout by hard link;
+that operation requires fresh verification once. Prior-layout directories remain
+available for rollback and are not removed by the new namespace's collection.
 
 A reorg affecting served coverage withdraws it before rebuilding. A fork
 strictly above served coverage may retain that coverage only after the fleet

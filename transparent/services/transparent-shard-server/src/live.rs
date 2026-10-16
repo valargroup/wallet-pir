@@ -591,27 +591,11 @@ impl LiveService {
                     let disk_freed_bytes = disk_pruned.unwrap_or(0);
                     let disk_seconds = disk_started.elapsed().as_secs_f64();
                     let directories_started = std::time::Instant::now();
-                    // Only controller-created, digest-named generations are ours.
-                    // Keep the newest three unused directories across restarts too.
-                    let mut unused: Vec<_> = std::fs::read_dir(root)
-                        .map_err(|e| e.to_string())?
-                        .filter_map(Result::ok)
-                        .filter(|e| {
-                            e.file_name().to_str().is_some_and(|s| {
-                                s.len() == 64 && s.bytes().all(|c| c.is_ascii_hexdigit())
-                            }) && e.file_type().is_ok_and(|t| t.is_dir())
-                                && !keep.contains(&e.path())
-                        })
-                        .collect();
-                    unused.sort_by_key(|e| {
-                        std::cmp::Reverse(e.metadata().and_then(|m| m.modified()).ok())
-                    });
-                    for entry in unused.into_iter().skip(3) {
-                        std::fs::remove_dir_all(entry.path()).map_err(|e| e.to_string())?;
-                    }
+                    let source_collection_deferred = !collect_publications(&root, &keep)
+                        .map_err(|e| e.to_string())?;
                     let directory_seconds = directories_started.elapsed().as_secs_f64();
-                    tracing::info!(snapshot_seconds, disk_seconds, directory_seconds, disk_freed_bytes, disk_collection_deferred, "publication collection stages");
-                    Ok(serde_json::json!({"collected":true,"disk_freed_bytes":disk_freed_bytes,"disk_collection_deferred":disk_collection_deferred,"snapshot_seconds":snapshot_seconds,"disk_seconds":disk_seconds,"directory_seconds":directory_seconds}))
+                    tracing::info!(snapshot_seconds, disk_seconds, directory_seconds, disk_freed_bytes, disk_collection_deferred, source_collection_deferred, "publication collection stages");
+                    Ok(serde_json::json!({"collected":true,"source_collection_deferred":source_collection_deferred,"disk_freed_bytes":disk_freed_bytes,"disk_collection_deferred":disk_collection_deferred,"snapshot_seconds":snapshot_seconds,"disk_seconds":disk_seconds,"directory_seconds":directory_seconds}))
                 })
                 .await
                 .map_err(|e| format!("collection task failed: {e}"))?
@@ -705,4 +689,128 @@ async fn dispatch(State(live): State<LiveService>, request: Request) -> Response
         return refused();
     }
     response
+}
+
+/// Collect unused publications and then revisions no remaining publication
+/// references. Staging uses the same file lock for linking and rsync. Defer
+/// rather than blocking control commands behind a slow transfer.
+fn collect_publications(root: &Path, keep: &BTreeSet<PathBuf>) -> std::io::Result<bool> {
+    use std::fs::{self, OpenOptions, TryLockError};
+    let lock = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(root.join(".sources.lock"))?;
+    match lock.try_lock() {
+        Ok(()) => {}
+        Err(TryLockError::WouldBlock) => return Ok(false),
+        Err(TryLockError::Error(error)) => return Err(error),
+    }
+    let digest = |name: &std::ffi::OsStr| {
+        name.to_str().is_some_and(|s| {
+            s.len() == 64
+                && s.bytes()
+                    .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
+        })
+    };
+    let mut publications = Vec::new();
+    for entry in fs::read_dir(root)? {
+        let entry = entry?;
+        if digest(&entry.file_name()) && entry.file_type()?.is_dir() {
+            publications.push(entry);
+        }
+    }
+    publications.sort_by_key(|e| std::cmp::Reverse(e.metadata().and_then(|m| m.modified()).ok()));
+    let mut unused = 0;
+    let mut referenced = BTreeSet::new();
+    for publication in publications {
+        if !keep.contains(&publication.path()) {
+            unused += 1;
+            if unused > 3 {
+                fs::remove_dir_all(publication.path())?;
+                continue;
+            }
+        }
+        for revision in fs::read_dir(publication.path())? {
+            let revision = revision?;
+            // A malformed or partially staged link cannot make a referenced
+            // revision disappear. Loading it still requires full validation.
+            if digest(&revision.file_name()) {
+                referenced.insert(revision.file_name());
+            }
+        }
+    }
+    let catalog = root.join(".sources");
+    if fs::symlink_metadata(&catalog).is_ok_and(|m| m.is_dir()) {
+        for entry in fs::read_dir(catalog)? {
+            let entry = entry?;
+            if digest(&entry.file_name())
+                && entry.file_type()?.is_dir()
+                && !referenced.contains(&entry.file_name())
+            {
+                fs::remove_dir_all(entry.path())?;
+            }
+        }
+    }
+    Ok(true)
+}
+
+#[cfg(test)]
+mod collection_tests {
+    use super::*;
+    #[test]
+    fn collection_keeps_referenced_sources_and_defers_during_staging() {
+        let root = tempfile::tempdir().unwrap();
+        let catalog = root.path().join(".sources");
+        std::fs::create_dir(&catalog).unwrap();
+        let revision = "a".repeat(64);
+        let orphan = "b".repeat(64);
+        std::fs::create_dir(catalog.join(&revision)).unwrap();
+        std::fs::create_dir(catalog.join(&orphan)).unwrap();
+        let mut keep = BTreeSet::new();
+        for n in 0..8 {
+            let publication = root.path().join(format!("{n:064x}"));
+            std::fs::create_dir(&publication).unwrap();
+            std::os::unix::fs::symlink(
+                format!("../.sources/{revision}"),
+                publication.join(&revision),
+            )
+            .unwrap();
+            if n == 0 {
+                keep.insert(publication);
+            }
+        }
+        let lock = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(root.path().join(".sources.lock"))
+            .unwrap();
+        lock.lock().unwrap();
+        assert!(!collect_publications(root.path(), &keep).unwrap());
+        assert!(catalog.join(&orphan).exists());
+        drop(lock);
+        assert!(collect_publications(root.path(), &keep).unwrap());
+        assert!(catalog.join(&revision).exists());
+        assert!(!catalog.join(&orphan).exists());
+        assert!(keep.iter().next().unwrap().exists());
+        assert_eq!(
+            std::fs::read_dir(root.path())
+                .unwrap()
+                .filter_map(Result::ok)
+                .filter(|e| e.file_name().to_str().is_some_and(|s| s.len() == 64))
+                .count(),
+            4
+        );
+        for entry in std::fs::read_dir(root.path()).unwrap() {
+            let entry = entry.unwrap();
+            if entry.file_name().to_str().is_some_and(|s| s.len() == 64) {
+                std::fs::remove_dir_all(entry.path()).unwrap();
+            }
+        }
+        collect_publications(root.path(), &BTreeSet::new()).unwrap();
+        assert!(!catalog.join(&revision).exists());
+    }
 }

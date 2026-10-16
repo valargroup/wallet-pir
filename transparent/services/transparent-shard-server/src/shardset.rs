@@ -1206,10 +1206,33 @@ impl ShardSet {
                 path: dir.to_path_buf(),
                 source,
             })?;
-            if !entry.path().is_dir() {
+            let path = entry.path();
+            if path.is_symlink() {
+                // Fleet publications may reference a revision stored once in
+                // this worker's sibling catalog. Do not accept redirects out
+                // of that catalog or through another symlink.
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
+                let catalog = dir.parent().unwrap_or(dir).join(".sources");
+                let target = catalog.join(name.as_ref());
+                let expected = Path::new("../.sources").join(name.as_ref());
+                if name.len() != 64
+                    || !name
+                        .bytes()
+                        .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
+                    || std::fs::read_link(&path).ok().as_ref() != Some(&expected)
+                    || !std::fs::symlink_metadata(&catalog).is_ok_and(|m| m.is_dir())
+                    || !std::fs::symlink_metadata(&target).is_ok_and(|m| m.is_dir())
+                {
+                    return Err(LoadError::Invalid(format!(
+                        "invalid revision catalog link: {}",
+                        path.display()
+                    )));
+                }
+            } else if !path.is_dir() {
                 continue;
             }
-            let meta = LoadedShard::read_manifest(&entry.path())?;
+            let meta = LoadedShard::read_manifest(&path)?;
             // A digest names its own content, so two directories cannot hold
             // the same digest and different bytes. One filesystem path per
             // digest is still required, so the source of a revision is

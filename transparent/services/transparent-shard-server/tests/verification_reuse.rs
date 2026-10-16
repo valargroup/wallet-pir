@@ -490,3 +490,96 @@ fn a_file_with_unsettled_timestamps_is_not_vouched_for() {
         2 * bytes.len() as u64
     );
 }
+
+#[test]
+fn catalog_publications_preserve_verification_across_changing_maps_and_collection() {
+    let world = World::new();
+    let catalog = world.root.join(".sources");
+    std::fs::create_dir(&catalog).unwrap();
+    for entry in [&world.r0, &world.r1] {
+        std::fs::rename(
+            world.p2.join(&entry.manifest_digest),
+            catalog.join(&entry.manifest_digest),
+        )
+        .unwrap();
+    }
+    let publish = |round: usize, current: &ShardMapEntry| {
+        let path = world.root.join(format!("{round:064x}"));
+        std::fs::create_dir(&path).unwrap();
+        for entry in [&world.r0, &world.r1]
+            .into_iter()
+            .filter(|entry| entry.revision <= current.revision)
+        {
+            std::os::unix::fs::symlink(
+                format!("../.sources/{}", entry.manifest_digest),
+                path.join(&entry.manifest_digest),
+            )
+            .unwrap();
+        }
+        write_map(&path, current);
+        path
+    };
+    let first_dir = publish(0, &world.r0);
+    let first = open(&first_dir, None).unwrap();
+    let second_dir = publish(1, &world.r1);
+    let mut previous = open(&second_dir, Some(&first)).unwrap();
+    assert_eq!(
+        previous.verification().page_bytes_hashed,
+        page_bytes(&previous, &world.r1.manifest_digest, 1)
+    );
+    // Three ordinary publications and collection must never mutate source
+    // identity. Restart still hashes every assigned source independently.
+    for round in 2..5 {
+        let next_dir = publish(round, &world.r1);
+        let next = open(&next_dir, Some(&previous)).unwrap();
+        assert_eq!(
+            next.verification().bytes_hashed,
+            0,
+            "{:?}",
+            next.verification()
+        );
+        assert!(next.verification().segments_reused > 0);
+        eprintln!("catalog round {round}: {:?}", next.verification());
+        previous = next;
+    }
+    std::fs::remove_dir_all(first_dir).unwrap();
+    std::fs::remove_dir_all(second_dir).unwrap();
+    let final_dir = world.root.join(format!("{:064x}", 4));
+    let restarted = open(&final_dir, None).unwrap();
+    assert_eq!(restarted.verification().segments_reused, 0);
+    assert!(restarted.verification().bytes_hashed > 0);
+    // A one-row source change must fail even while prior evidence exists.
+    let pages = world.sealed_pages(&final_dir);
+    let file = OpenOptions::new().write(true).open(&pages[0]).unwrap();
+    file.write_at(&[0xff], 8).unwrap();
+    assert!(open(&final_dir, Some(&previous)).is_err());
+}
+
+#[test]
+fn catalog_links_reject_redirects_and_missing_sources() {
+    let world = World::new();
+    let catalog = world.root.join(".sources");
+    std::fs::create_dir(&catalog).unwrap();
+    let publication = world.root.join("linked");
+    std::fs::create_dir(&publication).unwrap();
+    write_map(&publication, &world.r1);
+    let link = publication.join(&world.r1.manifest_digest);
+    for target in [
+        world.p2.join(&world.r1.manifest_digest),
+        PathBuf::from(format!("../.sources/{}", world.r1.manifest_digest)),
+    ] {
+        std::os::unix::fs::symlink(target, &link).unwrap();
+        assert!(open(&publication, Some(&world.first))
+            .err()
+            .unwrap()
+            .contains("invalid revision catalog link"));
+        std::fs::remove_file(&link).unwrap();
+    }
+    let stored = catalog.join(&world.r1.manifest_digest);
+    std::os::unix::fs::symlink(world.p2.join(&world.r1.manifest_digest), &stored).unwrap();
+    std::os::unix::fs::symlink(format!("../.sources/{}", world.r1.manifest_digest), &link).unwrap();
+    assert!(open(&publication, Some(&world.first))
+        .err()
+        .unwrap()
+        .contains("invalid revision catalog link"));
+}

@@ -5,6 +5,8 @@ from contextlib import redirect_stderr
 import importlib.util
 import io
 import json
+import shutil
+import sys
 from pathlib import Path
 import tempfile
 import unittest
@@ -187,18 +189,23 @@ class RuntimeStagingTests(unittest.IsolatedAsyncioTestCase):
         # copied over the network again; revision directories as before.
         script = self.scripts[0]
         self.assertIn(f'ln /srv/old/{RUNTIME} ', script)
-        self.assertIn(f'cp -al /srv/old/{REVISION} ', script)
+        self.assertIn(f'cp -al /srv/old/{REVISION}/. ', script)
+        self.assertIn(f'ln -s ../.sources/{REVISION} ', script)
+        self.assertIn('/workers/recent/.sources/', script)
+        transfers = [c for c in self.commands if c[0] == 'rsync']
+        self.assertEqual(len(transfers), 2)
+        self.assertTrue(all('--rsync-path' in c and 'flock -x ' in c[c.index('--rsync-path') + 1] for c in transfers))
         rsync = next(c for c in self.commands if c[0] == 'rsync')
         self.assertIn('--ignore-existing', rsync)
         self.assertIn('--stats', rsync)
         prepare = next(c for c in self.controls if c['operation'] == 'prepare')
         remote = prepare['publication']['directory']
         self.assertEqual(prepare['publication']['runtimes'], remote)
-        self.assertEqual(staged['transferred_bytes'], 41234)
+        self.assertEqual(staged['transferred_bytes'], 82468)
         self.assertEqual(staged['runtimes']['shipped'], 2)
         self.assertEqual(staged['publication']['runtimes'], remote)
 
-    async def test_without_an_offer_staging_is_unchanged(self):
+    async def test_without_an_offer_sources_still_use_the_catalog(self):
         staged = await self.fleet.stage(self.worker, self.request(False), self.assignment)
         inventory = next(c for c in self.commands if c[1] == 'files')
         self.assertNotIn('--runtimes', inventory)
@@ -206,6 +213,8 @@ class RuntimeStagingTests(unittest.IsolatedAsyncioTestCase):
         prepare = next(c for c in self.controls if c['operation'] == 'prepare')
         self.assertNotIn('runtimes', prepare['publication'])
         self.assertNotIn('runtimes', staged['publication'])
+        self.assertIn('/workers/recent/', staged['publication']['directory'])
+        self.assertIn('ln -s ../.sources/', self.scripts[0])
 
     async def test_runtimes_elsewhere_than_the_publication_are_refused(self):
         req = self.request(True)
@@ -223,6 +232,79 @@ class RuntimeStagingTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(ValueError):
                 await self.fleet.stage(self.worker, self.request(True), self.assignment)
         self.assertEqual(self.scripts, [])
+
+    @unittest.skipUnless(sys.platform == 'linux' and shutil.which('flock') and shutil.which('rsync'),
+                         'requires Linux staging tools')
+    async def test_real_staging_preserves_sources_and_recovers_an_interrupted_transfer(self):
+        self.fleet.c['worker_root'] = str(self.root / 'workers')
+        old = self.root / 'old'
+        revision = old / REVISION
+        revision.mkdir(parents=True)
+        (revision / 'table.bin').write_bytes(b'committed source bytes')
+        incoming = self.source / REVISION
+        incoming.mkdir()
+        shutil.copy2(revision / 'table.bin', incoming / 'table.bin')
+        (incoming / 'filter.bin').write_bytes(b'filter')
+        before = {'map_sha256': '11' * 32, 'directory': str(old)}
+        interrupt = True
+
+        async def execute(args, data=None):
+            process = await asyncio.create_subprocess_exec(*args, stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+            out, err = await process.communicate(data)
+            if process.returncode:
+                raise RuntimeError(err.decode())
+            return out
+
+        async def ssh(host, command, data=None, **kwargs):
+            return await execute(['sh', '-c', command], data)
+
+        async def run(args, data=None, **kwargs):
+            nonlocal interrupt
+            args = [str(a) for a in args]
+            if args[1] == 'files':
+                return f'shards.json\n{REVISION}/table.bin\n{REVISION}/filter.bin\n'.encode()
+            if interrupt:
+                interrupt = False
+                raise RuntimeError('interrupted transfer')
+            # Keep the actual rsync selection and options, replacing only SSH
+            # with local paths. Shell setup above uses the real cp/ln/flock.
+            transport = args.index('-e')
+            del args[transport:transport + 2]
+            args[-1] = args[-1].removeprefix('root@host:')
+            return await execute(args)
+
+        async def control(worker, request):
+            self.controls.append(request)
+            if request['operation'] == 'status':
+                return {'active': dict(before)}
+            return {}
+
+        self.fleet.ssh = ssh
+        self.fleet.control = control
+        with patch.object(M, 'run', side_effect=run), redirect_stderr(io.StringIO()):
+            with self.assertRaisesRegex(RuntimeError, 'interrupted transfer'):
+                await self.fleet.stage(self.worker, self.request(False), self.assignment)
+            self.assertFalse(any(c.get('operation') == 'prepare' for c in self.controls))
+            # A retry completes the partial catalog and then three new maps
+            # keep the source inode and ctime, including when an old map is
+            # collected. Only the first seed may change file identity.
+            first = await self.fleet.stage(self.worker, self.request(False), self.assignment)
+            before.update(first['publication'])
+            table = Path(before['directory']) / REVISION / 'table.bin'
+            stamp = table.stat()
+            for n in range(3, 6):
+                req = {**self.request(False), 'map_sha256': f'{n:064x}'}
+                staged = await self.fleet.stage(self.worker, req, self.assignment)
+                path = Path(staged['publication']['directory']) / REVISION
+                self.assertEqual((path / 'table.bin').read_bytes(), b'committed source bytes')
+                self.assertEqual((path / 'filter.bin').read_bytes(), b'filter')
+                observed = (path / 'table.bin').stat()
+                self.assertEqual((observed.st_ino, observed.st_ctime_ns), (stamp.st_ino, stamp.st_ctime_ns))
+                self.assertTrue(path.is_symlink())
+                shutil.rmtree(before['directory'])
+                self.assertTrue((path / 'table.bin').exists())
+                before.update(staged['publication'])
 
     def test_transfer_bytes_reads_rsync_stats(self):
         self.assertEqual(M.transfer_bytes(STATS), 41234)
