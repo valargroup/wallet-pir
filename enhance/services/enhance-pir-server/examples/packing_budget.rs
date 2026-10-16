@@ -161,7 +161,9 @@ fn prepare(
     let coverage = Lifecycle::default().coverage(count, Geometry::default())?;
     let plan = runtime::plan(coverage.shards[0].clone(), records)?;
     let mut engine = Engine::new(&output.join("database"));
-    let eval = engine.prepare(plan.clone(), records)?;
+    let (eval, _) = engine
+        .prepare(plan.clone(), records)
+        .map_err(String::from)?;
     let hint = eval.hint()?;
     let mut file = BufWriter::new(File::create(output.join("hint.bin"))?);
     write_crs_blocks(&mut file, &hint)?;
