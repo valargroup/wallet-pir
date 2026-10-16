@@ -455,6 +455,18 @@ class DisplayUpgrade(Harness):
         self.assertEqual(code, 1, lines)
         self.assertTrue(any('txid-4k8' in line for line in lines), lines)
 
+    def test_worker_readiness_is_read_from_the_ready_endpoint(self):
+        self.run_cli('baseline')
+        http_get = self.fake.http_get
+        def distinct_health(host, url, timeout=5):
+            if url.endswith('/v1/health'):
+                return 200, json.dumps({'role': 'combined', 'map_sha256': self.map[0]})
+            return http_get(host, url, timeout)
+        self.fake.http_get = distinct_health
+        code, lines = self.run_cli('deploy', '--binary', str(self.binary), '--skip-exact-check')
+        self.assertEqual(code, 0, lines)
+        self.assertEqual(self.run_cli('rollback')[0], 0)
+
     def test_real_run_mode_controller_without_geometry_passes(self):
         """Before: the check demanded `--geometry txid-4k8`, which run mode does not take, so this refused."""
         self.assertEqual(self.run_cli('baseline')[0], 0)
