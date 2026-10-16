@@ -532,7 +532,7 @@ artifact origin; map discovery has refreshable cache semantics.
 
 Source only, off by default (`ship_runtimes` in the publication controller's JSON config);
 measured on the shared development hub and not accepted, not deployed. See
-[status](status.md#prepared-history-runtimes-measured-not-accepted-2026-10-14) and
+[status](status.md#prepared-history-runtimes) and
 [remaining work](remaining-work.md#prepared-history-runtimes).
 
 With `ship_runtimes` on, the controller prepares every runtime of each candidate on the
