@@ -81,9 +81,9 @@ class PlannerTests(unittest.TestCase):
         self.assertIn('check-docs', result['helpers'])
 
     def test_receiver_packages_have_their_own_full_group(self):
-        result = fast.plan(self.packages, ['receiver/crates/receiver-directory/src/filter.rs'])
+        result = fast.plan(self.packages, ['receiver/crates/receiver-store/src/lib.rs'])
         self.assertEqual(result['groups'], ['receiver'])
-        self.assertIn('receiver-directory/store', full.commands('receiver', full.inventory())[0])
+        self.assertIn('receiver-store', full.commands('receiver', full.inventory())[0])
 
     def test_receiver_ops_config_changes_run_their_contract_suite(self):
         makefile = (ROOT / 'Makefile').read_text()

@@ -56,18 +56,18 @@ NODE = {
 WALLET_LIBRARIES = 'github.com/zakura-core/wallet-libraries'
 # Protocol framing packages that must not acquire chain or wallet behaviour.
 PURE = {
-    'receiver-directory', 'receiver-pir', 'receiver-pir-server',
+    'receiver-pir-server',
     'pir-observability', 'pir-control', 'enhance-pir', 'transparent-blocks',
     'transparent-wallet', 'transparent-wallet-store', 'transparent-shard-server',
 }
-RECEIVER = {'receiver-directory', 'receiver-pir', 'receiver-pir-server'}
+RECEIVER = {'receiver-pir-server'}
 CODEC = 'zakura-receiver-crypto'
 # The canonical PIR primitive and protocol packages wallet-libraries owns. A pure
 # package may consume them; their own graphs are checked like the package's.
 CANONICAL = {
     'zakura-pir-native', 'zakura-transparent-native', 'zakura-transparent-events',
     'zakura-transparent-filter', 'zakura-transparent-shard',
-    'zakura-transparent-txid-client',
+    'zakura-transparent-txid-client', 'zakura-receiver-directory', 'zakura-receiver-pir',
 }
 # Preserved sources outside the active product: legacy demos and retained evidence.
 EXCLUDED = ('demos/', 'enhance/crates/transparent-spend-pir/', 'evidence/',
@@ -117,10 +117,7 @@ def violations(packages, allowed):
                                     f"{'Common' if name in COMMON else 'node'} package {name}")
             if (package['name'] in PURE and WALLET_LIBRARIES in dependency['git']
                     and name not in CANONICAL
-                    and not (package['name'] == 'receiver-directory' and name == CODEC
-                             and dependency['kind'] == 'dependencies'
-                             and dependency.get('default-features') is False
-                             and not dependency.get('features'))):
+                    ):
                 problems.append(f"{package['manifest']}: pure PIR package has a "
                                 f"{dependency['kind']} on wallet-libraries package {name}")
     for edge in sorted(set(allowed) - found):
@@ -177,7 +174,7 @@ def standalone_receiver_metadata():
         lines = ['[package]', 'name = "receiver-boundary-consumer"',
                  'version = "0.0.0"', 'edition = "2021"', '[workspace]', '[dependencies]']
         for name in sorted(RECEIVER):
-            folder = ('receiver/services/' if name.endswith('-server') else 'receiver/crates/') + name
+            folder = 'receiver/services/' + name
             lines.append(f'{name} = {{ path = {json.dumps(str(ROOT / folder))} }}')
         (root / 'Cargo.toml').write_text('\n'.join(lines) + '\n')
         (root / 'src').mkdir()

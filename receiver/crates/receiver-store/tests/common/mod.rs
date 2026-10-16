@@ -1,4 +1,4 @@
-//! Fixtures shared by the receiver crates' integration tests, included with `#[path]`.
+//! Fixtures shared by the receiver services' tests, included with `#[path]`.
 #![allow(dead_code)]
 use receiver_directory::{
     snapshot::{Manifest, PROFILE},

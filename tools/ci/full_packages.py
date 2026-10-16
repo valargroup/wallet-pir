@@ -40,7 +40,6 @@ def commands(group, groups, lint=False, compile_only=False):
                *[arg for name in ordinary for arg in ('-p', name)],
                *(['--features', 'enhance-pir/cli'] if group == 'enhance' else
                  ['--features', 'transparent-filter/cli'] if group == 'transparent' else
-                 ['--features', 'receiver-directory/store'] if group == 'receiver' else
                  ['--features', 'pir-control/admission'] if group == 'shared' else [])]]
     if 'enhance-pir-server' in names:
         result.append(['python3', 'tools/ci/enhance_tests.py', '--tier', 'full',

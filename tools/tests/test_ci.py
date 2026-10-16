@@ -73,7 +73,7 @@ class BoundaryTests(unittest.TestCase):
 
     def test_the_receiver_packages_declare_no_common_or_node_edges(self):
         packages = {p['name']: p for p in boundary.manifests()}
-        for name in ['receiver-directory', 'receiver-pir', 'receiver-pir-server']:
+        for name in ['receiver-store', 'receiver-pir-server']:
             names = {d['name'] for d in packages[name]['dependencies']}
             self.assertFalse(names & (boundary.COMMON | boundary.NODE), name)
 
@@ -93,32 +93,22 @@ class BoundaryTests(unittest.TestCase):
             self.edge('sha2'), self.edge('rand')]}]
         self.assertEqual(boundary.violations(packages, []), [])
 
-    def test_only_directory_framing_can_use_the_featureless_codec(self):
-        edge = self.edge('zakura-receiver-crypto', git='https://github.com/zakura-core/wallet-libraries')
-        edge.update({'default-features': False, 'features': []})
-        package = {'name': 'receiver-directory', 'manifest': 'directory/Cargo.toml',
-                   'dependencies': [edge]}
+    def test_pure_packages_use_only_canonical_library_packages(self):
+        library = 'https://github.com/zakura-core/wallet-libraries'
+        package = {'name': 'receiver-pir-server', 'manifest': 'server/Cargo.toml',
+                   'dependencies': [self.edge(name, git=library) for name in sorted(boundary.CANONICAL)]}
         self.assertEqual(boundary.violations([package], []), [])
-        for change in [{'default-features': True}, {'features': ['crypto']},
-                       {'kind': 'dev-dependencies'}, {'kind': 'build-dependencies'},
-                       {'kind': 'target.cfg(unix).dependencies'}, {'name': 'zakura-wallet-lib'}]:
-            changed = {**package, 'dependencies': [{**edge, **change}]}
-            self.assertEqual(len(boundary.violations([changed], [])), 1, change)
-        for name in ['receiver-pir', 'enhance-pir', 'transparent-wallet']:
-            self.assertEqual(len(boundary.violations([{**package, 'name': name}], [])), 1, name)
-
-    def test_receiver_framing_uses_the_library_codec_with_crypto_disabled(self):
-        directory = next(p for p in boundary.manifests() if p['name'] == 'receiver-directory')
-        edge = next(d for d in directory['dependencies'] if d['name'] == boundary.CODEC)
-        self.assertFalse(edge['default-features'])
-        self.assertEqual(edge['features'], [])
+        for name in [boundary.CODEC, 'zakura-wallet-lib', 'zakura-server-chain']:
+            changed = {**package, 'dependencies': [self.edge(name, git=library)]}
+            self.assertEqual(len(boundary.violations([changed], [])), 1, name)
+        self.assertEqual(boundary.violations([{**changed, 'name': 'receiver-indexer'}], []), [])
 
     def test_workspace_crypto_unification_does_not_excuse_standalone_crypto_or_nodes(self):
         def node(name, deps=()):
             return {'id': name, 'deps': [{'pkg': d, 'dep_kinds': [{'kind': None}]} for d in deps]}
         metadata = {
             'packages': [
-                {'id': 'pir', 'name': 'receiver-pir', 'source': None},
+                {'id': 'pir', 'name': 'receiver-pir-server', 'source': None},
                 {'id': 'codec', 'name': boundary.CODEC,
                  'source': 'git+https://github.com/zakura-core/wallet-libraries'},
                 {'id': 'orchard', 'name': 'zakura-orchard', 'source': 'registry'},
@@ -129,13 +119,13 @@ class BoundaryTests(unittest.TestCase):
         }
         self.assertEqual(boundary.resolved_violations(metadata, workspace_unified=True), [])
         self.assertEqual(boundary.resolved_violations(metadata),
-                         ['receiver-pir: resolves zakura-orchard'])
+                         ['receiver-pir-server: resolves zakura-orchard'])
         metadata['resolve']['nodes'][1] = node('codec', ['orchard', 'chain'])
         self.assertEqual(boundary.resolved_violations(metadata, workspace_unified=True),
-                         ['receiver-pir: resolves zakura-chain'])
+                         ['receiver-pir-server: resolves zakura-chain'])
         metadata['resolve']['nodes'][0] = node('pir', ['orchard'])
         self.assertEqual(boundary.resolved_violations(metadata, workspace_unified=True),
-                         ['receiver-pir: resolves zakura-orchard'])
+                         ['receiver-pir-server: resolves zakura-orchard'])
 
     def test_offline_mode_reaches_workspace_metadata_and_helper_targets(self):
         metadata = {'packages': [], 'resolve': {'nodes': []}}
@@ -166,7 +156,7 @@ class BoundaryTests(unittest.TestCase):
             return {'id': id, 'deps': [{'pkg': d, 'dep_kinds': [{'kind': k}]} for d, k in deps]}
         metadata = {
             'packages': [
-                {'id': 'pir', 'name': 'receiver-pir', 'source': None},
+                {'id': 'pir', 'name': 'receiver-pir-server', 'source': None},
                 {'id': 'mid', 'name': 'helper', 'source': 'registry'},
                 {'id': 'orchard', 'name': 'zakura-orchard', 'source': 'registry'},
                 {'id': 'chain', 'name': 'zakura-chain', 'source': 'git+https://github.com/zakura-core/zakura'},
@@ -180,7 +170,7 @@ class BoundaryTests(unittest.TestCase):
             ]},
         }
         self.assertEqual(boundary.resolved_violations(metadata),
-                         ['receiver-pir: resolves zakura-orchard'])
+                         ['receiver-pir-server: resolves zakura-orchard'])
 
 
 class ReleaseTests(unittest.TestCase):

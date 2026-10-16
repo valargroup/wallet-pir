@@ -1,13 +1,57 @@
-//! Atomic contiguous coverage with explicit rewind. Empty blocks are retained too.
-use crate::{
-    record,
+//! The receiver indexer's durable stores: atomic contiguous coverage with explicit
+//! rewind (empty blocks are retained too), and the provider feeds' `ProviderStore`.
+//!
+//! Records, placement and publications are wallet-libraries'
+//! `zakura-receiver-directory`; this crate only persists them.
+use receiver_directory::{
     snapshot::{self, Manifest, ProviderSet, Snapshot, PROFILE, TREE_SIZE},
-    Error, Hash, Payment, RawRecord, ReceiverBytes,
+    Hash, Payment, RawRecord, ReceiverBytes,
 };
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::path::Path;
+
+/// Why directory data, coverage or the database was rejected: the directory's own
+/// errors, unchanged, and the database's.
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error("malformed receiver directory data")]
+    Malformed,
+    #[error("receiver directory coverage is incomplete or uses a different anchor")]
+    Coverage,
+    #[error("receiver directory table or commitment history limit exceeded")]
+    Capacity,
+    #[error("missing continuation page")]
+    MissingPage,
+    #[error(transparent)]
+    Sql(#[from] rusqlite::Error),
+    #[error(transparent)]
+    Json(#[from] serde_json::Error),
+}
+
+impl From<receiver_directory::Error> for Error {
+    fn from(error: receiver_directory::Error) -> Self {
+        match error {
+            receiver_directory::Error::Malformed => Error::Malformed,
+            receiver_directory::Error::Coverage => Error::Coverage,
+            receiver_directory::Error::Capacity => Error::Capacity,
+            receiver_directory::Error::MissingPage => Error::MissingPage,
+            receiver_directory::Error::Json(error) => Error::Json(error),
+        }
+    }
+}
+
+/// Encodes `record` after checking its page bounds.
+fn encode(record: &RawRecord) -> Result<[u8; receiver_directory::RECORD_BYTES], Error> {
+    record.encode().map_err(|_| Error::Malformed)
+}
+
+/// Decodes one slot structurally. Only an entirely zero slot is empty; any other
+/// malformed slot is an error, so corruption can never advance a gap limit.
+fn decode(bytes: &[u8]) -> Result<Option<RawRecord>, Error> {
+    RawRecord::decode(bytes).map_err(|_| Error::Malformed)
+}
 
 /// Salts a publication tries at one row count before the caller grows the table.
 pub const SALT_ATTEMPTS: u32 = 16;
@@ -214,7 +258,7 @@ impl Store {
             }
             last = Some(p);
             // Stored as a lone page; a snapshot numbers the pages.
-            let record = record::encode(&RawRecord {
+            let record = encode(&RawRecord {
                 receiver: *receiver,
                 page: 0,
                 total: 1,
@@ -293,7 +337,7 @@ impl Store {
                     return Err(Error::Capacity);
                 }
                 let bytes: Vec<u8> = row.get(0)?;
-                records.push(record::decode(&bytes)?.ok_or(Error::Malformed)?);
+                records.push(decode(&bytes)?.ok_or(Error::Malformed)?);
             }
         }
         let mut start = 0;
@@ -329,8 +373,8 @@ impl Store {
                 filters_sha256: [0; 32],
             };
             match Snapshot::build(manifest, &records, provider) {
-                Err(Error::Capacity) => continue,
-                built => return built,
+                Err(receiver_directory::Error::Capacity) => continue,
+                built => return Ok(built?),
             }
         }
         Err(Error::Capacity)

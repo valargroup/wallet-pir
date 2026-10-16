@@ -682,7 +682,7 @@ async fn fetch<T, E: std::fmt::Display>(
 }
 
 #[cfg(test)]
-#[path = "../../../crates/receiver-directory/tests/common/mod.rs"]
+#[path = "../../../crates/receiver-store/tests/common/mod.rs"]
 pub(crate) mod common;
 
 #[cfg(test)]

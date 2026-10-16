@@ -1,5 +1,5 @@
 //! Receiver PIR evaluation and the HTTP service that wallets reach through a [`Transport`].
-#[path = "../../../crates/receiver-directory/tests/common/mod.rs"]
+#[path = "../../../crates/receiver-store/tests/common/mod.rs"]
 mod common;
 use common::{manifest, receiver, record};
 use receiver_directory::{snapshot::Snapshot, RawRecord};
