@@ -344,6 +344,13 @@ class HistoryUpgrade(Harness):
         self.assertEqual(self.pins(), {i: sha256(OLD) for i in IDS.values()})
         self.assertFalse(self.load_active())
 
+        self.fake.systemctl = systemctl
+        self.write_request()
+        code, lines = self.run_cli('deploy', '--binary', str(self.binary), '--skip-exact-check')
+        self.assertEqual(code, 0, lines)
+        self.assertEqual(set(self.running().values()), {sha256(NEW)})
+        self.assertTrue(self.load_active(), 'a recovered observer permits an ordinary retry')
+
     def test_explicit_rollback_recovers_an_unhealthy_controller(self):
         self.run_cli('baseline')
         self.write_request(component='controller')

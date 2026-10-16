@@ -475,6 +475,7 @@ class UpgradeDeployer(Deployer):
                 self.ex.systemctl(host, 'stop', unit)
                 self.rollback_journal(journal)
                 self.repin_load(journal)
+                self.refresh_baseline()
                 raise DeployError('monitoring recovery failed; workers rolled back and load left stopped: %s' % error) from error
             journal.set_status('committed')
         return journal
