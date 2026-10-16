@@ -116,12 +116,14 @@ pub fn check_publication(snapshot: &Snapshot, witnesses: Option<&[u8]>) -> Resul
     Ok(())
 }
 
-/// Prepares `snapshot` for serving once [`check_publication`] accepts it.
-pub fn prepare(
-    snapshot: Snapshot,
-    witnesses: Option<Vec<u8>>,
-) -> Result<Publication, receiver_pir::Error> {
-    check_publication(&snapshot, witnesses.as_deref()).map_err(|error| {
+/// Checks a publication before serving, returning the PIR protocol's error type.
+/// Both fresh preparation and test-fixture reuse use this gate; database errors
+/// cannot arise from the check and are refused as malformed data.
+pub fn check_publication_for_serving(
+    snapshot: &Snapshot,
+    witnesses: Option<&[u8]>,
+) -> Result<(), receiver_pir::Error> {
+    check_publication(snapshot, witnesses).map_err(|error| {
         receiver_pir::Error::Directory(match error {
             Error::Malformed => receiver_directory::Error::Malformed,
             Error::Coverage => receiver_directory::Error::Coverage,
@@ -131,7 +133,15 @@ pub fn prepare(
             // A publication check reads no database.
             Error::Sql(_) => receiver_directory::Error::Malformed,
         })
-    })?;
+    })
+}
+
+/// Prepares `snapshot` for serving once [`check_publication_for_serving`] accepts it.
+pub fn prepare(
+    snapshot: Snapshot,
+    witnesses: Option<Vec<u8>>,
+) -> Result<Publication, receiver_pir::Error> {
+    check_publication_for_serving(&snapshot, witnesses.as_deref())?;
     #[cfg(test)]
     {
         crate::prepared::prepare(snapshot, witnesses)

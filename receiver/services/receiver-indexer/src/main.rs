@@ -32,7 +32,7 @@ fn prepare_snapshot(
     snapshot: Snapshot,
     witnesses: Option<Vec<u8>>,
 ) -> std::result::Result<receiver_pir_server::Publication, receiver_pir::Error> {
-    verify::check_publication(&snapshot, witnesses.as_deref())?;
+    verify::check_publication_for_serving(&snapshot, witnesses.as_deref())?;
     prepared::prepare(snapshot, witnesses)
 }
 #[cfg(not(test))]
@@ -1030,6 +1030,27 @@ mod tests {
         // Reads committed after the capture, during preparation.
         let latest = paused.provider().read("near-payouts").unwrap().unwrap();
         assert!(latest > until.as_i64().unwrap());
+    }
+
+    #[test]
+    fn fixture_preparation_returns_protocol_errors_before_reusing_public_rows() {
+        use receiver_directory::Error::Malformed;
+        use receiver_pir::Error::Directory;
+        let mut manifest = super::common::manifest(receiver_pir::MIN_ROWS);
+        manifest.end_position = 300;
+        let valid = super::common::record(0, 1);
+        let mut malformed = valid.clone();
+        malformed.payment.cmx = [255; 32];
+        let snapshot = Snapshot::build(manifest.clone(), &[malformed], &[]).unwrap();
+        assert!(matches!(
+            prepare_snapshot(snapshot, None),
+            Err(Directory(Malformed))
+        ));
+        let snapshot = Snapshot::build(manifest, &[valid], &[]).unwrap();
+        assert!(matches!(
+            prepare_snapshot(snapshot, Some(vec![0; 152])),
+            Err(Directory(Malformed))
+        ));
     }
 
     /// One-shot output validates persisted records and proofs before creating files.
