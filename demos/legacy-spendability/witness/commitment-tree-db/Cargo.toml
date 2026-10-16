@@ -5,8 +5,7 @@ edition = "2021"
 
 [dependencies]
 witness-types = { path = "../witness-types" }
-orchard = { package = "zakura-orchard", version = "1.0", default-features = false }
-incrementalmerkletree = "0.8.2"
+zakura-receiver-crypto = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "54e2b9d360bbe1ad6edb14a301194fde04a4e765" }
 xxhash-rust = { version = "0.8", features = ["xxh64"] }
 thiserror = "2"
 tracing = "0.1"
