@@ -1,8 +1,10 @@
 """Compiled identity comes from the selected executable, never adjacent source."""
 import hashlib
+from contextlib import closing
 import json
 from pathlib import Path
 import sys
+import sqlite3
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -98,6 +100,69 @@ class SourceInfoTests(unittest.TestCase):
         self.assertEqual(actual['metadata_dependency'],'b'*40)
         self.assertEqual(actual['compiled_reader_identity'],source_info.read(self.binary))
         self.assertEqual({p.name:p.read_bytes() for p in checkpoint.iterdir()},before)
+
+    def test_replacing_binary_during_either_verifier_never_publishes_its_report_or_identity(self):
+        for replace_during in ['stream', 'packing', 'final']:
+            with self.subTest(replace_during=replace_during):
+                self.executable(identity())
+                checkpoint=self.root/('checkpoint-'+replace_during);checkpoint.mkdir()
+                receipt=dict(source='archive',blocks=[],design='fixed',canonical_recheck={},
+                             node_info_sha256='f'*64,acquisition_seconds=1,new_rpc_calls=0)
+                for name,value in [('receipt.json',receipt),('final-replay.json',{}),('node-info.json',{})]:
+                    (checkpoint/name).write_text(json.dumps(value))
+                output=self.root/('output-'+replace_during);output.mkdir()
+                (output/'sources.json').write_text(json.dumps(dict(source_files={})))
+                def replace(*args):
+                    value=identity();value['node_parser']['git_revision']='f'*40
+                    value['node_parser']['git_source']='git+https://example.invalid/source#'+'f'*40
+                    self.executable(value)
+                    return {}
+                def git_sha(*args,**kwargs):
+                    if replace_during=='final': replace()
+                    return 'fixture-analysis-head'
+                with patch.object(prepare_evidence.survey,'sufficient',return_value={}), \
+                        patch.object(prepare_evidence.survey,'report',return_value={}), \
+                        patch.object(prepare_evidence.geometry,'survey_projection',return_value={}), \
+                        patch.object(prepare_evidence.verify_stream,'verify',side_effect=replace if replace_during=='stream' else lambda *args:{}), \
+                        patch.object(prepare_evidence,'sample_packing',side_effect=replace if replace_during=='packing' else lambda *args:{}), \
+                        patch.object(prepare_evidence.subprocess,'check_output',side_effect=git_sha):
+                    with self.assertRaisesRegex(ValueError,'binary identity changed'):
+                        prepare_evidence.publish(checkpoint,self.binary,output)
+                self.assertFalse((output/'archive-survey-sources.json').exists())
+                self.assertFalse((output/'SHA256SUMS').exists())
+                if replace_during=='stream': self.assertFalse((output/'stream-conformance.json').exists())
+                if replace_during=='packing': self.assertFalse((output/'archive-sample-packing.json').exists())
+
+    def test_populated_census_without_checkpoint_cannot_be_rebound_to_a_new_binary(self):
+        self.executable(identity())
+        cache=self.root/'unbound-cache';cache.mkdir()
+        database=cache/'census.sqlite'
+        with closing(sqlite3.connect(database)) as db:
+            db.executescript('CREATE TABLE blocks(height INTEGER, hash TEXT); CREATE TABLE txids(id TEXT);')
+            db.execute('INSERT INTO blocks VALUES(0, ?)',('old-parser-block',))
+            db.execute('INSERT INTO txids VALUES(?)',('old-parser-record',))
+            db.commit()
+        before=database.read_bytes()
+        with patch.object(fullchain,'bundles') as bundles, patch.object(fullchain,'extract_bundle') as extract, \
+                patch.object(fullchain,'Gateway') as gateway:
+            with self.assertRaisesRegex(ValueError,'without a source-bound checkpoint'):
+                fullchain.scan(cache,self.binary,self.root/'status',self.root/'evidence')
+            bundles.assert_not_called();extract.assert_not_called();gateway.assert_not_called()
+        self.assertEqual(database.read_bytes(),before)
+        self.assertFalse((cache/'checkpoint.json').exists())
+        self.assertFalse((self.root/'evidence').exists())
+
+    def test_uncheckpointed_empty_database_is_allowed_but_orphan_rows_are_not(self):
+        database=self.root/'empty.sqlite'
+        fullchain.require_empty_census(database)
+        self.assertFalse(database.exists())
+        with closing(sqlite3.connect(database)) as db:
+            db.executescript('CREATE TABLE blocks(height INTEGER); CREATE TABLE txids(id TEXT);')
+            db.commit()
+            fullchain.require_empty_census(database)
+            db.execute('INSERT INTO txids VALUES(?)',('old-orphan-row',));db.commit()
+        with self.assertRaisesRegex(ValueError,'without a source-bound checkpoint'):
+            fullchain.require_empty_census(database)
 
     def test_fullchain_resume_refuses_relabeling_previous_binary_records(self):
         self.executable(identity())
