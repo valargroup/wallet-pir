@@ -936,8 +936,6 @@ dependencies = [
  "tower",
  "tracing",
  "tracing-subscriber",
- "zakura-note-encryption",
- "zakura-orchard",
  "zakura-pir-enhance",
  "zakura-server-chain",
 ]
@@ -2363,7 +2361,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "be769465445e8c1474e9c5dac2018218498557af32d9ed057325ec9a41ae81bf"
 dependencies = [
  "heck",
- "itertools 0.13.0",
+ "itertools 0.14.0",
  "log",
  "multimap",
  "once_cell",
@@ -2383,7 +2381,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a56d757972c98b346a9b766e3f02746cde6dd1cd1d1d563472929fdd74bec4d"
 dependencies = [
  "anyhow",
- "itertools 0.13.0",
+ "itertools 0.14.0",
  "proc-macro2",
  "quote",
  "syn 2.0.117",
@@ -4829,7 +4827,7 @@ dependencies = [
 [[package]]
 name = "zakura-pir-enhance"
 version = "0.0.1-rc3"
-source = "git+https://github.com/zakura-core/wallet-libraries.git?rev=513537bec79ea834a5eb145c3e01883fc3dfda5e#513537bec79ea834a5eb145c3e01883fc3dfda5e"
+source = "git+https://github.com/zakura-core/wallet-libraries.git?rev=cb56f1fded0e3c908f1db341eb0dca566ecbc8f9#cb56f1fded0e3c908f1db341eb0dca566ecbc8f9"
 dependencies = [
  "base64",
  "futures-util",
@@ -4843,6 +4841,8 @@ dependencies = [
  "sha2 0.10.9",
  "thiserror 2.0.18",
  "url",
+ "zakura-note-encryption",
+ "zakura-orchard",
  "zakura-pir-enhance-types",
  "zakura-pir-native",
 ]
@@ -4850,16 +4850,17 @@ dependencies = [
 [[package]]
 name = "zakura-pir-enhance-types"
 version = "0.0.1-rc1"
-source = "git+https://github.com/zakura-core/wallet-libraries.git?rev=513537bec79ea834a5eb145c3e01883fc3dfda5e#513537bec79ea834a5eb145c3e01883fc3dfda5e"
+source = "git+https://github.com/zakura-core/wallet-libraries.git?rev=cb56f1fded0e3c908f1db341eb0dca566ecbc8f9#cb56f1fded0e3c908f1db341eb0dca566ecbc8f9"
 
 [[package]]
 name = "zakura-pir-native"
 version = "0.0.1-rc1"
-source = "git+https://github.com/zakura-core/wallet-libraries.git?rev=513537bec79ea834a5eb145c3e01883fc3dfda5e#513537bec79ea834a5eb145c3e01883fc3dfda5e"
+source = "git+https://github.com/zakura-core/wallet-libraries.git?rev=cb56f1fded0e3c908f1db341eb0dca566ecbc8f9#cb56f1fded0e3c908f1db341eb0dca566ecbc8f9"
 dependencies = [
  "ipir-sp",
  "rand 0.8.5",
  "rand_chacha 0.3.1",
+ "rayon",
  "reinspiring",
 ]
 
