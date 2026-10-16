@@ -103,7 +103,7 @@ class PlannerTests(unittest.TestCase):
         for path in ['unknown.file', 'Cargo.lock', '.cargo/config.toml', 'tools/ci/fast.py', '.github/workflows/ci-full.yml']:
             result = fast.plan(self.packages, [path])
             self.assertEqual(set(result['groups']), fast.FULL_GROUPS)
-            self.assertEqual(len(result['packages']), len(self.packages))
+            self.assertEqual(len(result['packages']), 0 if path.startswith(('tools/ci/', '.github/workflows/ci')) else len(self.packages))
 
     def test_infra_maps_to_its_own_validation(self):
         result = fast.plan(self.packages, ['ops/infra/digitalocean/transparent/worker-pool/main.tf'])
@@ -257,19 +257,23 @@ class IntegrityTests(unittest.TestCase):
                 snapshot.main()
 
     def test_release_build_produces_every_default_bundle_binary(self):
-        # `release.py assemble` without --kind bundles every kind not built on request.
+        # Each CPU candidate must contain every binary its family publishes.
         workflow = (ROOT / '.github/workflows/ci-full.yml').read_text()
         job = workflow.split('\n  release:\n', 1)[1].split('\n  release-cuda:\n', 1)[0]
-        build = job.split('Build optimized release binaries once', 1)[1].split('- name:', 1)[0]
-        built = {word.split()[0] for word in build.split('--bin ')[1:]}
+        qualification = load('qualification')
         release = load('release')
-        for kind, binaries in release.BINARIES.items():
-            if kind in release.ON_REQUEST:
-                continue
-            self.assertLessEqual(set(binaries), built, kind)
-            self.assertIn('name: %s-${{ github.sha }}' % kind, job)
-            self.assertIn('path: release-bundles/%s.tar.gz' % kind, job)
-        self.assertIn('cargo build --locked --release', build)
+        for family in ['receiver', 'transparent', 'enhance']:
+            with patch.object(qualification, 'run') as run:
+                qualification.build(family)
+            build = run.call_args.args[0]
+            built = {build[i + 1] for i, word in enumerate(build) if word == '--bin'}
+            for kind in qualification.KINDS[family]:
+                if kind in release.ON_REQUEST:
+                    continue
+                self.assertLessEqual(set(release.BINARIES[kind]), built, kind)
+                self.assertIn('name: %s-${{ github.sha }}' % kind, job)
+                self.assertIn('path: release-bundles/%s/%s.tar.gz' % (kind, kind), job)
+            self.assertEqual(build[:4], ['cargo', 'build', '--locked', '--release'])
 
     def test_release_native_does_not_use_checkout_local_target(self):
         workflow = (ROOT / '.github/workflows/ci-full.yml').read_text()

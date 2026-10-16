@@ -229,7 +229,7 @@ class ReleaseTests(unittest.TestCase):
     def test_missing_and_expired_artifacts_refused(self):
         run = dict(id=1, head_sha=SHA, head_branch='main', event='push', status='completed', conclusion='success', path='.github/workflows/ci-full.yml')
         for artifacts in [[], [{'name': f'transparent-filter-{SHA}', 'expired': True}]]:
-            with patch.dict('os.environ', {'GITHUB_REPOSITORY': 'org/repo'}), patch.object(release, 'api', side_effect=[{'workflow_runs': [run]}, {'artifacts': artifacts}]):
+            with patch.dict('os.environ', {'GITHUB_REPOSITORY': 'org/repo'}), patch.object(release, 'api', side_effect=[{'workflow_runs': []}, {'workflow_runs': [run]}, {'artifacts': artifacts}]):
                 with self.assertRaises(ValueError):
                     release.resolve(SHA, 'transparent-filter')
 

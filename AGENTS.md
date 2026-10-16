@@ -21,8 +21,9 @@ demo workspace is independent. Preserve existing Cargo package and binary names.
   checkout and head before accepting results; a background process alone does
   not establish automatic wakeup. Record slow commands/blockers with that skill.
 - `make check` / `make check-full` explicitly run comprehensive local checks.
-  Full CI on main, exact-SHA artifact verification and hardware qualification
-  remain release gates. Fast CI is feedback, not release qualification.
+  Full affected-service qualification, exact-SHA artifact verification and hardware
+  qualification remain release gates; unrelated regression CI runs asynchronously.
+  Fast CI is feedback, not release qualification.
 - Keep focused evidence before merging/deploying cryptographic, protocol,
   privacy and migration changes. Preserve independent oracles, negative cases,
   restart/recovery coverage and real HTTP boundaries. Test with `release-fast`;
@@ -40,8 +41,8 @@ demo workspace is independent. Preserve existing Cargo package and binary names.
   `make check-fast` scope for the change; watch main CI in the background and
   fix or revert promptly if the push turns it red.
 - `make prepare-dev` installs a pre-push guard that refuses a push to `main`
-  while main's last finished CI full run failed. Fix or revert that failure
-  first; push the fix itself with `WALLET_PIR_PUSH_ON_RED=1`.
+  while main's last finished service-qualification run failed. Fix or revert that
+  failure first; push the fix itself with `WALLET_PIR_PUSH_ON_RED=1`.
 - Production changes go through `ops/scripts/wallet-pir-deploy.py`
   (`plan`/`preflight` first), which holds the production lock. Do not mutate
   production hosts by hand (`systemctl`, signals, `scp` of binaries) or while

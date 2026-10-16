@@ -1,11 +1,17 @@
 name: CI full
 
-# Release correctness checks for both product families. Fast CI never substitutes
-# for these tests. Enhance hardware qualification remains a separate deployment
-# gate; artifacts are published only after every check in this workflow passes.
+# Reusable full qualification for one service family, plus asynchronous whole-
+# repository regression checks. Existing suites and hardware gates are retained.
 
 on:
-  push:
+  workflow_call:
+    inputs:
+      family:
+        type: string
+        required: true
+  workflow_run:
+    workflows: [Qualify services]
+    types: [completed]
     branches: [main]
   pull_request:
     branches: [main]
@@ -17,7 +23,7 @@ permissions:
   actions: read
 
 concurrency:
-  group: full-${{ github.event.pull_request.number || github.sha }}
+  group: full-${{ github.workflow }}-${{ inputs.family || 'all' }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 env:
@@ -26,9 +32,14 @@ env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -Dwarnings -C target-cpu=x86-64-v3
 
+defaults:
+  run:
+    shell: bash --noprofile --norc -e -o pipefail -c 'umask 022; source "$1"' -- {0}
+
 jobs:
   select:
     name: Select full checks
+    if: github.event_name != 'workflow_run' || (github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.conclusion != 'cancelled')
     runs-on: ubuntu-24.04
     outputs:
       enhance: ${{ steps.affected.outputs.enhance }}
@@ -41,23 +52,33 @@ jobs:
       transparent_infra: ${{ steps.affected.outputs.transparent_infra }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
       - name: Select affected full suites
         id: affected
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
+          FAMILY: ${{ inputs.family }}
+          SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
+          umask 022
+          if [[ -n "$FAMILY" ]]; then
+            python3 tools/ci/qualification.py checks --family "$FAMILY"
+          elif [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
             [[ "$BASE" =~ ^[0-9a-f]{40}$ ]]
             git fetch --no-tags --depth=1 origin "$BASE"
             python3 tools/ci/fast.py --committed-only --base "$BASE" --select-only --github-output
+          elif [[ "$GITHUB_EVENT_NAME" == workflow_run ]]; then
+            python3 tools/ci/qualification.py background --sha "$SOURCE_SHA"
           else
             python3 tools/ci/fast.py --all --select-only --github-output
           fi
 
   transparent-lint:
-    needs: select
-    if: needs.select.outputs.transparent == 'true'
+    needs: [select, validate-ops]
+    if: always() && needs.select.result == 'success' && (needs.validate-ops.result == 'success' || needs.validate-ops.result == 'skipped') && needs.select.outputs.transparent == 'true'
     name: Transparent lint
     runs-on: ${{ fromJSON(github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.WALLET_PIR_BUILD_RUNNER || '"ubuntu-24.04"') }}
     timeout-minutes: 60
@@ -69,6 +90,8 @@ jobs:
       CFLAGS: -mpclmul
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
       - uses: ./.github/actions/rust-setup
         with:
           lane: full-lint
@@ -86,8 +109,8 @@ jobs:
         run: python3 tools/ci/cargo_cache.py report
 
   transparent-test:
-    needs: select
-    if: needs.select.outputs.transparent == 'true'
+    needs: [select, validate-ops]
+    if: always() && needs.select.result == 'success' && (needs.validate-ops.result == 'success' || needs.validate-ops.result == 'skipped') && needs.select.outputs.transparent == 'true'
     name: Transparent tests
     runs-on: ${{ fromJSON(github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.WALLET_PIR_BUILD_RUNNER || '"ubuntu-24.04"') }}
     timeout-minutes: 60
@@ -98,6 +121,8 @@ jobs:
       CFLAGS: -mpclmul
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
       - uses: ./.github/actions/rust-setup
         with:
           lane: full-test
@@ -118,6 +143,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.14.8
@@ -145,6 +172,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.14.8
@@ -164,6 +193,8 @@ jobs:
     runs-on: ${{ fromJSON(github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.WALLET_PIR_BUILD_RUNNER || '"ubuntu-24.04"') }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
       - name: Read repository Rust toolchain
         id: helper-toolchain
         run: python3 -c 'import os,tomllib; t=tomllib.load(open("rust-toolchain.toml","rb"))["toolchain"]["channel"]; print("toolchain="+t, file=open(os.environ["GITHUB_OUTPUT"],"a"))'
@@ -254,8 +285,8 @@ jobs:
           refuses "second ExecStart"
 
   enhance-lint:
-    needs: select
-    if: needs.select.outputs.enhance == 'true'
+    needs: [select, validate-ops]
+    if: always() && needs.select.result == 'success' && (needs.validate-ops.result == 'success' || needs.validate-ops.result == 'skipped') && needs.select.outputs.enhance == 'true'
     name: Enhance lint
     runs-on: ${{ fromJSON(github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.WALLET_PIR_BUILD_RUNNER || '"ubuntu-24.04"') }}
     timeout-minutes: 60
@@ -264,6 +295,8 @@ jobs:
       CFLAGS: -mpclmul
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
       - uses: ./.github/actions/rust-setup
         with:
           lane: full-lint
@@ -275,8 +308,8 @@ jobs:
         run: python3 tools/ci/cargo_cache.py report
 
   enhance-test:
-    needs: select
-    if: needs.select.outputs.enhance == 'true'
+    needs: [select, validate-ops]
+    if: always() && needs.select.result == 'success' && (needs.validate-ops.result == 'success' || needs.validate-ops.result == 'skipped') && needs.select.outputs.enhance == 'true'
     name: Enhance tests
     runs-on: ${{ fromJSON(github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.WALLET_PIR_BUILD_RUNNER || '"ubuntu-24.04"') }}
     timeout-minutes: 60
@@ -289,6 +322,8 @@ jobs:
       CFLAGS: -mpclmul
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
       - uses: ./.github/actions/rust-setup
         with:
           lane: full-test
@@ -324,14 +359,16 @@ jobs:
 
   shared-test:
     name: Shared lint and tests
-    needs: select
-    if: needs.select.outputs.shared == 'true'
+    needs: [select, validate-ops]
+    if: always() && needs.select.result == 'success' && (needs.validate-ops.result == 'success' || needs.validate-ops.result == 'skipped') && needs.select.outputs.shared == 'true'
     runs-on: ${{ fromJSON(github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.WALLET_PIR_BUILD_RUNNER || '"ubuntu-24.04"') }}
     timeout-minutes: 60
     env:
       RUST_TEST_THREADS: "1"
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
       - uses: ./.github/actions/rust-setup
         with:
           lane: full-test
@@ -345,12 +382,14 @@ jobs:
 
   receiver-test:
     name: Receiver lint and tests
-    needs: select
-    if: needs.select.outputs.receiver == 'true'
+    needs: [select, validate-ops]
+    if: always() && needs.select.result == 'success' && (needs.validate-ops.result == 'success' || needs.validate-ops.result == 'skipped') && needs.select.outputs.receiver == 'true'
     runs-on: ${{ fromJSON(github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.WALLET_PIR_BUILD_RUNNER || '"ubuntu-24.04"') }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
       - uses: ./.github/actions/rust-setup
         with:
           lane: full-test
@@ -364,7 +403,7 @@ jobs:
 
   complete:
     name: Full checks complete
-    if: always()
+    if: always() && needs.select.result == 'success'
     needs: [select, transparent-lint, transparent-test, enhance-lint, enhance-test, shared-test, receiver-test, validate-ops, validate-enhance-infra, validate-transparent-elastic-infra]
     runs-on: ubuntu-24.04
     steps:
@@ -388,133 +427,152 @@ jobs:
                   raise SystemExit(f'{job}: {results[job]["result"]}, expected {expected}')
           PYCHECK
 
-  release:
-    name: Prepare qualified release artifacts
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-    needs: [complete]
+  build:
+    name: Build candidate release artifacts
+    if: inputs.family != '' && github.event_name != 'pull_request' && github.event_name != 'workflow_run' && github.ref == 'refs/heads/main'
+    needs: [select, validate-ops]
     runs-on: ${{ fromJSON(vars.WALLET_PIR_BUILD_RUNNER || '"ubuntu-24.04"') }}
     timeout-minutes: 60
-    permissions:
-      contents: read
     env:
       RUSTFLAGS: -C target-cpu=x86-64-v3 -C target-feature=+pclmulqdq
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      - name: Prepare operations candidate
+        if: inputs.family == 'ops'
+        run: python3 tools/ci/qualification.py assemble --family ops --sha "$GITHUB_SHA"
       - uses: ./.github/actions/rust-setup
+        if: inputs.family != 'ops'
         with:
           lane: release
           scope: q48
-      - name: Build optimized release binaries once
-        run: >-
-          python3 tools/ci/stage.py compile:release -- cargo build --locked --release
-          -p enhance-pir-server -p enhance-pir -p enhance-pir-load-test -p pir-apm -p pir-monitor
-          -p transparent-filter-server -p transparent-shard-server -p receiver-indexer
-          --bin enhance-pir-server --bin enhance-pir-load-test
-          --bin enhance-pir-cli --bin pir-apm --bin transparent-filter-server
-          --bin transparent-shard-server --bin shard-assign --bin shard-prune
-          --bin shard-control --bin transparent-publish-controller
-          --bin transparent-txid-server --bin txid-control --bin txid-inventory
-          --bin txid-display-controller --bin transparent-event-ingest
-          --bin receiver-directory --bin receiver-probe --features enhance-pir/cli
-      - name: Assemble checksummed release bundles
+      - name: Build selected CPU candidate
+        if: inputs.family != 'ops'
         env:
-          SHA: ${{ github.sha }}
-        run: python3 tools/ci/stage.py artifact -- python3 tools/ci/release.py assemble --sha "$SHA" --output release-bundles
-      # The native profile serves an incompatible protocol; build it in its own
-      # target directory so feature unification never leaks into the q48 bundle.
+          FAMILY: ${{ inputs.family }}
+        run: |
+          python3 tools/ci/qualification.py build --family "$FAMILY"
+          python3 tools/ci/qualification.py assemble --family "$FAMILY" --sha "$GITHUB_SHA"
       - uses: ./.github/actions/rust-setup
+        if: inputs.family == 'enhance'
         with:
           lane: release-native
           scope: native
-      - name: Build native Enhance binaries
-        run: >-
-          python3 tools/ci/stage.py compile:native -- cargo build --locked --release
-          -p enhance-pir-server -p enhance-pir -p enhance-pir-load-test
-          --bin enhance-pir-server --bin enhance-pir-load-test --bin enhance-pir-cli --bin status-pir
-          --features enhance-pir/cli,enhance-pir/native-reinspiring,enhance-pir-server/native-reinspiring,enhance-pir-load-test/native-reinspiring
-      - name: Assemble native Enhance bundle
-        env:
-          SHA: ${{ github.sha }}
-        run: python3 tools/ci/stage.py artifact -- python3 tools/ci/release.py assemble --sha "$SHA" --kind enhance-pir-native --target "$CARGO_TARGET_DIR" --output release-bundles-native
-      # Status roles and controller come from the same native build.
-      - name: Assemble Status bundle
-        env:
-          SHA: ${{ github.sha }}
-        run: python3 tools/ci/stage.py artifact -- python3 tools/ci/release.py assemble --sha "$SHA" --kind status-pir --target "$CARGO_TARGET_DIR" --output release-bundles-status
+      - name: Build native Enhance and Status candidates
+        if: inputs.family == 'enhance'
+        run: |
+          python3 tools/ci/stage.py compile:native -- cargo build --locked --release \
+            -p enhance-pir-server -p enhance-pir -p enhance-pir-load-test \
+            --bin enhance-pir-server --bin enhance-pir-load-test --bin enhance-pir-cli --bin status-pir \
+            --features enhance-pir/cli,enhance-pir/native-reinspiring,enhance-pir-server/native-reinspiring,enhance-pir-load-test/native-reinspiring
+          python3 tools/ci/qualification.py assemble --family enhance --native --sha "$GITHUB_SHA"
       - name: Report Cargo cache reuse
-        if: always()
+        if: always() && inputs.family != 'ops'
         continue-on-error: true
         run: python3 tools/ci/cargo_cache.py report
       - uses: actions/upload-artifact@v4
         with:
-          name: status-pir-${{ github.sha }}
-          path: release-bundles-status/status-pir.tar.gz
-          overwrite: true
+          name: candidate-${{ inputs.family }}-${{ github.sha }}
+          path: release-bundles/**/*.tar.gz
           compression-level: 0
           if-no-files-found: error
-          retention-days: 14
-      - uses: actions/upload-artifact@v4
+          retention-days: 2
+
+  release:
+    name: Prepare qualified release artifacts
+    if: inputs.family != '' && github.event_name != 'pull_request' && github.event_name != 'workflow_run' && github.ref == 'refs/heads/main'
+    needs: [complete, build]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
         with:
-          name: enhance-pir-native-${{ github.sha }}
-          path: release-bundles-native/enhance-pir-native.tar.gz
-          overwrite: true
-          compression-level: 0
-          if-no-files-found: error
-          retention-days: 14
-      - uses: actions/upload-artifact@v4
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
         with:
-          name: enhance-pir-${{ github.sha }}
-          path: release-bundles/enhance-pir.tar.gz
-          overwrite: true
-          compression-level: 0
-          if-no-files-found: error
-          retention-days: 14
+          name: candidate-${{ inputs.family }}-${{ github.sha }}
+          path: release-bundles
+      - name: Verify qualified candidate contents
+        env:
+          FAMILY: ${{ inputs.family }}
+        run: python3 tools/ci/qualification.py verify --family "$FAMILY" --sha "$GITHUB_SHA"
       - uses: actions/upload-artifact@v4
-        with:
-          name: transparent-filter-${{ github.sha }}
-          path: release-bundles/transparent-filter.tar.gz
-          overwrite: true
-          compression-level: 0
-          if-no-files-found: error
-          retention-days: 14
-      - uses: actions/upload-artifact@v4
-        with:
-          name: transparent-shard-${{ github.sha }}
-          path: release-bundles/transparent-shard.tar.gz
-          overwrite: true
-          compression-level: 0
-          if-no-files-found: error
-          retention-days: 14
-      - uses: actions/upload-artifact@v4
-        with:
-          name: transparent-publisher-${{ github.sha }}
-          path: release-bundles/transparent-publisher.tar.gz
-          overwrite: true
-          compression-level: 0
-          if-no-files-found: error
-          retention-days: 14
-      - uses: actions/upload-artifact@v4
-        with:
-          name: transparent-txid-display-${{ github.sha }}
-          path: release-bundles/transparent-txid-display.tar.gz
-          overwrite: true
-          compression-level: 0
-          if-no-files-found: error
-          retention-days: 14
-      - uses: actions/upload-artifact@v4
-        with:
-          name: receiver-pir-${{ github.sha }}
-          path: release-bundles/receiver-pir.tar.gz
-          overwrite: true
-          compression-level: 0
-          if-no-files-found: error
-          retention-days: 14
-      - uses: actions/upload-artifact@v4
+        if: inputs.family == 'ops'
         with:
           name: wallet-pir-ops-${{ github.sha }}
-          path: release-bundles/wallet-pir-ops.tar.gz
+          path: release-bundles/wallet-pir-ops/wallet-pir-ops.tar.gz
+          overwrite: true
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: inputs.family == 'receiver'
+        with:
+          name: receiver-pir-${{ github.sha }}
+          path: release-bundles/receiver-pir/receiver-pir.tar.gz
+          overwrite: true
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: inputs.family == 'transparent'
+        with:
+          name: transparent-filter-${{ github.sha }}
+          path: release-bundles/transparent-filter/transparent-filter.tar.gz
+          overwrite: true
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: inputs.family == 'transparent'
+        with:
+          name: transparent-shard-${{ github.sha }}
+          path: release-bundles/transparent-shard/transparent-shard.tar.gz
+          overwrite: true
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: inputs.family == 'transparent'
+        with:
+          name: transparent-publisher-${{ github.sha }}
+          path: release-bundles/transparent-publisher/transparent-publisher.tar.gz
+          overwrite: true
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: inputs.family == 'transparent'
+        with:
+          name: transparent-txid-display-${{ github.sha }}
+          path: release-bundles/transparent-txid-display/transparent-txid-display.tar.gz
+          overwrite: true
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: inputs.family == 'enhance'
+        with:
+          name: enhance-pir-${{ github.sha }}
+          path: release-bundles/enhance-pir/enhance-pir.tar.gz
+          overwrite: true
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: inputs.family == 'enhance'
+        with:
+          name: enhance-pir-native-${{ github.sha }}
+          path: release-bundles/enhance-pir-native/enhance-pir-native.tar.gz
+          overwrite: true
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: inputs.family == 'enhance'
+        with:
+          name: status-pir-${{ github.sha }}
+          path: release-bundles/status-pir/status-pir.tar.gz
           overwrite: true
           compression-level: 0
           if-no-files-found: error
@@ -522,7 +580,7 @@ jobs:
 
   release-cuda:
     name: Prepare native CUDA release artifact (Ubuntu 22.04)
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    if: inputs.family == 'enhance' && github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     needs: [complete]
     runs-on: ubuntu-24.04
     timeout-minutes: 120

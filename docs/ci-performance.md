@@ -24,7 +24,7 @@ runs the integration targets classified as `fast` in
 [`tools/ci/enhance-tests.json`](../tools/ci/enhance-tests.json). The remaining
 integration targets, doctests, binary unit tests and all-feature lint run in
 **CI full**. PRs select affected product, shared, operations and infrastructure
-families; main qualifies every family. The aggregate completion check fails if a
+families; main qualifies affected service families. The aggregate completion check fails if a
 selected job fails or is skipped. This avoids compiling every integration target just
 to exclude its tests at runtime. Affected helper
 checks run concurrently with Rust; selected operations suites run in
@@ -38,11 +38,25 @@ the bounded default fixture. Existing ignored hardware/GPU cases remain explicit
 manual checks. The boundary recovery target is a reference model, not evidence that
 the implementation follows every modeled transition.
 
-CI full on main runs both Transparent and Enhance suites and offline deployment
-acceptance checks. After all pass, it builds optimized release binaries and uploads
-checksummed q48, native CPU and optional CUDA bundles tied to that SHA. A green fast run is never release
-qualification. Full qualification of an older main commit is not cancelled by a
-newer main push. No tests were marked ignored or removed.
+`Qualify services` selects cumulative changes since each service's last qualified
+ancestor on main. Missing history, unknown inputs and truncated GitHub comparisons
+broaden coverage. A manual run can qualify one family or all families at the exact
+main revision captured by dispatch; newer pushes do not cancel manual runs.
+
+Receiver, Transparent, Enhance/Status and the operations package qualify
+independently, using the existing full family suites, shared tests and helper
+checks. Cheap helper checks precede native work. Candidate release builds may run
+alongside testing in separate target lanes; candidate archives are uploaded under
+an ineligible name and re-verified before qualified publication. Each family
+publishes immediately after its required checks pass. Failure in another family
+cannot authorize or prevent that publication. CPU artifacts do not wait for CUDA.
+
+Whole-repository **CI full** follows automatic service qualification in the
+background, at the triggering source revision. New main pushes cancel obsolete
+automatic qualification and regression work; pinned manual runs and production
+deployments retain separate concurrency groups. Full PR checks remain affected
+checks. No tests are removed or newly ignored, and hardware qualification remains
+a separate deployment gate.
 
 To reproduce selection without running tests:
 
@@ -157,21 +171,21 @@ A missing cache is a valid cold build.
 
 ## Prepared-artifact deployment
 
-Run CI full on the desired main revision and wait for success before dispatching
+Qualify the required service on the desired main revision before dispatching
 a deployment. The existing `ref` input still specifies a full SHA. Enhance still
 requires current main; Transparent still accepts an ancestor of main.
 
-Deploy workflows locate a successful main **CI full** run for that exact SHA,
+Deploy workflows require a completed successful service release job for that exact SHA,
 download its product bundle, verify the complete inventory, SHA and checksums,
 restore executable permissions, then invoke the existing deployment scripts.
 There is no deployment-time Cargo build or fallback compilation. Missing,
 expired, mismatched or unqualified artifacts fail before activation. Retention is
-14 days; rerun full CI for that revision if artifacts have expired.
+14 days; dispatch service qualification if artifacts have expired.
 
 `tested_locally` was removed from Transparent deployments: local tests cannot
 substitute for a qualified downloadable release. Enhance `artifact_only=true`
 now fetches and verifies the prepared bundle rather than compiling it. For
-isolated qualification, download the bundle directly from the full CI run.
+isolated qualification, download the bundle directly from the service-qualification run.
 
 Publisher `shadow` consumes prepared binaries. Its `activate` and `rollback`
 modes use installed/saved state and do not require a fresh artifact download.
@@ -241,3 +255,26 @@ on isolated infrastructure, including artifact rejection, unhealthy replicas and
 rollback. Publish achieved p95 only after collecting representative warm runs.
 If branch protection is added, require **Fast checks** for feedback; full release
 qualification is enforced independently by artifact provenance.
+
+## Runner storage and validation launchers
+
+Persistent cache setup marks the current generation before maintenance, retains
+at least the two most recently used generations per lane, and skips generations
+used in the last day or referenced by a readable process. Older inactive
+generations and unopened runner diagnostic logs older than fourteen days can be
+removed. Maintenance refuses to start expensive work with less than 10 GiB free;
+it never clears a current target to make a check appear healthy.
+
+For long remote validation, start a tracked hub job running
+`python3 tools/ci/launch.py --receipt <outside-checkout-attempt.json> -- <command>`.
+It requires a clean checkout, chooses the pinned Rust toolchain, checks native
+prerequisites, sets `umask 022`, and writes the commit, configuration digest,
+measured duration and exit status atomically. A changed source/configuration
+invalidates success. Use `--no-rust` for operations-only commands. Each attempt
+needs a new receipt path. Inspect the tracked job with short SSH checks; do not
+run validation through an inspection connection.
+
+The initial warm targets are under one minute of queueing, three minutes for
+operations qualification and five minutes for Receiver. These are acceptance
+targets, not measured guarantees. Enhance and Transparent need separate measured
+fixture improvements to reduce their existing roughly 25-minute test runtimes.

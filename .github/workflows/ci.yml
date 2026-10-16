@@ -21,6 +21,10 @@ env:
   CFLAGS: -mpclmul
   CXXFLAGS: -mpclmul
 
+defaults:
+  run:
+    shell: bash --noprofile --norc -e -o pipefail -c 'umask 022; source "$1"' -- {0}
+
 jobs:
   fast:
     name: Fast checks

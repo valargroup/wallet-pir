@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       ref:
-        description: Full main-ancestor SHA with successful full CI and native CUDA artifact
+        description: Full main-ancestor SHA with successful Enhance qualification and native CUDA artifact
         required: true
         type: string
       mode:

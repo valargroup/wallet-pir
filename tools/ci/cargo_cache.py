@@ -441,6 +441,7 @@ def prepare(args, env):
         target = Path(args.persistent_root) / args.lane / record['toolchain']
         existed = target.is_dir()
         target.mkdir(parents=True, exist_ok=True)
+        (target / '.last-used').touch()
         mode, refs, key = 'persistent', None, None
         write_env(env, WALLET_PIR_BUILD_CACHE_ROOT=args.persistent_root)
     else:
