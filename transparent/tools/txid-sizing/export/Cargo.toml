@@ -14,16 +14,16 @@ serde = { version = "1", features = ["derive"] }
 tempfile = "3"
 sha2 = "0.10"
 thiserror = "2"
-transparent-events = { path = "../../../crates/transparent-events" }
-transparent-filter = { path = "../../../crates/transparent-filter" }
-transparent-shard = { path = "../../../crates/transparent-shard" }
+transparent-events = { package = "zakura-transparent-events", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "2abe75b56c1a4e4fac6de4f22e61527937e2598e" }
+transparent-filter = { package = "zakura-transparent-filter", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "2abe75b56c1a4e4fac6de4f22e61527937e2598e" }
+transparent-shard = { package = "zakura-transparent-shard", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "2abe75b56c1a4e4fac6de4f22e61527937e2598e" }
 # Transaction and block reads through the server adapter, at the revision the
 # services pin.
-zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "513537bec79ea834a5eb145c3e01883fc3dfda5e" }
+zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "2abe75b56c1a4e4fac6de4f22e61527937e2598e" }
 
 [dev-dependencies]
 # Raw synthetic blocks for the shared extractor's tests.
-zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "513537bec79ea834a5eb145c3e01883fc3dfda5e", features = ["testing"] }
+zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "2abe75b56c1a4e4fac6de4f22e61527937e2598e", features = ["testing"] }
 
 [profile.release-fast]
 inherits = "release"

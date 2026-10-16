@@ -390,7 +390,7 @@ already name, so it adds no leakage.
 
 ### Wallet client
 
-`transparent/crates/transparent-txid-client` is the wallet's client for this
+`wallet-libraries/zakura/transparent-txid-client` is the wallet's client for this
 publication: synchronous, with no HTTP stack or async runtime. The tooling
 client in `transparent-shard-server/examples/support/txdisplay.rs` remains the
 reference it is tested against.

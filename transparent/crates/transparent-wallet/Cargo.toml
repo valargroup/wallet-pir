@@ -18,10 +18,10 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
 thiserror = "2"
-transparent-events = { version = "=0.1.0-rc.4", path = "../transparent-events" }
-transparent-filter = { version = "=0.1.0-rc.4", path = "../transparent-filter" }
-transparent-native = { version = "=0.1.0-rc.4", path = "../transparent-native" }
-transparent-shard = { version = "=0.1.0-rc.4", path = "../transparent-shard" }
+transparent-events = { package = "zakura-transparent-events", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "2abe75b56c1a4e4fac6de4f22e61527937e2598e" }
+transparent-filter = { package = "zakura-transparent-filter", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "2abe75b56c1a4e4fac6de4f22e61527937e2598e" }
+transparent-native = { package = "zakura-transparent-native", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "2abe75b56c1a4e4fac6de4f22e61527937e2598e" }
+transparent-shard = { package = "zakura-transparent-shard", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "2abe75b56c1a4e4fac6de4f22e61527937e2598e" }
 
 [features]
 # Reference HTTP adapters for the shard service and filter origin.

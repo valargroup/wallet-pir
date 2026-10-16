@@ -5,11 +5,11 @@
 //! types and its canonical record bytes.
 use receiver_directory::{
     snapshot::{Manifest, Snapshot, ROW_BYTES, SLOTS},
-    store::{IndexedBlock, Store},
-    Error, Payment, RawRecord, ReceiverBytes, RECORD_BYTES,
+    Payment, RawRecord, ReceiverBytes, RECORD_BYTES,
 };
 use receiver_pir::server::Server;
 use receiver_pir_server::Publication;
+use receiver_store::{Error, IndexedBlock, Store};
 use zakura_receiver_crypto::{
     witness::{self, WitnessCache, WitnessSnapshot},
     Record,
@@ -120,7 +120,17 @@ pub fn prepare(
     snapshot: Snapshot,
     witnesses: Option<Vec<u8>>,
 ) -> Result<Publication, receiver_pir::Error> {
-    check_publication(&snapshot, witnesses.as_deref())?;
+    check_publication(&snapshot, witnesses.as_deref()).map_err(|error| {
+        receiver_pir::Error::Directory(match error {
+            Error::Malformed => receiver_directory::Error::Malformed,
+            Error::Coverage => receiver_directory::Error::Coverage,
+            Error::Capacity => receiver_directory::Error::Capacity,
+            Error::MissingPage => receiver_directory::Error::MissingPage,
+            Error::Json(error) => receiver_directory::Error::Json(error),
+            // A publication check reads no database.
+            Error::Sql(_) => receiver_directory::Error::Malformed,
+        })
+    })?;
     Ok(Publication::verified(Server::new(snapshot)?, witnesses))
 }
 
@@ -128,11 +138,8 @@ pub fn prepare(
 mod tests {
     use super::*;
     use crate::probe::common;
-    use receiver_directory::{
-        snapshot::TREE_SIZE,
-        store::{Config, IndexedBlock},
-        Hash,
-    };
+    use receiver_directory::{snapshot::TREE_SIZE, Hash};
+    use receiver_store::{Config, IndexedBlock};
 
     /// A publication with records at positions 0 and 5 of an 8-leaf tree, and the
     /// witness file built from `tree` for those positions.

@@ -1,7 +1,7 @@
 //! The canonical chain, read through wallet-libraries' server chain adapters, as the
 //! directory store's blocks. The adapters own the node client, block decoding,
 //! note positions and zero-OVK recovery; this module maps their results.
-use receiver_directory::store::{Checkpoint, IndexedBlock};
+use receiver_store::{Checkpoint, IndexedBlock};
 use zakura_server_chain::{receiver, Network, NodeClient, NodeError};
 
 pub use zakura_server_chain::receiver::{MAX_RECEIVER_BATCH_BLOCKS, MAX_RECEIVER_CONCURRENCY};

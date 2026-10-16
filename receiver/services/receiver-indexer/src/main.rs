@@ -2,17 +2,14 @@
 //! `receiver-directory probe ...` runs the monitor's probe instead (see
 //! `receiver_indexer::probe`), so a release needs no other file.
 use clap::Parser;
-use receiver_directory::{
-    snapshot::{Snapshot, MAX_ROWS},
-    store::{Config, ProviderStore, Store},
-    Error,
-};
+use receiver_directory::snapshot::{Snapshot, MAX_ROWS};
 use receiver_indexer::{
     blocks::{MAX_RECEIVER_BATCH_BLOCKS, MAX_RECEIVER_CONCURRENCY},
     near::{Explorer, Reads},
     verify,
 };
 use receiver_pir_server::Publications;
+use receiver_store::{Config, Error, ProviderStore, Store};
 use std::{
     io::Write,
     net::{IpAddr, SocketAddr},
@@ -585,7 +582,7 @@ async fn is_canonical(rpc: &NodeClient, height: u32, hash: [u8; 32]) -> Result<b
 }
 
 #[cfg(test)]
-#[path = "../../../crates/receiver-directory/tests/common/mod.rs"]
+#[path = "../../../crates/receiver-store/tests/common/mod.rs"]
 mod common;
 
 #[cfg(test)]
@@ -757,7 +754,7 @@ mod tests {
             )
             .unwrap();
             store
-                .append(&receiver_directory::store::IndexedBlock {
+                .append(&receiver_store::IndexedBlock {
                     height: height as u32,
                     hash: [3; 32],
                     parent: [2; 32],

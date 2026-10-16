@@ -236,7 +236,7 @@ async fn cli_resumes_and_replaces_an_orphaned_publication() {
         .unwrap()
         .payment;
     let mut fixture: Value = serde_json::from_str(include_str!(
-        "../../../crates/receiver-directory/tests/fixtures/zero-ovk-action.json"
+        "../../../crates/receiver-store/tests/fixtures/zero-ovk-action.json"
     ))
     .unwrap();
     fixture["height"] = payment.height.into();
@@ -278,7 +278,7 @@ async fn cli_resumes_and_replaces_an_orphaned_publication() {
     let mut repinned = fixture.clone();
     // The receiver at external index zero of the spending key of all-three bytes.
     let other: serde_json::Value = serde_json::from_str(include_str!(
-        "../../../crates/receiver-directory/tests/fixtures/receivers.json"
+        "../../../crates/receiver-store/tests/fixtures/receivers.json"
     ))
     .unwrap();
     repinned["receiver"] = other["seeds"]["3"].clone();

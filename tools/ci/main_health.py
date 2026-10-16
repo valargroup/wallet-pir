@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Pre-push guard: refuse a push to main while main's latest finished CI full run failed.
+"""Pre-push guard: refuse a push to main while main's latest finished service qualification run failed.
 
-Commits go straight to main and CI full runs after the push, so a red main is
+Commits go straight to main and service qualification runs after the push, so a red main is
 only noticed by whoever watches it. On 2026-10-12 and 2026-10-14 main stayed
 red for about eight hours each while further pushes landed on top. This guard
 shows the failing jobs to the next pusher. Push the fix or revert with
@@ -15,7 +15,7 @@ import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[2]
-WORKFLOW = 'CI full'
+WORKFLOW = 'Qualify services'
 OVERRIDE = 'WALLET_PIR_PUSH_ON_RED'
 MARKER = '# wallet-pir red-main guard'
 HOOK = f'''#!/bin/sh
@@ -55,7 +55,7 @@ def pushes_main(lines):
 
 
 def verdict(runs, jobs_for, override=False):
-    """(allowed, message) for main's CI full history, newest first."""
+    """(allowed, message) for main's service qualification history, newest first."""
     run = latest_finished(runs)
     if run is None or run['conclusion'] == 'success':
         return True, ''

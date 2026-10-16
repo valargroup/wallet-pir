@@ -105,9 +105,63 @@ def qualified(run, sha):
             and run['path'] == '.github/workflows/ci-full.yml')
 
 
+def service_family(kind):
+    if kind == 'wallet-pir-ops':
+        return 'ops'
+    if kind == 'receiver-pir':
+        return 'receiver'
+    if kind.startswith('transparent-'):
+        return 'transparent'
+    if kind in ('enhance-pir', 'enhance-pir-native', 'enhance-pir-native-cuda', 'status-pir'):
+        return 'enhance'
+    raise ValueError('unknown release artifact kind')
+
+
+def service_run(run, sha, repo):
+    return (run.get('head_sha') == sha and run.get('head_branch') == 'main'
+            and run.get('event') in ('push', 'workflow_dispatch')
+            and run.get('path') == '.github/workflows/ci-qualify.yml'
+            and (run.get('head_repository') or {}).get('full_name') == repo
+            and isinstance(run.get('run_attempt'), int))
+
+
+def service_jobs(jobs, family, cuda=False):
+    prefix = {'ops': 'Operations', 'receiver': 'Receiver', 'transparent': 'Transparent',
+              'enhance': 'Enhance'}[family]
+    names = ['Select full checks', 'Validate selected helper checks', 'Full checks complete']
+    names += (['Prepare native CUDA release artifact (Ubuntu 22.04)'] if cuda else
+              ['Build candidate release artifacts', 'Prepare qualified release artifacts'])
+    if family != 'ops':
+        names.append('Shared lint and tests')
+    names += {'ops': ['Validate Enhance infrastructure', 'Validate transparent elastic infrastructure'],
+              'receiver': ['Receiver lint and tests', 'Validate Enhance infrastructure'],
+              'enhance': ['Enhance lint', 'Enhance tests', 'Validate Enhance infrastructure'],
+              'transparent': ['Transparent lint', 'Transparent tests', 'Validate transparent elastic infrastructure']}[family]
+    for name in names:
+        matching = [job for job in jobs if job.get('name') == f'{prefix} / {name}']
+        if (len(matching) != 1 or matching[0].get('status') != 'completed'
+                or matching[0].get('conclusion') != 'success'):
+            return False
+    return True
+
+
 def resolve(sha, kind):
     check_sha(sha)
     repo = os.environ['GITHUB_REPOSITORY']
+    family = service_family(kind)
+    runs = api(f'repos/{repo}/actions/workflows/ci-qualify.yml/runs?head_sha={sha}&per_page=100')['workflow_runs']
+    for run in runs:
+        if not service_run(run, sha, repo):
+            continue
+        jobs = api(f'repos/{repo}/actions/runs/{run["id"]}/attempts/{run["run_attempt"]}/jobs?per_page=100')['jobs']
+        if not service_jobs(jobs, family, kind == 'enhance-pir-native-cuda'):
+            continue
+        artifacts = api(f'repos/{repo}/actions/runs/{run["id"]}/artifacts?per_page=100')['artifacts']
+        matching = [a for a in artifacts if a['name'] == f'{kind}-{sha}' and not a['expired']]
+        if len(matching) == 1 and re.fullmatch(r'sha256:[0-9a-f]{64}', matching[0].get('digest', '')):
+            with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
+                out.write(f'run-id={run["id"]}\nartifact-digest={matching[0]["digest"]}\n')
+            return
     # Eligibility is independently checked by each deploy workflow. This is an
     # additional provenance gate: a successful fast/PR run cannot supply binaries.
     runs = api(f'repos/{repo}/actions/workflows/ci-full.yml/runs?head_sha={sha}&status=success&per_page=100')['workflow_runs']
@@ -119,7 +173,7 @@ def resolve(sha, kind):
             with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
                 out.write(f'run-id={run["id"]}\n')
             return
-    raise ValueError(f'no qualified, unexpired {kind} artifact for {sha}; run CI full on main first')
+    raise ValueError(f'no qualified, unexpired {kind} artifact for {sha}; qualify its service on main first')
 
 
 def assemble(sha, target, output, kind=None, build_metadata=None):

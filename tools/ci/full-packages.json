@@ -1,8 +1,7 @@
 {
   "shared": [
     "pir-control",
-    "pir-observability",
-    "pir-native"
+    "pir-observability"
   ],
   "enhance": [
     "enhance-pir",
@@ -12,19 +11,13 @@
     "pir-monitor"
   ],
   "receiver": [
-    "receiver-directory",
     "receiver-indexer",
-    "receiver-pir",
-    "receiver-pir-server"
+    "receiver-pir-server",
+    "receiver-store"
   ],
   "transparent": [
-    "transparent-native",
-    "transparent-events",
-    "transparent-filter",
-    "transparent-shard",
     "transparent-wallet",
     "transparent-wallet-store",
-    "transparent-txid-client",
     "transparent-blocks",
     "transparent-block-server",
     "transparent-filter-server",

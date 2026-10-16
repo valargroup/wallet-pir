@@ -28,7 +28,7 @@ Prototype-phase constraints (superseded by the staging deployment above):
 ## Why: what is known today
 
 - A shard closes on whichever fills first: distinct addresses, directory bytes,
-  or page rows (`transparent/crates/transparent-shard/src/seal.rs`). Targets are
+  or page rows (`wallet-libraries/zakura/transparent-shard/src/seal.rs`). Targets are
   capacity minus 1/7 for addresses and directory bytes, minus 1/32 for pages.
 - On the 2026-09-08 census (older schema), pages filled first almost everywhere:
   159 of 160 archive shards and 13 of 13 recent shards sealed on page rows.
@@ -211,7 +211,7 @@ may apply to any single-segment child, sealed or open.
 
 ## Changes by crate (wallet-pir, paths under `transparent/`)
 
-- `crates/transparent-shard`
+- `wallet-libraries/zakura/transparent-shard`
   - `records.rs`: v12 entry with `flags_child` and `head_row`; drop `inline_count`.
   - `page_row.rs`: 40-byte header with `prev_child`, `prev_row`, `older_runs` and
     their rules; everything that derives packing from the header width follows.

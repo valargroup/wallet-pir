@@ -57,7 +57,7 @@ SCOPES = {
     ('full-test', 'transparent'): ('release-fast', 'transparent-filter/cli'),
     ('full-test', 'enhance'): ('release-fast', 'enhance-pir/cli; native-reinspiring; cuda checks'),
     ('full-test', 'shared'): ('dev,release-fast', 'clippy all-features; pir-control/admission'),
-    ('full-test', 'receiver'): ('dev,release-fast', 'clippy all-features; receiver-directory/store'),
+    ('full-test', 'receiver'): ('dev,release-fast', 'clippy all-features'),
     ('release', 'q48'): ('release', 'enhance-pir/cli'),
     ('release-native', 'native'): ('release', 'enhance-pir/cli,native-reinspiring'),
     ('native-cuda', 'cuda'): ('release', 'enhance-pir/cli,native-reinspiring,cuda'),
@@ -441,6 +441,7 @@ def prepare(args, env):
         target = Path(args.persistent_root) / args.lane / record['toolchain']
         existed = target.is_dir()
         target.mkdir(parents=True, exist_ok=True)
+        (target / '.last-used').touch()
         mode, refs, key = 'persistent', None, None
         write_env(env, WALLET_PIR_BUILD_CACHE_ROOT=args.persistent_root)
     else:

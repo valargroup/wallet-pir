@@ -835,22 +835,9 @@ pub fn collect(args: &[String]) -> Result<Value, AnyError> {
             include_bytes!("../../../../services/transparent-filter-server/src/display_journal.rs")
                 .as_slice(),
         ),
-        (
-            "codec",
-            include_bytes!("../../../../crates/transparent-shard/src/txid.rs").as_slice(),
-        ),
-        (
-            "codec_v2x",
-            include_bytes!("../../../../crates/transparent-shard/src/txid_v2x.rs").as_slice(),
-        ),
-        (
-            "metadata",
-            include_bytes!("../../../../crates/transparent-events/src/lib.rs").as_slice(),
-        ),
-        (
-            "native_budget_reference",
-            include_bytes!("../../../../../shared/pir-native/src/lib.rs").as_slice(),
-        ),
+        // The codecs, event metadata and native budget reference are
+        // wallet-libraries' zakura-transparent-{shard,events} and
+        // zakura-pir-native, pinned by the exact revision in `lock` below.
         ("census", include_bytes!("journal_census.rs").as_slice()),
         ("lock", include_bytes!("../Cargo.lock").as_slice()),
     ]

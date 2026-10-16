@@ -78,19 +78,19 @@ tokio = { version = "1", features = ["full"] }
 tower-http = { version = "0.5", features = ["limit", "trace"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-transparent-events = { path = "../../crates/transparent-events" }
-transparent-filter = { path = "../../crates/transparent-filter" }
-transparent-native = { path = "../../crates/transparent-native" }
-transparent-shard = { path = "../../crates/transparent-shard" }
+transparent-events = { package = "zakura-transparent-events", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "2abe75b56c1a4e4fac6de4f22e61527937e2598e" }
+transparent-filter = { package = "zakura-transparent-filter", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "2abe75b56c1a4e4fac6de4f22e61527937e2598e" }
+transparent-native = { package = "zakura-transparent-native", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "2abe75b56c1a4e4fac6de4f22e61527937e2598e" }
+transparent-shard = { package = "zakura-transparent-shard", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "2abe75b56c1a4e4fac6de4f22e61527937e2598e" }
 transparent-shard-server = { path = "../transparent-shard-server" }
 # Node reads, transparent extraction, compact blocks and the RocksDB state
 # reader, pinned to an exact wallet-libraries revision. The reader opens the
 # node's RocksDB directly: before deploying it, verify that the zakura-state
 # revision wallet-libraries pins matches the running node's database format.
-zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "513537bec79ea834a5eb145c3e01883fc3dfda5e", features = ["rocksdb"] }
+zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "2abe75b56c1a4e4fac6de4f22e61527937e2598e", features = ["rocksdb"] }
 
 [dev-dependencies]
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
 # Raw synthetic blocks for the extraction tests.
-zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "513537bec79ea834a5eb145c3e01883fc3dfda5e", features = ["rocksdb", "testing"] }
+zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "2abe75b56c1a4e4fac6de4f22e61527937e2598e", features = ["rocksdb", "testing"] }

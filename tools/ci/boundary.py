@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 """Dependency boundary between wallet-pir and the Zakura chain and wallet libraries.
 
-wallet-pir owns PIR algorithms, protocol framing and serving. Dependencies run
+wallet-libraries owns the canonical PIR primitive and protocol packages
+(`CANONICAL`); wallet-pir owns serving, stores and operations. Dependencies run
 one way: wallet-pir may consume wallet-libraries; wallet-libraries never consumes
 wallet-pir packages. The receiver framing packages use only the library-owned
 wire codec, with cryptography disabled.
 
 No manifest may declare a direct dependency of any kind on a Zakura Common or
 node package except the ratcheted allowlist. Pure PIR packages may use only the
-explicit receiver codec adapter from wallet-libraries. Their normal/build graphs
+canonical PIR packages and the explicit receiver codec adapter from
+wallet-libraries. Their normal/build graphs
 must contain no Common or node packages. Cargo unifies features in whole-workspace
 metadata, where the indexer enables receiver cryptography: the resolved check
 therefore also resolves a fresh standalone receiver consumer with crypto disabled.
@@ -54,14 +56,19 @@ NODE = {
 WALLET_LIBRARIES = 'github.com/zakura-core/wallet-libraries'
 # Protocol framing packages that must not acquire chain or wallet behaviour.
 PURE = {
-    'receiver-directory', 'receiver-pir', 'receiver-pir-server',
-    'pir-observability', 'pir-native', 'pir-control', 'enhance-pir',
-    'transparent-events', 'transparent-blocks', 'transparent-filter',
-    'transparent-native', 'transparent-shard', 'transparent-txid-client',
+    'receiver-pir-server',
+    'pir-observability', 'pir-control', 'enhance-pir', 'transparent-blocks',
     'transparent-wallet', 'transparent-wallet-store', 'transparent-shard-server',
 }
-RECEIVER = {'receiver-directory', 'receiver-pir', 'receiver-pir-server'}
+RECEIVER = {'receiver-pir-server'}
 CODEC = 'zakura-receiver-crypto'
+# The canonical PIR primitive and protocol packages wallet-libraries owns. A pure
+# package may consume them; their own graphs are checked like the package's.
+CANONICAL = {
+    'zakura-pir-native', 'zakura-transparent-native', 'zakura-transparent-events',
+    'zakura-transparent-filter', 'zakura-transparent-shard',
+    'zakura-transparent-txid-client', 'zakura-receiver-directory', 'zakura-receiver-pir',
+}
 # Preserved sources outside the active product: legacy demos and retained evidence.
 # They are still checked for direct Common and node edges, which includes the
 # manually buildable legacy demo workspace; only the pure-package rules skip them.
@@ -126,10 +133,7 @@ def violations(packages, allowed):
                                     f"{'Common' if name in COMMON else 'node'} package {name}")
             if (package['name'] in PURE and not package.get('preserved')
                     and WALLET_LIBRARIES in dependency['git']
-                    and not (package['name'] == 'receiver-directory' and name == CODEC
-                             and dependency['kind'] == 'dependencies'
-                             and dependency.get('default-features') is False
-                             and not dependency.get('features'))):
+                    and name not in CANONICAL):
                 problems.append(f"{package['manifest']}: pure PIR package has a "
                                 f"{dependency['kind']} on wallet-libraries package {name}")
     for edge in sorted(set(allowed) - found):
@@ -163,7 +167,8 @@ def resolved_violations(metadata, *, workspace_unified=False):
             codec = package['name'] in RECEIVER and library and target['name'] == CODEC
             through_codec = through_codec or codec
             if current != root_id:
-                if (target['name'] in NODE or (library and not codec)
+                if (target['name'] in NODE
+                        or (library and not codec and target['name'] not in CANONICAL)
                         or (target['name'] in COMMON
                             and not (workspace_unified and through_codec))):
                     problems.add(f"{package['name']}: resolves {target['name']}")
@@ -185,7 +190,7 @@ def standalone_receiver_metadata():
         lines = ['[package]', 'name = "receiver-boundary-consumer"',
                  'version = "0.0.0"', 'edition = "2021"', '[workspace]', '[dependencies]']
         for name in sorted(RECEIVER):
-            folder = ('receiver/services/' if name.endswith('-server') else 'receiver/crates/') + name
+            folder = 'receiver/services/' + name
             lines.append(f'{name} = {{ path = {json.dumps(str(ROOT / folder))} }}')
         (root / 'Cargo.toml').write_text('\n'.join(lines) + '\n')
         (root / 'src').mkdir()

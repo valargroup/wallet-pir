@@ -3344,7 +3344,7 @@ dependencies = [
 [[package]]
 name = "zakura-receiver-crypto"
 version = "0.0.1-rc0"
-source = "git+https://github.com/zakura-core/wallet-libraries.git?rev=18efb63b4e4d48826d7a4029588ccafa9e48c34c#18efb63b4e4d48826d7a4029588ccafa9e48c34c"
+source = "git+https://github.com/zakura-core/wallet-libraries.git?rev=2abe75b56c1a4e4fac6de4f22e61527937e2598e#2abe75b56c1a4e4fac6de4f22e61527937e2598e"
 dependencies = [
  "incrementalmerkletree",
  "thiserror 2.0.20",
