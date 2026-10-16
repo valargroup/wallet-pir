@@ -92,14 +92,16 @@ published. Unset variables retain the **ubuntu-24.04** hosted fallback.
 
 | Repository variable | Configured value |
 |---|---|
-| `WALLET_PIR_FAST_RUNNER` | `["self-hosted","Linux","X64","wallet-pir-fast"]` |
+| `WALLET_PIR_MAIN_RUNNER` | `["self-hosted","Linux","X64","wallet-pir-fast"]` |
 | `WALLET_PIR_BUILD_RUNNER` | `["self-hosted","Linux","X64","wallet-pir-build"]` |
 
 Use separate Unix users and 0700 homes for the two services:
 `wallet-pir-fast` and `wallet-pir-build`. Neither has sudo or a deployment SSH key.
 The fast runner executes main and explicit cold preparation, with no production access or
 access to the build user's release caches or runner credentials. All PRs and branch
-dispatches use hosted runners to reserve main's queue. Explicit full runs from branches other than main
+dispatches use hosted runners to reserve main's queue. The legacy
+`WALLET_PIR_FAST_RUNNER` variable is `"ubuntu-24.04"`, so a workflow stored
+on an older branch cannot take main's runner through the previous setting. Explicit full runs from branches other than main
 also use hosted runners; only main builds use the trusted persistent build pool. The fast service has CPU/I/O weight 1000 and a 6-GiB memory ceiling; the build
 service has weight 100, nice level 10 and a 9-GiB ceiling. Both use
 `MemoryHigh=infinity`: a soft threshold previously trapped tests and the runner

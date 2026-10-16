@@ -94,6 +94,16 @@ class QualificationTests(unittest.TestCase):
                 for result in ['failure', 'skipped', 'cancelled', 'queued']:
                     self.assertFalse(permitted({**passed, gate: result}), (name, gate, result))
 
+    def test_main_has_a_separate_runner_setting_from_legacy_branch_workflows(self):
+        workflow = (ROOT / '.github/workflows/ci.yml').read_text()
+        routing = next(line for line in workflow.splitlines() if 'runs-on:' in line)
+        self.assertIn("github.ref == 'refs/heads/main'", routing)
+        self.assertIn("github.event_name != 'pull_request'", routing)
+        self.assertIn('vars.WALLET_PIR_MAIN_RUNNER', routing)
+        self.assertNotIn('vars.WALLET_PIR_FAST_RUNNER', workflow)
+        preparation = (ROOT / '.github/workflows/ci-prepare.yml').read_text()
+        self.assertIn('vars.WALLET_PIR_MAIN_RUNNER', preparation)
+
     def test_only_fast_validation_runs_on_main_pushes(self):
         # Parse trigger structure so adding a comment mentioning "push" cannot
         # accidentally change which workflows this assertion covers.

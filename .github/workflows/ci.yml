@@ -30,7 +30,7 @@ jobs:
     name: Fast checks
     # Reserve this queue for main. PRs and branch dispatches use hosted runners
     # so their cold builds cannot delay a main push.
-    runs-on: ${{ fromJSON(github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && vars.WALLET_PIR_FAST_RUNNER || '"ubuntu-24.04"') }}
+    runs-on: ${{ fromJSON(github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && vars.WALLET_PIR_MAIN_RUNNER || '"ubuntu-24.04"') }}
     # Cold preparation is explicit; main must fail promptly rather than wait.
     timeout-minutes: ${{ github.event_name == 'push' && 3 || 30 }}
     steps:

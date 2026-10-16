@@ -27,7 +27,7 @@ env:
 jobs:
   prepare:
     name: Prepare and validate cold fast units
-    runs-on: ${{ fromJSON(vars.WALLET_PIR_FAST_RUNNER || '"ubuntu-24.04"') }}
+    runs-on: ${{ fromJSON(vars.WALLET_PIR_MAIN_RUNNER || '"ubuntu-24.04"') }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
