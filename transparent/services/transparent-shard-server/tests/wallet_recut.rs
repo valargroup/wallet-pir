@@ -376,16 +376,17 @@ async fn held_before_the_re_cut(path: &Path, base: &str, sets: &Publications) {
     )
     .await;
     complete(&report.unwrap());
-    // A budget of one query stops before the first page: the tail's directory
-    // answers in one commit, which leaves script 3's pages owed.
-    let (report, _) = run(
+    // Two candidate rows for each matched tail script (2 and 3) require four
+    // directory queries. Stop before the first page, with script 2 covered and
+    // script 3's pages owed.
+    let (report, queries) = run(
         path,
         base,
         filters(),
         &sets.before,
         wallet(&[1, 2, 3]),
         TARGET,
-        budget(1),
+        budget(4),
     )
     .await;
     assert!(matches!(
@@ -395,6 +396,11 @@ async fn held_before_the_re_cut(path: &Path, base: &str, sets: &Publications) {
             ..
         }
     ));
+    assert_eq!(
+        queries.get(&5),
+        Some(&4),
+        "both directory candidates are read for each matched tail script"
+    );
     let store = SqliteStore::open(path).unwrap();
     let pending = store.pending().unwrap();
     let tail = &sets.before.shards[5];
