@@ -56,7 +56,7 @@ zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.g
 zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "513537bec79ea834a5eb145c3e01883fc3dfda5e", features = ["testing"] }
 # Independent wallet Enhance client, which is native-only, and the synthetic
 # Ironwood output fixture that authenticates PIR-returned records.
-zakura-pir-enhance = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "cb56f1fded0e3c908f1db341eb0dca566ecbc8f9", default-features = false, features = ["testing"] }
+zakura-pir-enhance = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "18efb63b4e4d48826d7a4029588ccafa9e48c34c", default-features = false, features = ["testing"] }
 simplepir-kernel = "=0.1.0-rc.4"
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
