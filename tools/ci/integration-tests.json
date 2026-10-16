@@ -24,12 +24,6 @@
       "status_wallet"
     ]
   },
-  "node-rpc": {
-    "fast": [
-      "http"
-    ],
-    "full": []
-  },
   "receiver-indexer": {
     "fast": [],
     "full": [

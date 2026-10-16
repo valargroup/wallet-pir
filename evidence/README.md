@@ -3,7 +3,6 @@
 - [Transparent recovery](../transparent/evidence/README.md): accepted milestones, correctness, fleet and filter measurements.
 - [Enhance](../enhance/evidence/README.md): reported performance and preflight results, with provenance limits.
 - [Receiver directory](../receiver/evidence/README.md): mainnet indexing, backfill, encrypted lookup and publication cache runs.
-- [External worker rehearsal](external-workers-rehearsal-2026-10-15/README.md): every external worker role installed, served, updated, refused and rolled back from an unpacked operations package, with its gaps.
 
 ## Retention and historical paths
 
