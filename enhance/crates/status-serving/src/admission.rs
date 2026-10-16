@@ -1,13 +1,13 @@
 //! Bounded, cancellation-safe admission. CPU jobs own their execution permit.
 use super::telemetry;
-use crate::admission::{Queue, Refusal};
 use axum::http::StatusCode;
+use pir_control::admission::{Queue, Refusal};
 use std::time::{Duration, Instant};
 use tokio::sync::OwnedSemaphorePermit;
 
 pub(super) const REQUEST_BUDGET: Duration = Duration::from_secs(5);
 
-pub(super) struct Admission(Queue);
+pub struct Admission(Queue);
 impl Admission {
     /// Serving roles absorb pauses of up to a second: on the CPU host a role
     /// occasionally stops for 0.2-0.9 s, and at 20 QPS the former eight-slot,
@@ -15,7 +15,7 @@ impl Admission {
     pub(super) fn production() -> Self {
         Self::new(4, 32, Duration::from_secs(1))
     }
-    pub(super) fn coordinator() -> Self {
+    pub fn coordinator() -> Self {
         Self::new(16, 8, Duration::from_millis(250))
     }
     fn new(executing: usize, waiting: usize, wait: Duration) -> Self {

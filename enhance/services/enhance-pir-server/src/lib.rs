@@ -1,44 +1,21 @@
-//! Coordinator and worker runtime for Ironwood Enhance PIR.
+//! The Enhance and Status PIR application: chain reading, ingestion, rebuilds,
+//! Status observation and publication, and the `enhance-pir-server` and
+//! `status-pir` command lines.
+//!
+//! Serving lives in `enhance-serving` and `status-serving`, which never depend
+//! on the chain readers here. Their modules are re-exported so existing paths
+//! under `enhance_pir_server` keep resolving.
 
+pub use enhance_serving::*;
 use pir_control::admission;
-pub mod artifact;
-pub mod capacity;
-pub mod control;
-pub mod coordinator;
-pub mod exercise;
+
 pub mod ingest;
-pub mod internal_auth;
-pub mod ipir;
-pub mod runtime;
-/// Isolated synthetic status-PIR backend; no production route is enabled implicitly.
-pub mod status;
-pub mod store;
-mod telemetry;
-pub mod types;
-pub mod wire;
-pub mod worker;
-pub mod zakura;
-
-pub use enhance_pir::{EnhanceRecord, EnhanceRecordParts};
-
-mod packing_budget;
-pub use packing_budget::PackingBudget;
-
-pub mod matvec;
-mod memory_observation;
-mod response_body;
-
-pub mod packing_router;
-pub mod pool;
-pub mod query_ingress;
 pub mod rebuild;
-mod serving_control;
-mod serving_fence;
-pub mod shutdown;
-
-mod http_metrics;
-
-mod query_serving;
-mod query_timing;
-
-pub mod prepared_packing;
+/// Status serving plus its chain observation, publication and CLI.
+pub mod status {
+    pub use status_serving::*;
+    pub mod cli;
+    pub mod publisher;
+    pub mod source;
+}
+pub mod zakura;

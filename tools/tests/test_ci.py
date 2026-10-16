@@ -187,7 +187,7 @@ class BoundaryTests(unittest.TestCase):
     def test_offline_mode_reaches_workspace_metadata_and_helper_targets(self):
         metadata = {'packages': [], 'resolve': {'nodes': []}}
         with patch.object(boundary.subprocess, 'check_output', return_value=json.dumps(metadata)), \
-             patch.object(boundary, 'standalone_receiver_metadata', return_value=metadata):
+             patch.object(boundary, 'standalone_metadata', return_value=metadata):
             self.assertEqual(boundary.main(['--resolved', '--offline']), 0)
             self.assertIn('--offline', boundary.subprocess.check_output.call_args.args[0])
         commands = subprocess.check_output(['make', '-n', 'check-tools', 'OFFLINE=1'],
@@ -202,6 +202,71 @@ class BoundaryTests(unittest.TestCase):
             fast.main()
         helper = next(kw for command, kw in calls if command[0] == 'make')
         self.assertEqual(helper['env']['OFFLINE'], '1')
+
+    def test_serving_libraries_refuse_ingestion_applications_and_other_products(self):
+        def package(*dependencies):
+            return [{'name': 'enhance-serving', 'manifest': 'enhance/crates/enhance-serving/Cargo.toml',
+                     'dependencies': list(dependencies)}]
+        library = 'https://github.com/zakura-core/wallet-libraries.git'
+        allowed = [{**self.edge('pir-control'), 'path': 'shared/pir-control/'},
+                   {**self.edge('enhance-pir'), 'path': 'enhance/crates/enhance-pir/'},
+                   self.edge('zakura-pir-native', git=library), self.edge('axum')]
+        self.assertEqual(boundary.violations(package(*allowed), []), [])
+        forbidden = [self.edge('zakura-server-chain', git=library),
+                     {**self.edge('enhance-pir-server'), 'path': 'enhance/services/enhance-pir-server/'},
+                     {**self.edge('loadtest'), 'path': 'enhance/tools/loadtest/'},
+                     {**self.edge('receiver-store'), 'path': 'receiver/crates/receiver-store/'},
+                     {**self.edge('transparent-server-backend'),
+                      'path': 'transparent/crates/transparent-server-backend/'}]
+        for kind in ['dependencies', 'dev-dependencies', 'build-dependencies',
+                     'target.cfg(unix).dependencies']:
+            for edge in forbidden:
+                problems = [p for p in boundary.violations(package({**edge, 'kind': kind}), [])
+                            if 'serving library' in p]
+                self.assertEqual(len(problems), 1, (kind, edge['name']))
+        # The application that composes the library may use the chain reader.
+        application = [{'name': 'enhance-pir-server',
+                        'manifest': 'enhance/services/enhance-pir-server/Cargo.toml',
+                        'dependencies': [self.edge('zakura-server-chain', git=library)]}]
+        self.assertEqual(boundary.violations(application, []), [])
+
+    def test_serving_library_graphs_resolve_no_ingestion_or_applications(self):
+        def node(id, deps):
+            return {'id': id, 'deps': [{'pkg': d, 'dep_kinds': [{'kind': k}]} for d, k in deps]}
+        def local(id, name, folder):
+            return {'id': id, 'name': name, 'source': None,
+                    'manifest_path': str(boundary.ROOT / folder / 'Cargo.toml')}
+        metadata = {
+            'packages': [
+                local('serving', 'status-serving', 'enhance/crates/status-serving'),
+                local('enhance', 'enhance-serving', 'enhance/crates/enhance-serving'),
+                local('control', 'pir-control', 'shared/pir-control'),
+                {'id': 'mid', 'name': 'helper', 'source': 'registry'},
+                {'id': 'chain', 'name': 'zakura-server-chain',
+                 'source': 'git+https://github.com/zakura-core/wallet-libraries'},
+                local('app', 'enhance-pir-server', 'enhance/services/enhance-pir-server'),
+                local('other', 'receiver-store', 'receiver/crates/receiver-store'),
+            ],
+            'resolve': {'nodes': [
+                node('serving', [('enhance', None), ('control', None)]),
+                node('enhance', [('control', None), ('mid', 'build')]),
+                node('control', []), node('mid', []), node('chain', []),
+                node('app', [('serving', None), ('chain', None)]), node('other', []),
+            ]},
+        }
+        self.assertEqual(boundary.resolved_violations(metadata), [])
+        metadata['resolve']['nodes'][3] = node('mid', [('chain', None)])
+        metadata['resolve']['nodes'][0] = node('serving', [('enhance', None), ('app', 'dev'),
+                                                           ('other', None)])
+        # Both are also pure packages, whose own rule refuses the chain reader.
+        self.assertEqual(boundary.resolved_violations(metadata), [
+            'enhance-serving: resolves zakura-server-chain',
+            'enhance-serving: serving library resolves zakura-server-chain',
+            'status-serving: resolves zakura-server-chain',
+            'status-serving: serving library resolves enhance-pir-server',
+            'status-serving: serving library resolves receiver-store',
+            'status-serving: serving library resolves zakura-server-chain',
+        ])
 
     def test_a_removed_edge_must_leave_the_allowlist(self):
         problems = boundary.violations([], ['svc -> zakura-chain'])

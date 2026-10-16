@@ -450,6 +450,21 @@ independently resampling decoys permits intersection across requests, while
 retrying only the real query reveals its domain. Cover multiplies evaluation
 work by the number of queried domains. See [wallet integration](integration.md).
 
+## Package boundaries
+
+Serving and ingestion are separate packages, following Receiver's indexer/server
+split. `enhance/crates/enhance-serving` holds the coordinator, query ingress,
+packing router, workers, stores and runtimes; `enhance/crates/status-serving` holds
+Status generations, the distributed controller and its roles. They consume
+`enhance-pir`, wallet-libraries PIR packages and `shared/` runtime helpers, and
+never chain readers (`zakura-server-chain`, node crates), ingestion, applications
+or another product's packages. `enhance/services/enhance-pir-server` composes them
+with chain reading (`zakura`), journal ingestion (`ingest`), rebuilds, Status
+observation (`status::source`) and publication (`status::publisher`), and the
+`enhance-pir-server` and `status-pir` command lines; ingestion-dependent tests live
+there. `tools/ci/boundary.py` enforces these rules for every dependency kind and
+for resolved workspace and standalone graphs.
+
 ## Validation and deployment
 
 The validation suite includes independent server/wallet session vectors, malformed

@@ -67,7 +67,7 @@ pub struct AdmissionMetrics {
     pub wait_buckets: [u64; 12],
     pub execution_buckets: [u64; 12],
 }
-pub(super) fn admission_rejected(role: &'static str, reason: &'static str) {
+pub fn admission_rejected(role: &'static str, reason: &'static str) {
     let mut t = shared().lock().unwrap();
     *t.admission
         .entry(role.into())

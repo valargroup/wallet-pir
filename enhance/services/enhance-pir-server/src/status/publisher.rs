@@ -1,14 +1,29 @@
 //! Independently scheduled Status controller hosted by the Enhance coordinator.
-use super::{distributed::*, *};
+use super::{distributed::*, http::*, *};
 use crate::admission::ClientSlots;
 use crate::zakura::ZakuraClient;
 use axum::http::HeaderMap;
+use axum::{
+    body::Bytes,
+    extract::{DefaultBodyLimit, Path, State},
+    http::StatusCode,
+    routing::{get, post},
+    Json, Router,
+};
+use enhance_pir::status::*;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use status_serving::admission;
 use std::{
     fs::{self, File},
     io::Write,
     net::SocketAddr,
     path::PathBuf,
+};
+use std::{
+    sync::atomic::{AtomicBool, Ordering},
+    sync::{Arc, RwLock},
+    time::Duration,
 };
 use tokio::sync::watch;
 
@@ -360,14 +375,7 @@ impl Publisher {
                 return Err("wrong activation acknowledgment".into());
             }
         }
-        let g = Generation {
-            manifest: expected.clone(),
-            public,
-            units: Vec::new(),
-            packing: Arc::new(Vec::new()),
-            top: None,
-            packing_digests: Vec::new(),
-        };
+        let g = Generation::public_only(expected.clone(), public);
         {
             let mut controller = self.controller.write().unwrap();
             if let Some(c) = controller.as_ref() {
@@ -586,13 +594,13 @@ fn same_source(s: &index::Snapshot, m: &Manifest) -> bool {
         && s.entries == m.entries
 }
 async fn init(State(s): State<Publisher>) -> Result<Json<Manifest>, StatusCode> {
-    super::init(State(s.http_state()?)).await
+    http::init(State(s.http_state()?)).await
 }
 async fn session(
     State(s): State<Publisher>,
     Path(id): Path<String>,
 ) -> Result<axum::body::Bytes, StatusCode> {
-    super::session(State(s.http_state()?), Path(id)).await
+    http::session(State(s.http_state()?), Path(id)).await
 }
 async fn forward(
     State(s): State<Publisher>,
@@ -604,7 +612,7 @@ async fn forward(
         telemetry::admission_rejected("coordinator", "client_concurrency");
         return Err(StatusCode::TOO_MANY_REQUESTS);
     };
-    let result = super::forward(State(http_state), body).await?;
+    let result = http::forward(State(http_state), body).await?;
     s.http_state()?;
     Ok(result)
 }

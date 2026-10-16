@@ -132,6 +132,19 @@ pub struct Preparation {
 }
 
 impl Generation {
+    /// A coordinator's generation: the manifest and public parameters only, with
+    /// no serving units; the workers hold the database.
+    pub fn public_only(manifest: Manifest, public: Arc<Vec<u8>>) -> Self {
+        Self {
+            manifest,
+            public,
+            units: Vec::new(),
+            packing: Arc::new(Vec::new()),
+            top: None,
+            packing_digests: Vec::new(),
+        }
+    }
+
     pub fn prepare(
         snapshot: &index::Snapshot,
         generation: u64,
@@ -596,7 +609,7 @@ fn query_masks(network: &Hash, salt: &Hash) -> Result<Vec<Vec<u64>>, Error> {
 fn unit_hint(db: &IPIRServer<u16>, masks: &[Vec<u64>]) -> Result<Vec<CrsBlock>, Error> {
     #[cfg(feature = "native-reinspiring")]
     {
-        crate::runtime::native_runtime::hint(db, masks).map_err(|_| Error::Pir)
+        enhance_serving::runtime::native_runtime::hint(db, masks).map_err(|_| Error::Pir)
     }
     #[cfg(not(feature = "native-reinspiring"))]
     {
@@ -609,7 +622,7 @@ fn unit_hint(db: &IPIRServer<u16>, masks: &[Vec<u64>]) -> Result<Vec<CrsBlock>, 
 #[cfg(test)]
 mod incremental_tests {
     use super::*;
-    use crate::status::{fixture, now_ms};
+    use crate::{fixture, now_ms};
     #[test]
     fn sparse_hint_matches_full_reconstruction_for_signed_negacyclic_boundaries() {
         let mut snapshot = fixture::snapshot(32, false).unwrap();
