@@ -133,7 +133,7 @@ impl Authority {
 
 fn persist(dir: &Path, state: &State) -> Result<(), AuthorityError> {
     let bytes = serde_json::to_vec(state)?;
-    crate::artifact::write_atomic(dir, "authority.json", |file| file.write_all(&bytes))?;
+    enhance_serving::artifact::write_atomic(dir, "authority.json", |file| file.write_all(&bytes))?;
     pir_control::durable::sync_dir(dir)?;
     Ok(())
 }

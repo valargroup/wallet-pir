@@ -100,7 +100,7 @@ impl Controller {
 #[cfg(test)]
 mod controller_tests {
     use super::*;
-    use crate::status::http::{query, serving_http_client, HttpState};
+    use crate::http::{query, serving_http_client, HttpState};
     use axum::{body::Bytes, extract::State, routing::get, Router};
     use std::time::Duration;
 

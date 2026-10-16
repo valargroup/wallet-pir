@@ -8,6 +8,8 @@ members = [
     "shared/pir-control",
     # Protocol libraries, clients and stores.
     "enhance/crates/enhance-pir",
+    "enhance/crates/enhance-serving",
+    "enhance/crates/status-serving",
     "transparent/crates/transparent-blocks",
     "transparent/crates/transparent-server-backend",
     # Services and operational dashboard.

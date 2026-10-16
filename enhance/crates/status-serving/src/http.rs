@@ -15,7 +15,7 @@ use std::{
 
 /// Reuse TCP connections across lookups, including SSH forwarding channels.
 /// Authority/freshness checks remain mandatory for every request on reused connections.
-pub(super) fn serving_http_client() -> Result<reqwest::Client, reqwest::Error> {
+pub fn serving_http_client() -> Result<reqwest::Client, reqwest::Error> {
     reqwest::Client::builder()
         .timeout(admission::REQUEST_BUDGET)
         .connect_timeout(Duration::from_secs(1))
@@ -26,14 +26,14 @@ pub(super) fn serving_http_client() -> Result<reqwest::Client, reqwest::Error> {
 }
 
 #[derive(Clone)]
-pub(super) struct HttpState {
-    pub(super) controller: Controller,
-    pub(super) origin: String,
-    pub(super) http: reqwest::Client,
-    pub(super) permits: Arc<admission::Admission>,
+pub struct HttpState {
+    pub controller: Controller,
+    pub origin: String,
+    pub http: reqwest::Client,
+    pub permits: Arc<admission::Admission>,
 }
 impl HttpState {
-    pub(super) fn new(controller: Controller, origin: String) -> Self {
+    pub fn new(controller: Controller, origin: String) -> Self {
         Self {
             controller,
             origin,
@@ -42,7 +42,7 @@ impl HttpState {
         }
     }
 }
-pub(super) async fn init(State(s): State<HttpState>) -> Result<Json<Manifest>, StatusCode> {
+pub async fn init(State(s): State<HttpState>) -> Result<Json<Manifest>, StatusCode> {
     let g = s.controller.current();
     s.controller.check(&g)?;
     Ok(Json(g.manifest.clone()))
@@ -54,10 +54,10 @@ impl AsRef<[u8]> for SharedBytes {
         self.0.as_slice()
     }
 }
-pub(crate) fn shared_bytes(bytes: Arc<Vec<u8>>) -> Bytes {
+pub fn shared_bytes(bytes: Arc<Vec<u8>>) -> Bytes {
     Bytes::from_owner(SharedBytes(bytes))
 }
-pub(super) async fn session(
+pub async fn session(
     State(s): State<HttpState>,
     Path(id): Path<String>,
 ) -> Result<Bytes, StatusCode> {
@@ -69,10 +69,7 @@ pub(super) async fn session(
     s.controller.check(&g)?;
     Ok(shared_bytes(g.public.clone()))
 }
-pub(super) async fn bounded(
-    mut response: reqwest::Response,
-    limit: usize,
-) -> Result<Vec<u8>, StatusCode> {
+pub async fn bounded(mut response: reqwest::Response, limit: usize) -> Result<Vec<u8>, StatusCode> {
     if !response.status().is_success() {
         return Err(
             StatusCode::from_u16(response.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY)
@@ -91,10 +88,7 @@ pub(super) async fn bounded(
     }
     Ok(out)
 }
-pub(super) async fn forward(
-    State(s): State<HttpState>,
-    body: Bytes,
-) -> Result<Vec<u8>, StatusCode> {
+pub async fn forward(State(s): State<HttpState>, body: Bytes) -> Result<Vec<u8>, StatusCode> {
     match tokio::time::timeout(admission::REQUEST_BUDGET, forward_admitted(s, body)).await {
         Ok(result) => result,
         Err(_) => {
@@ -119,10 +113,7 @@ async fn forward_admitted(s: HttpState, body: Bytes) -> Result<Vec<u8>, StatusCo
     s.controller.check(&g)?;
     Ok(bytes)
 }
-pub(super) async fn evaluate(
-    State(s): State<HttpState>,
-    body: Bytes,
-) -> Result<Vec<u8>, StatusCode> {
+pub async fn evaluate(State(s): State<HttpState>, body: Bytes) -> Result<Vec<u8>, StatusCode> {
     match tokio::time::timeout(admission::REQUEST_BUDGET, evaluate_admitted(s, body)).await {
         Ok(result) => result,
         Err(_) => {
@@ -159,7 +150,7 @@ async fn evaluate_admitted(s: HttpState, body: Bytes) -> Result<Vec<u8>, StatusC
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
 }
-pub(super) async fn query(State(s): State<HttpState>, body: Bytes) -> Result<Vec<u8>, StatusCode> {
+pub async fn query(State(s): State<HttpState>, body: Bytes) -> Result<Vec<u8>, StatusCode> {
     match tokio::time::timeout(admission::REQUEST_BUDGET, query_admitted(s, body)).await {
         Ok(result) => result,
         Err(_) => {

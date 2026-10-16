@@ -15,6 +15,12 @@ must contain no Common or node packages. Cargo unifies features in whole-workspa
 metadata, where the indexer enables receiver cryptography: the resolved check
 therefore also resolves a fresh standalone receiver consumer with crypto disabled.
 
+Serving libraries (`SERVING`) serve prepared publications. No dependency of any
+kind, including target-specific ones, may reach a chain reader, an ingestion or
+application package (`INGESTION`, or any package under a product's `services/`
+or `tools/`), or another product's package. Their workspace graphs (including
+their own dev-dependencies) and standalone graphs are resolved and checked too.
+
 Common and node packages are named exactly: wallet-libraries adapters are
 intentionally `zakura-*` packages too, and low-level PIR cryptography (ipir-sp,
 reinspiring, spiral, hashes, randomness) is wallet-pir's own.
@@ -60,7 +66,18 @@ PURE = {
     'receiver-pir-server',
     'pir-observability', 'pir-control', 'enhance-pir', 'transparent-blocks',
     'transparent-shard-server', 'transparent-server-backend',
+    'enhance-serving', 'status-serving',
 }
+# Serving libraries and the chain reading, ingestion and application packages
+# they must never reach. Each product's applications compose its serving library.
+SERVING = {'enhance-serving', 'status-serving', 'transparent-server-backend'}
+INGESTION = {
+    'zakura-server-chain', 'enhance-pir-server', 'receiver-indexer',
+    'transparent-filter-server', 'transparent-block-server', 'transparent-measure',
+}
+PRODUCTS = ('enhance/', 'transparent/', 'receiver/')
+SHARED = 'shared/'
+
 RECEIVER = {'receiver-pir-server'}
 CODEC = 'zakura-receiver-crypto'
 # The canonical PIR primitive and protocol packages wallet-libraries owns. A pure
@@ -76,6 +93,26 @@ CANONICAL = {
 # manually buildable legacy demo workspace; only the pure-package rules skip them.
 EXCLUDED = ('demos/', 'enhance/crates/transparent-spend-pir/', 'evidence/',
             'enhance/evidence/', 'transparent/evidence/', 'receiver/evidence/', 'target/')
+
+
+def serving_target_problem(owner, target):
+    """Why a serving library at repository path `owner` may not reach the package at
+    repository path `target`, or None. Paths are directories relative to the root."""
+    product = next((p for p in PRODUCTS if owner.startswith(p)), None)
+    if any(target.startswith(p + kind) for p in PRODUCTS for kind in ('services/', 'tools/')):
+        return 'application package'
+    if not target.startswith(SHARED) and (product is None or not target.startswith(product)):
+        return "another product's package"
+    return None
+
+
+def relative_directory(path, root):
+    """`path` relative to `root` as a POSIX directory with a trailing slash, or None
+    outside the repository."""
+    try:
+        return Path(os.path.normpath(path)).relative_to(root).as_posix().rstrip('/') + '/'
+    except ValueError:
+        return None
 
 
 def shared_dependencies(path, root):
@@ -122,8 +159,12 @@ def manifests(root=ROOT):
                     if isinstance(value, dict) and value.get('workspace'):
                         value = shared.get(key, {})
                     value = value if isinstance(value, dict) else {'version': value}
+                    local = value.get('path')
+                    if local is not None:
+                        local = relative_directory(path.parent / local, root)
                     dependencies.append({'name': value.get('package', key),
                                          'kind': prefix + kind, 'git': value.get('git', ''),
+                                         'path': local,
                                          'default-features': value.get('default-features', True),
                                          'features': value.get('features', [])})
         packages.append({'name': data['package']['name'], 'manifest': relative,
@@ -149,6 +190,13 @@ def violations(packages, allowed):
                     and name not in CANONICAL):
                 problems.append(f"{package['manifest']}: pure PIR package has a "
                                 f"{dependency['kind']} on wallet-libraries package {name}")
+            if package['name'] in SERVING and not package.get('preserved'):
+                owner = package['manifest'].rsplit('/', 1)[0] + '/'
+                reason = ('chain reading or ingestion package' if name in INGESTION else
+                          dependency.get('path') and serving_target_problem(owner, dependency['path']))
+                if reason:
+                    problems.append(f"{package['manifest']}: serving library has a "
+                                    f"{dependency['kind']} on {reason} {name}")
     for edge in sorted(set(allowed) - found):
         problems.append(f'{edge}: allowlisted edge no longer exists; remove it from '
                         f'{ALLOWLIST.relative_to(ROOT)}')
@@ -167,6 +215,8 @@ def resolved_violations(metadata, *, workspace_unified=False):
     nodes = {n['id']: n for n in metadata['resolve']['nodes']}
     problems = set()
     for root_id, package in packages.items():
+        if package['name'] in SERVING and package['source'] is None:
+            problems.update(serving_resolved_violations(root_id, packages, nodes))
         if package['name'] not in PURE or package['source'] is not None:
             continue
         seen, queue = set(), [(root_id, False)]
@@ -191,20 +241,47 @@ def resolved_violations(metadata, *, workspace_unified=False):
     return sorted(problems)
 
 
-def standalone_receiver_metadata():
-    """Resolve receiver consumers without the indexer's unified crypto feature.
+def serving_resolved_violations(root_id, packages, nodes):
+    """Packages a serving library's resolved graph reaches but must not: chain
+    readers, nodes, ingestion and application packages, or another product's
+    packages. Every kind of edge counts; dev-dependencies are resolved only for the
+    library itself, so only its own appear."""
+    package = packages[root_id]
+    owner = relative_directory(Path(package['manifest_path']).parent, ROOT) or ''
+    problems, seen, queue = set(), set(), [root_id]
+    while queue:
+        current = queue.pop()
+        if current in seen:
+            continue
+        seen.add(current)
+        target = packages[current]
+        if current != root_id:
+            local = target['source'] is None and relative_directory(
+                Path(target['manifest_path']).parent, ROOT)
+            if (target['name'] in INGESTION or target['name'] in NODE
+                    or (local and serving_target_problem(owner, local))):
+                problems.add(f"{package['name']}: serving library resolves {target['name']}")
+        queue.extend(dep['pkg'] for dep in nodes[current]['deps'])
+    return problems
+
+
+def standalone_metadata(names):
+    """Resolve a fresh consumer of the named repository packages alone, without
+    features other workspace members unify into them (such as the indexer's
+    receiver crypto).
 
     Seed from the committed lockfile so compatible versions stay pinned. The
     temporary consumer adds only its own root; it cannot modify repository files.
     Dependencies have already been fetched by the locked workspace metadata check.
     """
-    with tempfile.TemporaryDirectory(prefix='receiver-boundary-') as directory:
+    folders = {p['name']: p['manifest'].rsplit('/', 1)[0]
+               for p in manifests() if not p['preserved']}
+    with tempfile.TemporaryDirectory(prefix='boundary-') as directory:
         root = Path(directory)
-        lines = ['[package]', 'name = "receiver-boundary-consumer"',
+        lines = ['[package]', 'name = "boundary-consumer"',
                  'version = "0.0.0"', 'edition = "2021"', '[workspace]', '[dependencies]']
-        for name in sorted(RECEIVER):
-            folder = 'receiver/services/' + name
-            lines.append(f'{name} = {{ path = {json.dumps(str(ROOT / folder))} }}')
+        for name in sorted(names):
+            lines.append(f'{name} = {{ path = {json.dumps(str(ROOT / folders[name]))} }}')
         (root / 'Cargo.toml').write_text('\n'.join(lines) + '\n')
         (root / 'src').mkdir()
         (root / 'src/lib.rs').write_text('')
@@ -227,7 +304,9 @@ def main(argv=None):
             ['cargo', 'metadata', '--locked', '--format-version', '1',
              *(['--offline'] if args.offline else [])], cwd=ROOT))
         problems += resolved_violations(metadata, workspace_unified=True)
-        problems += resolved_violations(standalone_receiver_metadata())
+        problems += resolved_violations(standalone_metadata(RECEIVER))
+        for name in sorted(SERVING):
+            problems += resolved_violations(standalone_metadata({name}))
     for problem in problems:
         print(problem, file=sys.stderr)
     return 1 if problems else 0

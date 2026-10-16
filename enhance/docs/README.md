@@ -16,7 +16,8 @@ validates the answer against its own chain context.
 - [Evidence](../evidence/README.md): key decision records, proofs and historical provenance.
 
 Status PIR has its own controller, router and worker roles in production deployment
-records, with source in the Enhance package. Its [architecture](architecture_status.md),
+records; its serving library is `enhance/crates/status-serving`, composed by
+the Enhance application package ([package boundaries](architecture.md#package-boundaries)). Its [architecture](architecture_status.md),
 [distributed runbook](status_distributed.md), [qualification gate](status_qualification.md)
 and [APM rollout](status_apm_rollout.md) separate implementation, observations and
 remaining qualification. The [synthetic backend](status_backend.md) is a test mode.

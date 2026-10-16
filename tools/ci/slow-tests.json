@@ -9,16 +9,20 @@
     "publication::tests::block_by_block_publication_equals_a_fresh_build": "Measured about 33s in warm CI: rebuilds 22 incremental publications and an independent fresh oracle. Full qualification retains the campaign; fast unit checks and the real HTTP smoke retain bounded publication/request coverage.",
     "txid_display::controller::tests::shipped_runtimes_go_out_with_each_candidate_and_go_with_it": "Measured about 37s in warm CI: prepares and ships real cryptographic runtimes across candidate changes. Full qualification retains shipping and cleanup assertions; fast runtime and HTTP checks retain cold preparation and cache recovery."
   },
-  "enhance-pir-server": {
+  "enhance-serving": {
     "runtime::tests::partial_preparation_failure_preserves_published_and_retries": "Real multi-unit cryptographic preparation and independent evaluation; full CI retains the complete test.",
     "runtime::tests::tail_domain_reuses_b_units_and_decodes_b_at_unchanged_coordinates": "Real multi-unit cryptographic preparation and independent evaluation; full CI retains the complete test.",
     "runtime::tests::unequal_units_match_monolithic_preprocessing_and_evaluation": "Real multi-unit cryptographic preparation and independent evaluation; full CI retains the complete test.",
     "runtime::tests::encrypted_bootstrap_round_trip_and_cached_restart": "Measured 5.45s locally: real encrypted bootstrap, independent CPU evaluation and durable runtime restart; full CI retains all assertions.",
     "worker::tests::restart_rebuilds_lost_cache_only_from_verified_durable_rows": "Measured 4.91s locally: real runtime preparation and corrupt/missing-cache recovery; full CI retains the complete HTTP/runtime evidence.",
     "coordinator::admission_tests::full_queue_and_expired_wait_return_retryable_429": "Measured 2.02s locally: real queue expiry and HTTP timeout coverage; full CI retains real elapsed-time assertions.",
-    "status::generation::incremental_tests::sparse_hint_matches_full_reconstruction_for_signed_negacyclic_boundaries": "Measured 1.99s locally: independent full cryptographic reconstruction oracle; full CI retains the comparison.",
-    "status::source::tests::live_rpc_candidate_revalidates_before_durable_publication": "Measured 1.40s locally: real RPC candidate revalidation and durable publication; full CI retains the complete test.",
     "worker::tests::backend_evaluation_failure_over_http_releases_permit_and_recovers": "Measured 2.28s locally: real cryptographic evaluation, malformed-query rejection, injected backend failure and HTTP recovery; full CI retains all assertions."
+  },
+  "status-serving": {
+    "generation::incremental_tests::sparse_hint_matches_full_reconstruction_for_signed_negacyclic_boundaries": "Measured 1.99s locally: independent full cryptographic reconstruction oracle; full CI retains the comparison."
+  },
+  "enhance-pir-server": {
+    "status::source::tests::live_rpc_candidate_revalidates_before_durable_publication": "Measured 1.40s locally: real RPC candidate revalidation and durable publication; full CI retains the complete test."
   },
   "pir-apm": {
     "fleet::integration_tests::failed_and_slow_workers_do_not_block_pages_or_good_samples": "Real HTTP stalled-worker timeout and scrape isolation; full CI retains real-time integration coverage.",
