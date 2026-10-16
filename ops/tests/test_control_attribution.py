@@ -5,6 +5,7 @@ socket mismatch can be exercised without root, sshd or a reconciler; one test
 reads a real kernel socket table on Linux.
 """
 import hashlib
+import io
 import os
 from pathlib import Path
 import socket
@@ -375,7 +376,15 @@ class Survey(unittest.TestCase):
         return item
 
     def observe(self, process, pending):
+        def fictional_executable(path, *args, **kwargs):
+            # The scan is fictional; a runner may own the same numeric PID.
+            # Its host executable must never establish a fixture's attribution.
+            if str(path) == '/proc/%d/exe' % process['pid']:
+                raise FileNotFoundError('fictional process has no host executable')
+            return open(path, *args, **kwargs)
+
         with tempfile.TemporaryDirectory() as directory, patch.object(S, 'scan', return_value=[process]), \
+                patch.object(S, 'open', side_effect=fictional_executable, create=True), \
                 patch.object(S, 'boot_id', return_value='00000000-0000-0000-0000-000000000001'), \
                 patch.object(S, 'booted_unix', return_value=time.time()-3600):
             return S.observe((('owners', Path(directory)/'absent'),), classes={'names': ['shard-control'], 'roots': []},
@@ -389,6 +398,23 @@ class Survey(unittest.TestCase):
         value=self.observe(item,candidates)
         self.assertEqual(observed,[item])
         self.assertEqual((value['pending_count'],value['unattributed_count']),(1,0))
+
+    def test_fictional_pid_cannot_read_a_runners_executable(self):
+        item = self.process(cgroup='0::/system.slice/transparent-shard-server.service')
+        identity = {k: item[k] for k in ('start_ticks', 'exe', 'command_sha256', 'cgroup')}
+        actual_open = open
+
+        def runner_executable(path, *args, **kwargs):
+            if str(path) == '/proc/4242/exe':
+                return io.BytesIO(b'an unrelated runner process')
+            return actual_open(path, *args, **kwargs)
+
+        with patch('builtins.open', side_effect=runner_executable) as host_open:
+            value = self.observe(item, {4242: identity})
+        self.assertEqual(value['pending_count'], 0)
+        self.assertTrue(value['blocked_count'] >= 1)
+        self.assertTrue(any('baseline executable unreadable' in reason for reason in value['blocked']))
+        self.assertFalse(any(str(call.args[0]) == '/proc/4242/exe' for call in host_open.call_args_list))
 
     def test_exact_pending_is_listed_apart_and_any_difference_is_unattributed(self):
         item = self.process()
