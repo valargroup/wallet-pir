@@ -542,9 +542,6 @@ impl<S: WalletStore> WalletStore for CrashAt<S> {
     ) -> Result<(), StoreError> {
         self.inner.put_filter(digest, hash, sealed, bytes)
     }
-    fn prune_caches(&mut self, queryable: &[&str]) -> Result<(), StoreError> {
-        self.inner.prune_caches(queryable)
-    }
     fn last_commit(&self) -> Result<u64, StoreError> {
         self.inner.last_commit()
     }
