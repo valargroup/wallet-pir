@@ -6,7 +6,9 @@ since BASE plus staged, unstaged and untracked files. CI uses committed changes
 only. Without BASE, local selection checks the working changes; use `python3
 tools/ci/fast.py --all` to request all fast checks. Every invocation prints its
 selected checks and reasons. Unknown paths, dependencies and build configuration
-broaden coverage. Package-owned fixtures also select their package.
+broaden coverage. Package-owned fixtures also select their package. CI orchestration
+edits run helper checks without recompiling unchanged Rust in the fast gate;
+full service qualification still broadens to every family.
 
 ```sh
 make doctor
@@ -41,12 +43,15 @@ renamed assignments. No production clocks or thresholds change.
 
 Full PR jobs select affected product/shared/operations/infrastructure families.
 The same helper selection is used for full PR checks: documentation runs only
-link validation, and operations run their affected consumers. Main selects every
-helper and restores exhaustive scaler tiers. Shared library changes expand
+link validation, and operations run their affected consumers. Service qualification
+selects every helper and restores exhaustive scaler tiers. Shared library changes expand
 through reverse dependencies, while unknown paths
 request complete coverage. `Full checks complete` verifies that every selected
-job succeeded and unrelated jobs were skipped. On main, every family must pass
-before release preparation can publish artifacts. Test builds use `release-fast`;
+job succeeded and unrelated jobs were skipped. On main, each selected service
+family publishes independently after its full family suites, shared tests, operations and infrastructure checks pass. Selection
+compares against that family's last qualified ancestor; missing ancestry broadens
+coverage. Whole-repository regression checks follow asynchronously. Test builds
+use `release-fast`;
 deployment binaries retain fat LTO and native/q48/CUDA isolation.
 
 ## Build and monitor ownership

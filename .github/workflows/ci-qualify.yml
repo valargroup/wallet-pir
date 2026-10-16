@@ -1,0 +1,81 @@
+name: Qualify services
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      family:
+        description: Service to qualify at this exact main revision
+        type: choice
+        options: [all, ops, receiver, transparent, enhance]
+        default: all
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  # Manual runs retain their pinned revision when newer main commits arrive.
+  group: qualify-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  select:
+    name: Select cumulative service changes
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: write
+    outputs:
+      ops: ${{ steps.affected.outputs.ops }}
+      receiver: ${{ steps.affected.outputs.receiver }}
+      transparent: ${{ steps.affected.outputs.transparent }}
+      enhance: ${{ steps.affected.outputs.enhance }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Stop obsolete automatic regression runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 tools/ci/qualification.py cancel-regressions --sha "$GITHUB_SHA"
+      - name: Select services since each last qualified ancestor
+        id: affected
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FAMILY: ${{ inputs.family || 'affected' }}
+        run: python3 tools/ci/qualification.py select --sha "$GITHUB_SHA" --family "$FAMILY"
+
+  ops:
+    name: Operations
+    needs: select
+    if: needs.select.outputs.ops == 'true'
+    uses: ./.github/workflows/ci-full.yml
+    with:
+      family: ops
+
+  receiver:
+    name: Receiver
+    needs: select
+    if: needs.select.outputs.receiver == 'true'
+    uses: ./.github/workflows/ci-full.yml
+    with:
+      family: receiver
+
+  transparent:
+    name: Transparent
+    needs: select
+    if: needs.select.outputs.transparent == 'true'
+    uses: ./.github/workflows/ci-full.yml
+    with:
+      family: transparent
+
+  enhance:
+    name: Enhance
+    needs: select
+    if: needs.select.outputs.enhance == 'true'
+    uses: ./.github/workflows/ci-full.yml
+    with:
+      family: enhance

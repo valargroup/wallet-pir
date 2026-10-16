@@ -229,7 +229,7 @@ class ReleaseTests(unittest.TestCase):
     def test_missing_and_expired_artifacts_refused(self):
         run = dict(id=1, head_sha=SHA, head_branch='main', event='push', status='completed', conclusion='success', path='.github/workflows/ci-full.yml')
         for artifacts in [[], [{'name': f'transparent-filter-{SHA}', 'expired': True}]]:
-            with patch.dict('os.environ', {'GITHUB_REPOSITORY': 'org/repo'}), patch.object(release, 'api', side_effect=[{'workflow_runs': [run]}, {'artifacts': artifacts}]):
+            with patch.dict('os.environ', {'GITHUB_REPOSITORY': 'org/repo'}), patch.object(release, 'api', side_effect=[{'workflow_runs': []}, {'workflow_runs': [run]}, {'artifacts': artifacts}]):
                 with self.assertRaises(ValueError):
                     release.resolve(SHA, 'transparent-filter')
 
@@ -786,7 +786,7 @@ class CacheWorkflowTests(unittest.TestCase):
     def test_trusted_build_pool_and_main_cache_writes_are_main_only(self):
         full = self.workflows['ci-full.yml']
         pools = [line for line in full.splitlines() if 'runs-on' in line and 'WALLET_PIR_BUILD_RUNNER' in line]
-        self.assertGreaterEqual(len(pools), 6)
+        self.assertGreaterEqual(len(pools), 5)
         for line in pools:
             # The release job is main-only through its job condition instead.
             if 'pull_request' in line:

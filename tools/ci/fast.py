@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """One affected-check planner for local iteration and CI. Selection needs no Rust.
 
-Unknown paths broaden coverage. Full CI on main always qualifies the whole
-workspace; this feedback gate never qualifies artifacts.
+Unknown paths broaden coverage. Service qualification retains full affected
+family suites; this feedback gate never qualifies artifacts.
 """
 import argparse
 from concurrent.futures import ThreadPoolExecutor
@@ -176,6 +176,15 @@ def plan(packages, paths, *, all_checks=False):
             groups.update({'shared', 'enhance', 'transparent', 'receiver'})
         else:
             groups.add('enhance')
+    # Changing CI orchestration needs exhaustive helper/selector checks, but
+    # recompiling unchanged Rust here duplicates the full qualification that
+    # still runs for every family. Manifests, build scripts and unknown inputs
+    # retain their broad native checks.
+    tooling = lambda path: path.startswith(('tools/ci/', 'tools/tests/', '.github/workflows/ci',
+                                           '.github/actions/rust-setup/'))
+    if any(tooling(path) for path in paths):
+        selected = select(packages, [path for path in paths if not tooling(path)])
+        reasons.append('CI tooling uses helper checks; full family qualification remains required')
     return {'packages': sorted(selected), 'helpers': sorted(helpers), 'groups': sorted(groups), 'reasons': reasons}
 
 
