@@ -20,6 +20,14 @@ class FeedbackTests(unittest.TestCase):
     def samples(self):
         return [row(i, ['shared', 'docs', 'ops'][i % 3]) for i in range(20)]
 
+    def test_timeout_cancellation_and_rerun_do_not_erase_failed_validation(self):
+        for changes in [dict(conclusion='cancelled', dispatch_seconds=200), dict(attempt=2)]:
+            rows = self.samples()
+            rows[0].update(changes)
+            result = timings.feedback_slo(rows)
+            self.assertFalse(result['accepted'])
+            self.assertIn(rows[0]['run'], result['failed_or_incomplete_runs'])
+
     def test_twenty_representative_warm_runs_are_needed(self):
         self.assertFalse(timings.feedback_slo(self.samples()[:19])['accepted'])
         self.assertTrue(timings.feedback_slo(self.samples())['accepted'])

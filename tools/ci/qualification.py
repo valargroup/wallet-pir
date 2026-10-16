@@ -84,7 +84,12 @@ def checks(family, service_only=False):
 def verify(family, sha, output):
     with tempfile.TemporaryDirectory() as directory:
         for kind in KINDS[family]:
-            release.extract(output / kind / (kind + '.tar.gz'), Path(directory) / kind, sha, kind)
+            destination = Path(directory) / kind
+            release.extract(output / kind / (kind + '.tar.gz'), destination, sha, kind)
+            for name in ('candidate.json', 'operations.json'):
+                metadata = destination / name
+                if metadata.exists() and json.loads(metadata.read_text()).get('source_dirty') is not False:
+                    raise ValueError(f'{kind}: candidate source was dirty')
 
 
 def build(family):

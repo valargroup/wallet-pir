@@ -162,6 +162,12 @@ def feedback_slo(rows, target=180):
         if row.get('event') != 'push' or row.get('branch') != 'main':
             excluded.append({'run': row['run'], 'reason': 'not a main push'})
             continue
+        if row.get('attempt', 1) > 1:
+            failures.append(row['run'])
+            continue
+        if row.get('conclusion') == 'cancelled' and row['dispatch_seconds'] >= target:
+            failures.append(row['run'])
+            continue
         if row.get('conclusion') == 'cancelled':
             excluded.append({'run': row['run'], 'reason': 'cancelled'})
             continue
@@ -182,7 +188,7 @@ def feedback_slo(rows, target=180):
                 continue
         covered.update(selection['families'])
         covered.add(selection['category'])
-        eligible.append({'run': row['run'], 'sha': row['sha'], 'seconds': row['dispatch_seconds'],
+        eligible.append({'run': row['run'], 'sha': row['sha'], 'seconds': row.get('total_dispatch_seconds', row['dispatch_seconds']),
                          'category': selection['category']})
     p95 = percentile95([row['seconds'] for row in eligible])
     return {'target_seconds': target, 'samples': eligible, 'sample_count': len(eligible),

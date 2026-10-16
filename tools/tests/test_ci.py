@@ -281,6 +281,31 @@ class ReleaseTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 release.extract(root / 'bundles-status-pir' / 'status-pir.tar.gz', root / 'cross-status', revision, 'enhance-pir-native')
 
+    def test_sequential_candidate_outputs_keep_clean_source_but_real_edits_are_dirty(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / '.gitignore').write_text((ROOT / '.gitignore').read_text())
+            (root / 'source.rs').write_text('source')
+            def git(*args):
+                return subprocess.check_output(['git', *args], cwd=root, stderr=subprocess.DEVNULL, text=True).strip()
+            git('init')
+            git('add', '.gitignore', 'source.rs')
+            git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-m', 'fixture')
+            revision = git('rev-parse', 'HEAD')
+            (root / 'target/release').mkdir(parents=True)
+            (root / 'target/release/server').write_bytes(b'fixture binary')
+            kind = 'enhance-pir-native'
+            with patch.object(release, 'ROOT', root), patch.object(release, 'BINARIES', {kind: ['server']}), \
+                    patch.object(release, 'FILES', {kind: []}):
+                for number, expected_dirty in [(1, False), (2, False), (3, True)]:
+                    if expected_dirty:
+                        (root / 'untracked-source.rs').write_text('real source change')
+                    output = root / 'release-bundles' / str(number)
+                    release.assemble(revision, root / 'target', output, kind)
+                    with tarfile.open(output / (kind + '.tar.gz')) as archive:
+                        metadata = json.load(archive.extractfile('candidate.json'))
+                    self.assertEqual(metadata['source_dirty'], expected_dirty)
+
     def test_cuda_metadata_and_kind_are_required_before_extraction(self):
         kind = 'enhance-pir-native-cuda'
         with tempfile.TemporaryDirectory() as tmp:

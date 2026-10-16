@@ -49,6 +49,14 @@ def complete_jobs(family):
 
 
 class QualificationTests(unittest.TestCase):
+    def test_qualification_rejects_dirty_candidates_before_publication(self):
+        def extract(_archive, destination, _sha, _kind):
+            destination.mkdir()
+            (destination / 'candidate.json').write_text(json.dumps({'source_dirty': True}))
+        with patch.object(q.release, 'extract', side_effect=extract):
+            with self.assertRaisesRegex(ValueError, 'candidate source was dirty'):
+                q.verify('enhance', SHA, Path('/unused'))
+
     def test_expensive_checks_can_be_cancelled_when_a_new_commit_arrives(self):
         workflow = (ROOT / '.github/workflows/ci-full.yml').read_text()
         for name in ['transparent-lint', 'transparent-test', 'enhance-lint',

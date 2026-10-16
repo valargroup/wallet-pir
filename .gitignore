@@ -22,3 +22,6 @@ monitor.sh
 # Local OS metadata and Python test caches
 .DS_Store
 __pycache__/
+# Generated release archives must not mark later artifacts as dirty source.
+/release-bundles/
+/release-bundles-native-cuda/
