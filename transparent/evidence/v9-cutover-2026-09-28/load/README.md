@@ -23,7 +23,7 @@ passed 68/68 before this run.
 `sample-redigest` (`4d4b8981`) re-derived the sample from the version-2
 journal: same 1,080 clients, scripts and ranges; 960 digests changed; every
 client's event count equals the recorded count ([log](sample-redigest.log)).
-The result, [`sample-v2codec.json`](sample-v2codec.json) (`d9ce4f84…`), is now
+The result, [`sample-v2codec.json`](../../../tools/transparent-regression/fixtures/load-sample-v2codec.json) (`d9ce4f84…`), is now
 the load workflow's and scenarios' default sample. The original sample is
 unchanged.
 

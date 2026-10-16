@@ -104,3 +104,10 @@ The initial candidate pool came from the existing seeded workload sample.
 Selection checked full histories before assigning labels: an assumed-unused
 repeated-byte P2SH script was active and was replaced; the coinbase case was
 selected from actual recent coinbase outputs and bounded to 1,643 events.
+
+## Shard-loading workload
+
+`load-sample-v2codec.json` is the unchanged default input of the shard-loading
+workflow. It was captured at
+`c00c2101e85fb9518ef8509f4478ed097ce49814:transparent/evidence/v9-cutover-2026-09-28/load/sample-v2codec.json`.
+Its digest is included in `SHA256SUMS`; moving it does not grant new acceptance.
