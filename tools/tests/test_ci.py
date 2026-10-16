@@ -786,7 +786,7 @@ class CacheWorkflowTests(unittest.TestCase):
     def test_trusted_build_pool_and_main_cache_writes_are_main_only(self):
         full = self.workflows['ci-full.yml']
         pools = [line for line in full.splitlines() if 'runs-on' in line and 'WALLET_PIR_BUILD_RUNNER' in line]
-        self.assertGreaterEqual(len(pools), 6)
+        self.assertGreaterEqual(len(pools), 5)
         for line in pools:
             # The release job is main-only through its job condition instead.
             if 'pull_request' in line:

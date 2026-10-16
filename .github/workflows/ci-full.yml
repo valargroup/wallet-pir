@@ -195,7 +195,7 @@ jobs:
     needs: select
     if: needs.select.outputs.ops == 'true'
     name: Validate selected helper checks
-    runs-on: ${{ fromJSON(github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.WALLET_PIR_BUILD_RUNNER || '"ubuntu-24.04"') }}
+    runs-on: ${{ fromJSON(github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.WALLET_PIR_FAST_RUNNER || '"ubuntu-24.04"') }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -441,7 +441,7 @@ jobs:
     name: Build candidate release artifacts
     if: inputs.family != '' && github.event_name != 'pull_request' && github.event_name != 'workflow_run' && github.ref == 'refs/heads/main'
     needs: [select, validate-ops]
-    runs-on: ${{ fromJSON(vars.WALLET_PIR_BUILD_RUNNER || '"ubuntu-24.04"') }}
+    runs-on: ${{ fromJSON(inputs.family == 'ops' && '"ubuntu-24.04"' || vars.WALLET_PIR_BUILD_RUNNER || '"ubuntu-24.04"') }}
     timeout-minutes: 60
     env:
       RUSTFLAGS: -C target-cpu=x86-64-v3 -C target-feature=+pclmulqdq

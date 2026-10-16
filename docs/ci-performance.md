@@ -45,7 +45,8 @@ main revision captured by dispatch; newer pushes do not cancel manual runs.
 
 Receiver, Transparent, Enhance/Status and the operations package qualify
 independently, using the existing full family suites, shared tests and helper
-checks. Cheap helper checks precede native work. Candidate release builds may run
+checks. Cheap helper checks precede native work on the fast pool. Operations archives
+assemble on hosted runners without Rust, so they never queue behind native tests. Candidate release builds may run
 alongside testing in separate target lanes; candidate archives are uploaded under
 an ineligible name and re-verified before qualified publication. Each family
 publishes immediately after its required checks pass. Failure in another family
