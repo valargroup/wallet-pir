@@ -32,6 +32,7 @@ availability.
 | Publication distributor | Authenticated revision discovery and immutable artifact delivery, directly or through mirrors |
 | Local publication manager | Synchronization, verification, activation, retirement and serving eligibility for the operator's holdings |
 | Router and worker | Wallet-facing API, coverage routing, query admission, encrypted evaluation and response packing |
+| Service discovery | Provider announcements and candidate selection by product, protocol and actual coverage; separate from serving authorization |
 
 ```mermaid
 flowchart LR
@@ -170,7 +171,51 @@ can query its local recent holdings and configured archive coverage. Losing a pe
 or receiving stale assignment information produces bounded failures under the
 existing protocol.
 
-### Phase 5: add publisher diversity and broaden service support
+### Phase 5: discover providers through capability announcements
+
+Define a versioned service discovery protocol so providers can announce their
+identity, endpoints, products, protocol support and available coverage. A provider
+may serve Transparent alone or several products. Describe each capability
+separately: supporting Transparent history does not imply support for transaction
+display, Enhance, Status or Receiver.
+
+Distinguish software capabilities from data that is loaded and eligible to serve.
+A useful announcement says more than "recent from height X": it identifies the
+network, protocol/profile, current publication and covered-through anchor, and
+states any gaps or multiple covered ranges. Separate locally held coverage from
+coverage the embedded router offers through peers. A recent node must not claim
+to hold archive data merely because it can forward archive queries.
+
+Use signed, expiring announcements bound to an operator identity, with a
+monotonic announcement revision and explicit withdrawal. Update them when
+publications, coverage or readiness change, including after a reorg; renew them
+while the provider remains available. Use existing vetted signing libraries.
+Announcement freshness never replaces a product's serving-authority checks.
+
+Start with capability documents fetched over HTTPS from configured providers and
+multiple bootstrap directories. Direct endpoint configuration remains supported.
+Directories index announcements rather than authorize publications; no single
+directory is required for established providers to keep serving. Cache verified
+announcements and refresh discovery independently of individual wallet queries.
+Permissionless admission, a DHT and gossip are not prerequisites.
+
+The router filters candidates by operator policy, network, product, protocol and
+exact publication coverage, then applies readiness and encrypted-answer checks.
+A valid signature proves who made a claim, not that the advertised data is
+complete, current or correctly served. Unverified or expired announcements cannot
+add eligible routes. Discovery does not grant administrative access or allow
+operators to choose a different wallet protocol silently.
+
+**Deliverable:** provider announcement publication, verification, refresh and
+withdrawal, plus router candidate selection. Existing wallets may continue using
+a configured provider endpoint; wallet-side automatic discovery is separate work.
+
+**Exit criterion:** two independent providers with different product and height
+coverage are discovered and selected correctly, including when a provider changes
+coverage or disappears and a bootstrap directory is unavailable. Claims alone
+cannot make an unqualified provider eligible for queries.
+
+### Phase 6: add publisher diversity and broaden service support
 
 Introduce a second independent publisher after qualifying the first provider
 workflow. Distinguish a mirror of identical bytes from an independently built
@@ -214,6 +259,28 @@ Add interfaces with their consumers in the owning phase:
   and remote workers.
 - **Coverage routing:** operator-controlled destinations qualified for exact
   publications.
+- **Service discovery:** signed, versioned provider announcements and a candidate
+  source for routing, without replacing publication validation or authority.
+
+### Discovery capabilities
+
+Each announcement binds an operator identity and announcement revision to its
+issue/expiry times and advertised endpoints. Each product capability describes:
+
+- The network/genesis identity, product and supported protocol/profile versions.
+- Its service role: recent, archive or combined where supported, and whether the
+  endpoint performs queries or forwards them.
+- Actual local coverage: inclusive start and covered-through heights, gaps or
+  multiple ranges as needed, and the publication/manifest identities and chain
+  anchors that bind those holdings.
+- Readiness and freshness observations, separate from configured capabilities and
+  from coverage available through forwarding.
+
+Height ranges are discovery filters, not a substitute for exact session matching.
+Use each product's existing coverage model: Status also describes its observation
+freshness, while Receiver cannot advertise truncated history as complete recovery.
+Keep the first protocol focused on capability and coverage; reputation, payments
+and claimed performance rankings are outside it.
 
 Each phase requires focused tests and an independently reviewable result before
 later phases depend on it. Preserve existing wallet-library clients and
@@ -227,6 +294,10 @@ independent correctness oracles. Exercise:
 - Client cancellation, slow transfers, overload and resource retention.
 - Unavailable peers, outdated holdings, routing loops and safe retry boundaries.
 - Publisher switching, mirror failure and rejection of mixed publication material.
+- Discovery of single-product and multi-product providers, incompatible protocols,
+  wrong networks, coverage gaps and local versus forwarded holdings.
+- Forged, expired, replayed and withdrawn announcements; coverage changes after a
+  reorg; stale readiness; and loss of a provider or bootstrap directory.
 
 Measure startup and update cost, steady-state memory, disk, synchronization
 bandwidth and query performance together. Include packing costs, temporary
@@ -242,8 +313,9 @@ routing information those protocols expose. This plan adds no new privacy claim.
 
 ## Defaults and exclusions
 
-Start with explicitly approved publishers and configured peers. Direct provider
-endpoints must work without automatic discovery or permissionless registration.
+Start with explicitly approved publishers and configured peers, then introduce
+discovery under operator-controlled admission policy. Direct provider endpoints
+must keep working without automatic discovery or permissionless registration.
 Keep wallet protocols, record layouts, session identities, validation and
 persisted formats unchanged. Introduce no new consensus mechanism, incentive
 system, PIR primitive or universal ingestion framework.
