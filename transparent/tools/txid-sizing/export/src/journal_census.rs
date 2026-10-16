@@ -1185,7 +1185,8 @@ mod tests {
             .collect();
         shapes.sort_unstable_by_key(|s| s.id);
         let tables =
-            transparent_shard::txid::build(0, &transparent_shard::DECOUPLED_2K_8K, &records).unwrap();
+            transparent_shard::txid::build(0, &transparent_shard::DECOUPLED_2K_8K, &records)
+                .unwrap();
         transparent_shard::txid::verify(
             0,
             &transparent_shard::DECOUPLED_2K_8K,

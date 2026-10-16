@@ -4,7 +4,6 @@ use transparent_filter::BlockHash;
 use transparent_filter_server::{
     events::EventStore,
     publication::{publish, BoxError, PublishOptions},
-    zakura::ZakuraClient,
 };
 #[derive(Parser)]
 #[command(name = "shard-publish", about = "Publish a transparent shard set")]
@@ -62,8 +61,9 @@ async fn main() -> Result<(), BoxError> {
     } else if let Some(parent) = parent_block_hash {
         BlockHash::from_display_hex(&parent)?
     } else {
-        let rpc = ZakuraClient::from_cookie_file(&cli.zakura_rpc_url, &cli.zakura_cookie)?;
-        BlockHash::from_display_hex(&rpc.block_hash(store.start_height() - 1).await?)?
+        let rpc =
+            transparent_filter_server::zakura::connect(&cli.zakura_rpc_url, &cli.zakura_cookie)?;
+        BlockHash::from_internal_bytes(rpc.block_hash(store.start_height() - 1).await?)
     };
     let endpoint = cli
         .through

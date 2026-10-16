@@ -11,7 +11,6 @@ use transparent_filter_server::txid_display::{
     serving::WorkersFile,
     source::{open_writer, LiveSource, ReplaySource, Source},
 };
-use transparent_filter_server::zakura::ZakuraClient;
 use transparent_shard::display::DisplaySealParams;
 
 #[derive(Parser)]
@@ -273,8 +272,8 @@ async fn main() -> Result<(), BoxError> {
                 Mode::Replay => None,
                 Mode::Live | Mode::ReplayThenLive => {
                     let cookie = rpc_cookie.ok_or("live modes need --rpc-cookie")?;
-                    let rpc = ZakuraClient::from_cookie_file(&rpc_url, &cookie)?;
-                    if rpc.genesis_hash().await? != store.genesis_hash() {
+                    let rpc = transparent_filter_server::zakura::connect(&rpc_url, &cookie)?;
+                    if rpc.block_hash_display(0).await? != store.genesis_hash() {
                         return Err("the node's genesis differs from the journal's".into());
                     }
                     Some(LiveSource::new(rpc, Duration::from_millis(poll_ms)))

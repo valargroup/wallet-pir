@@ -1,9 +1,9 @@
 //! Resumable, read-only raw-chain export for the block-scanning benchmark.
 use clap::Parser;
-use std::{path::PathBuf, sync::Arc};
+use std::path::PathBuf;
 use transparent_blocks::dataset::{decode, read_batch, write_batch, Manifest};
-use transparent_filter_server::{compact::compact_block, state::StateReader, zakura::ZakuraClient};
-use zakura_chain::parameters::Network;
+use transparent_filter_server::{compact::compact_block, state::StateReader, zakura::NodeClient};
+use zakura_server_chain::{hash::display, transparent::FetchedBlock, Network};
 type Error = Box<dyn std::error::Error + Send + Sync>;
 #[derive(Parser)]
 struct Cli {
@@ -34,7 +34,7 @@ async fn main() -> Result<(), Error> {
         .map(|p| StateReader::open(p, Network::Mainnet))
         .transpose()?;
     let rpc = if state.is_none() {
-        Some(ZakuraClient::from_cookie_file(
+        Some(transparent_filter_server::zakura::connect(
             &c.rpc_url,
             c.cookie.as_ref().ok_or("--cookie required with RPC")?,
         )?)
@@ -43,22 +43,17 @@ async fn main() -> Result<(), Error> {
     };
     async fn fetch(
         state: &Option<StateReader>,
-        rpc: &Option<ZakuraClient>,
+        rpc: &Option<NodeClient>,
         height: u64,
-    ) -> Result<Arc<zakura_chain::block::Block>, Error> {
+    ) -> Result<FetchedBlock, Error> {
         if let Some(s) = state {
             Ok(s.raw_block(height)?)
         } else {
-            Ok(Arc::new(rpc.as_ref().unwrap().block(height).await?.1))
+            Ok(rpc.as_ref().unwrap().fetch_block(height).await?)
         }
     }
-    let genesis = fetch(&state, &rpc, 0).await?.hash().to_string();
-    if fetch(&state, &rpc, c.anchor_height)
-        .await?
-        .hash()
-        .to_string()
-        != c.anchor_hash
-    {
+    let genesis = display(&fetch(&state, &rpc, 0).await?.hash());
+    if display(&fetch(&state, &rpc, c.anchor_height).await?.hash()) != c.anchor_hash {
         return Err("accepted anchor does not match node".into());
     }
     std::fs::create_dir_all(&c.out_dir)?;
@@ -113,7 +108,7 @@ async fn main() -> Result<(), Error> {
                 metadata.orchard_commitment_tree_size,
                 metadata.ironwood_commitment_tree_size,
             ];
-            if fetch(&state, &rpc, batch.end).await?.hash().to_string() != batch.hash {
+            if display(&fetch(&state, &rpc, batch.end).await?.hash()) != batch.hash {
                 return Err("node changed below export checkpoint".into());
             }
         }
@@ -140,12 +135,7 @@ async fn main() -> Result<(), Error> {
             );
         }
     }
-    if fetch(&state, &rpc, c.anchor_height)
-        .await?
-        .hash()
-        .to_string()
-        != c.anchor_hash
-    {
+    if display(&fetch(&state, &rpc, c.anchor_height).await?.hash()) != c.anchor_hash {
         return Err("node anchor changed during export".into());
     }
     manifest.complete = true;

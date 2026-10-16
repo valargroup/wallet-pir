@@ -2,10 +2,6 @@
   "comment": "Direct Zakura Common and node dependencies still to move behind wallet-libraries adapters. Only remove entries; tools/ci/boundary.py fails on a new edge or a stale entry.",
   "edges": [
     "enhance-pir-server -> zakura-note-encryption",
-    "enhance-pir-server -> zakura-orchard",
-    "transparent-filter-server -> zakura-chain",
-    "transparent-filter-server -> zakura-state",
-    "transparent-shard-server -> zakura-chain",
-    "txid-sizing-export -> zakura-chain"
+    "enhance-pir-server -> zakura-orchard"
   ]
 }

@@ -14,7 +14,7 @@ use clap::Parser;
 use std::path::{Path, PathBuf};
 use transparent_filter_server::events::EventStore;
 use transparent_filter_server::state::StateReader;
-use transparent_filter_server::zakura::ZakuraClient;
+use transparent_filter_server::zakura::NodeClient;
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
@@ -54,7 +54,7 @@ fn read_u64(bytes: &[u8]) -> u64 {
 /// Hashes by height from whichever node interface is configured.
 enum Node {
     State(Box<StateReader>),
-    Rpc(tokio::runtime::Runtime, ZakuraClient),
+    Rpc(tokio::runtime::Runtime, NodeClient),
     None,
 }
 
@@ -62,7 +62,9 @@ impl Node {
     fn hash(&self, height: u64) -> Result<Option<String>, BoxError> {
         Ok(match self {
             Node::State(reader) => Some(reader.block_hash(height)?),
-            Node::Rpc(runtime, client) => Some(runtime.block_on(client.block_hash(height))?),
+            Node::Rpc(runtime, client) => {
+                Some(runtime.block_on(client.block_hash_display(height))?)
+            }
             Node::None => None,
         })
     }
@@ -106,11 +108,11 @@ fn main() -> Result<(), BoxError> {
     let node = match (&cli.state_dir, &cli.zakura_cookie) {
         (Some(state), _) => Node::State(Box::new(StateReader::open(
             state,
-            zakura_chain::parameters::Network::Mainnet,
+            zakura_server_chain::Network::Mainnet,
         )?)),
         (None, Some(cookie)) => Node::Rpc(
             tokio::runtime::Runtime::new()?,
-            ZakuraClient::from_cookie_file(&cli.zakura_rpc_url, cookie)?,
+            transparent_filter_server::zakura::connect(&cli.zakura_rpc_url, cookie)?,
         ),
         (None, None) => Node::None,
     };

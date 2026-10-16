@@ -17,7 +17,13 @@ thiserror = "2"
 transparent-events = { path = "../../../crates/transparent-events" }
 transparent-filter = { path = "../../../crates/transparent-filter" }
 transparent-shard = { path = "../../../crates/transparent-shard" }
-zakura-chain = { git = "https://github.com/zakura-core/zakura.git", rev = "83738c07468bee30a7db8a8d678cb27bf60094f4" }
+# Transaction and block reads through the server adapter, at the revision the
+# services pin.
+zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "aac3d7ade1dca69bcb8f4d5d9352855efc3642f5" }
+
+[dev-dependencies]
+# Raw synthetic blocks for the shared extractor's tests.
+zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "aac3d7ade1dca69bcb8f4d5d9352855efc3642f5", features = ["testing"] }
 
 [profile.release-fast]
 inherits = "release"

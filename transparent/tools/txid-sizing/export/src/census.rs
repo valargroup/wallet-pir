@@ -3,24 +3,29 @@ use super::*;
 use crate::extract::PreviousOutputs;
 use rusqlite::{params, Connection, OptionalExtension};
 use std::io::{self, BufRead, Write};
-use zakura_chain::{serialization::ZcashSerialize, transparent::Input};
 
 fn point_key(p: &OutPoint) -> Vec<u8> {
-    let mut key = p.hash.0.to_vec();
-    key.extend_from_slice(&p.index.to_le_bytes());
+    let mut key = p.0.to_vec();
+    key.extend_from_slice(&p.1.to_le_bytes());
     key
 }
 struct DiskPrevious<'a>(&'a Connection);
-impl extract::PreviousOutputs for DiskPrevious<'_> {
-    fn previous_output(&mut self, p: &OutPoint) -> Result<Option<Output>, AnyError> {
+impl DiskPrevious<'_> {
+    /// The stored output at `p`, in its consensus encoding.
+    fn get(&self, p: &OutPoint) -> Result<Option<Output>, AnyError> {
         let raw: Option<Vec<u8>> = self
             .0
             .query_row("SELECT raw FROM utxo WHERE point=?", [point_key(p)], |r| {
                 r.get(0)
             })
             .optional()?;
-        raw.map(|r| Output::zcash_deserialize(r.as_slice()).map_err(Into::into))
+        raw.map(|r| Output::from_consensus_bytes(&r).map_err(Into::into))
             .transpose()
+    }
+}
+impl extract::PreviousOutputs for DiskPrevious<'_> {
+    fn previous_output(&mut self, txid: [u8; 32], index: u32) -> Result<Option<Output>, AnyError> {
+        self.get(&(txid, index))
     }
 }
 fn leb_len(mut n: u64) -> usize {
@@ -95,19 +100,15 @@ pub fn run(path: &str) -> Result<(), AnyError> {
         let height = u32::try_from(frame["height"].as_u64().ok_or("height")?)?;
         let raw = hex::decode(frame["raw_block"].as_str().ok_or("raw block")?)?;
         let raw_hash = hex::encode(Sha256::digest(&raw));
-        let mut cursor = raw.as_slice();
-        let block = Block::zcash_deserialize(&mut cursor)?;
-        if !cursor.is_empty() {
-            return Err("trailing block bytes".into());
-        }
-        let hash = block.hash().to_string();
-        let parent = block.header.previous_block_hash.to_string();
+        let block = read_block(&raw)?;
+        let hash = display(&block.hash());
+        let parent = display(&block.parent());
         if let Some(expected) = frame["hash"].as_str() {
             if expected != hash {
                 return Err("raw hash differs from pin".into());
             }
         }
-        if block.coinbase_height().map(|h| h.0) != Some(height) {
+        if block.coinbase_height() != Some(height) {
             return Err("canonical coinbase height differs".into());
         }
         let old: Option<(String, String)> = db
@@ -142,50 +143,44 @@ pub fn run(path: &str) -> Result<(), AnyError> {
         {
             return Err("mainnet genesis identity mismatch".into());
         }
-        if block.transactions.is_empty() {
+        let transactions = block.transactions();
+        if transactions.is_empty() {
             return Err("empty mainnet block".into());
         }
         let tx = db.unchecked_transaction()?;
         let mut records = Vec::new();
         let mut shielded_only = 0;
         let mut all_txids = Vec::new();
-        for (index, transaction) in block.transactions.iter().enumerate() {
-            let txid = transaction.hash().0;
+        for (index, transaction) in transactions.iter().enumerate() {
+            let txid = transaction.txid;
             tx.execute(
                 "INSERT INTO txids VALUES(?,?)",
                 params![txid.as_slice(), height],
             )?;
             all_txids.push(hex::encode(txid));
-            let coinbase = transaction
-                .inputs()
-                .iter()
-                .any(|i| matches!(i, Input::Coinbase { .. }));
+            let coinbase = transaction.coinbase;
             if coinbase != (index == 0) {
                 return Err("canonical coinbase position mismatch".into());
             }
             let mut spent = std::collections::HashSet::new();
             let mut missing = 0;
-            for input in transaction.inputs() {
-                if let Input::PrevOut { outpoint, .. } = input {
-                    if !spent.insert(*outpoint) {
-                        return Err("duplicate transparent input".into());
-                    }
-                    if DiskPrevious(&tx).previous_output(outpoint)?.is_none() {
-                        missing += 1;
-                    }
+            for outpoint in &transaction.spends {
+                if !spent.insert(*outpoint) {
+                    return Err("duplicate transparent input".into());
+                }
+                if DiskPrevious(&tx).get(outpoint)?.is_none() {
+                    missing += 1;
                 }
             }
-            if !transaction.inputs().is_empty() || !transaction.outputs().is_empty() {
+            if coinbase || !transaction.spends.is_empty() || !transaction.outputs.is_empty() {
                 let record = if missing == 0 {
-                    extract::extract_block(
-                        std::slice::from_ref(transaction),
-                        &mut DiskPrevious(&tx),
-                        height,
-                    )?
-                    .display
-                    .into_iter()
-                    .next()
-                    .ok_or("missing eligible record")?
+                    let read =
+                        block.transparent_transaction(index, height, &mut DiskPrevious(&tx))?;
+                    extract::index(&[read], height, true)?
+                        .display
+                        .into_iter()
+                        .next()
+                        .ok_or("missing eligible record")?
                 } else {
                     // Extraction refuses partial filters. Census preserves eligibility
                     // with the shared explicitly unknown fee state; no invented fee.
@@ -199,14 +194,14 @@ pub fn run(path: &str) -> Result<(), AnyError> {
                                 FeeState::Unknown
                             },
                             transparent_input_count: u32::try_from(spent.len())?,
-                            has_shielded_components: transaction.has_shielded_data(),
+                            has_shielded_components: transaction.has_shielded_components,
                         },
                         outputs: transaction
-                            .outputs()
+                            .outputs
                             .iter()
                             .map(|o| transparent_shard::txid::DisplayOutput {
-                                value: u64::from(o.value),
-                                script: o.lock_script.as_raw_bytes().to_vec(),
+                                value: o.value,
+                                script: o.script.clone(),
                             })
                             .collect(),
                     }
@@ -221,16 +216,12 @@ pub fn run(path: &str) -> Result<(), AnyError> {
             // Canonical state excludes the unspendable genesis UTXO; its display
             // record and exact raw output are still included in this inventory.
             if height > 0 {
-                for (index, output) in transaction.outputs().iter().enumerate() {
-                    let mut encoded = Vec::new();
-                    output.zcash_serialize(&mut encoded)?;
+                for (index, output) in transaction.outputs.iter().enumerate() {
+                    let encoded = output.consensus_bytes()?;
                     tx.execute(
                         "INSERT INTO utxo VALUES(?,?)",
                         params![
-                            point_key(&OutPoint {
-                                hash: transaction.hash(),
-                                index: u32::try_from(index)?
-                            }),
+                            point_key(&(transaction.txid, u32::try_from(index)?)),
                             encoded
                         ],
                     )?;
@@ -239,7 +230,7 @@ pub fn run(path: &str) -> Result<(), AnyError> {
         }
         let summary = serde_json::to_string(
             &json!({"height":height,"hash":hash,"parent":parent,"raw_sha256":raw_hash,
-            "raw_bytes":raw.len(),"transactions":block.transactions.len(),"eligible":records.len(),"shielded_only":shielded_only,"all_txids":all_txids,"records":records}),
+            "raw_bytes":raw.len(),"transactions":transactions.len(),"eligible":records.len(),"shielded_only":shielded_only,"all_txids":all_txids,"records":records}),
         )?;
         tx.execute(
             "INSERT INTO blocks VALUES(?,?,?,?,?)",

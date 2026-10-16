@@ -56,7 +56,7 @@ use transparent_events::TransparentEvent;
 use transparent_filter::ScriptBytes;
 use transparent_filter_server::events::EventStore;
 use transparent_filter_server::state::StateReader;
-use transparent_filter_server::zakura::ZakuraClient;
+use transparent_filter_server::zakura::NodeClient;
 use transparent_shard::layout::{by_name as geometry_by_name, Geometry};
 use transparent_shard::seal::{DecoupledPolicy, DisplacementSealer};
 
@@ -113,7 +113,7 @@ struct StateHeaders(StateReader);
 
 impl Headers for StateHeaders {
     fn time(&mut self, height: u64) -> Result<DateTime<Utc>, BoxError> {
-        Ok(self.0.block_time(height)?)
+        self.0.block_time(height)
     }
     fn hash(&mut self, height: u64) -> Result<String, BoxError> {
         Ok(self.0.block_hash(height)?)
@@ -125,7 +125,7 @@ impl Headers for StateHeaders {
 
 struct RpcHeaders {
     runtime: tokio::runtime::Runtime,
-    client: ZakuraClient,
+    client: NodeClient,
 }
 
 impl Headers for RpcHeaders {
@@ -143,7 +143,9 @@ impl Headers for RpcHeaders {
             .ok_or_else(|| format!("header time {seconds} at {height} is out of range").into())
     }
     fn hash(&mut self, height: u64) -> Result<String, BoxError> {
-        Ok(self.runtime.block_on(self.client.block_hash(height))?)
+        Ok(self
+            .runtime
+            .block_on(self.client.block_hash_display(height))?)
     }
     fn label(&self) -> &'static str {
         "rpc"
@@ -311,11 +313,11 @@ fn main() -> Result<(), BoxError> {
     let mut headers: Box<dyn Headers> = match (&cli.state_dir, &cli.zakura_cookie) {
         (Some(dir), _) => Box::new(StateHeaders(StateReader::open(
             dir,
-            zakura_chain::parameters::Network::Mainnet,
+            zakura_server_chain::Network::Mainnet,
         )?)),
         (None, Some(cookie)) => Box::new(RpcHeaders {
             runtime: tokio::runtime::Runtime::new()?,
-            client: ZakuraClient::from_cookie_file(&cli.zakura_rpc_url, cookie)?,
+            client: transparent_filter_server::zakura::connect(&cli.zakura_rpc_url, cookie)?,
         }),
         (None, None) => return Err("give --state-dir or --zakura-cookie".into()),
     };

@@ -5,12 +5,13 @@
 //! back one block at a time until the stored hash agrees with the node, which
 //! is what makes a reorg a rollback rather than a silently divergent history.
 
-use crate::extract::{extract, IndexedEvent};
-use crate::prevout::{prefetch_previous_outputs, OutputCache, ZakuraPreviousOutputs};
+use crate::extract::{index, IndexedEvent};
+use crate::prevout::OutputCache;
 use crate::service::{Phase, ServiceState};
 use crate::store::FilterStore;
-use crate::zakura::ZakuraClient;
 use transparent_filter::{build_filter, BlockHash, ScriptBytes};
+use zakura_server_chain::transparent::FetchedBlock;
+use zakura_server_chain::NodeClient;
 
 pub type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
@@ -20,7 +21,7 @@ pub type BoxError = Box<dyn std::error::Error + Send + Sync>;
 /// store as immutable cached content; they simply stop being reachable as
 /// coverage, and become reachable again for free if their block returns.
 pub async fn reconcile(
-    zakura: &ZakuraClient,
+    zakura: &NodeClient,
     store: &mut FilterStore,
     tip: u64,
     state: &ServiceState,
@@ -31,7 +32,7 @@ pub async fn reconcile(
             .block_hash_at(height)
             .expect("covered height has a hash");
         if height <= tip {
-            let canonical = BlockHash::from_display_hex(&zakura.block_hash(height).await?)?;
+            let canonical = BlockHash::from_internal_bytes(zakura.block_hash(height).await?);
             if canonical == stored {
                 break;
             }
@@ -79,12 +80,12 @@ pub struct BuiltEvents {
 /// appended. Publishing a partial result would be worse than publishing
 /// nothing, because a consumer cannot tell the difference.
 pub async fn build_block_events(
-    zakura: &ZakuraClient,
+    zakura: &NodeClient,
     cache: &mut OutputCache,
     height: u64,
     display: bool,
 ) -> Result<BuiltEvents, BoxError> {
-    let fetched = zakura.block(height).await?;
+    let fetched = zakura.fetch_block(height).await?;
     build_fetched_block_events(zakura, cache, height, fetched, display).await
 }
 
@@ -95,53 +96,28 @@ pub async fn build_block_events(
 /// cache state: which outputs a block creates and which it spends is a property
 /// of the block, and the cache only decides whether they have to be asked for.
 /// So the fetch can run ahead, and everything after it cannot.
+///
+/// The block's own transactions seed the cache before anything is resolved, so
+/// a later block spending them needs no lookup and a same-block spend is never
+/// requested from the node; everything still missing is then fetched in
+/// batches before extraction runs.
 pub async fn build_fetched_block_events(
-    zakura: &ZakuraClient,
+    zakura: &NodeClient,
     cache: &mut OutputCache,
     height: u64,
-    fetched: (String, zakura_chain::block::Block),
+    fetched: FetchedBlock,
     display: bool,
 ) -> Result<BuiltEvents, BoxError> {
-    let (hash_display, block) = fetched;
-    let block_hash = BlockHash::from_display_hex(&hash_display)?;
-    let event_height = u32::try_from(height)
-        .map_err(|_| format!("height {height} does not fit the event encoding"))?;
-
-    // Seed the cache with this block's own transactions before extraction, so a
-    // later block spending them needs no lookup, and so a same-block spend is
-    // never requested from the node.
-    for transaction in &block.transactions {
-        cache.insert_transaction(transaction);
-    }
-    // Then resolve everything still missing in batches, before extraction runs.
-    let batched = prefetch_previous_outputs(zakura, cache, &block.transactions).await?;
-
-    let runtime = tokio::runtime::Handle::current();
-    let transactions = block.transactions.clone();
-    let client = zakura.clone();
-    // Extraction is synchronous and does blocking RPC through the runtime
-    // handle, so it must not run on an async worker thread.
-    let (events, rpc_lookups, cache_hits, cache_out) = tokio::task::spawn_blocking({
-        let mut cache_owned = std::mem::replace(cache, OutputCache::new(1));
-        move || {
-            let mut previous = ZakuraPreviousOutputs::new(&client, runtime, &mut cache_owned);
-            let result = extract(&transactions, &mut previous, event_height, display);
-            let counts = (previous.rpc_lookups, previous.cache_hits);
-            (result, counts.0, counts.1, cache_owned)
-        }
-    })
-    .await?;
-    *cache = cache_out;
-
-    let extracted = events?;
+    let read = zakura.transparent_block(height, fetched, cache).await?;
+    let extracted = index(&read.transactions, read.height, display)?;
     Ok(BuiltEvents {
-        block_hash,
+        block_hash: BlockHash::from_internal_bytes(read.hash),
         events: extracted.events,
         display: extracted.display,
         // The pre-pass did the fetching; any straggler resolved during
         // extraction is counted with it.
-        rpc_lookups: rpc_lookups + batched,
-        cache_hits,
+        rpc_lookups: read.lookups,
+        cache_hits: read.cache_hits,
     })
 }
 
@@ -154,7 +130,7 @@ pub async fn build_fetched_block_events(
 /// permanent, silent coverage hole, since a wallet told it had no activity
 /// never looks again.
 pub async fn build_block_filter(
-    zakura: &ZakuraClient,
+    zakura: &NodeClient,
     cache: &mut OutputCache,
     height: u64,
 ) -> Result<BuiltFilter, BoxError> {
@@ -174,7 +150,7 @@ pub async fn build_block_filter(
 
 /// The ingest loop: reconcile, catch up, commit, repeat.
 pub async fn run(
-    zakura: ZakuraClient,
+    zakura: NodeClient,
     state: ServiceState,
     cache_outputs: usize,
     poll_seconds: u64,
