@@ -26,12 +26,47 @@ def tracked(root):
     return subprocess.check_output(['git', 'ls-files', '-z'], cwd=root).split(b'\0')
 
 
-def linked(root):
+def owned_target(root, target):
+    """Reject aliases and source overlap before creating or moving anything.
+
+    Keep the lexical path: resolving an alias first loses the ownership check.
+    Repeat after extraction, since the archive can introduce new aliases.
+    """
+    require('..' not in root.parts and '..' not in target.parts)
+    root, target = Path(os.path.abspath(root)), Path(os.path.abspath(target))
+    for path in (root, target):
+        require(not any(p.is_symlink() for p in (path, *path.parents)))
+        require(path.resolve() == path)
+    require(not root.is_relative_to(target))
+    require(not target.exists() or target.is_dir())
+    require(not target.is_relative_to(root / '.git'))
+    for name in tracked(root):
+        if name:
+            source = root / os.fsdecode(name)
+            require(not source.is_relative_to(target) and not target.is_relative_to(source))
+    return target
+
+
+def linked(root, target):
     # A symlink can alias another tracked file whose restored mtime would hide
     # different bytes at the original input path. Do not reuse any outputs in
     # such a checkout, including links to external/untracked destinations.
-    return any(any(p.is_symlink() for p in (root / os.fsdecode(name), *(root / os.fsdecode(name)).parents))
-               for name in tracked(root) if name)
+    # Include ignored/untracked inputs: an include_str!/build-script input can
+    # alias an unchanged tracked destination normalized below. Do not traverse
+    # links, Git internals or the separately validated output directory.
+    def failed(error):
+        raise error
+    for directory, dirs, names in os.walk(root, followlinks=False, onerror=failed):
+        parent = Path(directory)
+        for name in dirs + names:
+            path = parent / name
+            if path == root / '.git' or path == target:
+                if name in dirs:
+                    dirs.remove(name)
+                continue
+            if path.is_symlink():
+                return True
+    return False
 
 
 def files(root):
@@ -83,8 +118,9 @@ def restore(root, target, identity, pending):
     than restored fingerprints, even if the caller supplied old source mtimes.
     Capture the inputs BEFORE compilation; sealing them is a separate step.
     """
-    root, target = root.resolve(), target.resolve()
-    symlinks = linked(root)
+    target = owned_target(root, target)
+    root = root.resolve()
+    symlinks = linked(root, target)
     if symlinks and target.exists():
         # Preserve the restored archive for inspection, outside the saved path.
         # Never edit Cargo fingerprints or follow/touch a symlink destination.

@@ -148,6 +148,96 @@ class WorkspaceCacheOracle(unittest.TestCase):
         self.symlink_input('build.txt', 'alternate.txt', 'build-A', 'build-LINK',
                            'rust-A|include-A|build-LINK')
 
+    def untracked_alias(self, name, alternate, replacement, expected):
+        path = self.root / name
+        destination = path.with_name(alternate)
+        destination.write_text(replacement)
+        self.git('rm', '--cached', name)
+        (self.root / '.gitignore').write_text('/' + name + '\n')
+        self.commit('untracked input and tracked alternate')
+        self.baseline()
+        self.archive_roundtrip()
+        archive = self.area / f'cache-{self.sequence}.tar'
+        self.checkout()
+        path.symlink_to(alternate)
+        # Independent Cargo control: with normal checkout mtimes, following the
+        # new alias changes behavior. Then restore the SAME baseline archive.
+        artifacts, behavior = self.build()
+        self.assertEqual(behavior, expected)
+        self.assertTrue(any(not entry['fresh'] for entry in artifacts), artifacts)
+        self.target.rename(self.area / 'control-target')
+        subprocess.run(['tar', '-xf', str(archive), '-C', str(self.area)], check=True)
+        self.restore()
+        artifacts, behavior = self.build()
+        self.assertEqual(behavior, expected)
+        self.assertTrue(artifacts and all(not entry['fresh'] for entry in artifacts), artifacts)
+
+    def test_untracked_include_alias_rebuilds_after_clone_and_tar(self):
+        self.untracked_alias('src/included.txt', 'alternate.txt', 'include-LINK',
+                             'rust-A|include-LINK|build-A')
+
+    def test_untracked_build_alias_rebuilds_after_clone_and_tar(self):
+        self.untracked_alias('build.txt', 'alternate.txt', 'build-LINK',
+                             'rust-A|include-A|build-LINK')
+
+    def test_target_ownership_rejected_before_prepare_and_after_tar_extraction(self):
+        # A tracked source link requests the cold-miss rename. No rejected
+        # output alias may move its destination or normalize checkout sources.
+        (self.root / 'src/link').symlink_to('main.rs')
+        self.commit('source link')
+        foreign = self.area / 'foreign'
+        foreign.mkdir()
+        sentinel = foreign / 'sentinel'
+        sentinel.write_bytes(b'separately owned bytes')
+        sentinel.chmod(0o640)
+        os.utime(sentinel, ns=(123456789, 123456789))
+        original = (sentinel.read_bytes(), sentinel.stat().st_mode, sentinel.stat().st_mtime_ns)
+        source_time = (self.root / 'src/main.rs').stat().st_mtime_ns
+        env = {'RUNNER_TEMP': str(self.area / 'runner')}
+        directory = cargo_cache.state_dir(env)
+        directory.mkdir(parents=True)
+        for kind in ('target-link', 'parent-link', 'checkout', 'ancestor', 'source-overlap'):
+            with self.subTest(kind=kind):
+                lane = self.area / ('case-' + kind)
+                lane.mkdir()
+                target = lane / 'fast'
+                if kind == 'target-link':
+                    target.symlink_to(foreign, target_is_directory=True)
+                elif kind == 'parent-link':
+                    (lane / 'parent').symlink_to(foreign, target_is_directory=True)
+                    target = lane / 'parent/fast'
+                elif kind == 'checkout':
+                    target = self.root
+                elif kind == 'ancestor':
+                    target = self.area
+                else:
+                    target = self.root / 'src'
+                before = sorted(str(p.relative_to(self.area)) for p in self.area.rglob('*'))
+                args = argparse.Namespace(lane='fast', scope='affected', target_dir=str(target),
+                                          persistent_root=None, lookup_only=False)
+                with patch.object(cargo_cache, 'ROOT', self.root):
+                    with self.assertRaises(ValueError):
+                        cargo_cache.prepare(args, env)
+                self.assertEqual(sorted(str(p.relative_to(self.area)) for p in self.area.rglob('*')), before)
+                # POSIX tar can introduce an alias AFTER a valid prepare. Use
+                # the owning restored lifecycle, never call only the helper.
+                if kind in ('target-link', 'parent-link'):
+                    archive = lane / 'alias.tar'
+                    member = 'fast' if kind == 'target-link' else 'parent'
+                    subprocess.run(['tar', '--posix', '-cf', str(archive), '-C', str(lane), member], check=True)
+                    (lane / member).rename(lane / 'before-extraction')
+                    subprocess.run(['tar', '-xf', str(archive), '-C', str(lane)], check=True)
+                state = {'record': {'compatibility': 'compatible'}, 'mode': 'restore', 'target': str(target)}
+                (directory / 'fast.json').write_text(json.dumps(state))
+                before = sorted(str(p.relative_to(self.area)) for p in self.area.rglob('*'))
+                with patch.object(cargo_cache, 'ROOT', self.root):
+                    with self.assertRaises(ValueError):
+                        cargo_cache.restored(argparse.Namespace(lane='fast', cache_hit='true'), env)
+                self.assertEqual(sorted(str(p.relative_to(self.area)) for p in self.area.rglob('*')), before)
+                self.assertEqual((sentinel.read_bytes(), sentinel.stat().st_mode, sentinel.stat().st_mtime_ns), original)
+                self.assertEqual((self.root / 'src/main.rs').stat().st_mtime_ns, source_time)
+                self.assertFalse((directory / 'workspace-pending').exists())
+
     def test_executable_mode_loss_reruns_generator_and_fails_after_clone_and_tar(self):
         generator = self.root / 'generator.sh'
         generator.write_text('#!/bin/sh\nprintf build-A\n')

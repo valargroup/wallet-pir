@@ -997,6 +997,16 @@ class CacheWorkflowTests(unittest.TestCase):
         self.assertIn("if: github.event_name == 'push' && steps.affected.outputs.rust == 'true'", routine)
         self.assertEqual(self.workflows['ci-cache.yml'].count("if: github.ref == 'refs/heads/main'"), 1)
 
+    def test_unrelated_labels_cannot_enter_preparation_concurrency(self):
+        text = self.workflows['ci-pr-prepare.yml']
+        workflow, jobs = text.split('\njobs:\n', 1)
+        self.assertNotIn('\nconcurrency:', workflow)
+        job = jobs.split('  prepare:\n', 1)[1].split('    steps:\n', 1)[0]
+        self.assertIn("    if: github.event.label.name == 'prepare-hosted-cache'\n", job)
+        self.assertIn('    concurrency:\n'
+                      '      group: prepare-hosted-pr-${{ github.event.pull_request.number }}\n'
+                      '      cancel-in-progress: true\n', job)
+
     def test_cuda_cache_identity_sees_the_build_script_flags(self):
         script = (ROOT / 'tools/ci/build-cuda.sh').read_text()
         job = self.workflows['ci-full.yml'].split('\n  release-cuda:\n', 1)[1]

@@ -11,10 +11,6 @@ permissions:
   contents: read
   actions: read
 
-concurrency:
-  group: prepare-hosted-pr-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
-
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -Dwarnings -C target-cpu=x86-64-v3
@@ -24,6 +20,11 @@ env:
 jobs:
   prepare:
     if: github.event.label.name == 'prepare-hosted-cache'
+    # Filter before entering concurrency: unrelated labels must not cancel a
+    # running preparation. Genuine requests for the same PR still supersede it.
+    concurrency:
+      group: prepare-hosted-pr-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
     name: Cold preparation (not routine fast validation)
     runs-on: ubuntu-24.04
     timeout-minutes: 30

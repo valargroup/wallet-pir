@@ -441,6 +441,11 @@ def write_env(env, **values):
 
 
 def prepare(args, env):
+    # Check lexical ownership before probe/setup can create state, and keep it
+    # in the receipt so restored() can reject aliases introduced by extraction.
+    hosted_target = None
+    if not args.persistent_root and args.lane == 'fast':
+        hosted_target = workspace_cache.owned_target(ROOT, Path(args.target_dir))
     started = float(env.get('WALLET_PIR_SETUP_STARTED') or time.time())
     toolchain, full = identity(args.lane, args.scope, probe(ROOT, env), env)
     record = sanitized(toolchain, full)
@@ -452,7 +457,7 @@ def prepare(args, env):
         mode, refs, key = 'persistent', None, None
         write_env(env, WALLET_PIR_BUILD_CACHE_ROOT=args.persistent_root)
     else:
-        target = Path(args.target_dir).resolve()
+        target = hosted_target if hosted_target is not None else Path(args.target_dir).resolve()
         existed = None
         mode = 'lookup' if args.lookup_only else 'restore'
         key = hosted_key(record)

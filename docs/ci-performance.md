@@ -273,7 +273,14 @@ On restore, only unchanged bytes and modes at the same checkout path and compati
 identity regain their captured source timestamps. Changed files, or missing,
 corrupt, stale or incompatible metadata, receive timestamps newer than restored
 fingerprints. Metadata schema 2 rejects older records lacking mode identity.
-Any tracked path that is or traverses a symlink disables target reuse entirely:
+Before setup and again after archive extraction, validate the lexical target and
+all parents: aliases, checkout/ancestor targets, Git internals and overlap with
+tracked source paths fail closed before mkdir, move or timestamp normalization.
+Resolving a target alias first would lose ownership and could move another
+directory. Invalid paths are errors, not cold misses; their destinations remain
+untouched by the helper.
+Any symlink in the checkout outside Git internals and the validated target
+disables target reuse entirely, including ignored and untracked input links:
 the restored target is moved to a uniquely named `fast-unused-*` sibling outside
 the saved path, and Cargo starts with an empty target. This includes symlinks to
 external or untracked destinations; neither link nor destination is touched.
@@ -300,6 +307,8 @@ all fast units with a separate 30-minute cold-preparation allowance; every test
 keeps its 30-second limit. Only successful preparation saves a ref-isolated
 snapshot. This is not the routine fast gate or a latency pass. Remove/reapply the
 label after a head update; no synchronize event automatically repeats preparation.
+Concurrency belongs to the label-filtered job: unrelated label events cannot
+cancel preparation; genuine same-PR preparation requests still supersede it.
 Then rerun the ordinary CI job at the same PR merge SHA and verify actual Cargo
 fresh flags, executed tests, matched key/ref and complete warm duration including
 archive/cleanup under 180 seconds. Branch dispatch does not warm the PR merge ref.
