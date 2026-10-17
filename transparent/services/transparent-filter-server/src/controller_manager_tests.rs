@@ -36,7 +36,12 @@ fn copy_fixture_tree(source: &Path, target: &Path) {
     }
 }
 
-fn prepared_publication(root: &Path, through: u64) -> (PathBuf, ShardSet) {
+// Set only by the exact private exit-control entry. Its parent remains alive
+// while the child copies these immutable producer bytes into its own owned roots.
+static EXIT_FIXTURE_SOURCES: std::sync::OnceLock<BTreeMap<u64, PathBuf>> =
+    std::sync::OnceLock::new();
+
+fn prepared_fixture(through: u64) -> &'static Path {
     fn build(through: u64) -> PathBuf {
         static CLEANUP: std::sync::Once = std::sync::Once::new();
         CLEANUP.call_once(|| {
@@ -48,19 +53,32 @@ fn prepared_publication(root: &Path, through: u64) -> (PathBuf, ShardSet) {
             .prefix("provider-prepared-fixture-")
             .tempdir()
             .unwrap();
-        let (directory, set) = publication_through(root.path(), through);
-        prepare_recent(&directory, &set);
+        if let Some(sources) = EXIT_FIXTURE_SOURCES.get() {
+            let directory = root.path().join("publication");
+            copy_fixture_tree(&sources[&through].join("publication"), &directory);
+            let set = ShardSet::open(&directory, 0).unwrap();
+            // Reuse construction, never its verification result. The production
+            // finalizer verifies the copied table/runtime bytes independently.
+            Finalized::prepare(&directory, &set, 2).unwrap();
+        } else {
+            let (directory, set) = publication_through(root.path(), through);
+            prepare_recent(&directory, &set);
+        }
         let path = root.path().to_path_buf();
         PREPARED_FIXTURES.lock().unwrap().push(root);
         path
     }
     static FIRST: std::sync::LazyLock<PathBuf> = std::sync::LazyLock::new(|| build(2));
     static NEXT: std::sync::LazyLock<PathBuf> = std::sync::LazyLock::new(|| build(3));
-    let fixture = match through {
+    match through {
         2 => &*FIRST,
         3 => &*NEXT,
         _ => panic!("no prepared publication fixture through height {through}"),
-    };
+    }
+}
+
+fn prepared_publication(root: &Path, through: u64) -> (PathBuf, ShardSet) {
+    let fixture = prepared_fixture(through);
     let directory = root.join("publication");
     copy_fixture_tree(&fixture.join("publication"), &directory);
     let set = ShardSet::open(&directory, 0).unwrap();
@@ -69,45 +87,34 @@ fn prepared_publication(root: &Path, through: u64) -> (PathBuf, ShardSet) {
 
 // Use the real helper in a fresh libtest process, with no runner-owned TMPDIR
 // cleanup. Observe the directory only after the process and exit callback finish.
-fn fixture_exit_control(name: &str, both: bool, fail: bool) {
-    let name = format!("{}::{name}", module_path!().split_once("::").unwrap().1);
-    const CHILD: &str = "WALLET_PIR_FIXTURE_EXIT_CHILD";
-    if let Some(child) = std::env::var_os(CHILD) {
-        assert_eq!(child, name.as_str());
-        let first = tempfile::tempdir().unwrap();
-        let (directory, set) = prepared_publication(first.path(), 2);
-        let copy = tempfile::tempdir().unwrap();
-        let (copy_directory, copy_set) = prepared_publication(copy.path(), 2);
-        assert_eq!(set.map_digest, copy_set.map_digest);
-        let map = std::fs::read(copy_directory.join("shards.json")).unwrap();
-        std::fs::write(directory.join("shards.json"), b"corrupt").unwrap();
-        assert_eq!(
-            std::fs::read(copy_directory.join("shards.json")).unwrap(),
-            map
-        );
-        let fresh = tempfile::tempdir().unwrap();
-        let (fresh_directory, _) = prepared_publication(fresh.path(), 2);
-        assert_eq!(
-            std::fs::read(fresh_directory.join("shards.json")).unwrap(),
-            map
-        );
-        if both {
-            let next = tempfile::tempdir().unwrap();
-            let (_, next_set) = prepared_publication(next.path(), 3);
-            assert_ne!(set.map_digest, next_set.map_digest);
-        }
-        assert_eq!(
-            PREPARED_FIXTURES.lock().unwrap().len(),
-            if both { 2 } else { 1 }
-        );
-        println!("prepared fixtures: {}", if both { 2 } else { 1 });
-        assert!(!fail, "intentional child failure after preparing fixtures");
-        return;
+fn fixture_exit_control(both: bool, fail: bool) {
+    let child = format!(
+        "{}::prepared_fixtures_exit_child",
+        module_path!().split_once("::").unwrap().1
+    );
+    // Count construction inside this test when not already built by an earlier
+    // case. There is no disk cache, unmeasured warmup, or mutable shared tree.
+    let mut sources = BTreeMap::from([(2, prepared_fixture(2))]);
+    if both {
+        sources.insert(3, prepared_fixture(3));
     }
     let scratch = tempfile::tempdir().unwrap();
     let output = std::process::Command::new(std::env::current_exe().unwrap())
-        .args([&name, "--exact", "--test-threads=1", "--nocapture"])
-        .env(CHILD, &name)
+        .args([&child, "--exact", "--test-threads=1", "--nocapture"])
+        .env(
+            "WALLET_PIR_FIXTURE_EXIT_CHILD",
+            if fail {
+                "fail"
+            } else if both {
+                "both"
+            } else {
+                "first"
+            },
+        )
+        .env(
+            "WALLET_PIR_FIXTURE_EXIT_SOURCES",
+            serde_json::to_string(&sources).unwrap(),
+        )
         .env(
             "TRANSPARENT_BUILD_THREADS",
             std::env::var("TRANSPARENT_BUILD_THREADS").unwrap_or_else(|_| "4".into()),
@@ -138,19 +145,75 @@ fn fixture_exit_control(name: &str, both: bool, fail: bool) {
     assert_eq!(std::fs::read_dir(scratch.path()).unwrap().count(), 0);
 }
 
+// Only an explicitly selected private entry consumes the child mode. Public
+// controls always spawn a fresh process and check its scratch after exit, even
+// when their caller inherited the internal environment variable.
+#[test]
+fn prepared_fixtures_exit_child() {
+    let name = format!(
+        "{}::prepared_fixtures_exit_child",
+        module_path!().split_once("::").unwrap().1
+    );
+    let args: Vec<_> = std::env::args().collect();
+    if !args.iter().any(|arg| arg == "--exact") || !args.iter().any(|arg| arg == &name) {
+        return;
+    }
+    let (both, fail) = match std::env::var("WALLET_PIR_FIXTURE_EXIT_CHILD").as_deref() {
+        Ok("first") => (false, false),
+        Ok("both") => (true, false),
+        Ok("fail") => (true, true),
+        other => panic!("missing child mode: {other:?}"),
+    };
+    let sources: BTreeMap<u64, PathBuf> =
+        serde_json::from_str(&std::env::var("WALLET_PIR_FIXTURE_EXIT_SOURCES").unwrap()).unwrap();
+    assert_eq!(
+        sources.keys().copied().collect::<Vec<_>>(),
+        if both { vec![2, 3] } else { vec![2] }
+    );
+    EXIT_FIXTURE_SOURCES.set(sources).unwrap();
+    let first = tempfile::tempdir().unwrap();
+    let (directory, set) = prepared_publication(first.path(), 2);
+    let copy = tempfile::tempdir().unwrap();
+    let (copy_directory, copy_set) = prepared_publication(copy.path(), 2);
+    assert_eq!(set.map_digest, copy_set.map_digest);
+    let map = std::fs::read(copy_directory.join("shards.json")).unwrap();
+    std::fs::write(directory.join("shards.json"), b"corrupt").unwrap();
+    assert_eq!(
+        std::fs::read(copy_directory.join("shards.json")).unwrap(),
+        map
+    );
+    let fresh = tempfile::tempdir().unwrap();
+    let (fresh_directory, _) = prepared_publication(fresh.path(), 2);
+    assert_eq!(
+        std::fs::read(fresh_directory.join("shards.json")).unwrap(),
+        map
+    );
+    if both {
+        let next = tempfile::tempdir().unwrap();
+        let (_, next_set) = prepared_publication(next.path(), 3);
+        assert_ne!(set.map_digest, next_set.map_digest);
+    }
+    assert_eq!(
+        PREPARED_FIXTURES.lock().unwrap().len(),
+        if both { 2 } else { 1 }
+    );
+    println!("prepared fixtures: {}", if both { 2 } else { 1 });
+    assert!(!fail, "intentional child failure after preparing fixtures");
+}
+
 #[test]
 fn prepared_fixtures_exit_first_only() {
-    fixture_exit_control("prepared_fixtures_exit_first_only", false, false);
+    fixture_exit_control(false, false);
 }
 
 #[test]
 fn prepared_fixtures_exit_both() {
-    fixture_exit_control("prepared_fixtures_exit_both", true, false);
+    fixture_exit_control(true, false);
 }
 
 #[test]
 fn prepared_fixtures_exit_failed_test() {
-    fixture_exit_control("prepared_fixtures_exit_failed_test", true, true);
+    fixture_exit_control(true, true);
 }
 
 #[test]
