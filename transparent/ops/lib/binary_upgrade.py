@@ -2,7 +2,8 @@
 
 One transaction changes one component's executable: the workers, or the
 controller (staged under `<service root>/controller`, so a worker binary can
-never be selected as the controller). Only the executable changes. The release identity is the request's Git
+never be selected as the controller). An explicit History staging_adapter request
+may also change only its controller's fleet_command. The release identity is the request's Git
 revision and binary digest; the publication identity is everything the
 controller owns (configuration, fleet bytes, source revision, journal, roots)
 plus each worker's ready identity, and it must be identical before, after each
@@ -15,6 +16,7 @@ import hashlib
 import json
 import os
 import re
+from pathlib import Path
 
 from wallet_pir_ops import durable
 from wallet_pir_ops.deploy import descriptors, units
@@ -83,7 +85,7 @@ def validate(request):
     def require(condition, message):
         if not condition:
             raise DeployError('invalid upgrade request: ' + message)
-    require(isinstance(request, dict) and set(request) == REQUEST_KEYS, 'keys must be %s' % sorted(REQUEST_KEYS))
+    require(isinstance(request, dict) and set(request) in (REQUEST_KEYS, REQUEST_KEYS | {'staging_adapter'}), 'keys must be %s' % sorted(REQUEST_KEYS))
     require(request['schema'] == SCHEMA, 'schema must be ' + SCHEMA)
     product = PRODUCTS.get(request['service'])
     require(product is not None, 'service must be one of %s' % sorted(PRODUCTS))
@@ -122,7 +124,34 @@ def validate(request):
                 '%s.ready_identity pins exactly %s' % (key, list(product['ready_keys'])))
         require(ready['role'] in product['roles'], '%s.ready_identity.role must be one of %s' % (key, list(product['roles'])))
         require(isinstance(pinned['limits'], dict) and isinstance(pinned['args'], list), '%s limits/args' % key)
+    adapter = request.get('staging_adapter')
+    if 'staging_adapter' in request:
+        require(request['service'] == 'transparent-history' and request['component'] == 'controller',
+                'a staging adapter belongs only to the History controller')
+        require(isinstance(adapter, dict) and set(adapter) == {'sha256', 'configuration', 'previous_configuration'},
+                'staging_adapter is {sha256, configuration, previous_configuration}')
+        require(isinstance(adapter['sha256'], str) and bool(SHA256.fullmatch(adapter['sha256'])), 'invalid staging adapter digest')
+        require(isinstance(adapter['configuration'], str), 'adapter configuration must be JSON text')
+        try:
+            configuration = json.loads(adapter['configuration'])
+        except ValueError as error:
+            raise DeployError('invalid adapter configuration JSON') from error
+        require(isinstance(configuration, dict) and configuration.get('fleet_command') == adapter_path(adapter),
+                'adapter configuration must select its immutable digest path')
+        previous = adapter['previous_configuration']
+        require(isinstance(previous, str) and hashlib.sha256(previous.encode()).hexdigest() == files[product['config']],
+                'previous adapter configuration must match the pinned controller file')
+        try:
+            old = json.loads(previous)
+        except ValueError as error:
+            raise DeployError('invalid previous adapter configuration JSON') from error
+        require(isinstance(old, dict) and {**old, 'fleet_command': adapter_path(adapter)} == configuration,
+                'staging adapter update may change only controller fleet_command')
     return request
+
+
+def adapter_path(adapter):
+    return '/opt/transparent-publisher/v12/adapters/%s/transparent-live-fleet.py' % adapter['sha256']
 
 
 def unit_digest(state):
@@ -188,7 +217,12 @@ class Upgrade:
         state = ex.probe_unit(host, self.product['controller'])
         problem_if(check_authority and state['active_state'] != 'active', 'controller is %s' % state['active_state'], problems)
         problem_if(unit_digest(state) != controller['unit_sha256'], 'controller unit changed from the pinned bytes', problems)
-        for path, digest in sorted(controller['files'].items()):
+        files = dict(controller['files'])
+        adapter = self.request.get('staging_adapter')
+        if adapter and ex.sha256(host, self.product['config']) == hashlib.sha256(adapter['configuration'].encode()).hexdigest():
+            files[self.product['config']] = hashlib.sha256(adapter['configuration'].encode()).hexdigest()
+            files[adapter_path(adapter)] = adapter['sha256']
+        for path, digest in sorted(files.items()):
             problem_if(ex.sha256(host, path) != digest, 'controller file %s differs from its pinned digest' % path, problems)
         if 'config' in self.product:
             text = ex.read(host, self.product['config'])
@@ -200,7 +234,7 @@ class Upgrade:
             for key, value in self.request['publication'].items():
                 problem_if(config.get(key) != value, 'publication %s is %r, request pins %r' % (key, config.get(key), value), problems)
             for key in ('fleet_config', 'fleet_command'):
-                problem_if(config.get(key) not in controller['files'], 'controller %s is not a pinned file' % key, problems)
+                problem_if(config.get(key) not in files, 'controller %s is not a pinned file' % key, problems)
         else:
             words = units.split_exec(units.exec_start(units.effective(
                 [state['fragment_text'] or ''] + [d['text'] for d in state['drop_ins']])))[2].split()
@@ -371,6 +405,44 @@ class UpgradeDeployer(Deployer):
         self.operation = operation
         self.load_was_active = None
 
+    def assess(self, *args, **kwargs):
+        plans, problems = super().assess(*args, **kwargs)
+        adapter = self.upgrade.request.get('staging_adapter')
+        if not adapter:
+            return plans, problems
+        host = self.upgrade.controller.host
+        path = self.upgrade.product['config']
+        previous = self.ex.read(host, path)
+        desired = adapter['configuration']
+        if previous != desired:
+            if self.ex.sha256(host, path) != self.upgrade.request['controller']['files'][path]:
+                problems.append('controller configuration differs from the reviewed prior digest')
+            plans[0].changes.append({'op': 'write', 'path': path, 'previous': previous, 'new': desired})
+            plans[0].action = 'restart'
+        source = getattr(self, 'staging_adapter', None)
+        staged = self.ex.sha256(host, adapter_path(adapter))
+        if staged not in (None, adapter['sha256']):
+            problems.append('immutable staging adapter path holds different bytes')
+        if staged is None and (not source or hashlib.sha256(Path(source).read_bytes()).hexdigest() != adapter['sha256']):
+            problems.append('provide the checksum-bound --staging-adapter before deployment')
+        return plans, problems
+
+    def stage(self, *args, **kwargs):
+        super().stage(*args, **kwargs)
+        adapter = self.upgrade.request.get('staging_adapter')
+        if adapter:
+            self.lock.verify()
+            host, path = self.upgrade.controller.host, adapter_path(adapter)
+            if self.ex.sha256(host, path) is None:
+                self.ex.mkdir(host, os.path.dirname(path), 0o755)
+                partial = path + '.next'
+                self.ex.upload(host, self.staging_adapter, partial, 0o755)
+                if self.ex.sha256(host, partial) != adapter['sha256']:
+                    raise DeployError('uploaded staging adapter checksum differs from the reviewed request')
+                self.ex.rename(host, partial, path)
+            if self.ex.sha256(host, path) != adapter['sha256']:
+                raise DeployError('staged adapter checksum differs from the reviewed request')
+
     def check(self, record, expected):
         # Worker /health is diagnostic; /ready owns the readiness fields.
         # Use the endpoint already captured in the transaction for both
@@ -431,12 +503,33 @@ class UpgradeDeployer(Deployer):
         self.ex.write(load['host'], root + '/pins.json', data, 0o644)
         return pins
 
+    def wait_for_controller(self):
+        """Let the controller recover from a worker restart within its own readiness budget.
+
+        A warm worker can answer HTTP before the controller retries a failed
+        control call. Publication and ownership checks still run after recovery.
+        """
+        timeout = self.upgrade.controller.role.ready_timeout
+        deadline = self.clock() + timeout
+        while True:
+            _, problems = self.upgrade.authority_problems(self.ex)
+            if not problems:
+                return
+            if self.clock() >= deadline:
+                raise DeployError('controller did not resume publication within %ss: %s'
+                                  % (timeout, '; '.join(problems)))
+            self.sleep(self.poll_seconds)
+
     def activate(self, journal, index, sha):
         if self.upgrade.request['component'] == 'workers':
             self.pause_load(journal)
         super().activate(journal, index, sha)
         record = journal.hosts[index]
+        adapter = self.upgrade.request.get('staging_adapter')
+        if adapter and self.ex.read(record['host'], self.upgrade.product['config']) != adapter['configuration']:
+            raise DeployError('controller did not select the reviewed staging adapter configuration')
         if self.upgrade.request['component'] == 'workers':
+            self.wait_for_controller()
             # A restarted worker must come back owning the controller's current assignment.
             problems = self.upgrade.ready_problems(self.ex, record['key'], record['host'],
                                                    record['verify']['ready_url'] or record['verify']['health'])

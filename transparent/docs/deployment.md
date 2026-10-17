@@ -3855,6 +3855,11 @@ component. `baseline` records both components.
 
 - **Release identity** is the request's `release.git_sha` and `release.binary_sha256`; a mutating
   command also requires the installed operations package to name that Git revision.
+- An explicit History controller request may include `staging_adapter: {sha256, configuration, previous_configuration}`.
+  The adapter is staged once at `/opt/transparent-publisher/v12/adapters/<sha256>/transparent-live-fleet.py`
+  from `--staging-adapter`; its bytes must match the request. The prior configuration must match its pinned digest; the new configuration may differ only in
+  `fleet_command`. The locked transaction retains and restores the prior controller configuration
+  with its binary. It never overwrites the old immutable source or enables runtime shipping.
 - **Publication identity** is pinned separately: v12 `publication.source_sha` (the controller's
   `source_sha`, for example `fb90519b`), or the 4k8 display `root` (run mode takes no `--geometry`;
   `<root>/display-root.json`, pinned under `controller.files`, fixes txid-4k8); the controller's
@@ -3870,7 +3875,10 @@ component. `baseline` records both components.
   must match the controller's `<fleet.json state_dir>/<map_sha256>.assignment.json` (native
   `Assignment::digest` and `worker_digest`, recomputed in declaration order); `warm_runtimes` must
   equal `target_runtimes` with no `prewarm_failed`. Display workers must be `ready`, `warm` and
-  report `covered_through`.
+  report `covered_through`. After a worker becomes HTTP-ready, the operator waits within the
+  controller's existing readiness budget for publication to recover from failed control calls
+  during the restart. It then repeats the publication and ownership checks. A controller that
+  remains stalled causes rollback; worker HTTP readiness alone cannot commit the upgrade.
 - History refuses unless the controller holds `follow_journal: false`, the full-v3 journal, the
   full-v12 publication root and no `ship_runtimes`. Display refuses unless its controller runs
   `--root <root>` without `--geometry`.

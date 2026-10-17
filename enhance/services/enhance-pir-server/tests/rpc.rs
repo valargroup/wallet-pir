@@ -656,7 +656,7 @@ async fn application_collection_commits_survive_preparation_refusal_restart_and_
             .0
             .as_ref(),
         &expected[84..],
-        "the old immutable publication remains pinned during handover"
+        "existing client recovers expected answer after publication replacement"
     );
     router_task.abort();
     let _ = router_task.await;
