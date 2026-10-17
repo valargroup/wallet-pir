@@ -219,7 +219,13 @@ it permits collection on an unchanged poll. This collection never deletes source
 trees or immutable objects; disk-retention automation is not implemented
 in this slice, so operators must budget disk for retained trees and objects.
 
-`publisher-high-water.json` retains replay/withdrawal fencing. Before preparation,
+`publisher-high-water.json` retains replay/withdrawal fencing. A failed write
+also attempts `publisher-high-water-fallback.json` with the same complete source
+record, so an equal revision cannot substitute another inventory. Subsequent
+reads check both records and subsequent writes reconcile both once the fallback
+exists. The manager also rejects source revisions below its durable revocation
+floor; if both high-water writes failed, an equal eligible revision without a
+saved exact source identity cannot activate another map. Before preparation,
 positive applicable invalidation is applied through the existing owner's durable
 `active.invalid.json` fence. `revocation-floor.json` additionally records the
 highest revision and cumulative exact digests at which revocation was observed,
@@ -262,9 +268,11 @@ Do not reinterpret a managed root as a static/fleet publication or restore older
 high-water/revocation records to bypass fencing. Reverting the manager requires
 stopping this mode and retaining its safety records; no publisher artifacts or
 wallet formats require migration. Before using a reader that ignores
-`revocation-fallback.json`, reconcile its maximum revision and digest union into
-the primary intent while stopped, or retain a fallback-aware reader. Dropping
-that record is not a safe rollback.
+either fallback file, reconcile the maximum revision/digest union into the
+primary intent and the newest complete source record into the primary
+high-water while stopped, preserving negative eligibility at equal revisions and
+refusing contradictory identities, or retain a fallback-aware reader. Dropping either
+fallback record is not a safe rollback.
 
 A changed inventory is reconciled even when its map digest is unchanged. The
 existing same-map/different-worker-assignment fence remains in force. Required

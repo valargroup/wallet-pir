@@ -493,7 +493,11 @@ async fn manager_refuses_changed_holdings_on_an_unchanged_map() {
 // write fails. Run the same probe at the ordinary and both activation polls.
 async fn control_write_failure(pause_at: Option<u32>, failed_record: &str) {
     let failed_records = if failed_record == "both" {
-        vec!["publisher-high-water.tmp", "revocation-floor.tmp"]
+        vec![
+            "publisher-high-water.tmp",
+            "publisher-high-water-fallback.tmp",
+            "revocation-floor.tmp",
+        ]
     } else if failed_record == "malformed" {
         vec!["revocation-floor.json"]
     } else {
@@ -812,4 +816,65 @@ async fn manager_missing_durable_revision_cannot_reenable_revoked_view() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn manager_malformed_revocation_floor_still_fences_http() {
     control_write_failure(None, "malformed").await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn manager_rejects_replayed_different_map_below_durable_revocation_floor() {
+    let root = tempfile::tempdir().unwrap();
+    let (directory, set) = publication(root.path());
+    prepare_recent(&directory, &set);
+    let rpc = canonical_rpc(root.path(), &set).await;
+    let owner = authority(
+        &directory,
+        Some(Finalized::prepare(&directory, &set, 2).unwrap()),
+        rpc.client.clone(),
+    );
+    let tls = tls(root.path(), owner.clone()).await;
+    let state = root.path().join("provider");
+    let mut follow = manager(&tls, &state);
+    follow.poll_once().await.unwrap();
+    let (origin, task) = worker(follow.live().unwrap()).await;
+    std::fs::create_dir(state.join("publisher-high-water.tmp")).unwrap();
+    std::fs::create_dir(state.join("publisher-high-water-fallback.tmp")).unwrap();
+    std::fs::create_dir(state.join("revocation-floor.tmp")).unwrap();
+    owner.0.distribution_revision.store(100, Ordering::Release);
+    owner.0.withdrawn.store(true, Ordering::Release);
+    owner.0.invalidated_from.store(2, Ordering::Release);
+    assert!(follow.poll_once().await.is_err());
+    assert_eq!(
+        get(&origin, "/v2/shards/init").await.status(),
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+    task.abort();
+    let _ = task.await;
+    drop(follow);
+    std::fs::remove_dir(state.join("publisher-high-water.tmp")).unwrap();
+    std::fs::remove_dir(state.join("publisher-high-water-fallback.tmp")).unwrap();
+    std::fs::remove_dir(state.join("revocation-floor.tmp")).unwrap();
+    let next_root = root.path().join("next");
+    std::fs::create_dir(&next_root).unwrap();
+    let (next_dir, next_set) = publication_through(&next_root, 3);
+    prepare_recent(&next_dir, &next_set);
+    advance(&owner, &next_dir, &next_set);
+    owner.0.distribution_revision.store(40, Ordering::Release);
+    owner.0.withdrawn.store(false, Ordering::Release);
+    owner.0.invalidated_from.store(u64::MAX, Ordering::Release);
+    let mut restarted = manager(&tls, &state);
+    for revision in [40, 100] {
+        owner
+            .0
+            .distribution_revision
+            .store(revision, Ordering::Release);
+        assert!(
+            restarted.poll_once().await.is_err(),
+            "a different map cannot bypass the saved revision100 floor at{revision}"
+        );
+        assert!(restarted.live().is_none());
+    }
+    owner.0.distribution_revision.store(101, Ordering::Release);
+    restarted.poll_once().await.unwrap();
+    let (origin, task) = worker(restarted.live().unwrap()).await;
+    query(&origin, &next_set).await;
+    task.abort();
+    let _ = task.await;
 }

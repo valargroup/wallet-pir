@@ -514,9 +514,22 @@ async fn poll_snapshot(
     let Some(current) = source.poll(root, previous, network, genesis).await? else {
         return Ok(None);
     };
+    let recorded = floor(root);
+    if let Ok(bound) = &recorded {
+        if current.revision < bound.revision {
+            return Err("publisher replay below durable revocation revision".into());
+        }
+        if current.revision == bound.revision
+            && current.eligible()
+            && source.observed_revision(root)? < bound.revision
+        {
+            return Err("equal revision lacks a durable exact source identity".into());
+        }
+    }
     let durable = source.observe(root, &current);
     let applied = apply_snapshot(source, root, live, &current).await;
     durable?;
     applied?;
+    recorded?;
     Ok(Some(current))
 }

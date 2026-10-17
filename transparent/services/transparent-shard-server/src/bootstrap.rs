@@ -140,35 +140,47 @@ impl Source {
         Ok(bytes)
     }
     pub(crate) fn observed_revision(&self, directory: &std::path::Path) -> Result<u64, Error> {
-        match std::fs::read(directory.join("publisher-high-water.json")) {
-            Ok(bytes) => {
-                let saved: HighWater = serde_json::from_slice(&bytes)?;
-                if saved.origin != self.origin.as_str() {
-                    return Err("publisher origin change".into());
+        let mut revision = 0;
+        for name in [
+            "publisher-high-water.json",
+            "publisher-high-water-fallback.json",
+        ] {
+            match std::fs::read(directory.join(name)) {
+                Ok(bytes) => {
+                    let saved: HighWater = serde_json::from_slice(&bytes)?;
+                    if saved.origin != self.origin.as_str() {
+                        return Err("publisher origin change".into());
+                    }
+                    revision = revision.max(saved.current.revision);
                 }
-                Ok(saved.current.revision)
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(e.into()),
             }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(0),
-            Err(e) => Err(e.into()),
         }
+        Ok(revision)
     }
     fn validate_observation(
         &self,
         directory: &std::path::Path,
         current: &Current,
     ) -> Result<(), Error> {
-        let path = directory.join("publisher-high-water.json");
-        match std::fs::read(&path) {
-            Ok(bytes) => {
-                let saved: HighWater = serde_json::from_slice(&bytes)?;
-                if saved.origin != self.origin.as_str() || !current.succeeds(&saved.current) {
-                    return Err(
-                        "publisher origin change, replay or contradictory current record".into(),
-                    );
+        for name in [
+            "publisher-high-water.json",
+            "publisher-high-water-fallback.json",
+        ] {
+            match std::fs::read(directory.join(name)) {
+                Ok(bytes) => {
+                    let saved: HighWater = serde_json::from_slice(&bytes)?;
+                    if saved.origin != self.origin.as_str() || !current.succeeds(&saved.current) {
+                        return Err(
+                            "publisher origin change, replay or contradictory current record"
+                                .into(),
+                        );
+                    }
                 }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
             }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error.into()),
         }
         if self
             .observed
@@ -188,16 +200,18 @@ impl Source {
         // A failed durable write cannot erase a positive observation in this
         // process. The manager still applies its exact revocation to the owner.
         self.observed = Some(current.clone());
-        let path = directory.join("publisher-high-water.json");
-        // Observing a newer record fences an older one even when its transfer
-        // subsequently fails. A restart must contact HTTPS current again.
-        crate::control::persist(
-            &path,
-            &HighWater {
-                origin: self.origin.to_string(),
-                current: current.clone(),
-            },
-        )?;
+        // Keep the full source identity as well as its revision: an equal
+        // revision must not substitute another inventory after a write failure.
+        let saved = HighWater {
+            origin: self.origin.to_string(),
+            current: current.clone(),
+        };
+        let primary = crate::control::persist(&directory.join("publisher-high-water.json"), &saved);
+        let fallback = directory.join("publisher-high-water-fallback.json");
+        if primary.is_err() || fallback.exists() {
+            crate::control::persist(&fallback, &saved)?;
+        }
+        primary?;
         Ok(())
     }
 
