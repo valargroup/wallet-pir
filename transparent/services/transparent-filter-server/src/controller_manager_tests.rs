@@ -1501,15 +1501,31 @@ async fn standard_history_lifecycle_queries_advance_and_reconciles_lost_activati
     // exact encrypted bytes were just decrypted against the original row oracle.
     let tip = Arc::new(AtomicU64::new(2));
     let node_tip = tip.clone();
+    struct EntryPause {
+        enabled: AtomicBool,
+        entered: tokio::sync::Notify,
+        resume: tokio::sync::Notify,
+    }
+    let pause = Arc::new(EntryPause {
+        enabled: AtomicBool::new(false),
+        entered: tokio::sync::Notify::new(),
+        resume: tokio::sync::Notify::new(),
+    });
+    let node_pause = pause.clone();
     let rpc_app = axum::Router::new().route(
         "/",
         axum::routing::post(move |axum::Json(request): axum::Json<serde_json::Value>| {
             let tip = node_tip.clone();
+            let pause = node_pause.clone();
             async move {
                 let value = match request["method"].as_str().unwrap() {
                     "getblockcount" => serde_json::json!(tip.load(Ordering::Acquire)),
                     "getblockhash" => {
                         let h = request["params"][0].as_u64().unwrap();
+                        if h == 3 && pause.enabled.swap(false, Ordering::AcqRel) {
+                            pause.entered.notify_one();
+                            pause.resume.notified().await;
+                        }
                         serde_json::json!(if h == 0 {
                             transparent_filter::MAINNET_GENESIS_DISPLAY.to_string()
                         } else {
@@ -1597,6 +1613,42 @@ with urllib.request.urlopen(r,timeout=20) as response: sys.stdout.buffer.write(r
     };
     pir_pipeline::Task::run(&mut input).await.unwrap();
     assert_eq!(reader.lock().await.covered_through(), Some(3));
+    let Input::Work(work) = acquire_history(&config, &rpc, &reader, &owner)
+        .await
+        .unwrap()
+    else {
+        panic!("committed work expected");
+    };
+    let Input::Work(ready) = prepare_history(&config, &rpc, &owner, work).await.unwrap() else {
+        panic!("prepared work expected");
+    };
+    pause.enabled.store(true, Ordering::Release);
+    {
+        let activation = activate_history(&config, &rpc, &owner, ready);
+        tokio::pin!(activation);
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            tokio::select! {
+                result = &mut activation => panic!("owner check did not pause: {result:?}"),
+                _ = pause.entered.notified() => {},
+            }
+        })
+        .await
+        .unwrap();
+        // A valid RPC answer cannot clear an invalidation that arrived while
+        // the owner awaited it. No durable intent or fleet activation may occur.
+        owner.0.epoch.fetch_add(1, Ordering::AcqRel);
+        pause.resume.notify_one();
+        assert!(activation
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("invalidated before activation"));
+    }
+    assert!(!config.publication_root.join("activation.json").exists());
+    assert_eq!(
+        live.command(Command::Status).await.unwrap()["active"]["map_sha256"],
+        set.map_digest
+    );
     assert!(publish_once(&config, &rpc, &reader, &owner).await.is_err());
     assert_eq!(
         owner.0.active.read().unwrap().publication.map_sha256,

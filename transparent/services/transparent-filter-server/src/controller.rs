@@ -1071,6 +1071,8 @@ async fn activate_history(
     // writing activation intent or changing any fleet authority.
     if authority.0.epoch.load(Ordering::Acquire) != epoch
         || rpc.block_hash_display(height).await? != hash
+        // Ingest can invalidate while the canonicality RPC is awaiting its reply.
+        || authority.0.epoch.load(Ordering::Acquire) != epoch
     {
         return Err("candidate invalidated before activation".into());
     }
