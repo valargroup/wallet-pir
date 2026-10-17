@@ -14,7 +14,7 @@ inputs:
 outputs:
   cache-hit:
     description: An exact hosted entry exists for this compatibility identity
-    value: ${{ steps.restore.outputs.cache-hit }}
+    value: ${{ steps.workspace.outputs.cache-hit || steps.restore.outputs.cache-hit }}
 runs:
   using: composite
   steps:
@@ -74,13 +74,15 @@ runs:
         umask 022
         args=(--lane "$LANE" --scope "$SCOPE" --target-dir "target/$LANE")
         [[ "$LOOKUP_ONLY" != true ]] || args+=(--lookup-only)
+        # Match rust-cache's nonincremental build mode in the workspace lane.
+        echo 'CARGO_INCREMENTAL=0' >> "$GITHUB_ENV"
         python3 tools/ci/cargo_cache.py prepare "${args[@]}"
     # Fast keys retain compiler/configuration/profile isolation while allowing
     # dependency fallback across lockfiles. Other lanes retain exact identities.
     # PR saves stay in the merge ref, never in main's trusted cache.
     - name: Restore hosted Cargo cache
       id: restore
-      if: runner.environment != 'self-hosted'
+      if: runner.environment != 'self-hosted' && inputs.lane != 'fast'
       uses: Swatinem/rust-cache@v2
       with:
         prefix-key: v1-wallet-pir
@@ -90,9 +92,24 @@ runs:
         cache-workspace-crates: true
         cache-on-failure: true
         lookup-only: ${{ inputs.lookup-only }}
+    # Source trees get distinct immutable snapshots, with fallback only inside
+    # the existing compatibility partition. Save only completed successful jobs:
+    # cancellation can leave Cargo writers alive during post-action archiving.
+    - name: Restore hosted workspace snapshot
+      id: workspace
+      if: runner.environment != 'self-hosted' && inputs.lane == 'fast'
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target/fast
+        key: ${{ steps.identity.outputs.workspace-key }}
+        restore-keys: ${{ steps.identity.outputs.workspace-prefix }}
+        lookup-only: ${{ inputs.lookup-only }}
     - name: Record restored Cargo state
       shell: bash
       env:
         LANE: ${{ inputs.lane }}
-        CACHE_HIT: ${{ steps.restore.outputs.cache-hit }}
+        CACHE_HIT: ${{ steps.workspace.outputs.cache-hit || steps.restore.outputs.cache-hit }}
       run: python3 tools/ci/cargo_cache.py restored --lane "$LANE" --cache-hit "$CACHE_HIT"
