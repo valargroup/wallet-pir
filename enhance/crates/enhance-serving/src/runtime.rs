@@ -291,6 +291,9 @@ impl Evaluation {
             || local.db_rows != expected.db_rows
             || local.db_cols != expected.db_cols
             || local.p != expected.p
+            || local.item_size_bits != expected.item_size_bits
+            || local.query_bits != expected.query_bits
+            || local.q_prime_1 != expected.q_prime_1
             || local.db_cols != params.db_cols
             || local.p != params.p
         {
@@ -829,6 +832,13 @@ mod tests {
             .unwrap()
             .0;
         assert!(eval.verified_hint_artifact().unwrap().is_some());
+        let oracle_root = tempfile::tempdir().unwrap();
+        let expected = Engine::new(oracle_root.path())
+            .prepare(domain.clone(), records)
+            .unwrap()
+            .0
+            .hint()
+            .unwrap();
         let mut partial = domain.clone();
         partial.shard = Lifecycle::default()
             .coverage(8192 * RECORDS_PER_ROW as u64 + 17, Geometry::default())
@@ -847,7 +857,7 @@ mod tests {
             };
             assert!(fallback.verified_hint_artifact().unwrap().is_none());
             // Preserve the generic partial contribution, with no new rewrite.
-            assert_eq!(fallback.hint().unwrap(), eval.hint().unwrap());
+            assert_eq!(fallback.hint().unwrap(), expected);
         }
 
         // A real persisted unit with the Status row layout has a different

@@ -448,6 +448,8 @@ async fn single_unit_hint_rejects_damage_and_pins_retired_file() {
     }
     // Disconnect does not poison healthy shared validation state.
     drop(http.get(&url).send().await.unwrap());
+    // A pinned, verified unit remains readable without its original pathname.
+    std::fs::remove_file(&path).unwrap();
     let response = http.get(&url).send().await.unwrap();
     assert_eq!(response.status(), reqwest::StatusCode::OK);
     hint_command(
