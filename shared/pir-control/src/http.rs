@@ -1,4 +1,4 @@
-//! Keep admission charged until HTTP releases its buffered response.
+//! Transport-owned resources and product-fenced buffered responses.
 use axum::body::{Body, Bytes};
 use http_body::{Body as HttpBody, Frame, SizeHint};
 use std::{
@@ -7,13 +7,12 @@ use std::{
     task::{Context, Poll},
 };
 
-struct GuardedBody<G, F> {
+struct FencedBody<F> {
     bytes: Option<Bytes>,
-    _guard: G,
     fence: F,
 }
 
-impl<G: Send + Unpin, F: Fn() -> Result<(), String> + Send + Unpin> HttpBody for GuardedBody<G, F> {
+impl<F: Fn() -> Result<(), String> + Send + Unpin> HttpBody for FencedBody<F> {
     type Data = Bytes;
     type Error = io::Error;
     fn poll_frame(
@@ -41,11 +40,43 @@ where
     G: Send + Unpin + 'static,
     F: Fn() -> Result<(), String> + Send + Unpin + 'static,
 {
-    Body::new(GuardedBody {
-        bytes: Some(bytes.into()),
+    retain(
+        Body::new(FencedBody {
+            bytes: Some(bytes.into()),
+            fence,
+        }),
+        guard,
+    )
+}
+
+/// Retain arbitrary resources for the entire transport body lifetime. Framing
+/// and end-of-stream hints are delegated unchanged to the original body.
+pub fn retain<G: Send + Unpin + 'static>(body: Body, guard: G) -> Body {
+    Body::new(RetainedBody {
+        body,
         _guard: guard,
-        fence,
     })
+}
+
+struct RetainedBody<G> {
+    body: Body,
+    _guard: G,
+}
+impl<G: Send + Unpin> HttpBody for RetainedBody<G> {
+    type Data = Bytes;
+    type Error = axum::Error;
+    fn poll_frame(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Bytes>, Self::Error>>> {
+        Pin::new(&mut self.body).poll_frame(cx)
+    }
+    fn is_end_stream(&self) -> bool {
+        self.body.is_end_stream()
+    }
+    fn size_hint(&self) -> SizeHint {
+        self.body.size_hint()
+    }
 }
 
 #[cfg(test)]
@@ -124,7 +155,9 @@ mod tests {
     async fn revocation_after_packing_prevents_response_release() {
         let revoked = Arc::new(AtomicBool::new(false));
         let fence = revoked.clone();
-        let mut body = guarded(vec![7], (), move || {
+        let permits = Arc::new(Semaphore::new(1));
+        let permit = permits.clone().acquire_owned().await.unwrap();
+        let mut body = guarded(vec![7], permit, move || {
             if fence.load(Ordering::SeqCst) {
                 Err("revoked".into())
             } else {
@@ -138,35 +171,8 @@ mod tests {
                 .unwrap()
                 .is_err()
         );
-    }
-}
-
-/// Retain arbitrary resources for the entire transport body lifetime. Framing
-/// and end-of-stream hints are delegated unchanged to the original body.
-pub fn retain<G: Send + Unpin + 'static>(body: Body, guard: G) -> Body {
-    Body::new(RetainedBody {
-        body,
-        _guard: guard,
-    })
-}
-
-struct RetainedBody<G> {
-    body: Body,
-    _guard: G,
-}
-impl<G: Send + Unpin> HttpBody for RetainedBody<G> {
-    type Data = Bytes;
-    type Error = axum::Error;
-    fn poll_frame(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-    ) -> Poll<Option<Result<Frame<Bytes>, Self::Error>>> {
-        Pin::new(&mut self.body).poll_frame(cx)
-    }
-    fn is_end_stream(&self) -> bool {
-        self.body.is_end_stream()
-    }
-    fn size_hint(&self) -> SizeHint {
-        self.body.size_hint()
+        assert_eq!(permits.available_permits(), 0);
+        drop(body);
+        assert_eq!(permits.available_permits(), 1);
     }
 }
