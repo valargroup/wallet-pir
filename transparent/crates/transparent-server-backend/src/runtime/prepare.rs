@@ -184,6 +184,78 @@ mod tests {
         ShippedRuntimes::new(path)
     }
 
+    #[tokio::test]
+    async fn required_prepared_refuses_missing_and_corrupt_on_later_cache_misses() {
+        use crate::{
+            metrics::Metrics,
+            runtime::{Produced, RuntimeCache},
+        };
+        use std::sync::Arc;
+        let dir = tempfile::tempdir().unwrap();
+        let (shared, source) = segment(dir.path(), 3);
+        let shared = Arc::new(shared);
+        let key = ("12".repeat(32), Table::Pages, 0);
+        let out = publication(dir.path(), "strict");
+        let strict = ShippedRuntimes::required(out.directory().to_path_buf());
+        let metrics = Arc::new(Metrics::default());
+        let cache = RuntimeCache::new(4 << 30, 1, metrics.clone());
+        assert!(cache
+            .get_from(
+                key.clone(),
+                shared.clone(),
+                source.clone(),
+                Some(strict.clone())
+            )
+            .await
+            .is_err());
+        assert_eq!(Metrics::get(&metrics.shipped_fallbacks), 0);
+        prepare_segment(&out, &[], &key, &shared, &source, "pages".into()).unwrap();
+        let (handle, produced) = cache
+            .get_from(
+                key.clone(),
+                shared.clone(),
+                source.clone(),
+                Some(strict.clone()),
+            )
+            .await
+            .unwrap();
+        assert!(matches!(produced, Produced::Shipped { .. }));
+        drop(handle);
+        cache.evict_unpinned();
+        // The same strict view is used after activation on a query cache miss.
+        let file = out.path(&key, &shared, source.sha256());
+        fs::write(&file, [0u8; 64]).unwrap();
+        assert!(cache
+            .get_from(
+                key.clone(),
+                shared.clone(),
+                source.clone(),
+                Some(strict.clone())
+            )
+            .await
+            .is_err());
+        fs::remove_file(&file).unwrap();
+        assert!(cache
+            .get_from(key.clone(), shared.clone(), source.clone(), Some(strict))
+            .await
+            .is_err());
+        assert_eq!(Metrics::get(&metrics.shipped_fallbacks), 0);
+        assert_eq!(Metrics::get(&metrics.builds), 0);
+        // An existing optional deployment still builds when no shipped file
+        // exists. Its behavior is preserved, with a counted fallback.
+        let (_handle, produced) = cache
+            .get_from(
+                key.clone(),
+                shared.clone(),
+                source.clone(),
+                Some(out.clone()),
+            )
+            .await
+            .unwrap();
+        assert!(matches!(produced, Produced::Fallback));
+        assert_eq!(Metrics::get(&metrics.shipped_fallbacks), 1);
+    }
+
     /// A retained publication's completed file is linked, not rebuilt; a
     /// missing, truncated, foreign or interrupted one is rebuilt, and a
     /// corrupt source fails as the publication's own fault.

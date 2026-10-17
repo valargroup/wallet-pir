@@ -33,6 +33,8 @@ The contract governs intended behavior; code establishes implementation; deploym
 
 13. [First independent history provider plan](recent-provider-plan.md): approved PR stack for HTTPS publication synchronization, embedded recent serving and a fixed Valargroup archive upstream.
 
+14. [Prepared publication bootstrap](prepared-distribution.md): opt-in PR1 verification checkpoint, HTTPS trust/replay rules and remaining activation gate.
+
 ## Product boundaries
 
 Active transparent recovery uses `wallet-libraries/zakura/transparent-events`, `wallet-libraries/zakura/transparent-filter`, `wallet-libraries/zakura/transparent-shard`, `wallet-libraries/zakura/transparent-txid-client`, `wallet-libraries/zakura/pir-transparent` (`engine` and `engine_store`), `transparent/services/transparent-filter-server`, and `transparent/services/transparent-shard-server`.

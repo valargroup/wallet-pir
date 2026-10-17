@@ -137,7 +137,7 @@ re-cut map.
 The provider plan fixes the public stable release available before approval:
 [Vizor v0.0.60](https://github.com/chainapsis/vizor-wallet/releases/tag/release/v0.0.60),
 macOS build 195, source `1c38c2eb0753fc6a36c16ec58cfe397696f25e4b`.
-This is the released application, not the PR1021 registry demo or a rebuilt wallet.
+This baseline uses the original released application artifacts.
 Original assets were downloaded again without installing or executing them:
 
 | Original release asset | Bytes | SHA-256 |
