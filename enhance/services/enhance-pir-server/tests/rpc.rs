@@ -602,7 +602,7 @@ async fn application_collection_commits_survive_preparation_refusal_restart_and_
         .await
         .unwrap();
     let first = coordinator.manifest().await.unwrap();
-    let (origin, router_task) = serve(coordinator.router()).await;
+    let (origin, router_task) = serve(coordinator.clone().router()).await;
     let mut retained = EnhancePirClient::connect(&origin).await.unwrap();
     assert_eq!(
         retained
