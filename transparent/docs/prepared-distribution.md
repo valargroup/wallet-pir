@@ -1,10 +1,10 @@
 # Prepared history publication bootstrap
 
-Status: PR1 implementation checkpoint, one-shot verification only; independent
-review and qualification remain pending. This opt-in publisher/provider interface
-is separate from wallet protocols. PR2 owns continuous reconciliation and atomic
-activation; this command does not start a wallet listener or implement an archive
-router, standalone packaging, or unchanged-application qualification.
+Status: PR1 bootstrap and PR2 recent-worker reconciliation implementation;
+independent review and qualification remain separate gates. This opt-in interface
+is separate from wallet protocols. The manager serves recent holdings only; it
+does not implement an archive router, standalone packaging, or unchanged-application
+qualification.
 The [approved plan](recent-provider-plan.md) retains those outcomes and order.
 The fixed [Vizor baseline and API trace](wallet-adapter.md#fixed-vizor-provider-qualification-baseline)
 remain unchanged.
@@ -33,7 +33,10 @@ All routes are GET-only under `/provider/v1/`:
 | `inventories/{sha256}` | Exact digest-bound inventory JSON for the current publication |
 | `artifacts/{sha256}` | Exact immutable file bytes referenced locally by that inventory |
 
-Current responses use `Cache-Control: no-store`; immutable responses use a
+Current responses use `Cache-Control: no-store` and an ETag of the entire
+serialized current record. `If-None-Match` yields 304 only after the same live
+source checks as a full response. A 304 supplies no new provider authority or
+activation proof. Immutable responses use a
 content digest and immutable cache policy. Only the current inventory is offered
 for bootstrap. Ordinary supersession does not revoke previously held material.
 Unknown or retired targets return an explicit refusal. Artifacts common to the
@@ -148,9 +151,8 @@ completeness checks remain independent and unchanged. Digests alone establish
 neither chain acceptance nor serving authority.
 
 The one-shot command verifies candidate inputs and this live authority context;
-it does not grant permission to serve. In PR2 the existing publication owner must
-repeat the fresh current/anchor checks immediately before its predecessor-map
-prepare/activate CAS, consume applicable invalidation first, and retain admitted
+it does not grant permission to serve. The PR2 publication owner repeats the fresh current/anchor checks immediately before its predecessor-map
+prepare/activate CAS, consumes applicable invalidation first, and retains admitted
 handles under the existing rules. Persisted prepared files and saved attestations
 can never bypass that owner boundary on restart. A retained older publication can
 be checked through `anchors/{height}/{hash}` after missed revisions; the latest
@@ -163,10 +165,9 @@ response means the publisher checked the offered anchor; it does not promise a
 latest chain height, complete indexing or indefinite permission. Routine publisher
 advancement is not revocation. Failed polls/source outages cannot establish a new
 candidate or refresh authority, and do not by themselves prove that an already
-active canonical publication is orphaned. PR2 must preserve those distinctions,
-serving-owner canonicality checks, refusal codes and restart fences. Continuous
-polling/retry, activation and retained-request lifecycle remain PR2 implementation;
-the source, evidence meaning and ordering above are fixed at this PR1 boundary.
+active canonical publication is orphaned. Continuous reconciliation preserves
+those distinctions, serving-owner checks, refusal codes and restart fences. The
+source, evidence meaning and ordering remain the PR1 trust boundary.
 
 Real TLS tests terminate HTTPS with a fresh localhost certificate and forward to
 the actual controller router. The actual provider/production loader receives
@@ -177,3 +178,120 @@ canonicality-source failure/mismatch, higher-revision recovery, journal-only
 retention and older-anchor checks. These tests
 do not execute the fixed wallet application or qualify archive routing,
 production TLS, distribution scale, hardware or the complete service.
+
+## Following publications with the recent worker
+
+Omit `--verify-only` from the command above to run the manager and existing recent
+worker in the existing binary. A successful initial fetch or verified predecessor recovery, strict load, prewarm
+and live owner check precede listener binding. Startup source failure refuses to
+listen; restart retries through the operator's normal process supervisor. A saved
+predecessor can recover through fresh exact-anchor checks while a newer candidate
+fails to download; the saved pointer alone grants no authority. After
+startup, synchronization runs independently of wallet requests. This is a recent
+worker, **not a complete history provider**: the accounting-only archive row does
+not qualify a route. PR3 still owns complete-history composition.
+
+The manager holds the same exclusive directory lock as bootstrap. Its serving
+owner retains that lock across cancellation and blocking activation work, so a
+new manager cannot race an unfinished durable commit. Each attempt
+has the existing connect/request deadlines and response-body budget. Transfers
+are sequential (concurrency one); successful synchronization waits five seconds
+plus up to one second of jitter, while failures back off exponentially to 120
+seconds plus jitter. Only an activated snapshot supplies a conditional token.
+Unchanged responses do not fetch inventories/artifacts, update a success-time
+lease, or authorize an activation. Transparent still has no lease.
+
+Completed objects live under `objects/<sha256>`. Every reuse verifies exact
+length and digest; each fresh staging tree receives separate copies, then the
+production loader verifies tables and prewarms required native runtimes. On
+later preparation, native files are also loaded and self-checked independently of
+resident cache hits before recording a replacement directory, even on the same map. Files,
+child directories and staging parents are synced before publishing an active
+pointer. Incomplete copies have a `.partial` name and are never reuse candidates.
+A corrupt object is downloaded again; a bad download never replaces its completed
+object. Successful artifacts from an interrupted attempt are reusable without
+relying on old inventories, deltas or saved proofs. Interrupted staging and old
+objects remain non-authoritative. On activation and every subsequent poll, the
+manager releases unused in-memory views with the owner's existing policy: retain
+three recent predecessors and any older snapshot still held by an admitted
+request. A long request does not retain other unused generations, and completing
+it permits collection on an unchanged poll. This collection never deletes source
+trees or immutable objects; disk-retention automation is not implemented
+in this slice, so operators must budget disk for retained trees and objects.
+
+`publisher-high-water.json` retains replay/withdrawal fencing. A failed write
+also attempts `publisher-high-water-fallback.json` with the same complete source
+record, so an equal revision cannot substitute another inventory. Subsequent
+reads check both records and subsequent writes reconcile both once the fallback
+exists. The manager also rejects source revisions below its durable revocation
+floor; if both high-water writes failed, an equal eligible revision without a
+saved exact source identity cannot activate another map. Before preparation,
+positive applicable invalidation is applied through the existing owner's durable
+`active.invalid.json` fence. `revocation-floor.json` additionally records the
+highest revision and cumulative exact digests at which revocation was observed,
+before changing that fence. Startup replays this intent even if the process died
+before the owner's fence write. If intent persistence fails, the owner still
+fences memory and attempts its own durable record. This also applies when the
+high-water write fails after a validated source response, at ordinary polling,
+activation rechecks and recovery rechecks; invalidation cannot disappear behind
+a control-record storage error. A process retains its observed revision/digest
+floor even if both intent writes fail, including a separate exact-anchor negative
+following an eligible Current at that revision. All activation and clearing gates
+combine this in-memory bound with both durable records. Repairing storage does
+not permit same-revision recovery. If every applicable exact safety write is
+unavailable, a process or power loss cannot be promised to preserve that negative
+observation; the in-process bound is not a universal durability guarantee.
+
+When an already-running Source has a trusted complete in-memory Current, an
+unreadable or malformed high-water record does not hide a freshly authenticated,
+identity-checked and replay-ordered negative response from the owner. Every
+readable companion record must still agree. The owner fences affected material,
+while the original storage error remains visible and activation is refused.
+Startup without that trusted baseline stays closed. Malformed, replayed or failed
+transport responses remain errors rather than revocation evidence. Startup binds otherwise
+unrecorded owner revocations to the previously observed source revision before
+polling. A failed primary intent write/read also attempts the exact revision and
+digests in `revocation-fallback.json`, independently of the high-water write.
+Startup reconciles both intent records; once a fallback exists, successful
+recovery writes both records so a crash between them remains conservative.
+A corrupt primary remains a startup/activation error, even if the fallback
+preserved the newly observed negative evidence. This retains exact higher-revision
+recovery after simultaneous high-water and primary-intent write failures instead
+of estimating a floor from an older saved revision. Only a higher revision with fresh exact candidate-anchor attestations can clear
+revoked digest entries. Neither the process-local epoch nor the most recent
+invalidation range is a cumulative history. The manager checks exact anchors of
+all retained revisions on changed snapshots; source failure cannot prove an
+anchor orphaned, while a positive mismatch immediately fences it.
+
+The owner holds activation serialization while re-reading unconditional current,
+checking exact anchors and re-reading current again. Only an identical eligible
+snapshot may cross its existing predecessor-map CAS. Ordinary supersession or
+failed transfer/loading leaves a valid active view and retained admitted handles
+available. Recovery prepares a new snapshot; clearing a durable digest entry does
+not revive a cancelled in-memory snapshot. Restart re-fetches live current and
+checks cached bytes through the same strict loader before any listener is exposed.
+The saved active pointer is a crash-consistent record, never offline authority.
+
+Required runtime policy belongs to this mandatory `--publisher` mode and its
+owner, including subsequent preparation and query cache misses; it does not add
+a field to the existing publication JSON. Restart with that same provider
+configuration. Existing fleet/static modes retain their optional-runtime policy.
+Do not reinterpret a managed root as a static/fleet publication or restore older
+high-water/revocation records to bypass fencing. Before stopping managed mode,
+repair/reconcile any otherwise unpersisted exact negative revision/digest bound
+held by the live process into durable safety state. Then stop this mode and retain
+its safety records; no publisher artifacts or wallet formats require migration.
+Before using a reader that ignores either fallback file, reconcile the maximum
+revision/digest union into the primary intent and the newest complete source
+record into the primary high-water while stopped, preserving negative eligibility
+at equal revisions and refusing contradictory identities, or retain a
+fallback-aware reader. Code revert or safety-file deletion alone is not a safe
+rollback. If all applicable exact safety writes remain unavailable, process or
+power loss can still lose the memory-only bound.
+
+A changed inventory is reconciled even when its map digest is unchanged. The
+existing same-map/different-worker-assignment fence remains in force. Required
+recent-worker mode also refuses any candidate that retires a local shard: there
+is no qualified archive destination in PR2. A valid predecessor keeps serving;
+PR3 must supply archive readiness and atomic router/worker handover before that
+refusal can be replaced. No archive cost/accounting row bypasses this boundary.

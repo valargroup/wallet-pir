@@ -514,6 +514,39 @@ impl ServiceState {
         self.inner.cache.prune_disk(keep)
     }
 
+    pub(crate) fn required_material(&self) -> bool {
+        self.inner.shipped.as_ref().is_some_and(|s| s.is_required())
+    }
+    /// A reused in-memory runtime cannot verify the replacement's persistent
+    /// native files. Required providers verify those files independently before
+    /// committing a restart pointer, even on an unchanged map/cache hit.
+    pub(crate) fn verify_required_material(&self) -> Result<(), String> {
+        let Some(shipped) = &self.inner.shipped else {
+            return Err("provider requires prepared runtimes".into());
+        };
+        for shard in self.inner.set.current() {
+            for table in shard.tables() {
+                let shared = &self.inner.params[&(shard.geometry.name, table.kind())];
+                for segment in 0..shard.segments(table) {
+                    let source = shard
+                        .segment(table, segment)
+                        .ok_or("missing runtime source")?;
+                    let key = (
+                        shard.runtime_identity(table).to_string(),
+                        table.kind(),
+                        segment,
+                    );
+                    let runtime = shipped
+                        .load(&key, shared, source.sha256())
+                        .map_err(|e| e.to_string())?;
+                    runtime
+                        .self_check(shared, &source.load().map_err(|e| e.to_string())?)
+                        .map_err(|e| e.to_string())?;
+                }
+            }
+        }
+        Ok(())
+    }
     pub(crate) fn release_invalidated(&self, digests: &std::collections::BTreeSet<String>) {
         if self
             .inner

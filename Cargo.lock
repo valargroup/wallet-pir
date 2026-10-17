@@ -3656,6 +3656,7 @@ name = "transparent-filter-server"
 version = "0.1.0-rc.4"
 dependencies = [
  "axum",
+ "base64",
  "chrono",
  "clap",
  "hex",
