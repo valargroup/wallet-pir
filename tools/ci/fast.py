@@ -216,6 +216,9 @@ def changed_paths(base='', head='HEAD', *, local=True, root=ROOT):
 def rust_checks(selected, *, features='', test='', test_target='', offline=False, compile_only=False, unit_jobs=1):
     if not selected:
         return
+    if not (features or test or test_target):
+        from fast_build import execute
+        return execute(selected, offline=offline, compile_only=compile_only, jobs=unit_jobs)
     metadata = json.loads(subprocess.check_output(['cargo', 'metadata', '--locked', '--no-deps', '--format-version', '1', *(['--offline'] if offline else [])], cwd=ROOT, **inherited_fds()))
     run(['cargo', 'fmt', '--all', '--check'], stage='format')
     options = ['--locked', '--profile', 'release-fast']
@@ -320,11 +323,13 @@ def main():
     parser.add_argument('--test-target', default='')
     parser.add_argument('--offline', action='store_true')
     parser.add_argument('--select-only', action='store_true')
-    parser.add_argument('--unit-jobs', type=int, choices=(1, 2), default=1,
+    parser.add_argument('--unit-jobs', type=int, choices=(1, 2), default=None,
                         help='bounded concurrent test programs, after sequential Cargo builds')
     parser.add_argument('--compile-only', action='store_true', help='prepare fast Rust units without running tests')
     parser.add_argument('--github-output', action='store_true')
     args = parser.parse_args()
+    if args.unit_jobs is None:
+        args.unit_jobs = 1 if (args.features or args.test or args.test_target) else 2
     if args.unit_jobs > 1 and (args.features or args.test or args.test_target):
         parser.error('--unit-jobs requires the standard fast unit selection')
     if not args.select_only:

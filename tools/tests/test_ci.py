@@ -104,7 +104,8 @@ class BoundaryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / 'Cargo.toml').write_text('[workspace]\n')
-            for name in ['new', 'target/cached', '.claude/worktrees/old']:
+            for name in ['new', 'target/cached', '.local-pir/cargo/registry/cached',
+                         '.claude/worktrees/old']:
                 path = root / name
                 path.mkdir(parents=True)
                 (path / 'Cargo.toml').write_text('[package]\nname="example"\n[dependencies]\nzakura-chain="1"\n')
@@ -997,6 +998,22 @@ class CacheWorkflowTests(unittest.TestCase):
                     self.assertEqual(ran_command[2:], primed_command[3:])
                 else:
                     self.assertIn('--compile-only', primed_command)
+
+    def test_enhance_common_suite_runs_once_with_native_features(self):
+        full = load_full()
+        commands = full.commands('enhance', full.inventory())
+        self.assertEqual(len(commands), 1)
+        command = commands[0]
+        for package in full.inventory()['enhance']:
+            self.assertIn(package, command)
+        features = command[command.index('--features') + 1].split(',')
+        self.assertIn('enhance-pir-server/native-reinspiring', features)
+        workflow = self.workflows['ci-full.yml']
+        self.assertNotIn('tests:native-server-lib', workflow)
+        self.assertIn('--lib ipir::tests', workflow)
+        self.assertIn('-p enhance-serving --test ci_smoke', workflow)
+        self.assertIn('-p enhance-pir -p status-serving --lib --tests', workflow)
+        self.assertIn('--features native-reinspiring,cuda --test matvec_config', workflow)
 
     def test_transparent_full_checks_include_the_standalone_exporter(self):
         full = load_full()

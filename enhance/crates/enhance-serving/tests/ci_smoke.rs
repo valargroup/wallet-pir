@@ -3,12 +3,16 @@ use enhance_pir::{
     client::EnhancePirClient,
     types::{EnhanceRecord, EnhanceRecordParts},
 };
-use enhance_pir_server::{
+use enhance_serving::{
     control::{Group, Ledger, Replica},
     coordinator::Coordinator,
     store::RecordJournal,
     types::{DatabaseId, ENHANCE_LAYOUT},
     worker::Worker,
+};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
 };
 use std::time::Duration;
 
@@ -65,13 +69,31 @@ fn record(position: u64) -> Vec<u8> {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn encrypted_http_answers_survive_restart_and_reject_malformed_queries() {
-    tokio::time::timeout(Duration::from_secs(60), async {
+    tokio::time::timeout(Duration::from_secs(30), async {
         let root = tempfile::tempdir().unwrap();
         let mut listeners = Vec::new();
         let mut replicas = Vec::new();
+        let reject_commit = Arc::new(AtomicBool::new(false));
         for index in 0..2 {
             let worker = Worker::open(&root.path().join(format!("worker-{index}"))).unwrap();
-            let listening = serve(worker.router()).await;
+            let rejected = reject_commit.clone();
+            let router = worker.router().layer(axum::middleware::from_fn(
+                move |request: axum::extract::Request, next: axum::middleware::Next| {
+                    let rejected = rejected.clone();
+                    async move {
+                        use axum::response::IntoResponse;
+                        if index == 0
+                            && request.uri().path() == "/internal/commit"
+                            && rejected.load(Ordering::SeqCst)
+                        {
+                            axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response()
+                        } else {
+                            next.run(request).await
+                        }
+                    }
+                },
+            ));
+            let listening = serve(router).await;
             replicas.push(Replica {
                 name: format!("worker-{index}"),
                 url: listening.url.clone(),
@@ -101,6 +123,9 @@ async fn encrypted_http_answers_survive_restart_and_reject_malformed_queries() {
                 &(0..67).map(record).collect::<Vec<_>>(),
             )
             .unwrap();
+        // Both workers prepare the first assignment, but one loses its commit
+        // acknowledgement. Its healthy peer must still publish the next block.
+        reject_commit.store(true, Ordering::SeqCst);
         coordinator
             .publish(&journal, 3428143, "01".repeat(32))
             .await
@@ -116,6 +141,38 @@ async fn encrypted_http_answers_survive_restart_and_reject_malformed_queries() {
                 .as_ref(),
             record(66)
         );
+        // Keep one real commit unacknowledged while its healthy peer publishes
+        // again. This bridges the small decision-delivery tests to real worker
+        // preparation, publication selection and encrypted wallet answers.
+        let read_state = || -> enhance_serving::control::State {
+            serde_json::from_slice(&std::fs::read(state_dir.join("controller.json")).unwrap())
+                .unwrap()
+        };
+        let pending = read_state().pending_commits;
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].replica, "worker-0");
+        journal
+            .append_block(3428144, "02".repeat(32), &[record(67)])
+            .unwrap();
+        coordinator
+            .publish(&journal, 3428144, "02".repeat(32))
+            .await
+            .unwrap();
+        assert_eq!(read_state().pending_commits, pending);
+        let mut current = EnhancePirClient::connect(&http.url).await.unwrap();
+        assert_eq!(
+            current
+                .query_position_with_timing(67)
+                .await
+                .unwrap()
+                .0
+                .as_ref(),
+            record(67)
+        );
+        drop(current);
+        reject_commit.store(false, Ordering::SeqCst);
+        coordinator.reconcile().await.unwrap();
+        assert!(read_state().pending_commits.is_empty());
         let malformed = reqwest::Client::builder()
             .timeout(Duration::from_secs(5))
             .build()

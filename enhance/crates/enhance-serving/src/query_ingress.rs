@@ -373,6 +373,16 @@ async fn metrics(
 mod tests {
     use super::*;
     use tower::ServiceExt;
+
+    async fn wait_for(mut ready: impl FnMut() -> bool) {
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while !ready() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("ingress state did not converge");
+    }
     async fn activate_for(r: &QueryIngress, routes: Vec<String>) {
         let ack = prepare(
             State(r.clone()),
@@ -478,13 +488,13 @@ mod tests {
             tokio::spawn(async move { router.oneshot(request).await.unwrap() })
         };
         let mut stalled_uploads: Vec<_> = (0..CLIENT_UPLOADS).map(|_| stalled("1.2.3.4")).collect();
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        wait_for(|| r.uploads.available_permits() == 5 - CLIENT_UPLOADS).await;
         assert_eq!(r.uploads.available_permits(), 5 - CLIENT_UPLOADS);
         assert_eq!(r.admission.available_permits(), 1);
         let same_client = stalled("1.2.3.4").await.unwrap();
         assert_eq!(same_client.status(), StatusCode::TOO_MANY_REQUESTS);
         stalled_uploads.push(stalled("5.6.7.8"));
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        wait_for(|| r.uploads.available_permits() == 0).await;
         assert_eq!(r.uploads.available_permits(), 0);
         let other_client = stalled("9.9.9.9").await.unwrap();
         assert_eq!(other_client.status(), StatusCode::TOO_MANY_REQUESTS);
@@ -495,6 +505,117 @@ mod tests {
         }
         assert_eq!(r.uploads.available_permits(), 5);
         assert_eq!(r.client_uploads.tracked(), 0);
+    }
+
+    #[tokio::test]
+    async fn disconnected_http_uploads_release_capacity_before_any_forwarding() {
+        use tokio::io::AsyncWriteExt;
+        let root = tempfile::tempdir().unwrap();
+        let r = QueryIngress::open_with_uploads(root.path(), 1, 2).unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let router = r.public_router();
+        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        let mut uploads = Vec::new();
+        for _ in 0..2 {
+            let mut stream = tokio::net::TcpStream::connect(address).await.unwrap();
+            stream.write_all(format!("POST /v1/enhance/query HTTP/1.1\r\nHost: {address}\r\nContent-Length: 372\r\nConnection: close\r\n\r\n").as_bytes()).await.unwrap();
+            stream.write_all(&body()[..HEADER_BYTES]).await.unwrap();
+            uploads.push(stream);
+        }
+        wait_for(|| r.uploads.available_permits() == 0).await;
+        assert_eq!(r.admission.available_permits(), 1);
+        assert_eq!(
+            reqwest::Client::new()
+                .post(format!("http://{address}/v1/enhance/query"))
+                .body(body())
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::TOO_MANY_REQUESTS
+        );
+        drop(uploads);
+        wait_for(|| r.uploads.available_permits() == 2).await;
+        assert_eq!(r.admission.available_permits(), 1);
+        assert_eq!(r.client_uploads.tracked(), 0);
+        // With upload capacity restored, a complete request reaches the ordinary
+        // authority check rather than being rejected as an overloaded upload.
+        assert_eq!(
+            reqwest::Client::new()
+                .post(format!("http://{address}/v1/enhance/query"))
+                .body(body())
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        server.abort();
+        let _ = server.await;
+    }
+
+    #[tokio::test]
+    async fn expired_authority_and_revocation_refuse_http_queries_without_forwarding() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let calls = Arc::new(AtomicUsize::new(0));
+        let count = calls.clone();
+        let upstream = Router::new().route(
+            "/v1/enhance/query",
+            post(move || {
+                count.fetch_add(1, Ordering::SeqCst);
+                async { StatusCode::OK }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, upstream).await.unwrap() });
+        let root = tempfile::tempdir().unwrap();
+        let r = QueryIngress::open(root.path(), 1).unwrap();
+        activate_for(&r, vec![url.clone()]).await;
+        let request = || {
+            Request::builder()
+                .method("POST")
+                .uri("/v1/enhance/query")
+                .body(axum::body::Body::from(body()))
+                .unwrap()
+        };
+        let response = r.public_router().oneshot(request()).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        axum::body::to_bytes(response.into_body(), 1024)
+            .await
+            .unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        r.inner.lock().unwrap().control.refreshed = pir_control::Watchdog::renewed_at(
+            std::time::Instant::now() - pir_control::CONTROL_WATCHDOG - Duration::from_millis(1),
+        );
+        assert_eq!(
+            r.public_router().oneshot(request()).await.unwrap().status(),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert!(r.inner.lock().unwrap().control.fence.sessions.is_empty());
+        activate_for(&r, vec![url]).await;
+        revoke(
+            State(r.clone()),
+            Json(Revocation {
+                recovery_epoch: 1,
+                sessions: ["aa".repeat(32)].into(),
+            }),
+        )
+        .await
+        .unwrap();
+        assert!(!r
+            .public_router()
+            .oneshot(request())
+            .await
+            .unwrap()
+            .status()
+            .is_success());
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(r.admission.available_permits(), 1);
+        server.abort();
+        let _ = server.await;
     }
     #[tokio::test]
     async fn ambiguous_router_failure_is_never_replayed() {

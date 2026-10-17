@@ -54,7 +54,7 @@ Use measured, projected, proposed, implemented, and deployed precisely. Every ne
 
 Retained raw evidence lives under `transparent/evidence/`; its bytes and historical
 provenance are preserved. Superseded diagnostics and designs are recorded in the
-[cleanup ledger](../../docs/cleanup-2026-09-14.md). Use Git history for those records;
+[historical cleanup ledger](https://github.com/valargroup/wallet-pir/blob/3765536ee363af7646cc70d8c11ea4da27818ef5/docs/cleanup-2026-09-14.md). Use Git history for those records;
 they are not current instructions. Follow the [retention rules](../../evidence/README.md).
 
 ## Compact layout
