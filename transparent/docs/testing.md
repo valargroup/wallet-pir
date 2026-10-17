@@ -10,7 +10,9 @@ through the reference HTTP adapters and SQLite persistence.
 The controller's shipped-runtime success case cold-builds every runtime of a
 mixed `decoupled-2k-8k` recent / `decoupled-32k-32k` archive publication, then
 checks fleet offering, activation ordering and inode-preserving links during
-handover. Its companion refusal case starts from the same mixed-geometry source
+handover. This full-geometry campaign runs in full CI: it exceeded the 30-second
+case deadline during hosted PR preparation. Routine checks retain the companion
+refusal case, which starts from the same mixed-geometry source
 publication without building successful runtimes first. Superseded preparation
 verifies and retains that source set; replacing a linked table then tests that
 verification is required again. The case also retains the recent-only runtime
