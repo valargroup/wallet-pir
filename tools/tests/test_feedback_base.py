@@ -24,6 +24,64 @@ class ComparisonTests(unittest.TestCase):
         with patch.object(feedback_base, 'api', side_effect=TimeoutError):
             with self.assertRaises(TimeoutError):
                 feedback_base.comparison('push', 'b'*40, 'v/p')
+
+
+class PreparedComparisonTests(unittest.TestCase):
+    def setUp(self):
+        self.previous, self.prepared, self.head = 'a'*40, 'b'*40, 'c'*40
+        self.run = dict(id=12, head_sha=self.prepared, status='completed', conclusion='success',
+                        event='workflow_dispatch', head_branch='main', run_attempt=2,
+                        path='.github/workflows/ci-prepare.yml', head_repository={'full_name': 'v/p'})
+        self.job = dict(status='completed', conclusion='success', steps=[
+            dict(name=name, status='completed', conclusion='success')
+            for name in ('Compile fast units', 'Validate prepared units')])
+        self.ancestry = ['ahead', 'ahead']
+
+    def api(self, path, **kwargs):
+        if '/runs?' in path:
+            return {'workflow_runs': [self.run]}
+        if '/compare/' in path:
+            return {'status': self.ancestry.pop(0)}
+        self.assertIn('/attempts/2/jobs?', path)
+        return {'jobs': [self.job]}
+
+    def selected(self):
+        with patch.object(feedback_base, 'api', side_effect=self.api):
+            return feedback_base.prepared_base('v/p', self.head, self.previous)
+
+    def test_completed_full_preparation_replaces_an_older_push_baseline(self):
+        self.assertEqual(self.selected(), self.prepared)
+
+    def test_preparation_can_establish_the_first_verified_baseline(self):
+        self.previous = ''
+        self.assertEqual(self.selected(), self.prepared)
+
+    def test_wrong_repository_branch_workflow_and_unfinished_results_are_refused(self):
+        for changes in [dict(head_repository={'full_name': 'fork/p'}), dict(head_branch='feature'),
+                        dict(path='.github/workflows/ci.yml'), dict(event='push'),
+                        dict(status='in_progress'), dict(conclusion='cancelled'), dict(run_attempt=0)]:
+            with self.subTest(changes=changes):
+                original = self.run
+                self.run = dict(original, **changes)
+                self.ancestry = ['ahead', 'ahead']
+                self.assertEqual(self.selected(), self.previous)
+                self.run = original
+
+    def test_skipped_or_failed_steps_and_jobs_cannot_establish_a_baseline(self):
+        for status in ['skipped', 'failure', 'cancelled', 'queued']:
+            for kind in ['job', 'step']:
+                with self.subTest(status=status, kind=kind):
+                    job = self.job
+                    self.job = dict(job, conclusion=status) if kind == 'job' else dict(job, steps=[
+                        dict(step, conclusion=status) for step in job['steps']])
+                    self.ancestry = ['ahead', 'ahead']
+                    self.assertEqual(self.selected(), self.previous)
+                    self.job = job
+
+    def test_older_and_unrelated_preparations_never_skip_unchecked_commits(self):
+        for statuses in [['behind'], ['diverged'], ['ahead', 'diverged'], ['ahead', 'behind']]:
+            self.ancestry = statuses
+            self.assertEqual(self.selected(), self.previous)
         with patch.object(feedback_base, 'api', return_value={'workflow_runs': [dict(
                 head_sha='a'*40, conclusion='success', event='pull_request', head_branch='main')]}):
             with self.assertRaises(ValueError):

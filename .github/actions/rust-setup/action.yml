@@ -75,8 +75,9 @@ runs:
         args=(--lane "$LANE" --scope "$SCOPE" --target-dir "target/$LANE")
         [[ "$LOOKUP_ONLY" != true ]] || args+=(--lookup-only)
         python3 tools/ci/cargo_cache.py prepare "${args[@]}"
-    # The key is only the compatibility identity: no checkout SHA, workflow
-    # text or runtime-only variables. PR saves stay in the merge ref.
+    # Fast keys retain compiler/configuration/profile isolation while allowing
+    # dependency fallback across lockfiles. Other lanes retain exact identities.
+    # PR saves stay in the merge ref, never in main's trusted cache.
     - name: Restore hosted Cargo cache
       id: restore
       if: runner.environment != 'self-hosted'
@@ -84,7 +85,7 @@ runs:
       with:
         prefix-key: v1-wallet-pir
         shared-key: ${{ steps.identity.outputs.shared-key }}
-        add-rust-environment-hash-key: 'false'
+        add-rust-environment-hash-key: ${{ inputs.lane == 'fast' && 'true' || 'false' }}
         workspaces: ". -> target/${{ inputs.lane }}"
         cache-workspace-crates: true
         cache-on-failure: true

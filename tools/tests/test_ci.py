@@ -60,6 +60,17 @@ class SelectionTests(unittest.TestCase):
     def test_deleted_or_renamed_source_selects_both_sides(self):
         self.assertEqual(fast.select(self.packages, ['crates/other/src/old.rs', 'crates/client/src/new.rs']), {'other', 'client', 'server'})
 
+    def test_ci_edits_keep_tool_and_contract_checks_without_unrelated_operations(self):
+        selected = fast.plan(self.packages, ['tools/ci/fast.py', '.github/workflows/ci-full.yml'])
+        self.assertEqual(selected['packages'], [])
+        self.assertEqual(selected['helpers'], ['check-ops-contracts', 'check-tools'])
+        self.assertEqual(set(selected['groups']), fast.FULL_GROUPS)
+
+    def test_unknown_changes_still_select_all_helpers(self):
+        selected = fast.plan(self.packages, ['tools/ci/fast.py', 'unknown.file'])
+        self.assertEqual(set(selected['packages']), {'core', 'client', 'server', 'other'})
+        self.assertEqual(set(selected['helpers']), fast.HELPERS)
+
 
 class BoundaryTests(unittest.TestCase):
     """The Common/node and wallet-libraries dependency boundary; see tools/ci/boundary.py."""
@@ -649,6 +660,20 @@ class CacheIdentityTests(unittest.TestCase):
                 self.assertNotEqual(changed, identity)
                 self.assertEqual(changed_toolchain, toolchain)
 
+    def test_fast_restore_prefix_survives_lock_edits_but_not_build_changes(self):
+        def key(lane='fast', scope='affected', env=ENV):
+            toolchain, full = cargo_cache.identity(lane, scope, TOOLS, env, self.root)
+            return cargo_cache.hosted_key(cargo_cache.sanitized(toolchain, full))
+
+        original = key()
+        full = key('full-test', 'enhance')
+        (self.root / 'Cargo.lock').write_text('version = 4\n[[package]]\nname = "new"\nversion = "1"\n')
+        self.assertEqual(key(), original)
+        self.assertNotEqual(key('full-test', 'enhance'), full)
+        self.assertNotEqual(key(env=dict(ENV, RUSTFLAGS='-C target-cpu=native')), original)
+        (self.root / 'Cargo.toml').write_text(PROFILE_MANIFEST.replace('codegen-units = 16', 'codegen-units = 8'))
+        self.assertNotEqual(key(), original)
+
     def test_consumed_cargo_config_hierarchy_and_includes_change_the_identity(self):
         toolchain, identity = self.ids()
         ancestor = self.parent / '.cargo'
@@ -719,6 +744,8 @@ class CacheIdentityTests(unittest.TestCase):
         pr = 'refs/pull/7/merge'
         self.assertEqual(status('restore', 'false', ['refs/heads/main'], pr), 'miss')
         self.assertEqual(status('restore', '', None, pr), 'miss')
+        self.assertEqual(status('restore', 'false', None, pr, populated=True), 'hit-compatible')
+        self.assertEqual(status('lookup', 'false', None, pr, populated=True), 'miss')
         self.assertEqual(status('restore', 'true', ['refs/heads/main'], pr), 'hit-main')
         self.assertEqual(status('restore', 'true', ['refs/heads/main', pr], pr), 'hit-current-ref')
         # Another PR's entry is not readable; a hit must have come from elsewhere.

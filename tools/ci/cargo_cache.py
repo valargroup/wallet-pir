@@ -255,6 +255,7 @@ def sanitized(toolchain, full):
     rust = compiler(toolchain['compiler'])
     return {
         'identity': digest(full, 16), 'toolchain': digest(toolchain, 16),
+        'compatibility': digest({key: value for key, value in full.items() if key != 'lock'}, 16),
         'lane': full['lane'], 'scope': full['scope'], 'profile': full['profile'], 'features': full['features'],
         'rustc': rust, 'cargo': toolchain['cargo'], 'target': toolchain['target'],
         'os': toolchain['os'], 'libc': toolchain['libc'], 'machine': toolchain['machine'],
@@ -268,8 +269,12 @@ def sanitized(toolchain, full):
 
 
 def hosted_key(record):
-    """The `shared-key` passed to rust-cache, which appends only OS/arch."""
-    return f"{record['lane']}-{record['scope']}-{record['identity']}"
+    """Restore partition; fast keys also get rust-cache's environment/lock suffixes."""
+    # Fast feedback may restore dependencies from another lockfile. rust-cache
+    # appends its environment/manifest hashes and uses a compatible restore key;
+    # Cargo fingerprints still validate every unit before executing tests.
+    identity = record['compatibility'] if record['lane'] == 'fast' else record['identity']
+    return f"{record['lane']}-{record['scope']}-{identity}"
 
 
 def api(path, env):
@@ -298,12 +303,12 @@ def cache_refs(key, env):
     return sorted({entry['ref'] for entry in data.get('actions_caches', []) if entry.get('key') == key})
 
 
-def restore_status(mode, cache_hit, refs, ref, default_ref='refs/heads/main', existed=None):
+def restore_status(mode, cache_hit, refs, ref, default_ref='refs/heads/main', existed=None, populated=False):
     """Which state this job starts from. Never inferred from timing."""
     if mode == 'persistent':
         return 'persistent-existing' if existed else 'persistent-new'
     if cache_hit != 'true':
-        return 'miss'
+        return 'hit-compatible' if populated and mode == 'restore' else 'miss'
     if mode == 'lookup':
         return 'primed'
     if refs is None:
@@ -450,7 +455,9 @@ def prepare(args, env):
         mode = 'lookup' if args.lookup_only else 'restore'
         key = hosted_key(record)
         # rust-cache appends the runner OS and Node architecture to `shared-key`.
-        refs = cache_refs(f'{PREFIX}-{key}-Linux-x64', env)
+        # Fast keys have rust-cache's own manifest/environment suffixes. Its
+        # exact restored ref is not exposed; do not guess it from candidate refs.
+        refs = None if args.lane == 'fast' else cache_refs(f'{PREFIX}-{key}-Linux-x64', env)
     directory = state_dir(env)
     directory.mkdir(parents=True, exist_ok=True)
     stages = directory / 'stages.jsonl'
@@ -469,9 +476,9 @@ def restored(args, env):
     path = state_dir(env) / f'{args.lane}.json'
     state = json.loads(path.read_text())
     state['restored'] = time.time()
-    state['status'] = restore_status(state['mode'], args.cache_hit, state['refs_before_restore'],
-                                     state['ref'], existed=state['existed'])
     state['before'] = snapshot(state['target'])
+    state['status'] = restore_status(state['mode'], args.cache_hit, state['refs_before_restore'],
+                                     state['ref'], existed=state['existed'], populated=bool(state['before']))
     path.write_text(json.dumps(state))
     print(f"CI_CACHE_RESTORE {json.dumps({'lane': args.lane, 'status': state['status'], 'restored_units': len(state['before'])})}", flush=True)
 

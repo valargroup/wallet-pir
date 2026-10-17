@@ -10,17 +10,18 @@ class RunnerRoutingTests(unittest.TestCase):
         workflow = (ROOT / '.github/workflows/ci.yml').read_text()
         runner = next(line for line in workflow.splitlines() if 'runs-on:' in line)
         condition = runner.split('fromJSON(', 1)[1].split('&& vars.', 1)[0].strip()
-        for event, ref, same_repo, expected in [
-            ('push', 'refs/heads/main', True, True),
-            ('pull_request', 'refs/pull/1/merge', True, False),
-            ('pull_request', 'refs/pull/1/merge', False, False),
-            ('workflow_dispatch', 'refs/heads/upgrade', True, False),
-            ('workflow_dispatch', 'refs/heads/main', True, True),
+        for event, ref, same_repo, hosted, expected in [
+            ('push', 'refs/heads/main', True, False, True),
+            ('pull_request', 'refs/pull/1/merge', True, False, False),
+            ('pull_request', 'refs/pull/1/merge', False, False, False),
+            ('workflow_dispatch', 'refs/heads/upgrade', True, False, False),
+            ('workflow_dispatch', 'refs/heads/main', True, False, True),
+            ('workflow_dispatch', 'refs/heads/main', True, True, False),
         ]:
-            values = {'github.event_name': event, 'github.ref': ref,
+            values = {'github.event_name': event, 'github.ref': ref, 'inputs.hosted': hosted,
                       'github.repository': 'valargroup/wallet-pir',
                       'github.event.pull_request.head.repo.full_name': 'valargroup/wallet-pir' if same_repo else 'fork/wallet-pir'}
-            expression = condition
+            expression = condition.replace('!inputs.hosted', 'not inputs.hosted')
             for key in sorted(values, key=len, reverse=True):
                 expression = expression.replace(key, repr(values[key]))
             expression = expression.replace('&&', ' and ').replace('||', ' or ')
