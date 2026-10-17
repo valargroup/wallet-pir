@@ -21,7 +21,7 @@ demo workspace is independent. Preserve existing Cargo package and binary names.
 - Fetch pinned dependencies and install the local push guard with
   `make prepare-dev`; verify prerequisites with `make doctor`.
 - Compile all CPU workspace binaries, including the Enhance CLI, for local use:
-  `cargo build --locked --workspace --bins --profile release-fast --features enhance-pir/cli`.
+  `cargo build --locked --workspace --bins --profile release-fast --features enhance-pir/cli,transparent-filter-server/rocksdb-reader`.
   Use `make build` for deploy-profile binaries (fat-LTO `release`, slower
   and more memory-intensive). Do not enable CUDA on a CPU-only devbox.
 - Inspect entrypoints without starting a fleet:

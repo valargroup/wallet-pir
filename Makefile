@@ -14,7 +14,7 @@ TRANSPARENT_LOAD_STEP_DURATION ?= 10m
 TRANSPARENT_LOAD_JSON ?= .local-pir/runs/transparent/load-report.json
 
 build:
-	cargo build --release --workspace --bins --features enhance-pir/cli
+	cargo build --release --workspace --bins --features enhance-pir/cli,transparent-filter-server/rocksdb-reader
 
 check: check-full
 
@@ -42,7 +42,7 @@ prepare-dev:
 check-full: check-hygiene check-ops check-docs check-reports check-tools
 	cargo fmt --all --check
 	cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
-	tools/ci/full-test.sh --locked --workspace --profile release-fast
+	tools/ci/full-test.sh --locked --workspace --profile release-fast --features transparent-filter-server/rocksdb-reader
 
 # The deploy scripts' jq programs, compiled and run against payloads the server
 # serializes. Part of `check` because both of the bugs it exists to catch got
@@ -155,7 +155,7 @@ check-docs:
 	tools/check-doc-links.sh
 
 test:
-	tools/ci/full-test.sh --locked --workspace --profile release-fast
+	tools/ci/full-test.sh --locked --workspace --profile release-fast --features transparent-filter-server/rocksdb-reader
 
 run-server:
 	cargo run --release -p enhance-pir-server --bin enhance-pir-server -- --help
@@ -298,7 +298,7 @@ export SIM_COMPARISON_METADATA
 export BLOCK_DATASET BLOCK_URL BLOCK_FRESH_SAMPLE BLOCK_METRICS_URL BLOCK_ENCODING
 .PHONY: transparent-block-export transparent-block-serve transparent-sim-freeze transparent-sim-compare
 transparent-block-export:
-	cargo run --locked --release -p transparent-filter-server --bin compact-export -- $(BLOCK_EXPORT_ARGS) --out-dir "$(BLOCK_DATASET)"
+	cargo run --locked --release -p transparent-filter-server --features rocksdb-reader --bin compact-export -- $(BLOCK_EXPORT_ARGS) --out-dir "$(BLOCK_DATASET)"
 
 transparent-block-serve:
 	cargo run --locked --release -p transparent-block-server -- --dataset "$(BLOCK_DATASET)" $(BLOCK_SERVE_ARGS)

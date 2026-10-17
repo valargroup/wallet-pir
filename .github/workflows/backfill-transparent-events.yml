@@ -295,7 +295,7 @@ jobs:
           CFLAGS: -mpclmul
         run: |
           set -euo pipefail
-          cargo build --locked --release -p transparent-filter-server --bin transparent-event-ingest
+          cargo build --locked --release -p transparent-filter-server --features rocksdb-reader --bin transparent-event-ingest
           sha256sum target/release/transparent-event-ingest
 
       - name: Build and run the shard census

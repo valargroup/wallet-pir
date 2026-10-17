@@ -29,7 +29,8 @@ CUDA = ['enhance-serving/cuda', 'status-serving/cuda', 'enhance-pir-server/cuda'
 
 def variants(groups):
     return {
-        'transparent': dict(family='transparent', packages=groups['transparent'], features=[]),
+        'transparent': dict(family='transparent', packages=groups['transparent'],
+                            features=['transparent-filter-server/rocksdb-reader']),
         'export': dict(family='transparent', packages=['txid-sizing-export'], features=[], manifest=EXPORT),
         'native': dict(family='enhance', packages=groups['enhance'], features=NATIVE),
         'reference': dict(family='enhance', packages=['enhance-serving', 'enhance-pir', 'status-serving'], features=[]),
