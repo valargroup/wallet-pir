@@ -96,6 +96,13 @@ class FastBuildTests(unittest.TestCase):
         self.assertNotIn('QUALIFY_PUBLICATIONS', options['env'])
         self.assertFalse(Path(options['env']['WALLET_PIR_TEST_RUNTIME_CACHE']).exists())
 
+    def test_discovered_case_count_orders_programs_independently_of_cargo_output(self):
+        self.listings['/fixture/b-b'] = {f'case_{i}' for i in range(7)}
+        self.execute()
+        self.assertEqual(self.plans[0][0]['executable'], '/fixture/b-b')
+        self.assertEqual(self.plans[0][0]['case_count'], 7)
+        self.assertEqual(len(self.plans[0]), len(self.artifacts))
+
     def test_priming_builds_the_same_units_without_running_any_program(self):
         self.execute()
         baseline = next(command for command, _ in self.calls if command[:2] == ['cargo', 'test'])

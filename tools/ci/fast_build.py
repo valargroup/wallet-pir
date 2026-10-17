@@ -108,7 +108,7 @@ def execute(selected, *, offline=False, compile_only=False, jobs=2):
             discovered_units[name].update(names)
         exclusions = [] if integration else list(slow.get(name, {}))
         programs.append(dict(executable=binary, directory=directory, package=name,
-                             version=package['version'], exclusive=integration,
+                             version=package['version'], exclusive=integration, case_count=len(names),
                              args=[arg for case in exclusions for arg in ('--skip', case)]))
     if actual_integrations != expected_integrations or expected_units - actual_units:
         raise ValueError(f'fast test executables mismatch: missing_units={sorted(expected_units-actual_units)}, '
@@ -120,6 +120,9 @@ def execute(selected, *, offline=False, compile_only=False, jobs=2):
         stale = set(slow.get(name, {})) - discovered
         if stale:
             raise ValueError(f'{name}: stale slow-test classification: {sorted(stale)}')
+    # Cargo can report a freshly rebuilt large executable last. Start binaries
+    # with more discovered cases first so that work overlaps smaller programs.
+    programs.sort(key=lambda program: program['case_count'], reverse=True)
     run(['python3', 'tools/ci/reclaim-build-cache.py'], env=env, stage='reclaim')
     with tempfile.TemporaryDirectory(prefix='wallet-pir-fast-tests-') as directory:
         root = Path(directory)

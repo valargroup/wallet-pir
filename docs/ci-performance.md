@@ -61,7 +61,9 @@ Rust feedback compiles the selected unit tests, CLI test binaries and named fast
 integration targets together in one `release-fast` Cargo invocation. Campaign
 targets are excluded from that build. Local and CI checks then execute at most
 two Cargo-reported unit-test programs concurrently. Fast integration programs run
-first, one at a time, to keep encrypted HTTP working sets apart. Cases within each program stay
+first, one at a time, to keep encrypted HTTP working sets apart. Binaries with
+more discovered cases start first, so newly compiled targets reported last by
+Cargo can overlap smaller programs. Cases within each program stay
 serial, preserving process-local immutable public fixtures within the fast runner’s
 6-GiB ceiling. Explicit feature or test-filter checks use one program at a time.
 The fast runner enforces the 30-second limit for every Rust case, including
