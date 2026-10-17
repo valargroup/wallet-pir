@@ -64,7 +64,8 @@ two Cargo-reported unit-test programs concurrently. Fast integration programs ru
 first, one at a time, to keep encrypted HTTP working sets apart. Cases within each program stay
 serial, preserving process-local immutable public fixtures within the fast runner’s
 6-GiB ceiling. Explicit feature or test-filter checks use one program at a time.
-Each program keeps its package directory and Cargo environment; fast integration
+The fast runner enforces the 30-second limit for every Rust case, including
+setup and teardown inside the case. Each program keeps its package directory and Cargo environment; fast integration
 targets must contain an enabled, unignored case, and unit exclusions must still
 match discovered tests. Cold cache preparation compiles the same target selection.
 The package-qualified full-geometry/cache, multi-unit preparation, RPC publication

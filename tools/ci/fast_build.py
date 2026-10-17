@@ -128,5 +128,6 @@ def execute(selected, *, offline=False, compile_only=False, jobs=2):
         cache = root / 'public-fixtures'
         cache.mkdir()
         env['WALLET_PIR_TEST_RUNTIME_CACHE'] = str(cache)
-        run(['python3', 'tools/ci/unit_tests.py', str(plan), '--jobs', str(jobs)],
+        env['WALLET_PIR_ENFORCE_BUDGET'] = '1'
+        run(['python3', 'tools/ci/unit_tests.py', str(plan), '--budget', '--jobs', str(jobs)],
             env=env, stage='tests:fast-programs')

@@ -91,6 +91,8 @@ class FastBuildTests(unittest.TestCase):
             self.assertEqual(program['args'], expected)
         runner, options = self.calls[-1]
         self.assertEqual(runner[-2:], ['--jobs', '2'])
+        self.assertIn('--budget', runner)
+        self.assertEqual(options['env']['WALLET_PIR_ENFORCE_BUDGET'], '1')
         self.assertNotIn('QUALIFY_PUBLICATIONS', options['env'])
         self.assertFalse(Path(options['env']['WALLET_PIR_TEST_RUNTIME_CACHE']).exists())
 
