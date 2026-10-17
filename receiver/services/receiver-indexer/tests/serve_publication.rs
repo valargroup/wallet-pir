@@ -174,7 +174,6 @@ async fn read(request: reqwest::RequestBuilder, limit: usize) -> Result<Vec<u8>,
 struct World {
     root: tempfile::TempDir,
     node: Node,
-    rpc: String,
     record: PathBuf,
     config: PathBuf,
     origin: String,
@@ -214,7 +213,6 @@ impl World {
         Self {
             root,
             node,
-            rpc,
             record,
             config,
             origin: format!("http://{bind}"),

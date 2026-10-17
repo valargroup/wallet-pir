@@ -89,7 +89,7 @@ class FastBuildTests(unittest.TestCase):
         for program in plan:
             self.assertTrue(program['directory'].endswith('/' + program['package']))
             self.assertEqual(program['version'], '1.0.0')
-            self.assertEqual(program['exclusive'], program['executable'].endswith('smoke'))
+            self.assertFalse(program['exclusive'])
             self.assertEqual(program['integration'], program['executable'].endswith('smoke'))
             expected = ['--skip', 'slow'] if program['package'] == 'a' and not program['executable'].endswith('smoke') else []
             self.assertEqual(program['args'], expected)
@@ -101,7 +101,11 @@ class FastBuildTests(unittest.TestCase):
         self.assertFalse(Path(options['env']['WALLET_PIR_TEST_RUNTIME_CACHE']).exists())
         self.assertEqual(Path(options['env']['WALLET_PIR_CASE_LOG']).name, 'cases.jsonl')
 
-    def test_filter_library_runs_alone_without_changing_cases_or_arguments(self):
+    def test_fast_pool_preserves_the_requested_three_program_limit(self):
+        self.execute(jobs=3)
+        self.assertEqual(self.calls[-1][0][-2:], ['--jobs', '3'])
+
+    def test_filter_library_shares_the_bounded_pool_without_changing_cases_or_arguments(self):
         self.execute()
         baseline = {p['executable']: p for p in self.plans[0]}
         self.calls.clear()
@@ -112,12 +116,13 @@ class FastBuildTests(unittest.TestCase):
         self.execute()
         plan = {p['executable']: p for p in self.plans[0]}
         self.assertEqual(set(plan), set(baseline))
+        self.assertEqual(self.plans[0][0]['executable'], '/fixture/a-a')
         self.assertEqual({binary: p['exclusive'] for binary, p in plan.items()}, {
-            '/fixture/a-a': True,
+            '/fixture/a-a': False,
             '/fixture/a-client': False,
-            '/fixture/a-smoke': True,
+            '/fixture/a-smoke': False,
             '/fixture/b-b': False,
-            '/fixture/b-smoke': True,
+            '/fixture/b-smoke': False,
         })
         for binary, program in plan.items():
             for field in ['args', 'case_count', 'directory', 'version']:
@@ -126,11 +131,13 @@ class FastBuildTests(unittest.TestCase):
         self.assertIn('--budget', runner)
         self.assertEqual(options['env']['WALLET_PIR_ENFORCE_BUDGET'], '1')
 
-    def test_discovered_case_count_orders_programs_independently_of_cargo_output(self):
+    def test_discovered_case_count_orders_units_after_http_independently_of_cargo_output(self):
         self.listings['/fixture/b-b'] = {f'case_{i}' for i in range(7)}
         self.execute()
-        self.assertEqual(self.plans[0][0]['executable'], '/fixture/b-b')
-        self.assertEqual(self.plans[0][0]['case_count'], 7)
+        self.assertTrue(self.plans[0][0]['integration'])
+        units = [p for p in self.plans[0] if not p['integration']]
+        self.assertEqual(units[0]['executable'], '/fixture/b-b')
+        self.assertEqual(units[0]['case_count'], 7)
         self.assertEqual(len(self.plans[0]), len(self.artifacts))
 
     def test_priming_builds_the_same_units_without_running_any_program(self):

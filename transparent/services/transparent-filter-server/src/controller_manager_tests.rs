@@ -3,6 +3,252 @@
 use super::*;
 use transparent_shard_server::{live::Command, manager::Manager, service::ServiceConfig};
 
+// Prepare immutable producer bytes once per test process. Each test receives
+// separate copies: corruption, missing-file and restart cases must stay isolated.
+// Static destructors do not run at process exit. Register only roots we own,
+// and drop them after libtest joins its test threads (also on a failed test).
+// SIGKILL/abort still requires the runner's enclosing scratch-directory cleanup.
+static PREPARED_FIXTURES: std::sync::Mutex<Vec<tempfile::TempDir>> =
+    std::sync::Mutex::new(Vec::new());
+
+extern "C" fn cleanup_prepared_fixtures() {
+    PREPARED_FIXTURES
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clear();
+}
+
+fn copy_fixture_tree(source: &Path, target: &Path) {
+    std::fs::create_dir(target).unwrap();
+    for entry in std::fs::read_dir(source).unwrap() {
+        let entry = entry.unwrap();
+        let target = target.join(entry.file_name());
+        let kind = entry.file_type().unwrap();
+        if kind.is_dir() {
+            copy_fixture_tree(&entry.path(), &target);
+        } else {
+            assert!(
+                kind.is_file(),
+                "producer fixture must contain regular files"
+            );
+            std::fs::copy(entry.path(), target).unwrap();
+        }
+    }
+}
+
+// Set only by the exact private exit-control entry. Its parent remains alive
+// while the child copies these immutable producer bytes into its own owned roots.
+static EXIT_FIXTURE_SOURCES: std::sync::OnceLock<BTreeMap<u64, PathBuf>> =
+    std::sync::OnceLock::new();
+
+fn prepared_fixture(through: u64) -> &'static Path {
+    fn build(through: u64) -> PathBuf {
+        static CLEANUP: std::sync::Once = std::sync::Once::new();
+        CLEANUP.call_once(|| {
+            // SAFETY: the callback has C ABI, cannot unwind, and only drops
+            // registered TempDirs. It never initializes FIRST or NEXT.
+            assert_eq!(unsafe { libc::atexit(cleanup_prepared_fixtures) }, 0);
+        });
+        let root = tempfile::Builder::new()
+            .prefix("provider-prepared-fixture-")
+            .tempdir()
+            .unwrap();
+        if let Some(sources) = EXIT_FIXTURE_SOURCES.get() {
+            let directory = root.path().join("publication");
+            copy_fixture_tree(&sources[&through].join("publication"), &directory);
+            let set = ShardSet::open(&directory, 0).unwrap();
+            // Reuse construction, never its verification result. The production
+            // finalizer verifies the copied table/runtime bytes independently.
+            Finalized::prepare(&directory, &set, 2).unwrap();
+        } else {
+            let (directory, set) = publication_through(root.path(), through);
+            prepare_recent(&directory, &set);
+        }
+        let path = root.path().to_path_buf();
+        PREPARED_FIXTURES.lock().unwrap().push(root);
+        path
+    }
+    static FIRST: std::sync::LazyLock<PathBuf> = std::sync::LazyLock::new(|| build(2));
+    static NEXT: std::sync::LazyLock<PathBuf> = std::sync::LazyLock::new(|| build(3));
+    match through {
+        2 => &*FIRST,
+        3 => &*NEXT,
+        _ => panic!("no prepared publication fixture through height {through}"),
+    }
+}
+
+fn prepared_publication(root: &Path, through: u64) -> (PathBuf, ShardSet) {
+    let fixture = prepared_fixture(through);
+    let directory = root.join("publication");
+    copy_fixture_tree(&fixture.join("publication"), &directory);
+    let set = ShardSet::open(&directory, 0).unwrap();
+    (directory, set)
+}
+
+// Use the real helper in a fresh libtest process, with no runner-owned TMPDIR
+// cleanup. Observe the directory only after the process and exit callback finish.
+fn fixture_exit_control(both: bool, fail: bool) {
+    let child = format!(
+        "{}::prepared_fixtures_exit_child",
+        module_path!().split_once("::").unwrap().1
+    );
+    // Count construction inside this test when not already built by an earlier
+    // case. There is no disk cache, unmeasured warmup, or mutable shared tree.
+    let mut sources = BTreeMap::from([(2, prepared_fixture(2))]);
+    if both {
+        sources.insert(3, prepared_fixture(3));
+    }
+    let scratch = tempfile::tempdir().unwrap();
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([&child, "--exact", "--test-threads=1", "--nocapture"])
+        .env(
+            "WALLET_PIR_FIXTURE_EXIT_CHILD",
+            if fail {
+                "fail"
+            } else if both {
+                "both"
+            } else {
+                "first"
+            },
+        )
+        .env(
+            "WALLET_PIR_FIXTURE_EXIT_SOURCES",
+            serde_json::to_string(&sources).unwrap(),
+        )
+        .env(
+            "TRANSPARENT_BUILD_THREADS",
+            std::env::var("TRANSPARENT_BUILD_THREADS").unwrap_or_else(|_| "4".into()),
+        )
+        .env("TMPDIR", scratch.path())
+        .env("TMP", scratch.path())
+        .env("TEMP", scratch.path())
+        .output()
+        .unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(if fail { 101 } else { 0 }),
+        "child output: {} {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(String::from_utf8_lossy(&output.stdout).contains(if fail {
+        "1 failed"
+    } else {
+        "1 passed"
+    }));
+    assert!(String::from_utf8_lossy(&output.stdout)
+        .contains(&format!("prepared fixtures: {}", if both { 2 } else { 1 })));
+    if fail {
+        assert!(String::from_utf8_lossy(&output.stderr)
+            .contains("intentional child failure after preparing fixtures"));
+    }
+    assert_eq!(std::fs::read_dir(scratch.path()).unwrap().count(), 0);
+}
+
+// Only an explicitly selected private entry consumes the child mode. Public
+// controls always spawn a fresh process and check its scratch after exit, even
+// when their caller inherited the internal environment variable.
+#[test]
+fn prepared_fixtures_exit_child() {
+    let name = format!(
+        "{}::prepared_fixtures_exit_child",
+        module_path!().split_once("::").unwrap().1
+    );
+    let args: Vec<_> = std::env::args().collect();
+    if !args.iter().any(|arg| arg == "--exact") || !args.iter().any(|arg| arg == &name) {
+        return;
+    }
+    let (both, fail) = match std::env::var("WALLET_PIR_FIXTURE_EXIT_CHILD").as_deref() {
+        Ok("first") => (false, false),
+        Ok("both") => (true, false),
+        Ok("fail") => (true, true),
+        other => panic!("missing child mode: {other:?}"),
+    };
+    let sources: BTreeMap<u64, PathBuf> =
+        serde_json::from_str(&std::env::var("WALLET_PIR_FIXTURE_EXIT_SOURCES").unwrap()).unwrap();
+    assert_eq!(
+        sources.keys().copied().collect::<Vec<_>>(),
+        if both { vec![2, 3] } else { vec![2] }
+    );
+    EXIT_FIXTURE_SOURCES.set(sources).unwrap();
+    let first = tempfile::tempdir().unwrap();
+    let (directory, set) = prepared_publication(first.path(), 2);
+    let copy = tempfile::tempdir().unwrap();
+    let (copy_directory, copy_set) = prepared_publication(copy.path(), 2);
+    assert_eq!(set.map_digest, copy_set.map_digest);
+    let map = std::fs::read(copy_directory.join("shards.json")).unwrap();
+    std::fs::write(directory.join("shards.json"), b"corrupt").unwrap();
+    assert_eq!(
+        std::fs::read(copy_directory.join("shards.json")).unwrap(),
+        map
+    );
+    let fresh = tempfile::tempdir().unwrap();
+    let (fresh_directory, _) = prepared_publication(fresh.path(), 2);
+    assert_eq!(
+        std::fs::read(fresh_directory.join("shards.json")).unwrap(),
+        map
+    );
+    if both {
+        let next = tempfile::tempdir().unwrap();
+        let (_, next_set) = prepared_publication(next.path(), 3);
+        assert_ne!(set.map_digest, next_set.map_digest);
+    }
+    assert_eq!(
+        PREPARED_FIXTURES.lock().unwrap().len(),
+        if both { 2 } else { 1 }
+    );
+    println!("prepared fixtures: {}", if both { 2 } else { 1 });
+    assert!(!fail, "intentional child failure after preparing fixtures");
+}
+
+#[test]
+fn prepared_fixtures_exit_first_only() {
+    fixture_exit_control(false, false);
+}
+
+#[test]
+fn prepared_fixtures_exit_both() {
+    fixture_exit_control(true, false);
+}
+
+#[test]
+fn prepared_fixtures_exit_failed_test() {
+    fixture_exit_control(true, true);
+}
+
+#[test]
+fn fixture_copies_are_independent_and_refuse_symlinks() {
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("source");
+    std::fs::create_dir(&source).unwrap();
+    std::fs::write(source.join("bytes"), b"immutable").unwrap();
+    let first = root.path().join("first");
+    let second = root.path().join("second");
+    copy_fixture_tree(&source, &first);
+    copy_fixture_tree(&source, &second);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let metadata = |path: &Path| std::fs::metadata(path.join("bytes")).unwrap();
+        assert_ne!(metadata(&source).ino(), metadata(&first).ino());
+        assert_ne!(metadata(&first).ino(), metadata(&second).ino());
+        assert_eq!(metadata(&first).nlink(), 1);
+    }
+    std::fs::write(first.join("bytes"), b"corrupt").unwrap();
+    assert_eq!(std::fs::read(source.join("bytes")).unwrap(), b"immutable");
+    assert_eq!(std::fs::read(second.join("bytes")).unwrap(), b"immutable");
+    std::fs::remove_file(first.join("bytes")).unwrap();
+    assert_eq!(std::fs::read(second.join("bytes")).unwrap(), b"immutable");
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(source.join("bytes"), source.join("link")).unwrap();
+        assert!(std::panic::catch_unwind(|| {
+            copy_fixture_tree(&source, &root.path().join("refused"));
+        })
+        .is_err());
+    }
+}
+
 fn manager(tls: &Tls, root: &Path) -> Manager {
     Manager::new(
         config(tls, root.to_path_buf()),
@@ -107,8 +353,7 @@ async fn query_and_upload(origin: &str, set: &ShardSet) -> Vec<u8> {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn manager_reuses_immutable_transfers_and_serves_through_failed_update() {
     let root = tempfile::tempdir().unwrap();
-    let (directory, set) = publication(root.path());
-    prepare_recent(&directory, &set);
+    let (directory, set) = prepared_publication(root.path(), 2);
     let rpc = canonical_rpc(root.path(), &set).await;
     let owner = authority(
         &directory,
@@ -136,8 +381,7 @@ async fn manager_reuses_immutable_transfers_and_serves_through_failed_update() {
     assert_eq!(count, artifact_requests(&tls));
     let next_root = root.path().join("next");
     std::fs::create_dir(&next_root).unwrap();
-    let (next_dir, next_set) = publication_through(&next_root, 3);
-    prepare_recent(&next_dir, &next_set);
+    let (next_dir, next_set) = prepared_publication(&next_root, 3);
     advance(&owner, &next_dir, &next_set);
     for fault in ["truncated", "corrupt", "missing"] {
         std::fs::write(&tls.control, fault).unwrap();
@@ -252,8 +496,7 @@ async fn manager_reuses_immutable_transfers_and_serves_through_failed_update() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn manager_persists_invalidation_and_refuses_equal_revision_reenable_after_restart() {
     let root = tempfile::tempdir().unwrap();
-    let (directory, set) = publication(root.path());
-    prepare_recent(&directory, &set);
+    let (directory, set) = prepared_publication(root.path(), 2);
     let rpc = canonical_rpc(root.path(), &set).await;
     let owner = authority(
         &directory,
@@ -325,8 +568,7 @@ async fn entered(tls: &Tls) {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn manager_restarts_interrupted_staging_and_rejects_superseded_activation() {
     let root = tempfile::tempdir().unwrap();
-    let (directory, set) = publication(root.path());
-    prepare_recent(&directory, &set);
+    let (directory, set) = prepared_publication(root.path(), 2);
     let rpc = canonical_rpc(root.path(), &set).await;
     let owner = authority(
         &directory,
@@ -350,8 +592,7 @@ async fn manager_restarts_interrupted_staging_and_rejects_superseded_activation(
     query(&origin, &set).await;
     let next_root = root.path().join("next");
     std::fs::create_dir(&next_root).unwrap();
-    let (next_dir, next_set) = publication_through(&next_root, 3);
-    prepare_recent(&next_dir, &next_set);
+    let (next_dir, next_set) = prepared_publication(&next_root, 3);
     advance(&owner, &next_dir, &next_set);
     let _ = std::fs::remove_file(tls.control.with_extension("entered"));
     std::fs::write(&tls.control, "pause-artifact").unwrap();
@@ -411,8 +652,7 @@ async fn manager_restarts_interrupted_staging_and_rejects_superseded_activation(
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn manager_checks_inventory_and_required_files_on_unchanged_maps() {
     let root = tempfile::tempdir().unwrap();
-    let (directory, set) = publication(root.path());
-    prepare_recent(&directory, &set);
+    let (directory, set) = prepared_publication(root.path(), 2);
     let original = Finalized::prepare(&directory, &set, 2).unwrap();
     let runtime = original
         .inventory()
@@ -511,8 +751,7 @@ async fn control_write_failure(pause_at: Option<u32>, failed_record: &str) {
         vec![failed_record]
     };
     let root = tempfile::tempdir().unwrap();
-    let (directory, set) = publication(root.path());
-    prepare_recent(&directory, &set);
+    let (directory, set) = prepared_publication(root.path(), 2);
     let rpc = canonical_rpc(root.path(), &set).await;
     let owner = authority(
         &directory,
@@ -745,8 +984,7 @@ async fn manager_bounds_memory_while_retaining_admitted_upload() {
     use tower::ServiceExt;
     use transparent_server_backend::shardset::{Table, TableRef};
     let root = tempfile::tempdir().unwrap();
-    let (directory, set) = publication(root.path());
-    prepare_recent(&directory, &set);
+    let (directory, set) = prepared_publication(root.path(), 2);
     let rpc = canonical_rpc(root.path(), &set).await;
     let owner = authority(
         &directory,
@@ -856,8 +1094,7 @@ async fn manager_unreadable_revocation_floor_still_fences_http() {
 
 async fn recovery_poll_write_failure(pause_at: u32) {
     let root = tempfile::tempdir().unwrap();
-    let (directory, set) = publication(root.path());
-    prepare_recent(&directory, &set);
+    let (directory, set) = prepared_publication(root.path(), 2);
     let rpc = canonical_rpc(root.path(), &set).await;
     let owner = authority(
         &directory,
@@ -933,8 +1170,7 @@ async fn manager_malformed_revocation_floor_still_fences_http() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn manager_rejects_replayed_different_map_below_durable_revocation_floor() {
     let root = tempfile::tempdir().unwrap();
-    let (directory, set) = publication(root.path());
-    prepare_recent(&directory, &set);
+    let (directory, set) = prepared_publication(root.path(), 2);
     let rpc = canonical_rpc(root.path(), &set).await;
     let owner = authority(
         &directory,
@@ -965,8 +1201,7 @@ async fn manager_rejects_replayed_different_map_below_durable_revocation_floor()
     std::fs::remove_dir(state.join("revocation-floor.tmp")).unwrap();
     let next_root = root.path().join("next");
     std::fs::create_dir(&next_root).unwrap();
-    let (next_dir, next_set) = publication_through(&next_root, 3);
-    prepare_recent(&next_dir, &next_set);
+    let (next_dir, next_set) = prepared_publication(&next_root, 3);
     advance(&owner, &next_dir, &next_set);
     owner.0.distribution_revision.store(40, Ordering::Release);
     owner.0.withdrawn.store(false, Ordering::Release);
@@ -1034,8 +1269,7 @@ async fn manager_fallback_parse_failure_at_guard_still_fences_http() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn manager_double_intent_write_failure_retains_exact_negative_revision() {
     let root = tempfile::tempdir().unwrap();
-    let (directory, set) = publication(root.path());
-    prepare_recent(&directory, &set);
+    let (directory, set) = prepared_publication(root.path(), 2);
     let rpc = canonical_rpc(root.path(), &set).await;
     let owner = authority(
         &directory,

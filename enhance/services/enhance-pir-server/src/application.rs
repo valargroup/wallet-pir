@@ -15,7 +15,7 @@ pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + S
 pub enum Source {
     Canonical {
         rpc: ZakuraClient,
-        prevouts: Prevouts,
+        prevouts: Box<Prevouts>,
     },
     Fixture {
         records: u64,
