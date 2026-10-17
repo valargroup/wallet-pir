@@ -533,6 +533,49 @@ async fn retrieve_complete_history_and_enforce_limits_over_http() {
     assert!(history(&client, receiver()).await.unwrap().is_empty());
 }
 
+/// A transport that counts requests and records any row file request.
+struct Counted {
+    http: Http,
+    gets: AtomicUsize,
+    posts: AtomicUsize,
+    row_files: AtomicUsize,
+}
+
+impl Transport for Counted {
+    async fn get(&self, url: &str, limit: usize) -> Result<Vec<u8>, Error> {
+        self.gets.fetch_add(1, Ordering::Relaxed);
+        if url.contains("/v1/receiver/rows/") {
+            self.row_files.fetch_add(1, Ordering::Relaxed);
+        }
+        Transport::get(&self.http, url, limit).await
+    }
+    async fn post(&self, url: &str, body: Vec<u8>, limit: usize) -> Result<Vec<u8>, Error> {
+        self.posts.fetch_add(1, Ordering::Relaxed);
+        Transport::post(&self.http, url, body, limit).await
+    }
+}
+
+/// A history longer than the old 16-page PIR limit completes over PIR alone: one
+/// query per page, no row file request, and no GET beyond the manifest and setup.
+#[tokio::test]
+async fn long_histories_use_only_pir() {
+    const PAGES: u32 = 20;
+    let server = serve(snapshot(PAGES)).await;
+    let host = Counted {
+        http: Http(http()),
+        gets: AtomicUsize::new(0),
+        posts: AtomicUsize::new(0),
+        row_files: AtomicUsize::new(0),
+    };
+    let client = connect(&server.origin, &host, accepted()).await.unwrap();
+    let payments = history(&client, receiver()).await.unwrap();
+    assert_eq!(payments.len(), PAGES as usize);
+    assert!(payments.windows(2).all(|p| p[0].position < p[1].position));
+    assert_eq!(host.row_files.load(Ordering::Relaxed), 0);
+    assert_eq!(host.gets.load(Ordering::Relaxed), 2);
+    assert_eq!(host.posts.load(Ordering::Relaxed), PAGES as usize);
+}
+
 /// The common witness file is served byte for byte under the session's own route;
 /// this crate never interprets it, and a wallet verifies it.
 #[tokio::test]
