@@ -49,7 +49,7 @@ JOURNAL_KIND = 'txid-display-poc-transaction-v1'
 FLEET_SCHEMA = 'txid-display-fleet-v1'
 KIND = 'transparent-txid-display'
 BINARIES = ('transparent-txid-server', 'txid-control', 'txid-inventory', 'txid-display-controller',
-            'transparent-event-ingest')
+            'transparent-event-ingest', 'txid-quality-canary')
 SCRIPTS = ('txid-display-fleet.py', 'txid-display-observe.py')
 TEMPLATES = ('transparent-txid-display-worker.service.in', 'transparent-txid-display-controller.service.in',
              'txid-display-routes.caddy.in')

@@ -324,9 +324,12 @@ impl Packing {
         let began = std::time::Instant::now();
         let mut charge = super::packing_budget::Charge::prepare(budget)?;
         let params = parameters(logical_rows)?;
-        let material =
-            PreparedPacking::prepare(rlwe(), hint, PackingSetup::new(rlwe()), None, |_| false)
-                .map_err(|e| e.to_string())?;
+        // These fixed public masks depend only on the pinned parameter set,
+        // so generations share them while retaining their own hint material.
+        static SETUP: OnceLock<PackingSetup<'static>> = OnceLock::new();
+        let setup = SETUP.get_or_init(|| PackingSetup::new(rlwe())).clone();
+        let material = PreparedPacking::prepare(rlwe(), hint, setup, None, |_| false)
+            .map_err(|e| e.to_string())?;
         let public = material.public_rows(rlwe().q);
         charge.resident();
         crate::prepared_packing::observe_preparation(began.elapsed());

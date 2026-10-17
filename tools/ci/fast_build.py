@@ -3,8 +3,8 @@
 Cargo unifies features for the complete selection. Unit tests and the named
 fast integration targets share that build; campaign targets are never selected.
 Test programs retain their package directory, Cargo environment and existing
-slow-case exclusions. At most three ordinary programs execute together; integration programs and the
-filter library run alone.
+slow-case exclusions. At most three programs execute together, including HTTP
+integration programs and the filter library.
 """
 import json
 import os
@@ -108,13 +108,12 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3):
             actual_units.add(identity)
             discovered_units[name].update(names)
         exclusions = [] if integration else list(slow.get(name, {}))
-        # The filter library prepares full archive runtimes; keep its unchanged
-        # cases out of contention with other programs under the 30s case limit.
+        # Keep the shared pool bounded instead of serializing
+        # complete HTTP and publisher suites before all other tests.
         programs.append(dict(executable=binary, directory=directory, package=name,
                              version=package['version'],
                              integration=integration,
-                             exclusive=integration or (name == 'transparent-filter-server'
-                                                       and 'lib' in target['kind']),
+                             exclusive=False,
                              case_count=len(names),
                              args=[arg for case in exclusions for arg in ('--skip', case)]))
     if actual_integrations != expected_integrations or expected_units - actual_units:
@@ -127,9 +126,15 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3):
         stale = set(slow.get(name, {})) - discovered
         if stale:
             raise ValueError(f'{name}: stale slow-test classification: {sorted(stale)}')
-    # Cargo can report a freshly rebuilt large executable last. Start binaries
-    # with more discovered cases first so that work overlaps smaller programs.
-    programs.sort(key=lambda program: program['case_count'], reverse=True)
+    # Start the long publisher suite immediately. HTTP programs use the remaining
+    # slots before ordinary units, so neither forms a serial preparation wave.
+    def queue_key(program):
+        publisher = (program['package'] == 'transparent-filter-server'
+                     and not program['integration'] and program['case_count'] > 0)
+        group = 0 if publisher else 1 if program['integration'] else 2
+        return group, -program['case_count']
+
+    programs.sort(key=queue_key)
     run(['python3', 'tools/ci/reclaim-build-cache.py'], env=env, stage='reclaim')
     with tempfile.TemporaryDirectory(prefix='wallet-pir-fast-tests-') as directory:
         root = Path(directory)

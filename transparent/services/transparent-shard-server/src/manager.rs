@@ -627,3 +627,49 @@ async fn poll_snapshot(
     recorded?;
     Ok(Some(current))
 }
+
+#[cfg(test)]
+mod revocation_tests {
+    use super::*;
+
+    #[test]
+    fn damaged_floor_preserves_memory_and_every_readable_companion() {
+        for failed in ["revocation-floor.json", "revocation-fallback.json"] {
+            for unreadable in [false, true] {
+                let root = tempfile::tempdir().unwrap();
+                let companion = if failed.contains("fallback") {
+                    "revocation-floor.json"
+                } else {
+                    "revocation-fallback.json"
+                };
+                persist(
+                    &root.path().join(companion),
+                    &Revocations {
+                        revision: 100,
+                        digests: BTreeSet::from(["durable".into()]),
+                    },
+                )
+                .unwrap();
+                if unreadable {
+                    std::fs::create_dir(root.path().join(failed)).unwrap();
+                } else {
+                    std::fs::write(root.path().join(failed), b"{").unwrap();
+                }
+                assert!(
+                    floor(root.path()).is_err(),
+                    "startup must refuse a damaged floor"
+                );
+                let mut memory = Revocations {
+                    revision: 90,
+                    digests: BTreeSet::from(["in-memory".into()]),
+                };
+                assert!(combined_floor(root.path(), &mut memory).is_err());
+                assert_eq!(memory.revision, 100);
+                assert_eq!(
+                    memory.digests,
+                    BTreeSet::from(["durable".into(), "in-memory".into()])
+                );
+            }
+        }
+    }
+}
