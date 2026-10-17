@@ -31,6 +31,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          # Fetch comparison history while checkout has its ephemeral token.
+          fetch-depth: 0
           persist-credentials: false
       - uses: ./.github/actions/rust-setup
         with:
@@ -40,6 +42,13 @@ jobs:
         run: umask 022 && TMPDIR="$RUNNER_TEMP" python3 tools/ci/fast.py --all --compile-only
       - name: Validate prepared fast units
         run: umask 022 && TMPDIR="$RUNNER_TEMP" python3 tools/ci/fast.py --all --unit-jobs 3
+      # Cargo unifies dependency features for the selected roots. A complete
+      # workspace build need not contain the narrower affected graph's units.
+      # Finish with the ordinary PR comparison before sealing the snapshot.
+      - name: Validate affected fast units
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: umask 022 && TMPDIR="$RUNNER_TEMP" python3 tools/ci/fast.py --committed-only --base "$BASE" --unit-jobs 3
       # Required: metadata sealing failures must prevent a successful snapshot.
       - name: Seal and report prepared Cargo state
         run: umask 022 && python3 tools/ci/cargo_cache.py report

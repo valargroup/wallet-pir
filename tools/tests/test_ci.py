@@ -997,6 +997,24 @@ class CacheWorkflowTests(unittest.TestCase):
         self.assertIn("if: github.event_name == 'push' && steps.affected.outputs.rust == 'true'", routine)
         self.assertEqual(self.workflows['ci-cache.yml'].count("if: github.ref == 'refs/heads/main'"), 1)
 
+    def test_pr_preparation_finishes_with_the_ordinary_affected_graph_before_sealing(self):
+        text = self.workflows['ci-pr-prepare.yml']
+        checkout = text.split('- uses: actions/checkout@v4', 1)[1].split('- uses:', 1)[0]
+        self.assertIn('fetch-depth: 0', checkout)
+        self.assertIn('persist-credentials: false', checkout)
+        all_validation = text.index('- name: Validate prepared fast units')
+        affected = text.index('- name: Validate affected fast units')
+        seal = text.index('- name: Seal and report prepared Cargo state')
+        self.assertLess(all_validation, affected)
+        self.assertLess(affected, seal)
+        step = text[affected:seal]
+        command = 'python3 tools/ci/fast.py --committed-only --base "$BASE" --unit-jobs 3'
+        self.assertIn('BASE: ${{ github.event.pull_request.base.sha }}', step)
+        self.assertIn(command, step)
+        self.assertIn(command, self.workflows['ci.yml'])
+        for forbidden in ('continue-on-error', '--all', '--compile-only', '--package', 'if:'):
+            self.assertNotIn(forbidden, step)
+
     def test_unrelated_labels_cannot_enter_preparation_concurrency(self):
         text = self.workflows['ci-pr-prepare.yml']
         workflow, jobs = text.split('\njobs:\n', 1)
