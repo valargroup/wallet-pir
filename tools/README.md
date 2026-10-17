@@ -20,4 +20,4 @@ not the removed transparent-history research backend.
 
 Record measurements using the [evidence requirements](../evidence/README.md).
 Historical research tools remain available at the revision in the
-[cleanup ledger](../docs/cleanup-2026-09-14.md).
+[historical cleanup ledger](https://github.com/valargroup/wallet-pir/blob/3765536ee363af7646cc70d8c11ea4da27818ef5/docs/cleanup-2026-09-14.md).
