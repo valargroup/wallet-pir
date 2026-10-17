@@ -10,7 +10,9 @@ through the reference HTTP adapters and SQLite persistence.
 The controller's shipped-runtime success case cold-builds every runtime of a
 mixed `decoupled-2k-8k` recent / `decoupled-32k-32k` archive publication, then
 checks fleet offering, activation ordering and inode-preserving links during
-handover. Its companion refusal case starts from the same mixed-geometry source
+handover. This full-geometry campaign runs in full CI: it exceeded the 30-second
+case deadline during hosted PR preparation. Routine checks retain the companion
+refusal case, which starts from the same mixed-geometry source
 publication without building successful runtimes first. Superseded preparation
 verifies and retains that source set; replacing a linked table then tests that
 verification is required again. The case also retains the recent-only runtime
@@ -24,6 +26,15 @@ work separately from the independent refusal work without excluding targets or
 changing the 30-second case / 180-second warm correctness budgets. Production
 load, HTTP and full service qualification remain separate release gates; fixture
 timings do not qualify a deployment.
+
+When the standard fast selection includes `transparent-filter-server`, helpers
+still overlap the Rust compilation, then finish before Rust test execution starts.
+Publisher archive preparation already runs apart from other Rust programs in the
+integrated fast runner; this barrier also removes helper contention during that
+CPU window. It preserves the selected helpers, cases, cold fixture caches and
+30-second case guard. The wait remains inside the measured fast command and its
+180-second warm budget. This can lengthen warm runs when helpers outlast
+compilation; full hosted selection still needs qualification on its exact head.
 
 ## Running the deployed suite
 

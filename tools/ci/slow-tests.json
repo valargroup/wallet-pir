@@ -1,5 +1,6 @@
 {
   "transparent-filter-server": {
+    "controller::tests::shipped_runtimes_are_prepared_linked_and_offered_with_the_candidate": "Exceeded the 30-second case deadline in hosted PR preparation: cold-builds deployed archive runtimes and hands them over. Full CI retains every mixed-geometry assertion; fast controller refusals and encrypted HTTP checks retain source verification, runtime write failure, cold preparation and cache recovery.",
     "controller::tests::rpc_follow_publishes_empty_blocks_and_recovers_a_sealed_reorg": "Runs RPC follow, real publication/fleet subprocesses and reorg cancellation end to end.",
     "txid_display::controller::tests::incremental_stepping_reproduces_bootstrap": "Measured 7.7s locally: about 40 full 2,048-row display shard builds (16 MiB each) across three bootstraps and two stepped runs; full CI retains the equivalence check.",
     "txid_display::controller::tests::verify_reproduces_a_running_root": "Measured 10.5s locally: five complete re-bootstraps of a display root (queued, running, after a reorg, and two tampered records); full CI retains the comparison.",
@@ -23,10 +24,6 @@
   },
   "enhance-pir-server": {
     "status::source::tests::live_rpc_candidate_revalidates_before_durable_publication": "Measured 1.40s locally: real RPC candidate revalidation and durable publication; full CI retains the complete test."
-  },
-  "pir-apm": {
-    "fleet::integration_tests::failed_and_slow_workers_do_not_block_pages_or_good_samples": "Real HTTP stalled-worker timeout and scrape isolation; full CI retains real-time integration coverage.",
-    "packing_fleet::tests::discovery_pages_and_failed_scrapes_preserve_last_valid_sample": "Real HTTP stalled-worker timeout and scrape isolation; full CI retains real-time integration coverage."
   },
   "transparent-shard": {
     "build::tests::a_reorg_reproduces_everything_sealed_below_it": "Measured about 24s in warm CI: rebuilds and compares the entire sealed chain after a fork. Full qualification retains the independent rebuild; bounded reorg/publication and wallet transition checks remain fast.",

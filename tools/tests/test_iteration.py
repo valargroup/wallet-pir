@@ -154,12 +154,17 @@ class PlannerTests(unittest.TestCase):
             full.inventory(self.packages, groups)
 
     def test_explicit_slow_unit_filter_runs_without_skipping(self):
-        metadata = {'packages': [{'name': 'pir-apm', 'targets': [{'kind': ['bin']}]}]}
+        package = 'transparent-filter-server'
+        slow = json.loads((ROOT / 'tools/ci/slow-tests.json').read_text())[package]
+        selected = 'publication::tests::block_by_block_publication_equals_a_fresh_build'
+        self.assertIn(selected, slow)
+        listing = ''.join(name + ': test\n' for name in slow)
+        metadata = {'packages': [{'name': package, 'targets': [{'kind': ['lib']}]}]}
         calls = []
-        with patch.object(fast.subprocess, 'check_output', side_effect=[json.dumps(metadata).encode(), 'fleet::integration_tests::failed_and_slow_workers_do_not_block_pages_or_good_samples: test\npacking_fleet::tests::discovery_pages_and_failed_scrapes_preserve_last_valid_sample: test\n']), \
+        with patch.object(fast.subprocess, 'check_output', side_effect=[json.dumps(metadata).encode(), listing]), \
              patch.object(fast, 'run', side_effect=lambda command, **kw: calls.append(command)):
-            fast.rust_checks(['pir-apm'], test='failed_and_slow')
-        self.assertIn('failed_and_slow', calls[-1])
+            fast.rust_checks([package], test=selected)
+        self.assertIn(selected, calls[-1])
         self.assertNotIn('--skip', calls[-1])
 
     def test_explicit_integration_target_preserves_features_and_filter(self):
