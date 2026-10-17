@@ -62,6 +62,8 @@ exporter are included. New or removed targets require an explicit matrix update.
 Each shard reports compilation/execution timings and writes a success receipt
 bound to the source SHA, matrix and workflow attempt. Family aggregates reject
 missing, duplicate, compile-only or mismatched receipts before artifact promotion.
+Rerun the complete workflow rather than only failed jobs: receipts belong to one
+workflow attempt, and earlier attempts remain available as evidence.
 Common/shared checks overlap service work, but all required checks must finish
 successfully before candidates become qualified artifacts. Hosted source snapshots
 reuse verified unchanged inputs; Cargo still checks every compiled unit.

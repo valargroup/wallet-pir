@@ -106,7 +106,7 @@ jobs:
         run: umask 022 && python3 tools/ci/test_matrix.py run --shard '${{ matrix.shard }}' --output "$RUNNER_TEMP/qualification/${{ matrix.shard }}.json"
       - uses: actions/upload-artifact@v4
         with:
-          name: qualification-${{ matrix.family }}-${{ github.sha }}-${{ matrix.shard }}
+          name: qualification-${{ matrix.family }}-${{ github.sha }}-${{ github.run_attempt }}-${{ matrix.shard }}
           path: ${{ runner.temp }}/qualification/*.json
           if-no-files-found: error
           retention-days: 14
@@ -159,7 +159,7 @@ jobs:
           ref: ${{ github.sha }}
       - uses: actions/download-artifact@v4
         with:
-          pattern: qualification-transparent-${{ github.sha }}-*
+          pattern: qualification-transparent-${{ github.sha }}-${{ github.run_attempt }}-*
           path: qualification-receipts
           merge-multiple: true
       - run: python3 tools/ci/test_matrix.py verify --family transparent --receipts qualification-receipts
@@ -350,7 +350,7 @@ jobs:
           ref: ${{ github.sha }}
       - uses: actions/download-artifact@v4
         with:
-          pattern: qualification-enhance-${{ github.sha }}-*
+          pattern: qualification-enhance-${{ github.sha }}-${{ github.run_attempt }}-*
           path: qualification-receipts
           merge-multiple: true
       - run: python3 tools/ci/test_matrix.py verify --family enhance --receipts qualification-receipts
@@ -407,7 +407,7 @@ jobs:
           ref: ${{ github.sha }}
       - uses: actions/download-artifact@v4
         with:
-          pattern: qualification-receiver-${{ github.sha }}-*
+          pattern: qualification-receiver-${{ github.sha }}-${{ github.run_attempt }}-*
           path: qualification-receipts
           merge-multiple: true
       - run: python3 tools/ci/test_matrix.py verify --family receiver --receipts qualification-receipts

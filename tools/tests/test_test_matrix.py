@@ -220,6 +220,17 @@ class WorkflowTests(unittest.TestCase):
         for job in ('release', 'release-cuda'):
             self.assertIn('!inputs.defer-release', self.job(text, job))
 
+    def test_receipt_artifacts_are_isolated_by_attempt_for_full_reruns(self):
+        text = (ROOT / '.github/workflows/ci-full.yml').read_text()
+        shards = self.job(text, 'test-shards')
+        self.assertIn('name: qualification-${{ matrix.family }}-${{ github.sha }}-${{ github.run_attempt }}-${{ matrix.shard }}', shards)
+        for family in ('enhance', 'transparent', 'receiver'):
+            self.assertIn('pattern: qualification-' + family + '-${{ github.sha }}-${{ github.run_attempt }}-*',
+                          self.job(text, family + '-test'))
+        audit = (ROOT / '.github/workflows/ci-matrix-audit.yml').read_text()
+        self.assertEqual(audit.count('name: baseline-${{ matrix.family }}-${{ github.sha }}-${{ github.run_attempt }}'), 2)
+        self.assertIn('pattern: qualification-${{ matrix.family }}-${{ github.sha }}-${{ github.run_attempt }}-*', audit)
+
     def test_cache_variants_remain_isolated_and_qualification_uses_source_snapshots(self):
         registry = json.loads(matrix.REGISTRY.read_text())
         scopes = [cargo_cache.SCOPES['full-test', name] for name in registry]

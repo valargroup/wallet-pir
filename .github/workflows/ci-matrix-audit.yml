@@ -36,7 +36,7 @@ jobs:
       - run: python3 tools/ci/test_matrix.py baseline --family '${{ matrix.family }}' --output "$RUNNER_TEMP/baseline/${{ matrix.family }}.json"
       - uses: actions/upload-artifact@v4
         with:
-          name: baseline-${{ matrix.family }}-${{ github.sha }}
+          name: baseline-${{ matrix.family }}-${{ github.sha }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/baseline/*.json
           if-no-files-found: error
           retention-days: 14
@@ -57,11 +57,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          name: baseline-${{ matrix.family }}-${{ github.sha }}
+          name: baseline-${{ matrix.family }}-${{ github.sha }}-${{ github.run_attempt }}
           path: baseline
       - uses: actions/download-artifact@v4
         with:
-          pattern: qualification-${{ matrix.family }}-${{ github.sha }}-*
+          pattern: qualification-${{ matrix.family }}-${{ github.sha }}-${{ github.run_attempt }}-*
           path: qualification-receipts
           merge-multiple: true
       - run: python3 tools/ci/test_matrix.py compare --family '${{ matrix.family }}' --receipts qualification-receipts --baseline 'baseline/${{ matrix.family }}.json'
