@@ -32,11 +32,7 @@ REQUIRED = {'ops/scripts/wallet-pir-deploy.py', 'ops/scripts/wallet-pir-roles.py
             'ops/lib/wallet_pir_ops/__init__.py', 'ops/lib/wallet_pir_ops/deploy/host_helper.py',
             'ops/lib/wallet_pir_ops/release.py', 'transparent/ops/lib/deploy_cli.py',
             'transparent/ops/lib/roles.py', 'receiver/ops/digitalocean/service.toml',
-            'enhance/ops/lib/roles.py', 'receiver/ops/lib/roles.py',
-            'transparent/docs/prepared-distribution.md',
-            'transparent/ops/deploy/history-provider.example.json',
-            'transparent/ops/deploy/history-provider.caddy',
-            'transparent/ops/deploy/transparent-history-provider.role.service'}
+            'enhance/ops/lib/roles.py', 'receiver/ops/lib/roles.py'}
 
 
 def mode(name):

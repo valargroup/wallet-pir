@@ -84,6 +84,20 @@ class OperationsBundleTests(unittest.TestCase):
         self.assertFalse(list(destination.rglob('*.pyc')))
         self.assertFalse(any('.git' in p.parts for p in destination.rglob('*')))
 
+    def test_new_role_resources_do_not_raise_the_retained_v1_inventory_floor(self):
+        # A retained v1 release predating the provider still has a valid core
+        # inventory. Its own archived renderer determines its available roles.
+        provider = {'transparent/docs/prepared-distribution.md',
+                    'transparent/ops/deploy/history-provider.example.json',
+                    'transparent/ops/deploy/history-provider.caddy',
+                    'transparent/ops/deploy/transparent-history-provider.role.service'}
+        files = {name: data for name, data in bundle.contents(ROOT).items() if name not in provider}
+        archive = self.root / 'retained-v1.tar.gz'
+        bundle.write_archive(archive, 'b' * 40, files, False)
+        manifest, payload = bundle.verify(archive, 'b' * 40)
+        self.assertEqual(set(payload) - {'operations.json'}, set(files))
+        self.assertEqual(manifest['source_revision'], 'b' * 40)
+
     def test_archive_refusals_leave_destination_absent(self):
         special = tarfile.TarInfo('ops/lib/linked.py')
         special.type, special.linkname = tarfile.SYMTYPE, '/etc/passwd'

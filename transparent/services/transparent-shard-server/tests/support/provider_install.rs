@@ -346,10 +346,17 @@ async fn checkout_free_artifacts_support_queries_and_restart() {
         row_query(&origin, &set, 1).await;
         if std::env::var_os("WALLET_PIR_FROZEN_CLIENT").is_some() {
             let recovered = frozen(origin.clone(), 1, FIRST).await;
-            assert_eq!(recovered["unresolved"], 0);
-            assert_eq!(recovered["spends"][0]["value"], 123456);
-            assert_eq!(recovered["spends"][0]["spent_txid"], "01".repeat(32));
-            assert_eq!(recovered["history"].as_array().unwrap().len(), 2);
+            assert_eq!(
+                recovered,
+                serde_json::json!({
+                    "covered_through":FIRST+3,"matched_shards":[0,1],"utxos":[],"unresolved":0,
+                    "spends":[{"spent_txid":"01".repeat(32),"spent_index":0,
+                        "spending_txid":"02".repeat(32),"input_index":0,"height":FIRST+2,
+                        "value":123456,"script":hex::encode(script(1).as_slice())}],
+                    "history":[{"txid":"01".repeat(32),"height":FIRST,"received":123456,"spent":0},
+                        {"txid":"02".repeat(32),"height":FIRST+2,"received":0,"spent":123456}]
+                })
+            );
         }
         assert_eq!(
             status(&origin).await["archive_reachability"]["state"],
