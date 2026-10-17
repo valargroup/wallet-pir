@@ -110,6 +110,81 @@ class CoordinatorPreflight(unittest.TestCase):
                 self.check()
 
 
+class FeeOracleRepair(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.current, self.replacement = self.root/'oracle.json', self.root/'new.json'
+        self.evidence = self.root/'evidence'
+        self.evidence.mkdir()
+        def row(fee=None):
+            raw = bytearray(653)
+            if fee is not None:
+                raw[640] = 4
+                raw[645:653] = fee.to_bytes(8,'little')
+            return raw.hex()
+        self.old = [{'position':0,'record_hex':row()}, {'position':33,'record_hex':row(15000)}]
+        self.new = [{'position':0,'record_hex':row(20000)}, self.old[1]]
+        self.current.write_text(json.dumps(self.old))
+        self.replacement.write_text(json.dumps(self.new))
+        self.current.chmod(0o600)
+        self.replacement.chmod(0o600)
+        self.writes = []
+        original = Path.lstat
+        self.owner_stat = lambda path: SimpleNamespace(st_uid=0,st_mode=original(path).st_mode)
+
+    def repair(self, expected=None, held=None):
+        def write(path, data, mode):
+            self.writes.append(path)
+            Path(path).write_bytes(data)
+            Path(path).chmod(mode)
+        digest = expected or hashlib.sha256(self.replacement.read_bytes()).hexdigest()
+        with patch.object(Path, 'lstat', self.owner_stat):
+            return deploy.repair_reviewed_fee_oracle(self.current,self.replacement,digest,
+                                                     held or Mock(),self.evidence,write)
+
+    def test_fee_only_repair_preserves_cases_and_retains_prior_bytes(self):
+        original = self.current.read_bytes()
+        expected = self.replacement.read_bytes()
+        result = self.repair()
+        self.assertEqual(self.current.read_bytes(), expected)
+        self.assertEqual((self.evidence/'oracle-before.json').read_bytes(),original)
+        self.assertEqual((self.evidence/'oracle-after.json').read_bytes(),expected)
+        self.assertEqual(result['positions'],2)
+        self.assertEqual(result['fee_metadata_updates'],1)
+        self.assertEqual(self.current.stat().st_mode & 0o777,0o600)
+
+    def test_oracle_repair_refuses_ciphertext_expiry_known_fee_and_coverage_changes(self):
+        original = self.current.read_bytes()
+        for case in ['ciphertext','expiry','known-fee','position','drop-case']:
+            bad = copy.deepcopy(self.new)
+            if case in ['ciphertext','expiry']:
+                raw = bytearray.fromhex(bad[0]['record_hex'])
+                raw[0 if case=='ciphertext' else 641] ^= 1
+                bad[0]['record_hex'] = raw.hex()
+            elif case=='known-fee':
+                raw = bytearray.fromhex(bad[1]['record_hex']);raw[645] ^= 1
+                bad[1]['record_hex'] = raw.hex()
+            elif case=='position':
+                bad[0]['position'] = 1
+            else:
+                bad.pop()
+            self.replacement.write_text(json.dumps(bad))
+            with self.assertRaises(Exception):self.repair()
+            self.assertEqual(self.current.read_bytes(),original)
+            self.assertEqual(self.writes,[])
+
+    def test_oracle_repair_refuses_wrong_digest_and_lost_lock(self):
+        original = self.current.read_bytes()
+        with self.assertRaisesRegex(Exception,'reviewed SHA-256'):self.repair(expected='0'*64)
+        held = Mock();held.verify.side_effect = RuntimeError('lost lock')
+        with self.assertRaisesRegex(RuntimeError,'lost lock'):self.repair(held=held)
+        self.assertEqual(self.current.read_bytes(),original)
+        self.assertEqual(self.writes,[])
+        self.assertEqual(list(self.evidence.iterdir()),[])
+
+
 class CudaFleet(Fleet):
     def reviewed_state(self):
         runner = self.enhance_fleet()

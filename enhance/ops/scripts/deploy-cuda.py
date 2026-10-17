@@ -155,6 +155,57 @@ def rollback_verified_gpu(deployer, transaction, held):
     return restored, expected
 
 
+def repair_reviewed_fee_oracle(path, replacement, expected, held, evidence, write):
+    """Fill missing fee metadata from a pinned independent oracle, preserving every case."""
+    if replacement is None:
+        return None
+    for file in [path, replacement]:
+        info = file.lstat()
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
+            raise DeployError('oracle repair requires root-owned regular inputs without shared write access')
+    old_raw, new_raw = path.read_bytes(), replacement.read_bytes()
+    if hashlib.sha256(new_raw).hexdigest() != expected:
+        raise DeployError('oracle replacement differs from the reviewed SHA-256')
+    old, new = json.loads(old_raw), json.loads(new_raw)
+    for records in [old, new]:
+        if not isinstance(records, list) or any(
+                not isinstance(r, dict) or type(r.get('position')) is not int
+                or not 0 <= r['position'] < 2**64 or not isinstance(r.get('record_hex'), str) for r in records):
+            raise DeployError('oracle repair requires native record positions and hexadecimal bytes')
+    if (not isinstance(old, list) or not old or not isinstance(new, list)
+            or [r['position'] for r in old] != [r['position'] for r in new]):
+        raise DeployError('oracle repair must preserve every position in order')
+    if len({r['position'] for r in old}) != len(old):
+        raise DeployError('oracle repair requires distinct existing positions')
+    changed = 0
+    for before, after in zip(old, new):
+        a, b = bytes.fromhex(before['record_hex']), bytes.fromhex(after['record_hex'])
+        # Native v9's existing fee-only repair policy: flag byte 640 bit2,
+        # fee bytes645..653; ciphertext, transparent flags and expiry stay exact.
+        if len(a) != 653 or len(b) != 653:
+            raise DeployError('oracle repair requires existing native v9 record widths')
+        if a == b:
+            continue
+        if a[640] & 4 or b[640] != (a[640] | 4) or a[:640] != b[:640] or a[641:645] != b[641:645]:
+            raise DeployError('oracle repair may only fill previously missing fee metadata')
+        changed += 1
+    if old_raw == new_raw:
+        return None
+    held.verify()
+    with os.fdopen(os.open(evidence/'oracle-before.json', os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), 'wb') as saved:
+        saved.write(old_raw)
+        saved.flush()
+        os.fsync(saved.fileno())
+    held.verify()
+    write(str(path), new_raw, stat.S_IMODE(path.lstat().st_mode))
+    if hashlib.sha256(path.read_bytes()).hexdigest() != expected:
+        raise DeployError('installed public oracle differs from its reviewed digest')
+    with os.fdopen(os.open(evidence/'oracle-after.json', os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), 'wb') as saved:
+        saved.write(new_raw)
+    return {'previous_sha256':hashlib.sha256(old_raw).hexdigest(), 'sha256':expected,
+            'positions':len(old), 'fee_metadata_updates':changed}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('mode', choices=['preflight', 'deploy', 'rollback'])
@@ -165,11 +216,19 @@ def main():
     parser.add_argument('--evidence-dir', type=Path, required=True)
     parser.add_argument('--ssh-key', type=Path, required=True)
     parser.add_argument('--known-hosts', type=Path, required=True)
+    parser.add_argument('--oracle-replacement', type=Path, help='independent canonical fee-corrected oracle at the same positions')
+    parser.add_argument('--oracle-sha256', help='reviewed SHA-256 of --oracle-replacement')
     parser.add_argument('--transaction', help='exact GPU transaction to restore in rollback mode')
     parser.add_argument('--expected-current-sha256', help='reviewed running GPU hash for adoption of a stale baseline')
     args = parser.parse_args()
     if args.expected_current_sha256 is not None and not re.fullmatch(r"[0-9a-f]{64}", args.expected_current_sha256):
         parser.error("--expected-current-sha256 must be a full lowercase SHA-256")
+    if bool(args.oracle_replacement) != bool(args.oracle_sha256):
+        parser.error('--oracle-replacement and --oracle-sha256 must be supplied together')
+    if args.oracle_replacement is not None and not args.oracle_replacement.is_absolute():
+        parser.error('--oracle-replacement must be an absolute coordinator path')
+    if args.oracle_sha256 and not re.fullmatch(r'[0-9a-f]{64}', args.oracle_sha256):
+        parser.error('--oracle-sha256 must be a full lowercase SHA-256')
     if args.mode == 'rollback' and (not args.transaction or args.expected_current_sha256 is not None):
         parser.error('rollback requires --transaction and permits no baseline adoption')
     if args.mode != 'rollback' and args.transaction:
@@ -222,13 +281,17 @@ def main():
             deployer.lock = held
             deployer.check_identities([inventory.lock.get('host')])
             latest = Journal.load(args.state_dir, 'enhance')
+            if args.mode != 'rollback' and latest and latest.status not in FINAL:
+                raise DeployError('unfinished transaction; resume rollback before CUDA deployment')
+            result['oracle_repair'] = repair_reviewed_fee_oracle(
+                Path(inventory.services['enhance']['cuda_validation']['oracle']),
+                args.oracle_replacement, args.oracle_sha256, held, args.evidence_dir,
+                lambda path, data, mode: executor.write('coordinator', path, data, mode))
             if args.mode == 'rollback':
                 restored, expected = rollback_verified_gpu(deployer, args.transaction, held)
                 result.update(passed=True, binary_sha256=expected, transaction=restored.id,
                               transaction_status=restored.status)
                 return
-            if latest and latest.status not in FINAL:
-                raise DeployError('unfinished transaction; resume rollback before CUDA deployment')
             current = executor.probe_unit(target.host, target.unit)
             result['previous_binary_sha256'] = current['exe_sha256']
             ok, reason = deployer.check({'host': target.host, 'unit': target.unit, 'verify': {

@@ -183,6 +183,14 @@ The workflow retains the prior baseline bytes and both baseline digests in its
 private evidence. It does not replace or reset transaction history. Omit the input
 for ordinary deployments; baseline drift then remains a refusal.
 
+A stale pre-repair public oracle may be corrected with `oracle_replacement` and
+`oracle_sha256`. The replacement must come from the independent canonical extractor;
+review its retained provenance first. Under the production lock the operator keeps
+all positions in order and permits only missing fee metadata to be filled (the
+existing native v9 fee-repair policy). It retains both exact oracle files and their
+digests. Ciphertext, expiry, transparent flags and already-known fees cannot change.
+The same zero-error public query gate still runs after deployment.
+
 For an explicit GPU rollback, run this same workflow with `mode=rollback` and the
 exact `transaction` from its deployment receipt. `ref` supplies a qualified CUDA
 client bundle for verification; the server restored is the transaction's retained

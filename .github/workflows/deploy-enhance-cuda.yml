@@ -14,6 +14,14 @@ on:
         type: choice
         options: [preflight, deploy, rollback]
 
+      oracle_replacement:
+        description: Optional root-owned canonical fee-corrected oracle path; every existing position must remain
+        required: false
+        type: string
+      oracle_sha256:
+        description: Reviewed SHA-256 of the independent replacement oracle
+        required: false
+        type: string
       transaction:
         description: Exact GPU transaction to restore in rollback mode
         required: false
@@ -84,6 +92,8 @@ jobs:
           OPERATOR_SHA: ${{ github.sha }}
           EXPECTED_CURRENT_SHA256: ${{ inputs.expected_current_sha256 }}
           TRANSACTION: ${{ inputs.transaction }}
+          ORACLE_REPLACEMENT: ${{ inputs.oracle_replacement }}
+          ORACLE_SHA256: ${{ inputs.oracle_sha256 }}
         run: |
           set -euo pipefail
           printf '{"source_run":"%s","revision":"%s","deployment_run":"%s","operator_revision":"%s"}\n' \
@@ -94,6 +104,9 @@ jobs:
           fi
           if [[ -n "$TRANSACTION" ]]; then
             operation_args+=(--transaction "$TRANSACTION")
+          fi
+          if [[ -n "$ORACLE_REPLACEMENT" || -n "$ORACLE_SHA256" ]]; then
+            operation_args+=(--oracle-replacement "$ORACLE_REPLACEMENT" --oracle-sha256 "$ORACLE_SHA256")
           fi
           python3 enhance/ops/scripts/deploy-cuda.py "$MODE" "${operation_args[@]}" \
             --inventory /etc/enhance-pir/cuda-deploy-inventory.json \
