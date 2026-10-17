@@ -194,6 +194,8 @@ class PlannerTests(unittest.TestCase):
 
     def test_full_helper_dispatch_keeps_docs_precise_and_restores_models(self):
         self.assertEqual(helpers.targets(['check-docs'], full=True), ['check-docs'])
+        self.assertEqual(helpers.targets(['check-ops-deploy']), ['check-ops-deploy-fast'])
+        self.assertEqual(helpers.targets(['check-ops-deploy'], full=True), ['check-ops-deploy'])
         self.assertEqual(helpers.targets(['check-ops-scaler-fast'], full=True), ['check-ops-scaler'])
         self.assertEqual(set(helpers.targets(list(fast.HELPERS), full=True)),
                          (fast.HELPERS - {'check-ops-scaler-fast'}) | {'check-ops-scaler'})

@@ -71,6 +71,21 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(set(selected['packages']), {'core', 'client', 'server', 'other'})
         self.assertEqual(set(selected['helpers']), fast.HELPERS)
 
+    def test_global_build_changes_keep_native_coverage_without_unrelated_operations(self):
+        for path in ['Cargo.toml', 'Cargo.lock', 'Makefile', '.cargo/config.toml']:
+            with self.subTest(path=path):
+                selected = fast.plan(self.packages, [path])
+                self.assertEqual(set(selected['packages']), {'core', 'client', 'server', 'other'})
+                self.assertEqual(set(selected['helpers']), {'check-tools', 'check-ops-contracts'})
+                self.assertEqual(set(selected['groups']), fast.FULL_GROUPS)
+
+    def test_build_changes_do_not_drop_direct_operations_or_deleted_package_coverage(self):
+        selected = fast.plan(self.packages, ['Cargo.lock', 'ops/tests/deploy/test_ops_package.py',
+                                             'crates/client/src/deleted.rs'])
+        self.assertIn('check-ops-deploy', selected['helpers'])
+        self.assertIn('check-ops-contracts', selected['helpers'])
+        self.assertEqual(set(selected['packages']), {'core', 'client', 'server', 'other'})
+
 
 class BoundaryTests(unittest.TestCase):
     """The Common/node and wallet-libraries dependency boundary; see tools/ci/boundary.py."""

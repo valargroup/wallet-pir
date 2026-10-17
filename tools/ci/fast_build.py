@@ -116,6 +116,7 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3, before_tests
         # cases out of contention with other programs under the 30s case limit.
         programs.append(dict(executable=binary, directory=directory, package=name,
                              version=package['version'],
+                             integration=integration,
                              exclusive=integration or (name == 'transparent-filter-server'
                                                        and 'lib' in target['kind']),
                              case_count=len(names),
@@ -142,5 +143,13 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3, before_tests
         cache.mkdir()
         env['WALLET_PIR_TEST_RUNTIME_CACHE'] = str(cache)
         env['WALLET_PIR_ENFORCE_BUDGET'] = '1'
-        run(['python3', 'tools/ci/unit_tests.py', str(plan), '--budget', '--jobs', str(jobs)],
-            env=env, stage='tests:fast-programs')
+        cases = root / 'cases.jsonl'
+        env['WALLET_PIR_CASE_LOG'] = str(cases)
+        try:
+            run(['python3', 'tools/ci/unit_tests.py', str(plan), '--budget', '--jobs', str(jobs)],
+                env=env, stage='tests:fast-programs')
+        finally:
+            timings = [json.loads(line) for line in cases.read_text().splitlines()] if cases.exists() else []
+            print('CI_FAST_CASES ' + json.dumps(dict(
+                completed=len(timings),
+                slowest=sorted(timings, key=lambda case: case['seconds'], reverse=True)[:15])), flush=True)

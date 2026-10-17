@@ -88,6 +88,7 @@ class FastBuildTests(unittest.TestCase):
             self.assertTrue(program['directory'].endswith('/' + program['package']))
             self.assertEqual(program['version'], '1.0.0')
             self.assertEqual(program['exclusive'], program['executable'].endswith('smoke'))
+            self.assertEqual(program['integration'], program['executable'].endswith('smoke'))
             expected = ['--skip', 'slow'] if program['package'] == 'a' and not program['executable'].endswith('smoke') else []
             self.assertEqual(program['args'], expected)
         runner, options = self.calls[-1]
@@ -96,6 +97,7 @@ class FastBuildTests(unittest.TestCase):
         self.assertEqual(options['env']['WALLET_PIR_ENFORCE_BUDGET'], '1')
         self.assertNotIn('QUALIFY_PUBLICATIONS', options['env'])
         self.assertFalse(Path(options['env']['WALLET_PIR_TEST_RUNTIME_CACHE']).exists())
+        self.assertEqual(Path(options['env']['WALLET_PIR_CASE_LOG']).name, 'cases.jsonl')
 
     def test_filter_library_runs_alone_without_changing_cases_or_arguments(self):
         self.execute()
