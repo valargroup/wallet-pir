@@ -1,9 +1,11 @@
 """Cargo selects executables; bounded workers preserve Cargo's runtime contract."""
 import io
 import json
+import os
 import subprocess
 from pathlib import Path
 import sys
+import tempfile
 import threading
 import unittest
 from unittest.mock import patch
@@ -12,9 +14,62 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tools/ci'))
 import stage
 import unit_tests
+import test_budget
 
 
 class ProgramTests(unittest.TestCase):
+    def test_budget_is_enforced_unless_diagnostic_mode_is_explicit(self):
+        program = dict(executable='/deps/p', directory='/p', package='p', version='1', args=[])
+        for value, enforced in [(None, True), ('1', True), ('0', False)]:
+            with self.subTest(value=value), patch.dict(os.environ), \
+                    patch.object(unit_tests.subprocess, 'check_output', return_value='/rust/lib\n'), \
+                    patch.object(test_budget, 'execute', return_value=1) as execute:
+                os.environ.pop('WALLET_PIR_ENFORCE_BUDGET', None)
+                if value is not None:
+                    os.environ['WALLET_PIR_ENFORCE_BUDGET'] = value
+                unit_tests.execute([program], 1, budget=True)
+                self.assertEqual(execute.call_args.kwargs['enforce'], enforced)
+
+    def test_timed_program_scratch_is_removed_after_success_and_failure(self):
+        for fails in (False, True):
+            scratch = []
+            def execute(command, **kwargs):
+                directory = Path(kwargs['env']['TMPDIR'])
+                (directory / 'unfinished-upload').write_bytes(b'partial body')
+                scratch.append(directory)
+                if fails:
+                    raise RuntimeError('fixture failed')
+                return 1
+            program = dict(executable='/deps/p', directory='/p', package='p', version='1', args=[])
+            with patch.object(unit_tests.subprocess, 'check_output', return_value='/rust/lib\n'), \
+                    patch.object(test_budget, 'execute', side_effect=execute), \
+                    patch.object(test_budget, 'stop'):
+                if fails:
+                    with self.assertRaisesRegex(RuntimeError, 'fixture failed'):
+                        unit_tests.execute([program], 1, budget=True)
+                else:
+                    unit_tests.execute([program], 1, budget=True)
+            self.assertEqual(len(scratch), 1)
+            self.assertFalse(scratch[0].exists())
+
+    def test_explicit_command_environment_records_artifacts_and_target_ownership(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cargo = root / 'cargo'
+            artifact = dict(reason='compiler-artifact', package_id='path+file:///p#p@1.0.0',
+                            target={'name': 'p', 'kind': ['lib']}, profile={'test': True},
+                            executable='/test/p', fresh=False)
+            cargo.write_text('#!' + sys.executable + '\nprint(' + repr(json.dumps(artifact)) + ')\n')
+            cargo.chmod(0o755)
+            env = dict(os.environ, WALLET_PIR_ARTIFACT_LOG=str(root / 'artifacts'),
+                       WALLET_PIR_STAGE_LOG=str(root / 'stages'), WALLET_PIR_STAGE_PARENT='owner')
+            with patch('sys.stdout', new=io.StringIO()):
+                found = stage.run([str(cargo), 'test', '--no-run'], env=env,
+                                  collect_tests=True, test_details=True, stage='fixture')
+            self.assertEqual(found[0]['package_id'], artifact['package_id'])
+            self.assertEqual(json.loads((root / 'artifacts').read_text())['fresh'], False)
+            self.assertEqual(json.loads((root / 'stages').read_text())['parent'], 'owner')
+
     def test_collection_uses_cargo_test_artifacts_only(self):
         records = [dict(reason='compiler-artifact', package_id='path+file:///p#p@1.0.0',
                         target={'name': 'p', 'kind': ['lib']}, profile={'test': test},

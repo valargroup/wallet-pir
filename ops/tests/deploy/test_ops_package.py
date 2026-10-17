@@ -534,15 +534,15 @@ class InstallTests(PackageCase):
             'directory mode': lambda r: (r / 'ops').chmod(0o777),
             'release replaced by a link': lambda r: (shutil.rmtree(r), r.symlink_to(self.release(B))),
         }
+        self.install(A)
+        pristine = self.dir / 'pristine-retained-release'
+        shutil.copytree(self.release(A), pristine)
+        document = json.loads(self.fleet.read_bytes())
+        document['hosts']['worker-02']['address'] = '192.0.2.26'
+        self.fleet.write_text(json.dumps(document, indent=2))
+        upgrade = self.install(B)
         for name, corrupt in corruptions.items():
             with self.subTest(name):
-                self.setUp()
-                self.install(A)
-                first_fleet = self.fleet.read_bytes()
-                document = json.loads(first_fleet)
-                document['hosts']['worker-02']['address'] = '192.0.2.26'
-                self.fleet.write_text(json.dumps(document, indent=2))
-                upgrade = self.install(B)
                 corrupt(self.release(A))
                 self.host.log.clear()
                 with self.assertRaisesRegex(package.PackageError, 'rollback refused; nothing was changed'):
@@ -552,6 +552,14 @@ class InstallTests(PackageCase):
                 self.assertEqual(self.fleet_bytes(), self.fleet.read_bytes())
                 final = Path(self.layout.transaction(upgrade.id)) / 'final.json'
                 self.assertEqual(json.loads(final.read_text())['status'], 'committed')
+                # A refused rollback has no effects. Restore only the damaged
+                # immutable release bytes/modes for the next corruption, keeping
+                # the real committed transaction and current selection intact.
+                if self.release(A).is_symlink():
+                    self.release(A).unlink()
+                else:
+                    shutil.rmtree(self.release(A))
+                shutil.copytree(pristine, self.release(A))
 
     def test_rollback_refuses_a_retained_release_no_transaction_promoted(self):
         upgrade = self.install(B)

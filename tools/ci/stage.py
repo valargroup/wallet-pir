@@ -41,7 +41,7 @@ def with_messages(command):
     return [*command[:subcommand + 1], '--message-format=json-diagnostic-rendered-ansi', *command[subcommand + 1:]]
 
 
-def relay(process, log, stage, executables=None):
+def relay(process, log, stage, executables=None, test_details=False):
     """Pass non-message output through; log sanitized compiler-artifact records."""
     sys.path.insert(0, str(ROOT / 'tools/ci'))
     from cargo_cache import artifact_unit
@@ -63,7 +63,7 @@ def relay(process, log, stage, executables=None):
             elif (unit := artifact_unit(message)) is not None:
                 if (executables is not None and message.get('profile', {}).get('test')
                         and message.get('executable')):
-                    executables.append(message['executable'])
+                    executables.append(message if test_details else message['executable'])
                 if out is None:
                     continue
                 out.write(json.dumps({**unit, 'stage': stage, 'command': command}) + '\n')
@@ -95,13 +95,13 @@ def reap(groups):
             pass
 
 
-def cancel(signum, _frame):
+def stop(signum):
     """Stop owned command groups, including Cargo's compiler/test descendants."""
     global _CANCELLED
     with _PROCESS_LOCK:
         _CANCELLED = signum
         if _SPAWNING:
-            return
+            return False
         processes = list(_ACTIVE.values())
     # Do not re-enter Popen.wait here: the signal can interrupt its waitpid
     # lock. A separate reaper bounds cleanup after graceful signal propagation.
@@ -111,6 +111,12 @@ def cancel(signum, _frame):
         except ProcessLookupError:
             pass
     threading.Thread(target=reap, args=([p.pid for p in processes],), daemon=False).start()
+    return True
+
+
+def cancel(signum, _frame):
+    if not stop(signum):
+        return
     raise SystemExit(128 + signum)
 
 
@@ -120,17 +126,18 @@ def install_cancellation():
             signal.signal(sig, cancel)
 
 
-def run(command, *, env=None, stage='helper', cwd=ROOT, collect_tests=False):
+def run(command, *, env=None, stage='helper', cwd=ROOT, collect_tests=False, test_details=False):
     global _SPAWNING
     install_cancellation()
     identifier = uuid.uuid4().hex[:12]
+    parent = (os.environ if env is None else env).get(PARENT)
     child = dict(os.environ if env is None else env, **{PARENT: identifier})
     owns_group = os.name == 'posix' and not os.environ.get(COMMAND_GROUP)
     child[COMMAND_GROUP] = '1'
     started = time.time()
     start = time.monotonic()
     print('+ ' + ' '.join(command), flush=True)
-    log = os.environ.get(ARTIFACT_LOG)
+    log = child.get(ARTIFACT_LOG)
     messages = with_messages(command) if log or collect_tests else None
     executables = []
     if collect_tests and not messages:
@@ -154,7 +161,7 @@ def run(command, *, env=None, stage='helper', cwd=ROOT, collect_tests=False):
     try:
         with process:
             if messages:
-                relay(process, log, stage, executables if collect_tests else None)
+                relay(process, log, stage, executables if collect_tests else None, test_details)
             process.wait()
         result = subprocess.CompletedProcess(messages or command, process.returncode)
     finally:
@@ -163,16 +170,18 @@ def run(command, *, env=None, stage='helper', cwd=ROOT, collect_tests=False):
     elapsed = time.monotonic() - start
     record = {'stage': stage, 'seconds': round(elapsed, 3), 'exit': result.returncode}
     print('CHECK_STAGE ' + json.dumps(record), flush=True)
-    log = os.environ.get('WALLET_PIR_STAGE_LOG')
+    log = child.get('WALLET_PIR_STAGE_LOG')
     if log:
         with open(log, 'a') as out:
-            out.write(json.dumps({**record, 'id': identifier, 'parent': os.environ.get(PARENT),
+            out.write(json.dumps({**record, 'id': identifier, 'parent': parent,
                                   'started': round(started, 3)}) + '\n')
-    if os.environ.get('GITHUB_STEP_SUMMARY'):
-        with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as out:
+    if child.get('GITHUB_STEP_SUMMARY'):
+        with open(child['GITHUB_STEP_SUMMARY'], 'a') as out:
             out.write(f'| {stage} | {elapsed:.2f}s | {result.returncode} |\n')
     result.check_returncode()
     if collect_tests:
+        if test_details:
+            return executables
         return list(dict.fromkeys(executables))
 
 

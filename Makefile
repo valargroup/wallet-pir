@@ -18,7 +18,10 @@ build:
 
 check: check-full
 
-.PHONY: check-full check-fast check-hygiene check-package doctor prepare-dev
+.PHONY: check-full check-fast check-correctness check-hygiene check-package doctor prepare-dev
+check-correctness:
+	python3 tools/ci/correctness.py $(if $(filter 1,$(OFFLINE)),--offline)
+
 check-hygiene:
 	python3 tools/ci/hygiene.py $(if $(BASE),--base "$(BASE)")
 
@@ -137,7 +140,7 @@ check-ops-scaler-fast:
 .PHONY: check-reports
 check-reports:
 	python3 -m unittest discover -s transparent/tools/transparent-loadtest/tests -p 'test_*.py'
-	node --test transparent/tools/transparent-loadtest/tests/apm.test.cjs
+	node --test --test-timeout=30000 transparent/tools/transparent-loadtest/tests/apm.test.cjs
 
 # Every relative Markdown link must resolve. The transparent PIR documentation
 # rules delete superseded prose instead of leaving stubs, so a dangling link is

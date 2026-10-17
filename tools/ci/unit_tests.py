@@ -5,17 +5,18 @@ Cases stay in one process per program so immutable public fixtures can be reused
 Cargo compilation has already finished; no target directory writer runs here.
 """
 import argparse
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 import os
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 
 from stage import run
 
 
-def execute(programs, jobs):
+def execute(programs, jobs, *, budget=False):
     library_directory = subprocess.check_output(['rustc', '--print', 'target-libdir'], text=True).strip()
 
     def invoke(program):
@@ -26,14 +27,27 @@ def execute(programs, jobs):
                    CARGO_PKG_NAME=program['package'], CARGO_PKG_VERSION=program['version'])
         key = 'DYLD_FALLBACK_LIBRARY_PATH' if sys.platform == 'darwin' else 'LD_LIBRARY_PATH'
         env[key] = os.pathsep.join([str(Path(binary).parent), library_directory, env.get(key, '')])
-        run([binary, *program['args']], cwd=directory, env=env, stage='tests:' + program['package'])
+        if budget:
+            from test_budget import execute as timed_execute
+            with tempfile.TemporaryDirectory(prefix='wallet-pir-test-program-') as scratch:
+                env.update(TMPDIR=scratch, TMP=scratch, TEMP=scratch)
+                count = timed_execute([binary, *program['args']], cwd=directory, env=env,
+                                      report=env.get('WALLET_PIR_CASE_LOG'),
+                                      enforce=env.get('WALLET_PIR_ENFORCE_BUDGET') != '0')
+            if program.get('integration') and not count:
+                raise ValueError(f'{binary}: integration executable contains no tests')
+        else:
+            run([binary, *program['args']], cwd=directory, env=env, stage='tests:' + program['package'])
 
     with ThreadPoolExecutor(max_workers=jobs) as pool:
         futures = [pool.submit(invoke, program) for program in programs]
         try:
-            for future in futures:
+            for future in as_completed(futures):
                 future.result()
         except BaseException:
+            if budget:
+                from test_budget import stop
+                stop()
             for future in futures:
                 future.cancel()
             raise
@@ -43,8 +57,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('plan', type=Path)
     parser.add_argument('--jobs', type=int, choices=(1, 2), required=True)
+    parser.add_argument('--budget', action='store_true', help='time every case and enforce the correctness budget')
     args = parser.parse_args()
-    execute(json.loads(args.plan.read_text()), args.jobs)
+    if args.budget:
+        from test_budget import install_cancellation
+        install_cancellation()
+    execute(json.loads(args.plan.read_text()), args.jobs, budget=args.budget)
 
 
 if __name__ == '__main__':

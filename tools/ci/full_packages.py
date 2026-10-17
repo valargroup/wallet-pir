@@ -6,6 +6,7 @@ priming); it is never a substitute for the full suite.
 """
 import argparse
 import json
+import os
 from pathlib import Path
 import subprocess
 from fast import ROOT, workspace_packages
@@ -33,18 +34,16 @@ def commands(group, groups, lint=False, compile_only=False):
     if lint:
         return [['cargo', 'clippy', '--locked', '--all-targets', '--all-features',
                  *[arg for name in names for arg in ('-p', name)], '--', '-D', 'warnings']]
-    # This server's full registry includes lib, bins and every integration target.
-    ordinary = [name for name in names if name != 'enhance-pir-server']
     runner = ['cargo', 'test', '--no-run'] if compile_only else ['bash', 'tools/ci/full-test.sh']
-    # Canonical library CLI/internal tests run in wallet-libraries CI. Only
-    # this workspace's own packages may enable features from this driver.
+    features = {
+        'enhance': ['enhance-pir/cli', 'enhance-pir/native-reinspiring',
+                    'enhance-serving/native-reinspiring', 'status-serving/native-reinspiring',
+                    'enhance-pir-server/native-reinspiring', 'enhance-pir-load-test/native-reinspiring'],
+        'shared': ['pir-control/admission'],
+    }.get(group, [])
     result = [[*runner, '--locked', '--profile', 'release-fast',
-               *[arg for name in ordinary for arg in ('-p', name)],
-               *(['--features', 'enhance-pir/cli'] if group == 'enhance' else
-                 ['--features', 'pir-control/admission'] if group == 'shared' else [])]]
-    if 'enhance-pir-server' in names:
-        result.append(['python3', 'tools/ci/enhance_tests.py', '--tier', 'full',
-                       *(['--compile-only'] if compile_only else [])])
+               *[arg for name in names for arg in ('-p', name)],
+               *(['--features', ','.join(features)] if features else [])]]
     if group == 'transparent':
         # This analysis tool has its own workspace. Its journal-reader identity
         # and compiled-codec contracts run first, so another service test's
@@ -68,7 +67,11 @@ def main():
                 run(command, stage=f'{"lint" if args.lint else "compile"}:{args.group}')
             else:
                 print('+ ' + ' '.join(command), flush=True)
-                subprocess.run(command, cwd=ROOT, check=True)
+                # Qualification workload knobs are for explicit campaigns, not
+                # the bounded correctness suite or its compile-only twin.
+                env = {key: value for key, value in os.environ.items()
+                       if not key.startswith('QUALIFY_')}
+                subprocess.run(command, cwd=ROOT, env=env, check=True)
 
 
 if __name__ == '__main__':

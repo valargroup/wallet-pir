@@ -340,24 +340,24 @@ jobs:
           # deployment gate; keep artifact CI bounded to correctness coverage.
           python3 tools/ci/full_packages.py --group enhance
 
-      - name: Check tagged native distributed integration
-        env:
-          QUALIFY_PUBLICATIONS: "1"
-          QUALIFY_QUERY_LANES: "2"
-          QUALIFY_QUERIES_PER_LANE: "3"
+      - name: Check reference runtime arithmetic
         run: |
           umask 022
-          python3 tools/ci/stage.py compile:native-cuda-check -- cargo check --locked -p enhance-pir-server -p enhance-pir-load-test --features native-reinspiring,cuda
-          tools/ci/full-test.sh --locked --profile release-fast -p enhance-pir-server --features native-reinspiring --test packing_http --test status_wallet --test enhance_wallet_native
-          python3 tools/ci/stage.py tests:native-lib -- cargo test --locked --profile release-fast -p enhance-pir --features native-reinspiring --lib native
-          python3 tools/ci/stage.py tests:native-server-lib -- cargo test --locked --profile release-fast -p enhance-serving -p status-serving -p enhance-pir-server --features enhance-serving/native-reinspiring,status-serving/native-reinspiring,enhance-pir-server/native-reinspiring --lib
+          # Common control/HTTP assertions already run with the native backend.
+          # Preserve the independent reference implementation's arithmetic tests.
+          tools/ci/full-test.sh --locked --profile release-fast -p enhance-serving --lib ipir::tests
+          tools/ci/full-test.sh --locked --profile release-fast -p enhance-serving --test ci_smoke
+          # Frozen reference vectors must not be compared with native v9 identities.
+          tools/ci/full-test.sh --locked --profile release-fast -p enhance-pir -p status-serving --lib --tests
 
       - name: Check optional CUDA worker without a GPU
         run: |
           umask 022
-          python3 tools/ci/stage.py compile:cuda-check -- cargo check --locked -p enhance-serving -p status-serving -p enhance-pir-server --all-targets --features enhance-serving/cuda,status-serving/cuda,enhance-pir-server/cuda
-          python3 tools/ci/stage.py tests:cuda-config -- cargo test --locked --profile release-fast -p enhance-pir-server --features cuda --test matvec_config
-          python3 tools/ci/stage.py tests:cuda-load -- cargo test --locked --profile release-fast -p enhance-serving --features cuda --lib backend_load_failure_does_not_rebuild_or_replace_published_units
+          # Use the same native+CUDA feature set for each check so Cargo reuses
+          # the configured libraries. GPU execution remains hardware qualification.
+          python3 tools/ci/stage.py compile:cuda-check -- cargo check --locked -p enhance-serving -p status-serving -p enhance-pir-server -p enhance-pir-load-test --all-targets --features enhance-serving/cuda,status-serving/cuda,enhance-pir-server/cuda,enhance-pir-server/native-reinspiring,enhance-pir-load-test/native-reinspiring
+          tools/ci/full-test.sh --locked --profile release-fast -p enhance-pir-server --features native-reinspiring,cuda --test matvec_config
+          python3 tools/ci/stage.py tests:cuda-load -- cargo test --locked --profile release-fast -p enhance-serving --features native-reinspiring,cuda --lib backend_load_failure_does_not_rebuild_or_replace_published_units
       - name: Report Cargo cache reuse
         if: always()
         continue-on-error: true

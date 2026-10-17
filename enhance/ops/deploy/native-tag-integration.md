@@ -72,7 +72,7 @@ QUALIFY_PUBLICATIONS=1 QUALIFY_QUERY_LANES=2 QUALIFY_QUERIES_PER_LANE=3 \
   cargo test --locked -p enhance-pir-server --features native-reinspiring \
   --test packing_http --test status_wallet
 cargo test --locked -p enhance-pir --features native-reinspiring --lib native
-cargo test --locked -p enhance-pir-server --test packing_http
+cargo test --locked -p enhance-serving --test packing_http
 ```
 
 CI runs the native distributed HTTP fixture separately from the legacy suite,

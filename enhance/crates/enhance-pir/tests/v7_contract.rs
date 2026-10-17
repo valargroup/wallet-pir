@@ -149,6 +149,7 @@ fn multi_boundary_blocks_and_partial_threshold_use_canonical_coordinates() {
 }
 
 #[test]
+#[cfg(not(feature = "native-reinspiring"))]
 fn identity_vector_matches_frozen_bytes() {
     let m = manifest(67);
     // An independent Python encoder checks the serialized fixture as well.
