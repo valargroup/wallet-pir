@@ -207,6 +207,10 @@ def test_programs(artifacts, variant, packages, env):
     actual, programs, cases = set(), [], {}
     for artifact in artifacts:
         package = next(p for p in packages.values() if p['id'] == artifact['package_id'])
+        if (variant in ('transparent', 'native')
+                and 'qualification-tests' in package.get('features', {})
+                and 'qualification-tests' not in artifact.get('features', [])):
+            raise ValueError(f"{package['name']}: qualification fixture feature missing from executable")
         identity = (package['name'], artifact['target']['name'])
         if identity in actual:
             raise ValueError(f'duplicate executable: {identity}')

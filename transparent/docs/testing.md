@@ -9,9 +9,11 @@ through the reference HTTP adapters and SQLite persistence.
 
 The controller's shipped-runtime success case cold-builds runtimes and checks
 fleet offering, activation order and inode-preserving links during handover.
-Ordinary correctness uses the supported `decoupled-2k-8k` geometry for both
-roles; explicit qualification also uses the deployed `decoupled-32k-32k`
-archive. The refusal companion independently checks source verification,
+The bounded positive case runs the real cold preparation, fleet offer and
+activation phases on one valid recent publication, then verifies inode-preserving
+links into a separately staged candidate. Qualification additionally acquires
+new blocks and builds both distinct deployed geometries: `decoupled-2k-8k`
+recent and `decoupled-32k-32k` archive. The refusal companion independently checks source verification,
 supersession, linked-table replacement and counted runtime write failures.
 No unit case is omitted by name.
 
