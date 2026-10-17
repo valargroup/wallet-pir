@@ -214,6 +214,13 @@ async fn serve_app(app: axum::Router) -> (String, Server) {
     (format!("http://{addr}"), Server { stop, task })
 }
 fn terminal(dir: &std::path::Path, map: &ShardMap) -> ServiceState {
+    terminal_prepared(dir, map, None)
+}
+fn terminal_prepared(
+    dir: &std::path::Path,
+    map: &ShardMap,
+    shipped: Option<transparent_shard_server::runtime::disk::ShippedRuntimes>,
+) -> ServiceState {
     let assignment = plan(
         map,
         &super::map_sha256(map),
@@ -230,7 +237,7 @@ fn terminal(dir: &std::path::Path, map: &ShardMap) -> ServiceState {
         },
         ..LoadOptions::whole(0)
     };
-    ServiceState::build(
+    ServiceState::build_with_runtimes(
         ShardSet::open_with(dir, &options).unwrap(),
         ServiceConfig {
             readiness: ReadinessMode::Warm,
@@ -238,6 +245,8 @@ fn terminal(dir: &std::path::Path, map: &ShardMap) -> ServiceState {
             max_waiters: 0,
             ..ServiceConfig::default()
         },
+        None,
+        shipped,
     )
     .unwrap()
 }

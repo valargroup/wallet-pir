@@ -208,19 +208,34 @@ async fn checkout_free_artifacts_support_queries_and_restart() {
     );
     let corrupt_runtime = Arc::new(std::sync::atomic::AtomicBool::new(true));
     let corrupt = corrupt_runtime.clone();
-    let app = axum::Router::new().fallback(axum::routing::get(move |uri: axum::http::Uri| {
-        let body =
-            if uri.path() == runtime_path && corrupt.load(std::sync::atomic::Ordering::Acquire) {
+    let replies = Arc::new(replies);
+    let token = format!(
+        "\"{}\"",
+        distribution::digest(&serde_json::to_vec(&current).unwrap())
+    );
+    let app = axum::Router::new().fallback(axum::routing::get(
+        move |uri: axum::http::Uri, headers: axum::http::HeaderMap| {
+            let unchanged = uri.path() == "/provider/v1/current"
+                && headers
+                    .get("if-none-match")
+                    .is_some_and(|h| h.as_bytes() == token.as_bytes());
+            let body = if uri.path() == runtime_path
+                && corrupt.load(std::sync::atomic::Ordering::Acquire)
+            {
                 Some(vec![0])
             } else {
                 replies.get(uri.path()).cloned()
             };
-        async move {
-            body.map_or((axum::http::StatusCode::NOT_FOUND, Vec::new()), |b| {
-                (axum::http::StatusCode::OK, b)
-            })
-        }
-    }));
+            async move {
+                if unchanged {
+                    return (axum::http::StatusCode::NOT_MODIFIED, Vec::new());
+                }
+                body.map_or((axum::http::StatusCode::NOT_FOUND, Vec::new()), |b| {
+                    (axum::http::StatusCode::OK, b)
+                })
+            }
+        },
+    ));
     let (publisher, publisher_server) = serve_app(app).await;
     command(
         &[
@@ -247,7 +262,13 @@ async fn checkout_free_artifacts_support_queries_and_restart() {
     )
     .await;
     let (publisher, mut publisher_tls) = tls(root, &publisher).await;
-    let terminal = terminal(&source, &map);
+    // Reuse the exact publisher-built material through the production loader;
+    // the terminal must not rebuild the fixture's runtimes a second time.
+    let terminal = terminal_prepared(
+        &source,
+        &map,
+        Some(transparent_shard_server::runtime::disk::ShippedRuntimes::required(source.clone())),
+    );
     terminal.spawn_prewarm().await.unwrap();
     let (archive, archive_server) = serve(terminal).await;
     let (archive, mut archive_tls) = tls(root, &archive).await;
@@ -344,8 +365,6 @@ async fn checkout_free_artifacts_support_queries_and_restart() {
         assert_eq!(before["runtime_readiness"]["preparation"]["built"], 0);
         assert_eq!(before["active_coverage"][0]["local"], false);
         assert_eq!(before["active_coverage"][1]["local"], true);
-        row_query(&origin, &set, 0).await;
-        row_query(&origin, &set, 1).await;
         if std::env::var_os("WALLET_PIR_FROZEN_CLIENT").is_some() {
             let recovered = frozen(origin.clone(), 1, FIRST).await;
             assert_eq!(
@@ -359,6 +378,11 @@ async fn checkout_free_artifacts_support_queries_and_restart() {
                         {"txid":"02".repeat(32),"height":FIRST+2,"received":0,"spent":123456}]
                 })
             );
+        } else {
+            // Ordinary CPU runs compare exact producer rows; explicit original
+            // client qualification compares the full independently derived ledger.
+            row_query(&origin, &set, 0).await;
+            row_query(&origin, &set, 1).await;
         }
         assert_eq!(
             status(&origin).await["archive_reachability"]["state"],
