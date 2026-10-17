@@ -17,13 +17,13 @@ import time
 from stage import run
 
 
-def execute(programs, jobs, *, budget=False):
+def execute(programs, jobs, *, budget=False, test_threads=1):
     library_directory = subprocess.check_output(['rustc', '--print', 'target-libdir'], text=True).strip()
 
     def execute_program(program):
         directory = program['directory']
         binary = program['executable']
-        env = dict(os.environ, RUST_TEST_THREADS='1', CARGO_MANIFEST_DIR=directory,
+        env = dict(os.environ, RUST_TEST_THREADS=str(test_threads), CARGO_MANIFEST_DIR=directory,
                    CARGO_MANIFEST_PATH=str(Path(directory) / 'Cargo.toml'),
                    CARGO_PKG_NAME=program['package'], CARGO_PKG_VERSION=program['version'])
         if program['package'] == 'transparent-filter-server' and not program.get('integration'):
@@ -85,11 +85,12 @@ def main():
     parser.add_argument('plan', type=Path)
     parser.add_argument('--jobs', type=int, choices=(1, 2, 3), required=True)
     parser.add_argument('--budget', action='store_true', help='time every case and enforce the correctness budget')
+    parser.add_argument('--test-threads', type=int, choices=(1, 2), default=1)
     args = parser.parse_args()
     if args.budget:
         from test_budget import install_cancellation
         install_cancellation()
-    execute(json.loads(args.plan.read_text()), args.jobs, budget=args.budget)
+    execute(json.loads(args.plan.read_text()), args.jobs, budget=args.budget, test_threads=args.test_threads)
 
 
 if __name__ == '__main__':

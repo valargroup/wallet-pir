@@ -957,7 +957,7 @@ class CacheWorkflowTests(unittest.TestCase):
                 found.append((lane, scope))
         self.assertGreaterEqual(len(found), 8)
         for lane, scope in found:
-            if not lane.startswith('$'):
+            if not lane.startswith('$') and not scope.startswith('$'):
                 self.assertIn((lane, scope), cargo_cache.SCOPES)
         prime = self.workflows['ci-cache.yml']
         for lane, scope in re.findall(r'\{lane: (\S+), scope: (\S+),', prime):
@@ -1012,7 +1012,7 @@ class CacheWorkflowTests(unittest.TestCase):
         routine = self.workflows['ci.yml']
         self.assertIn("github.event_name == 'workflow_dispatch' && 30 || 3", routine)
         self.assertIn("if: github.event_name == 'push' && steps.affected.outputs.rust == 'true'", routine)
-        self.assertEqual(self.workflows['ci-cache.yml'].count("if: github.ref == 'refs/heads/main'"), 1)
+        self.assertEqual(self.workflows['ci-cache.yml'].count("if: github.ref == 'refs/heads/main'"), 2)
 
     def test_pr_preparation_finishes_with_the_ordinary_affected_graph_before_sealing(self):
         text = self.workflows['ci-pr-prepare.yml']
@@ -1076,10 +1076,13 @@ class CacheWorkflowTests(unittest.TestCase):
         self.assertIn('enhance-pir-server/native-reinspiring', features)
         workflow = self.workflows['ci-full.yml']
         self.assertNotIn('tests:native-server-lib', workflow)
-        self.assertIn('--lib ipir::tests', workflow)
-        self.assertIn('-p enhance-serving --test ci_smoke', workflow)
-        self.assertIn('-p enhance-pir -p status-serving --lib --tests', workflow)
-        self.assertIn('--features native-reinspiring,cuda --test matvec_config', workflow)
+        matrix = json.loads((ROOT / 'tools/ci/test-matrix.json').read_text())
+        self.assertIn('reference:enhance-serving:lib:enhance_serving', matrix['enhance-reference']['targets'])
+        self.assertIn('reference:enhance-serving:test:ci_smoke', matrix['enhance-reference']['targets'])
+        self.assertIn('cuda:enhance-pir-server:test:matvec_config', matrix['enhance-cuda-tests']['targets'])
+        runner = (ROOT / 'tools/ci/test_matrix.py').read_text()
+        self.assertIn("args = ['ipir::tests']", runner)
+        self.assertIn('backend_load_failure_does_not_rebuild_or_replace_published_units', runner)
 
     def test_transparent_full_checks_include_the_standalone_exporter(self):
         full = load_full()

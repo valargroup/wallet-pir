@@ -115,6 +115,7 @@ class QualificationTests(unittest.TestCase):
                 if not re.search(r'\b(always|cancelled|success|failure)\(', expression):
                     return False
                 condition = expression.removeprefix('${{').removesuffix('}}').strip()
+                condition = condition.replace('!inputs.defer-release', 'True')
                 condition = condition.replace('!cancelled()', repr(not cancelled)).replace('always()', 'True')
                 condition = condition.replace('&&', ' and ').replace('||', ' or ')
                 values = {'inputs.family': 'enhance' if name == 'release-cuda' else 'receiver',
@@ -135,6 +136,7 @@ class QualificationTests(unittest.TestCase):
         workflow = (ROOT / '.github/workflows/ci-full.yml').read_text()
         build = workflow.split('\n  build-cuda:\n', 1)[1].split('\n  release-cuda:\n', 1)[0]
         publish = workflow.split('\n  release-cuda:\n', 1)[1]
+        publish += (ROOT / '.github/actions/qualify-artifacts/action.yml').read_text()
         self.assertIn('    needs: [select, validate-ops]\n', build)
         self.assertNotIn('needs.complete', build)
         self.assertIn('tools/ci/build-cuda.sh', build)
@@ -175,7 +177,7 @@ class QualificationTests(unittest.TestCase):
         self.assertIn('    paths:\n', prime)
         self.assertIn('branches: [main]', prime)
         self.assertIn('--all --compile-only', prime)
-        self.assertNotIn('needs:', prime)
+        self.assertNotIn('needs:', prime.split('\n  plan-qualification:', 1)[0])
 
     def test_pr_and_main_feedback_share_the_three_minute_ceiling(self):
         workflow = (ROOT / '.github/workflows/ci.yml').read_text()
@@ -186,7 +188,7 @@ class QualificationTests(unittest.TestCase):
     def test_ci_only_feedback_does_not_compile_unchanged_rust_but_full_coverage_remains(self):
         packages = q.workspace_packages()
         for paths in [['tools/ci/fast.py', 'ops/lib/wallet_pir_ops/release.py'],
-                      ['.github/workflows/ci-qualify.yml'], ['.gitignore']]:
+                      ['.github/workflows/ci-qualify.yml'], ['.github/actions/qualify-artifacts/action.yml'], ['.gitignore']]:
             result = q.plan(packages, paths)
             self.assertEqual(result['packages'], [])
             self.assertEqual(set(result['groups']), q.FULL_GROUPS)

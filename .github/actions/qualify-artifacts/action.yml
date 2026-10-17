@@ -1,0 +1,124 @@
+name: Publish qualified candidates
+description: Verify candidate provenance and publish only after the caller's qualification gates.
+inputs:
+  family:
+    required: true
+    description: Qualified service family
+  cuda:
+    default: 'false'
+    description: Publish the native CUDA candidate
+runs:
+  using: composite
+  steps:
+    - uses: actions/download-artifact@v4
+      if: inputs.cuda != 'true'
+      with:
+        name: candidate-${{ inputs.family }}-${{ github.sha }}
+        path: release-bundles
+    - name: Verify qualified candidate contents
+      if: inputs.cuda != 'true'
+      env:
+        FAMILY: ${{ inputs.family }}
+      shell: bash
+      run: umask 022 && python3 tools/ci/qualification.py verify --family "$FAMILY" --sha "$GITHUB_SHA"
+    - uses: actions/upload-artifact@v4
+      if: inputs.cuda != 'true' && (inputs.family == 'ops')
+      with:
+        name: wallet-pir-ops-${{ github.sha }}
+        path: release-bundles/wallet-pir-ops/wallet-pir-ops.tar.gz
+        overwrite: true
+        compression-level: 0
+        if-no-files-found: error
+        retention-days: 14
+    - uses: actions/upload-artifact@v4
+      if: inputs.cuda != 'true' && (inputs.family == 'receiver')
+      with:
+        name: receiver-pir-${{ github.sha }}
+        path: release-bundles/receiver-pir/receiver-pir.tar.gz
+        overwrite: true
+        compression-level: 0
+        if-no-files-found: error
+        retention-days: 14
+    - uses: actions/upload-artifact@v4
+      if: inputs.cuda != 'true' && (inputs.family == 'transparent')
+      with:
+        name: transparent-filter-${{ github.sha }}
+        path: release-bundles/transparent-filter/transparent-filter.tar.gz
+        overwrite: true
+        compression-level: 0
+        if-no-files-found: error
+        retention-days: 14
+    - uses: actions/upload-artifact@v4
+      if: inputs.cuda != 'true' && (inputs.family == 'transparent')
+      with:
+        name: transparent-shard-${{ github.sha }}
+        path: release-bundles/transparent-shard/transparent-shard.tar.gz
+        overwrite: true
+        compression-level: 0
+        if-no-files-found: error
+        retention-days: 14
+    - uses: actions/upload-artifact@v4
+      if: inputs.cuda != 'true' && (inputs.family == 'transparent')
+      with:
+        name: transparent-publisher-${{ github.sha }}
+        path: release-bundles/transparent-publisher/transparent-publisher.tar.gz
+        overwrite: true
+        compression-level: 0
+        if-no-files-found: error
+        retention-days: 14
+    - uses: actions/upload-artifact@v4
+      if: inputs.cuda != 'true' && (inputs.family == 'transparent')
+      with:
+        name: transparent-txid-display-${{ github.sha }}
+        path: release-bundles/transparent-txid-display/transparent-txid-display.tar.gz
+        overwrite: true
+        compression-level: 0
+        if-no-files-found: error
+        retention-days: 14
+    - uses: actions/upload-artifact@v4
+      if: inputs.cuda != 'true' && (inputs.family == 'enhance')
+      with:
+        name: enhance-pir-${{ github.sha }}
+        path: release-bundles/enhance-pir/enhance-pir.tar.gz
+        overwrite: true
+        compression-level: 0
+        if-no-files-found: error
+        retention-days: 14
+    - uses: actions/upload-artifact@v4
+      if: inputs.cuda != 'true' && (inputs.family == 'enhance')
+      with:
+        name: enhance-pir-native-${{ github.sha }}
+        path: release-bundles/enhance-pir-native/enhance-pir-native.tar.gz
+        overwrite: true
+        compression-level: 0
+        if-no-files-found: error
+        retention-days: 14
+    - uses: actions/upload-artifact@v4
+      if: inputs.cuda != 'true' && (inputs.family == 'enhance')
+      with:
+        name: status-pir-${{ github.sha }}
+        path: release-bundles/status-pir/status-pir.tar.gz
+        overwrite: true
+        compression-level: 0
+        if-no-files-found: error
+        retention-days: 14
+    - uses: actions/download-artifact@v4
+      if: inputs.cuda == 'true'
+      with:
+        name: candidate-native-cuda-${{ github.sha }}
+        path: release-bundles-native-cuda/enhance-pir-native-cuda
+    - name: Verify qualified CUDA candidate contents
+      if: inputs.cuda == 'true'
+      shell: bash
+      run: >-
+        umask 022 && python3 tools/ci/qualification.py verify --family enhance --cuda
+        --sha "$GITHUB_SHA" --output release-bundles-native-cuda
+    - uses: actions/upload-artifact@v4
+      if: inputs.cuda == 'true'
+      with:
+        name: enhance-pir-native-cuda-${{ github.sha }}
+        path: release-bundles-native-cuda/enhance-pir-native-cuda/enhance-pir-native-cuda.tar.gz
+        overwrite: true
+        compression-level: 0
+        if-no-files-found: error
+        retention-days: 14

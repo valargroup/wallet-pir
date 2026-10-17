@@ -64,6 +64,19 @@ SCOPES = {
     ('release-native', 'native'): ('release', 'enhance-pir/cli,native-reinspiring'),
     ('native-cuda', 'cuda'): ('release', 'enhance-pir/cli,native-reinspiring,cuda'),
 }
+# Shards have private hosted targets, including their complete selection policy.
+# A policy change cannot restore an entry prepared for a different feature set.
+for shard_name, shard in json.loads((ROOT / 'tools/ci/test-matrix.json').read_text()).items():
+    SCOPES['full-test', shard_name] = (
+        'dev,release-fast', json.dumps(shard, sort_keys=True) + ':' +
+        hashlib.sha256((ROOT / 'tools/ci/test_matrix.py').read_bytes()).hexdigest())
+SCOPES['full-lint', 'receiver'] = ('dev', 'clippy all-targets all-features')
+
+
+def workspace_lane(lane):
+    return lane in ('fast', 'full-test')
+
+
 TOOLCHAIN_FILES = ['rust-toolchain', 'rust-toolchain.toml']
 CONFIG_NAMES = ('config', 'config.toml')
 # Programs Cargo runs to compile, from the environment or `[build]` configuration.
@@ -444,7 +457,7 @@ def prepare(args, env):
     # Check lexical ownership before probe/setup can create state, and keep it
     # in the receipt so restored() can reject aliases introduced by extraction.
     hosted_target = None
-    if not args.persistent_root and args.lane == 'fast':
+    if not args.persistent_root and workspace_lane(args.lane):
         hosted_target = workspace_cache.owned_target(ROOT, Path(args.target_dir))
     started = float(env.get('WALLET_PIR_SETUP_STARTED') or time.time())
     toolchain, full = identity(args.lane, args.scope, probe(ROOT, env), env)
@@ -464,11 +477,12 @@ def prepare(args, env):
         # rust-cache appends the runner OS and Node architecture to `shared-key`.
         # Fast snapshots have a source-tree suffix below. A fallback's exact
         # restored ref is not exposed; do not guess it from candidate refs.
-        refs = None if args.lane == 'fast' else cache_refs(f'{PREFIX}-{key}-Linux-x64', env)
+        refs = None if workspace_lane(args.lane) else cache_refs(f'{PREFIX}-{key}-Linux-x64', env)
         workspace_prefix = None
-        if args.lane == 'fast':
+        if workspace_lane(args.lane):
             tree = subprocess.check_output(['git', 'rev-parse', 'HEAD^{tree}'], cwd=ROOT, text=True).strip()
-            workspace_prefix = f'v2-wallet-pir-workspace-{record["compatibility"]}-'
+            partition = record['compatibility'] if args.lane == 'fast' else record['identity']
+            workspace_prefix = f'v2-wallet-pir-workspace-{partition}-'
             key = f'{workspace_prefix}{record["lock"]}-{tree}'
     directory = state_dir(env)
     directory.mkdir(parents=True, exist_ok=True)
@@ -482,7 +496,7 @@ def prepare(args, env):
     if env.get('GITHUB_OUTPUT') and key:
         with open(env['GITHUB_OUTPUT'], 'a') as out:
             out.write(f'shared-key={key}\n')
-            if args.lane == 'fast':
+            if workspace_lane(args.lane):
                 out.write(f'workspace-key={key}\nworkspace-prefix={workspace_prefix}\n')
 
 
@@ -490,7 +504,7 @@ def restored(args, env):
     path = state_dir(env) / f'{args.lane}.json'
     state = json.loads(path.read_text())
     state['restored'] = time.time()
-    if args.lane == 'fast' and state['mode'] != 'persistent':
+    if workspace_lane(args.lane) and state['mode'] != 'persistent':
         workspace_cache.restore(ROOT, Path(state['target']), state['record']['compatibility'],
                                 state_dir(env) / 'workspace-pending')
     state['before'] = snapshot(state['target'])
@@ -527,7 +541,7 @@ def report(env):
         state = json.loads(path.read_text())
         before = state.get('before')
         pending = directory / 'workspace-pending'
-        if state['record']['lane'] == 'fast' and state['mode'] != 'persistent' and pending.is_file():
+        if workspace_lane(state['record']['lane']) and state['mode'] != 'persistent' and pending.is_file():
             workspace_cache.seal(ROOT, Path(state['target']), state['record']['compatibility'], pending)
         result = {
             **{key: state['record'][key] for key in ('lane', 'scope', 'identity', 'toolchain', 'profile')},
