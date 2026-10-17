@@ -54,7 +54,6 @@ zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.g
 zakura-pir-enhance = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "886db40137caef486d32d5bc594b2c20b1dde75e", default-features = false, features = ["testing"] }
 tempfile = "3"
 # Used only by integration tests and examples.
-base64 = "0.22"
 inspiring = "=0.1.0-rc.3"
 rayon = "1"
 tokio-stream = "0.1"

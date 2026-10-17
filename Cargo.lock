@@ -908,7 +908,6 @@ name = "enhance-pir-server"
 version = "0.0.1"
 dependencies = [
  "axum",
- "base64",
  "clap",
  "enhance-pir",
  "enhance-serving",
@@ -2245,7 +2244,6 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "http-body",
- "serde",
  "tokio",
  "tower",
 ]
@@ -3311,7 +3309,6 @@ dependencies = [
  "axum",
  "clap",
  "hex",
- "inspiring",
  "ipir-sp",
  "libc",
  "pir-control",
@@ -3610,7 +3607,6 @@ dependencies = [
  "pin-project-lite",
  "tower-layer",
  "tower-service",
- "tracing",
 ]
 
 [[package]]
@@ -3762,7 +3758,6 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tower",
- "tower-http 0.5.2",
  "tracing",
  "tracing-subscriber",
  "transparent-blocks",
@@ -3901,7 +3896,6 @@ dependencies = [
  "http-body",
  "ipir-sp",
  "pir-control",
- "pir-observability",
  "pir-pipeline",
  "rayon",
  "reinspiring",
