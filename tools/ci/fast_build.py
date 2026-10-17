@@ -108,7 +108,7 @@ def execute(selected, *, offline=False, compile_only=False, jobs=2):
             discovered_units[name].update(names)
         exclusions = [] if integration else list(slow.get(name, {}))
         programs.append(dict(executable=binary, directory=directory, package=name,
-                             version=package['version'],
+                             version=package['version'], exclusive=integration,
                              args=[arg for case in exclusions for arg in ('--skip', case)]))
     if actual_integrations != expected_integrations or expected_units - actual_units:
         raise ValueError(f'fast test executables mismatch: missing_units={sorted(expected_units-actual_units)}, '

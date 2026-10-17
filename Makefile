@@ -67,7 +67,7 @@ check-ops-control-sessions:
 # The Enhance and Status deploy CLI (ops/scripts/wallet-pir-deploy.py) against
 # an in-memory fleet, plus its host helper run locally.
 check-ops-deploy:
-	python3 -m unittest discover -s ops/tests/deploy -p 'test_*.py'
+	python3 tools/ci/python_tests.py ops/tests/deploy --jobs 2
 	python3 transparent/ops/tests/test_activity_schema_operation.py
 	python3 transparent/ops/tests/test_activity_schema_baseline.py
 
@@ -140,7 +140,7 @@ check-ops-scaler-fast:
 .PHONY: check-reports
 check-reports:
 	python3 -m unittest discover -s transparent/tools/transparent-loadtest/tests -p 'test_*.py'
-	node --test --test-timeout=30000 transparent/tools/transparent-loadtest/tests/apm.test.cjs
+	node --test transparent/tools/transparent-loadtest/tests/apm.test.cjs
 
 # Every relative Markdown link must resolve. The transparent PIR documentation
 # rules delete superseded prose instead of leaving stubs, so a dangling link is

@@ -108,6 +108,25 @@ class ProgramTests(unittest.TestCase):
         self.assertEqual(peak, 2)
         self.assertCountEqual(seen, [p['executable'] for p in programs])
 
+    def test_exclusive_programs_finish_before_ordinary_programs_overlap(self):
+        barrier = threading.Barrier(2, timeout=5)
+        finished = []
+        def run(command, **kwargs):
+            if command[0] == '/deps/http':
+                self.assertEqual(finished, [])
+                finished.append('http')
+            else:
+                self.assertEqual(finished, ['http'])
+                barrier.wait()
+        programs = [dict(executable='/deps/' + name, directory='/p', package='p',
+                         version='1', args=[], exclusive=name == 'http')
+                    for name in ['a', 'http', 'b']]
+        with patch.object(unit_tests.subprocess, 'check_output', return_value='/rust/lib\n'), \
+                patch.object(unit_tests, 'run', side_effect=run) as execute:
+            unit_tests.execute(programs, 2)
+        self.assertCountEqual([call.args[0][0] for call in execute.call_args_list],
+                              [program['executable'] for program in programs])
+
     def test_failed_program_is_not_retried(self):
         program = dict(executable='/deps/p', directory='/p', package='p', version='1', args=[])
         with patch.object(unit_tests.subprocess, 'check_output', return_value='/rust/lib\n'), \

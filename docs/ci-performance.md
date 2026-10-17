@@ -60,7 +60,8 @@ and stale ancestry cannot leave unchecked changes behind.
 Rust feedback compiles the selected unit tests, CLI test binaries and named fast
 integration targets together in one `release-fast` Cargo invocation. Campaign
 targets are excluded from that build. Local and CI checks then execute at most
-two Cargo-reported test programs concurrently. Cases within each program stay
+two Cargo-reported unit-test programs concurrently. Fast integration programs run
+first, one at a time, to keep encrypted HTTP working sets apart. Cases within each program stay
 serial, preserving process-local immutable public fixtures within the fast runner’s
 6-GiB ceiling. Explicit feature or test-filter checks use one program at a time.
 Each program keeps its package directory and Cargo environment; fast integration
@@ -76,7 +77,11 @@ integration targets, doctests, binary unit tests and all-feature lint run in
 selected job fails or is skipped. This avoids compiling every integration target just
 to exclude its tests at runtime. Affected helper
 checks run concurrently with Rust; selected operations suites run in
-four parallel make slots, and failures in any task fail fast CI.
+four parallel make slots. Deployment unittest modules use two separate processes,
+retaining every discovered case and each module's fixtures. Each case keeps its
+own mutable deployment tree; negative variants may restore a real transaction
+checkpoint after proving that an untampered copy still recovers. Failures in any
+task fail fast CI.
 
 Every workspace integration target must be classified exactly once.
 `make check-tools` validates the registry against manifests and integration source files without invoking Rust, rejecting new

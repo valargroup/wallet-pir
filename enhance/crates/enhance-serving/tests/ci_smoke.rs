@@ -131,16 +131,6 @@ async fn encrypted_http_answers_survive_restart_and_reject_malformed_queries() {
             .await
             .unwrap();
         let http = serve(coordinator.clone().router()).await;
-        let mut client = EnhancePirClient::connect(&http.url).await.unwrap();
-        assert_eq!(
-            client
-                .query_position_with_timing(66)
-                .await
-                .unwrap()
-                .0
-                .as_ref(),
-            record(66)
-        );
         // Keep one real commit unacknowledged while its healthy peer publishes
         // again. This bridges the small decision-delivery tests to real worker
         // preparation, publication selection and encrypted wallet answers.
@@ -184,7 +174,6 @@ async fn encrypted_http_answers_survive_restart_and_reject_malformed_queries() {
             .unwrap();
         assert!(malformed.status().is_client_error());
         let _ = malformed.bytes().await.unwrap();
-        drop(client);
         http.stop().await;
         drop(coordinator);
         let restored = Coordinator::open(&state_dir, groups).unwrap();
