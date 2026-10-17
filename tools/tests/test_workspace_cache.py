@@ -1,4 +1,4 @@
-"""Real Cargo snapshot lifecycle and output-isolation oracles."""
+"""Real Cargo checkout/cache oracle: actual fresh flags and executable behavior."""
 from contextlib import redirect_stdout
 import argparse
 import io
