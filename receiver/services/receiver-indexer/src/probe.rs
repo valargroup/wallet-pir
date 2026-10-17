@@ -26,9 +26,8 @@ use receiver_directory::{
     Hash, Payment, ReceiverBytes,
 };
 use receiver_pir::{
-    public_bytes, response_bytes,
-    transport::{MAX_PIR_PAGES, MAX_WITNESS_BYTES},
-    AcceptedCoverage, Client, Manifest, MAX_MANIFEST_BYTES,
+    public_bytes, response_bytes, transport::MAX_WITNESS_BYTES, AcceptedCoverage, Client, Manifest,
+    MAX_MANIFEST_BYTES,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -46,6 +45,8 @@ const MAX_RECENT_AGE_SECS: i64 = 15 * 60;
 const MAX_HEALTH_BYTES: usize = 64 * 1024;
 /// How often `--await-feed-reads` polls health.
 const FEED_READS_POLL: Duration = Duration::from_secs(2);
+/// Pages the probe reads looking for the fixture's payment before it gives up.
+const MAX_PROBE_PAGES: u32 = 16;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
@@ -298,7 +299,7 @@ async fn probe(args: Args, lookup: &mut Option<(u32, bool)>) -> Result<Option<Fa
         if record.payment.position >= fixture.position || queries == record.total {
             break Some(record.payment);
         }
-        if queries == MAX_PIR_PAGES {
+        if queries == MAX_PROBE_PAGES {
             return Err("pinned receiver's history exceeds the probe's page bound".into());
         }
     };

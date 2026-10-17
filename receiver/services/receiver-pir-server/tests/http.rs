@@ -1,7 +1,10 @@
 //! Receiver PIR evaluation and the HTTP service that wallets reach through a [`Transport`].
 #[path = "../../../crates/receiver-store/tests/common/mod.rs"]
 mod common;
+#[path = "common/history.rs"]
+mod history;
 use common::{manifest, receiver, record};
+use history::history;
 use receiver_directory::snapshot::Snapshot;
 use receiver_pir::{
     server::Server,
@@ -70,7 +73,7 @@ async fn rotate_canonical_sessions_and_revoke_orphaned_work() {
         publications.clone(),
     ))
     .await;
-    let mut old = connect(&server.origin, Http(http()), accepted())
+    let old = connect(&server.origin, Http(http()), accepted())
         .await
         .unwrap();
     let old_id = hex::encode(old.manifest().id().unwrap());
@@ -88,12 +91,12 @@ async fn rotate_canonical_sessions_and_revoke_orphaned_work() {
         .await
         .unwrap();
     assert!(public.status().is_success());
-    assert_eq!(old.lookup(receiver(), accepted()).await.unwrap().len(), 2);
+    assert_eq!(history(&old, receiver()).await.unwrap().len(), 2);
     let mut anchor = accepted();
     anchor.height = 102;
     anchor.hash = [9; 32];
-    let mut new = connect(&server.origin, Http(http()), anchor).await.unwrap();
-    assert_eq!(new.lookup(receiver(), anchor).await.unwrap().len(), 2);
+    let new = connect(&server.origin, Http(http()), anchor).await.unwrap();
+    assert_eq!(history(&new, receiver()).await.unwrap().len(), 2);
 
     // Preparation started before the canonical guard detected the fork.
     let preparing_epoch = publications.epoch();
@@ -120,7 +123,7 @@ async fn rotate_canonical_sessions_and_revoke_orphaned_work() {
     );
     assert!(matches!(old.witnesses().await, Err(Error::Revision)));
     assert!(matches!(
-        new.lookup(receiver(), anchor).await,
+        history(&new, receiver()).await,
         Err(Error::Revision)
     ));
 
@@ -133,12 +136,8 @@ async fn rotate_canonical_sessions_and_revoke_orphaned_work() {
         publications.epoch()
     ));
     anchor.hash = [10; 32];
-    let mut recovered = connect(&server.origin, Http(http()), anchor).await.unwrap();
-    assert!(recovered
-        .lookup(receiver(), anchor)
-        .await
-        .unwrap()
-        .is_empty());
+    let recovered = connect(&server.origin, Http(http()), anchor).await.unwrap();
+    assert!(history(&recovered, receiver()).await.unwrap().is_empty());
 }
 /// Whether `response` forbids caching it.
 fn no_store(response: &reqwest::Response) -> bool {
@@ -456,7 +455,7 @@ async fn connect<T: Transport>(
     accepted: AcceptedCoverage,
 ) -> Result<DirectoryClient<T>, Error> {
     let manifest = DirectoryClient::fetch_manifest(origin, &http).await?;
-    DirectoryClient::connect_manifest(origin, http, accepted, manifest, 0).await
+    DirectoryClient::connect_manifest(origin, http, accepted, manifest).await
 }
 
 #[tokio::test]
@@ -497,16 +496,17 @@ async fn wallets_test_receivers_against_the_publication_filters() {
 #[tokio::test]
 async fn retrieve_complete_history_and_enforce_limits_over_http() {
     let server = serve(snapshot(2)).await;
-    let mut client = connect(&server.origin, Http(http()), accepted())
+    let client = connect(&server.origin, Http(http()), accepted())
         .await
         .unwrap();
-    let payments = client.lookup(receiver(), accepted()).await.unwrap();
+    let payments = history(&client, receiver()).await.unwrap();
     assert_eq!(payments.len(), 2);
     assert_eq!(payments[0].position, 200);
     assert_eq!(payments[1].position, 201);
+    // A client refuses a publication that does not end at the wallet's anchor.
     let mut wrong = accepted();
     wrong.hash[0] ^= 1;
-    assert!(client.lookup(receiver(), wrong).await.is_err());
+    assert!(connect(&server.origin, Http(http()), wrong).await.is_err());
     let oversized = http()
         .post(format!("{}/v1/receiver/query", server.origin))
         .body(vec![
@@ -527,14 +527,10 @@ async fn retrieve_complete_history_and_enforce_limits_over_http() {
         .unwrap();
     assert_eq!(malformed.status(), reqwest::StatusCode::BAD_REQUEST);
     let absent = serve(snapshot(0)).await;
-    let mut client = connect(&absent.origin, Http(http()), accepted())
+    let client = connect(&absent.origin, Http(http()), accepted())
         .await
         .unwrap();
-    assert!(client
-        .lookup(receiver(), accepted())
-        .await
-        .unwrap()
-        .is_empty());
+    assert!(history(&client, receiver()).await.unwrap().is_empty());
 }
 
 /// The common witness file is served byte for byte under the session's own route;

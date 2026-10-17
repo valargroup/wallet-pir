@@ -384,7 +384,7 @@ mod tests {
             height: manifest.end_height,
             hash: manifest.end_hash,
         };
-        let client = DirectoryClient::connect_manifest(&origin, http, accepted, served, 0)
+        let client = DirectoryClient::connect_manifest(&origin, http, accepted, served)
             .await
             .unwrap();
         let bytes = client.witnesses().await.unwrap();

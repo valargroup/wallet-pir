@@ -275,7 +275,7 @@ enforces response limits while streaming, rejects redirects and maps 410 to
 block against its own chain and calls `fetch_filters`, which checks the filter
 file against the manifest. It tests its receivers with `Filter::matches` and
 calls `connect_manifest` only if any need a lookup. `witnesses` fetches the
-common witness file, and every history page is one encrypted query. Reuse the
+common witness file, and `page` reads one history page per encrypted query. Reuse the
 client across lookups and reconnect for a new revision. The server sees the
 number of queries, so it learns how many lookups found several payments, but
 never which receivers were looked up. The service has no row file route. It keeps

@@ -4,7 +4,10 @@
 //! witness and revision handling interoperate with these routes byte for byte.
 #[path = "../../../crates/receiver-store/tests/common/mod.rs"]
 mod common;
+#[path = "common/history.rs"]
+mod history;
 use common::{manifest, receiver, record};
+use history::history;
 use receiver_directory::snapshot::Snapshot;
 use receiver_pir::{server::Server, MIN_ROWS};
 use receiver_pir::{
@@ -113,7 +116,7 @@ async fn read(request: reqwest::RequestBuilder, limit: usize) -> Result<Vec<u8>,
 /// Connects over PIR to the publication `origin` advertises.
 async fn connect<'a>(origin: &str, http: &'a Http) -> Result<DirectoryClient<&'a Http>, Error> {
     let manifest = DirectoryClient::fetch_manifest(origin, http).await?;
-    DirectoryClient::connect_manifest(origin, http, accepted(), manifest, 0).await
+    DirectoryClient::connect_manifest(origin, http, accepted(), manifest).await
 }
 
 /// The library client reads a two-page history over this service's PIR, one encrypted
@@ -126,8 +129,8 @@ async fn the_library_client_looks_up_over_pir() {
     ))
     .await;
     let http = Http::new();
-    let mut client = connect(&server.origin, &http).await.unwrap();
-    let payments = client.lookup(receiver(), accepted()).await.unwrap();
+    let client = connect(&server.origin, &http).await.unwrap();
+    let payments = history(&client, receiver()).await.unwrap();
     let expected: Vec<_> = (0..2).map(|page| record(page, 2).payment).collect();
     assert_eq!(payments.len(), 2);
     for (payment, expected) in payments.iter().zip(&expected) {
@@ -150,7 +153,7 @@ async fn the_library_client_looks_up_over_pir() {
     // A receiver without payments reads as empty, not as an error.
     let mut other = receiver();
     other[0] ^= 1;
-    assert!(client.lookup(other, accepted()).await.unwrap().is_empty());
+    assert!(history(&client, other).await.unwrap().is_empty());
 }
 
 /// The library client checks the publication's filter file against its manifest and
@@ -208,10 +211,10 @@ async fn a_revoked_publication_is_a_revision_to_the_library_client() {
     ))
     .await;
     let http = Http::new();
-    let mut client = connect(&server.origin, &http).await.unwrap();
+    let client = connect(&server.origin, &http).await.unwrap();
     server.publications.revoke();
     assert!(matches!(
-        client.lookup(receiver(), accepted()).await,
+        history(&client, receiver()).await,
         Err(Error::Revision)
     ));
     assert!(matches!(client.witnesses().await, Err(Error::Revision)));
