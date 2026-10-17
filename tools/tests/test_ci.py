@@ -211,6 +211,21 @@ class BoundaryTests(unittest.TestCase):
         self.assertEqual(boundary.resolved_violations(metadata, workspace_unified=True),
                          ['receiver-pir-server: resolves zakura-orchard'])
 
+    def test_default_publisher_refuses_transitive_database_dependencies(self):
+        def node(name, dependencies=()):
+            return {'id': name, 'deps': [{'pkg': dep, 'dep_kinds': [{'kind': None}]}
+                                        for dep in dependencies]}
+        metadata = {
+            'packages': [dict(id=name, name=name, source=None) for name in
+                         ('transparent-filter-server', 'zakura-server-chain', 'rocksdb')],
+            'resolve': {'nodes': [node('transparent-filter-server', ['zakura-server-chain']),
+                                  node('zakura-server-chain'), node('rocksdb')]},
+        }
+        self.assertEqual(boundary.database_reader_violations(metadata), [])
+        metadata['resolve']['nodes'][1] = node('zakura-server-chain', ['rocksdb'])
+        self.assertEqual(boundary.database_reader_violations(metadata),
+                         ['transparent-filter-server: default build resolves rocksdb'])
+
     def test_offline_mode_reaches_workspace_metadata_and_helper_targets(self):
         metadata = {'packages': [], 'resolve': {'nodes': []}}
         with patch.object(boundary.subprocess, 'check_output', return_value=json.dumps(metadata)), \
