@@ -490,7 +490,8 @@ async fn manager_checks_inventory_and_required_files_on_unchanged_maps() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn manager_refuses_changed_holdings_on_an_unchanged_map() {
     let root = tempfile::tempdir().unwrap();
-    let (directory, set) = prepared_publication(root.path(), 2);
+    let (directory, set) = publication(root.path());
+    prepare_recent(&directory, &set);
     let rpc = canonical_rpc(root.path(), &set).await;
     let owner = authority(
         &directory,
