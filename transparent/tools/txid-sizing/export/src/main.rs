@@ -28,10 +28,10 @@ fn read_block(raw: &[u8]) -> Result<FetchedBlock, AnyError> {
 }
 mod census;
 #[allow(dead_code)]
-#[path = "../../../../services/transparent-filter-server/src/display_journal.rs"]
+#[path = "../../../../crates/transparent-journal/src/display_journal.rs"]
 mod display_journal;
 #[allow(dead_code)]
-#[path = "../../../../services/transparent-filter-server/src/events.rs"]
+#[path = "../../../../crates/transparent-journal/src/events.rs"]
 mod events;
 #[allow(dead_code)]
 mod historical_v1;

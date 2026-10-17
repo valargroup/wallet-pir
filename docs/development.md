@@ -159,3 +159,7 @@ Direct node database readers in `transparent-filter-server` require
 `journal-inventory` and `compact-export`. Ordinary RPC-based server builds omit
 that feature and do not compile RocksDB. Full qualification and the workflows
 that build the database-reader tools enable it explicitly.
+
+`transparent-journal` owns the saved event journal and its display sidecars.
+Journal consumers such as `transparent-measure` depend on it directly, so they
+do not compile the publisher, node parser or database reader.

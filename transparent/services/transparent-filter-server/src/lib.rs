@@ -1,7 +1,7 @@
 //! Transparent activity filter service: Zakura ingest, immutable per-block
 //! filter storage, and range delivery.
 
-pub mod events;
+pub use transparent_journal::events;
 pub mod extract;
 pub mod ingest;
 pub mod metrics;
@@ -20,6 +20,6 @@ pub mod controller;
 
 pub mod compact;
 
-pub mod display_journal;
+pub use transparent_journal::display_journal;
 
 pub mod txid_display;

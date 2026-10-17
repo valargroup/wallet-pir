@@ -28,7 +28,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use transparent_events::TransparentEvent;
 use transparent_filter::{ScriptBytes, ShardMap};
-use transparent_filter_server::events::EventStore;
+use transparent_journal::events::EventStore;
 use transparent_shard::manifest::ShardManifest;
 use transparent_shard_server::service::{router, ServiceConfig, ServiceState};
 use transparent_shard_server::shardset::{ShardSet, DEFAULT_RETAIN_REVISIONS};
