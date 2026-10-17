@@ -71,6 +71,10 @@ class Role:
     renderer: str = None
     # Not required in a complete fleet: an external worker an operator may add.
     optional: bool = False
+    # Some rendered roles own an exclusive writable root and must preflight
+    # only as their unit user after stopping. The generic staged loader cannot
+    # execute that lifecycle; rendering and private observations still work.
+    shared_lifecycle: bool = True
 
     def render(self, settings, release):
         """The product adapter's `RenderedRole` for one instance."""
@@ -184,10 +188,13 @@ def load_descriptors(path, _parents=()):
             optional = spec.get('optional', False)
             require(isinstance(optional, bool) and (not optional or mode == 'role'),
                     '%s.%s: only a role-mode role may be optional' % (name, role_name))
+            shared_lifecycle = spec.get('shared_lifecycle', True)
+            require(type(shared_lifecycle) is bool and (shared_lifecycle or mode == 'role'),
+                    '%s.%s: shared_lifecycle is boolean, false only for a rendered role' % (name, role_name))
             roles[role_name] = Role(role_name, spec['unit'], mode, spec['health'], template, ready,
                                     spec.get('ready_url'), int(spec.get('ready_timeout', 180)),
                                     tuple(spec.get('adoptable_drop_ins', ())), owns_unit or mode == 'role',
-                                    tuple(duties), renderer, optional)
+                                    tuple(duties), renderer, optional, shared_lifecycle)
         order = tuple(raw.get('order', ()))
         require(order and sorted(order) == sorted(roles), '%s: order must list every role once' % name)
         require(PLAIN_PATH.match(raw.get('root', '')), '%s: root must be a plain absolute path' % name)

@@ -116,6 +116,10 @@ class Deployer:
     def plan_target(self, target, state, sha, retire_historical=False):
         plan = TargetPlan(target, state)
         role = target.role
+        if not role.shared_lifecycle:
+            plan.refusals.append('operator-managed role: stop and preflight as the rendered unit user; '
+                                 'generic deployment cannot check its exclusive state')
+            return plan
         if state['load_state'] != 'loaded':
             if role.mode == 'role' and target.install and state['load_state'] == 'not-found':
                 return self.plan_install(plan, sha)
@@ -503,6 +507,8 @@ class Deployer:
         before any unit is replaced.
         """
         for record in journal.hosts:
+            if not self.service.roles[record['role']].shared_lifecycle:
+                raise DeployError('operator-managed role: generic deployment cannot run its stateful preflight')
             if record['action'] not in CHANGING or not record.get('check'):
                 continue
             host = record['host']
@@ -707,9 +713,13 @@ class Deployer:
             raise DeployError('rollback incomplete; re-run rollback after fixing:\n  ' + '\n  '.join(failures))
 
     def rollback(self, identifier=None, force=False):
+        if any(not target.role.shared_lifecycle for target in self.targets):
+            raise DeployError('operator-managed role: restore its unit and retained state through its operator lifecycle')
         journal = Journal.load(self.state_dir, self.service.name, identifier)
         if journal is None:
             raise DeployError('no %s transaction is recorded in %s' % (self.service.name, self.state_dir))
+        if any(not self.service.roles[record['role']].shared_lifecycle for record in journal.hosts):
+            raise DeployError('operator-managed role: generic rollback cannot mutate its unit or exclusive state')
         latest = Journal.load(self.state_dir, self.service.name)
         if latest.id != journal.id and latest.status not in ('failed', 'rolled-back'):
             raise DeployError('later transaction %s is %s; roll it back first' % (latest.id, latest.status))

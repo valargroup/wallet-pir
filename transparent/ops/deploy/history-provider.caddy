@@ -1,9 +1,18 @@
-# Replace this reserved example name with the operator's owned TLS hostname.
-# The operator supplies DNS, a valid certificate and Caddy's own resource budget.
+# Replace the reserved name with the operator's owned TLS hostname.
+# For fixed Vizor integration, use its existing origin and preserve display
+# through its existing trusted service. This installs no display process.
+# Set TRANSPARENT_DISPLAY_UPSTREAM explicitly: an approved HTTPS origin or an
+# operator-managed loopback display service, never this forwarding site's URL.
 provider.example.invalid {
     @history path /v2/shards /v2/shards/* /v2/filters/shards /v2/filters/shards/*
     handle @history {
         reverse_proxy 127.0.0.1:8092
+    }
+    @display path /v2/txid /v2/txid/*
+    handle @display {
+        reverse_proxy {$TRANSPARENT_DISPLAY_UPSTREAM} {
+            header_up Host {upstream_hostport}
+        }
     }
     handle {
         respond 404

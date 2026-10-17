@@ -58,10 +58,13 @@ class ProviderRole(unittest.TestCase):
         self.assertTrue(observed['readiness']['ready'])
         self.assertEqual(report('transparent-history', 'provider', None, None)['archive_reachability'], 'unobserved')
 
-    def test_tls_example_exposes_only_existing_history_wallet_routes(self):
+    def test_tls_example_preserves_same_origin_display_and_private_administration(self):
         text = (ROOT / 'transparent/ops/deploy/history-provider.caddy').read_text()
         self.assertIn('/v2/filters/shards', text)
         self.assertIn('/v2/shards', text)
+        self.assertIn('@display path /v2/txid /v2/txid/*', text)
+        self.assertIn('reverse_proxy {$TRANSPARENT_DISPLAY_UPSTREAM}', text)
+        self.assertLess(text.index('handle @display'), text.index('respond 404'))
         self.assertNotIn('/v1/', text)
         self.assertNotIn('/metrics', text)
         self.assertIn('respond 404', text)

@@ -236,6 +236,8 @@ async fn checkout_free_artifacts_support_queries_and_restart() {
             "/CN=localhost",
             "-addext",
             "subjectAltName=DNS:localhost",
+            "-addext",
+            "basicConstraints=critical,CA:FALSE",
             "-keyout",
             root.join("key.pem").to_str().unwrap(),
             "-out",

@@ -438,6 +438,12 @@ python3 ops-release/ops/scripts/wallet-pir-roles.py --service transparent-histor
   --role provider --settings provider.json --release "$PWD/history-release" > role.json
 ```
 
+The role is operator-managed: generic fleet `plan/preflight/deploy/rollback`
+refuses it. That engine runs staged checks as the deploy identity before stopping
+live units, which cannot safely preflight this exclusive state root. Render and
+private reporting remain supported. Use the dedicated unit/user procedure below;
+this does not authorize any fleet or production change.
+
 `role.json` describes the unit, writable `directories`, and the exact loader
 `check` arguments. Create only those directories, owned by a dedicated
 `transparent-provider` user/group; install the rendered `unit` as
@@ -456,8 +462,14 @@ refuse preparation/start/restart and later cache misses, without local builds.
 Existing fleet/static optional preparation policy is unchanged.
 
 Use `history-provider.caddy` from the same operations release as the TLS route
-example. Set your owned hostname, listener and certificate policy. Expose only
-its existing history wallet paths; keep `/v1/*` and `/metrics` on loopback. The
+example. Set your owned hostname, listener and certificate policy. For fixed Vizor
+integration at its existing origin, set `TRANSPARENT_DISPLAY_UPSTREAM` to the
+approved existing HTTPS display service (or an operator-managed loopback owner),
+preserving `/v2/txid/*` on that same origin. Do not point it back to this proxy.
+This forwards the existing display service and installs no display process.
+A history-only endpoint used separately by a library client can import the
+history handler into its own TLS site; it cannot replace Vizor's complete origin
+by dropping display. Keep `/v1/*` and `/metrics` on loopback. The
 renderer refuses public listeners and runs no control socket or additional
 product service. Keep other wallet products on their existing services.
 For a disposable smoke without systemd, run the extracted binary with `check`

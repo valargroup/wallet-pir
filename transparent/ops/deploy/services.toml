@@ -40,6 +40,9 @@ mode = "role"
 template = "transparent-history-provider.role.service"
 renderer = "transparent.ops.lib.roles:history_provider"
 optional = true
+# Exclusive state must be checked by its unit user while stopped, never by the
+# fleet deploy identity against a live provider. Rendering/private status remain available.
+shared_lifecycle = false
 health = "http://{listen}/v1/provider-status"
 ready_url = "http://{listen}/v1/ready"
 ready_timeout = 900
