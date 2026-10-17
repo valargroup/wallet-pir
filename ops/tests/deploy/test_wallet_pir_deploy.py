@@ -223,6 +223,50 @@ class Fleet(unittest.TestCase):
         return self.fake.host(host).units[unit]['exe']
 
 
+class ParallelStagingTests(Fleet):
+    def test_hosts_upload_together_before_any_service_restarts(self):
+        deployer = self.enhance_fleet()
+        uploads = threading.Barrier(2)
+        upload = self.fake.upload
+
+        def overlapping_upload(host, local_path, path, mode):
+            if host in ('worker-01', 'worker-02'):
+                uploads.wait(timeout=3)
+            self.assertFalse(any(op == 'systemctl' for _, op, _ in self.fake.log))
+            upload(host, local_path, path, mode)
+
+        with mock.patch.object(self.fake, 'upload', side_effect=overlapping_upload):
+            journal = deployer.deploy(NEW_SHA, self.binary, retire_historical=True)
+        self.assertEqual(journal.status, 'committed')
+        restarted = [(host, args[-1]) for host, op, args in self.fake.log
+                     if op == 'systemctl' and args[0] == 'restart']
+        self.assertEqual(restarted, ENHANCE)
+
+    def test_failed_upload_waits_for_other_hosts_before_releasing_the_lock(self):
+        deployer = self.enhance_fleet()
+        uploads = threading.Barrier(2)
+        upload = self.fake.upload
+        completed = threading.Event()
+
+        def failing_upload(host, local_path, path, mode):
+            if host in ('worker-01', 'worker-02'):
+                uploads.wait(timeout=3)
+            if host == 'worker-01':
+                raise OSError('upload interrupted')
+            upload(host, local_path, path, mode)
+            if host == 'worker-02':
+                self.assertIn(LOCK, self.fake.held)
+                completed.set()
+
+        with mock.patch.object(self.fake, 'upload', side_effect=failing_upload):
+            with self.assertRaisesRegex(OSError, 'upload interrupted'):
+                deployer.deploy(NEW_SHA, self.binary, retire_historical=True)
+        self.assertTrue(completed.is_set())
+        self.assertNotIn(LOCK, self.fake.held)
+        self.assertFalse(any(op == 'systemctl' for _, op, _ in self.fake.log))
+        self.assertEqual(Journal.load(self.state, 'enhance').status, 'failed')
+
+
 class DeployTests(Fleet):
     def test_only_the_selected_targets_roll(self):
         self.enhance_fleet()
@@ -271,7 +315,7 @@ class DeployTests(Fleet):
         self.assertIn(dropin('enhance-pir-worker.service', '90-v7.conf'), self.fake.host('worker-01').files)
         # One upload per host, into an immutable release directory.
         uploads = [(host, detail) for host, op, detail in self.fake.log if op == 'upload']
-        self.assertEqual([host for host, _ in uploads], ['worker-01', 'worker-02', 'router-01', 'coordinator'])
+        self.assertCountEqual([host for host, _ in uploads], ['worker-01', 'worker-02', 'router-01', 'coordinator'])
         self.assertTrue(all(self.fake.host(host).files[release] == NEW for host, _ in uploads))
         self.assertIn(('coordinator', ['/usr/local/bin/exact', '/opt/enhance-pir/releases/' + NEW_SHA, journal.id]),
                       self.fake.runs)

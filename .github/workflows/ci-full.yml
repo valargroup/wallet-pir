@@ -79,7 +79,7 @@ jobs:
     needs: [select, validate-ops]
     if: ${{ !cancelled() && needs.select.result == 'success' && (needs.validate-ops.result == 'success' || needs.validate-ops.result == 'skipped') && needs.select.outputs.transparent == 'true' }}
     name: Transparent lint
-    runs-on: ${{ fromJSON(github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.WALLET_PIR_BUILD_RUNNER || '"ubuntu-24.04"') }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
       # librocksdb-sys turns on SSE4.2 for its CRC32C code from the host's
@@ -112,7 +112,7 @@ jobs:
     needs: [select, validate-ops]
     if: ${{ !cancelled() && needs.select.result == 'success' && (needs.validate-ops.result == 'success' || needs.validate-ops.result == 'skipped') && needs.select.outputs.transparent == 'true' }}
     name: Transparent tests
-    runs-on: ${{ fromJSON(github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.WALLET_PIR_BUILD_RUNNER || '"ubuntu-24.04"') }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
       # Bound concurrent fixtures; each simulation still exercises internal concurrency.
@@ -292,7 +292,7 @@ jobs:
     needs: [select, validate-ops]
     if: ${{ !cancelled() && needs.select.result == 'success' && (needs.validate-ops.result == 'success' || needs.validate-ops.result == 'skipped') && needs.select.outputs.enhance == 'true' }}
     name: Enhance lint
-    runs-on: ${{ fromJSON(github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.WALLET_PIR_BUILD_RUNNER || '"ubuntu-24.04"') }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
       CXXFLAGS: -mpclmul
@@ -315,7 +315,7 @@ jobs:
     needs: [select, validate-ops]
     if: ${{ !cancelled() && needs.select.result == 'success' && (needs.validate-ops.result == 'success' || needs.validate-ops.result == 'skipped') && needs.select.outputs.enhance == 'true' }}
     name: Enhance tests
-    runs-on: ${{ fromJSON(github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.WALLET_PIR_BUILD_RUNNER || '"ubuntu-24.04"') }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
       # Full-size integration fixtures each retain multiple six-instance shard
@@ -367,7 +367,7 @@ jobs:
     name: Shared lint and tests
     needs: [select, validate-ops]
     if: ${{ !cancelled() && needs.select.result == 'success' && (needs.validate-ops.result == 'success' || needs.validate-ops.result == 'skipped') && needs.select.outputs.shared == 'true' }}
-    runs-on: ${{ fromJSON(github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.WALLET_PIR_BUILD_RUNNER || '"ubuntu-24.04"') }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
       RUST_TEST_THREADS: "1"
@@ -390,7 +390,7 @@ jobs:
     name: Receiver lint and tests
     needs: [select, validate-ops]
     if: ${{ !cancelled() && needs.select.result == 'success' && (needs.validate-ops.result == 'success' || needs.validate-ops.result == 'skipped') && needs.select.outputs.receiver == 'true' }}
-    runs-on: ${{ fromJSON(github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.WALLET_PIR_BUILD_RUNNER || '"ubuntu-24.04"') }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
@@ -587,10 +587,10 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  release-cuda:
-    name: Prepare native CUDA release artifact (Ubuntu 22.04)
-    if: ${{ !cancelled() && needs.complete.result == 'success' && inputs.family == 'enhance' && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
-    needs: [complete]
+  build-cuda:
+    name: Build candidate native CUDA artifact (Ubuntu 22.04)
+    if: ${{ !cancelled() && needs.select.result == 'success' && (needs.validate-ops.result == 'success' || needs.validate-ops.result == 'skipped') && inputs.family == 'enhance' && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+    needs: [select, validate-ops]
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     env:
@@ -651,15 +651,40 @@ jobs:
           umask 022 &&
           python3 tools/ci/stage.py artifact:cuda -- python3 tools/ci/release.py assemble --sha "$SHA"
           --kind enhance-pir-native-cuda --target target/native-cuda
-          --build-metadata target/native-cuda/build.json --output release-bundles-native-cuda
+          --build-metadata target/native-cuda/build.json --output release-bundles-native-cuda/enhance-pir-native-cuda
       - name: Report Cargo cache reuse
         if: always()
         continue-on-error: true
         run: umask 022 && python3 tools/ci/cargo_cache.py report
       - uses: actions/upload-artifact@v4
         with:
+          name: candidate-native-cuda-${{ github.sha }}
+          path: release-bundles-native-cuda/enhance-pir-native-cuda/enhance-pir-native-cuda.tar.gz
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 2
+
+  release-cuda:
+    name: Prepare native CUDA release artifact (Ubuntu 22.04)
+    if: ${{ !cancelled() && needs.complete.result == 'success' && needs.build-cuda.result == 'success' && inputs.family == 'enhance' && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+    needs: [complete, build-cuda]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: candidate-native-cuda-${{ github.sha }}
+          path: release-bundles-native-cuda/enhance-pir-native-cuda
+      - name: Verify qualified CUDA candidate contents
+        run: >-
+          umask 022 && python3 tools/ci/qualification.py verify --family enhance --cuda
+          --sha "$GITHUB_SHA" --output release-bundles-native-cuda
+      - uses: actions/upload-artifact@v4
+        with:
           name: enhance-pir-native-cuda-${{ github.sha }}
-          path: release-bundles-native-cuda/enhance-pir-native-cuda.tar.gz
+          path: release-bundles-native-cuda/enhance-pir-native-cuda/enhance-pir-native-cuda.tar.gz
           overwrite: true
           compression-level: 0
           if-no-files-found: error

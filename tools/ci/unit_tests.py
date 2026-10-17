@@ -12,6 +12,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import time
 
 from stage import run
 
@@ -19,7 +20,7 @@ from stage import run
 def execute(programs, jobs, *, budget=False):
     library_directory = subprocess.check_output(['rustc', '--print', 'target-libdir'], text=True).strip()
 
-    def invoke(program):
+    def execute_program(program):
         directory = program['directory']
         binary = program['executable']
         env = dict(os.environ, RUST_TEST_THREADS='1', CARGO_MANIFEST_DIR=directory,
@@ -47,6 +48,17 @@ def execute(programs, jobs, *, budget=False):
                 raise ValueError(f'{binary}: integration executable contains no tests')
         else:
             run([binary, *program['args']], cwd=directory, env=env, stage='tests:' + program['package'])
+
+    def invoke(program):
+        started = time.monotonic()
+        passed = False
+        try:
+            execute_program(program)
+            passed = True
+        finally:
+            print('CI_TEST_PROGRAM ' + json.dumps(dict(
+                package=program['package'], executable=Path(program['executable']).name,
+                seconds=round(time.monotonic() - started, 3), passed=passed)), flush=True)
 
     # Encrypted HTTP fixtures retain their own concurrency. Keep their working
     # sets apart from other Rust programs before overlapping ordinary units.

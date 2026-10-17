@@ -71,6 +71,21 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(set(selected['packages']), {'core', 'client', 'server', 'other'})
         self.assertEqual(set(selected['helpers']), fast.HELPERS)
 
+    def test_global_build_changes_keep_native_coverage_without_unrelated_operations(self):
+        for path in ['Cargo.toml', 'Cargo.lock', 'Makefile', '.cargo/config.toml']:
+            with self.subTest(path=path):
+                selected = fast.plan(self.packages, [path])
+                self.assertEqual(set(selected['packages']), {'core', 'client', 'server', 'other'})
+                self.assertEqual(set(selected['helpers']), {'check-tools', 'check-ops-contracts'})
+                self.assertEqual(set(selected['groups']), fast.FULL_GROUPS)
+
+    def test_build_changes_do_not_drop_direct_operations_or_deleted_package_coverage(self):
+        selected = fast.plan(self.packages, ['Cargo.lock', 'ops/tests/deploy/test_ops_package.py',
+                                             'crates/client/src/deleted.rs'])
+        self.assertIn('check-ops-deploy', selected['helpers'])
+        self.assertIn('check-ops-contracts', selected['helpers'])
+        self.assertEqual(set(selected['packages']), {'core', 'client', 'server', 'other'})
+
 
 class BoundaryTests(unittest.TestCase):
     """The Common/node and wallet-libraries dependency boundary; see tools/ci/boundary.py."""
@@ -951,13 +966,15 @@ class CacheWorkflowTests(unittest.TestCase):
     def test_trusted_build_pool_and_main_cache_writes_are_main_only(self):
         full = self.workflows['ci-full.yml']
         pools = [line for line in full.splitlines() if 'runs-on' in line and 'WALLET_PIR_BUILD_RUNNER' in line]
-        self.assertGreaterEqual(len(pools), 5)
+        self.assertEqual(len(pools), 1)
         for line in pools:
             # The release job is main-only through its job condition instead.
             if 'pull_request' in line:
                 self.assertIn("github.ref == 'refs/heads/main'", line)
         release = full.split('\n  release:\n', 1)[1].split('\n\n', 1)[0]
         self.assertIn("github.ref == 'refs/heads/main'", release)
+        build = full.split('\n  build:\n', 1)[1].split('    steps:\n', 1)[0]
+        self.assertIn("github.ref == 'refs/heads/main'", build)
         prime = self.workflows['ci-cache.yml']
         self.assertIn("if: github.ref == 'refs/heads/main'", prime)
         self.assertNotIn('pull_request', prime)
@@ -997,6 +1014,24 @@ class CacheWorkflowTests(unittest.TestCase):
         self.assertIn("if: github.event_name == 'push' && steps.affected.outputs.rust == 'true'", routine)
         self.assertEqual(self.workflows['ci-cache.yml'].count("if: github.ref == 'refs/heads/main'"), 1)
 
+    def test_pr_preparation_finishes_with_the_ordinary_affected_graph_before_sealing(self):
+        text = self.workflows['ci-pr-prepare.yml']
+        checkout = text.split('- uses: actions/checkout@v4', 1)[1].split('- uses:', 1)[0]
+        self.assertIn('fetch-depth: 0', checkout)
+        self.assertIn('persist-credentials: false', checkout)
+        all_validation = text.index('- name: Validate prepared fast units')
+        affected = text.index('- name: Validate affected fast units')
+        seal = text.index('- name: Seal and report prepared Cargo state')
+        self.assertLess(all_validation, affected)
+        self.assertLess(affected, seal)
+        step = text[affected:seal]
+        command = 'python3 tools/ci/fast.py --committed-only --base "$BASE" --unit-jobs 3'
+        self.assertIn('BASE: ${{ github.event.pull_request.base.sha }}', step)
+        self.assertIn(command, step)
+        self.assertIn(command, self.workflows['ci.yml'])
+        for forbidden in ('continue-on-error', '--all', '--compile-only', '--package', 'if:'):
+            self.assertNotIn(forbidden, step)
+
     def test_unrelated_labels_cannot_enter_preparation_concurrency(self):
         text = self.workflows['ci-pr-prepare.yml']
         workflow, jobs = text.split('\njobs:\n', 1)
@@ -1009,7 +1044,7 @@ class CacheWorkflowTests(unittest.TestCase):
 
     def test_cuda_cache_identity_sees_the_build_script_flags(self):
         script = (ROOT / 'tools/ci/build-cuda.sh').read_text()
-        job = self.workflows['ci-full.yml'].split('\n  release-cuda:\n', 1)[1]
+        job = self.workflows['ci-full.yml'].split('\n  build-cuda:\n', 1)[1].split('\n  release-cuda:\n', 1)[0]
         self.assertIn("export RUSTFLAGS='-C target-cpu=x86-64-v3 -C target-feature=+pclmulqdq'", script)
         self.assertIn('      RUSTFLAGS: -C target-cpu=x86-64-v3 -C target-feature=+pclmulqdq\n', job)
         self.assertIn('export CFLAGS=-mpclmul CXXFLAGS=-mpclmul', script)

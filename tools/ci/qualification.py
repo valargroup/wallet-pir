@@ -81,9 +81,12 @@ def checks(family, service_only=False):
         out.write(f'helpers={json.dumps(sorted(HELPERS) if 'ops' in groups else [])}\n')
 
 
-def verify(family, sha, output):
+def verify(family, sha, output, cuda=False):
+    if cuda and family != 'enhance':
+        raise ValueError('CUDA candidates belong to Enhance')
+    kinds = ['enhance-pir-native-cuda'] if cuda else KINDS[family]
     with tempfile.TemporaryDirectory() as directory:
-        for kind in KINDS[family]:
+        for kind in kinds:
             destination = Path(directory) / kind
             release.extract(output / kind / (kind + '.tar.gz'), destination, sha, kind)
             for name in ('candidate.json', 'operations.json'):
@@ -135,6 +138,8 @@ def main():
             child.add_argument('--target', type=Path, default=Path(os.environ.get('CARGO_TARGET_DIR', 'target')))
             child.add_argument('--output', type=Path, default=Path('release-bundles'))
             child.add_argument('--native', action='store_true')
+        if command == 'verify':
+            child.add_argument('--cuda', action='store_true')
     args = parser.parse_args()
     if args.command == 'select':
         result = selection(os.environ['GITHUB_REPOSITORY'], args.sha, args.family)
@@ -145,7 +150,7 @@ def main():
     elif args.command == 'checks':
         checks(args.family, args.service_only)
     elif args.command == 'verify':
-        verify(args.family, args.sha, args.output)
+        verify(args.family, args.sha, args.output, args.cuda)
     elif args.command == 'build':
         build(args.family)
     else:

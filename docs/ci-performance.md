@@ -51,7 +51,10 @@ restart, independent wallet, publication, packing and revocation checks remain.
 and their transitive reverse dependencies. Deleted files are included; build
 configuration, dependency manifests and unknown paths select the whole workspace.
 Workspace-only membership and local lockfile changes select the changed packages
-and their consumers. External dependency, profile, resolver, inherited-setting,
+and their consumers. Global manifests, dependency locks, Cargo configuration and
+the Makefile retain conservative native coverage and run tooling/workflow
+contracts; they do not by themselves select unrelated product operations fixtures.
+External dependency, profile, resolver, inherited-setting,
 removed-member and unrecognized changes retain complete workspace coverage.
 CI tooling changes run tool tests and workflow contracts; they retain broad full
 qualification without starting unrelated operations fixtures in fast feedback.
@@ -76,8 +79,11 @@ The fast runner enforces the 30-second limit for every Rust case, including
 setup and teardown inside the case. Each program keeps its package directory and Cargo environment; fast integration
 targets must contain an enabled, unignored case, and unit exclusions must still
 match discovered tests. Cold cache preparation compiles the same target selection.
-The package-qualified full-geometry/cache, multi-unit preparation, RPC publication
-and real HTTP retry cases run only in full CI;
+The package-qualified full-geometry/cache, multi-unit preparation, shipped-runtime
+identity matrices, retained-publication rebuild matrices, repeated HTTPS bootstrap
+fault/canonicality/budget matrices, RPC publication and real HTTP retry cases run
+only in full CI. Verified prepared-publication bootstrap over real HTTPS and its
+withdrawal refusal remain fast;
 `tools/ci/slow-tests.json` records the exact names and reasons. Binary unit tests run as well as library targets. For affected packages, fast CI also
 runs the integration targets classified as `fast` in
 [`tools/ci/integration-tests.json`](../tools/ci/integration-tests.json). The remaining
@@ -85,14 +91,24 @@ integration targets, doctests, binary unit tests and all-feature lint run in
 **CI full**, nightly or on request. The aggregate completion check fails if a
 selected job fails or is skipped. This avoids compiling every integration target just
 to exclude its tests at runtime. Affected helper
-checks run concurrently with Rust; selected operations suites run in
+checks overlap both Rust compilation and execution; completing helper checks
+is not a prerequisite to starting native tests. The gate still requires both
+suites to pass. Cargo writers remain sequential in each target; tooling oracles
+use separate fixture targets. Selected operations suites run in
 four parallel make slots. Deployment unittest modules use two separate processes,
-retaining every discovered case and each module's fixtures. The package
+retaining each module's fixtures. Fast deployment feedback selects exact discovered
+case IDs from `tools/ci/deploy-fast-tests.json`: installation and upgrade, lock
+refusal, interrupted recovery, tampered retained artifacts, failed verification
+and rollback. Empty, duplicate or renamed selections fail. Full qualification
+runs every discovered deployment case without that selection. The package
 transaction module has independent test classes and is explicitly split by class;
 class fixtures stay together, and modules with module fixtures cannot opt in. Each case keeps its
 own mutable deployment tree; negative variants may restore a real transaction
 checkpoint after proving that an untampered copy still recovers. Failures in any
-task fail fast CI.
+task fail fast CI. Fast native runs report each executable's wall time and the
+15 slowest completed cases; overlapping program times must not be added to infer
+the job's elapsed time. Tooling cache fixtures cannot write to the outer job's
+GitHub environment files or timing receipts.
 
 Every workspace integration target must be classified exactly once.
 `make check-tools` validates the registry against manifests and integration source files without invoking Rust, rejecting new
@@ -110,11 +126,16 @@ main revision captured by dispatch; newer pushes do not cancel manual runs.
 Receiver, Transparent, Enhance/Status and the operations package qualify
 independently, using the existing full family suites, shared tests and helper
 checks. Common helper, shared-library and infrastructure checks run once per qualification, before service-specific native work. Helpers run on hosted runners to reserve the fast queue for main. Operations archives
-assemble on hosted runners without Rust, so they never queue behind native tests. Candidate release builds may run
-alongside testing in separate target lanes; candidate archives are uploaded under
+assemble on hosted runners without Rust. Full tests and lint run on separate
+Ubuntu 24.04 hosted runners; CPU release builds use the dedicated build runner.
+CPU and Ubuntu 22.04 CUDA candidate builds start alongside family testing;
+candidate archives are uploaded under
 an ineligible name and re-verified before qualified publication. Each family
 publishes immediately after its required checks pass. Failure in another family
 cannot authorize or prevent that publication. CPU artifacts do not wait for CUDA.
+CUDA candidates use an ineligible artifact
+name until Enhance qualification and candidate compilation both pass; publication
+rechecks archive contents, ABI metadata and clean source provenance.
 
 Only **CI / Fast checks** validates automatically on main pushes and PRs.
 Dependency cache priming runs independently on relevant main changes.
@@ -203,12 +224,14 @@ an out-of-memory failure. Service stops allow 30 seconds before forced cleanup.
 Both limit Cargo to four
 build processes. A build cannot occupy the fast service's queue, but both services
 share the host CPU and disk, so latency must also be measured under contention.
-The single build slot serializes full-CI jobs. Enhance and Transparent share
-its `full-test` and `full-lint` lanes so common dependencies are compiled once
-per profile instead of once per product. Transparent full tests run two test cases at a time
+The single build slot serializes CPU release builds, while full tests and lint
+use independent hosted Ubuntu runners with their own lane/scope caches. Initial
+hosted qualification may need cold compilation; a successful hosted cache prime
+for fast feedback alone does not establish warm full-test or lint caches.
+Transparent full tests run two test cases at a time
 (`RUST_TEST_THREADS=2`), while Enhance tests run serially: the simulation fixtures each start multithreaded services,
-and eight simultaneous fixtures can trigger memory admission overloads inside
-the build service’s 9-GiB limit. Each test retains its internal concurrency. `tools/ci/full-test.sh` compiles
+and too many simultaneous fixtures can exhaust a hosted runner
+or trigger service memory admission refusals. Each test retains its internal concurrency. `tools/ci/full-test.sh` compiles
 the suite first, then asks Linux to discard clean file-cache pages for Cargo
 outputs before running tests. Build artifacts remain on disk. This prevents
 compiler cache from consuming the memory headroom used by service admission
@@ -313,7 +336,14 @@ For an unmerged PR, apply the `prepare-hosted-cache` label to explicitly run
 `pull_request` merge ref on the existing hosted runner, read-only repository
 permissions and no persisted checkout credentials. It compiles **and validates**
 all fast units with a separate 30-minute cold-preparation allowance; every test
-keeps its 30-second limit. Only successful preparation saves a ref-isolated
+keeps its 30-second limit. It then compiles and validates the ordinary affected
+selection against the event's actual PR base SHA before sealing. Cargo unifies
+dependency features across selected packages: an all-workspace build can enable
+extra features (for example `clap/env` and `reqwest/stream`) and does not prepare
+every narrower affected graph. A verified source-mtime/cache-key hit alone
+therefore does not establish fresh Cargo units. All-workspace preparation and
+validation remain intact, as do the separate main and complete warm correctness
+gates. Only successful preparation saves a ref-isolated
 snapshot. This is not the routine fast gate or a latency pass. Remove/reapply the
 label after a head update; no synchronize event automatically repeats preparation.
 Concurrency belongs to the label-filtered job: unrelated label events cannot
