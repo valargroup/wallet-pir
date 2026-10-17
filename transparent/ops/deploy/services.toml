@@ -40,8 +40,8 @@ mode = "role"
 template = "transparent-history-provider.role.service"
 renderer = "transparent.ops.lib.roles:history_provider"
 optional = true
-health = "http://{listen}/v1/ready"
-ready = { field = "ready", equals = true }
+health = "http://{listen}/v1/provider-status"
+ready_url = "http://{listen}/v1/ready"
 ready_timeout = 900
 
 [services.transparent-history.roles.controller]

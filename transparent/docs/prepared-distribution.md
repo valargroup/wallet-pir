@@ -1,9 +1,9 @@
-# Prepared history publication bootstrap
+# Prepared history distribution and standalone provider
 
-Status: bootstrap, recent-worker reconciliation and opt-in embedded archive
-routing implementation; independent review and qualification remain separate gates.
-This interface is separate from wallet protocols. Standalone packaging and
-unchanged-application qualification remain subsequent gates.
+Status: bootstrap, recent-worker reconciliation, opt-in embedded archive routing
+and standalone release roles are implemented. Independent review, release and
+unchanged-application qualification remain separate gates. This interface is
+separate from wallet protocols.
 The [approved plan](recent-provider-plan.md) retains those outcomes and order.
 The fixed [Vizor baseline and API trace](wallet-adapter.md#fixed-vizor-provider-qualification-baseline)
 remain unchanged.
@@ -442,8 +442,13 @@ python3 ops-release/ops/scripts/wallet-pir-roles.py --service transparent-histor
 `check` arguments. Create only those directories, owned by a dedicated
 `transparent-provider` user/group; install the rendered `unit` as
 `transparent-history-provider.service` through your local service manager.
-Before enabling it, run `history-release/transparent-shard-server` with the
-`check` argument array as that user. This real preflight downloads/verifies and
+Before enabling it, run the rendered argument array as that user:
+
+```sh
+python3 -c 'import json,subprocess; r=json.load(open("role.json")); subprocess.run(["./history-release/transparent-shard-server",*r["check"]],check=True)'
+```
+
+ This real preflight downloads/verifies and
 prewarms required material and checks live authority through the managed owner;
 it may prime state but opens no listener. The unit repeats the same check in
 `ExecStartPre` on every start/restart. Missing, corrupt or incompatible runtimes
@@ -465,7 +470,7 @@ Inspect `http://127.0.0.1:8092/v1/provider-status` locally. Its independent axes
   whether another attempt is in progress; a failure may coexist with valid service.
 - `verified_publication`: the actual owner's loaded map digest, not a downloaded
   candidate or an assertion that the publisher still offers it.
-- `runtime_readiness`: resident warmth, required-material policy, preparation
+- `runtime_readiness`: owner prewarm state, required-material policy, preparation
   counters and invalidation. Warmth alone is not archive readiness or authority.
 - `active_coverage`: each current range/revision, local ownership and revocation;
   nonlocal metadata alone does not prove an eligible archive route.

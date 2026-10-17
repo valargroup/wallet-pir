@@ -484,6 +484,8 @@ impl LiveService {
             })
             .collect();
         serde_json::json!({
+            "binary_sha256":pir_control::binary_sha256(),
+            "incarnation":pir_control::Identity::process().incarnation,
             "verified_publication":{"map_sha256":active.publication.map_sha256},
             "runtime_readiness":{"warm":state.is_warm(),"invalidated":state.is_invalidated(),
                 "required":state.required_material(),"preparation":state.preparation()},

@@ -9,7 +9,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / 'ops/lib'))
 sys.path.insert(0, str(ROOT))
-from transparent.ops.lib.roles import history_provider  # noqa: E402
+from transparent.ops.lib.roles import history_provider, report  # noqa: E402
 from wallet_pir_ops.deploy import units  # noqa: E402
 
 
@@ -47,6 +47,16 @@ class ProviderRole(unittest.TestCase):
         del missing['archive_upstream']
         with self.assertRaises(ValueError):
             history_provider(missing, release='/opt/provider/release')
+
+    def test_report_preserves_independent_observations_and_unknowns(self):
+        health = {'synchronization': {'state': 'refused'}, 'verified_publication': {'map_sha256': 'ab' * 32},
+                  'runtime_readiness': {'warm': True}, 'active_coverage': [{'local': False}],
+                  'archive_reachability': {'state': 'refused'}}
+        observed = report('transparent-history', 'provider', health, 200)
+        for key, value in health.items():
+            self.assertEqual(observed[key], value)
+        self.assertTrue(observed['readiness']['ready'])
+        self.assertEqual(report('transparent-history', 'provider', None, None)['archive_reachability'], 'unobserved')
 
     def test_tls_example_exposes_only_existing_history_wallet_routes(self):
         text = (ROOT / 'transparent/ops/deploy/history-provider.caddy').read_text()

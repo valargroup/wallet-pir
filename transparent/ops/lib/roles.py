@@ -190,6 +190,14 @@ def display_worker(settings, *, release, template=None):
 
 def report(service, role, health, ready_status):
     """Transparent history or display health, separated into the report's axes."""
+    if role == 'provider':
+        axes = ('synchronization', 'verified_publication', 'runtime_readiness',
+                'active_coverage', 'archive_reachability')
+        result = {axis: (health or {}).get(axis, 'unobserved') for axis in axes}
+        result['executable'] = {key: (health or {}).get(key, 'unobserved')
+                                for key in ('binary_sha256', 'incarnation')}
+        result['readiness'] = {'ready': None if ready_status is None else 200 <= ready_status < 300}
+        return result
     if health is None:
         return {'executable': {'binary_sha256': 'unobserved'}, 'publication': 'unobserved',
                 'preparation': 'unobserved', 'readiness': 'unobserved'}

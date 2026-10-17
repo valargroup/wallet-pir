@@ -196,8 +196,25 @@ async fn checkout_free_artifacts_support_queries_and_restart() {
             serde_json::to_vec(&anchor).unwrap(),
         );
     }
+    let runtime_path = format!(
+        "/provider/v1/artifacts/{}",
+        finalized
+            .inventory()
+            .artifacts
+            .iter()
+            .find(|f| f.kind == distribution::Kind::RecentRuntime)
+            .unwrap()
+            .sha256
+    );
+    let corrupt_runtime = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let corrupt = corrupt_runtime.clone();
     let app = axum::Router::new().fallback(axum::routing::get(move |uri: axum::http::Uri| {
-        let body = replies.get(uri.path()).cloned();
+        let body =
+            if uri.path() == runtime_path && corrupt.load(std::sync::atomic::Ordering::Acquire) {
+                Some(vec![0])
+            } else {
+                replies.get(uri.path()).cloned()
+            };
         async move {
             body.map_or((axum::http::StatusCode::NOT_FOUND, Vec::new()), |b| {
                 (axum::http::StatusCode::OK, b)
@@ -292,6 +309,18 @@ async fn checkout_free_artifacts_support_queries_and_restart() {
         .collect();
     let binary = root.join("binary/transparent-shard-server");
     // Real install/start preflight, then independent process startups from those same arguments.
+    let refused = tokio::process::Command::new(&binary)
+        .args(&check)
+        .current_dir(root)
+        .output()
+        .await
+        .unwrap();
+    assert!(
+        !refused.status.success(),
+        "bad prepared bytes must refuse installation"
+    );
+    assert!(!root.join("state/active.json").exists());
+    corrupt_runtime.store(false, std::sync::atomic::Ordering::Release);
     let preflight = tokio::process::Command::new(&binary)
         .args(&check)
         .current_dir(root)
@@ -329,6 +358,22 @@ async fn checkout_free_artifacts_support_queries_and_restart() {
         child.kill().await.unwrap();
         child.wait().await.unwrap();
     }
+    archive_tls.kill().await.unwrap();
+    archive_tls.wait().await.unwrap();
+    let mut child = start(&binary, args, root, &origin).await;
+    let digest = &map.shards[0].manifest_digest;
+    let refused = reqwest::get(format!(
+        "{origin}/v2/shards/0/revisions/{digest}/setup/directory/0"
+    ))
+    .await
+    .unwrap();
+    assert_eq!(refused.status(), 503);
+    let observed = status(&origin).await;
+    assert_eq!(observed["archive_reachability"]["state"], "refused");
+    assert_eq!(observed["runtime_readiness"]["warm"], true);
+    row_query(&origin, &set, 1).await;
+    child.kill().await.unwrap();
+    child.wait().await.unwrap();
     // Persisted bytes cannot permit an offline restart, nor can a configuration
     // origin assert archive readiness without a real runtime/identity check.
     publisher_tls.kill().await.unwrap();
@@ -340,8 +385,6 @@ async fn checkout_free_artifacts_support_queries_and_restart() {
         .await
         .unwrap();
     assert!(!refused.status.success());
-    archive_tls.kill().await.unwrap();
-    archive_tls.wait().await.unwrap();
     publisher_server.stop().await;
     archive_server.stop().await;
 }
