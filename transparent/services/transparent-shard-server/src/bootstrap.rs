@@ -49,6 +49,7 @@ pub(crate) struct Source {
     client: reqwest::Client,
     budget: u64,
     pub(crate) downloaded: u64,
+    observed: Option<Current>,
 }
 impl Source {
     pub(crate) fn new(config: &Config) -> Result<Self, Error> {
@@ -76,6 +77,7 @@ impl Source {
             client: builder.build()?,
             budget: config.max_download_bytes,
             downloaded: 0,
+            observed: None,
         })
     }
     fn budget_error(&self) -> Error {
@@ -150,7 +152,7 @@ impl Source {
             Err(e) => Err(e.into()),
         }
     }
-    pub(crate) fn observe(
+    fn validate_observation(
         &self,
         directory: &std::path::Path,
         current: &Current,
@@ -168,6 +170,25 @@ impl Source {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => return Err(error.into()),
         }
+        if self
+            .observed
+            .as_ref()
+            .is_some_and(|saved| !current.succeeds(saved))
+        {
+            return Err("publisher replay or contradictory in-memory current record".into());
+        }
+        Ok(())
+    }
+    pub(crate) fn observe(
+        &mut self,
+        directory: &std::path::Path,
+        current: &Current,
+    ) -> Result<(), Error> {
+        self.validate_observation(directory, current)?;
+        // A failed durable write cannot erase a positive observation in this
+        // process. The manager still applies its exact revocation to the owner.
+        self.observed = Some(current.clone());
+        let path = directory.join("publisher-high-water.json");
         // Observing a newer record fences an older one even when its transfer
         // subsequently fails. A restart must contact HTTPS current again.
         crate::control::persist(
@@ -269,7 +290,9 @@ impl Source {
         {
             return Err("invalid publisher current chain identity".into());
         }
-        self.observe(directory, &current)?;
+        // Persistence belongs to the manager after returning the authenticated,
+        // replay-checked snapshot, so write failure cannot hide invalidation.
+        self.validate_observation(directory, &current)?;
         Ok(Some(current))
     }
     pub(crate) async fn anchor(

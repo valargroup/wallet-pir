@@ -488,3 +488,288 @@ async fn manager_refuses_changed_holdings_on_an_unchanged_map() {
     task.abort();
     let _ = task.await;
 }
+
+// A validated withdrawal must reach the owner even when any one control-record
+// write fails. Run the same probe at the ordinary and both activation polls.
+async fn control_write_failure(pause_at: Option<u32>, failed_record: &str) {
+    let root = tempfile::tempdir().unwrap();
+    let (directory, set) = publication(root.path());
+    prepare_recent(&directory, &set);
+    let rpc = canonical_rpc(root.path(), &set).await;
+    let owner = authority(
+        &directory,
+        Some(Finalized::prepare(&directory, &set, 2).unwrap()),
+        rpc.client.clone(),
+    );
+    let tls = tls(root.path(), owner.clone()).await;
+    let state = root.path().join("provider");
+    let mut follow = manager(&tls, &state);
+    follow.poll_once().await.unwrap();
+    let live = follow.live().unwrap();
+    let (origin, task) = worker(live.clone()).await;
+    query(&origin, &set).await;
+    owner.0.distribution_revision.fetch_add(1, Ordering::AcqRel);
+    let result = if let Some(at) = pause_at {
+        std::fs::write(&tls.control, format!("pause-current-{at}")).unwrap();
+        let work = tokio::spawn(async move {
+            let result = follow.poll_once().await;
+            (follow, result)
+        });
+        entered(&tls).await;
+        if failed_record.ends_with(".json") {
+            std::fs::remove_file(state.join(failed_record)).unwrap();
+        }
+        std::fs::create_dir(state.join(failed_record)).unwrap();
+        owner.0.distribution_revision.fetch_add(1, Ordering::AcqRel);
+        // Exercise withdrawal alone at the first guard and an applicable range
+        // while the publication remains eligible at the final guard.
+        owner.0.withdrawn.store(at == 2, Ordering::Release);
+        owner
+            .0
+            .invalidated_from
+            .store(if at == 2 { u64::MAX } else { 2 }, Ordering::Release);
+        std::fs::write(&tls.control, "").unwrap();
+        let (returned, result) = work.await.unwrap();
+        follow = returned;
+        result
+    } else {
+        if failed_record.ends_with(".json") {
+            std::fs::remove_file(state.join(failed_record)).unwrap();
+        }
+        std::fs::create_dir(state.join(failed_record)).unwrap();
+        owner.0.withdrawn.store(true, Ordering::Release);
+        owner.0.invalidated_from.store(2, Ordering::Release);
+        follow.poll_once().await
+    };
+    assert!(result.is_err());
+    assert_eq!(
+        get(&origin, "/v2/shards/init").await.status(),
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+    // Refuse encrypted requests too, before parsing/evaluation of their body.
+    let response = reqwest::Client::new()
+        .post(format!(
+            "{origin}/v2/shards/1/revisions/{}/query/directory",
+            set.get(1).unwrap().digest
+        ))
+        .body(vec![0u8; 8])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    std::fs::remove_dir(state.join(failed_record)).unwrap();
+    owner.0.withdrawn.store(false, Ordering::Release);
+    owner.0.invalidated_from.store(u64::MAX, Ordering::Release);
+    assert!(follow.poll_once().await.is_err(), "same-revision reenable");
+    task.abort();
+    let _ = task.await;
+    drop(live);
+    drop(follow);
+    let mut restarted = manager(&tls, &state);
+    assert!(
+        restarted.poll_once().await.is_err(),
+        "restart cannot erase revocation"
+    );
+    assert!(restarted.live().is_none());
+    owner.0.distribution_revision.fetch_add(1, Ordering::AcqRel);
+    restarted.poll_once().await.unwrap();
+    let (origin, task) = worker(restarted.live().unwrap()).await;
+    query(&origin, &set).await;
+    task.abort();
+    let _ = task.await;
+}
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn manager_high_water_write_failure_still_fences_http() {
+    control_write_failure(None, "publisher-high-water.tmp").await;
+}
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn manager_activation_poll_write_failure_still_fences_http() {
+    control_write_failure(Some(2), "publisher-high-water.tmp").await;
+}
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn manager_final_poll_write_failure_still_fences_http() {
+    control_write_failure(Some(3), "publisher-high-water.tmp").await;
+}
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn manager_owner_fence_write_failure_still_fences_http() {
+    control_write_failure(None, "active.invalid.tmp").await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn manager_bounds_memory_while_retaining_admitted_upload() {
+    use tokio::io::AsyncWriteExt;
+    use tower::ServiceExt;
+    use transparent_server_backend::shardset::{Table, TableRef};
+    let root = tempfile::tempdir().unwrap();
+    let (directory, set) = publication(root.path());
+    prepare_recent(&directory, &set);
+    let rpc = canonical_rpc(root.path(), &set).await;
+    let owner = authority(
+        &directory,
+        Some(Finalized::prepare(&directory, &set, 2).unwrap()),
+        rpc.client.clone(),
+    );
+    let tls = tls(root.path(), owner.clone()).await;
+    let state = root.path().join("provider");
+    let mut follow = manager(&tls, &state);
+    follow.poll_once().await.unwrap();
+    let live = follow.live().unwrap();
+    let (origin, task) = worker(live.clone()).await;
+    let shard = set.get(1).unwrap();
+    let width = shard.geometry.directory_row_bytes;
+    let profile = transparent_native::TableProfile::new(
+        transparent_shard::manifest::SCHEMA,
+        shard.geometry.name,
+        "directory",
+        Table::Directory.rows(shard.geometry),
+        width as u32,
+    )
+    .unwrap();
+    let setup: serde_json::Value = get(
+        &origin,
+        &format!("/v2/shards/1/revisions/{}/setup/directory/0", shard.digest),
+    )
+    .await
+    .json()
+    .await
+    .unwrap();
+    let params = base64::Engine::decode(
+        &base64::engine::general_purpose::STANDARD,
+        setup["public_params"].as_str().unwrap(),
+    )
+    .unwrap();
+    let (secret, upload) = profile.prepare(0).unwrap();
+    let binding = transparent_shard::manifest::query_binding(&shard.digest, "directory");
+    let mut body = binding.to_vec();
+    body.extend(upload);
+    let (mut writer, reader) = tokio::io::duplex(body.len());
+    let request = axum::http::Request::post(format!(
+        "/v2/shards/1/revisions/{}/query/directory",
+        shard.digest
+    ))
+    .header("content-length", body.len())
+    .body(axum::body::Body::from_stream(
+        tokio_util::io::ReaderStream::new(reader),
+    ))
+    .unwrap();
+    let mut admitted = Box::pin(live.router().oneshot(request));
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(20), &mut admitted)
+            .await
+            .is_err()
+    );
+    // Same immutable map, new complete owner snapshots: no expensive fixture
+    // growth, and no helper-only fake activation or explicit Collect command.
+    for _ in 0..7 {
+        owner.0.distribution_revision.fetch_add(1, Ordering::AcqRel);
+        follow.poll_once().await.unwrap();
+        let status = live.command(Command::Status).await.unwrap();
+        assert!(status["retired_snapshots"].as_u64().unwrap() <= 4);
+    }
+    assert_eq!(
+        live.command(Command::Status).await.unwrap()["retired_snapshots"],
+        4,
+        "held oldest plus three recent"
+    );
+    writer.write_all(&body).await.unwrap();
+    drop(writer);
+    let response = admitted.await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let decoded = profile.decode(&secret, &params, &bytes[16..]).unwrap();
+    let source = shard
+        .segment(TableRef::Directory, 0)
+        .unwrap()
+        .load()
+        .unwrap();
+    assert_eq!(decoded, source[..width]);
+    assert!(follow.poll_once().await.unwrap().unchanged);
+    assert_eq!(
+        live.command(Command::Status).await.unwrap()["retired_snapshots"],
+        3
+    );
+    query(&origin, &set).await;
+    assert!(state.join("objects").is_dir());
+    assert!(
+        std::fs::read_dir(&state)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|e| e.file_name().to_string_lossy().starts_with("staging-"))
+            .count()
+            >= 8,
+        "memory collection does not delete disk trees"
+    );
+    task.abort();
+    let _ = task.await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn manager_unreadable_revocation_floor_still_fences_http() {
+    control_write_failure(None, "revocation-floor.json").await;
+}
+
+async fn recovery_poll_write_failure(pause_at: u32) {
+    let root = tempfile::tempdir().unwrap();
+    let (directory, set) = publication(root.path());
+    prepare_recent(&directory, &set);
+    let rpc = canonical_rpc(root.path(), &set).await;
+    let owner = authority(
+        &directory,
+        Some(Finalized::prepare(&directory, &set, 2).unwrap()),
+        rpc.client.clone(),
+    );
+    let tls = tls(root.path(), owner.clone()).await;
+    let state = root.path().join("provider");
+    let mut follow = manager(&tls, &state);
+    follow.poll_once().await.unwrap();
+    drop(follow);
+    let mut restarted = manager(&tls, &state);
+    std::fs::write(&tls.control, format!("pause-current-{pause_at}")).unwrap();
+    let work = tokio::spawn(async move {
+        let result = restarted.poll_once().await;
+        (restarted, result)
+    });
+    entered(&tls).await;
+    std::fs::create_dir(state.join("publisher-high-water.tmp")).unwrap();
+    owner.0.distribution_revision.fetch_add(1, Ordering::AcqRel);
+    owner.0.withdrawn.store(true, Ordering::Release);
+    owner.0.invalidated_from.store(2, Ordering::Release);
+    std::fs::write(&tls.control, "").unwrap();
+    let (restarted, result) = work.await.unwrap();
+    assert!(result.is_err());
+    assert!(
+        restarted.live().is_none(),
+        "recovery cannot expose the saved view"
+    );
+    let floor: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(state.join("revocation-floor.json")).unwrap())
+            .unwrap();
+    assert_eq!(floor["revision"], 2);
+    assert!(floor["digests"]
+        .as_array()
+        .unwrap()
+        .contains(&serde_json::json!(set.get(1).unwrap().digest)));
+    drop(restarted);
+    std::fs::remove_dir(state.join("publisher-high-water.tmp")).unwrap();
+    owner.0.withdrawn.store(false, Ordering::Release);
+    owner.0.invalidated_from.store(u64::MAX, Ordering::Release);
+    let mut restarted = manager(&tls, &state);
+    assert!(restarted.poll_once().await.is_err());
+    assert!(restarted.live().is_none());
+    owner.0.distribution_revision.fetch_add(1, Ordering::AcqRel);
+    restarted.poll_once().await.unwrap();
+    let (origin, task) = worker(restarted.live().unwrap()).await;
+    query(&origin, &set).await;
+    task.abort();
+    let _ = task.await;
+}
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn manager_recovery_poll_write_failure_keeps_saved_view_unexposed() {
+    recovery_poll_write_failure(2).await;
+}
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn manager_recovery_final_poll_write_failure_keeps_saved_view_unexposed() {
+    recovery_poll_write_failure(3).await;
+}

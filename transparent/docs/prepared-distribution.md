@@ -211,7 +211,12 @@ pointer. Incomplete copies have a `.partial` name and are never reuse candidates
 A corrupt object is downloaded again; a bad download never replaces its completed
 object. Successful artifacts from an interrupted attempt are reusable without
 relying on old inventories, deltas or saved proofs. Interrupted staging and old
-objects remain non-authoritative; disk-retention automation is not implemented
+objects remain non-authoritative. On activation and every subsequent poll, the
+manager releases unused in-memory views with the owner's existing policy: retain
+three recent predecessors and any older snapshot still held by an admitted
+request. A long request does not retain other unused generations, and completing
+it permits collection on an unchanged poll. This collection never deletes source
+trees or immutable objects; disk-retention automation is not implemented
 in this slice, so operators must budget disk for retained trees and objects.
 
 `publisher-high-water.json` retains replay/withdrawal fencing. Before preparation,
@@ -220,7 +225,12 @@ positive applicable invalidation is applied through the existing owner's durable
 highest revision and cumulative exact digests at which revocation was observed,
 before changing that fence. Startup replays this intent even if the process died
 before the owner's fence write. If intent persistence fails, the owner still
-fences memory and attempts its own durable record; startup binds otherwise
+fences memory and attempts its own durable record. This also applies when the
+high-water write fails after a validated source response, at ordinary polling,
+activation rechecks and recovery rechecks; invalidation cannot disappear behind
+a control-record storage error. A process retains its observed revision/digest
+floor even if that write fails. Malformed, replayed or failed transport responses
+remain errors rather than revocation evidence. Startup binds otherwise
 unrecorded owner revocations to the previously observed source revision before
 polling. Only a higher revision with fresh exact candidate-anchor attestations can clear
 revoked digest entries. Neither the process-local epoch nor the most recent

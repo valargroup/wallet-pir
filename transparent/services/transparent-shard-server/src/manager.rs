@@ -76,15 +76,18 @@ impl Manager {
     }
     pub async fn poll_once(&mut self) -> Result<Progress, Error> {
         self.source.reset_budget();
-        let current = self
-            .source
-            .poll(
-                &self.config.directory,
-                self.current.as_ref(),
-                &self.config.network,
-                &self.config.genesis_hash,
-            )
-            .await?;
+        if let Some(live) = &self.live {
+            live.collect_memory().await?;
+        }
+        let current = poll_snapshot(
+            &mut self.source,
+            &self.config.directory,
+            self.live.as_ref(),
+            self.current.as_ref(),
+            &self.config.network,
+            &self.config.genesis_hash,
+        )
+        .await?;
         let Some(current) = current else {
             return Ok(Progress {
                 unchanged: true,
@@ -102,14 +105,16 @@ impl Manager {
                 Err(error) => tracing::warn!(%error, "saved publication not eligible for recovery"),
             }
         }
-        // Do this before inventory fetch, cache access, preparation or activation.
-        apply_snapshot(
-            &mut self.source,
-            &self.config.directory,
-            self.live.as_ref(),
-            &current,
-        )
-        .await?;
+        // A recovered owner was not present for the first observation.
+        if self.current.is_none() {
+            apply_snapshot(
+                &mut self.source,
+                &self.config.directory,
+                self.live.as_ref(),
+                &current,
+            )
+            .await?;
+        }
         if !current.eligible() {
             return Err("publisher current publication is withdrawn or noncanonical".into());
         }
@@ -175,11 +180,10 @@ impl Manager {
             initial,
             || async {
                 let result: Result<(), Error> = async {
-                    let latest = source
-                        .poll(root, None, network, genesis)
-                        .await?
-                        .ok_or("missing fresh current")?;
-                    apply_snapshot(source, root, Some(&checked_live), &latest).await?;
+                    let latest =
+                        poll_snapshot(source, root, Some(&checked_live), None, network, genesis)
+                            .await?
+                            .ok_or("missing fresh current")?;
                     if latest != current || !latest.eligible() {
                         return Err("publication superseded before activation".into());
                     }
@@ -213,12 +217,11 @@ impl Manager {
                     }
                     // Anchor checks cannot authorize a candidate across a source
                     // pointer/recovery change. Never use 304 for this final read.
-                    let final_current = source
-                        .poll(root, None, network, genesis)
-                        .await?
-                        .ok_or("missing final current")?;
+                    let final_current =
+                        poll_snapshot(source, root, Some(&checked_live), None, network, genesis)
+                            .await?
+                            .ok_or("missing final current")?;
                     if final_current != latest {
-                        apply_snapshot(source, root, Some(&checked_live), &final_current).await?;
                         return Err("publication superseded during anchor checks".into());
                     }
                     Ok(())
@@ -232,6 +235,7 @@ impl Manager {
             &staged.directory.join("verified-inventory.json"),
             &staged.inventory,
         )?;
+        live.collect_memory().await?;
         self.live = Some(live);
         self.current = Some(current.clone());
         Ok(Progress {
@@ -301,20 +305,18 @@ impl Manager {
             true,
             || async {
                 let result: Result<(), Error> = async {
-                    let latest = source
-                        .poll(root, None, network, genesis)
-                        .await?
-                        .ok_or("missing recovery current")?;
-                    apply_snapshot(source, root, Some(&checked), &latest).await?;
+                    let latest =
+                        poll_snapshot(source, root, Some(&checked), None, network, genesis)
+                            .await?
+                            .ok_or("missing recovery current")?;
                     if &latest != current {
                         return Err("recovery snapshot superseded".into());
                     }
-                    let final_current = source
-                        .poll(root, None, network, genesis)
-                        .await?
-                        .ok_or("missing recovery recheck")?;
+                    let final_current =
+                        poll_snapshot(source, root, Some(&checked), None, network, genesis)
+                            .await?
+                            .ok_or("missing recovery recheck")?;
                     if latest != final_current {
-                        apply_snapshot(source, root, Some(&checked), &final_current).await?;
                         return Err("recovery snapshot superseded during anchor checks".into());
                     }
                     Ok(())
@@ -391,12 +393,15 @@ async fn revoke_digests(
     current: &Current,
     digests: BTreeSet<String>,
 ) -> Result<(), Error> {
-    let mut intent = floor(root)?;
-    intent.revision = intent.revision.max(current.revision);
-    intent.digests.extend(digests.iter().cloned());
-    // Exact revocation intent precedes the owner's fence. Restart replays it
-    // even if the process died before active.invalid.json reached disk.
-    let durable = persist(&root.join("revocation-floor.json"), &intent);
+    let durable = (|| -> Result<(), Error> {
+        let mut intent = floor(root)?;
+        intent.revision = intent.revision.max(current.revision);
+        intent.digests.extend(digests.iter().cloned());
+        // Exact revocation intent precedes the owner's fence. Restart replays it
+        // even if the process died before active.invalid.json reached disk.
+        persist(&root.join("revocation-floor.json"), &intent)?;
+        Ok(())
+    })();
     // Storage failure cannot leave known orphaned material serving. The owner
     // still fences in memory and attempts its own durable write before we fail.
     let fenced = live.revoke_exact(digests).await;
@@ -465,4 +470,25 @@ async fn apply_snapshot(
         }
     }
     Ok(())
+}
+
+/// Every live poll boundary applies authenticated positive evidence even if a
+/// control-record write fails. Transport, identity and replay failures never
+/// become invalidation evidence; a 304 never grants new authority.
+async fn poll_snapshot(
+    source: &mut Source,
+    root: &Path,
+    live: Option<&LiveService>,
+    previous: Option<&Current>,
+    network: &str,
+    genesis: &str,
+) -> Result<Option<Current>, Error> {
+    let Some(current) = source.poll(root, previous, network, genesis).await? else {
+        return Ok(None);
+    };
+    let durable = source.observe(root, &current);
+    let applied = apply_snapshot(source, root, live, &current).await;
+    durable?;
+    applied?;
+    Ok(Some(current))
 }

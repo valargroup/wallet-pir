@@ -571,17 +571,7 @@ impl LiveService {
                         .flat_map(|s| s.runtime_identities())
                         .collect();
                     let mut retired = service.0.retired.write().unwrap();
-                    // A long request may hold one old snapshot without preventing
-                    // collection of every other unused generation behind it.
-                    let recent_from = retired.len().saturating_sub(3);
-                    let mut removed = Vec::new();
-                    for (index, old) in std::mem::take(&mut *retired).into_iter().enumerate() {
-                        if index >= recent_from || old.state.has_other_holders() {
-                            retired.push(old);
-                        } else {
-                            removed.push(old);
-                        }
-                    }
+                    let removed = retain_snapshots(&mut retired);
                     let active = service.0.active.read().unwrap();
                     let root = active
                         .publication
@@ -638,6 +628,21 @@ impl LiveService {
             }
             _ => unreachable!(),
         }
+    }
+
+    /// Apply the existing snapshot/handle retention policy without touching
+    /// source directories or immutable objects. Also run on unchanged polls so
+    /// a completed long request does not retain an old view until another update.
+    pub(crate) async fn collect_memory(&self) -> Result<(), String> {
+        let operation = self.0.operations.clone().lock_owned().await;
+        let service = self.clone();
+        tokio::task::spawn_blocking(move || {
+            let _operation = operation;
+            let removed = retain_snapshots(&mut service.0.retired.write().unwrap());
+            drop(removed);
+        })
+        .await
+        .map_err(|e| format!("snapshot collection task failed: {e}"))
     }
 
     /// A negative exact-anchor attestation revokes that revision, not a newer
@@ -811,6 +816,21 @@ impl LiveService {
         })
         .await
     }
+}
+
+// One policy for explicit disk collection and manager-only memory collection.
+// Return removed views so their destruction happens outside the serving lock.
+fn retain_snapshots(retired: &mut Vec<Active>) -> Vec<Active> {
+    let recent_from = retired.len().saturating_sub(3);
+    let mut removed = Vec::new();
+    for (index, old) in std::mem::take(retired).into_iter().enumerate() {
+        if index >= recent_from || old.state.has_other_holders() {
+            retired.push(old);
+        } else {
+            removed.push(old);
+        }
+    }
+    removed
 }
 
 async fn dispatch(State(live): State<LiveService>, request: Request) -> Response {

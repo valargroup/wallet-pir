@@ -41,13 +41,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_header("Content-Length", "0")
             self.end_headers()
             return
-        if fault == "pause-activation" and self.path.endswith("/current"):
+        if (fault == "pause-activation" or fault.startswith("pause-current-")) and self.path.endswith("/current"):
             counter = Path(control + ".current-count")
             count = int(counter.read_text()) + 1 if counter.exists() else 1
             counter.write_text(str(count))
-            if count >= 2:
+            pause_at = int(fault.rsplit("-", 1)[1]) if fault.startswith("pause-current-") else 2
+            if count >= pause_at:
                 Path(control + ".entered").touch()
-                while Path(control).read_text().strip() == "pause-activation":
+                while Path(control).read_text().strip() == fault:
                     time.sleep(0.01)
         if fault == "pause-artifact" and "/artifacts/" in self.path:
             Path(control + ".entered").touch()
