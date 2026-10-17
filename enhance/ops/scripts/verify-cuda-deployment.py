@@ -66,6 +66,39 @@ def validate_health(worker, router, worker_url):
         raise ValueError('router is not ready with the GPU available')
 
 
+def wait_for_publication(worker_url, config, identity, baseline, budget, *, recover_router=False,
+                         fetcher=fetch, clock=time.monotonic, sleep=time.sleep, samples=None):
+    """Require current publication membership while sharing the existing recovery budget.
+
+    Publication may advance during the measured query run. It must converge
+    before commit; process, OOM and restart drift remain immediate failures.
+    """
+    started = clock()
+    while True:
+        worker = json.loads(fetcher(worker_url + '/internal/health'))
+        router = json.loads(fetcher(config['router_url'] + '/internal/health'))
+        coordinator = json.loads(fetcher(config['coordinator_url'] + '/v1/health'))
+        if identity() != baseline:
+            raise ValueError('worker identity, OOM or restart evidence changed during recovery')
+        if samples is not None:
+            samples.append({'at':time.time(), 'generation':coordinator.get('generation'),
+                            'published':worker.get('published')})
+        problem = 'GPU has not rejoined the current published generation'
+        try:
+            validate_health(worker, router, worker_url)
+        except ValueError as error:
+            if not recover_router:
+                raise
+            problem = str(error)
+        else:
+            if coordinator.get('generation') in worker.get('published', []):
+                return coordinator, worker, router, max(0, budget - (clock() - started))
+        remaining = budget - (clock() - started)
+        if remaining <= 0:
+            raise ValueError(problem + ' within the shared readiness budget')
+        sleep(min(2, remaining))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--inventory', type=Path, required=True)
@@ -94,22 +127,10 @@ def main():
             raise ValueError('running binary does not match CUDA artifact')
         # Recovery requires two successful router probes after restart. Wait
         # for eligibility before measurement, then fail on any readiness loss.
-        ready_deadline = time.monotonic() + 60
-        while True:
-            worker = json.loads(fetch(worker_url + '/internal/health'))
-            router = json.loads(fetch(config['router_url'] + '/internal/health'))
-            coordinator = json.loads(fetch(config['coordinator_url'] + '/v1/health'))
-            try:
-                validate_health(worker, router, worker_url)
-                if coordinator.get('generation') not in worker.get('published', []):
-                    raise ValueError('GPU is not at the current published generation')
-                break
-            except ValueError:
-                if time.monotonic() >= ready_deadline:
-                    raise
-                time.sleep(2)
-        if worker_snapshot(executor, target) != baseline:
-            raise ValueError('worker identity, OOM or restart evidence changed during recovery')
+        evidence['publication_samples'] = []
+        _, _, _, publication_budget = wait_for_publication(
+            worker_url, config, lambda:worker_snapshot(executor,target), baseline, 60,
+            recover_router=True, samples=evidence['publication_samples'])
         before = counter(fetch(worker_url + '/internal/metrics'))
         evidence['evaluations_before'] = before
         command = [str(args.client), '--server', config['origin'], '--oracle', config['oracle'],
@@ -148,10 +169,11 @@ def main():
         evidence['evaluations_after'] = after
         if measured_before is None or after <= measured_before:
             raise ValueError('no CUDA evaluations observed during the measured exact-query phase')
-        coordinator = json.loads(fetch(config['coordinator_url'] + '/v1/health'))
-        worker = json.loads(fetch(worker_url + '/internal/health'))
-        if coordinator.get('generation') not in worker.get('published', []):
-            raise ValueError('GPU has not rejoined the current published generation')
+        coordinator, worker, router, publication_budget = wait_for_publication(
+            worker_url, config, lambda:worker_snapshot(executor,target), baseline, publication_budget,
+            samples=evidence['publication_samples'])
+        evidence['publication_wait_remaining_seconds'] = publication_budget
+        evidence['final_router'] = router
         evidence['coordinator'] = coordinator
         evidence['final_worker'] = worker
         evidence['passed'] = True

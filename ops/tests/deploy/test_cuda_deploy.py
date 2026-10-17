@@ -8,11 +8,11 @@ import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, Mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from test_wallet_pir_deploy import Fleet, OLD_SHA, NEW_SHA, ENHANCE, ROOT, SERVICES
-from wallet_pir_ops.deploy import descriptors
+from wallet_pir_ops.deploy import descriptors, units
 from wallet_pir_ops.deploy.remote import SSHExecutor
 
 
@@ -59,6 +59,41 @@ class CoordinatorPreflight(unittest.TestCase):
                 self.check()
             path.chmod(0o700 if path.is_dir() else 0o600)
 
+    def test_locked_preparation_tightens_existing_ledger_without_replacing_it(self):
+        path = self.args.state_dir
+        retained = path / 'transaction.json'
+        retained.write_text('retained receipt')
+        before = (path.stat().st_ino, retained.stat().st_ino)
+        path.chmod(0o755)
+        held = Mock()
+        original = deploy.os.fstat
+        with patch.object(deploy.os, 'fstat', side_effect=lambda fd: SimpleNamespace(st_uid=0, st_mode=original(fd).st_mode)):
+            deploy.prepare_state_directory(path, held)
+        held.verify.assert_called_once()
+        self.assertEqual(path.stat().st_mode & 0o777, 0o700)
+        self.assertEqual((path.stat().st_ino, retained.stat().st_ino), before)
+        self.assertEqual(retained.read_text(), 'retained receipt')
+        self.check()
+
+    def test_state_preparation_refuses_lost_lock_and_untrusted_directories(self):
+        path = self.args.state_dir
+        path.chmod(0o755)
+        held = Mock()
+        held.verify.side_effect = RuntimeError('lost lock')
+        with self.assertRaisesRegex(RuntimeError, 'lost lock'):
+            deploy.prepare_state_directory(path, held)
+        self.assertEqual(path.stat().st_mode & 0o777, 0o755)
+        held = Mock()
+        for owner, mode in [(1, 0o40755), (0, 0o40777)]:
+            with patch.object(deploy.os, 'fstat', return_value=SimpleNamespace(st_uid=owner, st_mode=mode)):
+                with self.assertRaisesRegex(ValueError, 'root-owned'):
+                    deploy.prepare_state_directory(path, held)
+            self.assertEqual(path.stat().st_mode & 0o777, 0o755)
+        path.rmdir()
+        path.symlink_to(self.root, target_is_directory=True)
+        with self.assertRaises(OSError):
+            deploy.prepare_state_directory(path, held)
+
     def test_symlink_non_owner_and_missing_capability_fail(self):
         self.args.ssh_key.unlink()
         self.args.ssh_key.symlink_to(self.args.inventory)
@@ -75,7 +110,232 @@ class CoordinatorPreflight(unittest.TestCase):
                 self.check()
 
 
+class CudaPublicationConvergence(unittest.TestCase):
+    def setUp(self):
+        self.now = 0.0
+        self.poll = 0
+        self.worker_url = 'http://gpu'
+        self.config = {'router_url':'http://router','coordinator_url':'http://coordinator'}
+        self.members = [[10],[11]]
+        self.router_ready = True
+        self.identity = {'pid':7,'oom':0,'restarts':0}
+
+    def fetch(self,url):
+        if url.startswith(self.worker_url):
+            index = min(self.poll,len(self.members)-1)
+            self.poll += 1
+            return json.dumps({'protocol':deploy.PROTOCOL,'published':self.members[index],
+                               'matvec':{'matvec_backend':'cuda','cuda_device':0}})
+        if url.startswith(self.config['router_url']):
+            return json.dumps({'protocol':deploy.PROTOCOL,'ready':self.router_ready,
+                               'preferred_workers':{self.worker_url:True}})
+        return json.dumps({'generation':11})
+
+    def wait(self,budget=60,**extra):
+        def sleep(seconds):self.now += seconds
+        return verify.wait_for_publication(self.worker_url,self.config,lambda:self.identity,
+                                           {'pid':7,'oom':0,'restarts':0},budget,
+                                           fetcher=self.fetch,clock=lambda:self.now,sleep=sleep,**extra)
+
+    def test_generation_that_advances_during_queries_must_converge_before_commit(self):
+        coordinator,worker,_,remaining = self.wait()
+        self.assertIn(coordinator['generation'],worker['published'])
+        self.assertEqual(self.now,2)
+        self.assertEqual(remaining,58)
+
+    def test_both_convergence_checks_share_one_existing_wait_budget(self):
+        _,_,_,remaining = self.wait()
+        self.now += 70  # The paced queries are outside the readiness wait budget.
+        self.members = [[10]]
+        with self.assertRaisesRegex(ValueError,'shared readiness budget'):
+            self.wait(budget=remaining)
+        self.assertEqual(self.now,130)
+
+    def test_post_query_readiness_loss_and_identity_drift_are_immediate_failures(self):
+        self.router_ready = False
+        with self.assertRaisesRegex(ValueError,'router is not ready'):self.wait()
+        self.assertEqual(self.now,0)
+        self.router_ready = True
+        self.identity = {'pid':8,'oom':0,'restarts':0}
+        with self.assertRaisesRegex(ValueError,'identity, OOM or restart'):self.wait()
+        self.assertEqual(self.now,0)
+
+
+class FeeOracleRepair(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.current, self.replacement = self.root/'oracle.json', self.root/'new.json'
+        self.evidence = self.root/'evidence'
+        self.evidence.mkdir()
+        def row(fee=None):
+            raw = bytearray(653)
+            if fee is not None:
+                raw[640] = 4
+                raw[645:653] = fee.to_bytes(8,'little')
+            return raw.hex()
+        self.old = [{'position':0,'record_hex':row()}, {'position':33,'record_hex':row(15000)}]
+        self.new = [{'position':0,'record_hex':row(20000)}, self.old[1]]
+        self.current.write_text(json.dumps(self.old))
+        self.replacement.write_text(json.dumps(self.new))
+        self.current.chmod(0o600)
+        self.replacement.chmod(0o600)
+        self.writes = []
+        original = Path.lstat
+        self.owner_stat = lambda path: SimpleNamespace(st_uid=0,st_mode=original(path).st_mode)
+
+    def repair(self, expected=None, held=None):
+        def write(path, data, mode):
+            self.writes.append(path)
+            Path(path).write_bytes(data)
+            Path(path).chmod(mode)
+        digest = expected or hashlib.sha256(self.replacement.read_bytes()).hexdigest()
+        with patch.object(Path, 'lstat', self.owner_stat):
+            return deploy.repair_reviewed_fee_oracle(self.current,self.replacement,digest,
+                                                     held or Mock(),self.evidence,write)
+
+    def test_fee_only_repair_preserves_cases_and_retains_prior_bytes(self):
+        original = self.current.read_bytes()
+        expected = self.replacement.read_bytes()
+        result = self.repair()
+        self.assertEqual(self.current.read_bytes(), expected)
+        self.assertEqual((self.evidence/'oracle-before.json').read_bytes(),original)
+        self.assertEqual((self.evidence/'oracle-after.json').read_bytes(),expected)
+        self.assertEqual(result['positions'],2)
+        self.assertEqual(result['fee_metadata_updates'],1)
+        self.assertEqual(self.current.stat().st_mode & 0o777,0o600)
+
+    def test_oracle_repair_refuses_ciphertext_expiry_known_fee_and_coverage_changes(self):
+        original = self.current.read_bytes()
+        for case in ['ciphertext','expiry','known-fee','position','drop-case']:
+            bad = copy.deepcopy(self.new)
+            if case in ['ciphertext','expiry']:
+                raw = bytearray.fromhex(bad[0]['record_hex'])
+                raw[0 if case=='ciphertext' else 641] ^= 1
+                bad[0]['record_hex'] = raw.hex()
+            elif case=='known-fee':
+                raw = bytearray.fromhex(bad[1]['record_hex']);raw[645] ^= 1
+                bad[1]['record_hex'] = raw.hex()
+            elif case=='position':
+                bad[0]['position'] = 1
+            else:
+                bad.pop()
+            self.replacement.write_text(json.dumps(bad))
+            with self.assertRaises(Exception):self.repair()
+            self.assertEqual(self.current.read_bytes(),original)
+            self.assertEqual(self.writes,[])
+
+    def test_oracle_repair_refuses_wrong_digest_and_lost_lock(self):
+        original = self.current.read_bytes()
+        with self.assertRaisesRegex(Exception,'reviewed SHA-256'):self.repair(expected='0'*64)
+        held = Mock();held.verify.side_effect = RuntimeError('lost lock')
+        with self.assertRaisesRegex(RuntimeError,'lost lock'):self.repair(held=held)
+        self.assertEqual(self.current.read_bytes(),original)
+        self.assertEqual(self.writes,[])
+        self.assertEqual(list(self.evidence.iterdir()),[])
+
+
 class CudaFleet(Fleet):
+    def reviewed_state(self):
+        runner = self.enhance_fleet()
+        runner.targets = runner.targets[:1]
+        runner.capture_baseline()
+        target = runner.targets[0]
+        current = copy.deepcopy(self.fake.probe_unit(target.host, target.unit))
+        old_binary = units.split_exec(units.exec_start(units.effective(
+            [current['fragment_text']] + [d['text'] for d in current['drop_ins']])))[1]
+        new_binary = runner.service.release_binary(NEW_SHA)
+        current['exe_sha256'] = NEW_SHA
+        current['fragment_text'] = current['fragment_text'].replace(old_binary, new_binary)
+        for item in current['drop_ins']:
+            item['text'] = item['text'].replace(old_binary, new_binary)
+        evidence = self.dir/'evidence'
+        evidence.mkdir()
+        return runner, current, evidence
+
+    def test_reviewed_baseline_adoption_retains_old_bytes_and_ledger(self):
+        runner, current, evidence = self.reviewed_state()
+        original = runner.baseline_path.read_bytes()
+        pointer = self.state/'latest-enhance.json'
+        pointer.write_text('retained transaction pointer')
+        with patch.object(runner, 'probe', return_value={runner.targets[0].key: current}):
+            result = deploy.adopt_reviewed_baseline(runner, current, NEW_SHA, Mock(), evidence)
+        self.assertEqual((evidence/'baseline-before.json').read_bytes(), original)
+        self.assertEqual(result['previous_baseline_sha256'], hashlib.sha256(original).hexdigest())
+        self.assertEqual(pointer.read_text(), 'retained transaction pointer')
+        self.assertEqual(json.loads(runner.baseline_path.read_text())['targets'][runner.targets[0].key]['exe_sha256'], NEW_SHA)
+        self.assertEqual(self.restarts(), [])
+        self.assertIsNone(deploy.adopt_reviewed_baseline(runner, current, NEW_SHA, Mock(), evidence))
+
+    def test_baseline_adoption_requires_the_explicit_matching_running_hash(self):
+        runner, current, evidence = self.reviewed_state()
+        original = runner.baseline_path.read_bytes()
+        self.assertIsNone(deploy.adopt_reviewed_baseline(runner, current, None, Mock(), evidence))
+        with self.assertRaisesRegex(Exception, 'expected-current-sha256'):
+            deploy.adopt_reviewed_baseline(runner, current, OLD_SHA, Mock(), evidence)
+        self.assertEqual(runner.baseline_path.read_bytes(), original)
+        self.assertEqual(list(evidence.iterdir()), [])
+
+    def test_reviewed_baseline_adoption_refuses_argument_limit_and_file_drift(self):
+        runner, current, evidence = self.reviewed_state()
+        original = runner.baseline_path.read_bytes()
+        for change in ['argument', 'limit', 'file']:
+            bad = copy.deepcopy(current)
+            if change == 'argument':
+                binary = runner.service.release_binary(NEW_SHA)
+                bad['fragment_text'] = bad['fragment_text'].replace(binary, binary + ' --unreviewed')
+                for item in bad['drop_ins']:
+                    item['text'] = item['text'].replace(binary, binary + ' --unreviewed')
+            elif change == 'limit':
+                bad['fragment_text'] += 'MemoryMax=4G\n'
+            else:
+                bad['fragment_path'] += '.changed'
+            with self.assertRaisesRegex(Exception, 'executable path|unit file paths'):
+                deploy.adopt_reviewed_baseline(runner, bad, NEW_SHA, Mock(), evidence)
+            self.assertEqual(runner.baseline_path.read_bytes(), original)
+        self.assertEqual(list(evidence.iterdir()), [])
+
+    def test_reviewed_baseline_adoption_refuses_a_lost_lock(self):
+        runner, current, evidence = self.reviewed_state()
+        original = runner.baseline_path.read_bytes()
+        held = Mock()
+        held.verify.side_effect = RuntimeError('lost lock')
+        with self.assertRaisesRegex(RuntimeError, 'lost lock'):
+            deploy.adopt_reviewed_baseline(runner, current, NEW_SHA, held, evidence)
+        self.assertEqual(runner.baseline_path.read_bytes(), original)
+        self.assertEqual(list(evidence.iterdir()), [])
+
+    def test_gpu_rollback_refuses_paths_outside_its_canonical_ledger(self):
+        runner = self.enhance_fleet()
+        with patch.object(deploy.Journal, 'load') as load:
+            with self.assertRaisesRegex(Exception, 'canonical GPU transaction'):
+                deploy.rollback_verified_gpu(runner, '../other-ledger/transaction', Mock())
+            load.assert_not_called()
+
+    def test_gpu_rollback_refuses_a_transaction_for_other_targets(self):
+        runner = self.enhance_fleet()
+        runner.targets = runner.targets[:1]
+        foreign = SimpleNamespace(hosts=[{'host':'unrelated','unit':'other.service'}])
+        with patch.object(deploy.Journal, 'load', return_value=foreign), patch.object(runner, 'rollback') as rollback:
+            with self.assertRaisesRegex(Exception, 'exactly the selected GPU'):
+                deploy.rollback_verified_gpu(runner, 'enhance-explicit-transaction', Mock())
+            rollback.assert_not_called()
+
+    def test_gpu_rollback_cannot_pass_when_public_verification_fails(self):
+        runner = self.enhance_fleet()
+        runner.targets = runner.targets[:1]
+        target = runner.targets[0]
+        journal = SimpleNamespace(hosts=[{'host':target.host,'unit':target.unit,
+                                        'previous':{'exe_sha256':OLD_SHA}}])
+        runner.inventory.services['enhance']['exact_check'] = {
+            'host':'coordinator','argv':['verifier','--sha256',NEW_SHA],'timeout':60}
+        with patch.object(deploy.Journal, 'load', return_value=journal), \
+                patch.object(runner, 'rollback', return_value=journal), \
+                patch.object(runner, 'run_exact_check', side_effect=ValueError('public oracle failed')):
+            with self.assertRaisesRegex(ValueError, 'public oracle failed'):
+                deploy.rollback_verified_gpu(runner, 'enhance-explicit-transaction', Mock())
+
     def test_repeat_validation_checks_exact_answers_without_restarting(self):
         runner = self.enhance_fleet()
         result = runner.deploy(OLD_SHA, verify_noop=True)
