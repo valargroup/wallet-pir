@@ -3,16 +3,13 @@
 use super::{index, profile};
 use enhance_pir::status::*;
 #[cfg(not(feature = "native-reinspiring"))]
-use inspiring::QueryPackPreprocessed;
-use inspiring::TopKeyImages;
-#[cfg(not(feature = "native-reinspiring"))]
-use ipir_sp::{server::published_c1_rows, IPIRClient};
+use ipir_sp::IPIRClient;
 use ipir_sp::{
     server::{CrsBlock, MatvecBackend},
     IPIRServer, ProductionSimplePirParams, SimplePirProfile,
 };
 #[cfg(not(feature = "native-reinspiring"))]
-use pir_runtime::packing::PackingKeys;
+use pir_runtime::packing::{PackingKeys, PackingSetup, PreparedPacking};
 use rayon::prelude::*;
 use sha2::{Digest, Sha256};
 #[cfg(not(feature = "native-reinspiring"))]
@@ -23,15 +20,13 @@ use std::{sync::Arc, time::Instant};
 use enhance_serving::runtime::modulus;
 
 /// Router-side packing material for one d-column hint block.
-#[cfg(not(feature = "native-reinspiring"))]
-type PackingBlock = QueryPackPreprocessed<'static>;
 #[cfg(feature = "native-reinspiring")]
 type PackingBlock = Arc<reinspiring::native::NativePreprocessed>;
 
 #[cfg(not(feature = "native-reinspiring"))]
-fn top_images() -> Arc<TopKeyImages<'static>> {
-    static TOP: OnceLock<Arc<TopKeyImages<'static>>> = OnceLock::new();
-    TOP.get_or_init(|| Arc::new(TopKeyImages::build(profile().rlwe())))
+fn packing_setup() -> PackingSetup<'static> {
+    static TOP: OnceLock<PackingSetup<'static>> = OnceLock::new();
+    TOP.get_or_init(|| PackingSetup::new(profile().rlwe()))
         .clone()
 }
 
@@ -115,8 +110,10 @@ pub struct Generation {
     manifest: Manifest,
     public: Arc<Vec<u8>>,
     pub(super) units: Vec<Arc<Unit>>,
+    #[cfg(feature = "native-reinspiring")]
     pub(super) packing: Arc<Vec<PackingBlock>>,
-    pub(super) top: Option<Arc<TopKeyImages<'static>>>,
+    #[cfg(not(feature = "native-reinspiring"))]
+    packing: Option<Arc<PreparedPacking<'static>>>,
     pub(super) packing_digests: Vec<Hash>,
 }
 
@@ -181,8 +178,10 @@ impl Generation {
             manifest,
             public,
             units: Vec::new(),
+            #[cfg(feature = "native-reinspiring")]
             packing: Arc::new(Vec::new()),
-            top: None,
+            #[cfg(not(feature = "native-reinspiring"))]
+            packing: None,
             packing_digests: Vec::new(),
         }
     }
@@ -212,7 +211,6 @@ impl Generation {
         worker.manifest = router.manifest;
         worker.public = router.public;
         worker.packing = router.packing;
-        worker.top = router.top;
         worker.packing_digests = router.packing_digests;
         stats.packing_ms = started.elapsed().as_secs_f64() * 1000.;
         stats.total_ms += stats.packing_ms;
@@ -327,57 +325,33 @@ impl Generation {
                 public: Arc::new(public),
                 units: Vec::new(),
                 packing: Arc::new(packing),
-                top: None,
                 packing_digests,
             })
         }
         #[cfg(not(feature = "native-reinspiring"))]
         {
-            let top = top_images();
-            let packing: Vec<_> = blocks
-                .par_iter()
-                .enumerate()
-                .map(|(i, block)| {
-                    if let Some(old) = previous
-                        .filter(|g| g.packing_digests.get(i) == packing_digests.get(i))
-                        .and_then(|g| g.packing.get(i))
-                    {
-                        // Upstream's precomputation owns immutable matrices. Copy the
-                        // exact values rather than rebuilding unchanged CRS blocks.
-                        return Ok(QueryPackPreprocessed {
-                            params: old.params,
-                            collapse_a_final_ntt: old.collapse_a_final_ntt.clone(),
-                            digits_ntt: old.digits_ntt.clone(),
-                        });
-                    }
-                    QueryPackPreprocessed::build_with_top(p.rlwe(), &block.to_ntt(p.rlwe()), &top)
-                        .map_err(|_| Error::Pir)
-                })
-                .collect::<Result<_, _>>()?;
-            // Measure public preprocessing transport cost before moving preparation
-            // across hosts. Includes fixed-shape matrix values, excluding framing.
-            let packing_matrix_bytes: usize = packing
-                .iter()
-                .map(|block| {
-                    (block.collapse_a_final_ntt.data.len()
-                        + block.digits_ntt.iter().map(|m| m.data.len()).sum::<usize>())
-                        * 8
-                })
-                .sum();
+            let packing = PreparedPacking::prepare(
+                p.rlwe(),
+                &blocks,
+                packing_setup(),
+                previous.and_then(|g| g.packing.as_deref()),
+                |i| previous.is_some_and(|g| g.packing_digests.get(i) == packing_digests.get(i)),
+            )
+            .map_err(|_| Error::Pir)?;
+            let packing_matrix_bytes = packing.coefficient_bytes();
             tracing::info!(
                 hint_bytes = bytes.len(),
                 packing_matrix_bytes,
                 preparation_threads = rayon::current_num_threads(),
                 "Status packing material geometry"
             );
-            let public = published_c1_rows(&packing, p.rlwe().q);
+            let public = packing.public_rows(p.rlwe().q);
             manifest.public_digest = Sha256::digest(&public).into();
             Ok(Self {
                 manifest,
                 public: Arc::new(public),
                 units: Vec::new(),
-                packing: Arc::new(packing),
-                top: Some(top),
+                packing: Some(Arc::new(packing)),
                 packing_digests,
             })
         }
@@ -445,8 +419,10 @@ impl Generation {
         let database_hint_ms = start.elapsed().as_secs_f64() * 1000.;
         let packing_ms = 0.;
         let public = Vec::new();
-        let packing = Vec::new();
-        let top = None;
+        #[cfg(feature = "native-reinspiring")]
+        let packing = Arc::new(Vec::new());
+        #[cfg(not(feature = "native-reinspiring"))]
+        let packing = None;
         let manifest = Manifest {
             protocol: PROTOCOL.into(),
             network: snapshot.network,
@@ -476,8 +452,7 @@ impl Generation {
                 manifest,
                 public: Arc::new(public),
                 units,
-                packing: Arc::new(packing),
-                top,
+                packing,
                 packing_digests: Vec::new(),
             },
             stats,
@@ -567,9 +542,7 @@ impl Generation {
     #[cfg(not(feature = "native-reinspiring"))]
     pub fn pack(&self, body: &[u8], values: &[u64]) -> Result<Vec<u8>, Error> {
         self.coefficients(body)?;
-        if self.packing.is_empty() {
-            return Err(Error::Unavailable);
-        }
+        let packing = self.packing.as_ref().ok_or(Error::Unavailable)?;
         let p = profile();
         if values.len() != p.ypir().db_cols || values.iter().any(|v| *v >= p.rlwe().q) {
             return Err(Error::Malformed);
@@ -579,14 +552,9 @@ impl Generation {
             .map_err(|_| Error::Malformed)?;
         let mut response = body[..HEADER_BYTES].to_vec();
         response.extend(
-            pir_runtime::packing::pack(
-                values,
-                &keys,
-                self.top.as_deref().ok_or(Error::Unavailable)?,
-                &self.packing,
-                p.ypir().q_prime_1,
-            )
-            .map_err(|_| Error::Pir)?,
+            packing
+                .pack(values, &keys, p.ypir().q_prime_1)
+                .map_err(|_| Error::Pir)?,
         );
         Ok(response)
     }

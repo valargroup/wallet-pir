@@ -12,15 +12,11 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 use enhance_pir::protocol::*;
 use enhance_pir::types::{ITEM_SIZE_BITS, RECORDS_PER_ROW, RECORD_BYTES};
 use inspiring::RlweParams;
-#[cfg(not(feature = "native-reinspiring"))]
-use inspiring::{QueryPackPreprocessed, TopKeyImages};
 use ipir_sp::server::CrsBlock;
-#[cfg(not(feature = "native-reinspiring"))]
-use ipir_sp::server::{build_pack_preprocessed_blocks, published_c1_rows};
 #[cfg(not(feature = "native-reinspiring"))]
 use ipir_sp::YpirSchemeParams;
 #[cfg(not(feature = "native-reinspiring"))]
-use pir_runtime::packing::PackingKeys;
+use pir_runtime::packing::{PackingKeys, PackingSetup, PreparedPacking};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -265,8 +261,7 @@ pub struct Packing {
     _charge: super::packing_budget::Charge,
     pub params: YpirSchemeParams,
     pub public: Vec<u8>,
-    preprocessed: Vec<QueryPackPreprocessed<'static>>,
-    top: Option<TopKeyImages<'static>>,
+    material: Option<PreparedPacking<'static>>,
     mapped: Option<inspiring::prepared::MappedPrepared<'static>>,
 }
 
@@ -276,13 +271,11 @@ impl Packing {
         out.write_all(&(self.params.db_rows as u64).to_le_bytes())
             .map_err(|e| e.to_string())?;
         out.write_all(&self.public).map_err(|e| e.to_string())?;
-        inspiring::prepared::write(
-            out,
-            rlwe(),
-            &self.preprocessed,
-            self.top.as_ref().ok_or("cannot rewrite mapped artifact")?,
-        )
-        .map_err(|e| e.to_string())
+        self.material
+            .as_ref()
+            .ok_or("cannot rewrite mapped artifact")?
+            .write(out, rlwe())
+            .map_err(|e| e.to_string())
     }
     /// Read-only mappings own their file pages through all in-flight query pins.
     /// Router artifacts are immutable: downloads replace inodes atomically and
@@ -317,8 +310,7 @@ impl Packing {
             _charge: charge,
             params,
             public,
-            preprocessed: Vec::new(),
-            top: None,
+            material: None,
             mapped: Some(mapped),
         })
     }
@@ -331,18 +323,17 @@ impl Packing {
         let began = std::time::Instant::now();
         let mut charge = super::packing_budget::Charge::prepare(budget)?;
         let params = parameters(logical_rows)?;
-        let preprocessed =
-            build_pack_preprocessed_blocks(rlwe(), hint).map_err(|e| e.to_string())?;
-        let public = published_c1_rows(&preprocessed, rlwe().q);
-        let top = TopKeyImages::build(rlwe());
+        let material =
+            PreparedPacking::prepare(rlwe(), hint, PackingSetup::new(rlwe()), None, |_| false)
+                .map_err(|e| e.to_string())?;
+        let public = material.public_rows(rlwe().q);
         charge.resident();
         crate::prepared_packing::observe_preparation(began.elapsed());
         Ok(Self {
             _charge: charge,
             params,
             public,
-            preprocessed,
-            top: Some(top),
+            material: Some(material),
             mapped: None,
         })
     }
@@ -411,13 +402,10 @@ impl Packing {
                 .pack(intermediate, keys.upstream())
                 .map(|packed| pir_runtime::packing::response_bodies(&packed, q_prime_1))
         } else {
-            pir_runtime::packing::pack(
-                intermediate,
-                &keys,
-                self.top.as_ref().expect("owned packing top images"),
-                &self.preprocessed,
-                q_prime_1,
-            )
+            self.material
+                .as_ref()
+                .expect("owned packing material")
+                .pack(intermediate, &keys, q_prime_1)
         }
         .map_err(|e| e.to_string())?;
         let mut response = binding.encode();

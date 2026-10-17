@@ -9,3 +9,4 @@ repository = "https://github.com/valargroup/wallet-pir"
 [dependencies]
 inspiring = "=0.1.0-rc.3"
 ipir-sp = "=0.1.0-rc.7"
+rayon = "1.10"

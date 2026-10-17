@@ -6,8 +6,9 @@ use crate::matvec::MatvecConfig;
 use crate::types::{DatabaseId, DatabaseLayout};
 use crate::wire::{crs_encoded_len, write_crs_blocks};
 use inspiring::{InspiringError, RlweParams};
-use ipir_sp::server::{CrsBlock, IPIRServer};
+use ipir_sp::server::CrsBlock;
 use ipir_sp::{IPIRSimpleQuery, YpirSchemeParams};
+use pir_runtime::evaluation::PreparedDatabase;
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File};
 use std::io::{self, BufReader, Read};
@@ -138,7 +139,7 @@ pub struct ShardRuntime {
     pub shard_id: u64,
     pub query_row_start: usize,
     pub rows_sha256: String,
-    pub server: IPIRServer<u16>,
+    pub server: PreparedDatabase,
 }
 
 /// Offline preparation owns CRS only until it has been durably persisted.
@@ -490,7 +491,7 @@ impl PreparedShard {
                 shard_id,
                 query_row_start,
                 rows_sha256,
-                server,
+                server: PreparedDatabase::new(server),
             },
             crs_blocks,
         })
@@ -550,7 +551,7 @@ impl PreparedShard {
 /// No partially read database is ever returned to a caller; see
 /// [`pir_runtime::evaluation::build_from_le_u16`].
 #[cfg(test)]
-fn read_database(reader: impl Read, params: YpirSchemeParams) -> io::Result<IPIRServer<u16>> {
+fn read_database(reader: impl Read, params: YpirSchemeParams) -> io::Result<PreparedDatabase> {
     read_database_with_backend(reader, params, MatvecConfig::default()).map_err(io::Error::other)
 }
 
@@ -558,13 +559,15 @@ fn read_database_with_backend(
     mut reader: impl Read,
     params: YpirSchemeParams,
     backend: MatvecConfig,
-) -> Result<IPIRServer<u16>, LoadError> {
+) -> Result<PreparedDatabase, LoadError> {
     let count = params
         .db_rows
         .checked_mul(params.db_cols)
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "database size overflow"))?;
     let server = pir_runtime::evaluation::build_from_le_u16(&mut reader, count, |coefficients| {
-        backend.server(params, coefficients, true)
+        backend
+            .server(params, coefficients, true)
+            .map(PreparedDatabase::new)
     })?;
     let server = server.map_err(LoadError::Backend)?;
     let mut trailing = [0];
