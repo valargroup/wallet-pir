@@ -234,6 +234,8 @@ fn terminal(dir: &std::path::Path, map: &ShardMap) -> ServiceState {
         ShardSet::open_with(dir, &options).unwrap(),
         ServiceConfig {
             readiness: ReadinessMode::Warm,
+            query_slots: 1,
+            max_waiters: 0,
             ..ServiceConfig::default()
         },
     )
@@ -243,12 +245,11 @@ async fn frozen_output(origin: String, tag: u32, birthday: u64) -> std::process:
     let binary = std::env::var("WALLET_PIR_FROZEN_CLIENT")
         .expect("build the isolated frozen client and set WALLET_PIR_FROZEN_CLIENT");
     let script = hex::encode(script(tag).as_slice());
-    let output = tokio::process::Command::new(binary)
+    tokio::process::Command::new(binary)
         .args([origin, script, birthday.to_string()])
         .output()
         .await
-        .unwrap();
-    output
+        .unwrap()
 }
 async fn frozen(origin: String, tag: u32, birthday: u64) -> serde_json::Value {
     let output = frozen_output(origin, tag, birthday).await;
@@ -388,6 +389,7 @@ async fn archive_readiness_and_setup_are_checked_over_real_http() {
     let mode = Arc::new(AtomicU8::new(0));
     let injection = mode.clone();
     let archive_metrics = terminal.metrics().clone();
+    let terminal_hold = terminal.clone();
     let app = router(terminal).layer(axum::middleware::from_fn(
         move |request: axum::extract::Request, next: axum::middleware::Next| {
             let mode = injection.load(Ordering::SeqCst);
@@ -459,6 +461,11 @@ async fn archive_readiness_and_setup_are_checked_over_real_http() {
         map.shards[0].manifest_digest
     );
     assert_eq!(client.get(&setup).send().await.unwrap().status(), 200);
+    let held = terminal_hold.hold_query_slot().await;
+    let capacity = client.get(&setup).send().await.unwrap();
+    assert_eq!(capacity.status(),503);
+    assert_eq!(capacity.headers()["retry-after"],"1","explicit terminal capacity must remain retryable");
+    drop(capacity);drop(held);
     for fault in 1..=4 {
         mode.store(fault, Ordering::SeqCst);
         assert_eq!(
