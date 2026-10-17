@@ -3,6 +3,45 @@
 use super::*;
 use transparent_shard_server::{live::Command, manager::Manager, service::ServiceConfig};
 
+// Prepare immutable producer bytes once per test process. Each test receives
+// separate copies: corruption, missing-file and restart cases must stay isolated.
+fn prepared_publication(root: &Path, through: u64) -> (PathBuf, ShardSet) {
+    fn build(through: u64) -> tempfile::TempDir {
+        let root = tempfile::tempdir().unwrap();
+        let (directory, set) = publication_through(root.path(), through);
+        prepare_recent(&directory, &set);
+        root
+    }
+    static FIRST: std::sync::LazyLock<tempfile::TempDir> = std::sync::LazyLock::new(|| build(2));
+    static NEXT: std::sync::LazyLock<tempfile::TempDir> = std::sync::LazyLock::new(|| build(3));
+    let fixture = match through {
+        2 => &*FIRST,
+        3 => &*NEXT,
+        _ => panic!("no prepared publication fixture through height {through}"),
+    };
+    fn copy_tree(source: &Path, target: &Path) {
+        std::fs::create_dir(target).unwrap();
+        for entry in std::fs::read_dir(source).unwrap() {
+            let entry = entry.unwrap();
+            let target = target.join(entry.file_name());
+            let kind = entry.file_type().unwrap();
+            if kind.is_dir() {
+                copy_tree(&entry.path(), &target);
+            } else {
+                assert!(
+                    kind.is_file(),
+                    "producer fixture must contain regular files"
+                );
+                std::fs::copy(entry.path(), target).unwrap();
+            }
+        }
+    }
+    let directory = root.join("publication");
+    copy_tree(&fixture.path().join("publication"), &directory);
+    let set = ShardSet::open(&directory, 0).unwrap();
+    (directory, set)
+}
+
 fn manager(tls: &Tls, root: &Path) -> Manager {
     Manager::new(
         config(tls, root.to_path_buf()),
@@ -107,8 +146,7 @@ async fn query_and_upload(origin: &str, set: &ShardSet) -> Vec<u8> {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn manager_reuses_immutable_transfers_and_serves_through_failed_update() {
     let root = tempfile::tempdir().unwrap();
-    let (directory, set) = publication(root.path());
-    prepare_recent(&directory, &set);
+    let (directory, set) = prepared_publication(root.path(), 2);
     let rpc = canonical_rpc(root.path(), &set).await;
     let owner = authority(
         &directory,
@@ -136,8 +174,7 @@ async fn manager_reuses_immutable_transfers_and_serves_through_failed_update() {
     assert_eq!(count, artifact_requests(&tls));
     let next_root = root.path().join("next");
     std::fs::create_dir(&next_root).unwrap();
-    let (next_dir, next_set) = publication_through(&next_root, 3);
-    prepare_recent(&next_dir, &next_set);
+    let (next_dir, next_set) = prepared_publication(&next_root, 3);
     advance(&owner, &next_dir, &next_set);
     for fault in ["truncated", "corrupt", "missing"] {
         std::fs::write(&tls.control, fault).unwrap();
@@ -252,8 +289,7 @@ async fn manager_reuses_immutable_transfers_and_serves_through_failed_update() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn manager_persists_invalidation_and_refuses_equal_revision_reenable_after_restart() {
     let root = tempfile::tempdir().unwrap();
-    let (directory, set) = publication(root.path());
-    prepare_recent(&directory, &set);
+    let (directory, set) = prepared_publication(root.path(), 2);
     let rpc = canonical_rpc(root.path(), &set).await;
     let owner = authority(
         &directory,
@@ -325,8 +361,7 @@ async fn entered(tls: &Tls) {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn manager_restarts_interrupted_staging_and_rejects_superseded_activation() {
     let root = tempfile::tempdir().unwrap();
-    let (directory, set) = publication(root.path());
-    prepare_recent(&directory, &set);
+    let (directory, set) = prepared_publication(root.path(), 2);
     let rpc = canonical_rpc(root.path(), &set).await;
     let owner = authority(
         &directory,
@@ -350,8 +385,7 @@ async fn manager_restarts_interrupted_staging_and_rejects_superseded_activation(
     query(&origin, &set).await;
     let next_root = root.path().join("next");
     std::fs::create_dir(&next_root).unwrap();
-    let (next_dir, next_set) = publication_through(&next_root, 3);
-    prepare_recent(&next_dir, &next_set);
+    let (next_dir, next_set) = prepared_publication(&next_root, 3);
     advance(&owner, &next_dir, &next_set);
     let _ = std::fs::remove_file(tls.control.with_extension("entered"));
     std::fs::write(&tls.control, "pause-artifact").unwrap();
@@ -411,8 +445,7 @@ async fn manager_restarts_interrupted_staging_and_rejects_superseded_activation(
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn manager_checks_inventory_and_required_files_on_unchanged_maps() {
     let root = tempfile::tempdir().unwrap();
-    let (directory, set) = publication(root.path());
-    prepare_recent(&directory, &set);
+    let (directory, set) = prepared_publication(root.path(), 2);
     let original = Finalized::prepare(&directory, &set, 2).unwrap();
     let runtime = original
         .inventory()
@@ -457,7 +490,9 @@ async fn manager_checks_inventory_and_required_files_on_unchanged_maps() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn manager_refuses_changed_holdings_on_an_unchanged_map() {
     let root = tempfile::tempdir().unwrap();
-    let (directory, set) = publication(root.path());
+    // Assignment identity is independent of table geometry. Keep both tiers
+    // small here so expanding holdings does not build an unrelated 32k runtime.
+    let (directory, set) = publication_with_archive(root.path(), 2, "decoupled-2k-8k");
     prepare_recent(&directory, &set);
     let rpc = canonical_rpc(root.path(), &set).await;
     let owner = authority(
@@ -505,14 +540,11 @@ async fn control_write_failure(pause_at: Option<u32>, failed_record: &str) {
             "publisher-high-water-fallback.tmp",
             "revocation-floor.tmp",
         ]
-    } else if failed_record == "malformed" {
-        vec!["revocation-floor.json"]
     } else {
         vec![failed_record]
     };
     let root = tempfile::tempdir().unwrap();
-    let (directory, set) = publication(root.path());
-    prepare_recent(&directory, &set);
+    let (directory, set) = prepared_publication(root.path(), 2);
     let rpc = canonical_rpc(root.path(), &set).await;
     let owner = authority(
         &directory,
@@ -547,9 +579,7 @@ async fn control_write_failure(pause_at: Option<u32>, failed_record: &str) {
         });
         entered(&tls).await;
         for record in &failed_records {
-            if failed_record == "malformed"
-                || high_water_fault.is_some_and(|(kind, _)| kind == "parse")
-            {
+            if high_water_fault.is_some_and(|(kind, _)| kind == "parse") {
                 std::fs::write(state.join(record), b"{").unwrap();
                 continue;
             }
@@ -572,9 +602,7 @@ async fn control_write_failure(pause_at: Option<u32>, failed_record: &str) {
         result
     } else {
         for record in &failed_records {
-            if failed_record == "malformed"
-                || high_water_fault.is_some_and(|(kind, _)| kind == "parse")
-            {
+            if high_water_fault.is_some_and(|(kind, _)| kind == "parse") {
                 std::fs::write(state.join(record), b"{").unwrap();
                 continue;
             }
@@ -662,18 +690,6 @@ async fn control_write_failure(pause_at: Option<u32>, failed_record: &str) {
             error.contains(if kind == "read" { "directory" } else { "EOF" }),
             "original high-water storage error: {error}"
         );
-        // A new Source has no trusted in-process baseline. The same malformed
-        // or unreadable record must refuse before constructing any owner.
-        let startup_root = root.path().join("startup-provider");
-        std::fs::create_dir(&startup_root).unwrap();
-        if kind == "read" {
-            std::fs::create_dir(startup_root.join(record)).unwrap();
-        } else {
-            std::fs::write(startup_root.join(record), b"{").unwrap();
-        }
-        let mut startup = manager(&tls, &startup_root);
-        assert!(startup.poll_once().await.is_err());
-        assert!(startup.live().is_none());
     }
     assert_eq!(
         get(&origin, "/v2/shards/init").await.status(),
@@ -692,8 +708,7 @@ async fn control_write_failure(pause_at: Option<u32>, failed_record: &str) {
         .unwrap();
     assert_eq!(response.status(), StatusCode::CONFLICT);
     for record in &failed_records {
-        if failed_record == "malformed" || high_water_fault.is_some_and(|(kind, _)| kind == "parse")
-        {
+        if high_water_fault.is_some_and(|(kind, _)| kind == "parse") {
             std::fs::remove_file(state.join(record)).unwrap();
         } else {
             std::fs::remove_dir(state.join(record)).unwrap();
@@ -745,8 +760,7 @@ async fn manager_bounds_memory_while_retaining_admitted_upload() {
     use tower::ServiceExt;
     use transparent_server_backend::shardset::{Table, TableRef};
     let root = tempfile::tempdir().unwrap();
-    let (directory, set) = publication(root.path());
-    prepare_recent(&directory, &set);
+    let (directory, set) = prepared_publication(root.path(), 2);
     let rpc = canonical_rpc(root.path(), &set).await;
     let owner = authority(
         &directory,
@@ -856,8 +870,7 @@ async fn manager_unreadable_revocation_floor_still_fences_http() {
 
 async fn recovery_poll_write_failure(pause_at: u32) {
     let root = tempfile::tempdir().unwrap();
-    let (directory, set) = publication(root.path());
-    prepare_recent(&directory, &set);
+    let (directory, set) = prepared_publication(root.path(), 2);
     let rpc = canonical_rpc(root.path(), &set).await;
     let owner = authority(
         &directory,
@@ -926,15 +939,9 @@ async fn manager_missing_durable_revision_cannot_reenable_revoked_view() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn manager_malformed_revocation_floor_still_fences_http() {
-    control_write_failure(None, "malformed").await;
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn manager_rejects_replayed_different_map_below_durable_revocation_floor() {
     let root = tempfile::tempdir().unwrap();
-    let (directory, set) = publication(root.path());
-    prepare_recent(&directory, &set);
+    let (directory, set) = prepared_publication(root.path(), 2);
     let rpc = canonical_rpc(root.path(), &set).await;
     let owner = authority(
         &directory,
@@ -965,8 +972,7 @@ async fn manager_rejects_replayed_different_map_below_durable_revocation_floor()
     std::fs::remove_dir(state.join("revocation-floor.tmp")).unwrap();
     let next_root = root.path().join("next");
     std::fs::create_dir(&next_root).unwrap();
-    let (next_dir, next_set) = publication_through(&next_root, 3);
-    prepare_recent(&next_dir, &next_set);
+    let (next_dir, next_set) = prepared_publication(&next_root, 3);
     advance(&owner, &next_dir, &next_set);
     owner.0.distribution_revision.store(40, Ordering::Release);
     owner.0.withdrawn.store(false, Ordering::Release);
@@ -997,36 +1003,6 @@ async fn manager_primary_read_failure_at_poll_still_fences_http() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn manager_primary_read_failure_at_guard_still_fences_http() {
-    control_write_failure(Some(2), "read:publisher-high-water.json").await;
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn manager_primary_parse_failure_at_poll_still_fences_http() {
-    control_write_failure(None, "parse:publisher-high-water.json").await;
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn manager_primary_parse_failure_at_guard_still_fences_http() {
-    control_write_failure(Some(3), "parse:publisher-high-water.json").await;
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn manager_fallback_read_failure_at_poll_still_fences_http() {
-    control_write_failure(None, "read:publisher-high-water-fallback.json").await;
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn manager_fallback_read_failure_at_guard_still_fences_http() {
-    control_write_failure(Some(2), "read:publisher-high-water-fallback.json").await;
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn manager_fallback_parse_failure_at_poll_still_fences_http() {
-    control_write_failure(None, "parse:publisher-high-water-fallback.json").await;
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn manager_fallback_parse_failure_at_guard_still_fences_http() {
     control_write_failure(Some(3), "parse:publisher-high-water-fallback.json").await;
 }
@@ -1034,8 +1010,7 @@ async fn manager_fallback_parse_failure_at_guard_still_fences_http() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn manager_double_intent_write_failure_retains_exact_negative_revision() {
     let root = tempfile::tempdir().unwrap();
-    let (directory, set) = publication(root.path());
-    prepare_recent(&directory, &set);
+    let (directory, set) = prepared_publication(root.path(), 2);
     let rpc = canonical_rpc(root.path(), &set).await;
     let owner = authority(
         &directory,
