@@ -68,7 +68,8 @@ class FastBuildTests(unittest.TestCase):
                 patch.object(fast_build.subprocess, 'check_output', side_effect=output), \
                 patch.object(fast_build, 'run', side_effect=run), \
                 patch.dict(os.environ, QUALIFY_PUBLICATIONS='100000'):
-            fast_build.execute(['a', 'b'], offline=True, compile_only=compile_only, jobs=jobs)
+            fast_build.execute([p['name'] for p in self.packages], offline=True,
+                               compile_only=compile_only, jobs=jobs)
 
     def test_one_build_preserves_units_binaries_fast_targets_and_package_specific_exclusions(self):
         self.execute()
@@ -95,6 +96,31 @@ class FastBuildTests(unittest.TestCase):
         self.assertEqual(options['env']['WALLET_PIR_ENFORCE_BUDGET'], '1')
         self.assertNotIn('QUALIFY_PUBLICATIONS', options['env'])
         self.assertFalse(Path(options['env']['WALLET_PIR_TEST_RUNTIME_CACHE']).exists())
+
+    def test_filter_library_runs_alone_without_changing_cases_or_arguments(self):
+        self.execute()
+        baseline = {p['executable']: p for p in self.plans[0]}
+        self.calls.clear()
+        self.plans.clear()
+        self.packages[0]['name'] = 'transparent-filter-server'
+        self.registry['transparent-filter-server'] = self.registry.pop('a')
+        self.slow['transparent-filter-server'] = self.slow.pop('a')
+        self.execute()
+        plan = {p['executable']: p for p in self.plans[0]}
+        self.assertEqual(set(plan), set(baseline))
+        self.assertEqual({binary: p['exclusive'] for binary, p in plan.items()}, {
+            '/fixture/a-a': True,
+            '/fixture/a-client': False,
+            '/fixture/a-smoke': True,
+            '/fixture/b-b': False,
+            '/fixture/b-smoke': True,
+        })
+        for binary, program in plan.items():
+            for field in ['args', 'case_count', 'directory', 'version']:
+                self.assertEqual(program[field], baseline[binary][field])
+        runner, options = self.calls[-1]
+        self.assertIn('--budget', runner)
+        self.assertEqual(options['env']['WALLET_PIR_ENFORCE_BUDGET'], '1')
 
     def test_discovered_case_count_orders_programs_independently_of_cargo_output(self):
         self.listings['/fixture/b-b'] = {f'case_{i}' for i in range(7)}
