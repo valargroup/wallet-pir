@@ -407,7 +407,7 @@ async fn manager_restarts_interrupted_staging_and_rejects_superseded_activation(
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn manager_checks_inventory_and_required_files_on_unchanged_maps() {
     let root = tempfile::tempdir().unwrap();
-    let (directory, set) = publication_with_geometry(root.path(), 2, "decoupled-2k-8k");
+    let (directory, set) = publication(root.path());
     prepare_recent(&directory, &set);
     let original = Finalized::prepare(&directory, &set, 2).unwrap();
     let runtime = original
