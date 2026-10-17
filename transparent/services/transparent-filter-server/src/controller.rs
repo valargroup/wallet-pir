@@ -1303,7 +1303,27 @@ async fn distribution_request(authority: Authority, request: Request) -> Respons
                 current.eligibility = Eligibility::Withdrawn;
             }
         }
-        return ([("cache-control", "no-store")], axum::Json(current)).into_response();
+        let etag = format!(
+            "\"{}\"",
+            distribution::digest(&serde_json::to_vec(&current).expect("serializable current"))
+        );
+        if request
+            .headers()
+            .get("if-none-match")
+            .and_then(|h| h.to_str().ok())
+            == Some(etag.as_str())
+        {
+            return (
+                StatusCode::NOT_MODIFIED,
+                [("cache-control", "no-store"), ("etag", etag.as_str())],
+            )
+                .into_response();
+        }
+        return (
+            [("cache-control", "no-store"), ("etag", etag.as_str())],
+            axum::Json(current),
+        )
+            .into_response();
     }
     if !current.eligible() {
         return unavailable();
