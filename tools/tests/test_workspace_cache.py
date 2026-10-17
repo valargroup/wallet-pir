@@ -20,6 +20,15 @@ import cargo_cache
 
 class WorkspaceCacheOracle(unittest.TestCase):
     def setUp(self):
+        # prepare() appends to GitHub's real environment/output files as well
+        # as changing os.environ. Keep fixture lifecycle effects in the fixture.
+        env = {key: value for key, value in os.environ.items()
+               if key not in {'GITHUB_ENV', 'GITHUB_OUTPUT', 'GITHUB_STEP_SUMMARY',
+                              'WALLET_PIR_STAGE_LOG', 'WALLET_PIR_ARTIFACT_LOG',
+                              'WALLET_PIR_CASE_LOG', 'WALLET_PIR_STAGE_PARENT'}}
+        isolation = patch.dict(os.environ, env, clear=True)
+        isolation.start()
+        self.addCleanup(isolation.stop)
         (ROOT / '.local-pir').mkdir(exist_ok=True)
         self.tmp = tempfile.TemporaryDirectory(prefix='workspace-cache-', dir=ROOT / '.local-pir')
         # The local output directory may itself be a symlink to a retained cache.
@@ -468,6 +477,26 @@ class WorkspaceCacheOracle(unittest.TestCase):
         artifacts, behavior = self.build()
         self.assertTrue(any(not entry['fresh'] for entry in artifacts))
         self.assertEqual(behavior, 'rust-A|include-A|build-A')
+
+
+class WorkspaceCacheOutputIsolationTests(unittest.TestCase):
+    def test_fixture_cannot_change_outer_github_environment_or_timing_files(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            names = ['GITHUB_ENV', 'GITHUB_OUTPUT', 'GITHUB_STEP_SUMMARY',
+                     'WALLET_PIR_STAGE_LOG', 'WALLET_PIR_ARTIFACT_LOG', 'WALLET_PIR_CASE_LOG']
+            env = os.environ.copy()
+            for name in names:
+                path = root / name
+                path.write_text('outer job\n')
+                env[name] = str(path)
+            result = subprocess.run(
+                [sys.executable, '-m', 'unittest',
+                 'test_workspace_cache.WorkspaceCacheOracle.test_managed_external_target_still_prepares_restores_and_builds'],
+                cwd=ROOT / 'tools/tests', env=env, capture_output=True, text=True, timeout=60)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            for name in names:
+                self.assertEqual((root / name).read_text(), 'outer job\n', name)
 
 
 if __name__ == '__main__':

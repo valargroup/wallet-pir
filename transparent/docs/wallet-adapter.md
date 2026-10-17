@@ -131,3 +131,71 @@ has followed produces `SealedRewrite` too: an adapter that records the epoch it 
 and treats a map with a lower one as behind before syncing, tells the two apart. A re-cut
 published during a sync ends that sync with `MapDiverged`, and the next sync starts from the
 re-cut map.
+
+## Fixed Vizor provider qualification baseline
+
+The provider plan fixes the public stable release available before approval:
+[Vizor v0.0.60](https://github.com/chainapsis/vizor-wallet/releases/tag/release/v0.0.60),
+macOS build 195, source `1c38c2eb0753fc6a36c16ec58cfe397696f25e4b`.
+This baseline uses the original released application artifacts.
+Original assets were downloaded again without installing or executing them:
+
+| Original release asset | Bytes | SHA-256 |
+|---|---:|---|
+| macOS DMG, asset 643050669 | 155631164 | `72ef8b5afd0152eccfcd66108ff659fac871396593feb4ac16f57ec6d9c63939` |
+| Linux x86_64 AppImage, asset 642971073 | 89405944 | `944a9d02eecb7bc7cb725291b11bed078fe44d3e0d4d30fccae172676bf44006` |
+
+The release source's `rust/Cargo.lock` hashes to
+`c9db7eb50dc5c459931104f6a31488f7e0a35e467803ab4862fc2ae9ba9f60a7`.
+It declares `zakura-pir-transparent` 0.0.1-rc0, crate checksum
+`ad10db262413b0502e4782710af4eb5a76333d6a3d89adc0c50c3c130947ddf2`,
+whose original `.cargo_vcs_info.json` names
+`391d0b0247f0e07cfdea855ce87fcdf8ba376aae`. Native, shard and txid client
+are published 0.1.0-rc.3 crates (VCS
+`c0852aa558abc6cfd97640965fdda8d3e27b7334`). This is declared dependency
+provenance, not independent binary dependency attestation. Do not add the old
+adapter's reverse server development graph to the current release graph.
+
+The fixed history profile is `transparent-shard-v12`,
+`reinspiring-two-mask-p8-g27x1-m22-dq28-r10-v1`, with
+`decoupled-2k-8k` and `decoupled-32k-32k`. Published shard manifest/layout
+comparison to server pin `609cbd3` established matching source bytes; the native
+adapter differs in namespaces and P16 shape-error handling. Neither comparison
+proves cryptographic interoperability or application behavior. Raw release assets,
+source archives and crates remain ignored local inputs.
+
+### Endpoint and API trace
+
+At the fixed release source,
+`rust/src/wallet/sync_engine/transparent_ledger/pir.rs` sets mainnet history to
+`https://transparent-pir.valargroup.dev`. `origin_override` reads
+`VIZOR_TRANSPARENT_PIR_URL` only under `debug_assertions`; the release has no
+independent-provider selector. Qualification must use the existing origin with
+valid TLS, without rebuilding, new settings, or a wallet migration. Isolated
+route/TLS fixture access is a named application qualification gate; no production
+routing or DNS change is authorized.
+
+The published adapter's `src/http.rs` resolves the following routes; discovery,
+setup, revision validation, private query framing, retries and refresh retain
+their existing semantics. `{table}` includes the existing child-page labels.
+
+| Operation | Method and origin-relative path | Owning service |
+|---|---|---|
+| History discovery | GET `/v2/filters/shards`, `/v2/filters/shards/{id}/filter`, `/v2/shards/init` | Existing history publisher/serving boundary |
+| History manifest/setup | GET `/v2/shards/{id}/revisions/{rev}/manifest`, `/v2/shards/{id}/revisions/{rev}/setup/{table}/{segment}` | History worker/router |
+| Private history | POST `/v2/shards/{id}/revisions/{rev}/query/{table}` | History worker/router |
+| Display discovery | GET `/v2/txid/init`, `/v2/txid/map`, `/v2/txid/map/{height}/{digest}` | Existing display service |
+| Display manifest/setup/query | GET `/v2/txid/shards/{id}/revisions/{rev}/manifest`; GET `/v2/txid/{archive,recent}/shards/{id}/revisions/{rev}/setup/directory-{n}/{segment}`; POST the corresponding `/query/directory-{n}` | Existing display service |
+
+Release `transparent_details/source.rs` imports the **same history origin** for
+display. Preserve `/v2/txid/*` at the front routing boundary through that existing
+service. History-only provider work does not implement a display provider.
+`enhancement/mod.rs` and `enhancement/status/private.rs` use the existing
+`https://enhance-pir.valargroup.dev` origin for Enhance and Status, through their
+separate transports. No Receiver call was located in this fixed application
+source; any existing Receiver service remains independent and unchanged.
+
+The application still owns chain acceptance, privacy policy, complete coverage,
+companion state and commit/settlement. No source comparison or provider bootstrap
+test qualifies unchanged-app recent/archive recovery, continued sync, restart or
+handover; those remain explicit application gates in PRs 3–5 of the plan.

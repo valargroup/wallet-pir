@@ -51,7 +51,10 @@ restart, independent wallet, publication, packing and revocation checks remain.
 and their transitive reverse dependencies. Deleted files are included; build
 configuration, dependency manifests and unknown paths select the whole workspace.
 Workspace-only membership and local lockfile changes select the changed packages
-and their consumers. External dependency, profile, resolver, inherited-setting,
+and their consumers. Global manifests, dependency locks, Cargo configuration and
+the Makefile retain conservative native coverage and run tooling/workflow
+contracts; they do not by themselves select unrelated product operations fixtures.
+External dependency, profile, resolver, inherited-setting,
 removed-member and unrecognized changes retain complete workspace coverage.
 CI tooling changes run tool tests and workflow contracts; they retain broad full
 qualification without starting unrelated operations fixtures in fast feedback.
@@ -76,8 +79,9 @@ The fast runner enforces the 30-second limit for every Rust case, including
 setup and teardown inside the case. Each program keeps its package directory and Cargo environment; fast integration
 targets must contain an enabled, unignored case, and unit exclusions must still
 match discovered tests. Cold cache preparation compiles the same target selection.
-The package-qualified full-geometry/cache, multi-unit preparation, RPC publication
-and real HTTP retry cases run only in full CI;
+The package-qualified full-geometry/cache, multi-unit preparation, shipped-runtime
+identity matrices, retained-publication rebuild matrices, RPC publication and real
+HTTP retry cases run only in full CI;
 `tools/ci/slow-tests.json` records the exact names and reasons. Binary unit tests run as well as library targets. For affected packages, fast CI also
 runs the integration targets classified as `fast` in
 [`tools/ci/integration-tests.json`](../tools/ci/integration-tests.json). The remaining
@@ -87,12 +91,19 @@ selected job fails or is skipped. This avoids compiling every integration target
 to exclude its tests at runtime. Affected helper
 checks run concurrently with Rust; selected operations suites run in
 four parallel make slots. Deployment unittest modules use two separate processes,
-retaining every discovered case and each module's fixtures. The package
+retaining each module's fixtures. Fast deployment feedback selects exact discovered
+case IDs from `tools/ci/deploy-fast-tests.json`: installation and upgrade, lock
+refusal, interrupted recovery, tampered retained artifacts, failed verification
+and rollback. Empty, duplicate or renamed selections fail. Full qualification
+runs every discovered deployment case without that selection. The package
 transaction module has independent test classes and is explicitly split by class;
 class fixtures stay together, and modules with module fixtures cannot opt in. Each case keeps its
 own mutable deployment tree; negative variants may restore a real transaction
 checkpoint after proving that an untampered copy still recovers. Failures in any
-task fail fast CI.
+task fail fast CI. Fast native runs report each executable's wall time and the
+15 slowest completed cases; overlapping program times must not be added to infer
+the job's elapsed time. Tooling cache fixtures cannot write to the outer job's
+GitHub environment files or timing receipts.
 
 Every workspace integration target must be classified exactly once.
 `make check-tools` validates the registry against manifests and integration source files without invoking Rust, rejecting new

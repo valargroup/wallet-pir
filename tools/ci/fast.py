@@ -158,6 +158,13 @@ def plan(packages, paths, *, all_checks=False):
             groups.update(FULL_GROUPS)
             reasons.append(f'{path}: CI tools and workflow contract checks')
             continue
+        if path in ('Cargo.toml', 'Cargo.lock', 'Makefile') or path.startswith('.cargo/'):
+            # Native coverage stays conservative. These inputs do not change
+            # product deployment logic; full qualification still runs it all.
+            helpers.update({'check-tools', 'check-ops-contracts'})
+            groups.update(FULL_GROUPS)
+            reasons.append(f'{path}: workspace native checks and build/tool contracts')
+            continue
         package = owner(packages, path)
         routed = route(path)
         if path.endswith('Cargo.toml') or path == 'Cargo.lock':
@@ -369,8 +376,9 @@ def main():
         futures = []
         before_tests = None
         if selected['helpers'] and not args.compile_only:
+            from helpers import targets
             helper_env = dict(os.environ, OFFLINE='1') if args.offline else os.environ.copy()
-            helpers = pool.submit(run, ['make', '-j4', *selected['helpers']],
+            helpers = pool.submit(run, ['make', '-j4', *targets(selected['helpers'])],
                                   env=helper_env, stage='helpers')
             futures.append(helpers)
             if 'transparent-filter-server' in selected['packages']:

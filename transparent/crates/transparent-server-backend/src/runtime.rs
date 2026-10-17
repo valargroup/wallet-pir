@@ -1043,6 +1043,7 @@ impl RuntimeCache {
         let fallback = match shipped {
             None => false,
             Some(shipped) => {
+                let required = shipped.is_required();
                 let refusal = (key.clone(), shipped.directory().to_path_buf());
                 if self
                     .refused_shipped
@@ -1050,6 +1051,11 @@ impl RuntimeCache {
                     .expect("refusals")
                     .contains(&refusal)
                 {
+                    if required {
+                        return Err(CacheError::Failed(
+                            "required prepared runtime was refused".into(),
+                        ));
+                    }
                     // An admission retry of the operation that refused this
                     // file: already counted, and not loaded again.
                     true
@@ -1062,6 +1068,11 @@ impl RuntimeCache {
                             return Ok((Arc::new(runtime), Produced::Shipped { check_micros }))
                         }
                         Err(error) => {
+                            if required {
+                                return Err(CacheError::Failed(format!(
+                                    "required prepared runtime: {error}"
+                                )));
+                            }
                             let mut refused = self.refused_shipped.lock().expect("refusals");
                             if refused.len() >= REFUSALS_KEPT {
                                 refused.clear();

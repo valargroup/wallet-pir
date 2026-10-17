@@ -37,8 +37,9 @@ use std::path::{Path, PathBuf};
 const FORMAT: &[u8] = b"transparent-runtime-v2/native-two-mask-m29/ipir-1f2aec6/reinspiring-0.1.2";
 // The 8-bit tables' database is stored in the byte kernel's interleaved layout
 // of reinspiring 0.1.3-rc.1 (ipir-sp v0.1.0-rc.7).
-const FORMAT_BYTES: &[u8] =
-    b"transparent-runtime-v3/native-two-mask-p8-g27x1/interleaved-u8/ipir-35069f1/reinspiring-0.1.3-rc.1";
+pub const PREPARED_RUNTIME_FORMAT: &str =
+    "transparent-runtime-v3/native-two-mask-p8-g27x1/interleaved-u8/ipir-35069f1/reinspiring-0.1.3-rc.1";
+const FORMAT_BYTES: &[u8] = PREPARED_RUNTIME_FORMAT.as_bytes();
 
 /// Identity and checksum.
 const HEADER_BYTES: u64 = 64;
@@ -498,15 +499,31 @@ impl DiskCache {
 /// scheme is simply not found, and a loaded one passes every check
 /// [`DiskCache::load`] makes.
 #[derive(Clone, Debug)]
-pub struct ShippedRuntimes(DiskCache);
+pub struct ShippedRuntimes(DiskCache, bool);
 
 impl ShippedRuntimes {
     pub fn new(directory: PathBuf) -> Self {
-        Self(DiskCache {
-            directory,
-            max_bytes: u64::MAX,
-            restore_slots: 1,
-        })
+        Self(
+            DiskCache {
+                directory,
+                max_bytes: u64::MAX,
+                restore_slots: 1,
+            },
+            false,
+        )
+    }
+
+    /// Strict providers never replace a missing or invalid shipped file with
+    /// a locally restored or built runtime. The policy travels with this view
+    /// through prewarm and later query cache misses.
+    pub fn required(directory: PathBuf) -> Self {
+        let mut shipped = Self::new(directory);
+        shipped.1 = true;
+        shipped
+    }
+
+    pub fn is_required(&self) -> bool {
+        self.1
     }
 
     pub fn directory(&self) -> &Path {
