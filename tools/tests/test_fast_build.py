@@ -198,3 +198,26 @@ class FastBuildTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class PublisherCampaignTierTests(unittest.TestCase):
+    def test_repeated_fault_campaigns_keep_full_coverage_and_fast_representatives(self):
+        import json
+        from pathlib import Path
+        root = Path(__file__).resolve().parents[2]
+        slow = json.loads((root / 'tools/ci/slow-tests.json').read_text())['transparent-filter-server']
+        prefix = 'controller::distribution_tests::manager_tests::'
+        self.assertIn(prefix + 'manager_primary_read_failure_at_poll_still_fences_http', slow)
+        self.assertIn(prefix + 'manager_fallback_parse_failure_at_guard_still_fences_http', slow)
+        for name in ('manager_reuses_immutable_transfers_and_serves_through_failed_update',
+                     'manager_persists_invalidation_and_refuses_equal_revision_reenable_after_restart',
+                     'manager_owner_fence_write_failure_still_fences_http',
+                     'manager_restarts_interrupted_staging_and_rejects_superseded_activation',
+                     'manager_checks_inventory_and_required_files_on_unchanged_maps'):
+            self.assertNotIn(prefix + name, slow)
+        import sys
+        sys.path.insert(0, str(root / 'tools/ci'))
+        from full_packages import commands, inventory
+        full = commands('transparent', inventory())
+        self.assertFalse(any('--skip' in command for command in full))
+        self.assertIn('transparent-filter-server', full[-1])

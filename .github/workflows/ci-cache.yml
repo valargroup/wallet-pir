@@ -14,6 +14,9 @@ on:
       - '.cargo/**'
       - .github/actions/rust-setup/action.yml
       - tools/ci/cargo_cache.py
+      - tools/ci/test_matrix.py
+      - tools/ci/test-matrix.json
+      - .github/workflows/ci-full.yml
       - .github/workflows/ci-cache.yml
   schedule:
     - cron: '37 3 * * *'
@@ -54,6 +57,40 @@ jobs:
       - name: Compile hosted feedback units without running tests
         if: steps.setup.outputs.cache-hit != 'true'
         run: python3 tools/ci/fast.py --all --compile-only
+      - name: Report Cargo cache reuse
+        if: always()
+        continue-on-error: true
+        run: python3 tools/ci/cargo_cache.py report
+
+  plan-qualification:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: matrix
+        run: python3 tools/ci/test_matrix.py plan --github-output
+
+  prime-qualification:
+    name: Prime qualification / ${{ matrix.shard }}
+    needs: plan-qualification
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan-qualification.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: setup
+        uses: ./.github/actions/rust-setup
+        with:
+          lane: full-test
+          scope: ${{ matrix.shard }}
+          lookup-only: 'true'
+      - name: Compile qualification targets without attesting tests
+        if: steps.setup.outputs.cache-hit != 'true'
+        run: python3 tools/ci/test_matrix.py compile-only --shard '${{ matrix.shard }}' --output "$RUNNER_TEMP/prime.json"
       - name: Report Cargo cache reuse
         if: always()
         continue-on-error: true
