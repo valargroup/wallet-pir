@@ -3,7 +3,8 @@
 Cargo unifies features for the complete selection. Unit tests and the named
 fast integration targets share that build; campaign targets are never selected.
 Test programs retain their package directory, Cargo environment and existing
-slow-case exclusions. At most three ordinary programs execute together; integration programs run alone.
+slow-case exclusions. At most three ordinary programs execute together; integration programs and the
+filter library run alone.
 """
 import json
 import os
@@ -21,7 +22,7 @@ def test_names(binary, directory, *, ignored=False):
     return {line[:-6] for line in listing.splitlines() if line.endswith(': test')}
 
 
-def execute(selected, *, offline=False, compile_only=False, jobs=3):
+def execute(selected, *, offline=False, compile_only=False, jobs=3, before_tests=None):
     from integration_tests import inventory
     registry = inventory()
     slow = json.loads((ROOT / 'tools/ci/slow-tests.json').read_text())
@@ -79,6 +80,10 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3):
                     test_details=True)
     if compile_only:
         return
+    # Helpers may overlap compilation, but publisher archive preparation needs
+    # the same exclusive CPU window that it has among Rust test programs.
+    if before_tests is not None:
+        before_tests()
     programs = []
     actual_integrations, actual_units = set(), set()
     discovered_units = {name: set() for name in selected}
@@ -107,8 +112,13 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3):
             actual_units.add(identity)
             discovered_units[name].update(names)
         exclusions = [] if integration else list(slow.get(name, {}))
+        # The filter library prepares full archive runtimes; keep its unchanged
+        # cases out of contention with other programs under the 30s case limit.
         programs.append(dict(executable=binary, directory=directory, package=name,
-                             version=package['version'], exclusive=integration, case_count=len(names),
+                             version=package['version'],
+                             exclusive=integration or (name == 'transparent-filter-server'
+                                                       and 'lib' in target['kind']),
+                             case_count=len(names),
                              args=[arg for case in exclusions for arg in ('--skip', case)]))
     if actual_integrations != expected_integrations or expected_units - actual_units:
         raise ValueError(f'fast test executables mismatch: missing_units={sorted(expected_units-actual_units)}, '

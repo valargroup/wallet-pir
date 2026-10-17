@@ -25,6 +25,14 @@ admission (`pir-control`), metrics (`pir-observability`) and the PIR profile
 wallet-libraries' server-only chain adapters (`zakura-server-chain`), which decode
 blocks, count note positions and recover receivers.
 
+The indexer's `receiver_indexer::application` owns refresh orchestration. Its
+`collect` phase reconciles and commits through the concrete chain client and
+store; the returned pass borrows those dependencies until `publish` builds from
+one provider capture and writes files or prepares and activates. Preparation
+failure keeps committed progress for retry. `receiver-directory` configures these
+calls and independently wires the HTTP server, canonical guard and provider feed;
+the guard continues checking served anchors throughout both phases.
+
 ## Node RPC policy
 
 The current indexer source uses wallet-libraries' server-only chain adapter with

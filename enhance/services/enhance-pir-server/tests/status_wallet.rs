@@ -18,7 +18,7 @@ fn native_client_decodes_real_server_two_mask_material() {
     let snapshot = fixture::snapshot(entries, false).unwrap();
     let (g, _) = Generation::prepare(&snapshot, 1, 1, now_ms(), None, backend).unwrap();
     assert_eq!(
-        g.public.len(),
+        g.public().len(),
         enhance_pir::native::public_len(server::COLS)
     );
     let anchor = server::AcceptedAnchor {
@@ -26,7 +26,7 @@ fn native_client_decodes_real_server_two_mask_material() {
         height: snapshot.height,
         hash: snapshot.anchor,
     };
-    let client = server::Client::new(g.manifest.clone(), &g.public, &anchor).unwrap();
+    let client = server::Client::new(g.manifest().clone(), g.public(), &anchor).unwrap();
     for (txid, expected) in fixture::cases(entries, false) {
         let query = client
             .prepare(&txid, Some(snapshot.start), now_ms())
@@ -49,9 +49,9 @@ fn native_client_decodes_real_server_two_mask_material() {
     let mut other_session = a.body.clone();
     other_session[4] ^= 1;
     assert!(g.coefficients(&other_session).is_err());
-    let mut tampered = g.public.to_vec();
+    let mut tampered = g.public().to_vec();
     tampered[0] ^= 1;
-    assert!(server::Client::new(g.manifest.clone(), &tampered, &anchor).is_err());
+    assert!(server::Client::new(g.manifest().clone(), &tampered, &anchor).is_err());
 }
 
 /// Status servers accept a 44-bit dithered selection in the same envelope as
@@ -62,10 +62,10 @@ fn native_server_answers_dithered_queries_in_the_same_envelope() {
     use enhance_pir::native as n;
     let snapshot = fixture::snapshot(32, false).unwrap();
     let (g, _) = Generation::prepare(&snapshot, 1, 1, now_ms(), None, MatvecBackend::Cpu).unwrap();
-    let setup = server::native_packing_setup(&g.manifest.network, &g.manifest.salt);
-    let masks = server::native_query_masks(&g.manifest.network, &g.manifest.salt);
+    let setup = server::native_packing_setup(&g.manifest().network, &g.manifest().salt);
+    let masks = server::native_query_masks(&g.manifest().network, &g.manifest().salt);
     let mut header = server::QUERY_MAGIC.to_vec();
-    header.extend(g.manifest.id());
+    header.extend(g.manifest().id());
     header.extend([7u8; 16]);
     assert_eq!(header.len(), server::HEADER_BYTES);
     for row in [0, 1_234, server::ROWS - 1] {
@@ -90,7 +90,7 @@ fn native_server_answers_dithered_queries_in_the_same_envelope() {
         );
         let decoded = n::decode_cols(
             &secret,
-            &g.public,
+            g.public(),
             &response[server::HEADER_BYTES..],
             server::COLS,
         )

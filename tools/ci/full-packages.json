@@ -1,7 +1,8 @@
 {
   "shared": [
     "pir-control",
-    "pir-observability"
+    "pir-observability",
+    "pir-runtime"
   ],
   "enhance": [
     "enhance-pir",

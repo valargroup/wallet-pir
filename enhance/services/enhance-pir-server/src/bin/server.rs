@@ -1,13 +1,9 @@
 //! Enhance PIR coordinator and worker entrypoint.
 use clap::{Parser, Subcommand};
 use enhance_pir_server::{
-    control::{Group, Ledger, PlacementPolicy, Replica},
-    coordinator::Coordinator,
-    ingest::EnhanceJournal,
-    worker::Worker,
-    zakura::ZakuraClient,
+    application::load_inventory, control::PlacementPolicy, coordinator::Coordinator,
+    ingest::EnhanceJournal, worker::Worker, zakura::ZakuraClient,
 };
-use serde::Deserialize;
 use std::{net::SocketAddr, path::PathBuf, time::Duration};
 
 #[derive(Parser)]
@@ -166,57 +162,6 @@ enum Command {
         #[arg(long, default_value_t = 4096)]
         capacity_burst_rows: u64,
     },
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Inventory {
-    #[serde(default)]
-    groups: Vec<InventoryGroup>,
-    #[serde(default)]
-    workers: Vec<InventoryReplica>,
-}
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct InventoryGroup {
-    name: String,
-    replicas: Vec<InventoryReplica>,
-}
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct InventoryReplica {
-    name: String,
-    url: String,
-}
-
-fn load_inventory(
-    path: &std::path::Path,
-) -> Result<Vec<Group>, Box<dyn std::error::Error + Send + Sync>> {
-    let config: Inventory = serde_json::from_slice(&std::fs::read(path)?)?;
-    Ok(config
-        .groups
-        .into_iter()
-        .chain(config.workers.into_iter().map(|r| InventoryGroup {
-            name: format!("pool:{}", r.name),
-            replicas: vec![r],
-        }))
-        .enumerate()
-        .map(|(sequence, g)| Group {
-            placement_policy: Default::default(),
-            id: g.name,
-            sequence: sequence as u64,
-            replicas: g
-                .replicas
-                .into_iter()
-                .map(|r| Replica {
-                    name: r.name,
-                    url: r.url.trim_end_matches('/').into(),
-                    incarnation: String::new(),
-                    ledger: Ledger::default(),
-                })
-                .collect(),
-        })
-        .collect())
 }
 
 #[tokio::main]
@@ -511,151 +456,35 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             let task = tokio::spawn(async move {
                 axum::serve(tokio::net::TcpListener::bind(listen).await?, routes).await
             });
-            let mut journal = EnhanceJournal::open(&data_dir)?;
+            let journal = EnhanceJournal::open(&data_dir)?;
             let rpc = zakura_cookie
                 .map(|cookie| ZakuraClient::from_cookie_file(&zakura_rpc_url, &cookie))
                 .transpose()?;
             let prevouts = enhance_pir_server::zakura::Prevouts::new(prevout_cache_outputs);
-            loop {
-                if let Err(error) = coordinator.reconcile().await {
-                    tracing::error!(%error, "publication recovery blocked");
-                    tokio::time::sleep(Duration::from_secs(poll_seconds)).await;
-                    continue;
-                }
-                // Capacity registration is independent of journal advancement. A bad
-                // or unavailable addition must not stop serving/publishing on the
-                // already registered fleet. The infrastructure writer replaces this
-                // file atomically only after provisioning its replica pair.
-                let inventory_result = match load_inventory(&worker_config) {
-                    Ok(mut groups) => {
-                        for group in &mut groups {
-                            group.placement_policy = placement_policy;
-                        }
-                        coordinator.reconcile_inventory(groups).await
+            enhance_pir_server::application::run(
+                enhance_pir_server::application::Config {
+                    worker_config,
+                    placement_policy,
+                    pool_placement,
+                    pool_policy,
+                    frontier_replicas,
+                    capacity_policy,
+                    poll: Duration::from_secs(poll_seconds),
+                },
+                coordinator,
+                journal,
+                match rpc {
+                    Some(rpc) => {
+                        enhance_pir_server::application::Source::Canonical { rpc, prevouts }
                     }
-                    Err(error) => Err(error.to_string()),
-                };
-                if let Err(error) = inventory_result {
-                    tracing::error!(%error, "inventory reconciliation deferred");
-                }
-                if pool_placement {
-                    let policy = pool_policy
-                        .as_ref()
-                        .map(|path| {
-                            std::fs::read(path)
-                                .map_err(|e| e.to_string())
-                                .and_then(|bytes| {
-                                    serde_json::from_slice(&bytes).map_err(|e| e.to_string())
-                                })
-                        })
-                        .transpose();
-                    if let Err(error) = policy.and_then(|p| {
-                        coordinator.configure_pool(frontier_replicas, p.unwrap_or_default())
-                    }) {
-                        tracing::error!(%error,"pool policy waiting for inventory or durable decisions");
-                        tokio::time::sleep(Duration::from_secs(poll_seconds)).await;
-                        continue;
-                    }
-                }
-                let result: Result<(), Box<dyn std::error::Error + Send + Sync>> = async {
-                    let (height, hash) = if let Some(rpc) = &rpc {
-                        let tip = rpc.tip_height().await?;
-                        let mut ancestor = None;
-                        for block in journal.records().blocks().iter().rev() {
-                            if block.height <= tip
-                                && rpc.block_hash_display(block.height).await? == block.hash
-                            {
-                                ancestor =
-                                    Some((block.height, block.first_position + block.action_count));
-                                break;
-                            }
-                        }
-                        if journal.committed_height() != ancestor.map(|a| a.0) {
-                            coordinator
-                                .revoke_after(ancestor.map_or(0, |a| a.1))
-                                .await?;
-                            journal.rewind_to_height(ancestor.map(|a| a.0))?;
-                        }
-                        let next = journal
-                            .committed_height()
-                            .map_or(enhance_pir::ACTIVATION_HEIGHT, |h| h + 1);
-                        for height in next..=tip {
-                            journal.append_block(
-                                &enhance_pir_server::zakura::block(rpc, height, &prevouts).await?,
-                            )?;
-                        }
-                        journal
-                            .highest_committed()
-                            .ok_or("empty canonical journal")?
-                    } else {
-                        let target = if journal.tree_size() == 0 {
-                            fixture_records
-                        } else {
-                            journal
-                                .tree_size()
-                                .checked_add(fixture_append_records)
-                                .ok_or("fixture overflow")?
-                        };
-                        if target == 0 || target > 23 * 32768 * 33 {
-                            return Err("fixture outside fleet coverage".into());
-                        }
-                        while journal.tree_size() < target {
-                            let start = journal.tree_size();
-                            let count = (target - start).min(4096);
-                            let records: Vec<_> = (start..start + count)
-                                .map(|p| {
-                                    let mut r = vec![0u8; enhance_pir::RECORD_BYTES];
-                                    r[..8].copy_from_slice(&p.to_le_bytes());
-                                    r
-                                })
-                                .collect();
-                            journal.append_fixture_block(&records)?;
-                        }
-                        journal.highest_committed().ok_or("empty fixture")?
-                    };
-                    coordinator.observe_capacity(
-                        journal.tree_size(),
-                        std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)?
-                            .as_secs(),
-                        capacity_policy,
-                    )?;
-                    if coordinator
-                        .manifest()
-                        .await
-                        .is_some_and(|m| m.anchor_height == height && m.anchor_block_hash == hash)
-                    {
-                        return Ok(());
-                    }
-                    let verify_hash = hash.clone();
-                    coordinator
-                        .publish_checked(journal.records(), height, hash, || async {
-                            if let Some(rpc) = &rpc {
-                                if rpc
-                                    .block_hash_display(height)
-                                    .await
-                                    .map_err(|e| e.to_string())?
-                                    != verify_hash
-                                {
-                                    return Err(
-                                        "canonical anchor changed during preparation".into()
-                                    );
-                                }
-                            }
-                            Ok(())
-                        })
-                        .await?;
-                    Ok(())
-                }
-                .await;
-                if let Err(error) = result {
-                    tracing::error!(%error, "ingestion/publication blocked");
-                }
-                if task.is_finished() {
-                    return Err("HTTP server stopped".into());
-                }
-                tokio::time::sleep(Duration::from_secs(poll_seconds)).await;
-            }
+                    None => enhance_pir_server::application::Source::Fixture {
+                        records: fixture_records,
+                        append_records: fixture_append_records,
+                    },
+                },
+                task,
+            )
+            .await?;
         }
     }
     Ok(())

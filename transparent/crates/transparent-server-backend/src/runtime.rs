@@ -55,6 +55,7 @@ use crate::metrics::Metrics;
 use crate::shardset::{SegmentSource, Table};
 use ipir_sp::server::IPIRServer;
 use ipir_sp::YpirSchemeParams;
+use pir_runtime::evaluation::PreparedDatabase;
 use rayon::prelude::*;
 use reinspiring::native_kernel::PreparedU16Query;
 use sha2::{Digest, Sha256};
@@ -80,13 +81,13 @@ pub(crate) fn database_server(
     shared: &SharedParams,
     coefficients: impl Iterator<Item = u16>,
     transposed: bool,
-) -> IPIRServer<u16> {
+) -> PreparedDatabase {
     let transport = shared.transport.clone().expect("a 16-bit table");
     #[cfg(feature = "portable-kernel")]
     let server = IPIRServer::<u16>::new(transport, coefficients, transposed, true);
     #[cfg(not(feature = "portable-kernel"))]
     let server = IPIRServer::<u16>::new_auto_kernel(transport, coefficients, transposed, true);
-    server
+    PreparedDatabase::new(server)
 }
 
 /// The first-dimension scan shape for one 16-bit table: full 16-bit plaintexts, one
@@ -96,12 +97,9 @@ pub(crate) fn database_server(
 /// dithered query; the 49 here only keeps the shape, and with it every runtime
 /// disk-cache key, what it was before dithered queries.
 pub fn transport_params(rows: u64, row_bytes: u32) -> Result<YpirSchemeParams, String> {
-    let (_, mut params) = ipir_sp::params_for_simplepir_profile(
-        rows,
-        row_bytes as u64 * 8,
-        ipir_sp::SimplePirProfile::P16Q48,
-    )
-    .map_err(|error| error.to_string())?;
+    let mut params = pir_runtime::params::p16q48(rows, row_bytes as u64 * 8)?
+        .ypir()
+        .clone();
     params.query_bits = native::QUERY_BITS;
     params.q_prime_1 = 1 << native::RESPONSE_BITS;
     Ok(params)
@@ -414,7 +412,7 @@ fn sample_row(rows: &[u8], row_bytes: usize, table_rows: usize) -> usize {
 /// A runtime's encoded database.
 pub(crate) enum Database {
     /// A 16-bit table's coefficients, scanned by ipir-sp's server.
-    Wide(IPIRServer<u16>),
+    Wide(PreparedDatabase),
     /// An 8-bit table's bytes, one per coefficient, in the byte kernel's
     /// interleaved layout ([`interleave`]).
     Bytes(Vec<u8>),
@@ -1432,6 +1430,21 @@ impl RuntimeCache {
 
 #[cfg(test)]
 pub(crate) mod tests {
+
+    /// The scan shape keys every prepared runtime and disk cache entry. The
+    /// digest was captured on the base commit before the shared runtime
+    /// extraction; it must never change.
+    #[test]
+    fn transport_params_are_pinned() {
+        let shapes = [(2048, 4096), (4096, 4096), (65536, 4096)]
+            .map(|(rows, row_bytes)| super::transport_params(rows, row_bytes).unwrap());
+        assert_eq!(
+            hex::encode(<sha2::Sha256 as sha2::Digest>::digest(
+                serde_json::to_vec(&shapes).unwrap()
+            )),
+            "d270081346ced7386c22ffc61e3b504090e9951242f5fa5b3e1598eac2c6ee48"
+        );
+    }
 
     #[test]
     fn runtime_builds_run_in_their_own_smaller_pool() {

@@ -11,6 +11,23 @@ resident serving packing objects in this mode. See the
 [rollout evidence](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/enhance/evidence/architecture2-2026-09-24/README.md) and
 [qualification](qualification.md) for measured limits and outstanding gates.
 
+## Ingestion application
+
+`enhance_pir_server::application` owns the coordinator's polling loop, recovery,
+inventory reconciliation and canonical or isolated-fixture ingestion. `collect`
+revokes before journal rewind and commits validated records independently of
+publication. Its returned pass borrows the source, journal and coordinator;
+`publish` observes capacity and uses the existing checked publication operation,
+including canonical anchor revalidation before activation. Failed preparation
+leaves the journal available for retry or restart. The executable configures the
+source and listeners and calls this application API.
+
+Status already owns observation and publication in the application's
+`status::source` and `status::publisher`: source checkpoints remain a cache,
+observations carry their original freshness, and failed preparation cannot grant
+serving authority. Serving packages continue to consume prepared publications
+without depending on ingestion or the chain reader.
+
 ## Data and query path
 
 Each commitment-tree position identifies a 653-byte suffix record. There are
@@ -464,6 +481,21 @@ observation (`status::source`) and publication (`status::publisher`), and the
 `enhance-pir-server` and `status-pir` command lines; ingestion-dependent tests live
 there. `tools/ci/boundary.py` enforces these rules for every dependency kind and
 for resolved workspace and standalone graphs.
+
+Raw PIR integration that Enhance shares with Status or Transparent lives in
+`shared/pir-runtime`: the P16Q48 profile parameters, packing-key decoding and
+response packing (opaque `PackingSetup`, `PreparedPacking` and `PackingKeys`
+handles), intermediate accumulation and streaming stored coefficients into an
+opaque `PreparedDatabase` used by Enhance and Status. Transparent retains its
+P16 adapter, but all current table variants select P8; it is not counted as an
+active P16 consumer. The shared loader
+rejects incomplete reads and constructors that leave coefficients unconsumed;
+accumulation validates the entire contribution before changing its destination.
+Status keeps digest-based block reuse while shared packing owns the matrices. Preparation, evaluation and
+packing stay separate calls, so workers evaluate and the packing router or
+coordinator packs. Record layouts, framing, session checks, setup seeds and the
+native profile stay in `enhance-serving` and `status-serving`; Status takes its
+modulus from `enhance-serving`.
 
 ## Validation and deployment
 

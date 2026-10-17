@@ -480,3 +480,136 @@ async fn canonical_cli_ingests_rpc_rewinds_reorg_and_restarts_without_duplicatio
         worker.abort();
     }
 }
+
+/// The application commits independently of remote preparation refusal. Exercise
+/// collection/restart/reorg directly without duplicating cold-runtime qualification;
+/// the canonical CLI case above retains successful publication and encrypted recovery.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn application_collection_commits_survive_preparation_refusal_restart_and_reorg() {
+    use enhance_pir_server::{
+        application::{collect, Source},
+        capacity,
+        control::{Group, Ledger, Replica},
+        coordinator::Coordinator,
+        ingest::EnhanceJournal,
+        zakura::{Prevouts, ZakuraClient},
+    };
+    let tx = hex::decode(include_str!("fixtures/ironwood-fee-expiry.hex").trim()).unwrap();
+    let state = Rpc {
+        blocks: Arc::new(vec![
+            zakura_server_chain::testing::block_from_raw(&[tx.clone()], 0),
+            zakura_server_chain::testing::block_from_raw(&[tx], 1),
+        ]),
+        transactions: Arc::new(HashMap::new()),
+        selected: Arc::new(AtomicUsize::new(0)),
+        calls: Arc::new(AtomicUsize::new(0)),
+        tree_size: Arc::new(AtomicUsize::new(2)),
+    };
+    let (rpc_url, rpc_task) = serve(
+        Router::new()
+            .route("/", post(rpc))
+            .with_state(state.clone()),
+    )
+    .await;
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(root.path().join("cookie"), "test:test").unwrap();
+    let source = Source::Canonical {
+        rpc: ZakuraClient::from_cookie_file(&rpc_url, &root.path().join("cookie")).unwrap(),
+        prevouts: Prevouts::new(100),
+    };
+    let refuse = Arc::new(AtomicBool::new(true));
+    let mut workers = Vec::new();
+    let mut replicas = Vec::new();
+    for i in 0..2 {
+        let (worker_url, worker_task) = serve(
+            Worker::open(&root.path().join(format!("worker-{i}")))
+                .unwrap()
+                .router()
+                .layer(axum::middleware::from_fn({
+                    let refuse = refuse.clone();
+                    move |request: axum::extract::Request, next: axum::middleware::Next| {
+                        let refuse = refuse.clone();
+                        async move {
+                            if request.uri().path() == "/internal/prepare"
+                                && refuse.load(Ordering::SeqCst)
+                            {
+                                return axum::response::IntoResponse::into_response(
+                                    StatusCode::SERVICE_UNAVAILABLE,
+                                );
+                            }
+                            next.run(request).await
+                        }
+                    }
+                })),
+        )
+        .await;
+        workers.push(worker_task);
+        replicas.push(Replica {
+            name: format!("r{i}"),
+            url: worker_url,
+            incarnation: String::new(),
+            ledger: Ledger::default(),
+        });
+    }
+    let groups = vec![Group {
+        placement_policy: Default::default(),
+        id: "g0".into(),
+        sequence: 0,
+        replicas,
+    }];
+    let coordinator = Coordinator::open(&root.path().join("control"), groups.clone()).unwrap();
+    let mut journal = EnhanceJournal::open(root.path()).unwrap();
+    let collected = collect(&mut journal, &coordinator, &source).await.unwrap();
+    assert!(
+        coordinator.manifest().await.is_none(),
+        "collection does not activate"
+    );
+    assert!(collected
+        .publish(capacity::Policy::default())
+        .await
+        .is_err());
+    assert_eq!(
+        journal.tree_size(),
+        2,
+        "preparation failure preserves commits"
+    );
+    assert!(coordinator.manifest().await.is_none());
+    // Compare records to the frozen independent byte oracle, not producer output.
+    let expected =
+        hex::decode(include_str!("fixtures/ironwood-canonical-record-0.hex").trim()).unwrap();
+    assert_eq!(
+        journal.records().read_records(0, 1).unwrap(),
+        expected[84..]
+    );
+    // Drain the refused candidate before restart. Successful cold preparation and
+    // encrypted recovery remain covered by the unchanged canonical CLI case above;
+    // this direct API case bounds collection/refusal/recovery independently of it.
+    coordinator.reconcile().await.unwrap();
+    drop(journal);
+    drop(coordinator);
+    let mut journal = EnhanceJournal::open(root.path()).unwrap();
+    let coordinator = Coordinator::open(&root.path().join("control"), groups).unwrap();
+    coordinator.reconcile().await.unwrap();
+    drop(collect(&mut journal, &coordinator, &source).await.unwrap());
+    assert_eq!(journal.tree_size(), 2);
+    assert_eq!(journal.highest_committed().unwrap().1, state.blocks[0].1);
+    // Reorg plus invalid source completeness must fail after the durable rewind.
+    state.selected.store(1, Ordering::SeqCst);
+    state.tree_size.store(3, Ordering::SeqCst);
+    assert!(collect(&mut journal, &coordinator, &source).await.is_err());
+    assert_eq!(journal.tree_size(), 0);
+    assert!(journal.highest_committed().is_none());
+    // The next source pass can recover; it must never append duplicate positions.
+    state.tree_size.store(2, Ordering::SeqCst);
+    drop(collect(&mut journal, &coordinator, &source).await.unwrap());
+    assert_eq!(journal.tree_size(), 2);
+    assert_eq!(journal.highest_committed().unwrap().1, state.blocks[1].1);
+    assert!(
+        coordinator.manifest().await.is_none(),
+        "collection cannot activate"
+    );
+    for worker in workers {
+        worker.abort();
+    }
+    rpc_task.abort();
+}

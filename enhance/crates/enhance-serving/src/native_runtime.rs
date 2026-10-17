@@ -127,7 +127,7 @@ impl NativePacking {
 
 /// Build public unit hint contributions using exact lifted native-ring products.
 pub fn hint(
-    server: &ipir_sp::IPIRServer<u16>,
+    server: &pir_runtime::evaluation::PreparedDatabase,
     setup: &[Vec<u64>],
 ) -> Result<Vec<CrsBlock>, String> {
     let rows = server.params().db_rows;

@@ -6,8 +6,9 @@ use crate::matvec::MatvecConfig;
 use crate::types::{DatabaseId, DatabaseLayout};
 use crate::wire::{crs_encoded_len, write_crs_blocks};
 use inspiring::{InspiringError, RlweParams};
-use ipir_sp::server::{CrsBlock, IPIRServer};
+use ipir_sp::server::CrsBlock;
 use ipir_sp::{IPIRSimpleQuery, YpirSchemeParams};
+use pir_runtime::evaluation::PreparedDatabase;
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File};
 use std::io::{self, BufReader, Read};
@@ -43,36 +44,7 @@ pub fn deserialize_first_dim_query(
 /// matrix-vector product. Inputs are required to be canonical residues so a
 /// corrupt worker cannot smuggle an overflow or a second representation of the
 /// same value across the protocol boundary.
-pub fn add_intermediate_assign_mod(
-    accumulator: &mut [u64],
-    contribution: &[u64],
-    modulus: u64,
-) -> Result<(), InspiringError> {
-    if modulus < 2 {
-        return Err(InspiringError::PreprocessMismatch(
-            "intermediate modulus must be at least two".to_string(),
-        ));
-    }
-    if accumulator.len() != contribution.len() {
-        return Err(InspiringError::LweShape(format!(
-            "intermediate widths differ: {} and {}",
-            accumulator.len(),
-            contribution.len()
-        )));
-    }
-
-    for (left, right) in accumulator.iter_mut().zip(contribution) {
-        if *left >= modulus || *right >= modulus {
-            return Err(InspiringError::PreprocessMismatch(
-                "intermediate coefficient is not reduced modulo q".to_string(),
-            ));
-        }
-        let sum = u128::from(*left) + u128::from(*right);
-        *left = (sum % u128::from(modulus)) as u64;
-    }
-
-    Ok(())
-}
+pub use pir_runtime::evaluation::add_intermediate_assign_mod;
 
 /// Add one shard's partial CRS/hint contribution into the global CRS.
 ///
@@ -167,7 +139,7 @@ pub struct ShardRuntime {
     pub shard_id: u64,
     pub query_row_start: usize,
     pub rows_sha256: String,
-    pub server: IPIRServer<u16>,
+    pub server: PreparedDatabase,
 }
 
 /// Offline preparation owns CRS only until it has been durably persisted.
@@ -498,7 +470,8 @@ impl PreparedShard {
             .map_err(|error| {
                 tracing::error!(%error, "matrix-vector preparation failed");
                 InspiringError::Internal("matrix-vector preparation failed")
-            })?;
+            })
+            .map(PreparedDatabase::new)?;
         let first_poly = query_row_start / rlwe.d;
         let poly_count = layout.shard_rows / rlwe.d;
         let setup = global_setup
@@ -510,9 +483,7 @@ impl PreparedShard {
         let crs_blocks = crate::runtime::native_runtime::hint(&server, setup)
             .map_err(InspiringError::PreprocessMismatch)?;
         #[cfg(not(feature = "native-reinspiring"))]
-        let crs_blocks = server
-            .perform_offline_precomputation_simplepir(rlwe, setup)
-            .crs_blocks;
+        let crs_blocks = server.hint(rlwe, setup);
 
         Ok(Self {
             runtime: ShardRuntime {
@@ -576,11 +547,10 @@ impl PreparedShard {
     }
 }
 
-/// The upstream constructor requires an infallible iterator of exactly the
-/// declared size. On read failure, finish with placeholders, then discard the
-/// server. No partially read database is ever returned to a caller.
+/// No partially read database is ever returned to a caller; see
+/// [`pir_runtime::evaluation::build_from_le_u16`].
 #[cfg(test)]
-fn read_database(reader: impl Read, params: YpirSchemeParams) -> io::Result<IPIRServer<u16>> {
+fn read_database(reader: impl Read, params: YpirSchemeParams) -> io::Result<PreparedDatabase> {
     read_database_with_backend(reader, params, MatvecConfig::default()).map_err(io::Error::other)
 }
 
@@ -588,29 +558,16 @@ fn read_database_with_backend(
     mut reader: impl Read,
     params: YpirSchemeParams,
     backend: MatvecConfig,
-) -> Result<IPIRServer<u16>, LoadError> {
+) -> Result<PreparedDatabase, LoadError> {
     let count = params
         .db_rows
         .checked_mul(params.db_cols)
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "database size overflow"))?;
-    let mut failure = None;
-    let coefficients = (0..count).map(|_| {
-        if failure.is_some() {
-            return 0;
-        }
-        let mut bytes = [0; 2];
-        match reader.read_exact(&mut bytes) {
-            Ok(()) => u16::from_le_bytes(bytes),
-            Err(e) => {
-                failure = Some(e);
-                0
-            }
-        }
-    });
-    let server = backend.server(params, coefficients, true);
-    if let Some(e) = failure {
-        return Err(e.into());
-    }
+    let server = pir_runtime::evaluation::build_from_le_u16(&mut reader, count, |coefficients| {
+        backend
+            .server(params, coefficients, true)
+            .map(PreparedDatabase::new)
+    })?;
     let server = server.map_err(LoadError::Backend)?;
     let mut trailing = [0];
     if reader.read(&mut trailing)? != 0 {

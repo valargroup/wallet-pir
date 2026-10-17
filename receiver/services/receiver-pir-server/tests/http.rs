@@ -329,6 +329,28 @@ async fn health_and_metrics_follow_the_serving_contract() {
         .unwrap();
     assert!(metrics.contains("pir_http_arrivals_total{endpoint=\"receiver_init\"} 1"));
     assert!(metrics.contains("pir_http_arrivals_total{endpoint=\"receiver_health\"} 1"));
+    for family in [
+        "arrivals_total",
+        "inflight",
+        "cancelled_total",
+        "request_body_bytes_total",
+        "response_body_bytes_total",
+        "body_errors_total",
+        "incomplete_responses_total",
+    ] {
+        assert!(
+            metrics.contains(&format!(
+                "pir_http_{family}{{endpoint=\"receiver_health\"}}"
+            )),
+            "{family}"
+        );
+    }
+    assert!(
+        metrics.contains("pir_http_responses_total{endpoint=\"receiver_health\",code=\"2xx\"} 1")
+    );
+    assert!(metrics
+        .contains("pir_http_duration_seconds_bucket{endpoint=\"receiver_health\",le=\"0.001\"}"));
+    assert!(metrics.contains("pir_http_duration_seconds_count{endpoint=\"receiver_health\"} 1"));
     assert!(!metrics.contains(&hex::encode(revision)));
     server.task.abort();
 }
