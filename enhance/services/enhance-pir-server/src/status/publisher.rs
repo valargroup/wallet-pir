@@ -937,7 +937,7 @@ mod query_transport_tests {
             rpc: rpc.clone(),
             active,
         };
-        let checkpoint_before = std::fs::metadata(&checkpoint).unwrap().modified().unwrap();
+        let checkpoint_before = std::fs::read(&checkpoint).unwrap();
         let authority_before = std::fs::read(root.path().join("authority/authority.json")).unwrap();
         let (observations, source_progress) = watch::channel(None);
         let mut input = ObservationTask {
@@ -986,8 +986,10 @@ mod query_transport_tests {
                 .expect("observation continues during prepare");
             assert!(progressed.observed_ms > manifest.observed_ms);
             assert_eq!(progressed.snapshot.digest, observed.snapshot.digest);
-            assert!(
-                std::fs::metadata(&checkpoint).unwrap().modified().unwrap() > checkpoint_before
+            assert_eq!(
+                std::fs::read(&checkpoint).unwrap(),
+                checkpoint_before,
+                "unchanged source tip preserves the committed checkpoint"
             );
             assert!(!std::fs::read(&checkpoint).unwrap().is_empty());
             assert_eq!(
