@@ -1906,13 +1906,26 @@ print(json.dumps({'ok':True,'upstreams':[],'workers':{},'retained_publication':b
 
         // A preparation for an epoch an invalidation has since moved past
         // stops before its first segment, and nothing is offered.
+        // Candidate inputs are immutable. Link them into a private tree and
+        // omit runtime caches, rather than copying large files just to delete
+        // them. Fault injection below unlinks a table before changing it.
+        fn candidate_inputs(source: &Path, target: &Path) {
+            std::fs::create_dir(target).unwrap();
+            for entry in std::fs::read_dir(source).unwrap() {
+                let entry = entry.unwrap();
+                let kind = entry.file_type().unwrap();
+                if kind.is_dir() {
+                    candidate_inputs(&entry.path(), &target.join(entry.file_name()));
+                } else {
+                    assert!(kind.is_file());
+                    if entry.path().extension().is_none_or(|ext| ext != "runtime") {
+                        std::fs::hard_link(entry.path(), target.join(entry.file_name())).unwrap();
+                    }
+                }
+            }
+        }
         let candidate = config.publication_root.join("candidate-superseded");
-        std::process::Command::new("cp")
-            .arg("-a")
-            .arg(&second.directory)
-            .arg(&candidate)
-            .status()
-            .unwrap();
+        candidate_inputs(&second.directory, &candidate);
         for name in runtime_files(&candidate).keys() {
             std::fs::remove_file(candidate.join(name)).unwrap();
         }
@@ -1927,15 +1940,10 @@ print(json.dumps({'ok':True,'upstreams':[],'workers':{},'retained_publication':b
 
         // A candidate whose table does not verify is not published.
         let epoch = authority.0.epoch.load(Ordering::Acquire);
-        // A new candidate whose tables are new files the last verified set
-        // does not vouch for.
+        // Replacing a linked directory table makes a new file that the last
+        // verified set does not vouch for.
         let candidate = config.publication_root.join("candidate-corrupt");
-        std::process::Command::new("cp")
-            .arg("-a")
-            .arg(&second.directory)
-            .arg(&candidate)
-            .status()
-            .unwrap();
+        candidate_inputs(&second.directory, &candidate);
         let mut corrupted = 0;
         for entry in std::fs::read_dir(&candidate)
             .unwrap()
@@ -1949,6 +1957,14 @@ print(json.dumps({'ok':True,'upstreams':[],'workers':{},'retained_publication':b
             bytes[0] ^= 1;
             std::fs::remove_file(&table).unwrap();
             std::fs::write(&table, bytes).unwrap();
+            let original = second
+                .directory
+                .join(entry.file_name())
+                .join("directory.0.bin");
+            assert_ne!(
+                std::fs::metadata(&table).unwrap().ino(),
+                std::fs::metadata(original).unwrap().ino()
+            );
             corrupted += 1;
         }
         assert!(corrupted > 0);
@@ -1960,12 +1976,19 @@ print(json.dumps({'ok':True,'upstreams':[],'workers':{},'retained_publication':b
         // A runtime that cannot be written is reported, not fatal: the
         // candidate is still offered and workers build it.
         let unwritable = config.publication_root.join("candidate-unwritable");
-        std::process::Command::new("cp")
-            .arg("-a")
-            .arg(&second.directory)
-            .arg(&unwritable)
-            .status()
-            .unwrap();
+        // Permission failure is independent of archive size. Publish a real
+        // recent-only candidate so this negative case does not rebuild the
+        // large archive runtimes already checked above.
+        let mut recent_only = options;
+        recent_only.output = unwritable.clone();
+        recent_only.archive_geometry = None;
+        recent_only.recent_from = None;
+        publication::publish(
+            &recent_only,
+            &*store.lock().await,
+            BlockHash::from_internal_bytes([0; 32]),
+        )
+        .unwrap();
         for name in runtime_files(&unwritable).keys() {
             std::fs::remove_file(unwritable.join(name)).unwrap();
         }
