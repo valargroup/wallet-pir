@@ -27,7 +27,8 @@ BINARIES = {
     # Tiered txid display proof of concept beside history; deployed only by
     # `wallet-pir-deploy.py txid-display-*` (transparent/ops/lib/txid_display_poc.py).
     'transparent-txid-display': ['transparent-txid-server', 'txid-control', 'txid-inventory',
-                                 'txid-display-controller', 'transparent-event-ingest'],
+                                 'txid-display-controller', 'transparent-event-ingest',
+                                 'txid-quality-canary'],
     # Status roles and controller, from the native target like
     # `enhance-pir-native`; ops/scripts/wallet-pir-deploy.py renders its units.
     'status-pir': ['status-pir'],

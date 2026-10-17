@@ -474,9 +474,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 coordinator,
                 journal,
                 match rpc {
-                    Some(rpc) => {
-                        enhance_pir_server::application::Source::Canonical { rpc, prevouts }
-                    }
+                    Some(rpc) => enhance_pir_server::application::Source::Canonical {
+                        rpc,
+                        prevouts: Box::new(prevouts),
+                    },
                     None => enhance_pir_server::application::Source::Fixture {
                         records: fixture_records,
                         append_records: fixture_append_records,
