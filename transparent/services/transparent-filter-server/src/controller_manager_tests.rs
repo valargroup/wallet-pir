@@ -492,6 +492,13 @@ async fn manager_refuses_changed_holdings_on_an_unchanged_map() {
 // A validated withdrawal must reach the owner even when any one control-record
 // write fails. Run the same probe at the ordinary and both activation polls.
 async fn control_write_failure(pause_at: Option<u32>, failed_record: &str) {
+    let failed_records = if failed_record == "both" {
+        vec!["publisher-high-water.tmp", "revocation-floor.tmp"]
+    } else if failed_record == "malformed" {
+        vec!["revocation-floor.json"]
+    } else {
+        vec![failed_record]
+    };
     let root = tempfile::tempdir().unwrap();
     let (directory, set) = publication(root.path());
     prepare_recent(&directory, &set);
@@ -508,6 +515,9 @@ async fn control_write_failure(pause_at: Option<u32>, failed_record: &str) {
     let live = follow.live().unwrap();
     let (origin, task) = worker(live.clone()).await;
     query(&origin, &set).await;
+    if failed_record == "both" {
+        owner.0.distribution_revision.store(99, Ordering::Release);
+    }
     owner.0.distribution_revision.fetch_add(1, Ordering::AcqRel);
     let result = if let Some(at) = pause_at {
         std::fs::write(&tls.control, format!("pause-current-{at}")).unwrap();
@@ -516,10 +526,16 @@ async fn control_write_failure(pause_at: Option<u32>, failed_record: &str) {
             (follow, result)
         });
         entered(&tls).await;
-        if failed_record.ends_with(".json") {
-            std::fs::remove_file(state.join(failed_record)).unwrap();
+        for record in &failed_records {
+            if failed_record == "malformed" {
+                std::fs::write(state.join(record), b"{").unwrap();
+                continue;
+            }
+            if record.ends_with(".json") {
+                std::fs::remove_file(state.join(record)).unwrap();
+            }
+            std::fs::create_dir(state.join(record)).unwrap();
         }
-        std::fs::create_dir(state.join(failed_record)).unwrap();
         owner.0.distribution_revision.fetch_add(1, Ordering::AcqRel);
         // Exercise withdrawal alone at the first guard and an applicable range
         // while the publication remains eligible at the final guard.
@@ -533,10 +549,16 @@ async fn control_write_failure(pause_at: Option<u32>, failed_record: &str) {
         follow = returned;
         result
     } else {
-        if failed_record.ends_with(".json") {
-            std::fs::remove_file(state.join(failed_record)).unwrap();
+        for record in &failed_records {
+            if failed_record == "malformed" {
+                std::fs::write(state.join(record), b"{").unwrap();
+                continue;
+            }
+            if record.ends_with(".json") {
+                std::fs::remove_file(state.join(record)).unwrap();
+            }
+            std::fs::create_dir(state.join(record)).unwrap();
         }
-        std::fs::create_dir(state.join(failed_record)).unwrap();
         owner.0.withdrawn.store(true, Ordering::Release);
         owner.0.invalidated_from.store(2, Ordering::Release);
         follow.poll_once().await
@@ -557,7 +579,13 @@ async fn control_write_failure(pause_at: Option<u32>, failed_record: &str) {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::CONFLICT);
-    std::fs::remove_dir(state.join(failed_record)).unwrap();
+    for record in &failed_records {
+        if failed_record == "malformed" {
+            std::fs::remove_file(state.join(record)).unwrap();
+        } else {
+            std::fs::remove_dir(state.join(record)).unwrap();
+        }
+    }
     owner.0.withdrawn.store(false, Ordering::Release);
     owner.0.invalidated_from.store(u64::MAX, Ordering::Release);
     assert!(follow.poll_once().await.is_err(), "same-revision reenable");
@@ -772,4 +800,16 @@ async fn manager_recovery_poll_write_failure_keeps_saved_view_unexposed() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn manager_recovery_final_poll_write_failure_keeps_saved_view_unexposed() {
     recovery_poll_write_failure(3).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn manager_missing_durable_revision_cannot_reenable_revoked_view() {
+    // Lose both exact-revision writes, retaining only the owner's digest fence.
+    // A large missed-revision jump prevents an old high-water-plus-one shortcut.
+    control_write_failure(None, "both").await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn manager_malformed_revocation_floor_still_fences_http() {
+    control_write_failure(None, "malformed").await;
 }

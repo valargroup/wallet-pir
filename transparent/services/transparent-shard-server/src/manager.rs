@@ -58,7 +58,7 @@ impl Manager {
                 .revision
                 .max(source.observed_revision(&config.directory)?);
             intent.digests.extend(invalid);
-            persist(&config.directory.join("revocation-floor.json"), &intent)?;
+            persist_floor(&config.directory, &intent)?;
         }
         service.readiness = ReadinessMode::Warm;
         // No disk-cache restore/build path in this mode, including after restart.
@@ -213,7 +213,7 @@ impl Manager {
                         checked_live.restore_verified(&keep)?;
                         let mut intent = floor(root)?;
                         intent.digests.retain(|digest| !keep.contains(digest));
-                        persist(&root.join("revocation-floor.json"), &intent)?;
+                        persist_floor(root, &intent)?;
                     }
                     // Anchor checks cannot authorize a candidate across a source
                     // pointer/recovery change. Never use 304 for this final read.
@@ -357,12 +357,30 @@ struct Revocations {
     revision: u64,
     digests: BTreeSet<String>,
 }
-fn floor(root: &Path) -> Result<Revocations, Error> {
-    match std::fs::read(root.join("revocation-floor.json")) {
+fn read_floor(path: &Path) -> Result<Revocations, Error> {
+    match std::fs::read(path) {
         Ok(bytes) => Ok(serde_json::from_slice(&bytes)?),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Revocations::default()),
         Err(e) => Err(e.into()),
     }
+}
+fn floor(root: &Path) -> Result<Revocations, Error> {
+    let mut primary = read_floor(&root.join("revocation-floor.json"))?;
+    let fallback = read_floor(&root.join("revocation-fallback.json"))?;
+    primary.revision = primary.revision.max(fallback.revision);
+    primary.digests.extend(fallback.digests);
+    Ok(primary)
+}
+fn persist_floor(root: &Path, intent: &Revocations) -> Result<(), Error> {
+    // A failed primary write is still an error. Retain the SAME exact source
+    // revision/digests through an independent atomic path before owner fencing;
+    // a stale high-water cannot reconstruct a missed revision after restart.
+    let primary = persist(&root.join("revocation-floor.json"), intent);
+    if primary.is_err() || root.join("revocation-fallback.json").exists() {
+        persist(&root.join("revocation-fallback.json"), intent)?;
+    }
+    primary?;
+    Ok(())
 }
 async fn revoke(
     root: &Path,
@@ -394,13 +412,23 @@ async fn revoke_digests(
     digests: BTreeSet<String>,
 ) -> Result<(), Error> {
     let durable = (|| -> Result<(), Error> {
-        let mut intent = floor(root)?;
+        let saved = floor(root);
+        let mut intent = match &saved {
+            Ok(saved) => Revocations {
+                revision: saved.revision,
+                digests: saved.digests.clone(),
+            },
+            Err(_) => read_floor(&root.join("revocation-fallback.json"))?,
+        };
         intent.revision = intent.revision.max(current.revision);
         intent.digests.extend(digests.iter().cloned());
-        // Exact revocation intent precedes the owner's fence. Restart replays it
-        // even if the process died before active.invalid.json reached disk.
-        persist(&root.join("revocation-floor.json"), &intent)?;
-        Ok(())
+        if let Err(error) = saved {
+            // Preserve this negative evidence even when the primary cannot be
+            // read/parsed; the corrupt primary remains a startup/activation error.
+            persist(&root.join("revocation-fallback.json"), &intent)?;
+            return Err(error);
+        }
+        persist_floor(root, &intent)
     })();
     // Storage failure cannot leave known orphaned material serving. The owner
     // still fences in memory and attempts its own durable write before we fail.
@@ -420,7 +448,7 @@ async fn apply_snapshot(
         if !current.eligible() {
             let mut intent = floor(root)?;
             intent.revision = intent.revision.max(current.revision);
-            persist(&root.join("revocation-floor.json"), &intent)?;
+            persist_floor(root, &intent)?;
         }
         return Ok(());
     };

@@ -232,7 +232,14 @@ a control-record storage error. A process retains its observed revision/digest
 floor even if that write fails. Malformed, replayed or failed transport responses
 remain errors rather than revocation evidence. Startup binds otherwise
 unrecorded owner revocations to the previously observed source revision before
-polling. Only a higher revision with fresh exact candidate-anchor attestations can clear
+polling. A failed primary intent write/read also attempts the exact revision and
+digests in `revocation-fallback.json`, independently of the high-water write.
+Startup reconciles both intent records; once a fallback exists, successful
+recovery writes both records so a crash between them remains conservative.
+A corrupt primary remains a startup/activation error, even if the fallback
+preserved the newly observed negative evidence. This retains exact higher-revision
+recovery after simultaneous high-water and primary-intent write failures instead
+of estimating a floor from an older saved revision. Only a higher revision with fresh exact candidate-anchor attestations can clear
 revoked digest entries. Neither the process-local epoch nor the most recent
 invalidation range is a cumulative history. The manager checks exact anchors of
 all retained revisions on changed snapshots; source failure cannot prove an
@@ -254,7 +261,10 @@ configuration. Existing fleet/static modes retain their optional-runtime policy.
 Do not reinterpret a managed root as a static/fleet publication or restore older
 high-water/revocation records to bypass fencing. Reverting the manager requires
 stopping this mode and retaining its safety records; no publisher artifacts or
-wallet formats require migration.
+wallet formats require migration. Before using a reader that ignores
+`revocation-fallback.json`, reconcile its maximum revision and digest union into
+the primary intent while stopped, or retain a fallback-aware reader. Dropping
+that record is not a safe rollback.
 
 A changed inventory is reconciled even when its map digest is unchanged. The
 existing same-map/different-worker-assignment fence remains in force. Required
