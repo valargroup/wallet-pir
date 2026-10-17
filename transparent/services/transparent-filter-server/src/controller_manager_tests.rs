@@ -5,41 +5,185 @@ use transparent_shard_server::{live::Command, manager::Manager, service::Service
 
 // Prepare immutable producer bytes once per test process. Each test receives
 // separate copies: corruption, missing-file and restart cases must stay isolated.
+// Static destructors do not run at process exit. Register only roots we own,
+// and drop them after libtest joins its test threads (also on a failed test).
+// SIGKILL/abort still requires the runner's enclosing scratch-directory cleanup.
+static PREPARED_FIXTURES: std::sync::Mutex<Vec<tempfile::TempDir>> =
+    std::sync::Mutex::new(Vec::new());
+
+extern "C" fn cleanup_prepared_fixtures() {
+    PREPARED_FIXTURES
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clear();
+}
+
+fn copy_fixture_tree(source: &Path, target: &Path) {
+    std::fs::create_dir(target).unwrap();
+    for entry in std::fs::read_dir(source).unwrap() {
+        let entry = entry.unwrap();
+        let target = target.join(entry.file_name());
+        let kind = entry.file_type().unwrap();
+        if kind.is_dir() {
+            copy_fixture_tree(&entry.path(), &target);
+        } else {
+            assert!(
+                kind.is_file(),
+                "producer fixture must contain regular files"
+            );
+            std::fs::copy(entry.path(), target).unwrap();
+        }
+    }
+}
+
 fn prepared_publication(root: &Path, through: u64) -> (PathBuf, ShardSet) {
-    fn build(through: u64) -> tempfile::TempDir {
-        let root = tempfile::tempdir().unwrap();
+    fn build(through: u64) -> PathBuf {
+        static CLEANUP: std::sync::Once = std::sync::Once::new();
+        CLEANUP.call_once(|| {
+            // SAFETY: the callback has C ABI, cannot unwind, and only drops
+            // registered TempDirs. It never initializes FIRST or NEXT.
+            assert_eq!(unsafe { libc::atexit(cleanup_prepared_fixtures) }, 0);
+        });
+        let root = tempfile::Builder::new()
+            .prefix("provider-prepared-fixture-")
+            .tempdir()
+            .unwrap();
         let (directory, set) = publication_through(root.path(), through);
         prepare_recent(&directory, &set);
-        root
+        let path = root.path().to_path_buf();
+        PREPARED_FIXTURES.lock().unwrap().push(root);
+        path
     }
-    static FIRST: std::sync::LazyLock<tempfile::TempDir> = std::sync::LazyLock::new(|| build(2));
-    static NEXT: std::sync::LazyLock<tempfile::TempDir> = std::sync::LazyLock::new(|| build(3));
+    static FIRST: std::sync::LazyLock<PathBuf> = std::sync::LazyLock::new(|| build(2));
+    static NEXT: std::sync::LazyLock<PathBuf> = std::sync::LazyLock::new(|| build(3));
     let fixture = match through {
         2 => &*FIRST,
         3 => &*NEXT,
         _ => panic!("no prepared publication fixture through height {through}"),
     };
-    fn copy_tree(source: &Path, target: &Path) {
-        std::fs::create_dir(target).unwrap();
-        for entry in std::fs::read_dir(source).unwrap() {
-            let entry = entry.unwrap();
-            let target = target.join(entry.file_name());
-            let kind = entry.file_type().unwrap();
-            if kind.is_dir() {
-                copy_tree(&entry.path(), &target);
-            } else {
-                assert!(
-                    kind.is_file(),
-                    "producer fixture must contain regular files"
-                );
-                std::fs::copy(entry.path(), target).unwrap();
-            }
-        }
-    }
     let directory = root.join("publication");
-    copy_tree(&fixture.path().join("publication"), &directory);
+    copy_fixture_tree(&fixture.join("publication"), &directory);
     let set = ShardSet::open(&directory, 0).unwrap();
     (directory, set)
+}
+
+// Use the real helper in a fresh libtest process, with no runner-owned TMPDIR
+// cleanup. Observe the directory only after the process and exit callback finish.
+fn fixture_exit_control(name: &str, both: bool, fail: bool) {
+    let name = format!("{}::{name}", module_path!().split_once("::").unwrap().1);
+    const CHILD: &str = "WALLET_PIR_FIXTURE_EXIT_CHILD";
+    if let Some(child) = std::env::var_os(CHILD) {
+        assert_eq!(child, name.as_str());
+        let first = tempfile::tempdir().unwrap();
+        let (directory, set) = prepared_publication(first.path(), 2);
+        let copy = tempfile::tempdir().unwrap();
+        let (copy_directory, copy_set) = prepared_publication(copy.path(), 2);
+        assert_eq!(set.map_digest, copy_set.map_digest);
+        let map = std::fs::read(copy_directory.join("shards.json")).unwrap();
+        std::fs::write(directory.join("shards.json"), b"corrupt").unwrap();
+        assert_eq!(
+            std::fs::read(copy_directory.join("shards.json")).unwrap(),
+            map
+        );
+        let fresh = tempfile::tempdir().unwrap();
+        let (fresh_directory, _) = prepared_publication(fresh.path(), 2);
+        assert_eq!(
+            std::fs::read(fresh_directory.join("shards.json")).unwrap(),
+            map
+        );
+        if both {
+            let next = tempfile::tempdir().unwrap();
+            let (_, next_set) = prepared_publication(next.path(), 3);
+            assert_ne!(set.map_digest, next_set.map_digest);
+        }
+        assert_eq!(
+            PREPARED_FIXTURES.lock().unwrap().len(),
+            if both { 2 } else { 1 }
+        );
+        println!("prepared fixtures: {}", if both { 2 } else { 1 });
+        assert!(!fail, "intentional child failure after preparing fixtures");
+        return;
+    }
+    let scratch = tempfile::tempdir().unwrap();
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([&name, "--exact", "--test-threads=1", "--nocapture"])
+        .env(CHILD, &name)
+        .env(
+            "TRANSPARENT_BUILD_THREADS",
+            std::env::var("TRANSPARENT_BUILD_THREADS").unwrap_or_else(|_| "4".into()),
+        )
+        .env("TMPDIR", scratch.path())
+        .env("TMP", scratch.path())
+        .env("TEMP", scratch.path())
+        .output()
+        .unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(if fail { 101 } else { 0 }),
+        "child output: {} {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(String::from_utf8_lossy(&output.stdout).contains(if fail {
+        "1 failed"
+    } else {
+        "1 passed"
+    }));
+    assert!(String::from_utf8_lossy(&output.stdout)
+        .contains(&format!("prepared fixtures: {}", if both { 2 } else { 1 })));
+    if fail {
+        assert!(String::from_utf8_lossy(&output.stderr)
+            .contains("intentional child failure after preparing fixtures"));
+    }
+    assert_eq!(std::fs::read_dir(scratch.path()).unwrap().count(), 0);
+}
+
+#[test]
+fn prepared_fixtures_exit_first_only() {
+    fixture_exit_control("prepared_fixtures_exit_first_only", false, false);
+}
+
+#[test]
+fn prepared_fixtures_exit_both() {
+    fixture_exit_control("prepared_fixtures_exit_both", true, false);
+}
+
+#[test]
+fn prepared_fixtures_exit_failed_test() {
+    fixture_exit_control("prepared_fixtures_exit_failed_test", true, true);
+}
+
+#[test]
+fn fixture_copies_are_independent_and_refuse_symlinks() {
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("source");
+    std::fs::create_dir(&source).unwrap();
+    std::fs::write(source.join("bytes"), b"immutable").unwrap();
+    let first = root.path().join("first");
+    let second = root.path().join("second");
+    copy_fixture_tree(&source, &first);
+    copy_fixture_tree(&source, &second);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let metadata = |path: &Path| std::fs::metadata(path.join("bytes")).unwrap();
+        assert_ne!(metadata(&source).ino(), metadata(&first).ino());
+        assert_ne!(metadata(&first).ino(), metadata(&second).ino());
+        assert_eq!(metadata(&first).nlink(), 1);
+    }
+    std::fs::write(first.join("bytes"), b"corrupt").unwrap();
+    assert_eq!(std::fs::read(source.join("bytes")).unwrap(), b"immutable");
+    assert_eq!(std::fs::read(second.join("bytes")).unwrap(), b"immutable");
+    std::fs::remove_file(first.join("bytes")).unwrap();
+    assert_eq!(std::fs::read(second.join("bytes")).unwrap(), b"immutable");
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(source.join("bytes"), source.join("link")).unwrap();
+        assert!(std::panic::catch_unwind(|| {
+            copy_fixture_tree(&source, &root.path().join("refused"));
+        })
+        .is_err());
+    }
 }
 
 fn manager(tls: &Tls, root: &Path) -> Manager {
