@@ -968,6 +968,7 @@ class CacheWorkflowTests(unittest.TestCase):
             env = text.split('\nenv:\n', 1)[1].split('\n\n', 1)[0]
             return {key: value for key, value in re.findall(r'^  (\w+): (.+)$', env, re.M) if key in ('RUSTFLAGS', 'CFLAGS', 'CXXFLAGS')}
         self.assertEqual(flags(self.workflows['ci-cache.yml']), flags(self.workflows['ci.yml']))
+        self.assertEqual(flags(self.workflows['ci-pr-prepare.yml']), flags(self.workflows['ci.yml']))
 
     def test_hosted_priming_prepares_feedback_instead_of_unused_full_pr_caches(self):
         prime = self.workflows['ci-cache.yml']
@@ -975,6 +976,36 @@ class CacheWorkflowTests(unittest.TestCase):
         self.assertIn('scope: affected', prime)
         self.assertIn('tools/ci/fast.py --all --compile-only', prime)
         self.assertNotIn('full_packages.py', prime)
+
+    def test_opt_in_preparation_uses_actual_unprivileged_pr_context(self):
+        text = self.workflows['ci-pr-prepare.yml']
+        self.assertIn('  pull_request:\n    branches: [main]\n    types: [labeled]', text)
+        self.assertIn("if: github.event.label.name == 'prepare-hosted-cache'", text)
+        self.assertIn('runs-on: ubuntu-24.04', text)
+        self.assertIn('persist-credentials: false', text)
+        self.assertIn('permissions:\n  contents: read\n  actions: read', text)
+        self.assertIn('timeout-minutes: 30', text)
+        self.assertIn('tools/ci/fast.py --all --compile-only', text)
+        self.assertIn('tools/ci/fast.py --all --unit-jobs 3', text)
+        seal = text.split('- name: Seal and report prepared Cargo state', 1)[1].split('- name:', 1)[0]
+        self.assertNotIn('continue-on-error', seal)
+        for forbidden in ('pull_request_target', 'workflow_dispatch', 'WALLET_PIR_MAIN_RUNNER',
+                          'self-hosted', 'GITHUB_REF:', 'secrets.', 'write'):
+            self.assertNotIn(forbidden, text)
+        routine = self.workflows['ci.yml']
+        self.assertIn("github.event_name == 'workflow_dispatch' && 30 || 3", routine)
+        self.assertIn("if: github.event_name == 'push' && steps.affected.outputs.rust == 'true'", routine)
+        self.assertEqual(self.workflows['ci-cache.yml'].count("if: github.ref == 'refs/heads/main'"), 1)
+
+    def test_unrelated_labels_cannot_enter_preparation_concurrency(self):
+        text = self.workflows['ci-pr-prepare.yml']
+        workflow, jobs = text.split('\njobs:\n', 1)
+        self.assertNotIn('\nconcurrency:', workflow)
+        job = jobs.split('  prepare:\n', 1)[1].split('    steps:\n', 1)[0]
+        self.assertIn("    if: github.event.label.name == 'prepare-hosted-cache'\n", job)
+        self.assertIn('    concurrency:\n'
+                      '      group: prepare-hosted-pr-${{ github.event.pull_request.number }}\n'
+                      '      cancel-in-progress: true\n', job)
 
     def test_cuda_cache_identity_sees_the_build_script_flags(self):
         script = (ROOT / 'tools/ci/build-cuda.sh').read_text()

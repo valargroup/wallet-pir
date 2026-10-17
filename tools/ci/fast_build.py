@@ -3,7 +3,8 @@
 Cargo unifies features for the complete selection. Unit tests and the named
 fast integration targets share that build; campaign targets are never selected.
 Test programs retain their package directory, Cargo environment and existing
-slow-case exclusions. At most three ordinary programs execute together; integration programs run alone.
+slow-case exclusions. At most three ordinary programs execute together; integration programs and the
+filter library run alone.
 """
 import json
 import os
@@ -111,8 +112,13 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3, before_tests
             actual_units.add(identity)
             discovered_units[name].update(names)
         exclusions = [] if integration else list(slow.get(name, {}))
+        # The filter library prepares full archive runtimes; keep its unchanged
+        # cases out of contention with other programs under the 30s case limit.
         programs.append(dict(executable=binary, directory=directory, package=name,
-                             version=package['version'], exclusive=integration, case_count=len(names),
+                             version=package['version'],
+                             exclusive=integration or (name == 'transparent-filter-server'
+                                                       and 'lib' in target['kind']),
+                             case_count=len(names),
                              args=[arg for case in exclusions for arg in ('--skip', case)]))
     if actual_integrations != expected_integrations or expected_units - actual_units:
         raise ValueError(f'fast test executables mismatch: missing_units={sorted(expected_units-actual_units)}, '

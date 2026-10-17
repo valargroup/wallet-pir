@@ -295,6 +295,68 @@ async fn rows_retrieved_from_each_shard_equal_that_shards_published_table() {
     }
 }
 
+/// Runtime handles and query memory remain owned by the transport even when
+/// observation has already counted the response or the final frame was polled.
+#[tokio::test]
+async fn response_transport_retains_query_memory_until_body_drop() {
+    use http_body::Body as _;
+    use std::pin::Pin;
+    let f = fixture();
+    let revision = revision_of(&f, 0);
+    let table = TableRef::Directory;
+    let profile = transparent_native::TableProfile::new(
+        transparent_shard::manifest::SCHEMA,
+        GEOMETRY.name,
+        table.kind().as_str(),
+        table.kind().rows(&GEOMETRY),
+        table.kind().row_bytes(&GEOMETRY),
+    )
+    .unwrap();
+    for consume in [false, true] {
+        let (_, upload) = profile.prepare(0).unwrap();
+        let mut query = query_binding(&revision, &table.name()).to_vec();
+        query.extend(upload);
+        let response = router(f.state.clone())
+            .oneshot(
+                Request::post(format!(
+                    "/v2/shards/0/revisions/{revision}/query/{}",
+                    table.name()
+                ))
+                .header("content-length", query.len())
+                .body(Body::from(query))
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers()["content-type"],
+            "application/octet-stream"
+        );
+        // Admission accounting still ends with evaluation, as it did before
+        // sharing transport ownership; it is independent of retained memory.
+        assert_eq!(
+            transparent_shard_server::metrics::Metrics::get(&f.state.metrics().query_queue_depth),
+            0
+        );
+        let mut body = response.into_body();
+        if consume {
+            while let Some(frame) =
+                std::future::poll_fn(|cx| Pin::new(&mut body).poll_frame(cx)).await
+            {
+                frame.unwrap();
+            }
+        }
+        let (_, health) = get(&f.state, "/v1/health").await;
+        let health: serde_json::Value = serde_json::from_slice(&health).unwrap();
+        assert!(health["work_memory_reserved_bytes"].as_u64().unwrap() > 0);
+        drop(body);
+        let (_, health) = get(&f.state, "/v1/health").await;
+        let health: serde_json::Value = serde_json::from_slice(&health).unwrap();
+        assert_eq!(health["work_memory_reserved_bytes"], 0);
+    }
+}
+
 /// The upload length of a query over `rows` rows of a history table.
 fn request_len(rows: usize) -> usize {
     let native = transparent_native::profile_for(Table::Directory.as_str());

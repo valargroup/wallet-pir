@@ -248,27 +248,87 @@ Cargo tracks source, lockfile, features and profile changes inside a lane.
 Prune unused lane directories only while the runner is idle. Do not share
 writable caches between trust boundaries.
 
-Hosted fast jobs partition by compiler, native tools, OS/ABI, flags, Cargo
-configuration, lane, scope and profiles. Within that partition, rust-cache adds
-its environment/manifest/lock hashes and can fall back to another dependency
-revision. Cargo rechecks every unit; a fallback is recorded as `hit-compatible`
-only when build fingerprints were actually restored. The action does not expose
-the exact restored ref for these suffixed keys, so reports leave it unknown.
-Other hosted lanes retain exact keys and no cross-identity fallback. Lanes,
-scopes, CPU, native CPU and Ubuntu 22.04 CUDA builds never share entries.
-GitHub scopes a PR's saves
-to its merge ref; a PR restores its own entry first and otherwise main's. Main
-never reads PR entries. Because main uses persistent targets, the separate
-[Prime hosted Cargo caches](../.github/workflows/ci-cache.yml) workflow warms
-one fast feedback entry from main for hosted PRs. It looks up the exact key and
-compiles fast units only when missing. It runs no tests and is not a gate.
-Full qualification uses persistent build lanes; its former six hosted PR cache
-primers are no longer automatic work. Explicit branch full runs may build cold.
+Hosted fast snapshots partition by the existing compiler/native tools, OS/ABI,
+flags, Cargo configuration, lane, scope and profile compatibility identity. Their
+`v2-wallet-pir-workspace-<compatibility>-<lock>-<source-tree>` keys add the committed
+Git tree to permit writeback after source changes; the restore prefix stops at
+compatibility, retaining dependency fallback without crossing build or trust
+boundaries. Checkout SHA remains excluded from compatibility. Other hosted lanes
+retain rust-cache and exact identities. GitHub scopes PR saves to the merge ref;
+a PR can restore its own or base/default-branch entries, while main cannot read
+PR entries. No ref is inferred from fingerprint counts or restore duration.
 
-A restored cache can only save work. Cargo still checks every unit; a fresh
-checkout's workspace sources are newer than cached outputs, so workspace crates
-rebuild on hosted runners, while unchanged third-party units can be fresh.
-A missing cache is a separately measured cold build; it does not relax main validation or its deadline.
+Fast snapshots use `actions/cache` for the Cargo registry, Git dependencies and
+complete fast target, including test executables. Only successful jobs save;
+canceled/failed builds cannot archive targets while orphaned Cargo writers are
+still changing them. An exact immutable hit does not write back. The source-tree
+suffix permits a new successful snapshot after edits, but does not make a partial
+exact entry complete for a later broader selection. Other hosted lanes keep
+`cache-on-failure`; persistent targets and release caches are unchanged.
+
+[`workspace_cache.py`](../tools/ci/workspace_cache.py) captures tracked regular
+files before compilation. After work, it seals their content hashes, modes and mtimes
+alongside a checksum and a signature of Cargo fingerprint bytes **and mtimes**.
+On restore, only unchanged bytes and modes at the same checkout path and compatibility
+identity regain their captured source timestamps. Changed files, or missing,
+corrupt, stale or incompatible metadata, receive timestamps newer than restored
+fingerprints. Metadata schema 2 rejects older records lacking mode identity.
+Before setup and again after archive extraction, validate the lexical target and
+all parents: aliases, checkout/ancestor targets, Git internals and overlap with
+tracked source paths fail closed before mkdir, move or timestamp normalization.
+Git internals include the actual Git directory and common directory discovered
+read-only through Git, including linked worktrees and separate-Git-dir checkouts;
+targets inside or containing either directory are refused.
+Resolving a target alias first would lose ownership and could move another
+directory. Invalid paths are errors, not cold misses; their destinations remain
+untouched by the helper.
+Any symlink in the checkout outside Git internals and the validated target
+disables target reuse entirely, including ignored and untracked input links:
+the restored target is moved to a uniquely named `fast-unused-*` sibling outside
+the saved path, and Cargo starts with an empty target. This includes symlinks to
+external or untracked destinations; neither link nor destination is touched.
+These unused directories live only on the ephemeral hosted runner. This chooses
+extra compilation over trying to prove alias topology safe. External/untracked
+inputs and directory timestamps are otherwise not normalized. Cargo independently
+checks every unit, feature, environment,
+build-script dependency and output; conservative extra rebuilds remain possible.
+The signature prevents an old source record from blessing newer outputs built
+from different bytes even when Cargo fingerprint contents are identical.
+
+The new cache layout needs a separately measured first successful cold preparation
+before repeat hosted timing can qualify. It does not restore older rust-cache archives with a different path/version layout. Complete
+targets may cost more archive/storage time than rust-cache's pruned targets.
+Reverting the action/helper restores the old keys and behavior; v2 snapshots stay
+ref-scoped and expire under GitHub's existing retention policy, without deletion
+or cache migration. No dependent product format or published artifact changes.
+
+For an unmerged PR, apply the `prepare-hosted-cache` label to explicitly run
+[Prepare hosted PR cache](../.github/workflows/ci-pr-prepare.yml). It uses the real
+`pull_request` merge ref on the existing hosted runner, read-only repository
+permissions and no persisted checkout credentials. It compiles **and validates**
+all fast units with a separate 30-minute cold-preparation allowance; every test
+keeps its 30-second limit. Only successful preparation saves a ref-isolated
+snapshot. This is not the routine fast gate or a latency pass. Remove/reapply the
+label after a head update; no synchronize event automatically repeats preparation.
+Concurrency belongs to the label-filtered job: unrelated label events cannot
+cancel preparation; genuine same-PR preparation requests still supersede it.
+Then rerun the ordinary CI job at the same PR merge SHA and verify actual Cargo
+fresh flags, executed tests, matched key/ref and complete warm duration including
+archive/cleanup under 180 seconds. Branch dispatch does not warm the PR merge ref.
+An already-existing partial exact snapshot cannot be filled in: prepare the next
+source-tree key before routine Rust validation, without deleting old entries.
+The parent owns this hosted sequence and independent review; local tooling-only
+checks do not prove it. Reversal removes this optional workflow/label trigger;
+existing snapshots remain ref-scoped and expire normally, with no cache deletion,
+release artifacts or product state migration. The main-only primer guard and
+routine limits remain unchanged.
+
+Main uses persistent targets; the separate
+[Prime hosted Cargo caches](../.github/workflows/ci-cache.yml) workflow can prepare
+one successful main fast snapshot for hosted PRs. It compiles fast units only
+when the exact key is missing, runs no tests and is not a gate. Full qualification
+retains persistent build lanes. A missing cache never relaxes validation or the
+180-second routine ceiling.
 
 ## Cold preparation and representative latency
 

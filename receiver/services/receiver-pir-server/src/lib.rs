@@ -21,6 +21,58 @@ pub use publication::{Publication, Publications};
 use receiver_pir::{query_bytes, Error, HEADER_BYTES, MAGIC, MAX_ROWS};
 use std::{sync::Arc, time::Duration};
 
+// Preserve the historical bounded categories for unmatched product-shaped
+// paths as well as this service's registered routes.
+/// Only a fixed endpoint category survives classification. No dynamic path segment is retained.
+fn endpoint(path: &str) -> Option<&'static str> {
+    if path == "/v2/shards/init" {
+        Some("init")
+    } else if path == "/v2/shards" || path == "/v2/filters/shards" {
+        Some("map")
+    } else if path.starts_with("/v2/filters/") || path.starts_with("/v1/filters/") {
+        Some("filter")
+    } else if path.starts_with("/v2/shards/") && path.ends_with("/manifest") {
+        Some("manifest")
+    } else if path.starts_with("/v2/shards/") && path.contains("/setup/") {
+        Some("setup")
+    } else if let Some(route) = path.strip_prefix("/v1/receiver/") {
+        receiver_endpoint(route)
+    } else if path.starts_with("/v2/shards/") && path.contains("/query/") {
+        if path.ends_with("/directory") {
+            Some("query_directory")
+        } else if path.ends_with("/pages") {
+            Some("query_pages")
+        } else {
+            Some("query_other")
+        }
+    } else {
+        None
+    }
+}
+
+/// The receiver directory's route categories; session IDs never become labels.
+fn receiver_endpoint(route: &str) -> Option<&'static str> {
+    Some(match route.split('/').next()? {
+        "init" => "receiver_init",
+        "public" => "receiver_public",
+        "query" => "receiver_query",
+        "rows" => "receiver_rows",
+        "witness" => "receiver_witness",
+        "filters" => "receiver_filters",
+        "health" => "receiver_health",
+        _ => return None,
+    })
+}
+
+async fn observe(
+    axum::extract::State(metrics): axum::extract::State<pir_observability::HttpMetrics>,
+    request: Request,
+    next: axum::middleware::Next,
+) -> Response {
+    let label = endpoint(request.uri().path());
+    pir_observability::observe(metrics, label, request, next).await
+}
+
 /// Queries evaluated at once.
 const EVALUATING: usize = 2;
 /// Queries that may wait for an evaluation slot.
@@ -135,10 +187,7 @@ fn router(service: Service) -> Router {
             ),
         )
         .layer(axum::middleware::map_response(no_store_errors))
-        .layer(axum::middleware::from_fn_with_state(
-            metrics,
-            pir_observability::observe,
-        ))
+        .layer(axum::middleware::from_fn_with_state(metrics, observe))
         .with_state(service)
 }
 
@@ -252,20 +301,24 @@ async fn query(State(s): State<Service>, request: Request) -> Response {
     let Ok(permit) = s.queue.acquire(|| ()).await else {
         return overloaded();
     };
-    let result = tokio::task::spawn_blocking(move || {
-        // The blocking task outlives a disconnected request, so it owns admission until it finishes.
-        let _admitted = (permit, client);
-        publication.server.respond(&body)
-    })
+    let result = pir_control::admission::spawn_admitted(
+        (permit, client, publication),
+        move |(_, _, publication)| publication.server.respond(&body),
+    )
     .await;
     // A revocation during evaluation is 410; after it, wallets revalidate their anchor.
     if s.publications.epoch() != epoch {
         return StatusCode::GONE.into_response();
     }
     match result {
-        Ok(Ok(body)) => binary(body),
-        Ok(Err(Error::Revision)) => StatusCode::GONE.into_response(),
-        Ok(Err(Error::Malformed)) => StatusCode::BAD_REQUEST.into_response(),
+        Ok((Ok(body), guards)) => {
+            let mut response = binary(body);
+            let body = std::mem::replace(response.body_mut(), axum::body::Body::empty());
+            *response.body_mut() = pir_control::http::retain(body, guards);
+            response
+        }
+        Ok((Err(Error::Revision), _)) => StatusCode::GONE.into_response(),
+        Ok((Err(Error::Malformed), _)) => StatusCode::BAD_REQUEST.into_response(),
         _ => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
 }
@@ -273,6 +326,91 @@ async fn query(State(s): State<Service>, request: Request) -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn foreign_product_shaped_404_keeps_its_existing_metric_category() {
+        let (query_url, task) = serve(
+            Publications::default(),
+            Arc::new(Queue::new(1, 1, WAIT, true)),
+        )
+        .await;
+        let origin = query_url.strip_suffix("/v1/receiver/query").unwrap();
+        let http = reqwest::Client::new();
+        let refused = http
+            .get(format!("{origin}/v2/shards/init"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(refused.status(), StatusCode::NOT_FOUND);
+        drop(refused);
+        let metrics = http
+            .get(format!("{origin}/metrics"))
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap();
+        assert!(metrics.contains("pir_http_responses_total{endpoint=\"init\",code=\"4xx\"} 1"));
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn query_response_retains_admission_and_publication_until_transport_drop() {
+        use receiver_directory::snapshot::Snapshot;
+        use receiver_pir::{AcceptedCoverage, Client, MIN_ROWS};
+        let snapshot =
+            Snapshot::build(common::manifest(MIN_ROWS), &[common::record(0, 1)], &[]).unwrap();
+        let publication = crate::prepared::prepare(snapshot, None).unwrap();
+        let accepted = AcceptedCoverage {
+            genesis: [1; 32],
+            required_start: 100,
+            height: 101,
+            hash: [3; 32],
+        };
+        let client = Client::new(
+            publication.server.manifest().clone(),
+            publication.server.public(),
+            accepted,
+        )
+        .unwrap();
+        let publications = Publications::default();
+        assert!(publications.publish(publication, 0));
+        let prepared = Arc::downgrade(&publications.select(None).unwrap().0);
+        let queue = Arc::new(Queue::new(1, 1, WAIT, true));
+        let clients = ClientSlots::new(1);
+        let service = Service {
+            publications: publications.clone(),
+            queue: queue.clone(),
+            clients: clients.clone(),
+            metrics: Default::default(),
+            health_fields: Arc::new(serde_json::Map::new),
+        };
+        let request = client.prepare(common::receiver(), 0).unwrap();
+        let response = query(
+            State(service),
+            Request::post("/v1/receiver/query")
+                .body(axum::body::Body::from(request.body().to_vec()))
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers()[header::CONTENT_TYPE],
+            "application/octet-stream"
+        );
+        assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+        assert_eq!(queue.executing_available(), 0);
+        assert!(clients.try_acquire("unknown").is_none());
+        publications.revoke();
+        assert!(prepared.upgrade().is_some());
+        // Dropping an unconsumed response models transport cancellation. The
+        // shared wrapper also tests the fully-polled end-of-stream case.
+        drop(response);
+        assert_eq!(queue.executing_available(), 1);
+        assert!(clients.try_acquire("unknown").is_some());
+        assert!(prepared.upgrade().is_none());
+    }
 
     /// With every evaluation slot held, a query of the wrong length is still refused at
     /// once, while one of the right length waits and is then told to retry.

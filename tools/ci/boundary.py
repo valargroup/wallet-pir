@@ -64,13 +64,14 @@ WALLET_LIBRARIES = 'github.com/zakura-core/wallet-libraries'
 # Protocol framing packages that must not acquire chain or wallet behaviour.
 PURE = {
     'receiver-pir-server',
-    'pir-observability', 'pir-control', 'enhance-pir', 'transparent-blocks',
+    'pir-observability', 'pir-control', 'pir-runtime', 'enhance-pir', 'transparent-blocks',
     'transparent-shard-server', 'transparent-server-backend',
     'enhance-serving', 'status-serving',
 }
 # Serving libraries and the chain reading, ingestion and application packages
-# they must never reach. Each product's applications compose its serving library.
-SERVING = {'enhance-serving', 'status-serving', 'transparent-server-backend'}
+# they must never reach. Each product's applications compose its serving library;
+# the shared raw PIR runtime they call is held to the same rule.
+SERVING = {'enhance-serving', 'status-serving', 'transparent-server-backend', 'pir-runtime'}
 INGESTION = {
     'zakura-server-chain', 'enhance-pir-server', 'receiver-indexer',
     'transparent-filter-server', 'transparent-block-server', 'transparent-measure',

@@ -1,19 +1,18 @@
 //! Aggregate public-entrypoint telemetry. Bodies remain streaming and retain
 //! their original ownership (including admission guards) until transport drop.
 use axum::{
-    body::{Body, Bytes},
+    body::Body,
     extract::{Request, State},
     middleware::Next,
     response::Response,
 };
-use http_body::{Body as HttpBody, Frame, SizeHint};
+use http_body::Body as HttpBody;
+use pir_observability::ObservedBody;
 use prometheus::{
     Encoder, HistogramOpts, HistogramVec, IntCounter, IntCounterVec, Opts, Registry, TextEncoder,
 };
 use std::{
-    pin::Pin,
     sync::{Arc, Mutex},
-    task::{Context, Poll},
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -158,39 +157,19 @@ impl ArrivalWindow {
     }
 }
 
-struct CountedBody {
-    inner: Body,
+struct Counters {
     bytes: IntCounter,
     completed: Option<Arc<Mutex<Option<Instant>>>>,
 }
-impl HttpBody for CountedBody {
-    type Data = Bytes;
-    type Error = axum::Error;
-    fn poll_frame(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-    ) -> Poll<Option<Result<Frame<Bytes>, axum::Error>>> {
-        let result = Pin::new(&mut self.inner).poll_frame(cx);
-        if let Poll::Ready(Some(Ok(frame))) = &result {
-            if let Some(data) = frame.data_ref() {
-                self.bytes.inc_by(data.len() as u64);
-            }
-        }
+impl pir_observability::BodyObserver for Counters {
+    fn data(&mut self, bytes: usize) {
+        self.bytes.inc_by(bytes as u64);
+    }
+    fn complete(&mut self) {
         // A failed/truncated body never starts the processing timer.
-        if matches!(result, Poll::Ready(None))
-            || (matches!(result, Poll::Ready(Some(Ok(_)))) && self.inner.is_end_stream())
-        {
-            if let Some(completed) = self.completed.take() {
-                *completed.lock().unwrap() = Some(Instant::now());
-            }
+        if let Some(completed) = self.completed.take() {
+            *completed.lock().unwrap() = Some(Instant::now());
         }
-        result
-    }
-    fn is_end_stream(&self) -> bool {
-        self.inner.is_end_stream()
-    }
-    fn size_hint(&self) -> SizeHint {
-        self.inner.size_hint()
     }
 }
 
@@ -218,11 +197,13 @@ pub(crate) async fn measure(
     } else {
         None
     }));
-    let body = Body::new(CountedBody {
-        inner: body,
-        bytes: metrics.upload.with_label_values(&[endpoint]),
-        completed: Some(completed.clone()),
-    });
+    let body = Body::new(ObservedBody::new(
+        body,
+        Counters {
+            bytes: metrics.upload.with_label_values(&[endpoint]),
+            completed: Some(completed.clone()),
+        },
+    ));
     let response = next.run(Request::from_parts(parts, body)).await;
     if let Some(start) = *completed.lock().unwrap() {
         metrics
@@ -237,21 +218,25 @@ pub(crate) async fn measure(
     let (parts, body) = response.into_parts();
     Response::from_parts(
         parts,
-        Body::new(CountedBody {
-            inner: body,
-            bytes: metrics.download.with_label_values(&[endpoint]),
-            completed: None,
-        }),
+        Body::new(ObservedBody::new(
+            body,
+            Counters {
+                bytes: metrics.download.with_label_values(&[endpoint]),
+                completed: None,
+            },
+        )),
     )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::body::Bytes;
     use axum::{
         routing::{get, post},
         Router,
     };
+    use std::pin::Pin;
     use std::time::Duration;
     use tower::ServiceExt;
 
@@ -394,11 +379,13 @@ mod tests {
             slots.clone().acquire_owned().await.unwrap(),
             || Ok(()),
         );
-        let mut counted = CountedBody {
-            inner: body,
-            bytes: metrics.download.with_label_values(&["query"]),
-            completed: None,
-        };
+        let mut counted = ObservedBody::new(
+            body,
+            Counters {
+                bytes: metrics.download.with_label_values(&["query"]),
+                completed: None,
+            },
+        );
         assert!(
             std::future::poll_fn(|cx| Pin::new(&mut counted).poll_frame(cx))
                 .await
@@ -423,11 +410,13 @@ mod tests {
             Ok(Bytes::from_static(b"abc")),
             Err(std::io::Error::other("truncated")),
         ]));
-        let body = Body::new(CountedBody {
-            inner: body,
-            bytes: metrics.upload.with_label_values(&["query"]),
-            completed: Some(completed.clone()),
-        });
+        let body = Body::new(ObservedBody::new(
+            body,
+            Counters {
+                bytes: metrics.upload.with_label_values(&["query"]),
+                completed: Some(completed.clone()),
+            },
+        ));
         assert!(axum::body::to_bytes(body, 1024).await.is_err());
         assert!(completed.lock().unwrap().is_none());
         assert_eq!(metrics.upload.with_label_values(&["query"]).get(), 3);
