@@ -100,6 +100,22 @@ mod tests {
     use super::*;
 
     #[test]
+    fn sha256_matches_fixed_short_and_streamed_vectors() {
+        assert_eq!(
+            hex::encode(Sha256::digest(b"abc")),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+        let mut hash = Sha256::new();
+        for _ in 0..1000 {
+            hash.update([b'a'; 1000]);
+        }
+        assert_eq!(
+            hex::encode(hash.finalize()),
+            "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0"
+        );
+    }
+
+    #[test]
     fn a_replacement_lands_whole_and_returns_its_digest() {
         let dir = tempfile::tempdir().unwrap();
         write_atomic(dir.path(), "record", |w| w.write_all(b"old")).unwrap();

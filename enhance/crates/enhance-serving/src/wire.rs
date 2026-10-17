@@ -11,14 +11,19 @@ pub enum WireError {
 
 /// Writes the existing MPH1 encoding without buffering the complete hint.
 pub fn write_crs_blocks(mut output: impl Write, blocks: &[CrsBlock]) -> io::Result<()> {
+    let mut scratch = [0u8; 64 * 1024];
     output.write_all(HINT_MAGIC)?;
     output.write_all(&(blocks.len() as u32).to_le_bytes())?;
     for block in blocks {
         output.write_all(&(block.rows.len() as u32).to_le_bytes())?;
         for row in &block.rows {
             output.write_all(&(row.len() as u32).to_le_bytes())?;
-            for coefficient in row {
-                output.write_all(&coefficient.to_le_bytes())?;
+            for coefficients in row.chunks(scratch.len() / 8) {
+                let bytes = &mut scratch[..coefficients.len() * 8];
+                for (coefficient, encoded) in coefficients.iter().zip(bytes.chunks_exact_mut(8)) {
+                    encoded.copy_from_slice(&coefficient.to_le_bytes());
+                }
+                output.write_all(bytes)?;
             }
         }
     }
@@ -166,6 +171,47 @@ mod tests {
 #[cfg(test)]
 mod streaming_tests {
     use super::*;
+
+    #[test]
+    fn encoding_batches_coefficients_without_changing_the_bytes() {
+        #[derive(Default)]
+        struct Counting {
+            bytes: Vec<u8>,
+            calls: usize,
+            largest: usize,
+        }
+        impl Write for Counting {
+            fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+                self.calls += 1;
+                self.largest = self.largest.max(bytes.len());
+                self.bytes.extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        let rows: Vec<Vec<u64>> = [8193, 8192, 0]
+            .into_iter()
+            .map(|length| (0..length).map(|i| u64::MAX - i).collect())
+            .collect();
+        // Build the old coefficient-at-a-time encoding independently, including
+        // a chunk boundary and an empty row.
+        let mut expected = Vec::from(*HINT_MAGIC);
+        expected.extend_from_slice(&1u32.to_le_bytes());
+        expected.extend_from_slice(&3u32.to_le_bytes());
+        for row in &rows {
+            expected.extend_from_slice(&(row.len() as u32).to_le_bytes());
+            for coefficient in row {
+                expected.extend_from_slice(&coefficient.to_le_bytes());
+            }
+        }
+        let mut output = Counting::default();
+        write_crs_blocks(&mut output, &[CrsBlock { rows }]).unwrap();
+        assert_eq!(output.bytes, expected);
+        assert_eq!(output.largest, 64 * 1024);
+        assert_eq!(output.calls, 9);
+    }
 
     #[test]
     fn decoding_reads_payload_in_bounded_chunks() {

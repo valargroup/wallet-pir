@@ -22,7 +22,9 @@ class WorkspaceCacheOracle(unittest.TestCase):
     def setUp(self):
         (ROOT / '.local-pir').mkdir(exist_ok=True)
         self.tmp = tempfile.TemporaryDirectory(prefix='workspace-cache-', dir=ROOT / '.local-pir')
-        self.area = Path(self.tmp.name)
+        # The local output directory may itself be a symlink to a retained cache.
+        # Give the oracle real paths; alias rejection is tested separately.
+        self.area = Path(self.tmp.name).resolve()
         self.root = self.area / 'checkout'
         self.root.mkdir()
         (self.root / 'src').mkdir()

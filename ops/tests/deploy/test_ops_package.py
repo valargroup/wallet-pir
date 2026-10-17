@@ -390,31 +390,48 @@ class RecoveryTests(PackageCase):
                 self.host.after = None
                 self.assertEqual(self.package().rollback(journal.id).status, 'rolled-back')
 
-    def test_reconcile_rechecks_effects_whose_completed_markers_exist(self):
-        cases = {'select': ('package content', 'package mode', 'extra package file',
-                            'fleet', 'fleet mode', 'selection'),
-                 'verify': ('package content',), 'promote': ('package content',)}
-        for completed, drifts in cases.items():
-            self.setUp()
-            plan, _, archive = self.plan()
+    def test_reconcile_rechecks_completed_selection_with_changed_package(self):
+        self.check_completed_marker('select', 'package content')
 
-            def interrupt(op, arguments):
-                if op == 'write' and arguments['path'].endswith('-' + completed + '.done.json'):
-                    raise RemoteError('connection lost after the completed selection marker')
+    def test_reconcile_rechecks_completed_selection_with_changed_package_mode(self):
+        self.check_completed_marker('select', 'package mode')
 
-            self.host.after = interrupt
-            with self.assertRaisesRegex(package.PackageError, 'unknown until reconciled'):
-                self.package().install(A, self.fleet, durable.digest(plan), RUNS[A])
-            self.host.after = None
-            journal = Journal.load(self.state, package.SERVICE)
-            self.assertEqual(journal.status, 'unknown')
-            checkpoint = self.checkpoint()
-            # A restored, untampered checkpoint must still finish successfully;
-            # the negative cases below must fail because of the introduced drift.
-            self.restore_checkpoint(checkpoint)
-            self.assertEqual(self.package().reconcile(journal.id, archive, self.fleet).status, 'committed')
-            for drift in drifts:
-                self.check_completed_drift(completed, drift, checkpoint, journal.id, archive)
+    def test_reconcile_rechecks_completed_selection_with_extra_package_file(self):
+        self.check_completed_marker('select', 'extra package file')
+
+    def test_reconcile_rechecks_completed_selection_with_changed_fleet(self):
+        self.check_completed_marker('select', 'fleet')
+
+    def test_reconcile_rechecks_completed_selection_with_changed_fleet_mode(self):
+        self.check_completed_marker('select', 'fleet mode')
+
+    def test_reconcile_rechecks_completed_selection_with_changed_link(self):
+        self.check_completed_marker('select', 'selection')
+
+    def test_reconcile_rechecks_completed_verification_with_changed_package(self):
+        self.check_completed_marker('verify', 'package content')
+
+    def test_reconcile_rechecks_completed_promotion_with_changed_package(self):
+        self.check_completed_marker('promote', 'package content')
+
+    def check_completed_marker(self, completed, drift):
+        plan, _, archive = self.plan()
+
+        def interrupt(op, arguments):
+            if op == 'write' and arguments['path'].endswith('-' + completed + '.done.json'):
+                raise RemoteError('connection lost after the completed selection marker')
+
+        self.host.after = interrupt
+        with self.assertRaisesRegex(package.PackageError, 'unknown until reconciled'):
+            self.package().install(A, self.fleet, durable.digest(plan), RUNS[A])
+        self.host.after = None
+        journal = Journal.load(self.state, package.SERVICE)
+        self.assertEqual(journal.status, 'unknown')
+        checkpoint = self.checkpoint()
+        # Prove the same saved transaction recovers before introducing drift.
+        self.restore_checkpoint(checkpoint)
+        self.assertEqual(self.package().reconcile(journal.id, archive, self.fleet).status, 'committed')
+        self.check_completed_drift(completed, drift, checkpoint, journal.id, archive)
 
     def check_completed_drift(self, completed, drift, checkpoint, identifier, archive):
         with self.subTest(completed=completed, drift=drift):
@@ -628,7 +645,13 @@ class RetainedReleaseTests(PackageCase):
         self.assertEqual(self.package().status()['integrity'], 'verified')
         self.package().rollback(first.id)
         self.assertIsNone(self.selection())
-        # The rolled-back B is reselected as a retained release, then rolled back to A again.
+    def test_a_rolled_back_retained_release_can_be_reinstalled(self):
+        first = self.install(A)
+        upgrade = self.install(B)
+        self.package().rollback(upgrade.id)
+        self.package().rollback(first.id)
+        self.assertIsNone(self.selection())
+        # Both releases have recorded owners, despite no longer being selected.
         again = self.install(A)
         later = self.install(B)
         self.package().rollback(later.id)

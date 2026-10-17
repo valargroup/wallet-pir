@@ -188,13 +188,28 @@ pub fn groups(text: &str, health: Option<&str>) -> BTreeMap<String, Group> {
 }
 
 pub async fn monitor(path: PathBuf, dashboard: SharedDashboard) {
+    monitor_with_timing(
+        path,
+        dashboard,
+        Duration::from_secs(15),
+        Duration::from_secs(5),
+    )
+    .await;
+}
+
+async fn monitor_with_timing(
+    path: PathBuf,
+    dashboard: SharedDashboard,
+    period: Duration,
+    request_timeout: Duration,
+) {
     let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(5))
+        .timeout(request_timeout)
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .expect("worker HTTP client");
     let semaphore = Arc::new(tokio::sync::Semaphore::new(8));
-    let mut interval = tokio::time::interval(Duration::from_secs(15));
+    let mut interval = tokio::time::interval(period);
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
         interval.tick().await;
@@ -368,7 +383,12 @@ mod integration_tests {
         );
         data.fleet_enabled = true;
         let state = Arc::new(tokio::sync::RwLock::new(data));
-        let monitor_task = tokio::spawn(monitor(path.clone(), state.clone()));
+        let monitor_task = tokio::spawn(monitor_with_timing(
+            path.clone(),
+            state.clone(),
+            Duration::from_millis(100),
+            Duration::from_millis(100),
+        ));
         let (base, page_task) = serve(crate::dashboard_router(state.clone())).await;
         let client = reqwest::Client::new();
         tokio::time::timeout(Duration::from_secs(2), async {
