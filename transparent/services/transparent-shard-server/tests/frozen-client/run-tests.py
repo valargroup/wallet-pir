@@ -22,6 +22,8 @@ from target_lease import local_target  # noqa: E402
 from target_lease import inherited_fds  # noqa: E402
 from correctness import source_identity  # noqa: E402
 
+CASE_SECONDS = 30
+
 
 def host_snapshot():
     """Raw shared-host diagnostics, never an isolation/capacity attestation."""
@@ -58,6 +60,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args()
+    subprocess.run([sys.executable, str(HARNESS / "test_runner.py")], check=True, **inherited_fds())
     with local_target(REPO):
         return qualify(args)
 
@@ -96,7 +99,7 @@ def qualify(args):
                "source_diff_sha256": hashlib.sha256(difference).hexdigest(),
                "client_build_seconds": client_build_seconds, "server_build_seconds": server_build_seconds,
                "client": identity(client), "server_tests": identity(Path(executable)), "provider": identity(provider),
-               "profile": "release-fast", "case_deadline_seconds": 30,
+               "profile": "release-fast", "case_deadline_seconds": CASE_SECONDS,
                "qualification": "CPU fixture correctness; shared-host diagnostics, no application or hardware pass"}
     (output / "build-receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")
     fixtures = output / "fixtures"
@@ -106,7 +109,7 @@ def qualify(args):
     started = time.monotonic()
     passed = False
     try:
-        test_budget.execute([executable, "provider::", "--include-ignored"], cwd=REPO, env=env, report=str(output / "cases.jsonl"))
+        test_budget.execute([executable, "provider::", "--include-ignored"], cwd=REPO, env=env, report=str(output / "cases.jsonl"), seconds=CASE_SECONDS)
         if source_identity() != source:
             raise RuntimeError("source changed during qualification; results do not establish this snapshot")
         passed = True
