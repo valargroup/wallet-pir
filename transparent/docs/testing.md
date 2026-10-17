@@ -5,6 +5,26 @@ sync. The wallet's accepted checkpoint and the service's publication tip are
 separate authorities. The deployed regression runner exercises this distinction
 through the reference HTTP adapters and SQLite persistence.
 
+## Shipped history runtime correctness
+
+The controller's shipped-runtime success case cold-builds every runtime of a
+mixed `decoupled-2k-8k` recent / `decoupled-32k-32k` archive publication, then
+checks fleet offering, activation ordering and inode-preserving links during
+handover. Its companion refusal case starts from the same mixed-geometry source
+publication without building successful runtimes first. Superseded preparation
+verifies and retains that source set; replacing a linked table then tests that
+verification is required again. The case also retains the recent-only runtime
+write-failure check. Neither case depends on a warm fixture or test order.
+
+Publisher unit-test processes use up to four available build threads, respecting
+an explicit `TRANSPARENT_BUILD_THREADS`; integration programs and serving defaults
+keep their existing policy. Serving reserves half the CPUs for queries, whereas
+these serial unit cases have no query traffic. This bounds the cold preparation
+work separately from the independent refusal work without excluding targets or
+changing the 30-second case / 180-second warm correctness budgets. Production
+load, HTTP and full service qualification remain separate release gates; fixture
+timings do not qualify a deployment.
+
 ## Running the deployed suite
 
 Run `make transparent-regression` against the default public origins, or set
