@@ -1821,6 +1821,7 @@ async fn shared_display_lifecycle_serves_before_and_after_ordered_seals_and_rest
         vec![root.clone()],
     );
     let log: Log = Arc::default();
+    let archive_unavailable = Arc::new(std::sync::atomic::AtomicBool::new(false));
     struct Tasks(Vec<tokio::task::JoinHandle<()>>);
     impl Drop for Tasks {
         fn drop(&mut self) {
@@ -1837,6 +1838,7 @@ async fn shared_display_lifecycle_serves_before_and_after_ordered_seals_and_rest
         let listener =
             tokio::net::UnixListener::bind(temp.path().join(format!("{name}.sock"))).unwrap();
         let log = log.clone();
+        let unavailable = archive_unavailable.clone();
         tasks.0.push(tokio::spawn(async move {
             loop {
                 let (stream, _) = listener.accept().await.unwrap();
@@ -1862,7 +1864,16 @@ async fn shared_display_lifecycle_serves_before_and_after_ordered_seals_and_rest
                         .map(|s| &s.manifest_digest)
                         .collect::<Vec<_>>());
                 }
+                let refuse = name == "archive"
+                    && observed["operation"] == "prepare"
+                    && unavailable.load(std::sync::atomic::Ordering::Acquire);
                 log.lock().unwrap().push((name.into(), observed));
+                if refuse {
+                    // A real control-transport EOF: no fabricated readiness or
+                    // activation reply can qualify this unavailable archive.
+                    drop(write);
+                    continue;
+                }
                 let reply = reply_line(live.command(command).await);
                 write
                     .write_all(format!("{reply}\n").as_bytes())
@@ -1901,8 +1912,87 @@ async fn shared_display_lifecycle_serves_before_and_after_ordered_seals_and_rest
         .map_err(|_| "bootstrap activation")
         .unwrap();
     let mut wallet = display_world::Wallet::at(&origin);
+    let (_, transcript) = wallet.found(&chain_records(0, 103)[0], 103);
+    let query = transcript
+        .iter()
+        .find(|sent| sent.method == transparent_txid_client::Method::Post)
+        .unwrap();
+    let expected_reply = reqwest::Client::new()
+        .post(format!("{origin}{}", query.path))
+        .body(query.body.clone())
+        .send()
+        .await
+        .unwrap()
+        .bytes()
+        .await
+        .unwrap();
+    use tower::ServiceExt;
+    let retained = recent
+        .live
+        .router()
+        .oneshot(
+            axum::http::Request::post(&query.path)
+                .body(axum::body::Body::from(query.body.clone()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(retained.status(), axum::http::StatusCode::OK);
+    let original = controller.active().map_sha256.clone();
+    // Acquire one ordered batch through the actual source, then let every
+    // production build/stage job finish before this bounded publication attempt.
+    controller.poll_source().await.unwrap();
+    tokio::time::timeout(Duration::from_secs(15), async {
+        while controller
+            .queue
+            .iter()
+            .any(|job| job.state != JobState::Staged)
+        {
+            controller.schedule();
+            if controller
+                .queue
+                .iter()
+                .all(|job| job.state == JobState::Staged)
+            {
+                break;
+            }
+            let event = controller.receiver.recv().await.unwrap();
+            controller.background(event);
+        }
+    })
+    .await
+    .unwrap();
+    let recent_prepares = || {
+        log.lock()
+            .unwrap()
+            .iter()
+            .filter(|(name, c)| name == "recent" && c["operation"] == "prepare")
+            .count()
+    };
+    let before = recent_prepares();
+    archive_unavailable.store(true, std::sync::atomic::Ordering::Release);
+    assert!(matches!(
+        controller.cycle().await,
+        Err(CycleError::Retry(_))
+    ));
+    assert_eq!(
+        recent_prepares(),
+        before,
+        "unavailable archive cannot retire the old recent view"
+    );
+    assert_eq!(controller.active().map_sha256, original);
+    assert_eq!(recent.live.expected(), original);
     wallet.found(&chain_records(0, 103)[0], 103);
+    archive_unavailable.store(false, std::sync::atomic::Ordering::Release);
     assert_eq!(controller.run().await.unwrap(), Outcome::Idle);
+    assert_ne!(controller.active().map_sha256, original);
+    let retained_reply = axum::body::to_bytes(retained.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    assert_eq!(
+        retained_reply, expected_reply,
+        "admitted display response keeps its old binding and independently decoded answer"
+    );
     let active = controller.active().clone();
     assert!(
         active.seals.len() >= 2,

@@ -773,7 +773,12 @@ mod query_transport_tests {
         use axum::response::IntoResponse;
         use serde_json::{json, Value};
         let root = tempfile::tempdir().unwrap();
-        let snapshot = fixture::snapshot(8, false).unwrap();
+        let (source_rpc, source_service) = source::tests::fixture(false, false).await;
+        let checkpoint = root.path().join("source/source.bin");
+        let mut rolling =
+            source::RollingWindow::open(root.path().join("source"), [1; 32], 1).unwrap();
+        let observed = rolling.observe(&source_rpc).await.unwrap();
+        let snapshot = &observed.snapshot;
         let public = Arc::new(vec![1, 2, 3]);
         let manifest = Manifest {
             protocol: PROTOCOL.into(),
@@ -784,7 +789,7 @@ mod query_transport_tests {
             coverage_start: snapshot.start,
             anchor_height: snapshot.height,
             anchor_hash: snapshot.anchor,
-            observed_ms: now_ms(),
+            observed_ms: observed.observed_ms,
             entries: snapshot.entries,
             rows_digest: snapshot.digest,
             public_digest: Sha256::digest(public.as_slice()).into(),
@@ -911,14 +916,6 @@ mod query_transport_tests {
                 incarnation: "router".into(),
             },
         ];
-        let observed = source::Observation {
-            snapshot,
-            observed_ms: manifest.observed_ms,
-            collect_ms: 0.,
-            blocks: 1,
-            mempool: 0,
-            retained_forks: 0,
-        };
         for preparation_fails in [true, false] {
             refuse_prepare.store(preparation_fails, Ordering::SeqCst);
             assert!(publisher
@@ -940,6 +937,14 @@ mod query_transport_tests {
             rpc: rpc.clone(),
             active,
         };
+        let checkpoint_before = std::fs::metadata(&checkpoint).unwrap().modified().unwrap();
+        let authority_before = std::fs::read(root.path().join("authority/authority.json")).unwrap();
+        let (observations, source_progress) = watch::channel(None);
+        let mut input = ObservationTask {
+            source: rolling,
+            rpc: source_rpc,
+            tx: observations,
+        };
         {
             let publication = publisher.publish(&observed, &mut authority, &bindings, &rpc);
             tokio::pin!(publication);
@@ -947,6 +952,13 @@ mod query_transport_tests {
                 result = &mut publication => panic!("preparation did not pause: {result:?}"),
                 _ = preparing.notified() => {},
             }
+            let (source_shutdown, source_stopped) = tokio::sync::oneshot::channel();
+            let source_task = tokio::spawn(async move {
+                pir_pipeline::supervise(&mut input, Duration::from_secs(1), async {
+                    let _ = source_stopped.await;
+                })
+                .await
+            });
             let (shutdown, stopped) = tokio::sync::oneshot::channel();
             let heartbeat_task = tokio::spawn(async move {
                 pir_pipeline::supervise(&mut heartbeat, Duration::from_secs(1), async {
@@ -968,6 +980,26 @@ mod query_transport_tests {
             shutdown.send(()).unwrap();
             heartbeat_task.await.unwrap().unwrap();
             assert_eq!(heartbeats.load(Ordering::SeqCst), 6);
+            let progressed = source_progress
+                .borrow()
+                .clone()
+                .expect("observation continues during prepare");
+            assert!(progressed.observed_ms > manifest.observed_ms);
+            assert_eq!(progressed.snapshot.digest, observed.snapshot.digest);
+            assert!(
+                std::fs::metadata(&checkpoint).unwrap().modified().unwrap() > checkpoint_before
+            );
+            assert!(!std::fs::read(&checkpoint).unwrap().is_empty());
+            assert_eq!(
+                std::fs::read(root.path().join("authority/authority.json")).unwrap(),
+                authority_before
+            );
+            source_shutdown.send(()).unwrap();
+            source_task
+                .await
+                .unwrap()
+                .map_err(|_| "observation supervision failed")
+                .unwrap();
             let served: Manifest = reqwest::get(&init).await.unwrap().json().await.unwrap();
             assert_eq!(served, manifest, "heartbeats cannot refresh source time");
             pause_prepare.store(false, Ordering::SeqCst);
@@ -987,6 +1019,8 @@ mod query_transport_tests {
         role_task.abort();
         rpc_task.abort();
         public_task.abort();
+        source_service.abort();
+        let _ = source_service.await;
     }
 
     #[test]
