@@ -67,7 +67,7 @@ check-ops-control-sessions:
 # The Enhance and Status deploy CLI (ops/scripts/wallet-pir-deploy.py) against
 # an in-memory fleet, plus its host helper run locally.
 check-ops-deploy:
-	python3 tools/ci/python_tests.py ops/tests/deploy --jobs 2
+	python3 tools/ci/python_tests.py ops/tests/deploy --jobs 2 --split-module test_ops_package
 	python3 transparent/ops/tests/test_activity_schema_operation.py
 	python3 transparent/ops/tests/test_activity_schema_baseline.py
 

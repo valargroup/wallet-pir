@@ -349,6 +349,8 @@ class InstallTests(PackageCase):
             self.assertIn('unfinished schema transaction', problems)
         self.assertEqual(self.host.log, [])
 
+
+class RecoveryTests(PackageCase):
     def test_lost_lock_stops_before_the_next_step(self):
         plan, _, archive = self.plan()
         def lose(op, arguments):
@@ -547,6 +549,8 @@ class InstallTests(PackageCase):
             self.package().rollback(identifier)
         self.assertEqual(self.host.log, [])
 
+
+class RetainedReleaseTests(PackageCase):
     def test_rollback_refuses_a_changed_selection_and_a_later_transaction(self):
         first = self.install(A)
         self.install(B)

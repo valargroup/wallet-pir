@@ -18,6 +18,7 @@ use std::time::Duration;
 
 struct Listening {
     url: String,
+    address: std::net::SocketAddr,
     task: tokio::task::JoinHandle<()>,
     stop: Option<tokio::sync::oneshot::Sender<()>>,
 }
@@ -36,8 +37,12 @@ impl Drop for Listening {
     }
 }
 async fn serve(router: axum::Router) -> Listening {
-    let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let url = format!("http://{}", socket.local_addr().unwrap());
+    serve_at(router, "127.0.0.1:0".parse().unwrap()).await
+}
+async fn serve_at(router: axum::Router, address: std::net::SocketAddr) -> Listening {
+    let socket = tokio::net::TcpListener::bind(address).await.unwrap();
+    let address = socket.local_addr().unwrap();
+    let url = format!("http://{address}");
     let (stop, done) = tokio::sync::oneshot::channel();
     let task = tokio::spawn(async move {
         axum::serve(socket, router)
@@ -49,6 +54,7 @@ async fn serve(router: axum::Router) -> Listening {
     });
     Listening {
         url,
+        address,
         task,
         stop: Some(stop),
     }
@@ -69,6 +75,7 @@ fn record(position: u64) -> Vec<u8> {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn encrypted_http_answers_survive_restart_and_reject_malformed_queries() {
+    let phase = std::cell::Cell::new("starting listeners");
     tokio::time::timeout(Duration::from_secs(30), async {
         let root = tempfile::tempdir().unwrap();
         let mut listeners = Vec::new();
@@ -125,6 +132,7 @@ async fn encrypted_http_answers_survive_restart_and_reject_malformed_queries() {
             .unwrap();
         // Both workers prepare the first assignment, but one loses its commit
         // acknowledgement. Its healthy peer must still publish the next block.
+        phase.set("publishing the first block");
         reject_commit.store(true, Ordering::SeqCst);
         coordinator
             .publish(&journal, 3428143, "01".repeat(32))
@@ -144,11 +152,13 @@ async fn encrypted_http_answers_survive_restart_and_reject_malformed_queries() {
         journal
             .append_block(3428144, "02".repeat(32), &[record(67)])
             .unwrap();
+        phase.set("publishing while a commit is pending");
         coordinator
             .publish(&journal, 3428144, "02".repeat(32))
             .await
             .unwrap();
         assert_eq!(read_state().pending_commits, pending);
+        phase.set("querying the new publication");
         let mut current = EnhancePirClient::connect(&http.url).await.unwrap();
         assert_eq!(
             current
@@ -159,7 +169,7 @@ async fn encrypted_http_answers_survive_restart_and_reject_malformed_queries() {
                 .as_ref(),
             record(67)
         );
-        drop(current);
+        phase.set("retrying the pending commit");
         reject_commit.store(false, Ordering::SeqCst);
         coordinator.reconcile().await.unwrap();
         assert!(read_state().pending_commits.is_empty());
@@ -174,13 +184,19 @@ async fn encrypted_http_answers_survive_restart_and_reject_malformed_queries() {
             .unwrap();
         assert!(malformed.status().is_client_error());
         let _ = malformed.bytes().await.unwrap();
+        phase.set("restarting the coordinator");
+        let address = http.address;
         http.stop().await;
         drop(coordinator);
         let restored = Coordinator::open(&state_dir, groups).unwrap();
-        let restored_http = serve(restored.router()).await;
-        let mut client = EnhancePirClient::connect(&restored_http.url).await.unwrap();
+        let _restored_http = serve_at(restored.router(), address).await;
+        // The same wallet reconnects to the restarted service and rebinds its
+        // immutable query session. The response still traverses real HTTP and
+        // must decrypt from the workers' durable, restored publication.
+        phase.set("querying after restart");
+        current.refresh().await.unwrap();
         assert_eq!(
-            client
+            current
                 .query_position_with_timing(0)
                 .await
                 .unwrap()
@@ -190,5 +206,10 @@ async fn encrypted_http_answers_survive_restart_and_reject_malformed_queries() {
         );
     })
     .await
-    .expect("encrypted HTTP smoke exceeded its deadline");
+    .unwrap_or_else(|_| {
+        panic!(
+            "encrypted HTTP smoke exceeded its deadline while {}",
+            phase.get()
+        )
+    });
 }

@@ -16,11 +16,11 @@ from stage import inherited_fds
 
 
 class PythonTestDriverTests(unittest.TestCase):
-    def run_driver(self, directory, *, jobs=2):
+    def run_driver(self, directory, *, jobs=2, split=()):
         env = os.environ.copy()
         env.pop('WALLET_PIR_FIXTURE_MODULE_OWNER', None)
         return subprocess.run([sys.executable, str(DRIVER), str(directory / 'suite'),
-                               '--jobs', str(jobs)], cwd=directory, env=env,
+                               '--jobs', str(jobs), *[arg for name in split for arg in ('--split-module', name)]], cwd=directory, env=env,
                               capture_output=True, text=True, timeout=15, **inherited_fds(env))
 
     def test_modules_keep_their_fixtures_and_caller_directory_on_two_isolated_workers(self):
@@ -55,7 +55,7 @@ class Cases(unittest.TestCase):
                 (suite / ('test_' + uuid.uuid4().hex + '.py')).write_text(source)
             result = self.run_driver(root)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertIn('6 cases in 3 modules', result.stdout)
+            self.assertIn('6 cases in 3 groups', result.stdout)
             rows = [json.loads(line) for line in events.read_text().splitlines()]
             self.assertEqual(Counter(row['phase'] for row in rows), {'start': 3, 'end': 3})
             self.assertEqual(len({row['pid'] for row in rows}), 3)
@@ -64,6 +64,34 @@ class Cases(unittest.TestCase):
                 active += 1 if row['phase'] == 'start' else -1
                 peak = max(peak, active)
             self.assertEqual((active, peak), (0, 2))
+
+    def test_class_splitting_preserves_class_fixtures_and_refuses_module_fixtures(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            suite = root / 'suite'
+            suite.mkdir()
+            name = 'test_' + uuid.uuid4().hex
+            source = 'import os,unittest\nfrom pathlib import Path\n'
+            for kind in ['First', 'Second']:
+                source += (f'class {kind}(unittest.TestCase):\n'
+                           ' @classmethod\n def setUpClass(cls):\n'
+                           '  assert "OWNER" not in os.environ\n  os.environ["OWNER"]=cls.__name__\n'
+                           f'  Path({str(root / kind)!r}).write_text(str(os.getpid()))\n'
+                           ' def test_first(self):self.assertEqual(os.environ["OWNER"],type(self).__name__)\n'
+                           ' def test_second(self):self.assertEqual(os.environ["OWNER"],type(self).__name__)\n')
+            path = suite / (name + '.py')
+            path.write_text(source)
+            result = self.run_driver(root, split=[name])
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('4 cases in 2 groups', result.stdout)
+            self.assertNotEqual((root / 'First').read_text(), (root / 'Second').read_text())
+            path.write_text(source + 'def setUpModule():pass\n')
+            result = self.run_driver(root, split=[name])
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('module fixtures require one process', result.stderr)
+            result = self.run_driver(root, split=['unknown'])
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('unknown modules', result.stderr)
 
     def test_generated_duplicate_case_ids_are_not_deduplicated(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -82,7 +110,7 @@ class Cases(unittest.TestCase):
             result = self.run_driver(root, jobs=1)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertEqual(output.read_text().splitlines(), ['ran', 'ran'])
-            self.assertIn('2 cases in 1 modules', result.stdout)
+            self.assertIn('2 cases in 1 groups', result.stdout)
 
     def test_failure_and_discovery_errors_cannot_report_completion(self):
         for source in ['import unittest\nclass Cases(unittest.TestCase):\n def test_failure(self):self.fail("expected fixture failure")\n',

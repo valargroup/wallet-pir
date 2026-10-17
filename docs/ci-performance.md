@@ -78,7 +78,9 @@ selected job fails or is skipped. This avoids compiling every integration target
 to exclude its tests at runtime. Affected helper
 checks run concurrently with Rust; selected operations suites run in
 four parallel make slots. Deployment unittest modules use two separate processes,
-retaining every discovered case and each module's fixtures. Each case keeps its
+retaining every discovered case and each module's fixtures. The package
+transaction module has independent test classes and is explicitly split by class;
+class fixtures stay together, and modules with module fixtures cannot opt in. Each case keeps its
 own mutable deployment tree; negative variants may restore a real transaction
 checkpoint after proving that an untampered copy still recovers. Failures in any
 task fail fast CI.

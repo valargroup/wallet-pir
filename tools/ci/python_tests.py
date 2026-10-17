@@ -23,21 +23,33 @@ def cases(suite):
             yield item
 
 
-def discover(directory):
+def discover(directory, split_modules=()):
     loader = unittest.TestLoader()
     suite = loader.discover(str(directory), pattern='test_*.py')
     if loader.errors:
         raise ValueError('\n'.join(loader.errors))
+    requested = set(split_modules)
+    discovered = list(cases(suite))
+    names = {type(case).__module__ for case in discovered}
+    if requested - names:
+        raise ValueError(f'unknown modules requested for class splitting: {sorted(requested - names)}')
+    for name in requested:
+        if any(hasattr(sys.modules[name], fixture) for fixture in ('setUpModule', 'tearDownModule')):
+            raise ValueError(f'{name}: module fixtures require one process for the whole module')
     modules = {}
-    for case in cases(suite):
-        modules.setdefault(type(case).__module__, []).append(case.id())
+    for case in discovered:
+        kind = type(case)
+        group = kind.__module__
+        if group in requested:
+            group += '.' + kind.__qualname__
+        modules.setdefault(group, []).append(case.id())
     if not modules:
         raise ValueError(f'no unittest cases discovered in {directory}')
     return modules
 
 
-def execute(directory, jobs):
-    modules = discover(directory)
+def execute(directory, jobs, split_modules=()):
+    modules = discover(directory, split_modules)
     # Keep the caller's working directory, as unittest discovery did. Only its
     # import search path changes so child interpreters can resolve the case IDs.
     env = dict(os.environ, PYTHONPATH=os.pathsep.join([str(directory), os.environ.get('PYTHONPATH', '')]))
@@ -55,18 +67,20 @@ def execute(directory, jobs):
             stop(signal.SIGTERM)
             raise
     print(f'Python tests complete: {sum(map(len, modules.values()))} cases in '
-          f'{len(modules)} modules with {jobs} workers', flush=True)
+          f'{len(modules)} groups with {jobs} workers', flush=True)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('directory', type=Path)
     parser.add_argument('--jobs', type=int, choices=(1, 2), default=2)
+    parser.add_argument('--split-module', action='append', default=[],
+                        help='split an independent module by test class; module fixtures are refused')
     args = parser.parse_args()
     directory = args.directory.resolve()
     if not directory.is_dir():
         parser.error(f'test directory does not exist: {directory}')
-    execute(directory, args.jobs)
+    execute(directory, args.jobs, args.split_module)
 
 
 if __name__ == '__main__':
