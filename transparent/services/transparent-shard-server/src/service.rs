@@ -181,6 +181,7 @@ pub struct Inner {
     params: HashMap<ParamsKey, Arc<SharedParams>>,
     cache: Arc<RuntimeCache>,
     admission: Arc<Admission>,
+    forwarding_admission: Arc<Admission>,
     metrics: Arc<Metrics>,
     max_query_bytes: usize,
     warm: WarmState,
@@ -191,6 +192,7 @@ pub struct Inner {
     /// the publication was staged without them: the worker then produces
     /// every runtime itself, as it always has.
     shipped: Option<ShippedRuntimes>,
+    archive: Option<Arc<crate::archive::Archive>>,
 }
 
 #[derive(Clone)]
@@ -269,6 +271,40 @@ pub struct SetupResponse {
 }
 
 impl ServiceState {
+    /// Attach one trusted terminal archive before this snapshot is shared.
+    pub fn with_archive(mut self, archive: Arc<crate::archive::Archive>) -> Self {
+        Arc::get_mut(&mut self.inner)
+            .expect("attach archive before sharing state")
+            .archive = Some(archive);
+        self
+    }
+
+    pub(crate) fn archive(&self) -> Option<&Arc<crate::archive::Archive>> {
+        self.inner.archive.as_ref()
+    }
+
+    pub(crate) async fn qualify_retirement(&self, old: &Self) -> Result<(), String> {
+        for shard in old.set().current() {
+            let id = shard.manifest.shard_id;
+            if self.set().is_assigned(id) {
+                continue;
+            }
+            let next = self.set().meta(id).ok_or("retirement removes a shard")?;
+            if next.digest != shard.digest {
+                return Err("retirement must preserve the exact shard revision".into());
+            }
+            let archive = self
+                .archive()
+                .ok_or("local retirement requires a qualified archive route")?;
+            tokio::time::timeout(
+                self.worker().admission.config().query_deadline,
+                archive.qualify(self, id, &shard.digest),
+            )
+            .await
+            .map_err(|_| "archive retirement qualification timed out")??;
+        }
+        Ok(())
+    }
     pub fn build(set: ShardSet, config: ServiceConfig) -> Result<Self, String> {
         Self::build_with_disk(set, config, None)
     }
@@ -358,16 +394,34 @@ impl ServiceState {
         }
         Metrics::set(&metrics.target_runtimes, target as u64);
         let prewarm_slots = cache.prewarm_concurrency();
+        let admission = previous
+            .map(|s| s.inner.admission.clone())
+            .unwrap_or_else(|| Arc::new(Admission::new(config.admission(), metrics.clone())));
+        let forwarding_admission = match previous {
+            Some(state) => state.inner.forwarding_admission.clone(),
+            None => {
+                // Reserve uploads for the original local execution capacity,
+                // even when later snapshots introduce another approved geometry.
+                // This derives parameters only; no PIR runtime is constructed.
+                let mut largest = 0u64;
+                for geometry in transparent_shard::layout::PROFILES {
+                    for table in Table::HISTORY {
+                        let bytes = SharedParams::build(geometry, table)?.query_bytes() as u64;
+                        largest = largest.max(bytes.div_ceil(1024) * 1024);
+                    }
+                }
+                Arc::new(
+                    admission.forwarding(largest.saturating_mul(config.query_slots.max(1) as u64)),
+                )
+            }
+        };
         Ok(Self {
             inner: Arc::new(Inner {
                 set,
                 params,
                 cache,
-                admission: previous
-                    .map(|s| s.inner.admission.clone())
-                    .unwrap_or_else(|| {
-                        Arc::new(Admission::new(config.admission(), metrics.clone()))
-                    }),
+                admission,
+                forwarding_admission,
                 metrics,
                 max_query_bytes,
                 warm: WarmState {
@@ -381,6 +435,7 @@ impl ServiceState {
                 },
                 prewarm_slots,
                 shipped,
+                archive: previous.and_then(|s| s.inner.archive.clone()),
             }),
         })
     }
@@ -632,7 +687,7 @@ impl ServiceState {
     }
 
     /// The parts of this worker a request passes through.
-    fn worker(&self) -> Worker<'_> {
+    pub(crate) fn worker(&self) -> Worker<'_> {
         Worker {
             admission: &self.inner.admission,
             work_memory: self.inner.cache.work_memory(),
@@ -640,6 +695,10 @@ impl ServiceState {
             max_query_bytes: self.max_query_bytes(),
             map_digest: &self.inner.set.map_digest,
         }
+    }
+
+    pub(crate) fn forwarding_admission(&self) -> &Admission {
+        &self.inner.forwarding_admission
     }
 
     pub fn metrics(&self) -> &Arc<Metrics> {
@@ -779,7 +838,23 @@ pub fn router(state: ServiceState) -> Router {
             telemetry,
             transparent_server_backend::http::observe,
         ))
+        .layer(axum::middleware::from_fn_with_state(
+            state.archive().is_some(),
+            archive_hop,
+        ))
         .with_state(state)
+}
+
+async fn archive_hop(
+    State(forwarding): State<bool>,
+    request: Request,
+    next: axum::middleware::Next,
+) -> Response {
+    if forwarding && request.headers().contains_key("x-transparent-archive-hop") {
+        return RequestError::Misdirected("an archive hop must terminate at an owner".into())
+            .into_response("");
+    }
+    next.run(request).await
 }
 
 async fn health(State(state): State<ServiceState>) -> Response {
@@ -846,6 +921,7 @@ async fn ready(State(state): State<ServiceState>) -> Response {
     };
     let warm = inner.warm.count.load(Ordering::Acquire);
     let mut body = serde_json::json!({
+        "archive_forwarding": inner.archive.is_some(),
         "mode": match inner.warm.mode {
             ReadinessMode::LoadedOnly => "loaded-only",
             ReadinessMode::Warm => "warm",
@@ -1062,6 +1138,19 @@ async fn setup(
     let Some(table) = TableRef::parse(&table) else {
         return RequestError::Bad("unknown table".into()).into_response(&map_digest);
     };
+    if state.set().revision(&digest).is_none() && state.set().meta_by_digest(&digest).is_some() {
+        if let Some(archive) = state.archive() {
+            return archive
+                .setup(&state, shard_id, &digest, table, segment)
+                .await;
+        }
+    }
+    if state.archive().is_some()
+        && state.set().names(shard_id)
+        && state.set().meta_by_digest(&digest).is_none()
+    {
+        return stale(shard_id, &digest).into_response(&map_digest);
+    }
     // Counted as a waiter while the runtime is acquired or built, so a burst
     // of setup requests for a cold shard is bounded the same way queries are.
     let pending = match state.inner.admission.try_enter(None) {
@@ -1125,6 +1214,21 @@ async fn query_inner(
         let refused = RequestError::Bad("unknown table".into()).into_response(map_digest);
         return worker.refuse_unread(request, refused).await;
     };
+    if state.set().revision(&digest).is_none() && state.set().meta_by_digest(&digest).is_some() {
+        if let Some(archive) = state.archive() {
+            return archive
+                .query(&state, shard_id, &digest, table, request)
+                .await;
+        }
+    }
+    if state.archive().is_some()
+        && state.set().names(shard_id)
+        && state.set().meta_by_digest(&digest).is_none()
+    {
+        return worker
+            .refuse_unread(request, stale(shard_id, &digest).into_response(map_digest))
+            .await;
+    }
     let (segments, shared, query_rows) = {
         let shard = match state.revision(shard_id, &digest) {
             Ok(shard) => shard,

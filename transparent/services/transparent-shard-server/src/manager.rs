@@ -15,6 +15,7 @@ use transparent_server_backend::distribution::{Current, Error};
 pub struct Manager {
     config: Config,
     service: ServiceConfig,
+    archive: Option<std::sync::Arc<crate::archive::Archive>>,
     source: Source,
     _lock: std::sync::Arc<std::fs::File>,
     live: Option<LiveService>,
@@ -68,12 +69,17 @@ impl Manager {
         Ok(Self {
             config,
             service,
+            archive: None,
             source,
             _lock: std::sync::Arc::new(lock),
             live: None,
             current: None,
             revocations: intent,
         })
+    }
+    pub fn with_archive(mut self, archive: std::sync::Arc<crate::archive::Archive>) -> Self {
+        self.archive = Some(archive);
+        self
     }
     pub fn live(&self) -> Option<LiveService> {
         self.live.clone()
@@ -143,6 +149,10 @@ impl Manager {
                 None,
                 Some(ShippedRuntimes::required(staged.directory.clone())),
             )?;
+            let state = match &self.archive {
+                Some(archive) => state.with_archive(archive.clone()),
+                None => state,
+            };
             state.spawn_prewarm().await?;
             if !state.is_warm() {
                 return Err("required publication failed prewarm".into());
@@ -292,6 +302,10 @@ impl Manager {
                     .ok_or("saved provider lacks prepared runtimes")?,
             )),
         )?;
+        let state = match &self.archive {
+            Some(archive) => state.with_archive(archive.clone()),
+            None => state,
+        };
         state.spawn_prewarm().await?;
         let live = LiveService::new_required(
             state,
