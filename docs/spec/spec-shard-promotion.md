@@ -1,7 +1,7 @@
 # Shard promotion specification
 
-Status: draft. This document specifies agreed behavior for promoting shards
-through an amended hierarchy. It does not claim that the behavior is implemented
+Status: draft. This document specifies promotion by changing ownership of
+unchanged immutable shards. It does not claim that the behavior is implemented
 or deployed.
 
 The [decentralized query-serving architecture](../decentralized-query-serving.md)
@@ -17,8 +17,14 @@ choice.
   serving artifacts.
 - **Hierarchy:** the published organization of shards and their coverage,
   including recent and archive holdings.
+- **Promotion:** moving an already sealed, immutable shard out of recent holdings
+  into archive holdings, without changing the shard itself. Full Query Servers
+  may retain the shard throughout that move.
 - **Generation:** a version of that hierarchy within a publisher's publication
-  stream. Routine per-block data revisions are outside this specification.
+  stream, used by publishers and query servers to synchronize holdings and routes.
+  It does not introduce a new wallet-visible generation or replace existing
+  product revision and session identities. Routine per-block data revisions are
+  outside this specification.
 - **Current generation:** the finalized generation the publisher currently offers
   for synchronization and bootstrap.
 - **Active generation:** the generation a query server currently uses to answer
@@ -33,6 +39,30 @@ choice.
 Different query servers may temporarily have different active generations while
 they update. A publisher's current generation and a query server's active
 generation are distinct state.
+
+## Promotion and wallet compatibility
+
+The first version of promotion MUST change holdings and routing without rewriting
+the promoted shards. It MUST preserve their coverage boundaries, shard identifiers,
+content and revision digests, PIR geometry, serving bytes and public setup, and
+existing wallet request and session bindings. Promoting a shard MUST NOT split,
+merge, renumber or repack it. Sealing a mutable tail and re-cutting existing shards
+are separate operations outside this specification.
+
+The synchronization generation MUST remain a publisher/query-server concern.
+Wallets MUST NOT need to send or interpret it. Existing wallet endpoint formats,
+manifest schemas, cryptographic parameters, and refusal and refresh behavior MUST
+remain unchanged. Holdings and routing metadata MAY change through those existing
+interfaces, provided they continue to identify the same immutable shards and
+preserve the product's validity requirements. This does not require successive
+manifests to be byte-for-byte identical.
+
+A router MUST preserve the exact shard, revision and session binding of an
+encrypted request when selecting a local worker or forwarding destination.
+Moving a shard to another owner MUST NOT cause a router to reinterpret or rewrite
+the request for different data or setup. Any future shard reorganization requires
+a separate specification and explicit wallet compatibility qualification; it MUST
+NOT be treated as ownership-only promotion.
 
 ## Server capacity and promotion policy
 
@@ -84,6 +114,9 @@ of the old generation already held by query servers.
    fetching, verifying and loading the replacement. The old generation's metadata
    and setup needed to answer those requests MUST remain available locally.
 4. The query server MUST NOT activate a partially fetched or unready generation.
+   Readiness MUST include eligible serving destinations for shards whose routes
+   change, verified under the product's existing routing and authority rules.
+   Publisher finalization alone does not establish destination readiness.
 5. Once the replacement is ready, the query server MUST switch its router and
    worker serving view atomically. Its advertised active generation MUST reflect
    the serving view actually in use.
@@ -106,14 +139,16 @@ generation remains active, rather than unloading the old generation first.
 
 ## Wallet requests and validity
 
-Wallets MUST be able to continue querying a query server's active old generation
-while that server prepares the new generation. A publisher advancing its
-generation MUST NOT, by itself, invalidate those requests.
+Wallets MUST be able to continue using the existing wallet protocol against a
+query server's active serving view while that server prepares the new generation.
+A publisher advancing its generation MUST NOT, by itself, invalidate those
+requests or their existing shard, revision and session identities.
 
 After activation, requests already admitted under the old generation retain
 their binding and the product's existing request-lifetime rules. A query server
-MUST NOT evaluate an old-generation request against new-generation data. Stale
-wallet sessions follow the product's existing refusal and refresh behavior.
+MUST NOT evaluate a request against data or setup other than those to which it is
+bound. Stale wallet sessions follow the product's existing refusal and refresh
+behavior; no new wallet generation negotiation is introduced.
 
 These rules cover ordinary hierarchy replacement. They do not authorize serving
 data that has been invalidated by a reorg, whose serving authority has expired,
@@ -134,6 +169,14 @@ A conforming implementation demonstrates:
   valid active generation and lead to another synchronization attempt.
 - Router and worker activation do not mix generations; admitted requests preserve
   their binding and stale sessions receive the existing product behavior.
+- An unchanged wallet client completes metadata discovery, setup and encrypted
+  queries before, during and after promotion through the existing HTTP interface.
+  Exercise local and forwarded serving, independently updating providers, and a
+  destination that is not ready. Activation waits for eligible destinations while
+  the old serving view remains available.
+- Promoted shards retain their exact coverage, identifiers, digests, geometry,
+  serving bytes and setup. A candidate that rewrites a shard is rejected as
+  ownership-only promotion, even if its hierarchy generation is newer.
 - Reorg invalidation and expired authority still cause the required refusals.
 - Recent Only service and generation handover fit on a 64 GB RAM host at the
   supported serving load, including transient memory and system overhead.
@@ -141,6 +184,7 @@ A conforming implementation demonstrates:
 - Full coverage can place in-memory shards across machines without changing the
   recent-tier capacity contract.
 
-Wire encoding, endpoint names, polling intervals, promotion thresholds and changes
-to shard geometry are not specified here. No new wallet protocol or additional
-generation-retention window is introduced by this specification.
+The publisher/query-server wire encoding, endpoint names, polling intervals and
+promotion thresholds remain to be specified. Shard rewriting and changes to the
+wallet protocol are outside this version. No additional generation-retention
+window is introduced by this specification.
