@@ -463,6 +463,12 @@ async fn single_unit_hint_rejects_damage_and_pins_retired_file() {
         },
     )
     .await;
+    // Abort drops the candidate runtime; the response owns only its pinned file.
+    // The manual unlink above must not stand in for retention's directory GC.
+    assert!(
+        artifact_root.is_dir(),
+        "unit directory must exist before GC"
+    );
     hint_command(
         &http,
         &worker.url,
@@ -473,7 +479,10 @@ async fn single_unit_hint_rejects_damage_and_pins_retired_file() {
         },
     )
     .await;
-    assert!(!path.exists(), "retirement must reclaim the unit directory");
+    assert!(
+        !artifact_root.exists(),
+        "retirement must reclaim the unit directory"
+    );
     assert_eq!(response.bytes().await.unwrap().as_ref(), original);
     // A saved path alone cannot authorize serving, even if it contains valid bytes.
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
