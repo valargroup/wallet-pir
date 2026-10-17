@@ -145,4 +145,3 @@ class WorkspaceCacheFixture(unittest.TestCase):
         artifacts, behavior = self.build()
         self.assertEqual(behavior, expected)
         self.assertTrue(artifacts and all(not entry['fresh'] for entry in artifacts), artifacts)
-
