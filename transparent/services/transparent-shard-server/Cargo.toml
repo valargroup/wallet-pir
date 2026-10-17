@@ -32,7 +32,7 @@ portable-kernel = ["transparent-server-backend/portable-kernel"]
 
 [dependencies]
 transparent-server-backend = { path = "../../crates/transparent-server-backend" }
-pir-control = { version = "=0.1.0", path = "../../../shared/pir-control" }
+pir-control = { version = "=0.1.0", path = "../../../shared/pir-control", features = ["admission"] }
 pir-observability = { version = "=0.1.0", path = "../../../shared/pir-observability" }
 axum = "0.7"
 rayon = "1"
