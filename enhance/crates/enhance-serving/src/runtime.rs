@@ -666,6 +666,82 @@ mod tests {
         Ok(bytes)
     }
 
+    /// Deterministic bytes for fixed-input regression vectors.
+    #[cfg(not(feature = "native-reinspiring"))]
+    fn stream(label: &[u8], len: usize) -> Vec<u8> {
+        (0u64..)
+            .flat_map(|i| {
+                Sha256::new()
+                    .chain_update(label)
+                    .chain_update(i.to_le_bytes())
+                    .finalize()
+            })
+            .take(len)
+            .collect()
+    }
+
+    /// Pins public material and the packed answer for fixed records, setup
+    /// seed and query bytes. The digests were captured on the base commit
+    /// before the shared runtime extraction; they must never change.
+    #[cfg(not(feature = "native-reinspiring"))]
+    #[test]
+    fn fixed_inputs_pin_public_material_and_answer() {
+        let dir = tempfile::tempdir().unwrap();
+        let coverage = Lifecycle::default()
+            .coverage(67, Geometry::default())
+            .unwrap();
+        let plan = plan(coverage.shards[0].clone(), records).unwrap();
+        let mut engine = Engine::new(dir.path());
+        let (eval, _) = engine.prepare(plan.clone(), records).unwrap();
+        let hint = eval.hint().unwrap();
+        let pack = Packing::new(4096, &hint, &crate::PackingBudget::coordinator()).unwrap();
+        let mut hint_digest = Sha256::new();
+        for value in hint.iter().flat_map(|b| b.rows.iter().flatten()) {
+            hint_digest.update(value.to_le_bytes());
+        }
+        let binding = QueryBinding {
+            generation: 1,
+            shard_id: 0,
+            epoch: Sha256::digest(&pack.public)[..8].try_into().unwrap(),
+            recovery_epoch: 0,
+            session_id: [3; 32],
+            request_id: [4; 16],
+            anchor_hash: [5; 32],
+        };
+        let q = rlwe().q;
+        let keys: Vec<u64> = stream(b"keys", serialized_packing_keys_len(rlwe()) * 2)
+            .chunks_exact(8)
+            .map(|c| u64::from_le_bytes(c.try_into().unwrap()) % q)
+            .collect();
+        let mut body = binding.encode();
+        let keys = ipir_sp::bits::u64s_to_contiguous_bytes(
+            &keys,
+            ipir_sp::modulus_switch::modulus_bits(q),
+        );
+        body.extend(&keys[..serialized_packing_keys_len(rlwe())]);
+        body.extend(stream(
+            b"query",
+            (pack.params.db_rows * pack.params.query_bits).div_ceil(8),
+        ));
+        let rows = pack.params.db_rows;
+        let coefficients = pack.query_coefficients(&body, binding, rows).unwrap();
+        let answer = pack
+            .pack(&body, &eval.evaluate(&coefficients).unwrap(), rows)
+            .unwrap();
+        assert_eq!(
+            [
+                hex::encode(hint_digest.finalize()),
+                hex::encode(Sha256::digest(&pack.public)),
+                hex::encode(Sha256::digest(&answer)),
+            ],
+            [
+                "03c4b6b973673c506b1f12f18605daddbab033ec3c40a4a055fac538a833e361",
+                "89b1ad472659862a987130688c0e967189695e66d1eba518c2b950938f9f84df",
+                "045515ff10f14273c2a4118093407e9563add14410c8ad2392d5e277ae60db20",
+            ]
+        );
+    }
+
     #[test]
     fn encrypted_bootstrap_round_trip_and_cached_restart() {
         round_trip_and_restart(MatvecConfig::default());

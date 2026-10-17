@@ -1433,6 +1433,21 @@ impl RuntimeCache {
 #[cfg(test)]
 pub(crate) mod tests {
 
+    /// The scan shape keys every prepared runtime and disk cache entry. The
+    /// digest was captured on the base commit before the shared runtime
+    /// extraction; it must never change.
+    #[test]
+    fn transport_params_are_pinned() {
+        let shapes = [(2048, 4096), (4096, 4096), (65536, 4096)]
+            .map(|(rows, row_bytes)| super::transport_params(rows, row_bytes).unwrap());
+        assert_eq!(
+            hex::encode(<sha2::Sha256 as sha2::Digest>::digest(
+                serde_json::to_vec(&shapes).unwrap()
+            )),
+            "d270081346ced7386c22ffc61e3b504090e9951242f5fa5b3e1598eac2c6ee48"
+        );
+    }
+
     #[test]
     fn runtime_builds_run_in_their_own_smaller_pool() {
         let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
