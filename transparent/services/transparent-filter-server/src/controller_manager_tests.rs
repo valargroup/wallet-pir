@@ -1627,7 +1627,17 @@ with urllib.request.urlopen(r,timeout=20) as response: sys.stdout.buffer.write(r
         .unwrap()
         .load()
         .unwrap();
-    assert_ne!(old_rows, new_rows, "handover must change the answer oracle");
+    let width = set.get(1).unwrap().geometry.directory_row_bytes;
+    let selected = old_rows
+        .chunks_exact(width)
+        .position(|row| row.iter().any(|b| *b != 0))
+        .unwrap();
+    let selected = selected * width..(selected + 1) * width;
+    assert_ne!(
+        &old_rows[selected.clone()],
+        &new_rows[selected],
+        "the admitted query's selected row must change across handover"
+    );
     let retained_bytes = axum::body::to_bytes(retained.into_body(), usize::MAX)
         .await
         .unwrap();

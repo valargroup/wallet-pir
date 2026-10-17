@@ -118,8 +118,8 @@ activation intent, and the existing checked pointer commit, invalidation and
 unfinished-activation records remain product owned. Only preparation's existing
 fleet wait is cancellable on invalidation. Activation completes its existing
 post-checks. Boundary waits retain the input notification and publication deadline;
-phase timings do not grant serving authority. Prepared HTTPS pulling is a separate
-consumer and retains its existing source and safety policy.
+phase timings do not grant serving authority. The HTTPS manager still owns its
+separate acquisition loop and source/safety policy.
 
 The query worker serves maps and range filters at the same paths as the public
 filter origin. Wallets can use one origin or configure separate public and
