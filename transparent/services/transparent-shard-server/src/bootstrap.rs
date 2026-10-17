@@ -632,3 +632,111 @@ fn sync_tree(path: &std::path::Path) -> Result<(), Error> {
     std::fs::File::open(path.parent().ok_or("stage has no parent")?)?.sync_all()?;
     Ok(())
 }
+
+#[cfg(test)]
+mod observation_tests {
+    use super::*;
+    use distribution::Eligibility;
+
+    #[test]
+    fn damaged_high_water_requires_memory_and_never_hides_a_readable_contradiction() {
+        // The HTTP tests cover propagation into live serving and activation.
+        // Exercise both file locations and error kinds here without PIR setup.
+        for failed in [
+            "publisher-high-water.json",
+            "publisher-high-water-fallback.json",
+        ] {
+            for unreadable in [false, true] {
+                let root = tempfile::tempdir().unwrap();
+                let current = Current {
+                    schema: distribution::SCHEMA.into(),
+                    revision: 10,
+                    recovery_epoch: 0,
+                    inventory_sha256: "11".repeat(32),
+                    network: "main".into(),
+                    genesis_hash: "00".repeat(32),
+                    anchor_height: 2,
+                    anchor_hash: "22".repeat(32),
+                    eligibility: Eligibility::Canonical,
+                    invalidated_from: None,
+                };
+                let mut source = Source::new(&Config {
+                    publisher: "https://publisher.invalid".into(),
+                    network: current.network.clone(),
+                    genesis_hash: current.genesis_hash.clone(),
+                    directory: root.path().into(),
+                    cache_bytes: 0,
+                    max_download_bytes: 1024,
+                    roots: Vec::new(),
+                })
+                .unwrap();
+                let path = root.path().join(failed);
+                if unreadable {
+                    std::fs::create_dir(&path).unwrap();
+                } else {
+                    std::fs::write(&path, b"{").unwrap();
+                }
+                assert!(
+                    source.validate_observation(root.path(), &current).is_err(),
+                    "startup must refuse a damaged record: {failed}, unreadable={unreadable}"
+                );
+                source.observed = Some(current.clone());
+                let mut next = current.clone();
+                next.revision += 1;
+                next.eligibility = Eligibility::Withdrawn;
+                let storage = source.validate_observation(root.path(), &next).unwrap();
+                assert!(
+                    storage.is_some(),
+                    "trusted memory orders evidence but does not forgive storage"
+                );
+                assert!(source.observe(root.path(), &next).is_err());
+                assert_eq!(source.observed.as_ref(), Some(&next));
+                assert!(
+                    source.validate_observation(root.path(), &current).is_err(),
+                    "a failed write cannot erase the in-process revision floor"
+                );
+                let mut reenable = next.clone();
+                reenable.eligibility = Eligibility::Canonical;
+                assert!(
+                    source.validate_observation(root.path(), &reenable).is_err(),
+                    "same-revision recovery cannot erase a withdrawal"
+                );
+
+                let companion = if failed.contains("fallback") {
+                    "publisher-high-water.json"
+                } else {
+                    "publisher-high-water-fallback.json"
+                };
+                let mut saved = HighWater {
+                    origin: source.origin.to_string(),
+                    current: next.clone(),
+                };
+                crate::control::persist(&root.path().join(companion), &saved).unwrap();
+                assert!(source
+                    .validate_observation(root.path(), &next)
+                    .unwrap()
+                    .is_some());
+                saved.current.revision += 1;
+                crate::control::persist(&root.path().join(companion), &saved).unwrap();
+                assert!(
+                    source.validate_observation(root.path(), &next).is_err(),
+                    "a damaged record must not hide a newer readable companion"
+                );
+                saved.current = next.clone();
+                saved.current.inventory_sha256 = "33".repeat(32);
+                crate::control::persist(&root.path().join(companion), &saved).unwrap();
+                assert!(
+                    source.validate_observation(root.path(), &next).is_err(),
+                    "equal revisions cannot substitute another inventory"
+                );
+                saved.current = next.clone();
+                saved.origin = "https://another.invalid/".into();
+                crate::control::persist(&root.path().join(companion), &saved).unwrap();
+                assert!(
+                    source.validate_observation(root.path(), &next).is_err(),
+                    "a damaged record must not hide a readable origin mismatch"
+                );
+            }
+        }
+    }
+}
