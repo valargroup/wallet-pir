@@ -1,10 +1,9 @@
 # Prepared history publication bootstrap
 
-Status: PR1 bootstrap and PR2 recent-worker reconciliation implementation;
-independent review and qualification remain separate gates. This opt-in interface
-is separate from wallet protocols. The manager serves recent holdings only; it
-does not implement an archive router, standalone packaging, or unchanged-application
-qualification.
+Status: bootstrap, recent-worker reconciliation and opt-in embedded archive
+routing implementation; independent review and qualification remain separate gates.
+This interface is separate from wallet protocols. Standalone packaging and
+unchanged-application qualification remain subsequent gates.
 The [approved plan](recent-provider-plan.md) retains those outcomes and order.
 The fixed [Vizor baseline and API trace](wallet-adapter.md#fixed-vizor-provider-qualification-baseline)
 remain unchanged.
@@ -290,8 +289,57 @@ rollback. If all applicable exact safety writes remain unavailable, process or
 power loss can still lose the memory-only bound.
 
 A changed inventory is reconciled even when its map digest is unchanged. The
-existing same-map/different-worker-assignment fence remains in force. Required
-recent-worker mode also refuses any candidate that retires a local shard: there
-is no qualified archive destination in PR2. A valid predecessor keeps serving;
-PR3 must supply archive readiness and atomic router/worker handover before that
-refusal can be replaced. No archive cost/accounting row bypasses this boundary.
+existing same-map/different-worker-assignment fence remains in force. Without an
+archive route, required recent-worker mode refuses candidates retiring a local
+shard. With the embedded route below, retirement additionally requires the exact
+unchanged revision in the candidate metadata and a qualified terminal archive,
+both during preparation and before activation. The final publisher checks still
+follow archive qualification immediately before the durable predecessor CAS.
+No archive cost/accounting row bypasses this boundary.
+
+## Embedded history endpoint and fixed archive
+
+Add `--archive-upstream https://<trusted-Valargroup-archive-origin>` to managed
+serving mode to compose routing and recent execution in the existing process.
+The operator must supply the trusted deployment address: this document assigns
+no public hostname/IP and changes no production routing. `--archive-ca` may add
+an explicit trusted PEM root; certificate/hostname verification remains enabled.
+Only isolated loopback fixtures may use plain HTTP. The configured upstream must
+terminate at an owner running this serving implementation with warm readiness,
+not another forwarding provider. Redirects and wallet-supplied destinations are
+never used. There is one upstream and no automatic switching or query replay.
+
+Maps, filters, manifests and initialization remain verified local metadata for
+the complete publication, including distinct archive geometries. Eligible exact
+local revisions execute through the existing worker. Nonlocal current revisions
+obtain setup and encrypted answers through the fixed archive. Each operation
+checks terminal warm readiness, network/genesis/profile/native parameters, exact
+manifest and setup identity. Query replies must have the exact segment framing,
+revision/table prefix and qualified mask epochs. The wallet retains its own
+validation. Readiness is an observation, not a lease or a completeness proof.
+
+Forwarding uses the existing admission/body budget and deadlines. Setup and
+query responses retain the admitted snapshot/resources through transport drop;
+forwarded answer buffers reserve shared work memory. A transport failure after
+query submission never causes another encrypted submission. Explicit upstream
+refusals retain their existing status and retry delay. Failed qualification
+returns 503; it never returns successful empty history or performs public lookup.
+Independent valid recent operations do not consult the archive and remain
+available during its outage. `/v1/ready` describes local readiness and separately
+identifies forwarding with `archive_forwarding`; it does not attest complete
+archive availability. Promoted local revisions remain available under the
+owner's existing retained-handle policy, with unchanged revocation fences.
+
+The fixed original released-client process is in
+`transparent/services/transparent-shard-server/tests/frozen-client`. Its isolated lock and source verifier
+exclude the server's newer library pin; build and execute it through the required
+repository wrapper. From the repository root, run
+`python3 transparent/services/transparent-shard-server/tests/frozen-client/run-tests.py --output .local-pir/provider-qualification-<new-id>`
+inside that wrapper. It records resolved metadata, the isolated lock digest,
+crate/source-byte checks and build preparation times separately, then executes
+each HTTP case under the existing 30-second guard. The explicit frozen-process integration case in
+`assignment::provider` compares historical receive/spend recovery with original
+source events and checks recent recovery during archive outage. Library execution
+is not unchanged-application execution. The fixed Vizor build's existing-origin
+TLS and same-origin display smoke remains mandatory; no application rebuild,
+upgrade, TLS bypass, production DNS or routing change is authorized here.

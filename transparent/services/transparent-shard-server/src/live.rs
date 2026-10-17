@@ -366,7 +366,9 @@ impl LiveService {
                     .scope()
                     .is_some_and(|held| !held.assigned.is_subset(&next.assigned))
                 {
-                    return Err(Refusal::Admission("local retirement requires a qualified archive route; recent-worker mode has none".into()));
+                    if old.archive().is_none() {
+                        return Err(Refusal::Admission("local retirement requires a qualified archive route; recent-worker mode has none".into()));
+                    }
                 }
             }
         }
@@ -383,6 +385,7 @@ impl LiveService {
         };
         let config = self.0.config;
         let loading_started = std::time::Instant::now();
+        let retiring = old.clone();
         let (next, verification) = tokio::task::spawn_blocking(move || {
             tracing::info!(map = %digest, queue_seconds = loading_started.elapsed().as_secs_f64(), "publication loading task started");
             let eviction_started = std::time::Instant::now();
@@ -427,6 +430,11 @@ impl LiveService {
         })
         .await
         .map_err(|e| Refusal::Runtime(e.to_string()))??;
+        if self.0.required_runtimes || retiring.archive().is_some() {
+            next.qualify_retirement(&retiring)
+                .await
+                .map_err(Refusal::Admission)?;
+        }
         let loading_seconds = loading_started.elapsed().as_secs_f64();
         let warming_started = std::time::Instant::now();
         self.0.preparing.write().unwrap().as_mut().unwrap().phase = "warming";
@@ -710,6 +718,9 @@ impl LiveService {
         Fut: std::future::Future<Output = Result<(), String>>,
     {
         let operation = self.0.operations.clone().lock_owned().await;
+        if !initial {
+            self.qualify_candidate_retirement().await?;
+        }
         check().await?;
         if initial {
             let _gate = self.0.publication_gate.lock().unwrap();
@@ -730,12 +741,38 @@ impl LiveService {
             persist(&self.0.record, &active.publication)?;
             Ok(())
         } else {
-            self.activate(expected, map_sha256, operation)
+            self.commit_activation(expected, map_sha256, operation)
                 .await
                 .map(|_| ())
         }
     }
     async fn activate(
+        &self,
+        expected: String,
+        map_sha256: String,
+        _operation: tokio::sync::OwnedMutexGuard<()>,
+    ) -> Result<serde_json::Value, String> {
+        self.qualify_candidate_retirement().await?;
+        self.commit_activation(expected, map_sha256, _operation)
+            .await
+    }
+    async fn qualify_candidate_retirement(&self) -> Result<(), String> {
+        let old = self.0.active.read().unwrap().state.clone();
+        let next = self
+            .0
+            .candidate
+            .lock()
+            .await
+            .as_ref()
+            .map(|c| c.state.clone());
+        if self.0.required_runtimes || old.archive().is_some() {
+            if let Some(next) = next {
+                next.qualify_retirement(&old).await?;
+            }
+        }
+        Ok(())
+    }
+    async fn commit_activation(
         &self,
         expected: String,
         map_sha256: String,

@@ -22,6 +22,12 @@ struct Cli {
     /// Without --verify-only, follow publications and serve a recent worker.
     #[arg(long, requires_all = ["publisher_network", "publisher_genesis"])]
     publisher: Option<String>,
+    /// Fixed trusted terminal Valargroup archive origin; never supplied by wallets.
+    #[arg(long, requires = "publisher")]
+    archive_upstream: Option<String>,
+    /// Optional archive CA with ordinary TLS verification.
+    #[arg(long, requires = "archive_upstream")]
+    archive_ca: Option<PathBuf>,
     #[arg(long, requires = "publisher")]
     publisher_network: Option<String>,
     #[arg(long, requires = "publisher")]
@@ -174,6 +180,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 readiness: ReadinessMode::Warm,
             };
             let mut manager = transparent_shard_server::manager::Manager::new(provider, service)?;
+            if let Some(origin) = cli.archive_upstream {
+                let roots = cli
+                    .archive_ca
+                    .map(
+                        |path| -> Result<_, Box<dyn std::error::Error + Send + Sync>> {
+                            Ok(reqwest::Certificate::from_pem(&std::fs::read(path)?)?)
+                        },
+                    )
+                    .transpose()?
+                    .into_iter()
+                    .collect();
+                manager = manager.with_archive(transparent_shard_server::archive::Archive::new(
+                    &origin, roots,
+                )?);
+            }
             if let Err(error) = manager.poll_once().await {
                 tracing::warn!(%error, "initial synchronization failed; checking recovered active view");
                 if manager.live().is_none() {
