@@ -35,10 +35,10 @@ exclude = [
 
 # Consume the library-only dependency cleanup at one exact upstream revision.
 [patch.crates-io]
-ipir-sp = { git = "https://github.com/valargroup/ipir-sp.git", rev = "a719f820c59e60c5f08997a57b875b9090b7e53e" }
-inspiring = { git = "https://github.com/valargroup/ipir-sp.git", rev = "a719f820c59e60c5f08997a57b875b9090b7e53e" }
-reinspiring = { git = "https://github.com/valargroup/ipir-sp.git", rev = "a719f820c59e60c5f08997a57b875b9090b7e53e" }
-simplepir-kernel = { git = "https://github.com/valargroup/ipir-sp.git", rev = "a719f820c59e60c5f08997a57b875b9090b7e53e" }
+ipir-sp = { git = "https://github.com/valargroup/ipir-sp.git", rev = "1d637dba8a9e6dcf749a2054e33ea8ff03fac8c9" }
+inspiring = { git = "https://github.com/valargroup/ipir-sp.git", rev = "1d637dba8a9e6dcf749a2054e33ea8ff03fac8c9" }
+reinspiring = { git = "https://github.com/valargroup/ipir-sp.git", rev = "1d637dba8a9e6dcf749a2054e33ea8ff03fac8c9" }
+simplepir-kernel = { git = "https://github.com/valargroup/ipir-sp.git", rev = "1d637dba8a9e6dcf749a2054e33ea8ff03fac8c9" }
 
 # spiral-rs's Barrett reduction is intentionally wrapping: `barrett_raw_u128`
 # computes `zy * cr1 + tmp3 + carry` and relies on it wrapping modulo 2^64. That
