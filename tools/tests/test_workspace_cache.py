@@ -1,11 +1,10 @@
-"""Real Cargo checkout/cache oracle: actual fresh flags and executable behavior."""
+"""Real Cargo snapshot lifecycle and output-isolation oracles."""
 from contextlib import redirect_stdout
 import argparse
 import io
 import json
 import os
 from pathlib import Path
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -17,86 +16,10 @@ sys.path.insert(0, str(ROOT / 'tools/ci'))
 import workspace_cache
 import cargo_cache
 
+from workspace_cache_fixture import WorkspaceCacheFixture
 
-class WorkspaceCacheOracle(unittest.TestCase):
-    def setUp(self):
-        # prepare() appends to GitHub's real environment/output files as well
-        # as changing os.environ. Keep fixture lifecycle effects in the fixture.
-        env = {key: value for key, value in os.environ.items()
-               if key not in {'GITHUB_ENV', 'GITHUB_OUTPUT', 'GITHUB_STEP_SUMMARY',
-                              'WALLET_PIR_STAGE_LOG', 'WALLET_PIR_ARTIFACT_LOG',
-                              'WALLET_PIR_CASE_LOG', 'WALLET_PIR_STAGE_PARENT'}}
-        isolation = patch.dict(os.environ, env, clear=True)
-        isolation.start()
-        self.addCleanup(isolation.stop)
-        (ROOT / '.local-pir').mkdir(exist_ok=True)
-        self.tmp = tempfile.TemporaryDirectory(prefix='workspace-cache-', dir=ROOT / '.local-pir')
-        # The local output directory may itself be a symlink to a retained cache.
-        # Give the oracle real paths; alias rejection is tested separately.
-        self.area = Path(self.tmp.name).resolve()
-        self.root = self.area / 'checkout'
-        self.root.mkdir()
-        (self.root / 'src').mkdir()
-        (self.root / 'Cargo.toml').write_text('[package]\nname="cache-oracle"\nversion="0.1.0"\nedition="2021"\n'
-                                            '[workspace]\n[profile.release-fast]\ninherits="release"\nopt-level=0\n')
-        (self.root / 'src/main.rs').write_text('fn main() { println!("rust-A|{}|{}", '
-                                              'include_str!("included.txt"), env!("BUILT")); }\n')
-        (self.root / 'src/included.txt').write_text('include-A')
-        (self.root / 'build.txt').write_text('build-A')
-        (self.root / 'build.rs').write_text('fn main() { println!("cargo::rerun-if-changed=build.txt"); '
-                                           'println!("cargo::rustc-env=BUILT={}", '
-                                           'std::fs::read_to_string("build.txt").unwrap()); }\n')
-        shutil.copyfile(ROOT / 'rust-toolchain.toml', self.root / 'rust-toolchain.toml')
-        self.git('init', '-q')
-        self.git('add', '.')
-        self.git('-c', 'user.name=Oracle', '-c', 'user.email=oracle@example.invalid', 'commit', '-qm', 'fixture')
-        self.target = self.area / 'target'
-        self.pending = self.area / 'pending.json'
-        self.env = dict(os.environ, CARGO_TARGET_DIR=str(self.target), CARGO_INCREMENTAL='0')
-        self.sequence = 0
 
-    def tearDown(self):
-        self.tmp.cleanup()
-
-    def git(self, *args):
-        return subprocess.check_output(['git', *args], cwd=self.root, stderr=subprocess.PIPE)
-
-    def build(self, failure=None, selection=()):
-        toolchain = __import__('tomllib').loads((ROOT / 'rust-toolchain.toml').read_text())['toolchain']['channel']
-        command = ['rustup', 'run', toolchain, 'cargo'] if shutil.which('rustup') else ['cargo']
-        result = subprocess.run([*command, 'build', '--profile', 'release-fast', '--offline', '--message-format=json', *selection],
-                                cwd=self.root, env=self.env, capture_output=True, text=True, timeout=25)
-        if failure:
-            self.assertNotEqual(result.returncode, 0)
-            self.assertIn(failure, result.stderr)
-            return
-        self.assertEqual(result.returncode, 0, result.stderr)
-        artifacts = [json.loads(line) for line in result.stdout.splitlines() if line.startswith('{')]
-        artifacts = [entry for entry in artifacts if entry.get('reason') == 'compiler-artifact']
-        executable = next(entry['executable'] for entry in artifacts if entry.get('executable'))
-        behavior = subprocess.check_output([executable], text=True, timeout=2).strip()
-        return artifacts, behavior
-
-    def checkout(self):
-        # A real fresh Git checkout at the same path used by hosted Actions.
-        self.sequence += 1
-        old = self.area / f'checkout-{self.sequence}'
-        self.root.rename(old)
-        subprocess.run(['git', 'clone', '-q', str(old), str(self.root)], check=True, timeout=5)
-
-    def restore(self, identity='compatible'):
-        workspace_cache.restore(self.root, self.target, identity, self.pending)
-
-    def seal(self):
-        workspace_cache.seal(self.root, self.target, 'compatible', self.pending)
-
-    def baseline(self):
-        self.restore()
-        artifacts, behavior = self.build()
-        self.assertTrue(any(not entry['fresh'] for entry in artifacts))
-        self.assertEqual(behavior, 'rust-A|include-A|build-A')
-        self.seal()
-
+class WorkspaceCacheOracle(WorkspaceCacheFixture):
     def test_verified_all_workspace_snapshot_does_not_prepare_affected_feature_graph(self):
         # A second workspace root enables an extra feature on a shared leaf.
         # A valid archive/source-mtime hit cannot make its wider Cargo unit
@@ -164,77 +87,6 @@ class WorkspaceCacheOracle(unittest.TestCase):
         self.checkout()
         self.restore()
         self.assertTrue(all(entry['fresh'] for entry in self.build()[0]))
-
-    def archive_roundtrip(self):
-        self.sequence += 1
-        archive = self.area / f'cache-{self.sequence}.tar'
-        subprocess.run(['tar', '--posix', '-cf', str(archive), '-C', str(self.area), 'target'], check=True)
-        self.target.rename(self.area / f'original-target-{self.sequence}')
-        subprocess.run(['tar', '-xf', str(archive), '-C', str(self.area)], check=True)
-
-    def commit(self, message):
-        self.git('add', '.')
-        self.git('-c', 'user.name=Oracle', '-c', 'user.email=oracle@example.invalid', 'commit', '-qm', message)
-
-    def symlink_input(self, name, alternate, before, after, expected):
-        path = self.root / name
-        destination = path.with_name(alternate)
-        destination.write_text(path.read_text().replace(before, after))
-        self.commit('tracked alternate before baseline')
-        self.baseline()
-        self.archive_roundtrip()
-        path.unlink()
-        path.symlink_to(alternate)
-        self.commit('replace regular input with symlink')
-        self.checkout()
-        self.restore()
-        artifacts, behavior = self.build()
-        self.assertEqual(behavior, expected)
-        self.assertTrue(artifacts and all(not entry['fresh'] for entry in artifacts), artifacts)
-
-    def test_symlink_main_rebuilds_after_clone_and_tar(self):
-        self.symlink_input('src/main.rs', 'alternate.rs', 'rust-A', 'rust-LINK',
-                           'rust-LINK|include-A|build-A')
-
-    def test_symlink_include_rebuilds_after_clone_and_tar(self):
-        self.symlink_input('src/included.txt', 'alternate.txt', 'include-A', 'include-LINK',
-                           'rust-A|include-LINK|build-A')
-
-    def test_symlink_build_input_rebuilds_after_clone_and_tar(self):
-        self.symlink_input('build.txt', 'alternate.txt', 'build-A', 'build-LINK',
-                           'rust-A|include-A|build-LINK')
-
-    def untracked_alias(self, name, alternate, replacement, expected):
-        path = self.root / name
-        destination = path.with_name(alternate)
-        destination.write_text(replacement)
-        self.git('rm', '--cached', name)
-        (self.root / '.gitignore').write_text('/' + name + '\n')
-        self.commit('untracked input and tracked alternate')
-        self.baseline()
-        self.archive_roundtrip()
-        archive = self.area / f'cache-{self.sequence}.tar'
-        self.checkout()
-        path.symlink_to(alternate)
-        # Independent Cargo control: with normal checkout mtimes, following the
-        # new alias changes behavior. Then restore the SAME baseline archive.
-        artifacts, behavior = self.build()
-        self.assertEqual(behavior, expected)
-        self.assertTrue(any(not entry['fresh'] for entry in artifacts), artifacts)
-        self.target.rename(self.area / 'control-target')
-        subprocess.run(['tar', '-xf', str(archive), '-C', str(self.area)], check=True)
-        self.restore()
-        artifacts, behavior = self.build()
-        self.assertEqual(behavior, expected)
-        self.assertTrue(artifacts and all(not entry['fresh'] for entry in artifacts), artifacts)
-
-    def test_untracked_include_alias_rebuilds_after_clone_and_tar(self):
-        self.untracked_alias('src/included.txt', 'alternate.txt', 'include-LINK',
-                             'rust-A|include-LINK|build-A')
-
-    def test_untracked_build_alias_rebuilds_after_clone_and_tar(self):
-        self.untracked_alias('build.txt', 'alternate.txt', 'build-LINK',
-                             'rust-A|include-A|build-LINK')
 
     def test_target_ownership_rejected_before_prepare_and_after_tar_extraction(self):
         # A tracked source link requests the cold-miss rename. No rejected
@@ -368,24 +220,6 @@ class WorkspaceCacheOracle(unittest.TestCase):
             cargo_cache.restored(argparse.Namespace(lane='fast', cache_hit='false'), env)
         self.assertEqual(self.build()[1], 'rust-A|include-A|build-A')
 
-    def test_executable_mode_loss_reruns_generator_and_fails_after_clone_and_tar(self):
-        generator = self.root / 'generator.sh'
-        generator.write_text('#!/bin/sh\nprintf build-A\n')
-        generator.chmod(0o755)
-        (self.root / 'build.rs').write_text(
-            'fn main() { println!("cargo::rerun-if-changed=generator.sh"); '
-            'let out = std::process::Command::new("./generator.sh").output().unwrap(); '
-            'assert!(out.status.success()); '
-            'println!("cargo::rustc-env=BUILT={}", String::from_utf8(out.stdout).unwrap()); }')
-        self.commit('executable generator')
-        self.baseline()
-        self.archive_roundtrip()
-        generator.chmod(0o644)
-        self.commit('generator loses executable permission')
-        self.checkout()
-        self.restore()
-        self.build(failure='Permission denied')
-
     def test_fresh_checkout_reuses_real_archived_outputs(self):
         self.baseline()
         # GNU tar's POSIX format is also used by actions/cache. Exercise its
@@ -405,31 +239,6 @@ class WorkspaceCacheOracle(unittest.TestCase):
         artifacts, behavior = self.build()
         self.assertTrue(any(not entry['fresh'] for entry in artifacts))
         self.assertEqual(behavior, 'rust-A|include-A|build-A')
-
-    def test_source_include_and_build_inputs_recompile_and_change_behavior(self):
-        self.baseline()
-        changes = [('src/main.rs', 'rust-A', 'rust-B', 'rust-B|include-A|build-A'),
-                   ('src/included.txt', 'include-A', 'include-B', 'rust-B|include-B|build-A'),
-                   ('build.txt', 'build-A', 'build-B', 'rust-B|include-B|build-B'),
-                   ('build.rs', 'BUILT={}', 'BUILT=script-{}', 'rust-B|include-B|script-build-B')]
-        for name, before, after, expected in changes:
-            with self.subTest(name=name):
-                path = self.root / name
-                path.write_text(path.read_text().replace(before, after))
-                # Deliberately old timestamps must not hide changed bytes.
-                os.utime(path, ns=(1, 1))
-                self.restore()
-                artifacts, behavior = self.build()
-                self.assertTrue(any(not entry['fresh'] for entry in artifacts))
-                self.assertEqual(behavior, expected)
-                self.seal()
-                self.git('add', '.')
-                self.git('-c', 'user.name=Oracle', '-c', 'user.email=oracle@example.invalid', 'commit', '-qm', name)
-                self.checkout()
-                self.restore()
-                artifacts, behavior = self.build()
-                self.assertTrue(all(entry['fresh'] for entry in artifacts), artifacts)
-                self.assertEqual(behavior, expected)
 
     def test_legacy_metadata_without_modes_is_a_safe_miss(self):
         self.baseline()
@@ -479,6 +288,7 @@ class WorkspaceCacheOracle(unittest.TestCase):
         self.assertEqual(behavior, 'rust-A|include-A|build-A')
 
 
+
 class WorkspaceCacheOutputIsolationTests(unittest.TestCase):
     def test_fixture_cannot_change_outer_github_environment_or_timing_files(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -497,6 +307,7 @@ class WorkspaceCacheOutputIsolationTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             for name in names:
                 self.assertEqual((root / name).read_text(), 'outer job\n', name)
+
 
 
 if __name__ == '__main__':
