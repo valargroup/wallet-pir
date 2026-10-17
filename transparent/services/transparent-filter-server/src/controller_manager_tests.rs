@@ -1402,8 +1402,21 @@ with urllib.request.urlopen(r,timeout=20) as response: sys.stdout.buffer.write(r
         expected_response,
         "no refresh or new-generation response is permitted"
     );
-    // An unfinished activation is retained and reconciled by the existing
-    // fleet owner; shared advance never repeats activation on its own.
+    // Reopen the controller's independent read/checkpoint and authority state,
+    // as startup does with no committed active.json. The worker still holds the
+    // activation whose reply was lost, and the durable intent still protects it.
+    drop(input);
+    drop(owner);
+    drop(reader);
+    let owner = authority(&directory, None, rpc.clone());
+    owner.0.withdrawn.store(true, Ordering::Release);
+    let reader = Arc::new(tokio::sync::Mutex::new(
+        EventStore::open_existing(&config.data_dir).unwrap(),
+    ));
+    assert_eq!(reader.lock().await.covered_through(), Some(3));
+    assert!(config.publication_root.join("activation.json").exists());
+    // The existing fleet owner reconciles the actual predecessor; shared
+    // advance never repeats an uncertain activation on its own.
     publish_once(&config, &rpc, &reader, &owner).await.unwrap();
     assert!(!config.publication_root.join("activation.json").exists());
     assert_eq!(owner.0.active.read().unwrap().publication.height, 3);
