@@ -40,6 +40,15 @@ def owned_target(root, target):
     require(not root.is_relative_to(target))
     require(not target.exists() or target.is_dir())
     require(not target.is_relative_to(root / '.git'))
+    # .git can be a pointer file (linked worktree / separate Git directory).
+    # Discover both actual administrative directories before probing or writes.
+    git_dirs = subprocess.check_output(
+        ['git', 'rev-parse', '--path-format=absolute', '--git-dir', '--git-common-dir'],
+        cwd=root, text=True).splitlines()
+    require(len(git_dirs) == 2)
+    for directory in git_dirs:
+        administrative = Path(directory).resolve()
+        require(not target.is_relative_to(administrative) and not administrative.is_relative_to(target))
     for name in tracked(root):
         if name:
             source = root / os.fsdecode(name)

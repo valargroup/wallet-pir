@@ -238,6 +238,80 @@ class WorkspaceCacheOracle(unittest.TestCase):
                 self.assertEqual((self.root / 'src/main.rs').stat().st_mtime_ns, source_time)
                 self.assertFalse((directory / 'workspace-pending').exists())
 
+    def test_actual_git_directories_rejected_before_setup_and_on_restored_lifecycle(self):
+        (self.root / 'src/link').symlink_to('main.rs')
+        self.commit('source link requests cold target move')
+        original_root = self.root
+        linked = self.area / 'linked'
+        self.git('worktree', 'add', '--detach', str(linked), 'HEAD')
+        separate = self.area / 'separate'
+        subprocess.run(['git', 'clone', '-q', '--separate-git-dir', str(self.area / 'separate-admin'),
+                        str(original_root), str(separate)], check=True)
+        for checkout in (linked, separate):
+            self.root = checkout
+            for option in ('--git-dir', '--git-common-dir'):
+                with self.subTest(checkout=checkout.name, directory=option):
+                    target = Path(self.git('rev-parse', '--path-format=absolute', option).decode().strip())
+                    sentinel = target / 'sentinel'
+                    sentinel.write_bytes(b'Git administrative directory is separately owned')
+                    sentinel.chmod(0o640)
+                    os.utime(sentinel, ns=(123456789, 123456789))
+                    sentinel_before = (sentinel.read_bytes(), sentinel.stat().st_mode, sentinel.stat().st_mtime_ns)
+                    head, inventory = self.git('rev-parse', 'HEAD'), self.git('ls-files', '-z')
+                    sources = {name: (os.lstat(checkout / os.fsdecode(name)).st_mtime_ns,
+                                      os.readlink(checkout / os.fsdecode(name))
+                                      if (checkout / os.fsdecode(name)).is_symlink() else None)
+                               for name in inventory.split(b'\0') if name}
+                    env = {'RUNNER_TEMP': str(self.area / (checkout.name + option))}
+                    directory = cargo_cache.state_dir(env)
+                    args = argparse.Namespace(lane='fast', scope='affected', target_dir=str(target),
+                                              persistent_root=None, lookup_only=False)
+                    before = sorted(str(p.relative_to(self.area)) for p in self.area.rglob('*'))
+                    with patch.object(cargo_cache, 'ROOT', checkout), patch.object(cargo_cache, 'probe') as probe:
+                        with self.assertRaises(ValueError):
+                            cargo_cache.prepare(args, env)
+                        probe.assert_not_called()
+                    self.assertFalse(directory.exists())
+                    self.assertEqual(sorted(str(p.relative_to(self.area)) for p in self.area.rglob('*')), before)
+                    # An unsafe receipt from the old prepare must also fail at
+                    # the owning restore boundary after POSIX-tar extraction.
+                    directory.mkdir(parents=True)
+                    state = {'record': {'compatibility': 'compatible'}, 'mode': 'restore', 'target': str(target)}
+                    receipt = directory / 'fast.json'
+                    receipt.write_text(json.dumps(state))
+                    archive = directory / 'restored.tar'
+                    subprocess.run(['tar', '--posix', '-cf', str(archive), '-C', str(target), 'sentinel'], check=True)
+                    subprocess.run(['tar', '-xf', str(archive), '-C', str(target)], check=True)
+                    before = sorted(str(p.relative_to(self.area)) for p in self.area.rglob('*'))
+                    receipt_before = receipt.read_bytes()
+                    with patch.object(cargo_cache, 'ROOT', checkout):
+                        with self.assertRaises(ValueError):
+                            cargo_cache.restored(argparse.Namespace(lane='fast', cache_hit='true'), env)
+                    self.assertEqual(receipt.read_bytes(), receipt_before)
+                    self.assertFalse((directory / 'workspace-pending').exists())
+                    self.assertEqual(sorted(str(p.relative_to(self.area)) for p in self.area.rglob('*')), before)
+                    self.assertEqual((sentinel.read_bytes(), sentinel.stat().st_mode, sentinel.stat().st_mtime_ns),
+                                     sentinel_before)
+                    self.assertEqual(self.git('rev-parse', 'HEAD'), head)
+                    self.assertEqual(self.git('ls-files', '-z'), inventory)
+                    for name, (mtime, link) in sources.items():
+                        path = checkout / os.fsdecode(name)
+                        self.assertEqual(os.lstat(path).st_mtime_ns, mtime)
+                        if link is not None:
+                            self.assertEqual(os.readlink(path), link)
+        self.root = original_root
+
+    def test_managed_external_target_still_prepares_restores_and_builds(self):
+        self.target = self.area / 'managed-external' / 'fast'
+        self.env['CARGO_TARGET_DIR'] = str(self.target)
+        env = dict(os.environ, RUNNER_TEMP=str(self.area / 'runner-external'))
+        args = argparse.Namespace(lane='fast', scope='affected', target_dir=str(self.target),
+                                  persistent_root=None, lookup_only=False)
+        with patch.dict(os.environ), patch.object(cargo_cache, 'ROOT', self.root), redirect_stdout(io.StringIO()):
+            cargo_cache.prepare(args, env)
+            cargo_cache.restored(argparse.Namespace(lane='fast', cache_hit='false'), env)
+        self.assertEqual(self.build()[1], 'rust-A|include-A|build-A')
+
     def test_executable_mode_loss_reruns_generator_and_fails_after_clone_and_tar(self):
         generator = self.root / 'generator.sh'
         generator.write_text('#!/bin/sh\nprintf build-A\n')

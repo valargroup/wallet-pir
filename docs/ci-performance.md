@@ -276,6 +276,9 @@ fingerprints. Metadata schema 2 rejects older records lacking mode identity.
 Before setup and again after archive extraction, validate the lexical target and
 all parents: aliases, checkout/ancestor targets, Git internals and overlap with
 tracked source paths fail closed before mkdir, move or timestamp normalization.
+Git internals include the actual Git directory and common directory discovered
+read-only through Git, including linked worktrees and separate-Git-dir checkouts;
+targets inside or containing either directory are refused.
 Resolving a target alias first would lose ownership and could move another
 directory. Invalid paths are errors, not cold misses; their destinations remain
 untouched by the helper.
