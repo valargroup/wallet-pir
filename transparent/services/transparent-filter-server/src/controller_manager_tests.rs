@@ -540,6 +540,8 @@ async fn control_write_failure(pause_at: Option<u32>, failed_record: &str) {
             "publisher-high-water-fallback.tmp",
             "revocation-floor.tmp",
         ]
+    } else if failed_record == "malformed" {
+        vec!["revocation-floor.json"]
     } else {
         vec![failed_record]
     };
@@ -579,7 +581,9 @@ async fn control_write_failure(pause_at: Option<u32>, failed_record: &str) {
         });
         entered(&tls).await;
         for record in &failed_records {
-            if high_water_fault.is_some_and(|(kind, _)| kind == "parse") {
+            if failed_record == "malformed"
+                || high_water_fault.is_some_and(|(kind, _)| kind == "parse")
+            {
                 std::fs::write(state.join(record), b"{").unwrap();
                 continue;
             }
@@ -602,7 +606,9 @@ async fn control_write_failure(pause_at: Option<u32>, failed_record: &str) {
         result
     } else {
         for record in &failed_records {
-            if high_water_fault.is_some_and(|(kind, _)| kind == "parse") {
+            if failed_record == "malformed"
+                || high_water_fault.is_some_and(|(kind, _)| kind == "parse")
+            {
                 std::fs::write(state.join(record), b"{").unwrap();
                 continue;
             }
@@ -690,6 +696,18 @@ async fn control_write_failure(pause_at: Option<u32>, failed_record: &str) {
             error.contains(if kind == "read" { "directory" } else { "EOF" }),
             "original high-water storage error: {error}"
         );
+        // A new Source has no trusted in-process baseline. The same malformed
+        // or unreadable record must refuse before constructing any owner.
+        let startup_root = root.path().join("startup-provider");
+        std::fs::create_dir(&startup_root).unwrap();
+        if kind == "read" {
+            std::fs::create_dir(startup_root.join(record)).unwrap();
+        } else {
+            std::fs::write(startup_root.join(record), b"{").unwrap();
+        }
+        let mut startup = manager(&tls, &startup_root);
+        assert!(startup.poll_once().await.is_err());
+        assert!(startup.live().is_none());
     }
     assert_eq!(
         get(&origin, "/v2/shards/init").await.status(),
@@ -708,7 +726,8 @@ async fn control_write_failure(pause_at: Option<u32>, failed_record: &str) {
         .unwrap();
     assert_eq!(response.status(), StatusCode::CONFLICT);
     for record in &failed_records {
-        if high_water_fault.is_some_and(|(kind, _)| kind == "parse") {
+        if failed_record == "malformed" || high_water_fault.is_some_and(|(kind, _)| kind == "parse")
+        {
             std::fs::remove_file(state.join(record)).unwrap();
         } else {
             std::fs::remove_dir(state.join(record)).unwrap();
@@ -939,6 +958,11 @@ async fn manager_missing_durable_revision_cannot_reenable_revoked_view() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn manager_malformed_revocation_floor_still_fences_http() {
+    control_write_failure(None, "malformed").await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn manager_rejects_replayed_different_map_below_durable_revocation_floor() {
     let root = tempfile::tempdir().unwrap();
     let (directory, set) = prepared_publication(root.path(), 2);
@@ -1000,6 +1024,36 @@ async fn manager_rejects_replayed_different_map_below_durable_revocation_floor()
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn manager_primary_read_failure_at_poll_still_fences_http() {
     control_write_failure(None, "read:publisher-high-water.json").await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn manager_primary_read_failure_at_guard_still_fences_http() {
+    control_write_failure(Some(2), "read:publisher-high-water.json").await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn manager_primary_parse_failure_at_poll_still_fences_http() {
+    control_write_failure(None, "parse:publisher-high-water.json").await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn manager_primary_parse_failure_at_guard_still_fences_http() {
+    control_write_failure(Some(3), "parse:publisher-high-water.json").await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn manager_fallback_read_failure_at_poll_still_fences_http() {
+    control_write_failure(None, "read:publisher-high-water-fallback.json").await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn manager_fallback_read_failure_at_guard_still_fences_http() {
+    control_write_failure(Some(2), "read:publisher-high-water-fallback.json").await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn manager_fallback_parse_failure_at_poll_still_fences_http() {
+    control_write_failure(None, "parse:publisher-high-water-fallback.json").await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
