@@ -345,6 +345,41 @@ async fn query_with_reply(origin: &str, set: &ShardSet) -> (Vec<u8>, Vec<u8>) {
     (body, bytes.to_vec())
 }
 
+// A fresh query is decoded against producer bytes before it can be repeated.
+// Reuse stays within one test and one immutable revision; every check still
+// sends an actual HTTP request and compares the complete encrypted answer.
+struct CheckedAnswer {
+    path: String,
+    body: Vec<u8>,
+    reply: Vec<u8>,
+}
+impl CheckedAnswer {
+    async fn new(origin: &str, set: &ShardSet) -> Self {
+        let (body, reply) = query_with_reply(origin, set).await;
+        Self {
+            path: format!(
+                "/v2/shards/1/revisions/{}/query/directory",
+                set.get(1).unwrap().digest
+            ),
+            body,
+            reply,
+        }
+    }
+    async fn check(&self, origin: &str) {
+        let response = reqwest::Client::new()
+            .post(format!("{origin}{}", self.path))
+            .body(self.body.clone())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.bytes().await.unwrap().as_ref(),
+            self.reply.as_slice()
+        );
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn manager_reuses_immutable_transfers_and_serves_through_failed_update() {
     let root = tempfile::tempdir().unwrap();
@@ -379,7 +414,7 @@ async fn manager_reuses_immutable_transfers_and_serves_through_failed_update() {
     );
     assert_eq!(observed["runtime_readiness"]["required"], true);
     assert_eq!(observed["archive_reachability"], serde_json::Value::Null);
-    query(&origin, &set).await;
+    let original_answer = CheckedAnswer::new(&origin, &set).await;
     let count = artifact_requests(&tls);
     let unchanged = follow.poll_once().await.unwrap();
     assert!(unchanged.unchanged);
@@ -413,7 +448,7 @@ async fn manager_reuses_immutable_transfers_and_serves_through_failed_update() {
             live.command(Command::Status).await.unwrap()["active"]["map_sha256"],
             set.map_digest
         );
-        query(&origin, &set).await;
+        original_answer.check(&origin).await;
     }
     // A restart during a failed update recovers the complete predecessor only
     // after live source checks; failure of the new transfer still leaves it up.
@@ -428,7 +463,7 @@ async fn manager_reuses_immutable_transfers_and_serves_through_failed_update() {
         .live()
         .expect("freshly checked predecessor survives restart/update failure");
     let (origin, task) = worker(live.clone()).await;
-    query(&origin, &set).await;
+    original_answer.check(&origin).await;
     std::fs::write(&tls.control, "").unwrap();
     let updated = follow.poll_once().await.unwrap();
     assert!(updated.downloaded_files > 0);
@@ -440,16 +475,16 @@ async fn manager_reuses_immutable_transfers_and_serves_through_failed_update() {
         live.command(Command::Status).await.unwrap()["active"]["map_sha256"],
         next_set.map_digest
     );
-    query(&origin, &next_set).await;
+    let next_answer = CheckedAnswer::new(&origin, &next_set).await;
     // Old exact sessions retain their source after normal handover.
-    query(&origin, &set).await;
+    original_answer.check(&origin).await;
     // The newest range is not cumulative: the old retained tail can be
     // orphaned while its newer replacement is positively canonical.
     owner.0.distribution_revision.fetch_add(5, Ordering::AcqRel);
     owner.0.invalidated_from.store(4, Ordering::Release);
     *rpc.hash.write().unwrap() = Some("77".repeat(32));
     follow.poll_once().await.unwrap();
-    query(&origin, &next_set).await;
+    next_answer.check(&origin).await;
     assert_eq!(
         get(
             &origin,
@@ -482,10 +517,10 @@ async fn manager_reuses_immutable_transfers_and_serves_through_failed_update() {
     assert_eq!(status["runtimes"]["shipped_fallbacks"], 0);
     rpc.available.store(false, Ordering::Release);
     assert!(follow.poll_once().await.is_err());
-    query(&origin, &next_set).await;
+    next_answer.check(&origin).await;
     std::fs::write(&tls.control, "refused-body").unwrap();
     assert!(follow.poll_once().await.is_err());
-    query(&origin, &next_set).await;
+    next_answer.check(&origin).await;
     task.abort();
     let _ = task.await;
     drop(live);
@@ -511,7 +546,7 @@ async fn manager_reuses_immutable_transfers_and_serves_through_failed_update() {
     assert_eq!(status["runtimes"]["built"], 0);
     assert_eq!(status["runtimes"]["shipped_fallbacks"], 0);
     let (origin, task) = worker(restarted.live().unwrap()).await;
-    query(&origin, &next_set).await;
+    next_answer.check(&origin).await;
     task.abort();
     let _ = task.await;
 }
@@ -790,7 +825,7 @@ async fn control_write_failure(pause_at: Option<u32>, failed_record: &str) {
     follow.poll_once().await.unwrap();
     let live = follow.live().unwrap();
     let (origin, task) = worker(live.clone()).await;
-    let encrypted = query_and_upload(&origin, &set).await;
+    let answer = CheckedAnswer::new(&origin, &set).await;
     let saved_high_water = std::fs::read(state.join("publisher-high-water.json")).unwrap();
     if let Some((_, record)) = high_water_fault {
         if record.contains("fallback") {
@@ -912,7 +947,7 @@ async fn control_write_failure(pause_at: Option<u32>, failed_record: &str) {
             std::fs::write(state.join(other), &saved_high_water).unwrap();
             // Reuse an independently validated encrypted answer while storage
             // is still broken, proving the controls did not silently fence it.
-            query(&origin, &set).await;
+            answer.check(&origin).await;
         }
         owner.0.withdrawn.store(true, Ordering::Release);
         owner.0.invalidated_from.store(2, Ordering::Release);
@@ -948,7 +983,7 @@ async fn control_write_failure(pause_at: Option<u32>, failed_record: &str) {
             "{origin}/v2/shards/1/revisions/{}/query/directory",
             set.get(1).unwrap().digest
         ))
-        .body(encrypted)
+        .body(answer.body.clone())
         .send()
         .await
         .unwrap();
@@ -980,7 +1015,7 @@ async fn control_write_failure(pause_at: Option<u32>, failed_record: &str) {
     owner.0.distribution_revision.fetch_add(1, Ordering::AcqRel);
     restarted.poll_once().await.unwrap();
     let (origin, task) = worker(restarted.live().unwrap()).await;
-    query(&origin, &set).await;
+    answer.check(&origin).await;
     task.abort();
     let _ = task.await;
 }
