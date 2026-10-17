@@ -395,6 +395,13 @@ publication: synchronous, with no HTTP stack or async runtime. The tooling
 client in `transparent-shard-server/examples/support/txdisplay.rs` remains the
 reference it is tested against.
 
+The qualified `transparent-txid-display` release includes `txid-quality-canary`,
+the standalone encrypted lookup probe. It checks a retained fixture's transaction
+id and mined height against an independently pinned encoded-entry digest. Run
+this packaged probe on a trusted validation host so acceptance does not depend
+on a binary in an older development checkout. Keep the original fixture digests;
+never derive the expected digest from the server response being checked.
+
 - **API.**
   - The wallet implements `TxidTransport::send(TxidRequest) -> TxidReply`. A
     request has a method, an origin-relative `path()`, a loggable route
