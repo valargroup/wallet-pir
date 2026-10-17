@@ -365,6 +365,7 @@ impl LiveService {
                     .set()
                     .scope()
                     .is_some_and(|held| !held.assigned.is_subset(&next.assigned))
+                    && old.archive().is_none()
                 {
                     return Err(Refusal::Admission("local retirement requires a qualified archive route; recent-worker mode has none".into()));
                 }
@@ -383,6 +384,7 @@ impl LiveService {
         };
         let config = self.0.config;
         let loading_started = std::time::Instant::now();
+        let retiring = old.clone();
         let (next, verification) = tokio::task::spawn_blocking(move || {
             tracing::info!(map = %digest, queue_seconds = loading_started.elapsed().as_secs_f64(), "publication loading task started");
             let eviction_started = std::time::Instant::now();
@@ -427,6 +429,11 @@ impl LiveService {
         })
         .await
         .map_err(|e| Refusal::Runtime(e.to_string()))??;
+        if self.0.required_runtimes || retiring.archive().is_some() {
+            next.qualify_retirement(&retiring)
+                .await
+                .map_err(Refusal::Admission)?;
+        }
         let loading_seconds = loading_started.elapsed().as_secs_f64();
         let warming_started = std::time::Instant::now();
         self.0.preparing.write().unwrap().as_mut().unwrap().phase = "warming";
@@ -458,6 +465,33 @@ impl LiveService {
         Ok(
             serde_json::json!({"prepared":publication.map_sha256,"loading_seconds":loading_seconds,"warming_seconds":warming_seconds,"runtimes":preparation,"verification":verification}),
         )
+    }
+
+    pub(crate) fn provider_observations(&self) -> serde_json::Value {
+        let active = self.0.active.read().unwrap();
+        let state = &active.state;
+        let invalid = self.0.invalid.read().unwrap();
+        let coverage: Vec<_> = state
+            .set()
+            .map
+            .shards
+            .iter()
+            .map(|s| {
+                serde_json::json!({"shard_id":s.shard_id,"start_height":s.start_height,
+                "end_height":s.end_height,"manifest_digest":s.manifest_digest,
+                "local":state.set().is_assigned(s.shard_id),
+                "revoked":invalid.contains(&s.manifest_digest)})
+            })
+            .collect();
+        serde_json::json!({
+            "binary_sha256":pir_control::binary_sha256(),
+            "incarnation":pir_control::Identity::process().incarnation,
+            "verified_publication":{"map_sha256":active.publication.map_sha256},
+            "runtime_readiness":{"warm":state.is_warm(),"invalidated":state.is_invalidated(),
+                "required":state.required_material(),"preparation":state.preparation()},
+            "active_coverage":coverage,
+            "archive_reachability":state.archive().map(|a| a.observation()),
+        })
     }
 
     pub fn router(&self) -> Router {
@@ -710,6 +744,9 @@ impl LiveService {
         Fut: std::future::Future<Output = Result<(), String>>,
     {
         let operation = self.0.operations.clone().lock_owned().await;
+        if !initial {
+            self.qualify_candidate_retirement().await?;
+        }
         check().await?;
         if initial {
             let _gate = self.0.publication_gate.lock().unwrap();
@@ -730,12 +767,38 @@ impl LiveService {
             persist(&self.0.record, &active.publication)?;
             Ok(())
         } else {
-            self.activate(expected, map_sha256, operation)
+            self.commit_activation(expected, map_sha256, operation)
                 .await
                 .map(|_| ())
         }
     }
     async fn activate(
+        &self,
+        expected: String,
+        map_sha256: String,
+        _operation: tokio::sync::OwnedMutexGuard<()>,
+    ) -> Result<serde_json::Value, String> {
+        self.qualify_candidate_retirement().await?;
+        self.commit_activation(expected, map_sha256, _operation)
+            .await
+    }
+    async fn qualify_candidate_retirement(&self) -> Result<(), String> {
+        let old = self.0.active.read().unwrap().state.clone();
+        let next = self
+            .0
+            .candidate
+            .lock()
+            .await
+            .as_ref()
+            .map(|c| c.state.clone());
+        if self.0.required_runtimes || old.archive().is_some() {
+            if let Some(next) = next {
+                next.qualify_retirement(&old).await?;
+            }
+        }
+        Ok(())
+    }
+    async fn commit_activation(
         &self,
         expected: String,
         map_sha256: String,

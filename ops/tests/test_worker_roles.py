@@ -12,6 +12,7 @@ sys.path.insert(0, str(ROOT / 'ops/lib'))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from wallet_pir_ops.deploy import descriptors, units  # noqa: E402
 from worker_settings import SETTINGS  # noqa: E402
+from transparent.ops.tests.test_history_provider_role import ProviderRole  # noqa: E402,F401
 
 REGISTRY = descriptors.load_descriptors(ROOT / 'ops/deploy/services.toml')
 RELEASE = '/opt/example/releases/' + '0' * 64

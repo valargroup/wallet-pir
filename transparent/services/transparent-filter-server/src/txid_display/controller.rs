@@ -34,6 +34,7 @@ use super::source::{Source, SourceError, SourceUpdate};
 use super::timeline::{HeightIndex, Timeline};
 use crate::events::EventStore;
 use crate::publication::{write_atomic, BoxError, Journal};
+use pir_pipeline::Input;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, VecDeque};
@@ -119,6 +120,38 @@ pub enum Halt {
     SealedChanged(String),
     #[error("sealed map entries changed: {0}")]
     SealedEntryChanged(String),
+}
+
+struct DisplayProgress;
+impl pir_pipeline::Observer for DisplayProgress {
+    fn finished(&mut self, phase: pir_pipeline::Phase, elapsed: Duration, succeeded: bool) {
+        tracing::debug!(
+            ?phase,
+            seconds = elapsed.as_secs_f64(),
+            succeeded,
+            "display lifecycle phase"
+        );
+    }
+}
+
+// A prepared publication retains every ordered seal at the queue head. It
+// borrows its controller through `advance`; no store or seal queue is copied.
+struct DisplayCandidate {
+    started: Instant,
+    tip: u64,
+    tip_hash: String,
+    new_seals: Vec<SealRecord>,
+    dropped: Vec<DisplayMapEntry>,
+    floor: u64,
+    unsealed: u64,
+    recent_start: u64,
+    recent_id: u64,
+    recent: PublishedShard,
+    map: DisplayMap,
+    candidate: PathBuf,
+    sha: String,
+    candidate_ms: u64,
+    prebuild: Option<(u64, Vec<Shipped>)>,
 }
 
 enum CycleError {
@@ -743,11 +776,18 @@ impl Controller {
                 Source,
                 Timer,
             }
-            let wake = tokio::select! {
-                event = self.receiver.recv() => Wake::Background(event),
-                () = self.source.wait() => Wake::Source,
-                () = tokio::time::sleep_until(wake_at.max(now).into()) => Wake::Timer,
-            };
+            let mut wake = Wake::Timer;
+            pir_pipeline::wait(
+                wake_at.max(now).into(),
+                async {
+                    wake = tokio::select! {
+                        event = self.receiver.recv() => Wake::Background(event),
+                        () = self.source.wait() => Wake::Source,
+                    };
+                },
+                std::future::pending(),
+            )
+            .await;
             match wake {
                 Wake::Background(Some(event)) => self.background(event),
                 Wake::Background(None) => unreachable!("the controller holds a sender"),
@@ -778,12 +818,19 @@ impl Controller {
             *saved = next;
             Ok(())
         };
-        let polled = self
-            .source
-            .poll(&mut self.store, &self.cache, floor, &mut before_rollback)
-            .await;
+        let polled = pir_pipeline::acquire(
+            async {
+                self.source
+                    .poll(&mut self.store, &self.cache, floor, &mut before_rollback)
+                    .await
+                    .map(Input::Work)
+            },
+            &mut (),
+        )
+        .await;
         match polled {
-            Ok(update) => self.apply(update).await?,
+            Ok(Input::Work(update)) => self.apply(update).await?,
+            Ok(Input::Unchanged | Input::Deferred) => {}
             Err(SourceError::SealedReorg { ancestor, floor }) => {
                 self.timeline.record(
                     "reorg",
@@ -1168,6 +1215,23 @@ impl Controller {
     /// Publishes the current tip and every publishable seal at the queue's
     /// head.
     async fn cycle(&mut self) -> Result<(), CycleError> {
+        pir_pipeline::advance(
+            Input::Work(self),
+            |controller| async move {
+                match controller.prepare_cycle().await? {
+                    Input::Work(candidate) => Ok(Input::Work((controller, candidate))),
+                    Input::Unchanged => Ok(Input::Unchanged),
+                    Input::Deferred => Ok(Input::Deferred),
+                }
+            },
+            |(controller, candidate)| async move { controller.activate_cycle(candidate).await },
+            &mut DisplayProgress,
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn prepare_cycle(&mut self) -> Result<Input<DisplayCandidate>, CycleError> {
         let started = Instant::now();
         let (tip, tip_hash) = self.cache.tip().ok_or_else(|| retry("empty cache"))?;
         let tip_hash = tip_hash.to_display_hex();
@@ -1183,7 +1247,7 @@ impl Controller {
         let count = self.publishable();
         if count == 0 && (tip, &tip_hash) == (self.published_tip.0, &self.published_tip.1) {
             // Only a seal was due, and it is being staged again.
-            return Ok(());
+            return Ok(Input::Deferred);
         }
         let staged: Vec<&SealJob> = self.queue.iter().take(count).collect();
         let new_seals: Vec<SealRecord> = staged.iter().map(|j| j.record()).collect();
@@ -1272,6 +1336,43 @@ impl Controller {
         let candidate_ms = ms(candidate_started);
         let prebuild = self.prebuild(&candidate, &recent.digest).await;
 
+        Ok(Input::Work(DisplayCandidate {
+            started,
+            tip,
+            tip_hash,
+            new_seals,
+            dropped,
+            floor,
+            unsealed,
+            recent_start,
+            recent_id,
+            recent,
+            map,
+            candidate,
+            sha,
+            candidate_ms,
+            prebuild,
+        }))
+    }
+
+    async fn activate_cycle(&mut self, candidate: DisplayCandidate) -> Result<(), CycleError> {
+        let DisplayCandidate {
+            started,
+            tip,
+            tip_hash,
+            new_seals,
+            dropped,
+            floor,
+            unsealed,
+            recent_start,
+            recent_id,
+            recent,
+            map,
+            candidate,
+            sha,
+            candidate_ms,
+            prebuild,
+        } = candidate;
         self.deliver_invalidations().await;
         // The rollback record vouches only for what replicas held when it was
         // made. This candidate may reach some replicas without being

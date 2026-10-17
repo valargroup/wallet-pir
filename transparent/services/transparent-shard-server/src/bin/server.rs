@@ -22,6 +22,12 @@ struct Cli {
     /// Without --verify-only, follow publications and serve a recent worker.
     #[arg(long, requires_all = ["publisher_network", "publisher_genesis"])]
     publisher: Option<String>,
+    /// Fixed trusted terminal Valargroup archive origin; never supplied by wallets.
+    #[arg(long, requires = "publisher")]
+    archive_upstream: Option<String>,
+    /// Optional archive CA with ordinary TLS verification.
+    #[arg(long, requires = "archive_upstream")]
+    archive_ca: Option<PathBuf>,
     #[arg(long, requires = "publisher")]
     publisher_network: Option<String>,
     #[arg(long, requires = "publisher")]
@@ -162,7 +168,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             max_download_bytes: cli.bootstrap_max_bytes,
             roots,
         };
-        if !cli.verify_only {
+        if !cli.verify_only || cli.archive_upstream.is_some() {
             let service = ServiceConfig {
                 cache_bytes: cli.cache_bytes,
                 build_slots: cli.build_slots,
@@ -174,15 +180,43 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 readiness: ReadinessMode::Warm,
             };
             let mut manager = transparent_shard_server::manager::Manager::new(provider, service)?;
+            if let Some(origin) = cli.archive_upstream {
+                let roots = cli
+                    .archive_ca
+                    .map(
+                        |path| -> Result<_, Box<dyn std::error::Error + Send + Sync>> {
+                            Ok(reqwest::Certificate::from_pem(&std::fs::read(path)?)?)
+                        },
+                    )
+                    .transpose()?
+                    .into_iter()
+                    .collect();
+                manager = manager.with_archive(transparent_shard_server::archive::Archive::new(
+                    &origin, roots,
+                )?);
+            }
             if let Err(error) = manager.poll_once().await {
                 tracing::warn!(%error, "initial synchronization failed; checking recovered active view");
                 if manager.live().is_none() {
                     return Err(error);
                 }
             }
-            let live = manager.live().ok_or("provider did not activate")?;
+            if cli.verify_only {
+                // Same strict managed loader, owner and archive configuration as
+                // startup. No listener; saved bytes never bypass fresh authority.
+                let live = manager.live().ok_or("provider did not activate")?;
+                println!(
+                    "{}",
+                    serde_json::to_string(
+                        &live
+                            .command(transparent_shard_server::live::Command::Status)
+                            .await?
+                    )?
+                );
+                return Ok(());
+            }
+            let app = manager.router()?;
             let listener = tokio::net::TcpListener::bind(cli.listen).await?;
-            let app = live.router();
             let polling = tokio::spawn(manager.run());
             axum::serve(listener, app).await?;
             polling.abort();

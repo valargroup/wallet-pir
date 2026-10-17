@@ -16,6 +16,7 @@ name = "receiver-probe"
 path = "src/bin/receiver-probe.rs"
 
 [dependencies]
+pir-pipeline = { path = "../../../shared/pir-pipeline" }
 axum = "0.7"
 clap = { version = "4", features = ["derive", "env"] }
 hex = "0.4"

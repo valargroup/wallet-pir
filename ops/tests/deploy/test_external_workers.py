@@ -229,5 +229,82 @@ class ExternalWorkers(unittest.TestCase):
         self.assertEqual(target['action'], 'install')
 
 
+class ProviderLifecycle(unittest.TestCase):
+    setUp = ExternalWorkers.setUp
+    tearDown = ExternalWorkers.tearDown
+    write_inventory = ExternalWorkers.write_inventory
+    deployer = ExternalWorkers.deployer
+    def setUp(self):
+        ExternalWorkers.setUp(self)
+        settings = json.loads((ROOT / 'transparent/ops/deploy/history-provider.example.json').read_text())
+        self.write_inventory(extra={'transparent-history': {'roles': {'provider': [{
+            'host': 'edge-01', 'vars': {'listen': settings['listen']},
+            'settings': settings, 'install': True}]}}})
+
+    def test_provider_refuses_generic_cli_mutation_before_running_a_loader(self):
+        base = ['--inventory', str(self.inventory), '--state-dir', str(self.state), '--json']
+        for command in ('plan', 'preflight', 'deploy'):
+            with self.subTest(command=command):
+                output = []
+                result = cli.main(base + [command, 'transparent-history', '--only', 'provider',
+                                         '--binary', str(self.binary)], executor=self.fake, out=output.append)
+                self.assertEqual(result, 1, output)
+                self.assertIn('ordinary binary deployment', output[-1])
+                self.assertEqual(self.fake.log, [])
+                self.assertEqual(self.checks, [])
+
+    def test_direct_lifecycle_refuses_exclusive_state_before_staging(self):
+        deployer = self.deployer('transparent-history', only=['provider'])
+        deployer.capture_baseline()
+        result = Lifecycle(deployer).inspect('preflight', SHA, str(self.binary), stage=True)
+        self.assertTrue(any('operator-managed' in p for p in result.problems), result)
+        self.assertEqual(self.fake.log, [])
+        self.assertEqual(self.checks, [])
+        with self.assertRaisesRegex(DeployError, 'operator-managed'):
+            deployer.deploy(SHA, str(self.binary), skip_exact_check=True)
+        from wallet_pir_ops.deploy.transaction import Journal
+        journal = Journal.create(self.state, 'transparent-history', SHA, None,
+                                 [{'role': 'provider', 'host': 'edge-01',
+                                   'unit': 'transparent-history-provider.service'}], {})
+        with self.assertRaisesRegex(DeployError, 'operator-managed'):
+            deployer.rollback(journal.id)
+        self.assertEqual(self.fake.log, [])
+        self.assertEqual(self.checks, [])
+
+    def test_existing_worker_transaction_rolls_back_with_provider_in_inventory(self):
+        document = json.loads(self.inventory.read_text())
+        document['services']['transparent-history']['roles']['external-worker'] = [{
+            'host': 'edge-01', 'install': True, 'vars': {'listen': '127.0.0.1:8094'},
+            'settings': {'listen': '127.0.0.1:8094', 'shard_dir': '/srv/history/set',
+                         'state_dir': '/var/lib/history-worker'}}]
+        self.inventory.write_text(json.dumps(document))
+        unit = 'transparent-history-worker.service'
+        self.fake.endpoints[('edge-01', 'http://127.0.0.1:8094/v1/ready')] = unit
+        self.fake.health_shapes[('edge-01', unit)] = lambda ready, exe: {'ready': ready}
+        self.fake.product_check = lambda host, argv: (self.checks.append(argv) or (0, 'verified'))
+        deployer = self.deployer('transparent-history', only=['external-worker'])
+        deployer.capture_baseline()
+        journal = deployer.deploy(SHA, str(self.binary), skip_exact_check=True)
+        self.assertEqual(journal.status, 'committed')
+        self.fake.log.clear()
+        output = []
+        code = cli.main(['--inventory', str(self.inventory), '--state-dir', str(self.state),
+                         'rollback', 'transparent-history', '--transaction', journal.id],
+                        executor=self.fake, out=output.append,
+                        lock=lambda: self.fake.hold_lock('coordinator', descriptors.LOCK_PATH))
+        self.assertEqual(code, 0, output)
+        self.assertEqual(self.fake.probe_unit('edge-01', unit)['load_state'], 'not-found')
+        self.assertNotIn('/var/lib/transparent-provider', self.fake.host('edge-01').dirs)
+        self.assertFalse(any('--publisher' in argv for argv in self.checks))
+
+    def test_provider_private_report_still_works_without_a_deploy(self):
+        output = []
+        code = cli.main(['--inventory', str(self.inventory), 'worker-report', 'transparent-history',
+                         '--only', 'provider'], executor=self.fake, out=output.append)
+        self.assertEqual(code, 0, output)
+        self.assertEqual(json.loads(output[-1])['workers'][0]['synchronization'], 'unobserved')
+        self.assertEqual(self.fake.log, [])
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -295,6 +295,54 @@ class BoundaryTests(unittest.TestCase):
             'status-serving: serving library resolves zakura-server-chain',
         ])
 
+    def test_pipeline_refuses_every_nonutility_dependency_kind(self):
+        for kind in ['dependencies', 'dev-dependencies', 'build-dependencies',
+                     'target.cfg(unix).dependencies', 'target.cfg(unix).dev-dependencies',
+                     'target.cfg(unix).build-dependencies']:
+            for name in ['receiver-store', 'zakura-server-chain', 'zakura-pir-native',
+                         'sha2', 'rand', 'enhance-serving', 'pir-runtime']:
+                package = {'name': 'pir-pipeline', 'manifest': 'shared/pir-pipeline/Cargo.toml',
+                           'dependencies': [self.edge(name, kind)]}
+                self.assertTrue(boundary.violations([package], []), (kind, name))
+        package['dependencies'] = [self.edge('tokio')]
+        self.assertEqual(boundary.violations([package], []), [])
+        package['dependencies'][0]['path'] = 'receiver/crates/fake-tokio/'
+        self.assertTrue(boundary.violations([package], []))
+        for name in boundary.SERVING | boundary.PIPELINE_FOUNDATIONS:
+            package = {'name': name, 'manifest': 'shared/lib/Cargo.toml',
+                       'dependencies': [self.edge('pir-pipeline', 'dev-dependencies')]}
+            self.assertTrue(boundary.violations([package], []))
+
+    def test_pipeline_graph_checks_transitive_dev_build_and_target_edges(self):
+        def node(name, deps=()):
+            return {'id': name, 'deps': [{'pkg': dep, 'dep_kinds': [{'kind': kind,
+                    'target': 'cfg(unix)'}]} for dep, kind in deps]}
+        metadata = {'packages': [
+            {'id': 'pipeline', 'name': 'pir-pipeline', 'source': None},
+            {'id': 'tokio', 'name': 'tokio', 'source': 'registry'},
+            {'id': 'crypto', 'name': 'sha2', 'source': 'registry'},
+        ], 'resolve': {'nodes': [node('pipeline', [('tokio', None)]), node('tokio'), node('crypto')]}}
+        self.assertEqual(boundary.resolved_violations(metadata), [])
+        for kind in [None, 'dev', 'build']:
+            metadata['resolve']['nodes'][1] = node('tokio', [('crypto', kind)])
+            self.assertEqual(boundary.resolved_violations(metadata),
+                             ['pir-pipeline: resolves outside its utility boundary: sha2'])
+
+    def test_chain_free_serving_foundations_cannot_reach_the_pipeline(self):
+        for foundation in boundary.PIPELINE_FOUNDATIONS:
+            metadata = {'packages': [
+                {'id': 'foundation', 'name': foundation, 'source': None},
+                {'id': 'helper', 'name': 'helper', 'source': 'registry'},
+                {'id': 'pipeline', 'name': 'pir-pipeline', 'source': None},
+            ], 'resolve': {'nodes': [
+                {'id': 'foundation', 'deps': [{'pkg': 'helper', 'dep_kinds': [{'kind': 'dev'}]}]},
+                {'id': 'helper', 'deps': [{'pkg': 'pipeline', 'dep_kinds': [{'kind': 'build',
+                                                                         'target': 'cfg(unix)'}]}]},
+                {'id': 'pipeline', 'deps': []},
+            ]}}
+            self.assertEqual(boundary.resolved_violations(metadata),
+                             [f'{foundation}: serving foundation resolves pir-pipeline'])
+
     def test_a_removed_edge_must_leave_the_allowlist(self):
         problems = boundary.violations([], ['svc -> zakura-chain'])
         self.assertEqual(len(problems), 1)
@@ -957,7 +1005,7 @@ class CacheWorkflowTests(unittest.TestCase):
                 found.append((lane, scope))
         self.assertGreaterEqual(len(found), 8)
         for lane, scope in found:
-            if not lane.startswith('$'):
+            if not lane.startswith('$') and not scope.startswith('$'):
                 self.assertIn((lane, scope), cargo_cache.SCOPES)
         prime = self.workflows['ci-cache.yml']
         for lane, scope in re.findall(r'\{lane: (\S+), scope: (\S+),', prime):
@@ -1012,7 +1060,7 @@ class CacheWorkflowTests(unittest.TestCase):
         routine = self.workflows['ci.yml']
         self.assertIn("github.event_name == 'workflow_dispatch' && 30 || 3", routine)
         self.assertIn("if: github.event_name == 'push' && steps.affected.outputs.rust == 'true'", routine)
-        self.assertEqual(self.workflows['ci-cache.yml'].count("if: github.ref == 'refs/heads/main'"), 1)
+        self.assertEqual(self.workflows['ci-cache.yml'].count("if: github.ref == 'refs/heads/main'"), 2)
 
     def test_pr_preparation_finishes_with_the_ordinary_affected_graph_before_sealing(self):
         text = self.workflows['ci-pr-prepare.yml']
@@ -1076,10 +1124,13 @@ class CacheWorkflowTests(unittest.TestCase):
         self.assertIn('enhance-pir-server/native-reinspiring', features)
         workflow = self.workflows['ci-full.yml']
         self.assertNotIn('tests:native-server-lib', workflow)
-        self.assertIn('--lib ipir::tests', workflow)
-        self.assertIn('-p enhance-serving --test ci_smoke', workflow)
-        self.assertIn('-p enhance-pir -p status-serving --lib --tests', workflow)
-        self.assertIn('--features native-reinspiring,cuda --test matvec_config', workflow)
+        matrix = json.loads((ROOT / 'tools/ci/test-matrix.json').read_text())
+        self.assertIn('reference:enhance-serving:lib:enhance_serving', matrix['enhance-reference']['targets'])
+        self.assertIn('reference:enhance-serving:test:ci_smoke', matrix['enhance-reference']['targets'])
+        self.assertIn('cuda:enhance-pir-server:test:matvec_config', matrix['enhance-cuda-tests']['targets'])
+        runner = (ROOT / 'tools/ci/test_matrix.py').read_text()
+        self.assertIn("args = ['ipir::tests']", runner)
+        self.assertIn('backend_load_failure_does_not_rebuild_or_replace_published_units', runner)
 
     def test_transparent_full_checks_include_the_standalone_exporter(self):
         full = load_full()

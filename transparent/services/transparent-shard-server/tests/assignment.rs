@@ -903,3 +903,6 @@ async fn each_worker_receives_only_the_prepared_runtimes_of_its_shards() {
         "every runtime has an owner"
     );
 }
+
+#[path = "support/provider.rs"]
+mod provider;

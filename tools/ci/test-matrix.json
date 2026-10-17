@@ -1,0 +1,237 @@
+{
+  "transparent-contracts": {
+    "family": "transparent",
+    "targets": [
+      "export:txid-sizing-export:bin:txid-sizing-export",
+      "export:txid-sizing-export:test:codec_bounds",
+      "export:txid-sizing-export:test:executing_identity",
+      "export:txid-sizing-export:test:source_identity",
+      "transparent:transparent-block-server:bin:transparent-block-server",
+      "transparent:transparent-blocks:doc:transparent_blocks",
+      "transparent:transparent-blocks:lib:transparent_blocks",
+      "transparent:transparent-blocks:test:recovery",
+      "transparent:transparent-loadtest:bin:transparent-filter-cli",
+      "transparent:transparent-loadtest:bin:transparent-loadtest",
+      "transparent:transparent-loadtest:bin:txid-quality-canary",
+      "transparent:transparent-loadtest:example:sample_recovery",
+      "transparent:transparent-loadtest:test:service_tools",
+      "transparent:transparent-loadtest:test:simulation",
+      "transparent:transparent-measure:bin:transparent-measure",
+      "transparent:transparent-regression:bin:hierarchical-filter-eval",
+      "transparent:transparent-regression:bin:regression-export",
+      "transparent:transparent-regression:bin:transparent-regression",
+      "transparent:transparent-regression:doc:transparent_regression",
+      "transparent:transparent-regression:example:activity-reopen",
+      "transparent:transparent-regression:example:layout_replay",
+      "transparent:transparent-regression:lib:transparent_regression",
+      "transparent:transparent-regression:test:parent_filters",
+      "transparent:transparent-regression:test:runner",
+      "transparent:transparent-shard-server:bin:parent-evaluation-server",
+      "transparent:transparent-shard-server:bin:shard-assign",
+      "transparent:transparent-shard-server:bin:shard-control",
+      "transparent:transparent-shard-server:bin:shard-prune",
+      "transparent:transparent-shard-server:bin:shard-residency",
+      "transparent:transparent-shard-server:bin:shard-scaling",
+      "transparent:transparent-shard-server:bin:transparent-shard-server",
+      "transparent:transparent-shard-server:bin:transparent-txid-server",
+      "transparent:transparent-shard-server:bin:txid-control",
+      "transparent:transparent-shard-server:bin:txid-inventory",
+      "transparent:transparent-shard-server:doc:transparent_shard_server",
+      "transparent:transparent-shard-server:example:display_fixture",
+      "transparent:transparent-shard-server:example:hint_bench",
+      "transparent:transparent-shard-server:example:history_fixture",
+      "transparent:transparent-shard-server:example:native_certificate",
+      "transparent:transparent-shard-server:example:quality-canary",
+      "transparent:transparent-shard-server:example:rate-query",
+      "transparent:transparent-shard-server:example:soak-query",
+      "transparent:transparent-shard-server:example:txid-bandwidth",
+      "transparent:transparent-shard-server:example:txid-placement-census",
+      "transparent:transparent-shard-server:example:txid-rate",
+      "transparent:transparent-shard-server:lib:transparent_shard_server",
+      "transparent:transparent-shard-server:test:ci_smoke",
+      "transparent:transparent-shard-server:test:geometry_costs",
+      "transparent:transparent-shard-server:test:operator_payloads"
+    ]
+  },
+  "transparent-publisher": {
+    "family": "transparent",
+    "targets": [
+      "transparent:transparent-filter-server:bin:compact-export",
+      "transparent:transparent-filter-server:bin:event-spotcheck",
+      "transparent:transparent-filter-server:bin:filter-sweep",
+      "transparent:transparent-filter-server:bin:journal-convert-v1",
+      "transparent:transparent-filter-server:bin:journal-inventory",
+      "transparent:transparent-filter-server:bin:sample-oracle",
+      "transparent:transparent-filter-server:bin:sample-redigest",
+      "transparent:transparent-filter-server:bin:script-sample",
+      "transparent:transparent-filter-server:bin:shard-census",
+      "transparent:transparent-filter-server:bin:shard-cutoff",
+      "transparent:transparent-filter-server:bin:shard-publish",
+      "transparent:transparent-filter-server:bin:shard-verify",
+      "transparent:transparent-filter-server:bin:transparent-event-ingest",
+      "transparent:transparent-filter-server:bin:transparent-filter-server",
+      "transparent:transparent-filter-server:bin:transparent-publish-controller",
+      "transparent:transparent-filter-server:bin:txid-display-controller",
+      "transparent:transparent-filter-server:doc:transparent_filter_server",
+      "transparent:transparent-filter-server:example:publication_bench",
+      "transparent:transparent-filter-server:example:transparent-txid-demo",
+      "transparent:transparent-filter-server:lib:transparent_filter_server",
+      "transparent:transparent-filter-server:test:compact",
+      "transparent:transparent-filter-server:test:event_codec_bounds",
+      "transparent:transparent-filter-server:test:service_round_trip",
+      "transparent:transparent-filter-server:test:shard_filters",
+      "transparent:transparent-filter-server:test:txid_shipped_runtimes"
+    ]
+  },
+  "transparent-backend": {
+    "family": "transparent",
+    "targets": [
+      "transparent:transparent-server-backend:doc:transparent_server_backend",
+      "transparent:transparent-server-backend:lib:transparent_server_backend"
+    ]
+  },
+  "transparent-recovery": {
+    "family": "transparent",
+    "targets": [
+      "transparent:transparent-shard-server:test:assignment",
+      "transparent:transparent-shard-server:test:revisions_and_cache",
+      "transparent:transparent-shard-server:test:round_trip",
+      "transparent:transparent-shard-server:test:txid_client"
+    ]
+  },
+  "transparent-sharded": {
+    "family": "transparent",
+    "targets": [
+      "transparent:transparent-shard-server:test:txid_sharded",
+      "transparent:transparent-shard-server:test:verification_reuse",
+      "transparent:transparent-shard-server:test:wallet_anchor"
+    ]
+  },
+  "transparent-transitions": {
+    "family": "transparent",
+    "targets": [
+      "transparent:transparent-shard-server:test:wallet_continuation",
+      "transparent:transparent-shard-server:test:wallet_recut"
+    ]
+  },
+  "transparent-wallet-sync": {
+    "family": "transparent",
+    "targets": [
+      "transparent:transparent-shard-server:test:wallet_sync"
+    ]
+  },
+  "enhance-supporting": {
+    "family": "enhance",
+    "targets": [
+      "native:enhance-pir-load-test:bin:enhance-pir-load-test",
+      "native:enhance-pir:bin:enhance-pir-cli",
+      "native:enhance-pir:doc:enhance_pir",
+      "native:enhance-pir:example:v7_vector",
+      "native:enhance-pir:lib:enhance_pir",
+      "native:enhance-pir:test:routing_contract",
+      "native:enhance-pir:test:v7_contract",
+      "native:pir-apm:bin:pir-apm",
+      "native:pir-apm:doc:pir_apm",
+      "native:pir-apm:lib:pir_apm",
+      "native:pir-monitor:bin:pir-monitor",
+      "native:status-serving:doc:status_serving",
+      "native:status-serving:lib:status_serving"
+    ]
+  },
+  "enhance-serving-units": {
+    "family": "enhance",
+    "targets": [
+      "native:enhance-serving:doc:enhance_serving",
+      "native:enhance-serving:lib:enhance_serving"
+    ]
+  },
+  "enhance-serving-contracts": {
+    "family": "enhance",
+    "targets": [
+      "native:enhance-pir-server:bin:enhance-pir-server",
+      "native:enhance-pir-server:bin:status-pir",
+      "native:enhance-pir-server:doc:enhance_pir_server",
+      "native:enhance-pir-server:example:native_certificate",
+      "native:enhance-pir-server:example:packing_budget",
+      "native:enhance-pir-server:example:preprocess",
+      "native:enhance-pir-server:example:suffix_width",
+      "native:enhance-pir-server:lib:enhance_pir_server",
+      "native:enhance-pir-server:test:boundary_recovery_model",
+      "native:enhance-pir-server:test:matvec_config",
+      "native:enhance-pir-server:test:record_layout",
+      "native:enhance-pir-server:test:schema11_cutover",
+      "native:enhance-pir-server:test:status_wallet",
+      "native:enhance-pir-server:test:status_wallet_http",
+      "native:enhance-serving:test:ci_smoke",
+      "native:enhance-serving:test:packing_http"
+    ]
+  },
+  "enhance-http": {
+    "family": "enhance",
+    "targets": [
+      "native:enhance-serving:test:http"
+    ]
+  },
+  "enhance-recovery": {
+    "family": "enhance",
+    "targets": [
+      "native:enhance-pir-server:test:canonical_record",
+      "native:enhance-pir-server:test:enhance_wallet_native",
+      "native:enhance-pir-server:test:note_recovery",
+      "native:enhance-pir-server:test:row_repair_http",
+      "native:enhance-pir-server:test:rpc"
+    ]
+  },
+  "enhance-reference": {
+    "family": "enhance",
+    "targets": [
+      "reference:enhance-pir:lib:enhance_pir",
+      "reference:enhance-pir:test:routing_contract",
+      "reference:enhance-pir:test:v7_contract",
+      "reference:enhance-serving:lib:enhance_serving",
+      "reference:enhance-serving:test:ci_smoke",
+      "reference:status-serving:lib:status_serving"
+    ]
+  },
+  "enhance-cuda-check": {
+    "family": "enhance",
+    "targets": [
+      "cuda:enhance-pir-load-test:check:all",
+      "cuda:enhance-pir-server:check:enhance_pir_server",
+      "cuda:enhance-serving:check:enhance_serving",
+      "cuda:status-serving:check:status_serving"
+    ]
+  },
+  "enhance-cuda-tests": {
+    "family": "enhance",
+    "targets": [
+      "cuda:enhance-pir-server:test:matvec_config",
+      "cuda:enhance-serving:lib:enhance_serving"
+    ]
+  },
+  "receiver-indexer-store": {
+    "family": "receiver",
+    "targets": [
+      "receiver:receiver-indexer:bin:receiver-directory",
+      "receiver:receiver-indexer:bin:receiver-probe",
+      "receiver:receiver-indexer:doc:receiver_indexer",
+      "receiver:receiver-indexer:example:rehearsal_fixture",
+      "receiver:receiver-indexer:lib:receiver_indexer",
+      "receiver:receiver-indexer:test:indexer",
+      "receiver:receiver-indexer:test:serve_publication",
+      "receiver:receiver-store:doc:receiver_store",
+      "receiver:receiver-store:lib:receiver_store",
+      "receiver:receiver-store:test:store"
+    ]
+  },
+  "receiver-server": {
+    "family": "receiver",
+    "targets": [
+      "receiver:receiver-pir-server:doc:receiver_pir_server",
+      "receiver:receiver-pir-server:lib:receiver_pir_server",
+      "receiver:receiver-pir-server:test:ci_smoke",
+      "receiver:receiver-pir-server:test:http",
+      "receiver:receiver-pir-server:test:library_client"
+    ]
+  }
+}

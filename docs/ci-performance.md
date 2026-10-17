@@ -45,6 +45,38 @@ HTTP peers; separate worker tests
 check durable reservation, abort and commit behavior. Real encrypted HTTP,
 restart, independent wallet, publication, packing and revocation checks remain.
 
+## Parallel release qualification
+
+Service qualification targets five minutes from dispatch to qualified artifacts
+for routine source changes with compatible caches. Cold dependency/toolchain
+builds are measured separately. These are targets, not established guarantees.
+
+The checked-in [test matrix](../tools/ci/test-matrix.json) assigns every enabled
+family target exactly once: seven Transparent jobs, eight Enhance jobs and two
+Receiver jobs. Receiver lint runs separately. Whole test executables retain their
+fixture reuse and existing thread limits. Reference arithmetic and CUDA checks
+have separate feature/cache partitions; deployment builds remain on the dedicated
+build runner. Example builds, doctests, binary tests and the standalone sizing
+exporter are included. New or removed targets require an explicit matrix update.
+
+Each shard reports compilation/execution timings and writes a success receipt
+bound to the source SHA, matrix and workflow attempt. Family aggregates reject
+missing, duplicate, compile-only or mismatched receipts before artifact promotion.
+Rerun the complete workflow rather than only failed jobs: receipts belong to one
+workflow attempt, and earlier attempts remain available as evidence.
+Common/shared checks overlap service work, but all required checks must finish
+successfully before candidates become qualified artifacts. Hosted source snapshots
+reuse verified unchanged inputs; Cargo still checks every compiled unit.
+
+`python3 tools/ci/test_matrix.py validate` checks target coverage; `plan` prints
+the runner matrix. The existing cache-primer workflow can compile those shards
+without executing or qualifying tests. The manual **Audit qualification matrix**
+workflow executes the original and split suites at the same revision, then compares
+test names, ignored cases and package feature sets. It publishes audit evidence,
+not deployment artifacts. Retain failed/cancelled attempts and report queue, setup,
+compile, execution and promotion time separately when assessing the five-minute
+qualification and ten-minute deployment targets.
+
 ## Fast feedback and full qualification
 
 `CI / Fast checks` runs on pushes and PRs. It selects changed workspace packages

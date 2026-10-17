@@ -82,7 +82,7 @@ runs:
     # PR saves stay in the merge ref, never in main's trusted cache.
     - name: Restore hosted Cargo cache
       id: restore
-      if: runner.environment != 'self-hosted' && inputs.lane != 'fast'
+      if: runner.environment != 'self-hosted' && inputs.lane != 'fast' && inputs.lane != 'full-test'
       uses: Swatinem/rust-cache@v2
       with:
         prefix-key: v1-wallet-pir
@@ -97,13 +97,13 @@ runs:
     # cancellation can leave Cargo writers alive during post-action archiving.
     - name: Restore hosted workspace snapshot
       id: workspace
-      if: runner.environment != 'self-hosted' && inputs.lane == 'fast'
+      if: runner.environment != 'self-hosted' && (inputs.lane == 'fast' || inputs.lane == 'full-test')
       uses: actions/cache@v4
       with:
         path: |
           ~/.cargo/registry
           ~/.cargo/git
-          target/fast
+          target/${{ inputs.lane }}
         key: ${{ steps.identity.outputs.workspace-key }}
         restore-keys: ${{ steps.identity.outputs.workspace-prefix }}
         lookup-only: ${{ inputs.lookup-only }}

@@ -1,0 +1,23 @@
+[package]
+name = "frozen-provider-client"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# Intentionally separate: the released native links graph cannot be unified
+# with the provider's newer server graph. No patch sections or server dependency.
+[workspace]
+
+[dependencies]
+zakura-pir-transparent = { version = "=0.0.1-rc0", features = ["wallet"] }
+transparent-wallet = { version = "=0.1.0-rc.3" }
+transparent-filter = { version = "=0.1.0-rc.3" }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
+serde_json = "1"
+hex = "0.4"
+
+[profile.release-fast]
+inherits = "release"
+lto = false
+codegen-units = 16
+incremental = true

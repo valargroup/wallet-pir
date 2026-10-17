@@ -105,7 +105,7 @@ fn publication_through(root: &Path, through: u64) -> (PathBuf, ShardSet) {
     let set = ShardSet::open(&output, 0).unwrap();
     (output, set)
 }
-fn prepare_recent(directory: &Path, set: &ShardSet) {
+fn recent_options(set: &ShardSet) -> transparent_shard_server::shardset::LoadOptions {
     use transparent_shard_server::{
         assignment::{GeneratedBy, WorkerRole},
         router::{plan, RosterEntry},
@@ -144,17 +144,16 @@ fn prepare_recent(directory: &Path, set: &ShardSet) {
         },
     )
     .unwrap();
-    let recent = ShardSet::open_with(
-        directory,
-        &LoadOptions {
-            scope: LoadScope::Assigned {
-                assignment: Arc::new(assignment),
-                worker_id: "recent".into(),
-            },
-            ..LoadOptions::whole(0)
+    LoadOptions {
+        scope: LoadScope::Assigned {
+            assignment: Arc::new(assignment),
+            worker_id: "recent".into(),
         },
-    )
-    .unwrap();
+        ..LoadOptions::whole(0)
+    }
+}
+fn prepare_recent(directory: &Path, set: &ShardSet) {
+    let recent = ShardSet::open_with(directory, &recent_options(set)).unwrap();
     let prepared =
         transparent_server_backend::prebuild::prepare_publication(&recent, directory, &[], &|| {
             false

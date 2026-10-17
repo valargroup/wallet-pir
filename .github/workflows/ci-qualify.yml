@@ -59,36 +59,106 @@ jobs:
 
   ops:
     name: Operations
-    needs: [select, common]
+    needs: select
     if: needs.select.outputs.ops == 'true'
     uses: ./.github/workflows/ci-full.yml
     with:
       family: ops
       service-only: true
+      defer-release: true
 
   receiver:
     name: Receiver
-    needs: [select, common, shared]
+    needs: select
     if: needs.select.outputs.receiver == 'true'
     uses: ./.github/workflows/ci-full.yml
     with:
       family: receiver
       service-only: true
+      defer-release: true
 
   transparent:
     name: Transparent
-    needs: [select, common, shared]
+    needs: select
     if: needs.select.outputs.transparent == 'true'
     uses: ./.github/workflows/ci-full.yml
     with:
       family: transparent
       service-only: true
+      defer-release: true
 
   enhance:
     name: Enhance
-    needs: [select, common, shared]
+    needs: select
     if: needs.select.outputs.enhance == 'true'
     uses: ./.github/workflows/ci-full.yml
     with:
       family: enhance
       service-only: true
+      defer-release: true
+
+  publish-ops:
+    name: Operations / Prepare qualified release artifacts
+    needs: [select, common, ops]
+    if: ${{ !cancelled() && needs.select.outputs.ops == 'true' && needs.common.result == 'success' && needs.ops.result == 'success' }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/qualify-artifacts
+        with:
+          family: ops
+
+  publish-receiver:
+    name: Receiver / Prepare qualified release artifacts
+    needs: [select, common, receiver, shared]
+    if: ${{ !cancelled() && needs.select.outputs.receiver == 'true' && needs.common.result == 'success' && needs.receiver.result == 'success' && needs.shared.result == 'success' }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/qualify-artifacts
+        with:
+          family: receiver
+
+  publish-transparent:
+    name: Transparent / Prepare qualified release artifacts
+    needs: [select, common, transparent, shared]
+    if: ${{ !cancelled() && needs.select.outputs.transparent == 'true' && needs.common.result == 'success' && needs.transparent.result == 'success' && needs.shared.result == 'success' }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/qualify-artifacts
+        with:
+          family: transparent
+
+  publish-enhance:
+    name: Enhance / Prepare qualified release artifacts
+    needs: [select, common, enhance, shared]
+    if: ${{ !cancelled() && needs.select.outputs.enhance == 'true' && needs.common.result == 'success' && needs.enhance.result == 'success' && needs.shared.result == 'success' }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/qualify-artifacts
+        with:
+          family: enhance
+
+  publish-cuda:
+    name: Enhance / Prepare native CUDA release artifact (Ubuntu 22.04)
+    needs: [select, common, shared, enhance]
+    if: ${{ !cancelled() && needs.select.outputs.enhance == 'true' && needs.common.result == 'success' && needs.shared.result == 'success' && needs.enhance.result == 'success' }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/qualify-artifacts
+        with:
+          family: enhance
+          cuda: 'true'

@@ -9,6 +9,9 @@ on:
       family:
         type: string
         required: true
+      defer-release:
+        type: boolean
+        default: false
       service-only:
         type: boolean
         default: false
@@ -40,6 +43,8 @@ jobs:
     name: Select full checks
     runs-on: ubuntu-24.04
     outputs:
+      test_matrix: ${{ steps.matrix.outputs.matrix }}
+      test_count: ${{ steps.matrix.outputs.count }}
       enhance: ${{ steps.affected.outputs.enhance }}
       transparent: ${{ steps.affected.outputs.transparent }}
       shared: ${{ steps.affected.outputs.shared }}
@@ -74,6 +79,41 @@ jobs:
           else
             python3 tools/ci/fast.py --all --select-only --github-output
           fi
+      - name: Plan complete qualification matrix
+        id: matrix
+        env:
+          SELECTED: '{"enhance":"${{ steps.affected.outputs.enhance }}","transparent":"${{ steps.affected.outputs.transparent }}","receiver":"${{ steps.affected.outputs.receiver }}"}'
+        run: python3 tools/ci/test_matrix.py plan --selected "$SELECTED" --github-output
+
+  test-shards:
+    name: Qualification / ${{ matrix.shard }}
+    needs: [select, validate-ops]
+    if: ${{ !cancelled() && needs.select.result == 'success' && needs.select.outputs.test_count != '0' && (needs.validate-ops.result == 'success' || needs.validate-ops.result == 'skipped') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.select.outputs.test_matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: ./.github/actions/rust-setup
+        with:
+          lane: full-test
+          scope: ${{ matrix.shard }}
+      - name: Run assigned qualification targets
+        run: umask 022 && python3 tools/ci/test_matrix.py run --shard '${{ matrix.shard }}' --output "$RUNNER_TEMP/qualification/${{ matrix.shard }}.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qualification-${{ matrix.family }}-${{ github.sha }}-${{ github.run_attempt }}-${{ matrix.shard }}
+          path: ${{ runner.temp }}/qualification/*.json
+          if-no-files-found: error
+          retention-days: 14
+      - name: Report Cargo cache reuse
+        if: always()
+        continue-on-error: true
+        run: umask 022 && python3 tools/ci/cargo_cache.py report
 
   transparent-lint:
     needs: [select, validate-ops]
@@ -109,32 +149,20 @@ jobs:
         run: umask 022 && python3 tools/ci/cargo_cache.py report
 
   transparent-test:
-    needs: [select, validate-ops]
-    if: ${{ !cancelled() && needs.select.result == 'success' && (needs.validate-ops.result == 'success' || needs.validate-ops.result == 'skipped') && needs.select.outputs.transparent == 'true' }}
     name: Transparent tests
+    needs: [select, test-shards]
+    if: ${{ !cancelled() && needs.select.result == 'success' && needs.select.outputs.transparent == 'true' && needs.test-shards.result == 'success' }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
-    env:
-      # Bound concurrent fixtures; each simulation still exercises internal concurrency.
-      RUST_TEST_THREADS: "2"
-      CXXFLAGS: -mpclmul
-      CFLAGS: -mpclmul
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
-      - uses: ./.github/actions/rust-setup
+      - uses: actions/download-artifact@v4
         with:
-          lane: full-test
-          scope: transparent
-      # release-fast: the full-shard cryptographic tests need optimized code,
-      # not the fat-LTO single-codegen-unit link the deploy profile pays for,
-      # which on a two-vCPU runner is most of the wall time.
-      - run: python3 tools/ci/full_packages.py --group transparent
-      - name: Report Cargo cache reuse
-        if: always()
-        continue-on-error: true
-        run: umask 022 && python3 tools/ci/cargo_cache.py report
+          pattern: qualification-transparent-${{ github.sha }}-${{ github.run_attempt }}-*
+          path: qualification-receipts
+          merge-multiple: true
+      - run: python3 tools/ci/test_matrix.py verify --family transparent --receipts qualification-receipts
 
   validate-enhance-infra:
     needs: select
@@ -312,56 +340,20 @@ jobs:
         run: umask 022 && python3 tools/ci/cargo_cache.py report
 
   enhance-test:
-    needs: [select, validate-ops]
-    if: ${{ !cancelled() && needs.select.result == 'success' && (needs.validate-ops.result == 'success' || needs.validate-ops.result == 'skipped') && needs.select.outputs.enhance == 'true' }}
     name: Enhance tests
+    needs: [select, test-shards]
+    if: ${{ !cancelled() && needs.select.result == 'success' && needs.select.outputs.enhance == 'true' && needs.test-shards.result == 'success' }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
-    env:
-      # Full-size integration fixtures each retain multiple six-instance shard
-      # generations. Run them serially so two fixtures cannot exhaust a hosted
-      # runner before either test reports its result.
-      RUST_TEST_THREADS: "1"
-      CXXFLAGS: -mpclmul
-      CFLAGS: -mpclmul
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
-      - uses: ./.github/actions/rust-setup
+      - uses: actions/download-artifact@v4
         with:
-          lane: full-test
-          scope: enhance
-      - name: Run Enhance release tests
-        run: |
-          umask 022
-          # Full-size embedded/topology fixtures exceed the CI runner's memory
-          # on shared runners. Hardware qualification is a separate exact-release
-          # deployment gate; keep artifact CI bounded to correctness coverage.
-          python3 tools/ci/full_packages.py --group enhance
-
-      - name: Check reference runtime arithmetic
-        run: |
-          umask 022
-          # Common control/HTTP assertions already run with the native backend.
-          # Preserve the independent reference implementation's arithmetic tests.
-          tools/ci/full-test.sh --locked --profile release-fast -p enhance-serving --lib ipir::tests
-          tools/ci/full-test.sh --locked --profile release-fast -p enhance-serving --test ci_smoke
-          # Frozen reference vectors must not be compared with native v9 identities.
-          tools/ci/full-test.sh --locked --profile release-fast -p enhance-pir -p status-serving --lib --tests
-
-      - name: Check optional CUDA worker without a GPU
-        run: |
-          umask 022
-          # Use the same native+CUDA feature set for each check so Cargo reuses
-          # the configured libraries. GPU execution remains hardware qualification.
-          python3 tools/ci/stage.py compile:cuda-check -- cargo check --locked -p enhance-serving -p status-serving -p enhance-pir-server -p enhance-pir-load-test --all-targets --features enhance-serving/cuda,status-serving/cuda,enhance-pir-server/cuda,enhance-pir-server/native-reinspiring,enhance-pir-load-test/native-reinspiring
-          tools/ci/full-test.sh --locked --profile release-fast -p enhance-pir-server --features native-reinspiring,cuda --test matvec_config
-          python3 tools/ci/stage.py tests:cuda-load -- cargo test --locked --profile release-fast -p enhance-serving --features native-reinspiring,cuda --lib backend_load_failure_does_not_rebuild_or_replace_published_units
-      - name: Report Cargo cache reuse
-        if: always()
-        continue-on-error: true
-        run: umask 022 && python3 tools/ci/cargo_cache.py report
+          pattern: qualification-enhance-${{ github.sha }}-${{ github.run_attempt }}-*
+          path: qualification-receipts
+          merge-multiple: true
+      - run: python3 tools/ci/test_matrix.py verify --family enhance --receipts qualification-receipts
 
   shared-test:
     name: Shared lint and tests
@@ -386,26 +378,39 @@ jobs:
         continue-on-error: true
         run: umask 022 && python3 tools/ci/cargo_cache.py report
 
-  receiver-test:
-    name: Receiver lint and tests
+  receiver-lint:
+    name: Receiver lint
     needs: [select, validate-ops]
-    if: ${{ !cancelled() && needs.select.result == 'success' && (needs.validate-ops.result == 'success' || needs.validate-ops.result == 'skipped') && needs.select.outputs.receiver == 'true' }}
+    if: ${{ !cancelled() && needs.select.result == 'success' && needs.select.outputs.receiver == 'true' && (needs.validate-ops.result == 'success' || needs.validate-ops.result == 'skipped') }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.sha }}
       - uses: ./.github/actions/rust-setup
         with:
-          lane: full-test
+          lane: full-lint
           scope: receiver
       - run: python3 tools/ci/full_packages.py --group receiver --lint
-      - run: python3 tools/ci/full_packages.py --group receiver
       - name: Report Cargo cache reuse
         if: always()
         continue-on-error: true
         run: umask 022 && python3 tools/ci/cargo_cache.py report
+
+  receiver-test:
+    name: Receiver lint and tests
+    needs: [select, test-shards, receiver-lint]
+    if: ${{ !cancelled() && needs.select.result == 'success' && needs.select.outputs.receiver == 'true' && needs.test-shards.result == 'success' && needs.receiver-lint.result == 'success' }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: qualification-receiver-${{ github.sha }}-${{ github.run_attempt }}-*
+          path: qualification-receipts
+          merge-multiple: true
+      - run: python3 tools/ci/test_matrix.py verify --family receiver --receipts qualification-receipts
 
   complete:
     name: Full checks complete
@@ -490,102 +495,16 @@ jobs:
 
   release:
     name: Prepare qualified release artifacts
-    if: ${{ !cancelled() && needs.complete.result == 'success' && needs.build.result == 'success' && inputs.family != '' && inputs.family != 'common' && inputs.family != 'shared' && github.event_name != 'pull_request' && github.event_name != 'workflow_run' && github.ref == 'refs/heads/main' }}
+    if: ${{ !inputs.defer-release && !cancelled() && needs.complete.result == 'success' && needs.build.result == 'success' && inputs.family != '' && inputs.family != 'common' && inputs.family != 'shared' && github.event_name != 'pull_request' && github.event_name != 'workflow_run' && github.ref == 'refs/heads/main' }}
     needs: [complete, build]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@v4
+      - uses: ./.github/actions/qualify-artifacts
         with:
-          name: candidate-${{ inputs.family }}-${{ github.sha }}
-          path: release-bundles
-      - name: Verify qualified candidate contents
-        env:
-          FAMILY: ${{ inputs.family }}
-        run: umask 022 && python3 tools/ci/qualification.py verify --family "$FAMILY" --sha "$GITHUB_SHA"
-      - uses: actions/upload-artifact@v4
-        if: inputs.family == 'ops'
-        with:
-          name: wallet-pir-ops-${{ github.sha }}
-          path: release-bundles/wallet-pir-ops/wallet-pir-ops.tar.gz
-          overwrite: true
-          compression-level: 0
-          if-no-files-found: error
-          retention-days: 14
-      - uses: actions/upload-artifact@v4
-        if: inputs.family == 'receiver'
-        with:
-          name: receiver-pir-${{ github.sha }}
-          path: release-bundles/receiver-pir/receiver-pir.tar.gz
-          overwrite: true
-          compression-level: 0
-          if-no-files-found: error
-          retention-days: 14
-      - uses: actions/upload-artifact@v4
-        if: inputs.family == 'transparent'
-        with:
-          name: transparent-filter-${{ github.sha }}
-          path: release-bundles/transparent-filter/transparent-filter.tar.gz
-          overwrite: true
-          compression-level: 0
-          if-no-files-found: error
-          retention-days: 14
-      - uses: actions/upload-artifact@v4
-        if: inputs.family == 'transparent'
-        with:
-          name: transparent-shard-${{ github.sha }}
-          path: release-bundles/transparent-shard/transparent-shard.tar.gz
-          overwrite: true
-          compression-level: 0
-          if-no-files-found: error
-          retention-days: 14
-      - uses: actions/upload-artifact@v4
-        if: inputs.family == 'transparent'
-        with:
-          name: transparent-publisher-${{ github.sha }}
-          path: release-bundles/transparent-publisher/transparent-publisher.tar.gz
-          overwrite: true
-          compression-level: 0
-          if-no-files-found: error
-          retention-days: 14
-      - uses: actions/upload-artifact@v4
-        if: inputs.family == 'transparent'
-        with:
-          name: transparent-txid-display-${{ github.sha }}
-          path: release-bundles/transparent-txid-display/transparent-txid-display.tar.gz
-          overwrite: true
-          compression-level: 0
-          if-no-files-found: error
-          retention-days: 14
-      - uses: actions/upload-artifact@v4
-        if: inputs.family == 'enhance'
-        with:
-          name: enhance-pir-${{ github.sha }}
-          path: release-bundles/enhance-pir/enhance-pir.tar.gz
-          overwrite: true
-          compression-level: 0
-          if-no-files-found: error
-          retention-days: 14
-      - uses: actions/upload-artifact@v4
-        if: inputs.family == 'enhance'
-        with:
-          name: enhance-pir-native-${{ github.sha }}
-          path: release-bundles/enhance-pir-native/enhance-pir-native.tar.gz
-          overwrite: true
-          compression-level: 0
-          if-no-files-found: error
-          retention-days: 14
-      - uses: actions/upload-artifact@v4
-        if: inputs.family == 'enhance'
-        with:
-          name: status-pir-${{ github.sha }}
-          path: release-bundles/status-pir/status-pir.tar.gz
-          overwrite: true
-          compression-level: 0
-          if-no-files-found: error
-          retention-days: 14
+          family: ${{ inputs.family }}
 
   build-cuda:
     name: Build candidate native CUDA artifact (Ubuntu 22.04)
@@ -666,26 +585,14 @@ jobs:
 
   release-cuda:
     name: Prepare native CUDA release artifact (Ubuntu 22.04)
-    if: ${{ !cancelled() && needs.complete.result == 'success' && needs.build-cuda.result == 'success' && inputs.family == 'enhance' && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+    if: ${{ !inputs.defer-release && !cancelled() && needs.complete.result == 'success' && needs.build-cuda.result == 'success' && inputs.family == 'enhance' && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
     needs: [complete, build-cuda]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@v4
+      - uses: ./.github/actions/qualify-artifacts
         with:
-          name: candidate-native-cuda-${{ github.sha }}
-          path: release-bundles-native-cuda/enhance-pir-native-cuda
-      - name: Verify qualified CUDA candidate contents
-        run: >-
-          umask 022 && python3 tools/ci/qualification.py verify --family enhance --cuda
-          --sha "$GITHUB_SHA" --output release-bundles-native-cuda
-      - uses: actions/upload-artifact@v4
-        with:
-          name: enhance-pir-native-cuda-${{ github.sha }}
-          path: release-bundles-native-cuda/enhance-pir-native-cuda/enhance-pir-native-cuda.tar.gz
-          overwrite: true
-          compression-level: 0
-          if-no-files-found: error
-          retention-days: 14
+          family: enhance
+          cuda: 'true'
