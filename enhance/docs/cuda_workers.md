@@ -174,6 +174,15 @@ Transaction journals and baseline persist under `/var/lib/wallet-pir-deploy/cuda
 Under the production lock, the operator creates that directory with mode `0700`,
 or tightens an existing root-owned directory without replacing its ledger.
 Symlinks, foreign ownership and group- or world-writable directories are refused.
+If an earlier reviewed deployment used another ledger, `expected_current_sha256`
+may name its verified running GPU hash. Review that deployment's committed receipt
+first. Under the lock, adoption requires that exact running hash at its immutable
+release path, the same unit files, and byte-identical settings except the executable
+path. Arguments, limits, file changes and unfinished transactions still refuse.
+The workflow retains the prior baseline bytes and both baseline digests in its
+private evidence. It does not replace or reset transaction history. Omit the input
+for ordinary deployments; baseline drift then remains a refusal.
+
 Any activation or post-deploy verification failure rolls back touched targets.
 The workflow uploads metadata, smoke results, public query reports and rollback
 status even on failure. For an interrupted transaction, resume the existing

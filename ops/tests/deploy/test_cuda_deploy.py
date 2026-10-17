@@ -12,7 +12,7 @@ from unittest.mock import patch, Mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from test_wallet_pir_deploy import Fleet, OLD_SHA, NEW_SHA, ENHANCE, ROOT, SERVICES
-from wallet_pir_ops.deploy import descriptors
+from wallet_pir_ops.deploy import descriptors, units
 from wallet_pir_ops.deploy.remote import SSHExecutor
 
 
@@ -111,6 +111,75 @@ class CoordinatorPreflight(unittest.TestCase):
 
 
 class CudaFleet(Fleet):
+    def reviewed_state(self):
+        runner = self.enhance_fleet()
+        runner.targets = runner.targets[:1]
+        runner.capture_baseline()
+        target = runner.targets[0]
+        current = copy.deepcopy(self.fake.probe_unit(target.host, target.unit))
+        old_binary = units.split_exec(units.exec_start(units.effective(
+            [current['fragment_text']] + [d['text'] for d in current['drop_ins']])))[1]
+        new_binary = runner.service.release_binary(NEW_SHA)
+        current['exe_sha256'] = NEW_SHA
+        current['fragment_text'] = current['fragment_text'].replace(old_binary, new_binary)
+        for item in current['drop_ins']:
+            item['text'] = item['text'].replace(old_binary, new_binary)
+        evidence = self.dir/'evidence'
+        evidence.mkdir()
+        return runner, current, evidence
+
+    def test_reviewed_baseline_adoption_retains_old_bytes_and_ledger(self):
+        runner, current, evidence = self.reviewed_state()
+        original = runner.baseline_path.read_bytes()
+        pointer = self.state/'latest-enhance.json'
+        pointer.write_text('retained transaction pointer')
+        with patch.object(runner, 'probe', return_value={runner.targets[0].key: current}):
+            result = deploy.adopt_reviewed_baseline(runner, current, NEW_SHA, Mock(), evidence)
+        self.assertEqual((evidence/'baseline-before.json').read_bytes(), original)
+        self.assertEqual(result['previous_baseline_sha256'], hashlib.sha256(original).hexdigest())
+        self.assertEqual(pointer.read_text(), 'retained transaction pointer')
+        self.assertEqual(json.loads(runner.baseline_path.read_text())['targets'][runner.targets[0].key]['exe_sha256'], NEW_SHA)
+        self.assertEqual(self.restarts(), [])
+        self.assertIsNone(deploy.adopt_reviewed_baseline(runner, current, NEW_SHA, Mock(), evidence))
+
+    def test_baseline_adoption_requires_the_explicit_matching_running_hash(self):
+        runner, current, evidence = self.reviewed_state()
+        original = runner.baseline_path.read_bytes()
+        self.assertIsNone(deploy.adopt_reviewed_baseline(runner, current, None, Mock(), evidence))
+        with self.assertRaisesRegex(Exception, 'expected-current-sha256'):
+            deploy.adopt_reviewed_baseline(runner, current, OLD_SHA, Mock(), evidence)
+        self.assertEqual(runner.baseline_path.read_bytes(), original)
+        self.assertEqual(list(evidence.iterdir()), [])
+
+    def test_reviewed_baseline_adoption_refuses_argument_limit_and_file_drift(self):
+        runner, current, evidence = self.reviewed_state()
+        original = runner.baseline_path.read_bytes()
+        for change in ['argument', 'limit', 'file']:
+            bad = copy.deepcopy(current)
+            if change == 'argument':
+                binary = runner.service.release_binary(NEW_SHA)
+                bad['fragment_text'] = bad['fragment_text'].replace(binary, binary + ' --unreviewed')
+                for item in bad['drop_ins']:
+                    item['text'] = item['text'].replace(binary, binary + ' --unreviewed')
+            elif change == 'limit':
+                bad['fragment_text'] += 'MemoryMax=4G\n'
+            else:
+                bad['fragment_path'] += '.changed'
+            with self.assertRaisesRegex(Exception, 'executable path|unit file paths'):
+                deploy.adopt_reviewed_baseline(runner, bad, NEW_SHA, Mock(), evidence)
+            self.assertEqual(runner.baseline_path.read_bytes(), original)
+        self.assertEqual(list(evidence.iterdir()), [])
+
+    def test_reviewed_baseline_adoption_refuses_a_lost_lock(self):
+        runner, current, evidence = self.reviewed_state()
+        original = runner.baseline_path.read_bytes()
+        held = Mock()
+        held.verify.side_effect = RuntimeError('lost lock')
+        with self.assertRaisesRegex(RuntimeError, 'lost lock'):
+            deploy.adopt_reviewed_baseline(runner, current, NEW_SHA, held, evidence)
+        self.assertEqual(runner.baseline_path.read_bytes(), original)
+        self.assertEqual(list(evidence.iterdir()), [])
+
     def test_repeat_validation_checks_exact_answers_without_restarting(self):
         runner = self.enhance_fleet()
         result = runner.deploy(OLD_SHA, verify_noop=True)

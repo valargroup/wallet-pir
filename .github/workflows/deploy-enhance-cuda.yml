@@ -14,6 +14,11 @@ on:
         type: choice
         options: [preflight, deploy]
 
+      expected_current_sha256:
+        description: Optional reviewed running GPU hash to adopt an old baseline; unit arguments and limits must match
+        required: false
+        type: string
+
 permissions:
   contents: read
 
@@ -73,11 +78,16 @@ jobs:
           MODE: ${{ inputs.mode }}
           SOURCE_RUN: ${{ steps.release.outputs.run-id }}
           OPERATOR_SHA: ${{ github.sha }}
+          EXPECTED_CURRENT_SHA256: ${{ inputs.expected_current_sha256 }}
         run: |
           set -euo pipefail
           printf '{"source_run":"%s","revision":"%s","deployment_run":"%s","operator_revision":"%s"}\n' \
             "$SOURCE_RUN" "$SHA" "$GITHUB_RUN_ID" "$OPERATOR_SHA" > "$RUNNER_TEMP/cuda-ci-$GITHUB_RUN_ID.json"
-          python3 enhance/ops/scripts/deploy-cuda.py "$MODE" \
+          baseline_args=()
+          if [[ -n "$EXPECTED_CURRENT_SHA256" ]]; then
+            baseline_args+=(--expected-current-sha256 "$EXPECTED_CURRENT_SHA256")
+          fi
+          python3 enhance/ops/scripts/deploy-cuda.py "$MODE" "${baseline_args[@]}" \
             --inventory /etc/enhance-pir/cuda-deploy-inventory.json \
             --archive cuda-artifact/enhance-pir-native-cuda.tar.gz --sha "$SHA" \
             --state-dir /var/lib/wallet-pir-deploy/cuda \

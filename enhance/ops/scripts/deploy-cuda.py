@@ -6,6 +6,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import stat
@@ -14,8 +15,9 @@ import uuid
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / 'ops/lib'))
-from wallet_pir_ops.deploy import descriptors
-from wallet_pir_ops.deploy.engine import Deployer, DeployError
+from wallet_pir_ops import durable
+from wallet_pir_ops.deploy import descriptors, units
+from wallet_pir_ops.deploy.engine import Deployer, DeployError, unit_files
 from wallet_pir_ops.deploy.remote import SSHExecutor, production_lock
 from wallet_pir_ops.deploy.transaction import Journal, FINAL
 
@@ -81,6 +83,57 @@ def prepare_state_directory(path, held):
         os.close(descriptor)
 
 
+def adopt_reviewed_baseline(deployer, current, expected, held, evidence):
+    """Adopt an explicitly reviewed executable change, preserving all other unit bytes."""
+    if expected is None:
+        return None
+    if current['exe_sha256'] != expected:
+        raise DeployError('running GPU executable differs from --expected-current-sha256')
+    if not deployer.baseline_path.exists():
+        return None
+    raw = deployer.baseline_path.read_bytes()
+    baseline = json.loads(raw)
+    live = deployer.snapshot({deployer.targets[0].key: current})
+    if baseline.get('service') != live['service'] or set(baseline.get('targets', {})) != set(live['targets']):
+        raise DeployError('reviewed baseline adoption requires exactly the existing GPU target')
+    key = deployer.targets[0].key
+    old, new = baseline['targets'][key], live['targets'][key]
+    for field in ['host', 'role', 'unit', 'load_state', 'active_state']:
+        if old.get(field) != new.get(field):
+            raise DeployError('reviewed baseline adoption refused changed ' + field)
+    before, after = list(unit_files(old)), list(unit_files(new))
+    old_config = units.effective([text for _, text in before])
+    new_config = units.effective([text for _, text in after])
+    old_binary = units.split_exec(units.exec_start(old_config))[1]
+    new_binary = units.split_exec(units.exec_start(new_config))[1]
+    if new_binary != deployer.service.release_binary(expected):
+        raise DeployError('reviewed GPU executable must use its immutable release path')
+    if [path for path, _ in before] != [path for path, _ in after]:
+        raise DeployError('reviewed baseline adoption refused changed unit file paths')
+    for (_, old_text), (_, new_text) in zip(before, after):
+        rewritten = ''.join(line.replace(old_binary, new_binary, 1) if line.startswith('ExecStart=') else line
+                            for line in old_text.splitlines(keepends=True))
+        if rewritten != new_text:
+            raise DeployError('reviewed baseline adoption permits only the executable path to change')
+    if old['exe_sha256'] == expected and before == after:
+        return None
+    held.verify()
+    # Retain exact prior bytes before replacing the baseline. The private CI
+    # evidence file is uploaded with the deployment receipt, including failure.
+    with os.fdopen(os.open(evidence/'baseline-before.json', os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), 'wb') as saved:
+        saved.write(raw)
+        saved.flush()
+        os.fsync(saved.fileno())
+    held.verify()
+    durable.atomic_json(deployer.baseline_path, live, mode=0o600)
+    after_raw = deployer.baseline_path.read_bytes()
+    with os.fdopen(os.open(evidence/'baseline-after.json', os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), 'wb') as saved:
+        saved.write(after_raw)
+    return {'expected_current_sha256': expected, 'previous_executable_sha256': old['exe_sha256'],
+            'previous_baseline_sha256': hashlib.sha256(raw).hexdigest(),
+            'current_baseline_sha256': hashlib.sha256(after_raw).hexdigest()}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('mode', choices=['preflight', 'deploy'])
@@ -91,7 +144,10 @@ def main():
     parser.add_argument('--evidence-dir', type=Path, required=True)
     parser.add_argument('--ssh-key', type=Path, required=True)
     parser.add_argument('--known-hosts', type=Path, required=True)
+    parser.add_argument('--expected-current-sha256', help='reviewed running GPU hash for adoption of a stale baseline')
     args = parser.parse_args()
+    if args.expected_current_sha256 is not None and not re.fullmatch(r"[0-9a-f]{64}", args.expected_current_sha256):
+        parser.error("--expected-current-sha256 must be a full lowercase SHA-256")
     if os.geteuid() != 0:
         parser.error('run on the root coordinator deployment runner')
     try:
@@ -149,6 +205,8 @@ def main():
                 'health_equals': target.health_equals}}, current['exe_sha256'])
             if not ok:
                 raise DeployError('previous worker must be healthy native CUDA before staging: ' + reason)
+            result['baseline_adoption'] = adopt_reviewed_baseline(
+                deployer, current, args.expected_current_sha256, held, args.evidence_dir)
             if not deployer.baseline_path.exists():
                 deployer.capture_baseline()
             plans, problems = deployer.assess(digest, bundle / service.binary, retire_historical=True)
