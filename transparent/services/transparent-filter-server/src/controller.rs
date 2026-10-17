@@ -2021,12 +2021,23 @@ print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('re
     /// With `ship_runtimes`, the real publication path prepares every
     /// runtime of each candidate beside its revisions and offers them in the
     /// fleet's prepare request; the next candidate links the unchanged ones
-    /// from the active publication and builds only what changed. A
-    /// preparation whose candidate was invalidated is never offered, a
-    /// candidate that fails verification is not published, and a runtime
-    /// that cannot be written is reported and left to the workers.
+    /// from the active publication and builds only what changed.
     #[tokio::test(flavor = "multi_thread")]
     async fn shipped_runtimes_are_prepared_linked_and_offered_with_the_candidate() {
+        shipped_runtime_scenario(false).await;
+    }
+
+    /// Source-only candidates still exercise invalidation, verification against
+    /// previously verified files, and a counted runtime write failure.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn shipped_runtime_preparation_refuses_invalid_candidates_and_reports_write_failure() {
+        shipped_runtime_scenario(true).await;
+    }
+
+    // Success exercises cold preparation and handover with both supported
+    // geometries. Refusals need the same verified source files, but no prior
+    // cryptographic build: keep that independent work in its own bounded case.
+    async fn shipped_runtime_scenario(failures_only: bool) {
         use std::os::unix::fs::{MetadataExt, PermissionsExt};
         let root = tempfile::tempdir().unwrap();
         let chain: Chain = Arc::new(RwLock::new(Vec::new()));
@@ -2158,59 +2169,66 @@ print(json.dumps({'ok':True,'upstreams':[],'workers':{},'retained_publication':b
                 .collect()
         };
 
-        ingest_once(&config, &client, &store, &authority, &mut cache, &notify)
-            .await
-            .unwrap();
-        publish_once(&config, &client, &store, &authority)
-            .await
-            .unwrap();
-        let first = authority.0.active.read().unwrap().publication.clone();
-        assert_eq!(first.height, 4);
-        let offered = requests();
-        let prepare = offered
-            .iter()
-            .find(|r| r["operation"] == "prepare")
-            .expect("a prepare request");
-        assert_eq!(prepare["runtimes"], serde_json::json!(first.directory));
-        let set =
-            transparent_server_backend::shardset::ShardSet::open(&first.directory, 3).unwrap();
-        let files = runtime_files(&first.directory);
-        assert_eq!(
-            files.len(),
-            set.warm_targets().len(),
-            "one file per runtime"
-        );
-        let cycle = authority.0.status.read().unwrap()["last_cycle"].clone();
-        let report = &cycle["runtime_preparation"];
-        assert_eq!(report["built"], files.len(), "{cycle}");
-        assert_eq!(report["failures"], serde_json::json!([]));
-        assert!(cycle["activated_unix"].as_f64() >= cycle["prepared_unix"].as_f64());
-        assert!(cycle["prepared_unix"].as_f64() >= cycle["published_unix"].as_f64());
+        let source = if failures_only {
+            authority.0.active.read().unwrap().publication.clone()
+        } else {
+            ingest_once(&config, &client, &store, &authority, &mut cache, &notify)
+                .await
+                .unwrap();
+            publish_once(&config, &client, &store, &authority)
+                .await
+                .unwrap();
+            let first = authority.0.active.read().unwrap().publication.clone();
+            assert_eq!(first.height, 4);
+            let offered = requests();
+            let prepare = offered
+                .iter()
+                .find(|r| r["operation"] == "prepare")
+                .expect("a prepare request");
+            assert_eq!(prepare["runtimes"], serde_json::json!(first.directory));
+            let set =
+                transparent_server_backend::shardset::ShardSet::open(&first.directory, 3).unwrap();
+            let files = runtime_files(&first.directory);
+            assert_eq!(
+                files.len(),
+                set.warm_targets().len(),
+                "one file per runtime"
+            );
+            let cycle = authority.0.status.read().unwrap()["last_cycle"].clone();
+            let report = &cycle["runtime_preparation"];
+            assert_eq!(report["built"], files.len(), "{cycle}");
+            assert_eq!(report["failures"], serde_json::json!([]));
+            assert!(cycle["activated_unix"].as_f64() >= cycle["prepared_unix"].as_f64());
+            assert!(cycle["prepared_unix"].as_f64() >= cycle["published_unix"].as_f64());
 
-        // The next block: the sealed archive shard's runtime is the same
-        // file, linked; only the changed tail is built.
-        extend(&mut chain.write().unwrap(), 1, 60);
-        ingest_once(&config, &client, &store, &authority, &mut cache, &notify)
-            .await
-            .unwrap();
-        publish_once(&config, &client, &store, &authority)
-            .await
-            .unwrap();
-        let second = authority.0.active.read().unwrap().publication.clone();
-        assert_eq!(second.height, 5);
-        let report = authority.0.status.read().unwrap()["runtime_preparation"].clone();
-        assert!(report["linked"].as_u64().unwrap() >= 1, "{report}");
-        assert!(report["built"].as_u64().unwrap() >= 1, "{report}");
-        let (before, after) = (files, runtime_files(&second.directory));
-        let shared: Vec<_> = before
-            .iter()
-            .filter(|(name, _)| after.contains_key(*name))
-            .collect();
-        assert!(!shared.is_empty());
-        for (name, identity) in shared {
-            assert_eq!(&after[name], identity, "{name} is the same file");
-        }
-        assert_eq!(authority.0.runtime_preparations.load(Ordering::Relaxed), 2);
+            // The next block: the sealed archive shard's runtime is the same
+            // file, linked; only the changed tail is built.
+            extend(&mut chain.write().unwrap(), 1, 60);
+            ingest_once(&config, &client, &store, &authority, &mut cache, &notify)
+                .await
+                .unwrap();
+            publish_once(&config, &client, &store, &authority)
+                .await
+                .unwrap();
+            let second = authority.0.active.read().unwrap().publication.clone();
+            assert_eq!(second.height, 5);
+            let report = authority.0.status.read().unwrap()["runtime_preparation"].clone();
+            assert!(report["linked"].as_u64().unwrap() >= 1, "{report}");
+            assert!(report["built"].as_u64().unwrap() >= 1, "{report}");
+            let (before, after) = (files, runtime_files(&second.directory));
+            let shared: Vec<_> = before
+                .iter()
+                .filter(|(name, _)| after.contains_key(*name))
+                .collect();
+            assert!(!shared.is_empty());
+            for (name, identity) in shared {
+                assert_eq!(&after[name], identity, "{name} is the same file");
+            }
+            assert_eq!(authority.0.runtime_preparations.load(Ordering::Relaxed), 2);
+
+            server.abort();
+            return;
+        };
 
         // A preparation for an epoch an invalidation has since moved past
         // stops before its first segment, and nothing is offered.
@@ -2233,7 +2251,7 @@ print(json.dumps({'ok':True,'upstreams':[],'workers':{},'retained_publication':b
             }
         }
         let candidate = config.publication_root.join("candidate-superseded");
-        candidate_inputs(&second.directory, &candidate);
+        candidate_inputs(&source.directory, &candidate);
         for name in runtime_files(&candidate).keys() {
             std::fs::remove_file(candidate.join(name)).unwrap();
         }
@@ -2245,13 +2263,14 @@ print(json.dumps({'ok':True,'upstreams':[],'workers':{},'retained_publication':b
         assert!(error.to_string().contains("invalidated"), "{error}");
         assert!(runtime_files(&candidate).is_empty());
         assert_eq!(requests().len(), sent);
+        assert!(authority.0.prepared_set.lock().unwrap().is_some());
 
         // A candidate whose table does not verify is not published.
         let epoch = authority.0.epoch.load(Ordering::Acquire);
         // Replacing a linked directory table makes a new file that the last
         // verified set does not vouch for.
         let candidate = config.publication_root.join("candidate-corrupt");
-        candidate_inputs(&second.directory, &candidate);
+        candidate_inputs(&source.directory, &candidate);
         let mut corrupted = 0;
         for entry in std::fs::read_dir(&candidate)
             .unwrap()
@@ -2265,7 +2284,7 @@ print(json.dumps({'ok':True,'upstreams':[],'workers':{},'retained_publication':b
             bytes[0] ^= 1;
             std::fs::remove_file(&table).unwrap();
             std::fs::write(&table, bytes).unwrap();
-            let original = second
+            let original = source
                 .directory
                 .join(entry.file_name())
                 .join("directory.0.bin");
@@ -2300,8 +2319,8 @@ print(json.dumps({'ok':True,'upstreams':[],'workers':{},'retained_publication':b
         for name in runtime_files(&unwritable).keys() {
             std::fs::remove_file(unwritable.join(name)).unwrap();
         }
-        // Nothing retained holds this copy's tail either.
-        for retained in [&first.directory, &second.directory] {
+        // The refusal fixture has never built or retained any runtime.
+        for retained in [&config.initial_publication, &source.directory] {
             for name in runtime_files(retained).keys() {
                 std::fs::remove_file(retained.join(name)).unwrap();
             }
