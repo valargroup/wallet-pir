@@ -92,7 +92,6 @@ sha2 = "0.10"
 thiserror = "2"
 tokio = { version = "1", features = ["full"] }
 tokio-util = { version = "0.7", features = ["io"] }
-tower-http = { version = "0.5", features = ["limit", "trace"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 transparent-events = { package = "zakura-transparent-events", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "609cbd309625938ba70c115147a21b4c0db9fdf5" }
