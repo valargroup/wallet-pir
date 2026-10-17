@@ -28,6 +28,11 @@ OPS = {'check-ops-enhance', 'check-ops-shared', 'check-ops-control-sessions',
 HELPERS = OPS | {'check-docs', 'check-tools', 'check-reports'}
 
 
+def feedback_tooling(path):
+    return path == '.gitignore' or path.startswith(('tools/ci/', 'tools/tests/',
+        '.github/workflows/ci', '.github/actions/rust-setup/'))
+
+
 def workspace_packages(root=ROOT):
     """Read the same explicit manifests Cargo uses, including renamed dependencies."""
     workspace = tomllib.loads((root / 'Cargo.toml').read_text())['workspace']
@@ -145,6 +150,14 @@ def plan(packages, paths, *, all_checks=False):
     selected = select(packages, paths)
     helpers, groups, reasons = set(), set(), []
     for path in paths:
+        if feedback_tooling(path):
+            helpers.add('check-tools')
+            if path.startswith('.github/'):
+                helpers.add('check-ops-contracts')
+            # Full qualification remains conservative for workflow/selector edits.
+            groups.update(FULL_GROUPS)
+            reasons.append(f'{path}: CI tools and workflow contract checks')
+            continue
         package = owner(packages, path)
         routed = route(path)
         if path.endswith('Cargo.toml') or path == 'Cargo.lock':
@@ -181,10 +194,8 @@ def plan(packages, paths, *, all_checks=False):
     # recompiling unchanged Rust does not validate this orchestration.
     # Manifests, build scripts and unknown inputs
     # retain their broad native checks.
-    tooling = lambda path: path == '.gitignore' or path.startswith(('tools/ci/', 'tools/tests/', '.github/workflows/ci',
-                                           '.github/actions/rust-setup/'))
-    if any(tooling(path) for path in paths):
-        selected = select(packages, [path for path in paths if not tooling(path)])
+    if any(feedback_tooling(path) for path in paths):
+        selected = select(packages, [path for path in paths if not feedback_tooling(path)])
         reasons.append('CI tooling uses helper checks; full family qualification remains required')
     return {'packages': sorted(selected), 'helpers': sorted(helpers), 'groups': sorted(groups), 'reasons': reasons}
 
@@ -322,7 +333,15 @@ def main():
             raise SystemExit(1)
     packages = workspace_packages()
     paths = changed_paths(args.base, args.head, local=not args.committed_only)
-    selected = plan(packages, paths, all_checks=args.all or (args.committed_only and (not args.base or set(args.base) == {'0'})))
+    from workspace_changes import package_paths
+    selection_paths = package_paths(paths, packages, base=args.base, head=args.head,
+                                    local=not args.committed_only, root=ROOT)
+    selected = plan(packages, selection_paths, all_checks=args.all or (args.committed_only and (not args.base or set(args.base) == {'0'})))
+    if {'Cargo.toml', 'Cargo.lock'} & set(paths):
+        selected['helpers'] = sorted(set(selected['helpers']) | {'check-tools'})
+        selected['groups'] = sorted(set(selected['groups']) | {'ops'})
+    if selection_paths != paths:
+        selected['reasons'].append('workspace-only manifest/lock edits select changed packages and consumers')
     if args.package:
         unknown = set(args.package) - {p['name'] for p in packages}
         if unknown:

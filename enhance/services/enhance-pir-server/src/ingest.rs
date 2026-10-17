@@ -86,6 +86,26 @@ mod tests {
     use enhance_pir::EnhanceRecord;
 
     #[test]
+    fn ingest_cannot_acknowledge_a_duplicate_after_io_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut journal = EnhanceJournal::open(dir.path()).unwrap();
+        let block = CanonicalBlock {
+            height: 10,
+            hash: "aa".into(),
+            tree_size: 1,
+            records: vec![{
+                let mut bytes = [1; enhance_pir::RECORD_BYTES];
+                bytes[enhance_pir::types::RECORD_FLAGS_OFFSET..].fill(0);
+                EnhanceRecord::from_bytes(bytes).unwrap()
+            }],
+        };
+        journal.append_block(&block).unwrap();
+        journal.records.fail_after("manifest_write");
+        assert!(journal.rewind_to_height(None).is_err());
+        assert!(journal.append_block(&block).is_err());
+    }
+
+    #[test]
     fn appends_only_the_active_enhancement_journal() {
         let directory = tempfile::tempdir().unwrap();
         let mut journal = EnhanceJournal::open(directory.path()).unwrap();

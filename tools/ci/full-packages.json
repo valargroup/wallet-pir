@@ -5,6 +5,8 @@
   ],
   "enhance": [
     "enhance-pir",
+    "enhance-serving",
+    "status-serving",
     "enhance-pir-load-test",
     "enhance-pir-server",
     "pir-apm",

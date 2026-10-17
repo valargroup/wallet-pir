@@ -60,6 +60,17 @@ class SelectionTests(unittest.TestCase):
     def test_deleted_or_renamed_source_selects_both_sides(self):
         self.assertEqual(fast.select(self.packages, ['crates/other/src/old.rs', 'crates/client/src/new.rs']), {'other', 'client', 'server'})
 
+    def test_ci_edits_keep_tool_and_contract_checks_without_unrelated_operations(self):
+        selected = fast.plan(self.packages, ['tools/ci/fast.py', '.github/workflows/ci-full.yml'])
+        self.assertEqual(selected['packages'], [])
+        self.assertEqual(selected['helpers'], ['check-ops-contracts', 'check-tools'])
+        self.assertEqual(set(selected['groups']), fast.FULL_GROUPS)
+
+    def test_unknown_changes_still_select_all_helpers(self):
+        selected = fast.plan(self.packages, ['tools/ci/fast.py', 'unknown.file'])
+        self.assertEqual(set(selected['packages']), {'core', 'client', 'server', 'other'})
+        self.assertEqual(set(selected['helpers']), fast.HELPERS)
+
 
 class BoundaryTests(unittest.TestCase):
     """The Common/node and wallet-libraries dependency boundary; see tools/ci/boundary.py."""
@@ -211,7 +222,7 @@ class BoundaryTests(unittest.TestCase):
     def test_offline_mode_reaches_workspace_metadata_and_helper_targets(self):
         metadata = {'packages': [], 'resolve': {'nodes': []}}
         with patch.object(boundary.subprocess, 'check_output', return_value=json.dumps(metadata)), \
-             patch.object(boundary, 'standalone_receiver_metadata', return_value=metadata):
+             patch.object(boundary, 'standalone_metadata', return_value=metadata):
             self.assertEqual(boundary.main(['--resolved', '--offline']), 0)
             self.assertIn('--offline', boundary.subprocess.check_output.call_args.args[0])
         commands = subprocess.check_output(['make', '-n', 'check-tools', 'OFFLINE=1'],
@@ -226,6 +237,71 @@ class BoundaryTests(unittest.TestCase):
             fast.main()
         helper = next(kw for command, kw in calls if command[0] == 'make')
         self.assertEqual(helper['env']['OFFLINE'], '1')
+
+    def test_serving_libraries_refuse_ingestion_applications_and_other_products(self):
+        def package(*dependencies):
+            return [{'name': 'enhance-serving', 'manifest': 'enhance/crates/enhance-serving/Cargo.toml',
+                     'dependencies': list(dependencies)}]
+        library = 'https://github.com/zakura-core/wallet-libraries.git'
+        allowed = [{**self.edge('pir-control'), 'path': 'shared/pir-control/'},
+                   {**self.edge('enhance-pir'), 'path': 'enhance/crates/enhance-pir/'},
+                   self.edge('zakura-pir-native', git=library), self.edge('axum')]
+        self.assertEqual(boundary.violations(package(*allowed), []), [])
+        forbidden = [self.edge('zakura-server-chain', git=library),
+                     {**self.edge('enhance-pir-server'), 'path': 'enhance/services/enhance-pir-server/'},
+                     {**self.edge('loadtest'), 'path': 'enhance/tools/loadtest/'},
+                     {**self.edge('receiver-store'), 'path': 'receiver/crates/receiver-store/'},
+                     {**self.edge('transparent-server-backend'),
+                      'path': 'transparent/crates/transparent-server-backend/'}]
+        for kind in ['dependencies', 'dev-dependencies', 'build-dependencies',
+                     'target.cfg(unix).dependencies']:
+            for edge in forbidden:
+                problems = [p for p in boundary.violations(package({**edge, 'kind': kind}), [])
+                            if 'serving library' in p]
+                self.assertEqual(len(problems), 1, (kind, edge['name']))
+        # The application that composes the library may use the chain reader.
+        application = [{'name': 'enhance-pir-server',
+                        'manifest': 'enhance/services/enhance-pir-server/Cargo.toml',
+                        'dependencies': [self.edge('zakura-server-chain', git=library)]}]
+        self.assertEqual(boundary.violations(application, []), [])
+
+    def test_serving_library_graphs_resolve_no_ingestion_or_applications(self):
+        def node(id, deps):
+            return {'id': id, 'deps': [{'pkg': d, 'dep_kinds': [{'kind': k}]} for d, k in deps]}
+        def local(id, name, folder):
+            return {'id': id, 'name': name, 'source': None,
+                    'manifest_path': str(boundary.ROOT / folder / 'Cargo.toml')}
+        metadata = {
+            'packages': [
+                local('serving', 'status-serving', 'enhance/crates/status-serving'),
+                local('enhance', 'enhance-serving', 'enhance/crates/enhance-serving'),
+                local('control', 'pir-control', 'shared/pir-control'),
+                {'id': 'mid', 'name': 'helper', 'source': 'registry'},
+                {'id': 'chain', 'name': 'zakura-server-chain',
+                 'source': 'git+https://github.com/zakura-core/wallet-libraries'},
+                local('app', 'enhance-pir-server', 'enhance/services/enhance-pir-server'),
+                local('other', 'receiver-store', 'receiver/crates/receiver-store'),
+            ],
+            'resolve': {'nodes': [
+                node('serving', [('enhance', None), ('control', None)]),
+                node('enhance', [('control', None), ('mid', 'build')]),
+                node('control', []), node('mid', []), node('chain', []),
+                node('app', [('serving', None), ('chain', None)]), node('other', []),
+            ]},
+        }
+        self.assertEqual(boundary.resolved_violations(metadata), [])
+        metadata['resolve']['nodes'][3] = node('mid', [('chain', None)])
+        metadata['resolve']['nodes'][0] = node('serving', [('enhance', None), ('app', 'dev'),
+                                                           ('other', None)])
+        # Both are also pure packages, whose own rule refuses the chain reader.
+        self.assertEqual(boundary.resolved_violations(metadata), [
+            'enhance-serving: resolves zakura-server-chain',
+            'enhance-serving: serving library resolves zakura-server-chain',
+            'status-serving: resolves zakura-server-chain',
+            'status-serving: serving library resolves enhance-pir-server',
+            'status-serving: serving library resolves receiver-store',
+            'status-serving: serving library resolves zakura-server-chain',
+        ])
 
     def test_a_removed_edge_must_leave_the_allowlist(self):
         problems = boundary.violations([], ['svc -> zakura-chain'])
@@ -608,6 +684,20 @@ class CacheIdentityTests(unittest.TestCase):
                 self.assertNotEqual(changed, identity)
                 self.assertEqual(changed_toolchain, toolchain)
 
+    def test_fast_restore_prefix_survives_lock_edits_but_not_build_changes(self):
+        def key(lane='fast', scope='affected', env=ENV):
+            toolchain, full = cargo_cache.identity(lane, scope, TOOLS, env, self.root)
+            return cargo_cache.hosted_key(cargo_cache.sanitized(toolchain, full))
+
+        original = key()
+        full = key('full-test', 'enhance')
+        (self.root / 'Cargo.lock').write_text('version = 4\n[[package]]\nname = "new"\nversion = "1"\n')
+        self.assertEqual(key(), original)
+        self.assertNotEqual(key('full-test', 'enhance'), full)
+        self.assertNotEqual(key(env=dict(ENV, RUSTFLAGS='-C target-cpu=native')), original)
+        (self.root / 'Cargo.toml').write_text(PROFILE_MANIFEST.replace('codegen-units = 16', 'codegen-units = 8'))
+        self.assertNotEqual(key(), original)
+
     def test_consumed_cargo_config_hierarchy_and_includes_change_the_identity(self):
         toolchain, identity = self.ids()
         ancestor = self.parent / '.cargo'
@@ -678,6 +768,8 @@ class CacheIdentityTests(unittest.TestCase):
         pr = 'refs/pull/7/merge'
         self.assertEqual(status('restore', 'false', ['refs/heads/main'], pr), 'miss')
         self.assertEqual(status('restore', '', None, pr), 'miss')
+        self.assertEqual(status('restore', 'false', None, pr, populated=True), 'hit-compatible')
+        self.assertEqual(status('lookup', 'false', None, pr, populated=True), 'miss')
         self.assertEqual(status('restore', 'true', ['refs/heads/main'], pr), 'hit-main')
         self.assertEqual(status('restore', 'true', ['refs/heads/main', pr], pr), 'hit-current-ref')
         # Another PR's entry is not readable; a hit must have come from elsewhere.

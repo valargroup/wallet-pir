@@ -1,21 +1,24 @@
-//! Experimental isolated HTTP service. Production controller recovery is not wired here.
-mod admission;
+//! Status PIR serving: generations, the distributed controller and workers.
+//!
+//! This library serves prepared generations. Chain observation (`source`),
+//! publication (`publisher`) and the CLI live in `enhance-pir-server`; this
+//! library must not depend on chain readers or that application.
+/// Status admission queues; the application's publisher uses the coordinator queue.
+pub mod admission;
 pub mod artifact;
 pub mod authority;
-pub mod cli;
 mod controller;
 pub mod distributed;
 pub mod fixture;
 mod fixture_serving;
 mod generation;
-mod http;
+/// HTTP handlers shared by the serving roles and the application's publisher.
+pub mod http;
 pub mod index;
-pub mod publisher;
-pub mod source;
 pub mod telemetry;
 pub use controller::Controller;
 pub use generation::{Generation, Preparation};
-pub(crate) use http::shared_bytes;
+pub use http::shared_bytes;
 // Most of these imports serve `distributed` and `publisher`, which reach them
 // through `use super::*`.
 use axum::{
@@ -26,12 +29,12 @@ use axum::{
     Json, Router,
 };
 use enhance_pir::status::*;
-use http::{bounded, evaluate, forward, init, query, serving_http_client, session, HttpState};
+use http::{bounded, evaluate, query, serving_http_client, HttpState};
 use ipir_sp::{server::MatvecBackend, ProductionSimplePirParams, SimplePirProfile};
 use sha2::{Digest, Sha256};
 use std::{
-    sync::atomic::{AtomicBool, Ordering},
-    sync::{Arc, OnceLock, RwLock},
+    sync::atomic::Ordering,
+    sync::{Arc, OnceLock},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 

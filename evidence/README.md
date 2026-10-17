@@ -36,7 +36,7 @@ git show c00c2101e85fb9518ef8509f4478ed097ce49814:<original-path>
 All raw files retained in the current tree match their pre-cleanup bytes. Raw
 captures and paths inside them were not rewritten. The current `SHA256SUMS`
 lists only current proofs; original full-run checksums remain in the archive.
-See the [cleanup ledger](../docs/cleanup-2026-09-14.md) for the removal boundary.
+See the [historical cleanup ledger](https://github.com/valargroup/wallet-pir/blob/3765536ee363af7646cc70d8c11ea4da27818ef5/docs/cleanup-2026-09-14.md) for the removal boundary.
 
 ## New development runs
 

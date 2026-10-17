@@ -153,7 +153,7 @@ pub fn loopback_origin(origin: &str) -> Result<(), Failure> {
 }
 fn persist(dir: &FsPath, fence: &Fence) -> Result<(), Failure> {
     let bytes = serde_json::to_vec(fence)?;
-    crate::artifact::write_atomic(dir, "fence.json", |file| file.write_all(&bytes))?;
+    enhance_serving::artifact::write_atomic(dir, "fence.json", |file| file.write_all(&bytes))?;
     pir_control::durable::sync_dir(dir)?;
     Ok(())
 }

@@ -229,7 +229,7 @@ impl<R: Read> Read for VerifiedReader<R> {
 
 /// Commits one file after a successful flush and sync. Callers commit metadata
 /// last and sync the directory. A failed attempt never renames its temporary.
-pub(crate) fn write_atomic(
+pub fn write_atomic(
     directory: &Path,
     name: &str,
     write: impl FnOnce(&mut dyn Write) -> io::Result<()>,

@@ -31,7 +31,7 @@ use std::sync::{Arc, OnceLock, Weak};
 
 #[cfg(feature = "native-reinspiring")]
 #[path = "native_runtime.rs"]
-pub(crate) mod native_runtime;
+pub mod native_runtime;
 #[cfg(feature = "native-reinspiring")]
 pub use native_runtime::NativePacking as Packing;
 pub fn modulus() -> u64 {

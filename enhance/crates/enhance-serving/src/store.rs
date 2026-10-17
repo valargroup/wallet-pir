@@ -63,7 +63,7 @@ pub struct RecordJournal {
     layout: DatabaseLayout,
     manifest: StoreManifest,
     poisoned: bool,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "fault-injection"))]
     fail_after: Option<&'static str>,
 }
 
@@ -162,7 +162,7 @@ impl RecordJournal {
             layout,
             manifest,
             poisoned: false,
-            #[cfg(test)]
+            #[cfg(any(test, feature = "fault-injection"))]
             fail_after: None,
         };
         if !store.manifest_path().exists() {
@@ -364,7 +364,7 @@ impl RecordJournal {
         self.dir.join("manifest.json")
     }
 
-    pub(crate) fn ensure_healthy(&self) -> Result<(), StoreError> {
+    pub fn ensure_healthy(&self) -> Result<(), StoreError> {
         if self.poisoned {
             return Err(StoreError::Invariant(
                 "journal I/O failed; drop and reopen before use".into(),
@@ -380,9 +380,15 @@ impl RecordJournal {
         result
     }
 
+    /// Fails the next persistence step named `stage`, for callers' recovery tests.
+    #[cfg(feature = "fault-injection")]
+    pub fn fail_after(&mut self, stage: &'static str) {
+        self.fail_after = Some(stage);
+    }
+
     // Per-instance failure injection exercises persistence boundaries without global state.
     fn checkpoint(&self, _stage: &'static str) -> Result<(), StoreError> {
-        #[cfg(test)]
+        #[cfg(any(test, feature = "fault-injection"))]
         if self.fail_after == Some(_stage) {
             return Err(std::io::Error::other(format!("injected after {_stage}")).into());
         }
@@ -642,24 +648,6 @@ mod tests {
                 .unwrap();
             assert_eq!(recovered.read_records(1, 1).unwrap(), record(4).as_bytes());
         }
-    }
-
-    #[test]
-    fn ingest_cannot_acknowledge_a_duplicate_after_io_failure() {
-        let dir = tempfile::tempdir().unwrap();
-        let mut journal = crate::ingest::EnhanceJournal {
-            records: open(dir.path()),
-        };
-        let block = crate::zakura::CanonicalBlock {
-            height: 10,
-            hash: "aa".into(),
-            tree_size: 1,
-            records: vec![record(1)],
-        };
-        journal.append_block(&block).unwrap();
-        journal.records.fail_after = Some("manifest_write");
-        assert!(journal.rewind_to_height(None).is_err());
-        assert!(journal.append_block(&block).is_err());
     }
 
     #[test]

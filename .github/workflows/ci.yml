@@ -6,13 +6,22 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      comparison-base:
+        description: Compare against this commit to replay a representative change
+        type: string
+        default: ''
+      hosted:
+        description: Measure PR feedback on a hosted runner
+        type: boolean
+        default: false
 
 permissions:
   contents: read
   actions: read
 
 concurrency:
-  group: fast-${{ github.ref }}
+  group: fast-${{ inputs.hosted && 'hosted-' || '' }}${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -30,16 +39,17 @@ jobs:
     name: Fast checks
     # Reserve this queue for main. PRs and branch dispatches use hosted runners
     # so their cold builds cannot delay a main push.
-    runs-on: ${{ fromJSON(github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && vars.WALLET_PIR_MAIN_RUNNER || '"ubuntu-24.04"') }}
-    # Cold preparation is explicit; main must fail promptly rather than wait.
-    timeout-minutes: ${{ github.event_name == 'push' && 3 || 30 }}
+    runs-on: ${{ fromJSON(github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && !inputs.hosted && vars.WALLET_PIR_MAIN_RUNNER || '"ubuntu-24.04"') }}
+    # Routine PR/main feedback has the same ceiling. Manual measurement may
+    # diagnose a cold build; a timeout never counts as successful validation.
+    timeout-minutes: ${{ github.event_name == 'workflow_dispatch' && 30 || 3 }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
       - name: Fetch comparison revision
         env:
-          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          BASE: ${{ inputs.comparison-base || github.event.pull_request.base.sha || github.event.before }}
           GH_TOKEN: ${{ github.token }}
         run: |
           umask 022

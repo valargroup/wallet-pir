@@ -927,6 +927,38 @@ dependencies = [
  "base64",
  "clap",
  "enhance-pir",
+ "enhance-serving",
+ "hex",
+ "inspiring",
+ "ipir-sp",
+ "pir-control",
+ "rayon",
+ "reinspiring",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "status-serving",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-stream",
+ "tower",
+ "tracing",
+ "tracing-subscriber",
+ "zakura-pir-enhance",
+ "zakura-pir-native",
+ "zakura-server-chain",
+]
+
+[[package]]
+name = "enhance-serving"
+version = "0.0.1"
+dependencies = [
+ "axum",
+ "base64",
+ "clap",
+ "enhance-pir",
  "hdrhistogram",
  "hex",
  "http-body",
@@ -937,7 +969,6 @@ dependencies = [
  "pir-control",
  "prometheus",
  "rand 0.8.5",
- "rayon",
  "reinspiring",
  "reqwest",
  "serde",
@@ -950,10 +981,7 @@ dependencies = [
  "tokio-stream",
  "tower",
  "tracing",
- "tracing-subscriber",
- "zakura-pir-enhance",
  "zakura-pir-native",
- "zakura-server-chain",
 ]
 
 [[package]]
@@ -3323,6 +3351,34 @@ name = "static_assertions"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
+
+[[package]]
+name = "status-serving"
+version = "0.0.1"
+dependencies = [
+ "axum",
+ "clap",
+ "enhance-pir",
+ "enhance-serving",
+ "hex",
+ "inspiring",
+ "ipir-sp",
+ "libc",
+ "pir-control",
+ "prometheus",
+ "rand 0.8.5",
+ "rayon",
+ "reinspiring",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tower",
+ "tracing",
+]
 
 [[package]]
 name = "strsim"
