@@ -97,6 +97,16 @@ class OperationsBundleTests(unittest.TestCase):
         manifest, payload = bundle.verify(archive, 'b' * 40)
         self.assertEqual(set(payload) - {'operations.json'}, set(files))
         self.assertEqual(manifest['source_revision'], 'b' * 40)
+        destination = self.root / 'retained-v1'
+        bundle.extract(archive, destination, 'b' * 40)
+        bundle.self_check('b' * 40, root=destination)
+        # Optional files unexpectedly added to an old installation still alter
+        # its exact inventory; accepting old manifests must not hide additions.
+        guide = destination / 'transparent/docs/prepared-distribution.md'
+        guide.parent.mkdir(parents=True, exist_ok=True)
+        guide.write_text('unexpected resource')
+        with self.assertRaisesRegex(ValueError, 'inventory changed'):
+            bundle.self_check('b' * 40, root=destination)
 
     def test_archive_refusals_leave_destination_absent(self):
         special = tarfile.TarInfo('ops/lib/linked.py')

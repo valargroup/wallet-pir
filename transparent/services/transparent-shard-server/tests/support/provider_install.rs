@@ -138,6 +138,13 @@ async fn start(binary: &Path, args: &[String], cwd: &Path, origin: &str) -> toki
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn checkout_free_artifacts_support_queries_and_restart() {
+    installation_case(false).await;
+}
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn checkout_free_artifacts_refuse_missing_and_incompatible_runtimes() {
+    installation_case(true).await;
+}
+async fn installation_case(invalid_material: bool) {
     let root = tempfile::tempdir().unwrap();
     let root = root.path();
     let source = root.join("publisher-data");
@@ -196,6 +203,28 @@ async fn checkout_free_artifacts_support_queries_and_restart() {
             serde_json::to_vec(&anchor).unwrap(),
         );
     }
+    let mut alternate_current = Vec::new();
+    for missing in [true, false] {
+        let mut inventory = finalized.inventory().clone();
+        if missing {
+            inventory
+                .artifacts
+                .retain(|f| f.kind != distribution::Kind::RecentRuntime);
+        } else {
+            inventory.runtime.push_str("-incompatible");
+        }
+        let bytes = serde_json::to_vec(&inventory).unwrap();
+        let mut pointer = current.clone();
+        pointer.inventory_sha256 = distribution::digest(&bytes);
+        replies.insert(
+            format!("/provider/v1/inventories/{}", pointer.inventory_sha256),
+            bytes,
+        );
+        alternate_current.push(serde_json::to_vec(&pointer).unwrap());
+    }
+    let alternate_current = Arc::new(alternate_current);
+    let inventory_fault = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let fault = inventory_fault.clone();
     let runtime_path = format!(
         "/provider/v1/artifacts/{}",
         finalized
@@ -215,11 +244,15 @@ async fn checkout_free_artifacts_support_queries_and_restart() {
     );
     let app = axum::Router::new().fallback(axum::routing::get(
         move |uri: axum::http::Uri, headers: axum::http::HeaderMap| {
-            let unchanged = uri.path() == "/provider/v1/current"
+            let mode = fault.load(std::sync::atomic::Ordering::Acquire);
+            let unchanged = mode == 0
+                && uri.path() == "/provider/v1/current"
                 && headers
                     .get("if-none-match")
                     .is_some_and(|h| h.as_bytes() == token.as_bytes());
-            let body = if uri.path() == runtime_path
+            let body = if mode > 0 && uri.path() == "/provider/v1/current" {
+                Some(alternate_current[mode - 1].clone())
+            } else if uri.path() == runtime_path
                 && corrupt.load(std::sync::atomic::Ordering::Acquire)
             {
                 Some(vec![0])
@@ -331,6 +364,62 @@ async fn checkout_free_artifacts_support_queries_and_restart() {
         .map(|v| v.as_str().unwrap().to_string())
         .collect();
     let binary = root.join("binary/transparent-shard-server");
+    if invalid_material {
+        corrupt_runtime.store(false, std::sync::atomic::Ordering::Release);
+        for (mode, name) in [(1, "missing"), (2, "incompatible")] {
+            inventory_fault.store(mode, std::sync::atomic::Ordering::Release);
+            let state = root.join(format!("state-{name}"));
+            let mut arguments = check.clone();
+            let at = arguments.iter().position(|a| a == "--shard-dir").unwrap() + 1;
+            arguments[at] = state.to_str().unwrap().to_string();
+            for verify_only in [true, false] {
+                let args = if verify_only {
+                    &arguments[..]
+                } else {
+                    &arguments[..arguments.len() - 1]
+                };
+                let refused = tokio::process::Command::new(&binary)
+                    .args(args)
+                    .current_dir(root)
+                    .kill_on_drop(true)
+                    .output()
+                    .await
+                    .unwrap();
+                let error = String::from_utf8_lossy(&refused.stderr);
+                assert!(
+                    !refused.status.success(),
+                    "{name} material unexpectedly accepted"
+                );
+                assert!(
+                    error.contains("runtime"),
+                    "{name} refused for another reason: {error}"
+                );
+                assert!(!state.join("active.json").exists(), "{name} became active");
+            }
+        }
+        inventory_fault.store(0, std::sync::atomic::Ordering::Release);
+        let control = tokio::process::Command::new(&binary)
+            .args(&check)
+            .current_dir(root)
+            .kill_on_drop(true)
+            .output()
+            .await
+            .unwrap();
+        assert!(
+            control.status.success(),
+            "valid material control failed: {}",
+            String::from_utf8_lossy(&control.stderr)
+        );
+        let loaded: serde_json::Value = serde_json::from_slice(&control.stdout).unwrap();
+        assert_eq!(loaded["runtimes"]["built"], 0);
+        publisher_tls.kill().await.unwrap();
+        publisher_tls.wait().await.unwrap();
+        archive_tls.kill().await.unwrap();
+        archive_tls.wait().await.unwrap();
+        publisher_server.stop().await;
+        archive_server.stop().await;
+        return;
+    }
     // Real install/start preflight, then independent process startups from those same arguments.
     let refused = tokio::process::Command::new(&binary)
         .args(&check)

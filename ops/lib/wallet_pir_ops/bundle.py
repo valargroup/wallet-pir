@@ -48,7 +48,11 @@ def allowed(name):
                  (path.suffix in EXTENSIONS or path.name == 'Caddyfile' or name.endswith('.example.json')))))
 
 
-def contents(root):
+def contents(root, *, required_exact=None):
+    # Current assembly needs every current exact resource. A retained installed
+    # release instead names its own exact inventory; still enumerate any extra
+    # recognized files so additions cannot disappear from self-check.
+    required_exact = EXACT if required_exact is None else required_exact
     files, total = {}, 0
     for prefix in PREFIXES:
         directory = root / prefix
@@ -65,6 +69,8 @@ def contents(root):
                 files[name] = path.read_bytes()
     for name in EXACT:
         path = root / name
+        if not path.exists() and not path.is_symlink() and name not in required_exact:
+            continue
         if path.is_symlink() or not path.is_file():
             raise ValueError('operations resource missing: ' + name)
         total += path.stat().st_size
@@ -181,7 +187,7 @@ def check_installed(*, mutation=False, revision=None, root=ROOT):
             or type(manifest['source_dirty']) is not bool or manifest['qualification'] != 'unqualified'
             or not isinstance(manifest['files'], dict) or not REQUIRED <= manifest['files'].keys()):
         raise ValueError('installed operations manifest is incomplete')
-    installed = contents(root)
+    installed = contents(root, required_exact=set(manifest['files']))
     if set(installed) != set(manifest['files']):
         raise ValueError('installed operations inventory changed')
     for name, digest in manifest['files'].items():
