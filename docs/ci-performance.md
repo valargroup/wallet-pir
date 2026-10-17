@@ -57,10 +57,16 @@ steps from the same successful attempt and the canonical repository/workflow.
 Partial diagnostic dispatches, canceled or skipped validation, unrelated branches
 and stale ancestry cannot leave unchecked changes behind.
 
-Rust feedback compiles sequentially in `release-fast`, then CI executes at most
-two Cargo-reported unit test programs concurrently. Cases within each program stay
+Rust feedback compiles the selected unit tests, CLI test binaries and named fast
+integration targets together in one `release-fast` Cargo invocation. Campaign
+targets are excluded from that build. Local and CI checks then execute at most
+two Cargo-reported test programs concurrently. Cases within each program stay
 serial, preserving process-local immutable public fixtures within the fast runner’s
-6-GiB ceiling. Local focused checks default to one program at a time. The package-qualified full-geometry/cache, multi-unit preparation, RPC publication
+6-GiB ceiling. Explicit feature or test-filter checks use one program at a time.
+Each program keeps its package directory and Cargo environment; fast integration
+targets must contain an enabled, unignored case, and unit exclusions must still
+match discovered tests. Cold cache preparation compiles the same target selection.
+The package-qualified full-geometry/cache, multi-unit preparation, RPC publication
 and real HTTP retry cases run only in full CI;
 `tools/ci/slow-tests.json` records the exact names and reasons. Binary unit tests run as well as library targets. For affected packages, fast CI also
 runs the integration targets classified as `fast` in
