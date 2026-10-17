@@ -23,3 +23,5 @@ pub use transparent_server_backend::{
 };
 
 pub mod bootstrap;
+
+pub mod manager;

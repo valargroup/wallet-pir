@@ -32,7 +32,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
             try:
                 self.wfile.write(body)
-            except (BrokenPipeError, ConnectionResetError):
+            except (BrokenPipeError, ConnectionResetError, ssl.SSLEOFError):
                 pass
             return
         if fault == "redirect":
@@ -41,6 +41,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_header("Content-Length", "0")
             self.end_headers()
             return
+        if fault == "pause-activation" and self.path.endswith("/current"):
+            counter = Path(control + ".current-count")
+            count = int(counter.read_text()) + 1 if counter.exists() else 1
+            counter.write_text(str(count))
+            if count >= 2:
+                Path(control + ".entered").touch()
+                while Path(control).read_text().strip() == "pause-activation":
+                    time.sleep(0.01)
         if fault == "pause-artifact" and "/artifacts/" in self.path:
             Path(control + ".entered").touch()
             while Path(control).read_text().strip() == "pause-artifact":
@@ -71,7 +79,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         connection = http.client.HTTPConnection(upstream, timeout=10)
         try:
-            connection.request("GET", self.path)
+            connection.request("GET", self.path, headers={k: v for k, v in self.headers.items() if k.lower() in {"if-none-match", "cache-control"}})
             response = connection.getresponse()
             # Faults affect actual transport bytes, never replace the producer
             # or the provider loader with a mock implementation.
@@ -83,6 +91,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.end_headers()
                 return
             self.send_response(status)
+            if response.getheader("ETag"):
+                self.send_header("ETag", response.getheader("ETag"))
+            if status == 304:
+                self.end_headers()
+                return
             self.send_header("Connection", "close")
             self.send_header("Transfer-Encoding", "chunked")
             self.end_headers()
@@ -98,7 +111,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.wfile.write(f"{len(chunk):x}\r\n".encode() + chunk + b"\r\n")
                 first = False
             self.wfile.write(b"0\r\n\r\n")
-        except (BrokenPipeError, ConnectionResetError):
+        except (BrokenPipeError, ConnectionResetError, ssl.SSLEOFError):
             pass
         finally:
             connection.close()

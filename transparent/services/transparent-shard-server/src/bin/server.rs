@@ -19,8 +19,8 @@ use transparent_shard_server::shardset::{
 )]
 struct Cli {
     /// Verify a prepared recent publication from an authenticated HTTPS origin.
-    /// This bootstrap checkpoint never starts a wallet listener.
-    #[arg(long, requires_all = ["verify_only", "publisher_network", "publisher_genesis"])]
+    /// Without --verify-only, follow publications and serve a recent worker.
+    #[arg(long, requires_all = ["publisher_network", "publisher_genesis"])]
     publisher: Option<String>,
     #[arg(long, requires = "publisher")]
     publisher_network: Option<String>,
@@ -153,18 +153,42 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             .transpose()?
             .into_iter()
             .collect();
-        let report = transparent_shard_server::bootstrap::verify(
-            transparent_shard_server::bootstrap::Config {
-                publisher,
-                network: cli.publisher_network.unwrap(),
-                genesis_hash: cli.publisher_genesis.unwrap(),
-                directory: cli.shard_dir,
+        let provider = transparent_shard_server::bootstrap::Config {
+            publisher,
+            network: cli.publisher_network.unwrap(),
+            genesis_hash: cli.publisher_genesis.unwrap(),
+            directory: cli.shard_dir,
+            cache_bytes: cli.cache_bytes,
+            max_download_bytes: cli.bootstrap_max_bytes,
+            roots,
+        };
+        if !cli.verify_only {
+            let service = ServiceConfig {
                 cache_bytes: cli.cache_bytes,
-                max_download_bytes: cli.bootstrap_max_bytes,
-                roots,
-            },
-        )
-        .await?;
+                build_slots: cli.build_slots,
+                query_slots: cli.query_slots,
+                max_waiters: cli.query_waiters,
+                max_body_bytes: cli.body_bytes,
+                upload_deadline: std::time::Duration::from_secs(cli.upload_deadline_secs),
+                query_deadline: std::time::Duration::from_secs(cli.query_deadline_secs),
+                readiness: ReadinessMode::Warm,
+            };
+            let mut manager = transparent_shard_server::manager::Manager::new(provider, service)?;
+            if let Err(error) = manager.poll_once().await {
+                tracing::warn!(%error, "initial synchronization failed; checking recovered active view");
+                if manager.live().is_none() {
+                    return Err(error);
+                }
+            }
+            let live = manager.live().ok_or("provider did not activate")?;
+            let listener = tokio::net::TcpListener::bind(cli.listen).await?;
+            let app = live.router();
+            let polling = tokio::spawn(manager.run());
+            axum::serve(listener, app).await?;
+            polling.abort();
+            return Ok(());
+        }
+        let report = transparent_shard_server::bootstrap::verify(provider).await?;
         println!("{}", serde_json::to_string(&report)?);
         return Ok(());
     }

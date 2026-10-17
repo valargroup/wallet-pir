@@ -35,10 +35,13 @@ fn authority(directory: &Path, distribution: Option<Finalized>, rpc: NodeClient)
 }
 
 fn publication(root: &Path) -> (PathBuf, ShardSet) {
+    publication_through(root, 2)
+}
+fn publication_through(root: &Path, through: u64) -> (PathBuf, ShardSet) {
     let journal_dir = root.join("journal");
     let mut journal =
         EventStore::open(&journal_dir, transparent_filter::MAINNET_GENESIS_DISPLAY, 0).unwrap();
-    for h in 0..3 {
+    for h in 0..=through {
         // One real recent receive; the archive has no private records. This
         // keeps native correctness cases small without changing any geometry.
         let events = if h == 2 {
@@ -164,6 +167,7 @@ struct CanonicalRpc {
     client: NodeClient,
     hash: Arc<RwLock<Option<String>>>,
     genesis: Arc<RwLock<String>>,
+    available: Arc<AtomicBool>,
     task: tokio::task::JoinHandle<()>,
 }
 impl Drop for CanonicalRpc {
@@ -176,20 +180,29 @@ async fn canonical_rpc(root: &Path, set: &ShardSet) -> CanonicalRpc {
         set.map.shards.last().unwrap().terminal_block_hash.clone(),
     )));
     let genesis = Arc::new(RwLock::new(set.map.genesis_hash.clone()));
-    let state = (hash.clone(), genesis.clone());
+    let available = Arc::new(AtomicBool::new(true));
+    let state = (hash.clone(), genesis.clone(), available.clone());
     async fn rpc(
-        State((hash, genesis)): State<(Arc<RwLock<Option<String>>>, Arc<RwLock<String>>)>,
+        State((hash, genesis, available)): State<(
+            Arc<RwLock<Option<String>>>,
+            Arc<RwLock<String>>,
+            Arc<AtomicBool>,
+        )>,
         axum::Json(request): axum::Json<serde_json::Value>,
     ) -> impl IntoResponse {
         assert_eq!(request["method"], "getblockhash");
-        let result = if request["params"][0] == 0 {
+        let result = if !available.load(Ordering::Acquire) {
+            None
+        } else if request["params"][0] == 0 {
             Some(genesis.read().unwrap().clone())
         } else if request["params"][0] == 1 {
             Some(BlockHash::from_internal_bytes([1; 32]).to_display_hex())
         } else if request["params"][0] == 2 {
             hash.read().unwrap().clone()
         } else {
-            None
+            request["params"][0]
+                .as_u64()
+                .map(|h| BlockHash::from_internal_bytes([h as u8; 32]).to_display_hex())
         };
         axum::Json(match result {
             Some(hash) => serde_json::json!({"id":request["id"],"result":hash,"error":null}),
@@ -216,6 +229,7 @@ async fn canonical_rpc(root: &Path, set: &ShardSet) -> CanonicalRpc {
         client: crate::zakura::connect(format!("http://{address}"), cookie).unwrap(),
         hash,
         genesis,
+        available,
         task,
     }
 }
@@ -722,3 +736,6 @@ async fn https_bootstrap_charges_all_response_bytes_at_exact_budget_boundary() {
     assert_eq!(report.downloaded_bytes, exact);
     assert!(!report.serving);
 }
+
+#[path = "controller_manager_tests.rs"]
+mod manager_tests;

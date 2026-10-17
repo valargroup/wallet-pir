@@ -44,14 +44,14 @@ struct HighWater {
     current: Current,
 }
 
-struct Source {
+pub(crate) struct Source {
     origin: reqwest::Url,
     client: reqwest::Client,
     budget: u64,
-    downloaded: u64,
+    pub(crate) downloaded: u64,
 }
 impl Source {
-    fn new(config: &Config) -> Result<Self, Error> {
+    pub(crate) fn new(config: &Config) -> Result<Self, Error> {
         let origin = reqwest::Url::parse(&config.publisher)?;
         if origin.scheme() != "https"
             || origin.host_str().is_none()
@@ -137,7 +137,11 @@ impl Source {
         }
         Ok(bytes)
     }
-    fn observe(&self, directory: &std::path::Path, current: &Current) -> Result<(), Error> {
+    pub(crate) fn observe(
+        &self,
+        directory: &std::path::Path,
+        current: &Current,
+    ) -> Result<(), Error> {
         let path = directory.join("publisher-high-water.json");
         match std::fs::read(&path) {
             Ok(bytes) => {
@@ -195,7 +199,89 @@ impl Source {
         Ok(())
     }
 
-    async fn current(&mut self, directory: &std::path::Path) -> Result<Current, Error> {
+    pub(crate) fn reset_budget(&mut self) {
+        self.downloaded = 0;
+    }
+    pub(crate) async fn poll(
+        &mut self,
+        directory: &std::path::Path,
+        previous: Option<&Current>,
+        network: &str,
+        genesis: &str,
+    ) -> Result<Option<Current>, Error> {
+        if self.downloaded >= self.budget {
+            return Err(self.budget_error());
+        }
+        let mut request = self
+            .client
+            .get(
+                self.origin
+                    .join(&format!("{}current", distribution::PREFIX))?,
+            )
+            .header("cache-control", "no-cache");
+        if let Some(previous) = previous {
+            request = request.header(
+                "if-none-match",
+                format!(
+                    "\"{}\"",
+                    distribution::digest(&serde_json::to_vec(previous)?)
+                ),
+            );
+        }
+        let mut response = request.send().await?;
+        if response.status() == reqwest::StatusCode::NOT_MODIFIED {
+            if previous.is_none() {
+                return Err("unexpected unchanged response".into());
+            }
+            return Ok(None);
+        }
+        let status = response.status();
+        let mut bytes = Vec::new();
+        while let Some(chunk) = self.chunk(&mut response).await? {
+            if chunk.len() > (16usize << 10).saturating_sub(bytes.len()) {
+                return Err("current exceeds limit".into());
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        if status != reqwest::StatusCode::OK {
+            return Err(format!("publisher refused current with HTTP {status}").into());
+        }
+        let current: Current = serde_json::from_slice(&bytes)?;
+        if current.schema != distribution::SCHEMA
+            || current.revision == 0
+            || !distribution::is_digest(&current.inventory_sha256)
+            || !distribution::is_digest(&current.anchor_hash)
+            || current.network != network
+            || current.genesis_hash != genesis
+        {
+            return Err("invalid publisher current chain identity".into());
+        }
+        self.observe(directory, &current)?;
+        Ok(Some(current))
+    }
+    pub(crate) async fn anchor(
+        &mut self,
+        current: &Current,
+        height: u64,
+        hash: &str,
+    ) -> Result<bool, Error> {
+        let check: distribution::AnchorCheck = serde_json::from_slice(
+            &self
+                .small(&format!("anchors/{height}/{hash}"), 16 << 10)
+                .await?,
+        )?;
+        if check.schema != distribution::SCHEMA
+            || check.revision != current.revision
+            || check.recovery_epoch != current.recovery_epoch
+            || check.genesis_hash != current.genesis_hash
+            || check.height != height
+            || check.hash != hash
+        {
+            return Err("canonicality attestation identity/snapshot superseded".into());
+        }
+        Ok(check.canonical)
+    }
+    pub(crate) async fn current(&mut self, directory: &std::path::Path) -> Result<Current, Error> {
         let current: Current = serde_json::from_slice(&self.small("current", 16 << 10).await?)?;
         if current.schema != distribution::SCHEMA
             || current.revision == 0
@@ -230,6 +316,67 @@ pub async fn verify(config: Config) -> Result<Report, Error> {
     if current.network != config.network || current.genesis_hash != config.genesis_hash {
         return Err("prepared publication chain identity mismatch".into());
     }
+    let staged = stage(&config, &mut source, &current, false).await?;
+    let stage = staged.directory.clone();
+    let inventory = staged.inventory;
+    let options = staged.options;
+    let result = async {
+        let root = stage.clone();
+        let set =
+            tokio::task::spawn_blocking(move || ShardSet::open_with(&root, &options)).await??;
+        let state = ServiceState::build_with_runtimes(
+            set,
+            ServiceConfig {
+                cache_bytes: config.cache_bytes,
+                readiness: ReadinessMode::Warm,
+                ..ServiceConfig::default()
+            },
+            None,
+            Some(ShippedRuntimes::required(stage.clone())),
+        )?;
+        state.spawn_prewarm().await?;
+        if !state.is_warm() {
+            return Err("required prepared publication failed production loader/self-check".into());
+        }
+        // HTTP current, not files or a last-success timestamp, is the bootstrap
+        // freshness source. Supersession/withdrawal/outage cannot activate it.
+        source.check_anchor(&config.directory, &current).await?;
+        if source.current(&config.directory).await? != current {
+            return Err("publication superseded during bootstrap".into());
+        }
+        let runtime_preparation = state.preparation();
+        drop(state);
+        crate::control::persist(&stage.join("verified-inventory.json"), &inventory)?;
+        Ok(Report {
+            current,
+            map_sha256: inventory.map_sha256,
+            directory: stage.clone(),
+            downloaded_bytes: source.downloaded,
+            downloaded_files: staged.downloaded_files,
+            archive_tables_downloaded: 0,
+            serving: false,
+            runtime_preparation,
+        })
+    }
+    .await;
+    if result.is_err() {
+        let _ = std::fs::remove_dir_all(&stage);
+    }
+    result
+}
+
+pub(crate) struct Staged {
+    pub directory: PathBuf,
+    pub inventory: Inventory,
+    pub options: LoadOptions,
+    pub downloaded_files: usize,
+}
+pub(crate) async fn stage(
+    config: &Config,
+    source: &mut Source,
+    current: &Current,
+    cache: bool,
+) -> Result<Staged, Error> {
     let raw = source
         .small(
             &format!("inventories/{}", current.inventory_sha256),
@@ -247,7 +394,7 @@ pub async fn verify(config: Config) -> Result<Report, Error> {
         .filter(|f| f.kind.local())
         .try_fold(source.downloaded, |n, f| n.checked_add(f.bytes))
         .ok_or("download budget overflow")?;
-    if total > config.max_download_bytes {
+    if !cache && total > config.max_download_bytes {
         return Err("prepared publication exceeds download budget".into());
     }
     // New private staging tree; never join untrusted paths into an existing
@@ -275,30 +422,49 @@ pub async fn verify(config: Config) -> Result<Report, Error> {
         ) {
             let target = stage.join(&artifact.path);
             std::fs::create_dir_all(target.parent().ok_or("artifact has no parent")?)?;
-            let mut output = tokio::fs::OpenOptions::new()
-                .create_new(true)
-                .write(true)
-                .open(&target)
-                .await?;
-            let mut response = source
-                .get(&format!("artifacts/{}", artifact.sha256))
-                .await?;
-            let mut remaining = artifact.bytes;
-            while let Some(chunk) = source.chunk(&mut response).await? {
-                if chunk.len() as u64 > remaining {
-                    return Err("artifact exceeds declared length".into());
+            let cached = config.directory.join("objects").join(&artifact.sha256);
+            let reuse = cache
+                && std::fs::symlink_metadata(&cached).is_ok_and(|m| m.is_file())
+                && distribution::verify_file(&cached, artifact).is_ok();
+            if reuse {
+                tokio::fs::copy(&cached, &target).await?;
+            } else {
+                let mut output = tokio::fs::OpenOptions::new()
+                    .create_new(true)
+                    .write(true)
+                    .open(&target)
+                    .await?;
+                let mut response = source
+                    .get(&format!("artifacts/{}", artifact.sha256))
+                    .await?;
+                let mut remaining = artifact.bytes;
+                while let Some(chunk) = source.chunk(&mut response).await? {
+                    if chunk.len() as u64 > remaining {
+                        return Err("artifact exceeds declared length".into());
+                    }
+                    output.write_all(&chunk).await?;
+                    remaining -= chunk.len() as u64;
                 }
-                output.write_all(&chunk).await?;
-                remaining -= chunk.len() as u64;
+                if remaining != 0 {
+                    return Err("artifact incomplete".into());
+                }
+                output.sync_all().await?;
+                drop(output);
+                downloaded_files += 1;
             }
-            if remaining != 0 {
-                return Err("artifact incomplete".into());
-            }
-            output.sync_all().await?;
-            drop(output);
             let file = artifact.clone();
             let path = target.clone();
             tokio::task::spawn_blocking(move || distribution::verify_file(&path, &file)).await??;
+            if cache && !reuse {
+                std::fs::create_dir_all(cached.parent().ok_or("missing cache parent")?)?;
+                // Completed objects alone are reusable. A partial copy never has
+                // its digest name; every reuse hashes again.
+                let partial = cached.with_extension("partial");
+                tokio::fs::copy(&target, &partial).await?;
+                std::fs::File::open(&partial)?.sync_all()?;
+                std::fs::rename(&partial, &cached)?;
+                std::fs::File::open(cached.parent().unwrap())?.sync_all()?;
+            }
             if artifact.path == "shards.json" {
                 let map: transparent_filter::ShardMap =
                     serde_json::from_slice(&std::fs::read(&target)?)?;
@@ -310,7 +476,6 @@ pub async fn verify(config: Config) -> Result<Report, Error> {
                     return Err("canonicality attestation names another publication anchor".into());
                 }
             }
-            downloaded_files += 1;
         }
         let map: transparent_filter::ShardMap =
             serde_json::from_slice(&std::fs::read(stage.join("shards.json"))?)?;
@@ -359,41 +524,17 @@ pub async fn verify(config: Config) -> Result<Report, Error> {
             },
             ..LoadOptions::whole(0)
         };
-        let root = stage.clone();
-        let set =
-            tokio::task::spawn_blocking(move || ShardSet::open_with(&root, &options)).await??;
-        let state = ServiceState::build_with_runtimes(
-            set,
-            ServiceConfig {
-                cache_bytes: config.cache_bytes,
-                readiness: ReadinessMode::Warm,
-                ..ServiceConfig::default()
-            },
-            None,
-            Some(ShippedRuntimes::required(stage.clone())),
-        )?;
-        state.spawn_prewarm().await?;
-        if !state.is_warm() {
-            return Err("required prepared publication failed production loader/self-check".into());
+        if let LoadScope::Assigned { assignment, .. } = &options.scope {
+            crate::control::persist(&stage.join("assignment.json"), assignment.as_ref())?;
         }
-        // HTTP current, not files or a last-success timestamp, is the bootstrap
-        // freshness source. Supersession/withdrawal/outage cannot activate it.
-        source.check_anchor(&config.directory, &current).await?;
-        if source.current(&config.directory).await? != current {
-            return Err("publication superseded during bootstrap".into());
+        if cache {
+            sync_tree(&stage)?;
         }
-        let runtime_preparation = state.preparation();
-        drop(state);
-        crate::control::persist(&stage.join("verified-inventory.json"), &inventory)?;
-        Ok(Report {
-            current,
-            map_sha256: inventory.map_sha256,
+        Ok(Staged {
             directory: stage.clone(),
-            downloaded_bytes: source.downloaded,
+            inventory,
+            options,
             downloaded_files,
-            archive_tables_downloaded: 0,
-            serving: false,
-            runtime_preparation,
         })
     }
     .await;
@@ -401,4 +542,20 @@ pub async fn verify(config: Config) -> Result<Report, Error> {
         let _ = std::fs::remove_dir_all(&stage);
     }
     result
+}
+
+// Persist child entries before their parents and before the owner's active
+// pointer. Cached copies require the same durability as downloaded files.
+fn sync_tree(path: &std::path::Path) -> Result<(), Error> {
+    for entry in std::fs::read_dir(path)? {
+        let entry = entry?;
+        if entry.file_type()?.is_dir() {
+            sync_tree(&entry.path())?;
+        } else {
+            std::fs::File::open(entry.path())?.sync_all()?;
+        }
+    }
+    std::fs::File::open(path)?.sync_all()?;
+    std::fs::File::open(path.parent().ok_or("stage has no parent")?)?.sync_all()?;
+    Ok(())
 }

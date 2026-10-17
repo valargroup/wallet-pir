@@ -203,6 +203,8 @@ struct Inner {
     operations: Arc<tokio::sync::Mutex<()>>,
     publication_gate: std::sync::Mutex<()>,
     epoch: std::sync::atomic::AtomicU64,
+    required_runtimes: bool,
+    _directory_owner: Option<Arc<std::fs::File>>,
 }
 #[derive(Clone)]
 pub struct LiveService(Arc<Inner>);
@@ -214,13 +216,43 @@ impl LiveService {
         options: LoadOptions,
         record: PathBuf,
     ) -> Result<Self, String> {
+        Self::new_with_policy(state, publication, config, options, record, None)
+    }
+    pub(crate) fn new_required(
+        state: ServiceState,
+        publication: Publication,
+        config: ServiceConfig,
+        options: LoadOptions,
+        record: PathBuf,
+        directory_owner: Arc<std::fs::File>,
+    ) -> Result<Self, String> {
+        Self::new_with_policy(
+            state,
+            publication,
+            config,
+            options,
+            record,
+            Some(directory_owner),
+        )
+    }
+    fn new_with_policy(
+        state: ServiceState,
+        publication: Publication,
+        config: ServiceConfig,
+        options: LoadOptions,
+        record: PathBuf,
+        directory_owner: Option<Arc<std::fs::File>>,
+    ) -> Result<Self, String> {
+        let required_runtimes = directory_owner.is_some();
         let invalid: BTreeSet<String> = match std::fs::read(record.with_extension("invalid.json")) {
             Ok(bytes) => serde_json::from_slice(&bytes)
                 .map_err(|e| format!("invalid revocation record: {e}"))?,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => BTreeSet::new(),
             Err(e) => return Err(e.to_string()),
         };
-        state.release_invalidated(&invalid);
+        if !required_runtimes {
+            state.release_invalidated(&invalid);
+        }
         Ok(Self(Arc::new(Inner {
             active: RwLock::new(Active { state, publication }),
             invalid: RwLock::new(invalid),
@@ -229,6 +261,8 @@ impl LiveService {
             last_preparation: RwLock::new(None),
             config,
             options,
+            required_runtimes,
+            _directory_owner: directory_owner,
             record,
             retired: RwLock::new(Vec::new()),
             operations: Arc::new(tokio::sync::Mutex::new(())),
@@ -267,7 +301,11 @@ impl LiveService {
                 if !held_as_requested(active.state.set()) {
                     return Err(Refusal::Admission(ASSIGNMENT_CHANGED.into()));
                 }
-                return Ok(serde_json::json!({"prepared":publication.map_sha256}));
+                if !self.0.required_runtimes
+                    || active.publication.directory == publication.directory
+                {
+                    return Ok(serde_json::json!({"prepared":publication.map_sha256}));
+                }
             }
             if active.publication.map_sha256 != expected {
                 return Err(Refusal::Superseded("active predecessor changed".into()));
@@ -278,6 +316,7 @@ impl LiveService {
             c.publication.map_sha256 == publication.map_sha256
                 && c.state.is_warm()
                 && c.epoch == epoch
+                && (!self.0.required_runtimes || c.publication.directory == publication.directory)
         }) {
             if !held_as_requested(candidate.state.set()) {
                 return Err(Refusal::Admission(ASSIGNMENT_CHANGED.into()));
@@ -313,9 +352,35 @@ impl LiveService {
                 ))
             }
         }
+        if self.0.required_runtimes {
+            if let LoadScope::Assigned {
+                assignment,
+                worker_id,
+            } = &options.scope
+            {
+                let next = assignment
+                    .scope_for(worker_id)
+                    .map_err(|e| Refusal::InvalidSource(e.to_string()))?;
+                if old
+                    .set()
+                    .scope()
+                    .is_some_and(|held| !held.assigned.is_subset(&next.assigned))
+                {
+                    return Err(Refusal::Admission("local retirement requires a qualified archive route; recent-worker mode has none".into()));
+                }
+            }
+        }
         let directory = publication.directory.clone();
         let digest = publication.map_sha256.clone();
-        let shipped = publication.shipped();
+        let shipped = if self.0.required_runtimes {
+            Some(crate::runtime::disk::ShippedRuntimes::required(
+                publication.runtimes.clone().ok_or_else(|| {
+                    Refusal::InvalidSource("provider requires prepared runtimes".into())
+                })?,
+            ))
+        } else {
+            publication.shipped()
+        };
         let config = self.0.config;
         let loading_started = std::time::Instant::now();
         let (next, verification) = tokio::task::spawn_blocking(move || {
@@ -352,6 +417,10 @@ impl LiveService {
             let build_started = std::time::Instant::now();
             let state = ServiceState::build_reusing(set, config, None, Some(&old), shipped);
             tracing::info!(map = %digest, seconds = build_started.elapsed().as_secs_f64(), succeeded = state.is_ok(), "publication service construction finished");
+            let state = state.and_then(|state| {
+                if state.required_material() { state.verify_required_material()?; }
+                Ok(state)
+            });
             state
                 .map(|state| (state, verification))
                 .map_err(Refusal::Runtime)
@@ -461,7 +530,7 @@ impl LiveService {
             let revisions:std::collections::BTreeMap<_,_>=std::iter::once(&*active).chain(retired.iter()).flat_map(|a|a.state.set().revisions().iter())
                 .map(|s|(s.digest.clone(),serde_json::json!({"digest":s.digest,"end_height":s.manifest.end_height,"terminal_block_hash":s.manifest.terminal_block_hash}))).collect();
             return Ok(
-                serde_json::json!({"active":active.publication,"warm":active.state.is_warm(),"invalidated":active.state.is_invalidated(),"revoked_revisions":self.0.invalid.read().unwrap().len(),"preparing":preparing,"last_preparation":self.0.last_preparation.read().unwrap().clone(),"retired_snapshots":retired.len(),"candidate":candidate,"revisions":revisions.into_values().collect::<Vec<_>>()}),
+                serde_json::json!({"active":active.publication,"runtimes":active.state.preparation(),"warm":active.state.is_warm(),"invalidated":active.state.is_invalidated(),"revoked_revisions":self.0.invalid.read().unwrap().len(),"revoked_digests":self.0.invalid.read().unwrap().clone(),"preparing":preparing,"last_preparation":self.0.last_preparation.read().unwrap().clone(),"retired_snapshots":retired.len(),"candidate":candidate,"revisions":revisions.into_values().collect::<Vec<_>>()}),
             );
         }
         let _operation = self.0.operations.clone().lock_owned().await;
@@ -484,62 +553,8 @@ impl LiveService {
             Command::Activate {
                 expected,
                 map_sha256,
-            } => {
-                let service = self.clone();
-                tokio::task::spawn_blocking(move || {
-                    // Durable publication writes can block on disk. Keep them
-                    // off the async executor and retain serialization even if
-                    // the control caller disconnects while the job is running.
-                    let _operation = _operation;
-                    {
-                        let active = service.0.active.read().unwrap();
-                        if active.publication.map_sha256 == map_sha256 && active.state.is_warm() {
-                            return Ok(serde_json::json!({"active":map_sha256}));
-                        }
-                        if active.publication.map_sha256 != expected {
-                            return Err("active predecessor changed".into());
-                        }
-                    }
-                    let mut candidate = service.0.candidate.blocking_lock();
-                    // Invalidation must not land between the epoch check and the
-                    // durable active pointer swap, including after a restart.
-                    let _gate = service.0.publication_gate.lock().unwrap();
-                    let next = candidate.as_ref().ok_or("no prepared candidate")?;
-                    if next.epoch != service.0.epoch.load(std::sync::atomic::Ordering::Acquire) {
-                        return Err("reorg invalidated prepared candidate".into());
-                    }
-                    if next.publication.map_sha256 != map_sha256 || !next.state.is_warm() {
-                        return Err("candidate identity/readiness mismatch".into());
-                    }
-                    if next.state.set().map.shards.iter().any(|s| {
-                        service
-                            .0
-                            .invalid
-                            .read()
-                            .unwrap()
-                            .contains(&s.manifest_digest)
-                    }) {
-                        return Err("candidate contains invalidated history".into());
-                    }
-                    persist(&service.0.record, &next.publication)?;
-                    let next = candidate.take().unwrap();
-                    let old = std::mem::replace(
-                        &mut *service.0.active.write().unwrap(),
-                        Active {
-                            state: next.state,
-                            publication: next.publication,
-                        },
-                    );
-                    // Normal predecessors remain available to in-flight wallets.
-                    // Release their residency pins: only current and preparing
-                    // assignments are residency obligations.
-                    old.state.release_pins();
-                    service.0.retired.write().unwrap().push(old);
-                    Ok(serde_json::json!({"active":map_sha256}))
-                })
-                .await
-                .map_err(|e| e.to_string())?
-            }
+            } => self.activate(expected, map_sha256, _operation).await,
+
             Command::Collect => {
                 let collection_started = std::time::Instant::now();
                 let service = self.clone();
@@ -623,6 +638,161 @@ impl LiveService {
             }
             _ => unreachable!(),
         }
+    }
+
+    /// A negative exact-anchor attestation revokes that revision, not a newer
+    /// canonical replacement whose range overlaps it. Use the same owner fence,
+    /// cancellation and durable digest set as range invalidation.
+    pub(crate) async fn revoke_exact(&self, digests: BTreeSet<String>) -> Result<(), String> {
+        let service = self.clone();
+        tokio::task::spawn_blocking(move || {
+            let _gate = service.0.publication_gate.lock().unwrap();
+            let active = service.0.active.read().unwrap();
+            let retired = service.0.retired.read().unwrap();
+            let mut invalid = service.0.invalid.write().unwrap();
+            if digests.is_subset(&invalid) {
+                return Ok(());
+            }
+            invalid.extend(digests);
+            service
+                .0
+                .epoch
+                .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+            // Remain fenced in memory even on disk failure. Manager intent was
+            // persisted first and will replay this union before restart serving.
+            active.state.release_invalidated(&invalid);
+            for old in retired.iter() {
+                old.state.release_invalidated(&invalid);
+            }
+            persist(&service.0.record.with_extension("invalid.json"), &*invalid)
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+    /// Replay manager-owned intent into an unexposed startup owner. Do not
+    /// cancel the newly verified view: a newer checked recovery may clear the
+    /// fence before its initial activation. Dispatch still consults this set.
+    pub(crate) fn fence_recovered(&self, digests: &BTreeSet<String>) -> Result<(), String> {
+        let _gate = self.0.publication_gate.lock().unwrap();
+        let mut invalid = self.0.invalid.write().unwrap();
+        invalid.extend(digests.iter().cloned());
+        persist(&self.0.record.with_extension("invalid.json"), &*invalid)
+    }
+    /// Called only inside the manager's fresh checked activation. Clearing a
+    /// durable digest fence never revives an invalidated in-memory snapshot;
+    /// recovery prepares a new view with its own pins and cancellation state.
+    pub(crate) fn restore_verified(&self, keep: &BTreeSet<String>) -> Result<(), String> {
+        let _gate = self.0.publication_gate.lock().unwrap();
+        let mut invalid = self.0.invalid.write().unwrap();
+        let next: BTreeSet<_> = invalid.difference(keep).cloned().collect();
+        persist(&self.0.record.with_extension("invalid.json"), &next)?;
+        *invalid = next;
+        Ok(())
+    }
+    /// The publication owner holds command serialization while obtaining a
+    /// fresh authority decision, immediately before the durable predecessor CAS.
+    /// The manager's check also applies newly observed revocations; persisted
+    /// files or a saved proof cannot call this boundary on restart.
+    pub(crate) async fn activate_checked<F, Fut>(
+        &self,
+        expected: String,
+        map_sha256: String,
+        initial: bool,
+        check: F,
+    ) -> Result<(), String>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = Result<(), String>>,
+    {
+        let operation = self.0.operations.clone().lock_owned().await;
+        check().await?;
+        if initial {
+            let _gate = self.0.publication_gate.lock().unwrap();
+            let active = self.0.active.read().unwrap();
+            if active.publication.map_sha256 != map_sha256
+                || !active.state.is_warm()
+                || active.state.is_invalidated()
+                || active
+                    .state
+                    .set()
+                    .map
+                    .shards
+                    .iter()
+                    .any(|s| self.0.invalid.read().unwrap().contains(&s.manifest_digest))
+            {
+                return Err("initial publication is not eligible/warm".into());
+            }
+            persist(&self.0.record, &active.publication)?;
+            Ok(())
+        } else {
+            self.activate(expected, map_sha256, operation)
+                .await
+                .map(|_| ())
+        }
+    }
+    async fn activate(
+        &self,
+        expected: String,
+        map_sha256: String,
+        _operation: tokio::sync::OwnedMutexGuard<()>,
+    ) -> Result<serde_json::Value, String> {
+        let service = self.clone();
+        tokio::task::spawn_blocking(move || {
+            // Durable publication writes can block on disk. Keep them
+            // off the async executor and retain serialization even if
+            // the control caller disconnects while the job is running.
+            let _operation = _operation;
+            {
+                let active = service.0.active.read().unwrap();
+                if !service.0.required_runtimes
+                    && active.publication.map_sha256 == map_sha256
+                    && active.state.is_warm()
+                {
+                    return Ok(serde_json::json!({"active":map_sha256}));
+                }
+                if active.publication.map_sha256 != expected {
+                    return Err("active predecessor changed".into());
+                }
+            }
+            let mut candidate = service.0.candidate.blocking_lock();
+            // Invalidation must not land between the epoch check and the
+            // durable active pointer swap, including after a restart.
+            let _gate = service.0.publication_gate.lock().unwrap();
+            let next = candidate.as_ref().ok_or("no prepared candidate")?;
+            if next.epoch != service.0.epoch.load(std::sync::atomic::Ordering::Acquire) {
+                return Err("reorg invalidated prepared candidate".into());
+            }
+            if next.publication.map_sha256 != map_sha256 || !next.state.is_warm() {
+                return Err("candidate identity/readiness mismatch".into());
+            }
+            if next.state.set().map.shards.iter().any(|s| {
+                service
+                    .0
+                    .invalid
+                    .read()
+                    .unwrap()
+                    .contains(&s.manifest_digest)
+            }) {
+                return Err("candidate contains invalidated history".into());
+            }
+            persist(&service.0.record, &next.publication)?;
+            let next = candidate.take().unwrap();
+            let old = std::mem::replace(
+                &mut *service.0.active.write().unwrap(),
+                Active {
+                    state: next.state,
+                    publication: next.publication,
+                },
+            );
+            // Normal predecessors remain available to in-flight wallets.
+            // Release their residency pins: only current and preparing
+            // assignments are residency obligations.
+            old.state.release_pins();
+            service.0.retired.write().unwrap().push(old);
+            Ok(serde_json::json!({"active":map_sha256}))
+        })
+        .await
+        .map_err(|e| e.to_string())?
     }
 
     pub async fn listen(
