@@ -108,6 +108,12 @@ need explicit treatment before a node can promise lightweight operation.
 
 ## Implementation phases
 
+The approved next end-to-end slice is the
+[first independent Transparent history provider](../transparent/docs/recent-provider-plan.md).
+It groups the publication, embedded-serving and fixed-archive requirements into
+a reviewable PR stack after the service-boundary refactor. Implementation and PR
+preparation are approved; the phases below remain the broader architecture.
+
 ### Phase 1: establish reusable service boundaries
 
 Complete and reuse the service modularization already underway. Separate
