@@ -262,10 +262,40 @@ class ProviderLifecycle(unittest.TestCase):
         self.assertEqual(self.checks, [])
         with self.assertRaisesRegex(DeployError, 'operator-managed'):
             deployer.deploy(SHA, str(self.binary), skip_exact_check=True)
+        from wallet_pir_ops.deploy.transaction import Journal
+        journal = Journal.create(self.state, 'transparent-history', SHA, None,
+                                 [{'role': 'provider', 'host': 'edge-01',
+                                   'unit': 'transparent-history-provider.service'}], {})
         with self.assertRaisesRegex(DeployError, 'operator-managed'):
-            deployer.rollback()
+            deployer.rollback(journal.id)
         self.assertEqual(self.fake.log, [])
         self.assertEqual(self.checks, [])
+
+    def test_existing_worker_transaction_rolls_back_with_provider_in_inventory(self):
+        document = json.loads(self.inventory.read_text())
+        document['services']['transparent-history']['roles']['external-worker'] = [{
+            'host': 'edge-01', 'install': True, 'vars': {'listen': '127.0.0.1:8094'},
+            'settings': {'listen': '127.0.0.1:8094', 'shard_dir': '/srv/history/set',
+                         'state_dir': '/var/lib/history-worker'}}]
+        self.inventory.write_text(json.dumps(document))
+        unit = 'transparent-history-worker.service'
+        self.fake.endpoints[('edge-01', 'http://127.0.0.1:8094/v1/ready')] = unit
+        self.fake.health_shapes[('edge-01', unit)] = lambda ready, exe: {'ready': ready}
+        self.fake.product_check = lambda host, argv: (self.checks.append(argv) or (0, 'verified'))
+        deployer = self.deployer('transparent-history', only=['external-worker'])
+        deployer.capture_baseline()
+        journal = deployer.deploy(SHA, str(self.binary), skip_exact_check=True)
+        self.assertEqual(journal.status, 'committed')
+        self.fake.log.clear()
+        output = []
+        code = cli.main(['--inventory', str(self.inventory), '--state-dir', str(self.state),
+                         'rollback', 'transparent-history', '--transaction', journal.id],
+                        executor=self.fake, out=output.append,
+                        lock=lambda: self.fake.hold_lock('coordinator', descriptors.LOCK_PATH))
+        self.assertEqual(code, 0, output)
+        self.assertEqual(self.fake.probe_unit('edge-01', unit)['load_state'], 'not-found')
+        self.assertNotIn('/var/lib/transparent-provider', self.fake.host('edge-01').dirs)
+        self.assertFalse(any('--publisher' in argv for argv in self.checks))
 
     def test_provider_private_report_still_works_without_a_deploy(self):
         output = []

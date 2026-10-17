@@ -713,8 +713,6 @@ class Deployer:
             raise DeployError('rollback incomplete; re-run rollback after fixing:\n  ' + '\n  '.join(failures))
 
     def rollback(self, identifier=None, force=False):
-        if any(not target.role.shared_lifecycle for target in self.targets):
-            raise DeployError('operator-managed role: restore its unit and retained state through its operator lifecycle')
         journal = Journal.load(self.state_dir, self.service.name, identifier)
         if journal is None:
             raise DeployError('no %s transaction is recorded in %s' % (self.service.name, self.state_dir))
