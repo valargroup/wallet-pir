@@ -4,6 +4,44 @@ Keep product code, operations, docs and evidence under `enhance/`,
 `transparent/` or `receiver/`; shared code lives under `shared/`. The legacy
 demo workspace is independent. Preserve existing Cargo package and binary names.
 
+## Toolchain, build and run
+
+- Use the Rust version pinned in `rust-toolchain.toml` (currently 1.97.1),
+  with rustfmt and clippy. Linux prerequisites are C/C++ build tools,
+  Clang/libclang, pkg-config, OpenSSL development headers, protoc, Python
+  3.11+, Git, jq, shellcheck, Node and make. See
+  [the development workflow](docs/development.md) for validation details.
+- On the exe.dev devbox, the persistent primary checkout is
+  `/home/exedev/workspace/wallet-pir`. Rust and Node are installed under the
+  development user's home; open a new login shell after toolchain setup.
+  Git uses the attached GitHub integration through `github.int.exe.xyz`;
+  organization-scoped Git URL rewrites also cover pinned Git dependencies.
+  Cargo uses Git CLI fetching so those rewrites apply. Never store integration
+  credentials in the repository.
+- Fetch pinned dependencies and install the local push guard with
+  `make prepare-dev`; verify prerequisites with `make doctor`.
+- Compile all CPU workspace binaries, including the Enhance CLI, for local use:
+  `cargo build --locked --workspace --bins --profile release-fast --features enhance-pir/cli`.
+  Use `make build` for deploy-profile binaries (fat-LTO `release`, slower
+  and more memory-intensive). Do not enable CUDA on a CPU-only devbox.
+- Inspect entrypoints without starting a fleet:
+  `cargo run --locked --profile release-fast -p enhance-pir-server --bin enhance-pir-server -- --help`
+  and
+  `cargo run --locked --profile release-fast -p enhance-pir --features cli --bin enhance-pir-cli -- --help`.
+  `make run-server` and `make run-worker` also show help, using `release`.
+- To start an isolated local worker after building:
+  `target/release-fast/enhance-pir-server worker --listen 127.0.0.1:8091 --data-dir .local-pir/worker`.
+  A worker alone is not an end-to-end retrieval deployment; coordinator,
+  chain inputs and role configuration are described in the product runbooks.
+  Keep private/control listeners on loopback and never reuse production data
+  or invoke load-test targets against their default production origins casually.
+- For focused Rust tests use `make check-package PACKAGE=pir-control` (or
+  the package being changed); add `TEST=<filter>` when appropriate.
+  `cargo fmt --all --check` checks formatting. `make test` runs the full
+  optimized workspace tests; `make check-full` additionally runs lint,
+  documentation, tooling and operations checks. Neither replaces hardware
+  or release qualification.
+
 ## Iteration and validation
 
 - Keep routine PR and main fast feedback under three minutes; retain full service qualification separately.
