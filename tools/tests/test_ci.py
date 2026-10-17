@@ -308,7 +308,7 @@ class BoundaryTests(unittest.TestCase):
         self.assertEqual(boundary.violations([package], []), [])
         package['dependencies'][0]['path'] = 'receiver/crates/fake-tokio/'
         self.assertTrue(boundary.violations([package], []))
-        for name in boundary.SERVING:
+        for name in boundary.SERVING | boundary.PIPELINE_FOUNDATIONS:
             package = {'name': name, 'manifest': 'shared/lib/Cargo.toml',
                        'dependencies': [self.edge('pir-pipeline', 'dev-dependencies')]}
             self.assertTrue(boundary.violations([package], []))
@@ -327,6 +327,21 @@ class BoundaryTests(unittest.TestCase):
             metadata['resolve']['nodes'][1] = node('tokio', [('crypto', kind)])
             self.assertEqual(boundary.resolved_violations(metadata),
                              ['pir-pipeline: resolves outside its utility boundary: sha2'])
+
+    def test_chain_free_serving_foundations_cannot_reach_the_pipeline(self):
+        for foundation in boundary.PIPELINE_FOUNDATIONS:
+            metadata = {'packages': [
+                {'id': 'foundation', 'name': foundation, 'source': None},
+                {'id': 'helper', 'name': 'helper', 'source': 'registry'},
+                {'id': 'pipeline', 'name': 'pir-pipeline', 'source': None},
+            ], 'resolve': {'nodes': [
+                {'id': 'foundation', 'deps': [{'pkg': 'helper', 'dep_kinds': [{'kind': 'dev'}]}]},
+                {'id': 'helper', 'deps': [{'pkg': 'pipeline', 'dep_kinds': [{'kind': 'build',
+                                                                         'target': 'cfg(unix)'}]}]},
+                {'id': 'pipeline', 'deps': []},
+            ]}}
+            self.assertEqual(boundary.resolved_violations(metadata),
+                             [f'{foundation}: serving foundation resolves pir-pipeline'])
 
     def test_a_removed_edge_must_leave_the_allowlist(self):
         problems = boundary.violations([], ['svc -> zakura-chain'])

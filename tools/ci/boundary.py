@@ -84,6 +84,9 @@ SHARED = 'shared/'
 # graph. Every kind of edge counts, including optional and target-specific edges.
 PIPELINE = 'pir-pipeline'
 PIPELINE_DIRECT = {'tokio'}
+# These chain-free serving foundations also must not import the lifecycle.
+# transparent-shard-server is an application (its HTTPS manager adopts it later).
+PIPELINE_FOUNDATIONS = {'receiver-pir-server', 'pir-control', 'pir-observability'}
 PIPELINE_UTILITIES = {
     'tokio', 'tokio-macros', 'pin-project-lite', 'proc-macro2', 'quote', 'syn',
     'unicode-ident', 'bytes', 'libc', 'mio', 'parking_lot', 'parking_lot_core',
@@ -214,6 +217,9 @@ def violations(packages, allowed):
                     and name not in CANONICAL):
                 problems.append(f"{package['manifest']}: pure PIR package has a "
                                 f"{dependency['kind']} on wallet-libraries package {name}")
+            if package['name'] in PIPELINE_FOUNDATIONS and name == PIPELINE:
+                problems.append(f"{package['manifest']}: serving foundation has a "
+                                f"{dependency['kind']} on ingestion engine {name}")
             if package['name'] in SERVING and not package.get('preserved'):
                 owner = package['manifest'].rsplit('/', 1)[0] + '/'
                 reason = ('chain reading or ingestion package' if name in INGESTION else
@@ -251,6 +257,16 @@ def resolved_violations(metadata, *, workspace_unified=False):
                         target['name'] not in PIPELINE_UTILITIES
                         or not (target['source'] or '').startswith('registry')):
                     problems.add(f"{PIPELINE}: resolves outside its utility boundary: {target['name']}")
+                queue.extend(dep['pkg'] for dep in nodes[current]['deps'])
+        if package['name'] in PIPELINE_FOUNDATIONS and package['source'] is None:
+            seen, queue = set(), [root_id]
+            while queue:
+                current = queue.pop()
+                if current in seen:
+                    continue
+                seen.add(current)
+                if current != root_id and packages[current]['name'] == PIPELINE:
+                    problems.add(f"{package['name']}: serving foundation resolves {PIPELINE}")
                 queue.extend(dep['pkg'] for dep in nodes[current]['deps'])
         if package['name'] in SERVING and package['source'] is None:
             problems.update(serving_resolved_violations(root_id, packages, nodes))
@@ -342,7 +358,7 @@ def main(argv=None):
              *(['--offline'] if args.offline else [])], cwd=ROOT))
         problems += resolved_violations(metadata, workspace_unified=True)
         problems += resolved_violations(standalone_metadata(RECEIVER))
-        for name in sorted(SERVING | {PIPELINE}):
+        for name in sorted(SERVING | PIPELINE_FOUNDATIONS | {PIPELINE}):
             problems += resolved_violations(standalone_metadata({name}))
     for problem in problems:
         print(problem, file=sys.stderr)
