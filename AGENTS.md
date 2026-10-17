@@ -7,6 +7,12 @@ demo workspace is independent. Preserve existing Cargo package and binary names.
 ## Iteration and validation
 
 - Keep routine PR and main fast feedback under three minutes; retain full service qualification separately.
+- Keep every automated CPU correctness test below 30 seconds and the complete
+  warm correctness run below three minutes, including incremental compilation,
+  setup, teardown, tooling and lint. `make check-correctness` enforces the budget;
+  `python3 tools/ci/correctness.py --record-only` diagnoses overruns without
+  omitting coverage. Report cold preparation separately. Hardware and explicit
+  soak qualification retain their existing release gates.
 - Batch edits, then use `make check-fast BASE=<comparison-sha>` for affected
   checks. This includes committed, staged, unstaged and untracked changes.
   `make check-package PACKAGE=<name> TEST=<filter> FEATURES=<features>` selects

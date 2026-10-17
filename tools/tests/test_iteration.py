@@ -221,7 +221,7 @@ class PlannerTests(unittest.TestCase):
         self.assertIn('cli', calls[-1])
         self.assertNotIn('native-reinspiring', calls[-1])
         groups = full.inventory()
-        self.assertIn('enhance-pir/cli', full.commands('enhance', groups)[0])
+        self.assertIn('enhance-pir/cli', full.commands('enhance', groups)[0][-1].split(','))
         self.assertNotIn('--features', full.commands('transparent', groups)[0])
 
 

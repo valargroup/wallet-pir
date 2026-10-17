@@ -7,6 +7,38 @@ Cold builds, dependency/toolchain changes, initial data preparation, schema
 migrations and first fleet activation are measured separately. These are targets,
 not measured guarantees; hosted fallback and cold fleet warming can exceed them.
 
+## Complete CPU correctness budget
+
+`make check-correctness` runs all ordinary CPU correctness targets, reference
+arithmetic and encrypted HTTP restart checks, doctests, the standalone sizing
+exporter, operations/tooling checks and native CPU lint. The budget is 30 seconds
+per test and 180 seconds for the complete warm command, including compilation,
+fixture setup and teardown. CUDA and explicit soak/hardware campaigns keep their
+existing qualification commands and durations. This command does not replace
+exact-SHA release qualification.
+
+The complete command requires Linux: the sizing exporter deliberately verifies
+the executing binary through `/proc/self/exe`. Other platforms can run focused
+checks or diagnostic mode; a missing Linux check cannot qualify the full budget.
+
+Use `python3 tools/ci/correctness.py --record-only` to diagnose a complete run
+that exceeds the target; it runs the same correctness selection. Receipts and
+individual case times go to ignored `.local-pir/correctness/`. Record-only
+success establishes correctness, not compliance with the timing budget. Cold
+dependency preparation and CI queue/setup time must be reported separately;
+local timings do not establish CI-runner performance.
+
+Native tests compile once with a consistent feature set, then run Cargo-reported
+executables with at most two programs active and one case per program. Mutable
+service state is fresh; only immutable public runtime material is shared within
+the run. Serving HTTP and packing tests live beside the serving library and
+avoid the application's chain ingestion dependencies. Reference arithmetic,
+encrypted HTTP, frozen v7 vectors and Status checks run under the reference
+profile. Recovery decision tests use real durable controller state and small
+HTTP peers; separate worker tests
+check durable reservation, abort and commit behavior. Real encrypted HTTP,
+restart, independent wallet, publication, packing and revocation checks remain.
+
 ## Fast feedback and full qualification
 
 `CI / Fast checks` runs on pushes and PRs. It selects changed workspace packages
@@ -94,6 +126,24 @@ For a hosted timing replay, dispatch `CI` on main with `hosted=true` and
 hosted PR environment without occupying or canceling main's reserved queue.
 Manual diagnostic runs allow cold-build measurement beyond the routine ceiling;
 they do not qualify the latency target merely by completing successfully.
+
+Enhance full qualification runs common service assertions once with the native
+backend, including the independent wallet decoder and the bounded packing
+publication. Reference arithmetic and one encrypted HTTP/restart smoke remain
+separate; CUDA compilation and
+configuration checks use one native-plus-CUDA feature set. Commit/abort decision
+tests use durable controller state and small HTTP peers; worker tests separately
+check reservation accounting and restart behavior. The encrypted HTTP smoke
+retains a failed commit delivery, a later healthy publication, retry and restart
+with production runtimes.
+
+Transparent concurrency coverage pairs four publication layouts with four wallet
+shapes instead of running their Cartesian product. Each pair still compares real
+encrypted sequential and concurrent syncs against an independent ledger traversal;
+all layouts, one-shard and multi-shard wallets, and request/charge assertions remain.
+The deployment goal is under ten minutes for all services, including qualification,
+artifact preparation, rollout and query verification. These reductions do not by
+themselves establish that end-to-end timing; record a complete run before claiming it.
 
 ## Warm runners
 

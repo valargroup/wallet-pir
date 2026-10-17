@@ -1712,6 +1712,134 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn reservation_abort_and_commit_decisions_survive_reopening() {
+        let root = tempfile::tempdir().unwrap();
+        let mut candidate = Candidate {
+            placement_policy: Default::default(),
+            epoch: 1,
+            operation: "cancelled".into(),
+            attempt: 0,
+            expected_revision: 0,
+            generation: 1,
+            plans: vec![],
+        };
+        let router = Worker::open(root.path()).unwrap().router();
+        assert_eq!(
+            command(&router, "/internal/reserve", &candidate).await,
+            StatusCode::OK
+        );
+        drop(router);
+        let router = Worker::open(root.path()).unwrap().router();
+        let abort = Abort {
+            epoch: 2,
+            operation: candidate.operation.clone(),
+            attempt: 0,
+        };
+        // The caller may lose either reply. Reopening must retain the reservation
+        // and then the abort fence, without preparing any cryptographic rows.
+        assert_eq!(
+            command(&router, "/internal/abort", &abort).await,
+            StatusCode::OK
+        );
+        drop(router);
+        let router = Worker::open(root.path()).unwrap().router();
+        assert_eq!(
+            command(&router, "/internal/reserve", &candidate).await,
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        assert_eq!(
+            command(&router, "/internal/abort", &abort).await,
+            StatusCode::OK
+        );
+        candidate.epoch = 2;
+        candidate.attempt = 1;
+        candidate.operation = "replacement".into();
+        assert_eq!(
+            command(&router, "/internal/reserve", &candidate).await,
+            StatusCode::OK
+        );
+        let vector: serde_json::Value = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../enhance-pir/tests/fixtures/v7-session.json"
+        )))
+        .unwrap();
+        let mut manifest: Manifest = serde_json::from_value(vector["manifest"].clone()).unwrap();
+        manifest.generation = 1;
+        manifest.protocol_revision = PROTOCOL_REVISION.into();
+        for (session, shard) in manifest.sessions.iter_mut().zip(&manifest.coverage.shards) {
+            session.parameter_id = enhance_pir::protocol::parameter_id(shard.logical_rows).unwrap();
+        }
+        for unit in manifest.unit_identities.values_mut().flatten() {
+            unit.parameter_id =
+                enhance_pir::protocol::unit_parameter_id(unit.allocated_rows).unwrap();
+        }
+        let activation = Activation {
+            operation: candidate.operation,
+            attempt: 1,
+            epoch: 2,
+            manifest: manifest.clone(),
+        };
+        assert_eq!(
+            command(&router, "/internal/activate", &activation).await,
+            StatusCode::OK
+        );
+        drop(router);
+        let router = Worker::open(root.path()).unwrap().router();
+        let mut commit = Commit {
+            epoch: 2,
+            revision: 1,
+            generation: 1,
+            manifest_digest: "incorrect".into(),
+            retained: vec![1],
+        };
+        assert_eq!(
+            command(&router, "/internal/commit", &commit).await,
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        commit.manifest_digest = digest(&manifest);
+        assert_eq!(
+            command(&router, "/internal/commit", &commit).await,
+            StatusCode::OK
+        );
+        drop(router);
+        let worker = Worker::open(root.path()).unwrap();
+        assert!(worker.inner.lock().unwrap().disk.candidate.is_none());
+        assert_eq!(worker.inner.lock().unwrap().disk.retention, [1]);
+        let router = worker.router();
+        assert_eq!(
+            command(&router, "/internal/commit", &commit).await,
+            StatusCode::OK
+        );
+        commit.manifest_digest = "incorrect".into();
+        assert_eq!(
+            command(&router, "/internal/commit", &commit).await,
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        assert_eq!(
+            command(
+                &router,
+                "/internal/retain",
+                &Retain {
+                    epoch: 2,
+                    generations: vec![2],
+                }
+            )
+            .await,
+            StatusCode::OK
+        );
+        drop(router);
+        let worker = Worker::open(root.path()).unwrap();
+        assert!(worker.inner.lock().unwrap().disk.published.is_empty());
+        assert_eq!(worker.inner.lock().unwrap().disk.retention, [2]);
+        commit.manifest_digest = digest(&manifest);
+        assert_eq!(
+            command(&worker.router(), "/internal/commit", &commit).await,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "an expired decision cannot resurrect its generation"
+        );
+    }
+
+    #[tokio::test]
     async fn aborted_attempts_conflicting_payloads_and_stale_epochs_are_fenced_over_http() {
         let root = tempfile::tempdir().unwrap();
         let router = Worker::open(root.path()).unwrap().router();

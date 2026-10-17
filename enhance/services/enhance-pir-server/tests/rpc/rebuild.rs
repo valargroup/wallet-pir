@@ -295,13 +295,12 @@ async fn rebuild_resumes_and_coordinator_adopts_only_fee_repairs() {
     let mut process = start(root.path(), &address, &rpc_url);
     published(&mut process, root.path(), &origin, &hashes[3]).await;
     let mut client = EnhancePirClient::connect(&origin).await.unwrap();
-    for position in [0, 2, 4, 8] {
-        let answer = client.query_position_with_timing(position).await.unwrap().0;
-        check(
-            &EnhanceRecord::from_bytes(answer.as_ref().try_into().unwrap()).unwrap(),
-            position,
-            false,
-        );
+    let positions = [0, 2, 4, 8];
+    for (position, answer) in positions
+        .into_iter()
+        .zip(client.query_positions(&positions).await.unwrap())
+    {
+        check(&answer, position, false);
     }
 
     // Interrupted rebuild, against the journal the running coordinator holds.
@@ -434,8 +433,8 @@ async fn rebuild_resumes_and_coordinator_adopts_only_fee_repairs() {
         }
     }
 
-    // Refused adoptions through the real coordinator: the live journal stays,
-    // the staged directory is set aside, and the coordinator keeps serving.
+    // Every rejection checks the actual adoption code and unchanged live bytes.
+    // One also traverses coordinator startup and continued encrypted serving.
     type Tamper = fn(&Path);
     let tampers: [(&str, Tamper); 3] = [
         ("corrupt receipt", |dir| {
@@ -463,7 +462,27 @@ async fn rebuild_resumes_and_coordinator_adopts_only_fee_repairs() {
             write_receipt(dir, &r);
         }),
     ];
-    for (name, tamper) in tampers {
+    for (index, (name, tamper)) in tampers.into_iter().enumerate() {
+        if index != 0 {
+            let copy = root.path().join(format!("rejected-{index}"));
+            copy_dir(&live, &copy.join("enhance"));
+            copy_dir(&good, &copy.join("enhance-staged"));
+            let before = journal_digests(&copy.join("enhance"));
+            tamper(&copy.join("enhance-staged"));
+            let Adoption::Rejected { reason, moved_to } = adopt_staged(&copy).unwrap() else {
+                panic!("{name} must refuse adoption");
+            };
+            let expected = if name == "non-fee byte" {
+                "differs outside the fee fields"
+            } else {
+                "not a prefix"
+            };
+            assert!(reason.contains(expected), "{name}: {reason}");
+            assert!(!copy.join("enhance-staged").exists(), "{name}");
+            assert!(moved_to.join("rebuild.json").exists(), "{name}");
+            assert_eq!(journal_digests(&copy.join("enhance")), before, "{name}");
+            continue;
+        }
         drop(process);
         copy_dir(&good, &staged);
         tamper(&staged);
@@ -491,7 +510,7 @@ async fn rebuild_resumes_and_coordinator_adopts_only_fee_repairs() {
                 .starts_with("enhance-staged.rejected-")
         })
         .count();
-    assert_eq!(rejected, 3);
+    assert_eq!(rejected, 1);
 
     // Adoption, then the normal loop publishes the next block.
     drop(process);
@@ -520,13 +539,12 @@ async fn rebuild_resumes_and_coordinator_adopts_only_fee_repairs() {
     let next = chain.lock().unwrap().push_block(H + 4, &[fixture()], 4);
     published(&mut process, root.path(), &origin, &next).await;
     let mut client = EnhancePirClient::connect(&origin).await.unwrap();
-    for position in 0..12 {
-        let answer = client.query_position_with_timing(position).await.unwrap().0;
-        check(
-            &EnhanceRecord::from_bytes(answer.as_ref().try_into().unwrap()).unwrap(),
-            position,
-            true,
-        );
+    let positions: Vec<_> = (0..12).collect();
+    for (position, answer) in positions
+        .iter()
+        .zip(client.query_positions(&positions).await.unwrap())
+    {
+        check(&answer, *position, true);
     }
     drop(process);
     rpc_task.abort();

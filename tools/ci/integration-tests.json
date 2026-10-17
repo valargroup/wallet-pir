@@ -10,16 +10,14 @@
     "fast": [
       "boundary_recovery_model",
       "record_layout",
-      "schema11_cutover",
-      "ci_smoke"
+      "schema11_cutover"
     ],
     "full": [
       "canonical_record",
       "enhance_wallet_native",
-      "http",
       "matvec_config",
       "note_recovery",
-      "packing_http",
+      "row_repair_http",
       "rpc",
       "status_wallet"
     ]
@@ -93,6 +91,15 @@
       "wallet_recut",
       "wallet_sync",
       "verification_reuse"
+    ]
+  },
+  "enhance-serving": {
+    "fast": [
+      "ci_smoke"
+    ],
+    "full": [
+      "http",
+      "packing_http"
     ]
   }
 }

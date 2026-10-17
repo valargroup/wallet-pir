@@ -16,8 +16,21 @@ import integration_tests as tests
 class IntegrationTests(unittest.TestCase):
     def test_repository_registry_is_complete_and_each_service_has_a_smoke(self):
         registry = tests.inventory()
-        for package in ['receiver-pir-server', 'transparent-shard-server', 'enhance-pir-server']:
+        for package in ['receiver-pir-server', 'transparent-shard-server', 'enhance-serving']:
             self.assertIn('ci_smoke', registry[package]['fast'])
+
+    def test_application_only_feedback_keeps_the_serving_library_encrypted_smoke(self):
+        registry = {'enhance-pir-server': {'fast': ['layout'], 'full': []},
+                    'enhance-serving': {'fast': ['ci_smoke'], 'full': []}}
+        with patch.object(tests, 'inventory', return_value=registry), \
+                patch.object(tests, 'run') as run, \
+                patch.object(tests, 'target_features', return_value=[]), \
+                patch.object(tests.subprocess, 'check_output', side_effect=['case: test\n', '']):
+            tests.execute(['enhance-pir-server'], 'fast', smoke_only=True)
+        commands = [call.args[0] for call in run.call_args_list]
+        self.assertEqual(commands[0][commands[0].index('-p') + 1], 'enhance-serving')
+        self.assertIn('ci_smoke', commands[0])
+        self.assertNotIn('layout', str(commands))
 
     def test_workspace_rust_literal_module_and_fixture_paths_exist(self):
         checked = set()

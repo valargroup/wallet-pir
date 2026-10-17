@@ -2587,7 +2587,7 @@ async fn concurrent_requests_change_nothing_but_when_they_are_sent() {
     let per_shard = chain();
     let wallets: Vec<Vec<ScriptBytes>> = vec![
         vec![script(1), script(2), script(3), script(999)],
-        vec![script(1)],
+        vec![script(3)],
         vec![script(2), script(3)],
         vec![script(1), script(2), script(100), script(101)],
     ];
@@ -2621,65 +2621,65 @@ async fn concurrent_requests_change_nothing_but_when_they_are_sent() {
     let map = publish_with(dir.path(), &per_shard, two_tiers, 0, "");
     publications.push(("two geometries", dir, map));
 
-    for (name, dir, map) in &publications {
+    // Each layout and wallet shape appears once. Crossing every wallet with
+    // every layout repeats the same scheduling assertions and encrypted work.
+    for ((name, dir, map), wallet) in publications.iter().zip(&wallets) {
         let base = serve(dir.path()).await;
-        for wallet in &wallets {
-            let (sequential, reference) = run_recorded(
-                dir.path(),
-                base.clone(),
-                wallet.clone(),
-                map.clone(),
-                1,
-                Batches::Pass,
-            )
-            .await;
-            let (concurrent, log) = run_recorded(
-                dir.path(),
-                base.clone(),
-                wallet.clone(),
-                map.clone(),
-                4,
-                Batches::Pass,
-            )
-            .await;
-            compare(&sequential.ledger, &traverse(&per_shard, wallet, 0));
-            compare(&concurrent.ledger, &sequential.ledger);
-            assert_eq!(concurrent.charges, sequential.charges, "{name}");
-            assert_eq!(concurrent.matched_shards, sequential.matched_shards);
-            assert_eq!(
-                concurrent.unproductive_matches,
-                sequential.unproductive_matches
+        let (sequential, reference) = run_recorded(
+            dir.path(),
+            base.clone(),
+            wallet.clone(),
+            map.clone(),
+            1,
+            Batches::Pass,
+        )
+        .await;
+        let (concurrent, log) = run_recorded(
+            dir.path(),
+            base.clone(),
+            wallet.clone(),
+            map.clone(),
+            4,
+            Batches::Pass,
+        )
+        .await;
+        compare(&sequential.ledger, &traverse(&per_shard, wallet, 0));
+        compare(&concurrent.ledger, &sequential.ledger);
+        assert_eq!(concurrent.charges, sequential.charges, "{name}");
+        assert_eq!(concurrent.matched_shards, sequential.matched_shards);
+        assert_eq!(
+            concurrent.unproductive_matches,
+            sequential.unproductive_matches
+        );
+        assert_eq!(concurrent.covered_through, sequential.covered_through);
+        assert_eq!(concurrent.provisional, sequential.provisional);
+        assert_eq!(
+            sorted(&log.requests),
+            sorted(&reference.requests),
+            "{name}: the concurrent walk must make exactly the sequential walk's requests"
+        );
+        assert_eq!(reference.batches, 0, "concurrency 1 is the sequential walk");
+        if sequential.matched_shards.len() > 1 {
+            assert!(
+                log.batches > 0,
+                "{name}: several matched shards are batched"
             );
-            assert_eq!(concurrent.covered_through, sequential.covered_through);
-            assert_eq!(concurrent.provisional, sequential.provisional);
-            assert_eq!(
-                sorted(&log.requests),
-                sorted(&reference.requests),
-                "{name}: the concurrent walk must make exactly the sequential walk's requests"
-            );
-            assert_eq!(reference.batches, 0, "concurrency 1 is the sequential walk");
-            if sequential.matched_shards.len() > 1 {
-                assert!(
-                    log.batches > 0,
-                    "{name}: several matched shards are batched"
-                );
-                assert!(
-                    log.rounds < reference.rounds,
-                    "{name}: {} rounds concurrently, {} in sequence",
-                    log.rounds,
-                    reference.rounds
-                );
-            }
-            eprintln!(
-                "{name}, {} scripts, {} matched shards: {} requests, {} rounds in sequence, {} \
-                 at concurrency 4",
-                wallet.len(),
-                sequential.matched_shards.len(),
-                reference.requests.len(),
-                reference.rounds,
-                log.rounds
+            assert!(
+                log.rounds < reference.rounds,
+                "{name}: {} rounds concurrently, {} in sequence",
+                log.rounds,
+                reference.rounds
             );
         }
+        eprintln!(
+            "{name}, {} scripts, {} matched shards: {} requests, {} rounds in sequence, {} \
+             at concurrency 4",
+            wallet.len(),
+            sequential.matched_shards.len(),
+            reference.requests.len(),
+            reference.rounds,
+            log.rounds
+        );
     }
 }
 
