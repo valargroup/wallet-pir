@@ -1140,3 +1140,215 @@ async fn manager_double_intent_write_failure_retains_exact_negative_revision() {
     task.abort();
     let _ = task.await;
 }
+
+/// Standard controller/followed-journal adoption. Reuse the provider tests'
+/// immutable source fixture and native row oracle, with fresh writable owners.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn standard_history_lifecycle_queries_advance_and_reconciles_lost_activation() {
+    use std::os::unix::fs::PermissionsExt;
+    use transparent_shard_server::{
+        live::{LiveService, Publication},
+        service::ServiceState,
+        shardset::LoadScope,
+    };
+    let root = tempfile::tempdir().unwrap();
+    let (directory, set) = publication(root.path());
+    let service_config = ServiceConfig {
+        cache_bytes: 4 << 30,
+        ..ServiceConfig::default()
+    };
+    let options = recent_options(&set);
+    let state = ServiceState::build(
+        ShardSet::open_with(&directory, &options).unwrap(),
+        service_config,
+    )
+    .unwrap();
+    state.spawn_prewarm().await.unwrap();
+    let live = LiveService::new(
+        state,
+        Publication {
+            directory: directory.clone(),
+            assignment: None,
+            map_sha256: set.map_digest.clone(),
+            runtimes: None,
+        },
+        service_config,
+        options,
+        root.path().join("worker-active.json"),
+    )
+    .unwrap();
+    type FleetState = (LiveService, Arc<AtomicBool>);
+    async fn fleet_http(
+        State((live, lose_reply)): State<FleetState>,
+        axum::Json(request): axum::Json<serde_json::Value>,
+    ) -> axum::Json<serde_json::Value> {
+        let expected = live.command(Command::Status).await.unwrap()["active"]["map_sha256"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let command = match request["operation"].as_str().unwrap() {
+            "prepare" => {
+                let directory = PathBuf::from(request["directory"].as_str().unwrap());
+                let set = ShardSet::open(&directory, 0).unwrap();
+                let LoadScope::Assigned { assignment, .. } = recent_options(&set).scope else {
+                    unreachable!()
+                };
+                let path = directory.join("fixture-assignment.json");
+                std::fs::write(&path, serde_json::to_vec(assignment.as_ref()).unwrap()).unwrap();
+                Command::Prepare {
+                    expected,
+                    publication: Publication {
+                        directory,
+                        assignment: Some(path),
+                        map_sha256: request["map_sha256"].as_str().unwrap().into(),
+                        runtimes: None,
+                    },
+                }
+            }
+            "activate" => Command::Activate {
+                expected,
+                map_sha256: request["map_sha256"].as_str().unwrap().into(),
+            },
+            other => panic!("unexpected fleet operation {other}"),
+        };
+        let result = live.command(command).await;
+        if request["operation"] == "activate" && lose_reply.swap(false, Ordering::AcqRel) {
+            assert!(result.is_ok());
+            return axum::Json(
+                serde_json::json!({"ok":false,"error":"lost committed activation reply"}),
+            );
+        }
+        axum::Json(match result {
+            Ok(_) => serde_json::json!({"ok":true,"upstreams":[],"workers":{}}),
+            Err(error) => serde_json::json!({"ok":false,"error":error}),
+        })
+    }
+    let lose_reply = Arc::new(AtomicBool::new(true));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let app = axum::Router::new()
+        .route("/fleet", axum::routing::post(fleet_http))
+        .with_state((live.clone(), lose_reply))
+        .merge(live.router());
+    let worker_task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    struct Tasks(Vec<tokio::task::JoinHandle<()>>);
+    impl Drop for Tasks {
+        fn drop(&mut self) {
+            for task in &self.0 {
+                task.abort();
+            }
+        }
+    }
+    let mut tasks = Tasks(vec![worker_task]);
+    query(&origin, &set).await;
+    let tip = Arc::new(AtomicU64::new(2));
+    let node_tip = tip.clone();
+    let rpc_app = axum::Router::new().route(
+        "/",
+        axum::routing::post(move |axum::Json(request): axum::Json<serde_json::Value>| {
+            let tip = node_tip.clone();
+            async move {
+                let value = match request["method"].as_str().unwrap() {
+                    "getblockcount" => serde_json::json!(tip.load(Ordering::Acquire)),
+                    "getblockhash" => {
+                        let h = request["params"][0].as_u64().unwrap();
+                        serde_json::json!(if h == 0 {
+                            transparent_filter::MAINNET_GENESIS_DISPLAY.to_string()
+                        } else {
+                            BlockHash::from_internal_bytes([h as u8; 32]).to_display_hex()
+                        })
+                    }
+                    other => panic!("unexpected source method {other}"),
+                };
+                axum::Json(serde_json::json!({"result":value,"error":null,"id":request["id"]}))
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let rpc_origin = format!("http://{}", listener.local_addr().unwrap());
+    tasks.0.push(tokio::spawn(async move {
+        axum::serve(listener, rpc_app).await.unwrap()
+    }));
+    let cookie = root.path().join("cookie");
+    std::fs::write(&cookie, "fixture:fixture").unwrap();
+    let rpc = crate::zakura::connect(&rpc_origin, &cookie).unwrap();
+    let owner = authority(&directory, None, rpc.clone());
+    let hook = root.path().join("fleet.py");
+    std::fs::write(&hook, r#"#!/usr/bin/env python3
+import sys,urllib.request
+from pathlib import Path
+r=urllib.request.Request(Path(sys.argv[1]).read_text(),data=sys.stdin.buffer.read(),headers={'Content-Type':'application/json'})
+with urllib.request.urlopen(r,timeout=20) as response: sys.stdout.buffer.write(response.read())
+"#).unwrap();
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let fleet_config = root.path().join("fleet-url");
+    std::fs::write(&fleet_config, format!("{origin}/fleet")).unwrap();
+    let publications = root.path().join("publications");
+    std::fs::create_dir(&publications).unwrap();
+    let config = Config {
+        data_dir: root.path().join("journal"),
+        publication_root: publications,
+        initial_publication: directory.clone(),
+        recent_from: 2,
+        recent_geometry: "decoupled-2k-8k".into(),
+        archive_geometry: "decoupled-32k-32k".into(),
+        rpc_url: rpc_origin,
+        rpc_cookie: cookie,
+        fleet_command: hook,
+        fleet_config,
+        listen: "127.0.0.1:0".parse().unwrap(),
+        source_sha: "fixture".into(),
+        shadow: false,
+        directory_choice: publication::DirectoryChoice::Off,
+        range_profile: transparent_filter::RANGE_PROFILE.into(),
+        follow_journal: true,
+        snapshot_dir: None,
+        ship_runtimes: false,
+        distribute_prepared: false,
+    };
+    let reader = Arc::new(tokio::sync::Mutex::new(
+        EventStore::open_existing(&config.data_dir).unwrap(),
+    ));
+    let mut writer = EventStore::open(
+        &config.data_dir,
+        transparent_filter::MAINNET_GENESIS_DISPLAY,
+        0,
+    )
+    .unwrap();
+    writer
+        .append_block(3, BlockHash::from_internal_bytes([3; 32]), &[])
+        .unwrap();
+    writer.commit().unwrap();
+    tip.store(3, Ordering::Release);
+    let (notify, _) = tokio::sync::watch::channel(0);
+    let mut input = HistoryInputTask {
+        config: config.clone(),
+        rpc: rpc.clone(),
+        store: reader.clone(),
+        authority: owner.clone(),
+        notify,
+        cache: OutputCache::new(100),
+        pending_invalidation: None,
+    };
+    pir_pipeline::Task::run(&mut input).await.unwrap();
+    assert_eq!(reader.lock().await.covered_through(), Some(3));
+    assert!(publish_once(&config, &rpc, &reader, &owner).await.is_err());
+    assert_eq!(
+        owner.0.active.read().unwrap().publication.map_sha256,
+        set.map_digest
+    );
+    assert!(config.publication_root.join("activation.json").exists());
+    let activated: ActivePublication = serde_json::from_slice(
+        &std::fs::read(config.publication_root.join("activation.json")).unwrap(),
+    )
+    .unwrap();
+    let next_set = ShardSet::open(&activated.directory, 0).unwrap();
+    query(&origin, &next_set).await;
+    // An unfinished activation is retained and reconciled by the existing
+    // fleet owner; shared advance never repeats activation on its own.
+    publish_once(&config, &rpc, &reader, &owner).await.unwrap();
+    assert!(!config.publication_root.join("activation.json").exists());
+    assert_eq!(owner.0.active.read().unwrap().publication.height, 3);
+    let current = owner.0.active.read().unwrap().publication.clone();
+    query(&origin, &ShardSet::open(&current.directory, 0).unwrap()).await;
+}

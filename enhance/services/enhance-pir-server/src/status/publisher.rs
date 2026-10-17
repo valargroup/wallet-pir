@@ -11,6 +11,7 @@ use axum::{
     Json, Router,
 };
 use enhance_pir::status::*;
+use pir_pipeline::Input;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use status_serving::admission;
@@ -202,7 +203,33 @@ impl Publisher {
         bindings: &[Binding; 2],
         rpc: &ZakuraClient,
     ) -> Result<Manifest, Failure> {
-        let (generation, recovery_epoch) = authority.next_identity()?;
+        // Identity is selected by the product authority; shared progress never
+        // grants authority. A failed activation still requires outer fencing.
+        let identity = authority.next_identity()?;
+        match pir_pipeline::advance(
+            Input::Work(observed),
+            |observed| async move {
+                self.prepare(observed, identity, bindings)
+                    .await
+                    .map(Input::Work)
+            },
+            |(manifest, public)| self.commit_activate(authority, bindings, manifest, public, rpc),
+            &mut StatusProgress,
+        )
+        .await?
+        {
+            Input::Work(manifest) => Ok(manifest),
+            Input::Unchanged | Input::Deferred => {
+                unreachable!("Status preparation returns a candidate")
+            }
+        }
+    }
+    async fn prepare(
+        &self,
+        observed: &source::Observation,
+        (generation, recovery_epoch): (u64, u64),
+        bindings: &[Binding; 2],
+    ) -> Result<(Manifest, Arc<Vec<u8>>), Failure> {
         let snapshot = &observed.snapshot;
         let manifest = Manifest {
             protocol: PROTOCOL.into(),
@@ -247,15 +274,7 @@ impl Publisher {
                     return Err("wrong refresh acknowledgment".into());
                 }
             }
-            return self
-                .commit_activate(
-                    authority,
-                    bindings,
-                    refreshed,
-                    previous.public().clone(),
-                    rpc,
-                )
-                .await;
+            return Ok((refreshed, previous.public().clone()));
         }
         // Immutable candidate bytes are durable before remote preparation begins.
         let dir = self.config.state_dir.join("candidate");
@@ -347,8 +366,7 @@ impl Publisher {
         if <Hash>::from(Sha256::digest(&public)) != expected.public_digest {
             return Err("public material digest mismatch".into());
         }
-        self.commit_activate(authority, bindings, expected, Arc::new(public), rpc)
-            .await
+        Ok((expected, Arc::new(public)))
     }
     async fn commit_activate(
         &self,
@@ -411,7 +429,7 @@ impl Publisher {
         let salt: Hash = hex::decode(&self.config.salt_hex)?
             .try_into()
             .map_err(|_| "invalid salt")?;
-        let mut source = source::RollingWindow::open(
+        let source = source::RollingWindow::open(
             self.config.state_dir.join("source"),
             salt,
             self.config.window_blocks,
@@ -419,17 +437,12 @@ impl Publisher {
         let (tx, mut rx) = watch::channel(None::<Arc<source::Observation>>);
         let source_rpc = rpc.clone();
         let observer = tokio::spawn(async move {
-            loop {
-                match source.observe(&source_rpc).await {
-                    Ok(value) => {
-                        if tx.send(Some(Arc::new(value))).is_err() {
-                            break;
-                        }
-                    }
-                    Err(error) => tracing::warn!(%error, "Status source observation failed"),
-                }
-                tokio::time::sleep(Duration::from_secs(1)).await;
-            }
+            let mut task = ObservationTask {
+                source,
+                rpc: source_rpc,
+                tx,
+            };
+            pir_pipeline::supervise(&mut task, Duration::from_secs(1), std::future::pending()).await
         });
         let mut last_observed = 0;
         loop {
@@ -468,70 +481,14 @@ impl Publisher {
                     }
                 }
                 let _guard = StopOnExit(heartbeat_owner.clone());
-                loop {
-                    let active = active_rx.borrow().clone();
-                    if let Some(manifest) = active {
-                        if canonical_hash(&heartbeat_rpc, manifest.anchor_height).await?
-                            != manifest.anchor_hash
-                        {
-                            heartbeat_owner.stop();
-                            return Err::<(), Failure>("active Status anchor disconnected".into());
-                        }
-                        for (origin, binding) in [
-                            (
-                                &heartbeat_owner.config.worker_origin,
-                                &heartbeat_bindings[0],
-                            ),
-                            (
-                                &heartbeat_owner.config.router_origin,
-                                &heartbeat_bindings[1],
-                            ),
-                        ] {
-                            let ack: Binding = heartbeat_owner
-                                .post(
-                                    origin,
-                                    "/control/heartbeat",
-                                    &Activate {
-                                        binding: binding.clone(),
-                                        manifest: manifest.clone(),
-                                    },
-                                )
-                                .await?;
-                            if ack != *binding {
-                                return Err("wrong Status heartbeat acknowledgment".into());
-                            }
-                        }
-                    } else {
-                        for (origin, binding) in [
-                            (
-                                &heartbeat_owner.config.worker_origin,
-                                &heartbeat_bindings[0],
-                            ),
-                            (
-                                &heartbeat_owner.config.router_origin,
-                                &heartbeat_bindings[1],
-                            ),
-                        ] {
-                            let bytes = bounded(
-                                heartbeat_owner
-                                    .http
-                                    .get(format!("{origin}/control/health"))
-                                    .send()
-                                    .await?,
-                                16 * 1024,
-                            )
-                            .await
-                            .map_err(|e| e.to_string())?;
-                            let health: Health = serde_json::from_slice(&bytes)?;
-                            if health.binding != *binding {
-                                return Err(
-                                    "Status role restarted before initial publication".into()
-                                );
-                            }
-                        }
-                    }
-                    tokio::time::sleep(Duration::from_secs(1)).await;
-                }
+                let mut task = HeartbeatTask {
+                    owner: heartbeat_owner,
+                    bindings: heartbeat_bindings,
+                    rpc: heartbeat_rpc,
+                    active: active_rx,
+                };
+                pir_pipeline::supervise(&mut task, Duration::from_secs(1), std::future::pending())
+                    .await
             });
             loop {
                 let observed = rx
@@ -539,7 +496,16 @@ impl Publisher {
                     .clone()
                     .ok_or("Status source unavailable")?;
                 if observed.observed_ms <= last_observed {
-                    tokio::select! { result = rx.changed() => { result?; }, _ = tokio::time::sleep(Duration::from_secs(1)) => {} }
+                    let mut changed = Ok(());
+                    pir_pipeline::wait(
+                        tokio::time::Instant::now() + Duration::from_secs(1),
+                        async {
+                            changed = rx.changed().await;
+                        },
+                        std::future::pending(),
+                    )
+                    .await;
+                    changed?;
                     if heartbeat.is_finished() {
                         break;
                     }
@@ -590,6 +556,120 @@ impl Publisher {
         }
     }
 }
+// Observation only: these timings do not renew source freshness or a role lease.
+struct StatusProgress;
+impl pir_pipeline::Observer for StatusProgress {
+    fn finished(&mut self, phase: pir_pipeline::Phase, elapsed: Duration, succeeded: bool) {
+        tracing::debug!(
+            ?phase,
+            seconds = elapsed.as_secs_f64(),
+            succeeded,
+            "Status lifecycle phase"
+        );
+    }
+}
+
+/// Observation owns the checkpoint cache; it continues while publication waits
+/// on remote preparation. Sending progress cannot refresh a served manifest.
+struct ObservationTask {
+    source: source::RollingWindow,
+    rpc: ZakuraClient,
+    tx: watch::Sender<Option<Arc<source::Observation>>>,
+}
+enum ObservationError {
+    Source(source::SourceError),
+    Closed,
+}
+impl pir_pipeline::Task for ObservationTask {
+    type Error = ObservationError;
+    async fn run(&mut self) -> Result<(), Self::Error> {
+        let input = pir_pipeline::acquire(
+            async { self.source.observe(&self.rpc).await.map(Input::Work) },
+            &mut (),
+        )
+        .await
+        .map_err(ObservationError::Source)?;
+        if let Input::Work(value) = input {
+            self.tx
+                .send(Some(Arc::new(value)))
+                .map_err(|_| ObservationError::Closed)?;
+        }
+        Ok(())
+    }
+    fn failed(&mut self, error: &Self::Error) -> pir_pipeline::FailurePolicy {
+        match error {
+            ObservationError::Source(error) => {
+                tracing::warn!(%error, "Status source observation failed");
+                pir_pipeline::FailurePolicy::NextPoll
+            }
+            ObservationError::Closed => pir_pipeline::FailurePolicy::Stop,
+        }
+    }
+}
+
+struct HeartbeatTask {
+    owner: Publisher,
+    bindings: [Binding; 2],
+    rpc: ZakuraClient,
+    active: watch::Receiver<Option<Manifest>>,
+}
+impl pir_pipeline::Task for HeartbeatTask {
+    type Error = Failure;
+    async fn run(&mut self) -> Result<(), Failure> {
+        let active = self.active.borrow().clone();
+        if let Some(manifest) = active {
+            if canonical_hash(&self.rpc, manifest.anchor_height).await? != manifest.anchor_hash {
+                self.owner.stop();
+                return Err::<(), Failure>("active Status anchor disconnected".into());
+            }
+            for (origin, binding) in [
+                (&self.owner.config.worker_origin, &self.bindings[0]),
+                (&self.owner.config.router_origin, &self.bindings[1]),
+            ] {
+                let ack: Binding = self
+                    .owner
+                    .post(
+                        origin,
+                        "/control/heartbeat",
+                        &Activate {
+                            binding: binding.clone(),
+                            manifest: manifest.clone(),
+                        },
+                    )
+                    .await?;
+                if ack != *binding {
+                    return Err("wrong Status heartbeat acknowledgment".into());
+                }
+            }
+        } else {
+            for (origin, binding) in [
+                (&self.owner.config.worker_origin, &self.bindings[0]),
+                (&self.owner.config.router_origin, &self.bindings[1]),
+            ] {
+                let bytes = bounded(
+                    self.owner
+                        .http
+                        .get(format!("{origin}/control/health"))
+                        .send()
+                        .await?,
+                    16 * 1024,
+                )
+                .await
+                .map_err(|e| e.to_string())?;
+                let health: Health = serde_json::from_slice(&bytes)?;
+                if health.binding != *binding {
+                    return Err("Status role restarted before initial publication".into());
+                }
+            }
+        }
+        Ok(())
+    }
+    fn failed(&mut self, _: &Failure) -> pir_pipeline::FailurePolicy {
+        // The outer owner revokes and fences before attempting recovery.
+        pir_pipeline::FailurePolicy::Stop
+    }
+}
+
 fn same_source(s: &index::Snapshot, m: &Manifest) -> bool {
     s.network == m.network
         && s.salt == m.salt
@@ -710,14 +790,30 @@ mod query_transport_tests {
             public_digest: Sha256::digest(public.as_slice()).into(),
         };
         let refuse_prepare = Arc::new(AtomicBool::new(true));
+        let pause_prepare = Arc::new(AtomicBool::new(false));
+        let preparing = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Notify::new());
+        let heartbeats = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let role = Router::new()
             .route(
                 "/control/prepare-refresh",
                 post({
                     let refuse = refuse_prepare.clone();
+                    let pause = pause_prepare.clone();
+                    let preparing = preparing.clone();
+                    let release = release.clone();
                     move |Json(input): Json<Activate>| {
-                        let refuse = refuse.clone();
+                        let (refuse, pause, preparing, release) = (
+                            refuse.clone(),
+                            pause.clone(),
+                            preparing.clone(),
+                            release.clone(),
+                        );
                         async move {
+                            if pause.load(Ordering::SeqCst) {
+                                preparing.notify_one();
+                                release.notified().await;
+                            }
                             if refuse.load(Ordering::SeqCst) {
                                 return StatusCode::SERVICE_UNAVAILABLE.into_response();
                             }
@@ -741,6 +837,16 @@ mod query_transport_tests {
                     })
                 }),
             );
+        let role = role.route(
+            "/control/heartbeat",
+            post({
+                let heartbeats = heartbeats.clone();
+                move |Json(input): Json<Activate>| {
+                    heartbeats.fetch_add(1, Ordering::SeqCst);
+                    async move { Json(input.binding) }
+                }
+            }),
+        );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let origin = format!("http://{}", listener.local_addr().unwrap());
         let role_task = tokio::spawn(async move { axum::serve(listener, role).await.unwrap() });
@@ -824,11 +930,40 @@ mod query_transport_tests {
             assert_eq!(served, manifest);
         }
         source_down.store(false, Ordering::SeqCst);
+        // Run the production heartbeat task while actual shared preparation is
+        // held at a real HTTP reply. Its renewals retain the old observation.
+        pause_prepare.store(true, Ordering::SeqCst);
+        let (_active_tx, active) = watch::channel(Some(manifest.clone()));
+        let mut heartbeat = HeartbeatTask {
+            owner: publisher.clone(),
+            bindings: bindings.clone(),
+            rpc: rpc.clone(),
+            active,
+        };
+        {
+            let publication = publisher.publish(&observed, &mut authority, &bindings, &rpc);
+            tokio::pin!(publication);
+            tokio::select! {
+                result = &mut publication => panic!("preparation did not pause: {result:?}"),
+                _ = preparing.notified() => {},
+            }
+            for _ in 0..3 {
+                pir_pipeline::Task::run(&mut heartbeat).await.unwrap();
+            }
+            assert_eq!(heartbeats.load(Ordering::SeqCst), 6);
+            let served: Manifest = reqwest::get(&init).await.unwrap().json().await.unwrap();
+            assert_eq!(served, manifest, "heartbeats cannot refresh source time");
+            pause_prepare.store(false, Ordering::SeqCst);
+            release.notify_one();
+            // Both role preparations use the same HTTP fixture; after the
+            // first is released the second no longer pauses.
+            publication.await.unwrap();
+        }
         let activated = publisher
             .publish(&observed, &mut authority, &bindings, &rpc)
             .await
             .unwrap();
-        assert_eq!(activated.generation, identity.0);
+        assert_eq!(activated.generation, identity.0 + 1);
         assert_eq!(activated.observed_ms, observed.observed_ms);
         let served: Manifest = reqwest::get(init).await.unwrap().json().await.unwrap();
         assert_eq!(served, activated);
@@ -890,5 +1025,177 @@ mod query_transport_tests {
             c.query_router_origin = Some(bad.into());
             assert!(Publisher::new(c.clone()).is_err());
         }
+    }
+}
+
+#[cfg(all(test, feature = "native-reinspiring"))]
+mod lifecycle_wallet_tests {
+    use super::*;
+    #[allow(dead_code)]
+    mod transport {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/support/status_http.rs"
+        ));
+    }
+    use transport::Loopback;
+    use zakura_pir_status as wallet;
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn shared_status_lifecycle_collects_publishes_and_advances_over_real_roles() {
+        let root = tempfile::tempdir().unwrap();
+        let (rpc, source_task) = source::tests::fixture(false, false).await;
+        let (tx, rx) = watch::channel(None);
+        let mut input = ObservationTask {
+            source: source::RollingWindow::open(root.path().join("source"), [1; 32], 1).unwrap(),
+            rpc: rpc.clone(),
+            tx,
+        };
+        pir_pipeline::Task::run(&mut input)
+            .await
+            .map_err(|_| "source collection")
+            .unwrap();
+        let observed = rx.borrow().clone().unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let publisher_origin = format!("http://{}", listener.local_addr().unwrap());
+        let worker_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let worker_origin = format!("http://{}", worker_listener.local_addr().unwrap());
+        let router_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let router_origin = format!("http://{}", router_listener.local_addr().unwrap());
+        let publisher = Publisher::new(Config {
+            state_dir: root.path().join("publisher"),
+            salt_hex: hex::encode([1; 32]),
+            window_blocks: 1,
+            worker_origin: worker_origin.clone(),
+            router_origin: router_origin.clone(),
+            query_router_origin: None,
+            private_listen: listener.local_addr().unwrap(),
+            public_enabled: true,
+        })
+        .unwrap();
+        let app = publisher.routes().merge(
+            Router::new()
+                .route("/artifact/:id", get(artifact))
+                .with_state(publisher.clone()),
+        );
+        let publisher_task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let worker = Service::open(
+            Role::Worker,
+            observed.snapshot.network,
+            root.path().join("worker"),
+            publisher_origin.clone(),
+            worker_origin.clone(),
+            false,
+        )
+        .unwrap();
+        let router = Service::open(
+            Role::Router,
+            observed.snapshot.network,
+            root.path().join("router"),
+            worker_origin.clone(),
+            worker_origin,
+            false,
+        )
+        .unwrap();
+        let worker_routes = worker.routes();
+        let router_routes = router.routes();
+        let worker_task =
+            tokio::spawn(async move { axum::serve(worker_listener, worker_routes).await.unwrap() });
+        let router_task =
+            tokio::spawn(async move { axum::serve(router_listener, router_routes).await.unwrap() });
+        // Reuse RAII listener cleanup from the existing independent-client test.
+        let _services = [
+            transport::Listening {
+                origin: publisher_origin.clone(),
+                task: publisher_task,
+            },
+            transport::Listening {
+                origin: String::new(),
+                task: worker_task,
+            },
+            transport::Listening {
+                origin: String::new(),
+                task: router_task,
+            },
+            transport::Listening {
+                origin: String::new(),
+                task: source_task,
+            },
+        ];
+        let mut authority = authority::Authority::open(
+            root.path().join("authority"),
+            observed.snapshot.network,
+            [1; 32],
+        )
+        .unwrap();
+        let bindings = publisher
+            .fence_roles(authority.next_identity().unwrap().1)
+            .await
+            .unwrap();
+        let first = publisher
+            .publish(&observed, &mut authority, &bindings, &rpc)
+            .await
+            .unwrap();
+        assert!(root.path().join("source/source.bin").exists());
+        let transport = Loopback {
+            origin: publisher_origin,
+            http: reqwest::Client::new(),
+            corrupt_answer: AtomicBool::new(false),
+        };
+        let anchor = wallet::AcceptedAnchor {
+            network: first.network,
+            height: first.anchor_height,
+            hash: first.anchor_hash,
+        };
+        let coverage = wallet::LocalCoverageContext {
+            earliest_possible_inclusion: Some(1),
+            required_through: Some(1),
+        };
+        let txid = zakura_server_chain::hash::parse_display(
+            &zakura_server_chain::testing::status::regtest_genesis().2,
+        )
+        .unwrap();
+        let client = wallet::transport::PendingClient::fetch(
+            &transport,
+            "https://status-wallet.invalid",
+            now_ms,
+        )
+        .await
+        .unwrap()
+        .accept(&transport, &anchor)
+        .await
+        .unwrap();
+        assert_eq!(
+            client.observe(&transport, &txid, coverage).await.unwrap(),
+            wallet::Observation::Mined(1)
+        );
+        pir_pipeline::Task::run(&mut input)
+            .await
+            .map_err(|_| "next source collection")
+            .unwrap();
+        let next_observed = rx.borrow().clone().unwrap();
+        let next = publisher
+            .publish(&next_observed, &mut authority, &bindings, &rpc)
+            .await
+            .unwrap();
+        assert_eq!(next.generation, first.generation + 1);
+        assert_eq!(next.rows_digest, first.rows_digest);
+        assert_eq!(next.observed_ms, next_observed.observed_ms);
+        let current = wallet::transport::PendingClient::fetch(
+            &transport,
+            "https://status-wallet.invalid",
+            now_ms,
+        )
+        .await
+        .unwrap()
+        .accept(&transport, &anchor)
+        .await
+        .unwrap();
+        assert_eq!(
+            current.observe(&transport, &txid, coverage).await.unwrap(),
+            wallet::Observation::Mined(1)
+        );
+        // Keep the original real HTTP wallet regression's malformed and
+        // independent synthetic observation cases unchanged in its own target.
     }
 }

@@ -39,10 +39,12 @@ there are no new wallet routes, flags or HTTP sources in these products. Serving
 libraries cannot depend on this ingestion component, and its dependency checks
 allow only Tokio and its utility graph, including dev/build/target edges.
 
-Status already owns observation and publication in the application's
-`status::source` and `status::publisher`: source checkpoints remain a cache,
+Status also composes the shared lifecycle in the application's
+`status::source` and `status::publisher`: independently supervised observation and
+heartbeats continue during preparation. Source checkpoints remain a cache,
 observations carry their original freshness, and failed preparation cannot grant
-serving authority. Serving packages continue to consume prepared publications
+serving authority. Its [architecture](architecture_status.md#observation-collection-and-publication)
+describes the owner activation and recovery boundary. Serving packages continue to consume prepared publications
 without depending on ingestion or the chain reader.
 
 ## Data and query path

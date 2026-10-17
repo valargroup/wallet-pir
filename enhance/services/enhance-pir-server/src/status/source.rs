@@ -361,7 +361,7 @@ pub async fn observe(
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
     use axum::{extract::State, routing::post, Json, Router};
     use serde_json::{json, Value};
@@ -400,7 +400,7 @@ mod tests {
         Json(json!({"result":result,"error":null,"id":"enhance-pir"}))
     }
 
-    async fn fixture(
+    pub(crate) async fn fixture(
         move_tip: bool,
         bad_block_hash: bool,
     ) -> (ZakuraClient, tokio::task::JoinHandle<()>) {

@@ -1792,3 +1792,175 @@ async fn metrics_report_cycles_stages_and_freshness() {
         assert_eq!(count, expected, "{stage}");
     }
 }
+
+// Reuse the serving tests' independent wallet transport and per-process pure
+// profile cache. This controller still owns fresh journal/root/worker state.
+#[path = "../../../../transparent-shard-server/tests/support/display_world.rs"]
+mod display_world;
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn shared_display_lifecycle_serves_before_and_after_ordered_seals_and_restart() {
+    use transparent_shard_server::display::live::{reply_line, DisplayCommand};
+    use transparent_shard_server::display::DisplayRole;
+    let temp = tempfile::tempdir().unwrap();
+    let journal = temp.path().join("journal");
+    fixture::write_journal(&journal, 100, 112, 0);
+    let layout = layout(&journal, 100);
+    let root = temp.path().join("root");
+    bootstrap_at(&journal, &root, &layout, 103);
+    let archive = display_world::Worker::new(
+        temp.path(),
+        DisplayRole::ArchiveOwner,
+        display_world::config(),
+        vec![root.clone()],
+    );
+    let recent = display_world::Worker::new(
+        temp.path(),
+        DisplayRole::RecentReplica,
+        display_world::config(),
+        vec![root.clone()],
+    );
+    let log: Log = Arc::default();
+    struct Tasks(Vec<tokio::task::JoinHandle<()>>);
+    impl Drop for Tasks {
+        fn drop(&mut self) {
+            for task in &self.0 {
+                task.abort();
+            }
+        }
+    }
+    let mut tasks = Tasks(Vec::new());
+    for (name, live) in [
+        ("archive", archive.live.clone()),
+        ("recent", recent.live.clone()),
+    ] {
+        let listener =
+            tokio::net::UnixListener::bind(temp.path().join(format!("{name}.sock"))).unwrap();
+        let log = log.clone();
+        tasks.0.push(tokio::spawn(async move {
+            loop {
+                let (stream, _) = listener.accept().await.unwrap();
+                let (read, mut write) = stream.into_split();
+                let mut line = String::new();
+                tokio::io::BufReader::new(read)
+                    .read_line(&mut line)
+                    .await
+                    .unwrap();
+                let command: DisplayCommand = serde_json::from_str(&line).unwrap();
+                log.lock()
+                    .unwrap()
+                    .push((name.into(), serde_json::to_value(&command).unwrap()));
+                let reply = reply_line(live.command(command).await);
+                write
+                    .write_all(format!("{reply}\n").as_bytes())
+                    .await
+                    .unwrap();
+            }
+        }));
+    }
+    let app = axum::Router::new()
+        .fallback(display_world::edge)
+        .with_state(display_world::Edge {
+            archive: archive.live.router(),
+            recent: recent.live.router(),
+            faults: Default::default(),
+        });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    tasks.0.push(tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    }));
+    let workers = vec![
+        socket_worker(temp.path(), "archive", WorkerRole::ArchiveOwner),
+        socket_worker(temp.path(), "recent", WorkerRole::RecentReplica),
+    ];
+    let mut controller = Controller::open(
+        &root,
+        open_writer(&journal).unwrap(),
+        Source::Script(Script::new(vec![ScriptStep::Advance(112)])),
+        workers.clone(),
+        settings(),
+    )
+    .unwrap();
+    controller
+        .sync_workers()
+        .await
+        .map_err(|_| "bootstrap activation")
+        .unwrap();
+    let mut wallet = display_world::Wallet::at(&origin);
+    wallet.found(&chain_records(0, 103)[0], 103);
+    assert_eq!(controller.run().await.unwrap(), Outcome::Idle);
+    let active = controller.active().clone();
+    assert!(
+        active.seals.len() >= 2,
+        "every planned seal must survive: {:?}",
+        active.seals
+    );
+    // The oracle comes from the journal source fixture, not a read-back of the
+    // controller's published rows. Query both the archive and advanced recent.
+    wallet.found(&chain_records(0, 100)[0], 100);
+    wallet.found(&chain_records(0, 112)[0], 112);
+    let commands = log.lock().unwrap();
+    for seal in &active.seals {
+        let stage = commands
+            .iter()
+            .position(|(w, c)| {
+                w == "archive"
+                    && c["operation"] == "stage"
+                    && c["directory"]
+                        .as_str()
+                        .is_some_and(|p| p.ends_with(&seal.digest))
+            })
+            .unwrap();
+        let named = |worker: &str| {
+            commands
+                .iter()
+                .enumerate()
+                .find(|(_, (w, c))| {
+                    if w != worker || c["operation"] != "prepare" {
+                        return false;
+                    }
+                    let directory = c["publication"]["directory"].as_str().unwrap();
+                    read_map(
+                        Path::new(directory),
+                        c["publication"]["map_sha256"].as_str().unwrap(),
+                    )
+                    .unwrap()
+                    .shards
+                    .iter()
+                    .any(|s| s.manifest_digest == seal.digest)
+                })
+                .map(|(i, _)| i)
+                .unwrap()
+        };
+        let archive_prepare = named("archive");
+        let activated = commands
+            .iter()
+            .enumerate()
+            .find(|(i, (w, c))| {
+                *i > archive_prepare && w == "archive" && c["operation"] == "activate"
+            })
+            .unwrap()
+            .0;
+        assert!(
+            stage < archive_prepare && archive_prepare < activated && activated < named("recent")
+        );
+    }
+    drop(commands);
+    drop(controller);
+    let mut restarted = Controller::open(
+        &root,
+        open_writer(&journal).unwrap(),
+        Source::Script(Script::new(Vec::new())),
+        workers,
+        settings(),
+    )
+    .unwrap();
+    assert_eq!(restarted.run().await.unwrap(), Outcome::Idle);
+    assert_eq!(restarted.active().map_sha256, active.map_sha256);
+    assert_eq!(
+        identities(&restarted.active().seals),
+        identities(&active.seals)
+    );
+    wallet.found(&chain_records(0, 112)[0], 112);
+}

@@ -3672,6 +3672,7 @@ dependencies = [
  "libc",
  "pir-control",
  "pir-observability",
+ "pir-pipeline",
  "prometheus",
  "reqwest",
  "serde",
