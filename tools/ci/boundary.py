@@ -85,7 +85,7 @@ SHARED = 'shared/'
 PIPELINE = 'pir-pipeline'
 PIPELINE_DIRECT = {'tokio'}
 # These chain-free serving foundations also must not import the lifecycle.
-# transparent-shard-server is an application (its HTTPS manager adopts it later).
+# transparent-shard-server is an application; its HTTPS manager uses the lifecycle.
 PIPELINE_FOUNDATIONS = {'receiver-pir-server', 'pir-control', 'pir-observability'}
 PIPELINE_UTILITIES = {
     'tokio', 'tokio-macros', 'pin-project-lite', 'proc-macro2', 'quote', 'syn',

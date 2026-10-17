@@ -196,7 +196,12 @@ new manager cannot race an unfinished durable commit. Each attempt
 has the existing connect/request deadlines and response-body budget. Transfers
 are sequential (concurrency one); successful synchronization waits five seconds
 plus up to one second of jitter, while failures back off exponentially to 120
-seconds plus jitter. Only an activated snapshot supplies a conditional token.
+seconds plus jitter. The acquisition, strict preparation and checked owner publication phases compose
+`shared/pir-pipeline` using private borrowed tokens; no phase token is persisted.
+Shared boundary waiting preserves this delay-after-pass schedule and never drops
+an in-progress activation. Every failed pass starts the next attempt with source
+reconciliation rather than retrying an uncertain activation directly.
+Only an activated snapshot supplies a conditional token.
 Unchanged responses do not fetch inventories/artifacts, update a success-time
 lease, or authorize an activation. Transparent still has no lease.
 
