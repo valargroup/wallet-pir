@@ -396,6 +396,17 @@ results as evidence:
 
 ## Observation collection and publication
 
+The application publisher composes `shared/pir-pipeline` acquisition,
+preparation and owner publication. Acquisition still commits only the source
+checkpoint cache. Its one-second observation task and the separately supervised
+heartbeat task continue while a candidate waits on remote preparation. Preparation
+returns immutable manifest/public material; `commit_activate` rechecks canonicality
+and freshness, commits the existing authority record and checks both role replies
+before exposing the generation. A failure after authority advances still stops
+serving and returns to fencing; shared supervision never retries activation.
+Phase timings are internal observations, without changing status formats, source
+freshness or role leases. No store, authority or publication format is shared.
+
 ### Source consistency and freshness
 
 Poll the canonical tip and complete mempool on a one-second cadence. Validate

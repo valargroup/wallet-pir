@@ -14,6 +14,7 @@ use axum::{
     response::{IntoResponse, Response},
     Router,
 };
+use pir_pipeline::Input;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
@@ -458,50 +459,24 @@ pub async fn run(config: Config) -> Result<(), BoxError> {
     let ingest_store = store.clone();
     let ingest_rpc = rpc.clone();
     tokio::spawn(async move {
-        let mut cache = OutputCache::new(crate::prevout::DEFAULT_CACHE_OUTPUTS);
-        let mut pending_invalidation = None;
-        loop {
-            if ingest_config.follow_journal {
-                if let Err(error) = follow_once(
-                    &ingest_config,
-                    &ingest_rpc,
-                    &ingest_store,
-                    &ingest_authority,
-                    &mut pending_invalidation,
-                    &notify,
-                )
-                .await
-                {
-                    if error.downcast_ref::<EventStoreError>().is_some() {
-                        tracing::error!(%error,"journal read failed; restart from its checkpoint");
-                        std::process::exit(1);
-                    }
-                    tracing::error!(%error,"journal follow failed; retrying without advancing coverage");
-                    ingest_authority.0.status.write().unwrap()["ingest_error"] =
-                        error.to_string().into();
-                }
-                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                continue;
-            }
-            if let Err(error) = ingest_once(
-                &ingest_config,
-                &ingest_rpc,
-                &ingest_store,
-                &ingest_authority,
-                &mut cache,
-                &notify,
-            )
-            .await
-            {
-                if error.downcast_ref::<EventStoreError>().is_some() {
-                    tracing::error!(%error,"journal write failed; restart from durable checkpoint");
-                    std::process::exit(1);
-                }
-                tracing::error!(%error,"chain follow failed; retrying without advancing coverage");
-                ingest_authority.0.status.write().unwrap()["ingest_error"] =
-                    error.to_string().into();
-            }
-            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        let mut task = HistoryInputTask {
+            config: ingest_config,
+            rpc: ingest_rpc,
+            store: ingest_store,
+            authority: ingest_authority,
+            notify,
+            cache: OutputCache::new(crate::prevout::DEFAULT_CACHE_OUTPUTS),
+            pending_invalidation: None,
+        };
+        if let Err(error) = pir_pipeline::supervise(
+            &mut task,
+            std::time::Duration::from_secs(1),
+            std::future::pending(),
+        )
+        .await
+        {
+            tracing::error!(%error,"journal I/O failed; restart from durable checkpoint");
+            std::process::exit(1);
         }
     });
     loop {
@@ -533,7 +508,68 @@ pub async fn run(config: Config) -> Result<(), BoxError> {
         if let Err(error) = collect_candidates(&config, &authority) {
             tracing::warn!(%error,"candidate collection failed");
         }
-        tokio::select! { _=updates.changed()=>{}, _=tokio::time::sleep(std::time::Duration::from_secs(1))=>{} }
+        pir_pipeline::wait(
+            tokio::time::Instant::now() + std::time::Duration::from_secs(1),
+            async {
+                let _ = updates.changed().await;
+            },
+            std::future::pending(),
+        )
+        .await;
+    }
+}
+
+// Independent from publication: backpressure or slow fleet preparation cannot
+// delay canonical observation, revocation or journal commits.
+struct HistoryInputTask {
+    config: Config,
+    rpc: NodeClient,
+    store: Arc<tokio::sync::Mutex<EventStore>>,
+    authority: Authority,
+    notify: tokio::sync::watch::Sender<u64>,
+    cache: OutputCache,
+    pending_invalidation: Option<u64>,
+}
+impl pir_pipeline::Task for HistoryInputTask {
+    type Error = BoxError;
+    async fn run(&mut self) -> Result<(), BoxError> {
+        pir_pipeline::acquire(
+            async {
+                if self.config.follow_journal {
+                    follow_once(
+                        &self.config,
+                        &self.rpc,
+                        &self.store,
+                        &self.authority,
+                        &mut self.pending_invalidation,
+                        &self.notify,
+                    )
+                    .await?;
+                } else {
+                    ingest_once(
+                        &self.config,
+                        &self.rpc,
+                        &self.store,
+                        &self.authority,
+                        &mut self.cache,
+                        &self.notify,
+                    )
+                    .await?;
+                }
+                Ok::<_, BoxError>(Input::Work(()))
+            },
+            &mut (),
+        )
+        .await?;
+        Ok(())
+    }
+    fn failed(&mut self, error: &BoxError) -> pir_pipeline::FailurePolicy {
+        if error.downcast_ref::<EventStoreError>().is_some() {
+            return pir_pipeline::FailurePolicy::Stop;
+        }
+        tracing::error!(%error,"chain/journal follow failed; retrying without advancing coverage");
+        self.authority.0.status.write().unwrap()["ingest_error"] = error.to_string().into();
+        pir_pipeline::FailurePolicy::NextPoll
     }
 }
 
@@ -769,12 +805,71 @@ async fn ingest_once(
     Ok(())
 }
 
+struct HistoryProgress;
+impl pir_pipeline::Observer for HistoryProgress {
+    fn finished(
+        &mut self,
+        phase: pir_pipeline::Phase,
+        elapsed: std::time::Duration,
+        succeeded: bool,
+    ) {
+        tracing::debug!(
+            ?phase,
+            seconds = elapsed.as_secs_f64(),
+            succeeded,
+            "history lifecycle phase"
+        );
+    }
+}
+
+// Product-owned tokens retain the immutable source snapshot and activation
+// evidence. The shared engine owns neither stores nor publication authority.
+struct HistoryWork {
+    old: Arc<Public>,
+    epoch: u64,
+    snapshot: Snapshot,
+    height: u64,
+    hash: String,
+}
+struct HistoryCandidate {
+    candidate: Public,
+    epoch: u64,
+    height: u64,
+    hash: String,
+    started: std::time::Instant,
+    published_unix: f64,
+    prepared_unix: f64,
+    runtimes: Option<serde_json::Value>,
+    prepared: serde_json::Value,
+}
+
 async fn publish_once(
     config: &Config,
     rpc: &NodeClient,
     store: &Arc<tokio::sync::Mutex<EventStore>>,
     authority: &Authority,
 ) -> Result<(), BoxError> {
+    let input = pir_pipeline::acquire(
+        acquire_history(config, rpc, store, authority),
+        &mut HistoryProgress,
+    )
+    .await?;
+    pir_pipeline::advance(
+        input,
+        |work| prepare_history(config, rpc, authority, work),
+        |candidate| activate_history(config, rpc, authority, candidate),
+        &mut HistoryProgress,
+    )
+    .await?;
+    Ok(())
+}
+
+async fn acquire_history(
+    config: &Config,
+    rpc: &NodeClient,
+    store: &Arc<tokio::sync::Mutex<EventStore>>,
+    authority: &Authority,
+) -> Result<Input<HistoryWork>, BoxError> {
     let old = authority.0.active.read().unwrap().clone();
     let epoch = authority.0.epoch.load(Ordering::Acquire);
     {
@@ -785,7 +880,7 @@ async fn publish_once(
                 .is_some_and(|b| b.block_hash.to_display_hex() == old.publication.hash)
             && !authority.0.withdrawn.load(Ordering::Acquire)
         {
-            return Ok(());
+            return Ok(Input::Unchanged);
         }
     }
     authority
@@ -809,7 +904,7 @@ async fn publish_once(
         && hash == old.publication.hash
         && !authority.0.withdrawn.load(Ordering::Acquire)
     {
-        return Ok(());
+        return Ok(Input::Unchanged);
     }
     if config.shadow
         && authority
@@ -820,8 +915,30 @@ async fn publish_once(
             .get("shadow_hash")
             .is_some_and(|h| h == &hash)
     {
-        return Ok(());
+        return Ok(Input::Unchanged);
     }
+    Ok(Input::Work(HistoryWork {
+        old,
+        epoch,
+        snapshot,
+        height,
+        hash,
+    }))
+}
+
+async fn prepare_history(
+    config: &Config,
+    rpc: &NodeClient,
+    authority: &Authority,
+    work: HistoryWork,
+) -> Result<Input<HistoryCandidate>, BoxError> {
+    let HistoryWork {
+        old,
+        epoch,
+        snapshot,
+        height,
+        hash,
+    } = work;
     let started = std::time::Instant::now();
     let same = height == old.publication.height && hash == old.publication.hash;
     let directory = if same {
@@ -918,8 +1035,48 @@ async fn publish_once(
         authority.0.status.write().unwrap()["shadow_hash"] = hash.into();
         authority.0.status.write().unwrap()["build_seconds"] =
             started.elapsed().as_secs_f64().into();
-        return Ok(());
+        return Ok(Input::Unchanged);
     }
+    Ok(Input::Work(HistoryCandidate {
+        candidate,
+        epoch,
+        height,
+        hash,
+        started,
+        published_unix,
+        prepared_unix,
+        runtimes,
+        prepared,
+    }))
+}
+
+async fn activate_history(
+    config: &Config,
+    rpc: &NodeClient,
+    authority: &Authority,
+    ready: HistoryCandidate,
+) -> Result<(), BoxError> {
+    let HistoryCandidate {
+        mut candidate,
+        epoch,
+        height,
+        hash,
+        started,
+        published_unix,
+        prepared_unix,
+        runtimes,
+        prepared,
+    } = ready;
+    // The candidate is only evidence. Recheck at the owner boundary before
+    // writing activation intent or changing any fleet authority.
+    if authority.0.epoch.load(Ordering::Acquire) != epoch
+        || rpc.block_hash_display(height).await? != hash
+        // Ingest can invalidate while the canonicality RPC is awaiting its reply.
+        || authority.0.epoch.load(Ordering::Acquire) != epoch
+    {
+        return Err("candidate invalidated before activation".into());
+    }
+    let directory = &candidate.publication.directory;
     publication::write_atomic(
         &config.publication_root.join("activation.json"),
         &serde_json::to_vec(&candidate.publication)?,
@@ -1815,6 +1972,9 @@ mod tests {
 import json,sys,time
 from pathlib import Path
 r=json.load(sys.stdin)
+with Path(__file__).with_suffix('.requests').open('a') as log: log.write(json.dumps(r)+'\n')
+if r['operation']=='prepare' and Path(__file__).with_suffix('.fail').exists():
+    print(json.dumps({'ok':False,'error':'fixture preparation failed'})); sys.exit(0)
 pause=Path(__file__).with_suffix('.pause')
 if r['operation']=='prepare' and pause.exists():
     pause.with_suffix('.entered').touch()
@@ -1874,10 +2034,62 @@ print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('re
         }));
         let store = Arc::new(tokio::sync::Mutex::new(journal));
         let (notify, _) = tokio::sync::watch::channel(0);
-        let mut cache = OutputCache::new(100);
-        ingest_once(&config, &client, &store, &authority, &mut cache, &notify)
+        let mut input = HistoryInputTask {
+            config: config.clone(),
+            rpc: client.clone(),
+            store: store.clone(),
+            authority: authority.clone(),
+            notify: notify.clone(),
+            cache: OutputCache::new(100),
+            pending_invalidation: None,
+        };
+        pir_pipeline::Task::run(&mut input).await.unwrap();
+        let mut cache = input.cache;
+        assert_eq!(store.lock().await.covered_through(), Some(4));
+        let fail = config.fleet_command.with_extension("fail");
+        std::fs::write(&fail, []).unwrap();
+        assert!(publish_once(&config, &client, &store, &authority)
             .await
-            .unwrap();
+            .is_err());
+        assert_eq!(authority.0.active.read().unwrap().publication.height, 2);
+        assert!(!config.publication_root.join("activation.json").exists());
+        // Preparation failure cannot undo the independent source commit; a
+        // restarted reader sees it before any successful publication.
+        assert_eq!(
+            EventStore::open_existing(&config.data_dir)
+                .unwrap()
+                .covered_through(),
+            Some(4)
+        );
+        std::fs::remove_file(fail).unwrap();
+        // A candidate observed by shared progress has no activation authority.
+        let Input::Work(work) = acquire_history(&config, &client, &store, &authority)
+            .await
+            .unwrap()
+        else {
+            panic!("new durable work expected");
+        };
+        let Input::Work(ready) = prepare_history(&config, &client, &authority, work)
+            .await
+            .unwrap()
+        else {
+            panic!("prepared candidate expected");
+        };
+        authority.0.epoch.fetch_add(1, Ordering::AcqRel);
+        assert!(activate_history(&config, &client, &authority, ready)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("invalidated before activation"));
+        assert!(!config.publication_root.join("activation.json").exists());
+        let requests =
+            std::fs::read_to_string(config.fleet_command.with_extension("requests")).unwrap();
+        assert!(requests
+            .lines()
+            .all(
+                |line| serde_json::from_str::<serde_json::Value>(line).unwrap()["operation"]
+                    != "activate"
+            ));
         // Replacing journal-only blocks must cancel preparation without
         // withdrawing the still-canonical publication through height two.
         {

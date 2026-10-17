@@ -7,6 +7,7 @@ use crate::{
     ingest::EnhanceJournal,
     zakura::{Prevouts, ZakuraClient},
 };
+use pir_pipeline::{FailurePolicy, Input, Phase};
 use serde::Deserialize;
 use std::{path::PathBuf, time::Duration};
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
@@ -39,15 +40,47 @@ pub struct Config {
 pub async fn run(
     config: Config,
     coordinator: Coordinator,
-    mut journal: EnhanceJournal,
+    journal: EnhanceJournal,
     source: Source,
     task: tokio::task::JoinHandle<std::io::Result<()>>,
 ) -> Result<()> {
-    loop {
-        if let Err(error) = coordinator.reconcile().await {
+    let poll = config.poll;
+    pir_pipeline::supervise(
+        &mut Ingestion {
+            config,
+            coordinator,
+            journal,
+            source,
+            task,
+        },
+        poll,
+        std::future::pending(),
+    )
+    .await
+}
+
+struct Ingestion {
+    config: Config,
+    coordinator: Coordinator,
+    journal: EnhanceJournal,
+    source: Source,
+    task: tokio::task::JoinHandle<std::io::Result<()>>,
+}
+impl pir_pipeline::Task for Ingestion {
+    type Error = Box<dyn std::error::Error + Send + Sync>;
+    async fn run(&mut self) -> Result<()> {
+        let Self {
+            config,
+            coordinator,
+            journal,
+            source,
+            task,
+        } = self;
+        if let Err(error) =
+            pir_pipeline::phase(Phase::Reconcile, coordinator.reconcile(), &mut ()).await
+        {
             tracing::error!(%error, "publication recovery blocked");
-            tokio::time::sleep(config.poll).await;
-            continue;
+            return Ok(());
         }
         // Capacity registration is independent of journal advancement. A bad
         // or unavailable addition must not stop serving/publishing on the
@@ -79,24 +112,28 @@ pub async fn run(
                 coordinator.configure_pool(config.frontier_replicas, p.unwrap_or_default())
             }) {
                 tracing::error!(%error,"pool policy waiting for inventory or durable decisions");
-                tokio::time::sleep(config.poll).await;
-                continue;
+                return Ok(());
             }
         }
         let result = async {
-            collect(&mut journal, &coordinator, &source)
+            collect(journal, coordinator, source)
                 .await?
                 .publish(config.capacity_policy)
                 .await
         }
         .await;
-        if let Err(error) = result {
-            tracing::error!(%error, "ingestion/publication blocked");
-        }
         if task.is_finished() {
             return Err("HTTP server stopped".into());
         }
-        tokio::time::sleep(config.poll).await;
+        result
+    }
+    fn failed(&mut self, error: &Self::Error) -> FailurePolicy {
+        if self.task.is_finished() {
+            FailurePolicy::Stop
+        } else {
+            tracing::error!(%error, "ingestion/publication blocked");
+            FailurePolicy::NextPoll
+        }
     }
 }
 
@@ -113,6 +150,28 @@ pub struct Collected<'a> {
 /// Revoke before rewinding, then append only verified source blocks. Collection
 /// commits independently of preparation, allowing retry/restart without rereading.
 pub async fn collect<'a>(
+    journal: &'a mut EnhanceJournal,
+    coordinator: &'a Coordinator,
+    source: &'a Source,
+) -> Result<Collected<'a>> {
+    match pir_pipeline::acquire(
+        async {
+            collect_inner(journal, coordinator, source)
+                .await
+                .map(Input::Work)
+        },
+        &mut (),
+    )
+    .await?
+    {
+        Input::Work(work) => Ok(work),
+        Input::Unchanged | Input::Deferred => {
+            unreachable!("Enhance collection always commits an anchor")
+        }
+    }
+}
+
+async fn collect_inner<'a>(
     journal: &'a mut EnhanceJournal,
     coordinator: &'a Coordinator,
     source: &'a Source,
@@ -187,12 +246,23 @@ impl Collected<'_> {
     /// Observe capacity and prepare/activate through the coordinator's existing
     /// checked publication API, revalidating the canonical anchor before commit.
     pub async fn publish(self, capacity_policy: capacity::Policy) -> Result<()> {
+        pir_pipeline::advance(
+            Input::Work(self),
+            |work| work.prepare(capacity_policy),
+            |candidate| candidate.activate(),
+            &mut (),
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn prepare(self, capacity_policy: capacity::Policy) -> Result<Input<Self>> {
         let Self {
             journal,
             coordinator,
-            source,
             height,
-            hash,
+            ref hash,
+            ..
         } = self;
         coordinator.observe_capacity(
             journal.tree_size(),
@@ -204,10 +274,23 @@ impl Collected<'_> {
         if coordinator
             .manifest()
             .await
-            .is_some_and(|m| m.anchor_height == height && m.anchor_block_hash == hash)
+            .is_some_and(|m| m.anchor_height == height && m.anchor_block_hash == *hash)
         {
-            return Ok(());
+            return Ok(Input::Unchanged);
         }
+        Ok(Input::Work(self))
+    }
+
+    // Distributed preparation and activation deliberately remain one owner call:
+    // the coordinator holds its publication permit and durable operation throughout.
+    async fn activate(self) -> Result<()> {
+        let Self {
+            journal,
+            coordinator,
+            source,
+            height,
+            hash,
+        } = self;
         let verify_hash = hash.clone();
         coordinator
             .publish_checked(journal.records(), height, hash, || async {

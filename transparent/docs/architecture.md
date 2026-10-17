@@ -108,6 +108,19 @@ production processes remain separate so publication can prepare a new revision
 without sharing the query worker's CPU, memory limit or restart lifecycle.
 Existing query-library paths re-export the moved backend types for tooling.
 
+The standard history controller composes `shared/pir-pipeline` without joining
+its input and publication schedules. Shared supervision runs the existing ingest
+or followed-journal pass and stops on typed journal I/O failures; transient source
+failures retain the checkpoint and retry after the existing delay. Publication
+acquires an immutable suffix snapshot, prepares its candidate and fleet quorum,
+then delegates activation to the history owner. Epoch/canonical checks precede
+activation intent, and the existing checked pointer commit, invalidation and
+unfinished-activation records remain product owned. Only preparation's existing
+fleet wait is cancellable on invalidation. Activation completes its existing
+post-checks. Boundary waits retain the input notification and publication deadline;
+phase timings do not grant serving authority. The HTTPS manager still owns its
+separate acquisition loop and source/safety policy.
+
 The query worker serves maps and range filters at the same paths as the public
 filter origin. Wallets can use one origin or configure separate public and
 private origins. This does not change what a query discloses or provide a new

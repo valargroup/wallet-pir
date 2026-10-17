@@ -482,8 +482,8 @@ async fn canonical_cli_ingests_rpc_rewinds_reorg_and_restarts_without_duplicatio
 }
 
 /// The application commits independently of remote preparation refusal. Exercise
-/// collection/restart/reorg directly without duplicating cold-runtime qualification;
-/// the canonical CLI case above retains successful publication and encrypted recovery.
+/// collection/restart/reorg and two real publications against the frozen byte oracle.
+/// The larger CLI scenario above retains its independent end-to-end qualification.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn application_collection_commits_survive_preparation_refusal_restart_and_reorg() {
     use enhance_pir_server::{
@@ -581,9 +581,8 @@ async fn application_collection_commits_survive_preparation_refusal_restart_and_
         journal.records().read_records(0, 1).unwrap(),
         expected[84..]
     );
-    // Drain the refused candidate before restart. Successful cold preparation and
-    // encrypted recovery remain covered by the unchanged canonical CLI case above;
-    // this direct API case bounds collection/refusal/recovery independently of it.
+    // Drain the refused candidate before restart; the next pass must recover the
+    // committed source without rereading or duplicating its positions.
     coordinator.reconcile().await.unwrap();
     drop(journal);
     drop(coordinator);
@@ -593,6 +592,27 @@ async fn application_collection_commits_survive_preparation_refusal_restart_and_
     drop(collect(&mut journal, &coordinator, &source).await.unwrap());
     assert_eq!(journal.tree_size(), 2);
     assert_eq!(journal.highest_committed().unwrap().1, state.blocks[0].1);
+    // Retry preparation through the shared lifecycle, using the existing worker
+    // HTTP boundaries and original independent client/record oracle.
+    refuse.store(false, Ordering::SeqCst);
+    collect(&mut journal, &coordinator, &source)
+        .await
+        .unwrap()
+        .publish(capacity::Policy::default())
+        .await
+        .unwrap();
+    let first = coordinator.manifest().await.unwrap();
+    let (origin, router_task) = serve(coordinator.clone().router()).await;
+    let mut retained = EnhancePirClient::connect(&origin).await.unwrap();
+    assert_eq!(
+        retained
+            .query_position_with_timing(0)
+            .await
+            .unwrap()
+            .0
+            .as_ref(),
+        &expected[84..]
+    );
     // Reorg plus invalid source completeness must fail after the durable rewind.
     state.selected.store(1, Ordering::SeqCst);
     state.tree_size.store(3, Ordering::SeqCst);
@@ -604,12 +624,46 @@ async fn application_collection_commits_survive_preparation_refusal_restart_and_
     drop(collect(&mut journal, &coordinator, &source).await.unwrap());
     assert_eq!(journal.tree_size(), 2);
     assert_eq!(journal.highest_committed().unwrap().1, state.blocks[1].1);
-    assert!(
-        coordinator.manifest().await.is_none(),
-        "collection cannot activate"
+    assert_eq!(
+        coordinator.manifest().await.unwrap().generation,
+        first.generation,
+        "collection cannot activate a replacement"
     );
+    collect(&mut journal, &coordinator, &source)
+        .await
+        .unwrap()
+        .publish(capacity::Policy::default())
+        .await
+        .unwrap();
+    let next = coordinator.manifest().await.unwrap();
+    assert!(next.generation > first.generation);
+    assert_eq!(next.anchor_block_hash, state.blocks[1].1);
+    let mut current = EnhancePirClient::connect(&origin).await.unwrap();
+    assert_eq!(
+        current
+            .query_position_with_timing(0)
+            .await
+            .unwrap()
+            .0
+            .as_ref(),
+        &expected[84..]
+    );
+    assert_eq!(
+        retained
+            .query_position_with_timing(0)
+            .await
+            .unwrap()
+            .0
+            .as_ref(),
+        &expected[84..],
+        "existing client recovers expected answer after publication replacement"
+    );
+    router_task.abort();
+    let _ = router_task.await;
     for worker in workers {
         worker.abort();
+        let _ = worker.await;
     }
     rpc_task.abort();
+    let _ = rpc_task.await;
 }

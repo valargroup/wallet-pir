@@ -7,6 +7,7 @@ members = [
     "shared/pir-observability",
     "shared/pir-control",
     "shared/pir-runtime",
+    "shared/pir-pipeline",
     # Protocol libraries, clients and stores.
     "enhance/crates/enhance-pir",
     "enhance/crates/enhance-serving",

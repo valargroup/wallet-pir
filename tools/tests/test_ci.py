@@ -295,6 +295,54 @@ class BoundaryTests(unittest.TestCase):
             'status-serving: serving library resolves zakura-server-chain',
         ])
 
+    def test_pipeline_refuses_every_nonutility_dependency_kind(self):
+        for kind in ['dependencies', 'dev-dependencies', 'build-dependencies',
+                     'target.cfg(unix).dependencies', 'target.cfg(unix).dev-dependencies',
+                     'target.cfg(unix).build-dependencies']:
+            for name in ['receiver-store', 'zakura-server-chain', 'zakura-pir-native',
+                         'sha2', 'rand', 'enhance-serving', 'pir-runtime']:
+                package = {'name': 'pir-pipeline', 'manifest': 'shared/pir-pipeline/Cargo.toml',
+                           'dependencies': [self.edge(name, kind)]}
+                self.assertTrue(boundary.violations([package], []), (kind, name))
+        package['dependencies'] = [self.edge('tokio')]
+        self.assertEqual(boundary.violations([package], []), [])
+        package['dependencies'][0]['path'] = 'receiver/crates/fake-tokio/'
+        self.assertTrue(boundary.violations([package], []))
+        for name in boundary.SERVING | boundary.PIPELINE_FOUNDATIONS:
+            package = {'name': name, 'manifest': 'shared/lib/Cargo.toml',
+                       'dependencies': [self.edge('pir-pipeline', 'dev-dependencies')]}
+            self.assertTrue(boundary.violations([package], []))
+
+    def test_pipeline_graph_checks_transitive_dev_build_and_target_edges(self):
+        def node(name, deps=()):
+            return {'id': name, 'deps': [{'pkg': dep, 'dep_kinds': [{'kind': kind,
+                    'target': 'cfg(unix)'}]} for dep, kind in deps]}
+        metadata = {'packages': [
+            {'id': 'pipeline', 'name': 'pir-pipeline', 'source': None},
+            {'id': 'tokio', 'name': 'tokio', 'source': 'registry'},
+            {'id': 'crypto', 'name': 'sha2', 'source': 'registry'},
+        ], 'resolve': {'nodes': [node('pipeline', [('tokio', None)]), node('tokio'), node('crypto')]}}
+        self.assertEqual(boundary.resolved_violations(metadata), [])
+        for kind in [None, 'dev', 'build']:
+            metadata['resolve']['nodes'][1] = node('tokio', [('crypto', kind)])
+            self.assertEqual(boundary.resolved_violations(metadata),
+                             ['pir-pipeline: resolves outside its utility boundary: sha2'])
+
+    def test_chain_free_serving_foundations_cannot_reach_the_pipeline(self):
+        for foundation in boundary.PIPELINE_FOUNDATIONS:
+            metadata = {'packages': [
+                {'id': 'foundation', 'name': foundation, 'source': None},
+                {'id': 'helper', 'name': 'helper', 'source': 'registry'},
+                {'id': 'pipeline', 'name': 'pir-pipeline', 'source': None},
+            ], 'resolve': {'nodes': [
+                {'id': 'foundation', 'deps': [{'pkg': 'helper', 'dep_kinds': [{'kind': 'dev'}]}]},
+                {'id': 'helper', 'deps': [{'pkg': 'pipeline', 'dep_kinds': [{'kind': 'build',
+                                                                         'target': 'cfg(unix)'}]}]},
+                {'id': 'pipeline', 'deps': []},
+            ]}}
+            self.assertEqual(boundary.resolved_violations(metadata),
+                             [f'{foundation}: serving foundation resolves pir-pipeline'])
+
     def test_a_removed_edge_must_leave_the_allowlist(self):
         problems = boundary.violations([], ['svc -> zakura-chain'])
         self.assertEqual(len(problems), 1)

@@ -289,6 +289,16 @@ The v1 publication has run in production beside history since 2026-10-06
 The code on `main` no longer builds or reads v1. Serving v2 needs a fresh
 journal and lineage; the gates are in [remaining work](remaining-work.md).
 
+The display controller composes the shared lifecycle at source acquisition,
+candidate preparation and owner activation. Its borrowed controller token keeps
+the store and every seal job with their existing owner. Background seal building
+and staging remain ordered; preparation selects only the staged contiguous queue
+prefix, checks immutable lineage and writes the recent candidate. Owner publication
+then delivers invalidations, activates archive owners before recent replicas and
+commits the existing active record. Adaptive source/background/retry waits use the
+shared boundary wait without cancelling these operations or coalescing seals.
+Internal phase timing does not change status formats, readiness or authority.
+
 ### Controller status and metrics
 
 `txid-display-controller run --status-listen` serves private JSON status on `/`,
