@@ -947,9 +947,26 @@ mod query_transport_tests {
                 result = &mut publication => panic!("preparation did not pause: {result:?}"),
                 _ = preparing.notified() => {},
             }
-            for _ in 0..3 {
-                pir_pipeline::Task::run(&mut heartbeat).await.unwrap();
-            }
+            let (shutdown, stopped) = tokio::sync::oneshot::channel();
+            let heartbeat_task = tokio::spawn(async move {
+                pir_pipeline::supervise(&mut heartbeat, Duration::from_secs(1), async {
+                    let _ = stopped.await;
+                })
+                .await
+            });
+            tokio::time::timeout(Duration::from_secs(4), async {
+                while heartbeats.load(Ordering::SeqCst) < 6 {
+                    assert!(
+                        !heartbeat_task.is_finished(),
+                        "heartbeat stopped during preparation"
+                    );
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                }
+            })
+            .await
+            .unwrap();
+            shutdown.send(()).unwrap();
+            heartbeat_task.await.unwrap().unwrap();
             assert_eq!(heartbeats.load(Ordering::SeqCst), 6);
             let served: Manifest = reqwest::get(&init).await.unwrap().json().await.unwrap();
             assert_eq!(served, manifest, "heartbeats cannot refresh source time");
@@ -1043,6 +1060,24 @@ mod lifecycle_wallet_tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn shared_status_lifecycle_collects_publishes_and_advances_over_real_roles() {
+        // Exercise full production geometry with a bounded four-CPU preparation
+        // lane, as the Transparent unit runner does. A child confines the existing
+        // role constructor's environment setting; concurrent tests never see it.
+        // The outer case budget includes child startup, work and teardown.
+        const CHILD: &str = "WALLET_PIR_STATUS_LIFECYCLE_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let output = tokio::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "status::publisher::lifecycle_wallet_tests::shared_status_lifecycle_collects_publishes_and_advances_over_real_roles"])
+                .env(CHILD, "1").env("STATUS_PREPARATION_THREADS", "4")
+                .kill_on_drop(true).output().await.unwrap();
+            assert!(
+                output.status.success(),
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
         let root = tempfile::tempdir().unwrap();
         let (rpc, source_task) = source::tests::fixture(false, false).await;
         let (tx, rx) = watch::channel(None);

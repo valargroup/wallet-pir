@@ -1847,9 +1847,22 @@ async fn shared_display_lifecycle_serves_before_and_after_ordered_seals_and_rest
                     .await
                     .unwrap();
                 let command: DisplayCommand = serde_json::from_str(&line).unwrap();
-                log.lock()
-                    .unwrap()
-                    .push((name.into(), serde_json::to_value(&command).unwrap()));
+                let mut observed = serde_json::to_value(&command).unwrap();
+                if observed["operation"] == "prepare" {
+                    let publication = &observed["publication"];
+                    let map = read_map(
+                        Path::new(publication["directory"].as_str().unwrap()),
+                        publication["map_sha256"].as_str().unwrap(),
+                    )
+                    .unwrap();
+                    observed["sealed"] = json!(map
+                        .shards
+                        .iter()
+                        .filter(|s| s.sealed)
+                        .map(|s| &s.manifest_digest)
+                        .collect::<Vec<_>>());
+                }
+                log.lock().unwrap().push((name.into(), observed));
                 let reply = reply_line(live.command(command).await);
                 write
                     .write_all(format!("{reply}\n").as_bytes())
@@ -1898,6 +1911,7 @@ async fn shared_display_lifecycle_serves_before_and_after_ordered_seals_and_rest
     );
     // The oracle comes from the journal source fixture, not a read-back of the
     // controller's published rows. Query both the archive and advanced recent.
+    let mut wallet = display_world::Wallet::at(&origin);
     wallet.found(&chain_records(0, 100)[0], 100);
     wallet.found(&chain_records(0, 112)[0], 112);
     let commands = log.lock().unwrap();
@@ -1920,15 +1934,11 @@ async fn shared_display_lifecycle_serves_before_and_after_ordered_seals_and_rest
                     if w != worker || c["operation"] != "prepare" {
                         return false;
                     }
-                    let directory = c["publication"]["directory"].as_str().unwrap();
-                    read_map(
-                        Path::new(directory),
-                        c["publication"]["map_sha256"].as_str().unwrap(),
-                    )
-                    .unwrap()
-                    .shards
-                    .iter()
-                    .any(|s| s.manifest_digest == seal.digest)
+                    c["sealed"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .any(|digest| digest == &seal.digest)
                 })
                 .map(|(i, _)| i)
                 .unwrap()

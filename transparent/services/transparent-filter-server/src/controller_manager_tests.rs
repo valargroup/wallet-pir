@@ -50,6 +50,9 @@ async fn query(origin: &str, set: &ShardSet) {
     drop(query_and_upload(origin, set).await);
 }
 async fn query_and_upload(origin: &str, set: &ShardSet) -> Vec<u8> {
+    query_with_reply(origin, set).await.0
+}
+async fn query_with_reply(origin: &str, set: &ShardSet) -> (Vec<u8>, Vec<u8>) {
     use transparent_server_backend::shardset::{Table, TableRef};
     let shard = set.get(1).unwrap();
     let source = shard
@@ -101,7 +104,7 @@ async fn query_and_upload(origin: &str, set: &ShardSet) -> Vec<u8> {
     assert_eq!(&bytes[..8], &binding);
     let decoded = profile.decode(&secret, &params, &bytes[16..]).unwrap();
     assert_eq!(decoded, source[row * width..(row + 1) * width]);
-    body
+    (body, bytes.to_vec())
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1157,7 +1160,8 @@ async fn standard_history_lifecycle_queries_advance_and_reconciles_lost_activati
         cache_bytes: 4 << 30,
         ..ServiceConfig::default()
     };
-    let options = recent_options(&set);
+    let mut options = recent_options(&set);
+    options.retain_revisions = transparent_shard_server::shardset::DEFAULT_RETAIN_REVISIONS;
     let state = ServiceState::build(
         ShardSet::open_with(&directory, &options).unwrap(),
         service_config,
@@ -1189,7 +1193,11 @@ async fn standard_history_lifecycle_queries_advance_and_reconciles_lost_activati
         let command = match request["operation"].as_str().unwrap() {
             "prepare" => {
                 let directory = PathBuf::from(request["directory"].as_str().unwrap());
-                let set = ShardSet::open(&directory, 0).unwrap();
+                let set = ShardSet::open(
+                    &directory,
+                    transparent_shard_server::shardset::DEFAULT_RETAIN_REVISIONS,
+                )
+                .unwrap();
                 let LoadScope::Assigned { assignment, .. } = recent_options(&set).scope else {
                     unreachable!()
                 };
@@ -1240,7 +1248,23 @@ async fn standard_history_lifecycle_queries_advance_and_reconciles_lost_activati
         }
     }
     let mut tasks = Tasks(vec![worker_task]);
-    query(&origin, &set).await;
+    let (upload, expected_response) = query_with_reply(&origin, &set).await;
+    use tower::ServiceExt;
+    let retained = live
+        .router()
+        .oneshot(
+            axum::http::Request::post(format!(
+                "/v2/shards/1/revisions/{}/query/directory",
+                set.get(1).unwrap().digest
+            ))
+            .body(axum::body::Body::from(upload))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(retained.status(), StatusCode::OK);
+    // Keep the already admitted response unconsumed through activation. Its
+    // exact encrypted bytes were just decrypted against the original row oracle.
     let tip = Arc::new(AtomicU64::new(2));
     let node_tip = tip.clone();
     let rpc_app = axum::Router::new().route(
@@ -1315,8 +1339,15 @@ with urllib.request.urlopen(r,timeout=20) as response: sys.stdout.buffer.write(r
         0,
     )
     .unwrap();
+    let mut added = writer.events_at(2).unwrap().unwrap();
+    let TransparentEvent::Receive(event) = &mut added[0].1 else {
+        unreachable!()
+    };
+    event.height = 3;
+    event.txid = transparent_events::Txid([8; 32]);
+    event.value = 60_000;
     writer
-        .append_block(3, BlockHash::from_internal_bytes([3; 32]), &[])
+        .append_block(3, BlockHash::from_internal_bytes([3; 32]), &added)
         .unwrap();
     writer.commit().unwrap();
     tip.store(3, Ordering::Release);
@@ -1342,13 +1373,48 @@ with urllib.request.urlopen(r,timeout=20) as response: sys.stdout.buffer.write(r
         &std::fs::read(config.publication_root.join("activation.json")).unwrap(),
     )
     .unwrap();
-    let next_set = ShardSet::open(&activated.directory, 0).unwrap();
+    let next_set = ShardSet::open(
+        &activated.directory,
+        transparent_shard_server::shardset::DEFAULT_RETAIN_REVISIONS,
+    )
+    .unwrap();
     query(&origin, &next_set).await;
+    let old_rows = set
+        .get(1)
+        .unwrap()
+        .segment(transparent_server_backend::shardset::TableRef::Directory, 0)
+        .unwrap()
+        .load()
+        .unwrap();
+    let new_rows = next_set
+        .get(1)
+        .unwrap()
+        .segment(transparent_server_backend::shardset::TableRef::Directory, 0)
+        .unwrap()
+        .load()
+        .unwrap();
+    assert_ne!(old_rows, new_rows, "handover must change the answer oracle");
+    let retained_bytes = axum::body::to_bytes(retained.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    assert_eq!(
+        retained_bytes.as_ref(),
+        expected_response,
+        "no refresh or new-generation response is permitted"
+    );
     // An unfinished activation is retained and reconciled by the existing
     // fleet owner; shared advance never repeats activation on its own.
     publish_once(&config, &rpc, &reader, &owner).await.unwrap();
     assert!(!config.publication_root.join("activation.json").exists());
     assert_eq!(owner.0.active.read().unwrap().publication.height, 3);
     let current = owner.0.active.read().unwrap().publication.clone();
-    query(&origin, &ShardSet::open(&current.directory, 0).unwrap()).await;
+    query(
+        &origin,
+        &ShardSet::open(
+            &current.directory,
+            transparent_shard_server::shardset::DEFAULT_RETAIN_REVISIONS,
+        )
+        .unwrap(),
+    )
+    .await;
 }
