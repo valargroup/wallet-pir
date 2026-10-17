@@ -497,7 +497,7 @@ async fn application_collection_commits_survive_preparation_refusal_restart_and_
     let tx = hex::decode(include_str!("fixtures/ironwood-fee-expiry.hex").trim()).unwrap();
     let state = Rpc {
         blocks: Arc::new(vec![
-            zakura_server_chain::testing::block_from_raw(&[tx.clone()], 0),
+            zakura_server_chain::testing::block_from_raw(std::slice::from_ref(&tx), 0),
             zakura_server_chain::testing::block_from_raw(&[tx], 1),
         ]),
         transactions: Arc::new(HashMap::new()),
