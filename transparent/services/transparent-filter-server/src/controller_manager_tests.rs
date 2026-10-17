@@ -490,10 +490,7 @@ async fn manager_checks_inventory_and_required_files_on_unchanged_maps() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn manager_refuses_changed_holdings_on_an_unchanged_map() {
     let root = tempfile::tempdir().unwrap();
-    // Assignment identity is independent of table geometry. Keep both tiers
-    // small here so expanding holdings does not build an unrelated 32k runtime.
-    let (directory, set) = publication_with_archive(root.path(), 2, "decoupled-2k-8k");
-    prepare_recent(&directory, &set);
+    let (directory, set) = prepared_publication(root.path(), 2);
     let rpc = canonical_rpc(root.path(), &set).await;
     let owner = authority(
         &directory,
