@@ -304,8 +304,11 @@ class WorkspaceCacheOutputIsolationTests(unittest.TestCase):
                 path = root / name
                 path.write_text('outer job\n')
                 env[name] = str(path)
+            # This stdlib-only child must not install inherited sitecustomize
+            # timing hooks against the sentinel paths. The outer case still
+            # times all of its real Cargo work, including setup and teardown.
             result = subprocess.run(
-                [sys.executable, '-m', 'unittest',
+                [sys.executable, '-S', '-m', 'unittest',
                  'test_cargo_workspace_cache.WorkspaceCacheOracle.test_managed_external_target_still_prepares_restores_and_builds'],
                 cwd=ROOT / 'tools/tests', env=env, capture_output=True, text=True, timeout=60)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
