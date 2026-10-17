@@ -88,7 +88,9 @@ async fn independent_status_wallet_decrypts_http_and_rejects_invalid_envelopes()
     let snapshot = fixture::snapshot(32, false).unwrap();
     let (generation, _) =
         Generation::prepare(&snapshot, 1, 1, now_ms(), None, MatvecBackend::Cpu).unwrap();
-    let controller = Controller::new(generation);
+    // Preparation may outlast the observation window on a busy host. This
+    // immutable synthetic snapshot is still verified immediately before publish.
+    let controller = Controller::new(generation.reobserved(now_ms()));
     let worker = serve(controller.worker_routes()).await;
     let router = serve(controller.router_routes(worker.origin.clone())).await;
     let coordinator = serve(controller.coordinator_routes(router.origin.clone())).await;
