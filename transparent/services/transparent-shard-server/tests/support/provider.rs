@@ -15,6 +15,31 @@ use transparent_shard_server::{
 fn fixture(dir: &std::path::Path, archive_geometry: &'static Geometry) -> ShardMap {
     fixture_in(dir, archive_geometry, false)
 }
+fn retain_fixture(name: &str, source: &std::path::Path) {
+    let Some(output) = std::env::var_os("WALLET_PIR_QUALIFICATION_OUTPUT") else {
+        return;
+    };
+    let target = std::path::PathBuf::from(output).join(name);
+    fn copy(source: &std::path::Path, target: &std::path::Path) {
+        std::fs::create_dir(target).unwrap();
+        for entry in std::fs::read_dir(source).unwrap() {
+            let entry = entry.unwrap();
+            let path = target.join(entry.file_name());
+            if entry.file_type().unwrap().is_dir() {
+                copy(&entry.path(), &path);
+            } else {
+                assert!(entry.file_type().unwrap().is_file());
+                // Inputs are finalized here and never mutated. Preserve the
+                // original bytes after tempfile teardown without another RAM
+                // copy; cross-filesystem runs fall back to a normal file copy.
+                if std::fs::hard_link(entry.path(), &path).is_err() {
+                    std::fs::copy(entry.path(), &path).unwrap();
+                }
+            }
+        }
+    }
+    copy(source, &target);
+}
 fn fixture_in(dir: &std::path::Path, archive_geometry: &'static Geometry, paged: bool) -> ShardMap {
     let mut shards = Vec::new();
     let mut parent = String::new();
@@ -307,21 +332,55 @@ async fn distinct_archive_geometry_is_declared_without_archive_runtime_or_reacha
 #[tokio::test]
 #[ignore = "explicit frozen released391 process qualification; build isolated harness first"]
 async fn released391_recovers_archive_and_recent_then_recent_during_archive_outage() {
+    released_recovery(&DECOUPLED_2K_8K).await;
+}
+#[tokio::test]
+#[ignore = "explicit frozen released391 process qualification; build isolated harness first"]
+async fn released391_recovers_32k_archive_pages_with_2k_recent() {
+    released_recovery(&DECOUPLED_32K_32K).await;
+}
+async fn released_recovery(archive_geometry: &'static Geometry) {
     let dir = tempfile::tempdir().unwrap();
-    let map = fixture_in(dir.path(), &DECOUPLED_2K_8K, true);
+    let map = fixture_in(dir.path(), archive_geometry, true);
+    retain_fixture(
+        &format!("released391-{}", archive_geometry.name),
+        dir.path(),
+    );
     let terminal = terminal(dir.path(), &map);
     terminal.spawn_prewarm().await.unwrap();
     let archive_metrics = terminal.metrics().clone();
-    use std::sync::atomic::{AtomicBool, Ordering};
-    let corrupt = Arc::new(AtomicBool::new(false));
+    use std::sync::atomic::{AtomicU8, Ordering};
+    let corrupt = Arc::new(AtomicU8::new(0));
     let corruption = corrupt.clone();
+    let submissions = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let observed = submissions.clone();
     let app = router(terminal).layer(axum::middleware::from_fn(
-        move |request: axum::extract::Request, next: axum::middleware::Next| {
+        move |mut request: axum::extract::Request, next: axum::middleware::Next| {
             let corrupt = corruption.load(Ordering::SeqCst);
+            let observed = observed.clone();
             async move {
+                let page = request.uri().path().contains("/query/pages-");
                 let query = request.uri().path().contains("/query/");
+                let page_setup = request.uri().path().contains("/setup/pages-");
+                if query {
+                    let body = axum::body::to_bytes(
+                        std::mem::replace(request.body_mut(), axum::body::Body::empty()),
+                        1 << 20,
+                    )
+                    .await
+                    .unwrap();
+                    observed.lock().unwrap().push((
+                        request.uri().path().to_owned(),
+                        transparent_server_backend::distribution::digest(&body),
+                    ));
+                    *request.body_mut() = axum::body::Body::from(body);
+                }
                 let mut response = next.run(request).await;
-                if query && corrupt && response.status().is_success() {
+                // Exercise pages separately: directory success alone must not
+                // turn an incomplete historical restore into complete recovery.
+                if (query && corrupt == 1 || page && corrupt == 2 || page_setup && corrupt == 3)
+                    && response.status().is_success()
+                {
                     let mut bytes = axum::body::to_bytes(
                         std::mem::replace(response.body_mut(), axum::body::Body::empty()),
                         1 << 20,
@@ -329,7 +388,13 @@ async fn released391_recovers_archive_and_recent_then_recent_during_archive_outa
                     .await
                     .unwrap()
                     .to_vec();
-                    bytes[0] ^= 1;
+                    if corrupt != 3 {
+                        bytes[0] ^= 1;
+                    } else {
+                        let mut value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                        value["public_params_epoch"] = serde_json::json!("00".repeat(8));
+                        bytes = serde_json::to_vec(&value).unwrap();
+                    }
                     response.headers_mut().remove("content-length");
                     *response.body_mut() = axum::body::Body::from(bytes);
                 }
@@ -356,18 +421,32 @@ async fn released391_recovers_archive_and_recent_then_recent_during_archive_outa
         3,
         "recent execution must remain local"
     );
-    corrupt.store(true, Ordering::SeqCst);
-    let before = transparent_shard_server::metrics::Metrics::get(&archive_metrics.queries);
-    let failed = frozen_output(origin.clone(), 1, FIRST).await;
-    assert!(
-        !failed.status.success(),
-        "original released client must refuse an uncertain answer"
-    );
-    assert_eq!(
-        transparent_shard_server::metrics::Metrics::get(&archive_metrics.queries),
-        before + 1,
-        "original released client must not replay the uncertain submission"
-    );
+    // The released client pipelines two different page queries. Both may have
+    // reached evaluation before it receives either corrupted reply.
+    for (fault, evaluations) in [(1, 1), (2, 3), (3, 1)] {
+        corrupt.store(fault, Ordering::SeqCst);
+        submissions.lock().unwrap().clear();
+        let before = transparent_shard_server::metrics::Metrics::get(&archive_metrics.queries);
+        assert!(
+            !frozen_output(origin.clone(), 1, FIRST).await.status.success(),
+            "released client must refuse directory/page corruption and page-only setup identity mismatch"
+        );
+        assert_eq!(
+            transparent_shard_server::metrics::Metrics::get(&archive_metrics.queries),
+            before + evaluations,
+            "fault {fault}: refuse mismatched setup before evaluation; never replay an uncertain submission"
+        );
+        let trace = submissions.lock().unwrap();
+        assert_eq!(trace.len(), evaluations as usize);
+        assert_eq!(
+            trace
+                .iter()
+                .collect::<std::collections::BTreeSet<_>>()
+                .len(),
+            trace.len(),
+            "no identical encrypted submission may be replayed"
+        );
+    }
     archive_server.stop().await;
     let recent = frozen(origin.clone(), 2, FIRST + 2).await;
     assert_eq!(recent["matched_shards"], serde_json::json!([1]));
