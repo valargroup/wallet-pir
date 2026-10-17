@@ -287,24 +287,22 @@ pub(crate) async fn answer_query(
         }
     };
     let upload_deadline = worker.admission.config().upload_deadline;
-    let body = match tokio::time::timeout(
-        upload_deadline,
-        axum::body::to_bytes(request.into_body(), expected),
-    )
-    .await
-    {
-        Ok(Ok(body)) => body,
-        Ok(Err(error)) => {
-            Metrics::incr(&metrics.query_errors);
-            return RequestError::Bad(format!("reading the query body: {error}"))
-                .into_response(map_digest);
-        }
-        Err(_) => {
-            Metrics::incr(&metrics.upload_timeouts);
-            Metrics::incr(&metrics.query_errors);
-            return RequestError::UploadTimeout.into_response(map_digest);
-        }
-    };
+    let body =
+        match pir_control::admission::read_body(request.into_body(), expected, upload_deadline)
+            .await
+        {
+            Ok(body) => body,
+            Err(pir_control::admission::BodyError::Read(error)) => {
+                Metrics::incr(&metrics.query_errors);
+                return RequestError::Bad(format!("reading the query body: {error}"))
+                    .into_response(map_digest);
+            }
+            Err(pir_control::admission::BodyError::Timeout) => {
+                Metrics::incr(&metrics.upload_timeouts);
+                Metrics::incr(&metrics.query_errors);
+                return RequestError::UploadTimeout.into_response(map_digest);
+            }
+        };
     // A declared length is a claim; the bytes that arrived are the fact.
     if body.len() != expected {
         Metrics::incr(&metrics.query_length_rejections);
@@ -376,8 +374,7 @@ pub(crate) async fn answer_query(
     tracing::debug!(revision = %revision, table = %table, seconds = memory_started.elapsed().as_secs_f64(), admitted = true, stage = "query_memory_admission", "query stage");
     let evaluation_metrics = metrics.clone();
     let query_stage = std::time::Instant::now();
-    let evaluated = tokio::task::spawn_blocking(move || {
-        let _memory = memory;
+    let evaluated = pir_control::admission::spawn_admitted((handles, memory), move |(handles, _)| {
         tracing::debug!(revision = %revision, table = %table, seconds = query_stage.elapsed().as_secs_f64(), stage = "query_dispatch", "query stage");
         let query_stage = std::time::Instant::now();
         let _timer = evaluation_metrics.evaluation_seconds.timer();
@@ -385,7 +382,7 @@ pub(crate) async fn answer_query(
         // table's packing setup and query masks, so one parse serves them all.
         let query = shared.parse(binding, &body, query_rows)?;
         let mut answer = Vec::with_capacity(shared.response_bytes() * handles.len());
-        for handle in &handles {
+        for handle in handles {
             answer.extend(handle.get().answer(binding, &query)?);
         }
         tracing::debug!(revision = %revision, table = %table, seconds = query_stage.elapsed().as_secs_f64(), stage = "query_evaluate", "query stage");
@@ -394,16 +391,16 @@ pub(crate) async fn answer_query(
     })
     .await;
     match evaluated {
-        Ok(Ok(answer)) => {
+        Ok((Ok(answer), (handles, memory))) => {
             Metrics::incr(&metrics.queries);
             (
                 StatusCode::OK,
                 [("content-type", "application/octet-stream")],
-                answer,
+                pir_control::http::retain(axum::body::Body::from(answer), (handles, memory)),
             )
                 .into_response()
         }
-        Ok(Err(error)) => {
+        Ok((Err(error), _)) => {
             Metrics::incr(&metrics.query_errors);
             RequestError::Bad(error).into_response(map_digest)
         }

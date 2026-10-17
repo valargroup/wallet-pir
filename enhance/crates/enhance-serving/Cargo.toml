@@ -13,6 +13,7 @@ cuda = ["ipir-sp/cuda", "dep:simplepir-kernel"]
 fault-injection = []
 
 [dependencies]
+pir-observability = { path = "../../../shared/pir-observability" }
 pir-control = { path = "../../../shared/pir-control", features = ["admission"] }
 pir-runtime = { path = "../../../shared/pir-runtime" }
 reinspiring = { version = "=0.1.3-rc.1", optional = true }

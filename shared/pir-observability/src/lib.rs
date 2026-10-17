@@ -1,7 +1,7 @@
 //! Bounded aggregate HTTP observations. Paths and client data never become labels.
 use axum::{
     body::{Body, Bytes},
-    extract::{Request, State},
+    extract::Request,
     middleware::Next,
     response::Response,
 };
@@ -92,47 +92,6 @@ impl Default for HttpMetrics {
     }
 }
 
-/// Only a fixed endpoint category survives classification. No dynamic path segment is retained.
-pub fn endpoint(path: &str) -> Option<&'static str> {
-    if path == "/v2/shards/init" {
-        Some("init")
-    } else if path == "/v2/shards" || path == "/v2/filters/shards" {
-        Some("map")
-    } else if path.starts_with("/v2/filters/") || path.starts_with("/v1/filters/") {
-        Some("filter")
-    } else if path.starts_with("/v2/shards/") && path.ends_with("/manifest") {
-        Some("manifest")
-    } else if path.starts_with("/v2/shards/") && path.contains("/setup/") {
-        Some("setup")
-    } else if let Some(route) = path.strip_prefix("/v1/receiver/") {
-        receiver_endpoint(route)
-    } else if path.starts_with("/v2/shards/") && path.contains("/query/") {
-        if path.ends_with("/directory") {
-            Some("query_directory")
-        } else if path.ends_with("/pages") {
-            Some("query_pages")
-        } else {
-            Some("query_other")
-        }
-    } else {
-        None
-    }
-}
-
-/// The receiver directory's route categories; session IDs never become labels.
-fn receiver_endpoint(route: &str) -> Option<&'static str> {
-    Some(match route.split('/').next()? {
-        "init" => "receiver_init",
-        "public" => "receiver_public",
-        "query" => "receiver_query",
-        "rows" => "receiver_rows",
-        "witness" => "receiver_witness",
-        "filters" => "receiver_filters",
-        "health" => "receiver_health",
-        _ => return None,
-    })
-}
-
 impl HttpMetrics {
     pub fn initialize(&self, endpoints: &[&'static str]) {
         let mut ops = self.inner.lock().unwrap();
@@ -202,27 +161,39 @@ impl Drop for RequestGuard {
         op.duration_sum += elapsed;
     }
 }
-struct CountedBody {
+/// Product callbacks for streamed body observations. Completion includes the
+/// last successful frame when the inner body advertises end-of-stream.
+pub trait BodyObserver {
+    fn data(&mut self, _bytes: usize) {}
+    fn error(&mut self) {}
+    fn complete(&mut self) {}
+    fn incomplete(&mut self) {}
+}
+
+/// Observe frames without buffering or changing the inner body's ownership,
+/// framing, errors or transport lifetime.
+pub struct ObservedBody<O: BodyObserver> {
     body: Body,
-    metrics: HttpMetrics,
-    endpoint: &'static str,
-    response: bool,
+    observer: O,
     ended: bool,
 }
-impl Drop for CountedBody {
-    fn drop(&mut self) {
-        if self.response && !self.ended && !self.body.is_end_stream() {
-            self.metrics
-                .inner
-                .lock()
-                .unwrap()
-                .entry(self.endpoint)
-                .or_default()
-                .incomplete_responses += 1;
+impl<O: BodyObserver> ObservedBody<O> {
+    pub fn new(body: Body, observer: O) -> Self {
+        Self {
+            body,
+            observer,
+            ended: false,
         }
     }
 }
-impl HttpBody for CountedBody {
+impl<O: BodyObserver> Drop for ObservedBody<O> {
+    fn drop(&mut self) {
+        if !self.ended && !self.body.is_end_stream() {
+            self.observer.incomplete();
+        }
+    }
+}
+impl<O: BodyObserver + Unpin> HttpBody for ObservedBody<O> {
     type Data = Bytes;
     type Error = axum::Error;
     fn poll_frame(
@@ -233,26 +204,18 @@ impl HttpBody for CountedBody {
         match &result {
             Poll::Ready(Some(Ok(frame))) => {
                 if let Some(bytes) = frame.data_ref() {
-                    let mut ops = self.metrics.inner.lock().unwrap();
-                    let op = ops.entry(self.endpoint).or_default();
-                    if self.response {
-                        op.download += bytes.len() as u64;
-                    } else {
-                        op.upload += bytes.len() as u64;
-                    }
+                    self.observer.data(bytes.len());
                 }
             }
-            Poll::Ready(Some(Err(_))) => {
-                self.metrics
-                    .inner
-                    .lock()
-                    .unwrap()
-                    .entry(self.endpoint)
-                    .or_default()
-                    .body_errors += 1;
-            }
-            Poll::Ready(None) => self.ended = true,
-            Poll::Pending => {}
+            Poll::Ready(Some(Err(_))) => self.observer.error(),
+            _ => {}
+        }
+        if !self.ended
+            && (matches!(result, Poll::Ready(None))
+                || (matches!(result, Poll::Ready(Some(Ok(_)))) && self.body.is_end_stream()))
+        {
+            self.ended = true;
+            self.observer.complete();
         }
         result
     }
@@ -264,10 +227,48 @@ impl HttpBody for CountedBody {
     }
 }
 
+struct Counters {
+    metrics: HttpMetrics,
+    endpoint: &'static str,
+    response: bool,
+}
+impl BodyObserver for Counters {
+    fn data(&mut self, bytes: usize) {
+        let mut ops = self.metrics.inner.lock().unwrap();
+        let op = ops.entry(self.endpoint).or_default();
+        if self.response {
+            op.download += bytes as u64;
+        } else {
+            op.upload += bytes as u64;
+        }
+    }
+    fn error(&mut self) {
+        self.metrics
+            .inner
+            .lock()
+            .unwrap()
+            .entry(self.endpoint)
+            .or_default()
+            .body_errors += 1;
+    }
+    fn incomplete(&mut self) {
+        if self.response {
+            self.metrics
+                .inner
+                .lock()
+                .unwrap()
+                .entry(self.endpoint)
+                .or_default()
+                .incomplete_responses += 1;
+        }
+    }
+}
+
 /// Timer covers body extraction, admission, errors, and cancellation until response construction.
 /// Response bytes are counted only as the server polls them; this is not client receipt or decoding.
 pub async fn observe(
-    State(metrics): State<HttpMetrics>,
+    metrics: HttpMetrics,
+    endpoint: Option<&'static str>,
     mut request: Request,
     next: Next,
 ) -> Response {
@@ -276,7 +277,7 @@ pub async fn observe(
     if request.extensions().get::<Observed>().is_some() {
         return next.run(request).await;
     }
-    let Some(endpoint) = endpoint(request.uri().path()) else {
+    let Some(endpoint) = endpoint else {
         return next.run(request).await;
     };
     request.extensions_mut().insert(Observed);
@@ -293,34 +294,44 @@ pub async fn observe(
         code: None,
     };
     let (parts, body) = request.into_parts();
-    let body = Body::new(CountedBody {
+    let body = Body::new(ObservedBody::new(
         body,
-        metrics: metrics.clone(),
-        endpoint,
-        response: false,
-        ended: false,
-    });
+        Counters {
+            metrics: metrics.clone(),
+            endpoint,
+            response: false,
+        },
+    ));
     let response = next.run(Request::from_parts(parts, body)).await;
     guard.code = Some(response.status().as_u16());
     drop(guard);
     let (parts, body) = response.into_parts();
     Response::from_parts(
         parts,
-        Body::new(CountedBody {
+        Body::new(ObservedBody::new(
             body,
-            metrics,
-            endpoint,
-            response: true,
-            ended: false,
-        }),
+            Counters {
+                metrics,
+                endpoint,
+                response: true,
+            },
+        )),
     )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::extract::State;
     use axum::{http::StatusCode, routing::post, Router};
     use tower::ServiceExt;
+    async fn classified(
+        State(metrics): State<HttpMetrics>,
+        request: Request,
+        next: Next,
+    ) -> Response {
+        observe(metrics, Some("init"), request, next).await
+    }
     #[test]
     fn labels_reach_every_distribution_series() {
         let distribution = Distribution::default();
@@ -339,18 +350,18 @@ mod tests {
         let metrics = HttpMetrics::default();
         let app = Router::new()
             .route(
-                "/v2/shards/init",
+                "/test",
                 post(|| async { (StatusCode::SERVICE_UNAVAILABLE, "busy") }),
             )
             .layer(axum::middleware::from_fn_with_state(
                 metrics.clone(),
-                observe,
+                classified,
             ));
         let response = app
             .oneshot(
                 Request::builder()
                     .method("POST")
-                    .uri("/v2/shards/init")
+                    .uri("/test")
                     .body(Body::from("unread"))
                     .unwrap(),
             )
@@ -368,20 +379,20 @@ mod tests {
     async fn nested_layers_count_once_and_unconsumed_response_is_incomplete() {
         let metrics = HttpMetrics::default();
         let app = Router::new()
-            .route("/v2/shards/init", post(|| async { "payload" }))
+            .route("/test", post(|| async { "payload" }))
             .layer(axum::middleware::from_fn_with_state(
                 metrics.clone(),
-                observe,
+                classified,
             ))
             .layer(axum::middleware::from_fn_with_state(
                 metrics.clone(),
-                observe,
+                classified,
             ));
         let response = app
             .oneshot(
                 Request::builder()
                     .method("POST")
-                    .uri("/v2/shards/init")
+                    .uri("/test")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -398,7 +409,7 @@ mod tests {
         let metrics = HttpMetrics::default();
         let app = Router::new()
             .route(
-                "/v2/shards/init",
+                "/test",
                 post(|| async {
                     std::future::pending::<()>().await;
                     "unreachable"
@@ -406,12 +417,12 @@ mod tests {
             )
             .layer(axum::middleware::from_fn_with_state(
                 metrics.clone(),
-                observe,
+                classified,
             ));
         let request = app.oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/v2/shards/init")
+                .uri("/test")
                 .body(Body::empty())
                 .unwrap(),
         );
@@ -437,11 +448,6 @@ mod tests {
         assert!(metrics
             .render()
             .contains("pir_http_cancelled_total{endpoint=\"init\"} 1"));
-        assert_eq!(
-            endpoint("/v2/shards/123/revisions/private/query/pages"),
-            Some("query_pages")
-        );
-        assert_eq!(endpoint("/metrics"), None);
         assert!(!metrics.render().contains("private"));
     }
 }

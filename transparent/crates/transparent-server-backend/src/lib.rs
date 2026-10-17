@@ -14,3 +14,5 @@ pub mod prewarm;
 pub mod procmem;
 pub mod runtime;
 pub mod shardset;
+
+pub mod http;
