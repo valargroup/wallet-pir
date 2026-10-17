@@ -15,7 +15,7 @@ import subprocess
 import tempfile
 import time
 
-from full_packages import inventory, commands as full_commands
+from full_packages import inventory, commands as full_commands, qualification_features
 from stage import ROOT, run, install_cancellation, inherited_fds
 
 REGISTRY = ROOT / 'tools/ci/test-matrix.json'
@@ -29,9 +29,9 @@ CUDA = ['enhance-serving/cuda', 'status-serving/cuda', 'enhance-pir-server/cuda'
 
 def variants(groups):
     return {
-        'transparent': dict(family='transparent', packages=groups['transparent'], features=[]),
+        'transparent': dict(family='transparent', packages=groups['transparent'], features=qualification_features(groups['transparent'])),
         'export': dict(family='transparent', packages=['txid-sizing-export'], features=[], manifest=EXPORT),
-        'native': dict(family='enhance', packages=groups['enhance'], features=NATIVE),
+        'native': dict(family='enhance', packages=groups['enhance'], features=NATIVE + qualification_features(groups['enhance'])),
         'reference': dict(family='enhance', packages=['enhance-serving', 'enhance-pir', 'status-serving'], features=[]),
         'cuda': dict(family='enhance', packages=['enhance-serving', 'status-serving', 'enhance-pir-server',
                                              'enhance-pir-load-test'], features=CUDA),

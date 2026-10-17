@@ -26,15 +26,35 @@ Line Tools. `make doctor NETWORK=1` checks authenticated GitHub/dependency acces
 it suppresses subprocess output and never prints tokens. Missing dependencies are
 fixed explicitly, not by interactive repair in a test command.
 
-Fast Rust checks run library and binary unit tests in `release-fast`, plus the
-classified Enhance fast integration targets. Required CLI features are enabled
-for binary unit targets; protocol and hardware modes remain explicit choices. Package-qualified slow names are
-validated against executable test discovery before skips apply; removed/renamed
-entries fail. Full tests retain these cases. An explicit TEST filter can run a slow case; custom
-FEATURES select unit targets with those features and do not add default-feature
+Fast Rust checks run every library and binary unit test in `release-fast`, plus
+classified bounded integration targets. There are no named slow-unit exclusions.
+Required CLI features are enabled for binary unit targets. Ordinary cache,
+identity and fault matrices use supported narrow tables, while independent
+history HTTP checks retain real history rows. Publisher tests share immutable
+producer bytes and generated certificate material; writable state, listeners,
+trust checks and fault controls remain fresh. A query reused within one recovery
+scenario is first decoded against producer bytes, and every later check still
+sends it over HTTP and compares the complete answer.
+
+`make check-correctness` runs that complete bounded unit/integration population
+with native arithmetic, the independent reference checks, exporter contracts,
+doctests, formatting, lint and Python helpers. Its 180-second deadline includes
+warm compilation, fixture construction, execution and cleanup. Every CPU case
+retains its 30-second deadline. `--record-only` records overruns without omitting
+cases and never establishes an enforced timing pass.
+
+Explicit full commands (`make test`, `make check-full`, full package families and
+the qualification matrix) enable the declared `qualification-tests` features.
+These restore the original deployed geometry combinations, mixed-size archive
+preparation, full publication sequence and longer display histories. The same
+unit assertions run in both configurations; full integration campaigns and
+released-client checks remain classified separately. Fast builds reject this
+feature if it leaks into their actual executable artifacts. Use
+`make check-package PACKAGE=<name> FEATURES=qualification-tests TEST=<filter>`
+to diagnose one expanded unit case. Custom FEATURES do not select default
 integration targets. Full package families are validated against every workspace
-member in `tools/ci/full-packages.json`; new or stale assignments fail. Real HTTP, crypto, fault injection,
-restart and deployment qualification remain distinct from short model tests.
+member in `tools/ci/full-packages.json`; new or stale assignments fail. Real HTTP,
+crypto, fault injection, restart and deployment qualification remain required.
 
 Fast scaler feedback runs decision, forecast, signal, daemon and metrics unit
 tests. Seeded fleet simulations and exhaustive membership/mutant checks remain

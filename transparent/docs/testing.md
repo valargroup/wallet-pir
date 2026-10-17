@@ -7,34 +7,38 @@ through the reference HTTP adapters and SQLite persistence.
 
 ## Shipped history runtime correctness
 
-The controller's shipped-runtime success case cold-builds every runtime of a
-mixed `decoupled-2k-8k` recent / `decoupled-32k-32k` archive publication, then
-checks fleet offering, activation ordering and inode-preserving links during
-handover. This full-geometry campaign runs in full CI: it exceeded the 30-second
-case deadline during hosted PR preparation. Routine checks retain the companion
-refusal case, which starts from the same mixed-geometry source
-publication without building successful runtimes first. Superseded preparation
-verifies and retains that source set; replacing a linked table then tests that
-verification is required again. The case also retains the recent-only runtime
-write-failure check. Neither case depends on a warm fixture or test order.
+The controller's shipped-runtime success case cold-builds runtimes and checks
+fleet offering, activation order and inode-preserving links during handover.
+Ordinary correctness uses the supported `decoupled-2k-8k` geometry for both
+roles; explicit qualification also uses the deployed `decoupled-32k-32k`
+archive. The refusal companion independently checks source verification,
+supersession, linked-table replacement and counted runtime write failures.
+No unit case is omitted by name.
+
+Cache, admission, file identity and corruption matrices use narrow supported
+display tables in ordinary checks. The complete negative matrices, accounting
+assertions, blocked persistence, cancelled restore and cold fallback remain.
+`qualification-tests` restores their original history shapes and the complete
+history/display reconstruction comparisons. The ordinary history HTTP smoke
+and stored-mask tampering check retain actual history data and independent
+answer/refusal evidence.
+
+Publisher tests build immutable producer fixtures once per process and give each
+case independent writable copies. Generated TLS certificate bytes may be shared;
+listeners, trust verification, authority, faults and service state are fresh.
+Cleanup controls exercise the same ownership helper with small ordinary files.
+Their successful, failed and child-exit paths do not repeat cryptographic builds.
+Construction and cleanup remain inside measured checks. Cold and corruption
+checks keep their own cache state. No client secrets or validation results are
+shared between tests.
 
 Publisher unit-test processes use up to four available build threads, respecting
 an explicit `TRANSPARENT_BUILD_THREADS`; integration programs and serving defaults
-keep their existing policy. Serving reserves half the CPUs for queries, whereas
-these serial unit cases have no query traffic. This bounds the cold preparation
-work separately from the independent refusal work without excluding targets or
-changing the 30-second case / 180-second warm correctness budgets. Production
-load, HTTP and full service qualification remain separate release gates; fixture
-timings do not qualify a deployment.
-
-When the standard fast selection includes `transparent-filter-server`, helpers
-still overlap the Rust compilation, then finish before Rust test execution starts.
-Publisher archive preparation already runs apart from other Rust programs in the
-integrated fast runner; this barrier also removes helper contention during that
-CPU window. It preserves the selected helpers, cases, cold fixture caches and
-30-second case guard. The wait remains inside the measured fast command and its
-180-second warm budget. This can lengthen warm runs when helpers outlast
-compilation; full hosted selection still needs qualification on its exact head.
+retain their existing policy. Independent test programs share a bounded pool of
+at most three. No production clocks, thresholds or geometry definitions change.
+The 30-second case and 180-second warm correctness limits remain enforced;
+source preparation and larger release/hardware qualification are reported
+separately. A short fixture pass does not qualify a deployment.
 
 ## Running the deployed suite
 

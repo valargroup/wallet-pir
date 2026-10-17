@@ -1919,6 +1919,13 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn rpc_follow_publishes_empty_blocks_and_recovers_a_sealed_reorg() {
         use std::os::unix::fs::PermissionsExt;
+        // Both roles and the full handover remain ordinary correctness. The
+        // separate qualification configuration also builds the large archive.
+        let archive_geometry = if cfg!(feature = "qualification-tests") {
+            "decoupled-32k-32k"
+        } else {
+            "decoupled-2k-8k"
+        };
         let root = tempfile::tempdir().unwrap();
         let chain: Chain = Arc::new(RwLock::new(Vec::new()));
         extend(&mut chain.write().unwrap(), 5, 1);
@@ -1956,7 +1963,7 @@ mod tests {
             output: initial.clone(),
             previous: None,
             recent_geometry: "decoupled-2k-8k".into(),
-            archive_geometry: Some("decoupled-32k-32k".into()),
+            archive_geometry: Some(archive_geometry.into()),
             recent_from: Some(2),
             zakura_rpc_url: String::new(),
             zakura_cookie: cookie.clone(),
@@ -1993,7 +2000,7 @@ print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('re
             initial_publication: initial.clone(),
             recent_from: 2,
             recent_geometry: "decoupled-2k-8k".into(),
-            archive_geometry: "decoupled-32k-32k".into(),
+            archive_geometry: archive_geometry.into(),
             rpc_url: format!("http://{address}"),
             rpc_cookie: cookie,
             fleet_command: hook,
@@ -2251,6 +2258,13 @@ print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('re
     // cryptographic build: keep that independent work in its own bounded case.
     async fn shipped_runtime_scenario(failures_only: bool) {
         use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        // Both roles and the full handover remain ordinary correctness. The
+        // separate qualification configuration also builds the large archive.
+        let archive_geometry = if cfg!(feature = "qualification-tests") {
+            "decoupled-32k-32k"
+        } else {
+            "decoupled-2k-8k"
+        };
         let root = tempfile::tempdir().unwrap();
         let chain: Chain = Arc::new(RwLock::new(Vec::new()));
         extend(&mut chain.write().unwrap(), 5, 1);
@@ -2288,7 +2302,7 @@ print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('re
             output: initial.clone(),
             previous: None,
             recent_geometry: "decoupled-2k-8k".into(),
-            archive_geometry: Some("decoupled-32k-32k".into()),
+            archive_geometry: Some(archive_geometry.into()),
             recent_from: Some(2),
             zakura_rpc_url: String::new(),
             zakura_cookie: cookie.clone(),
@@ -2324,7 +2338,7 @@ print(json.dumps({'ok':True,'upstreams':[],'workers':{},'retained_publication':b
             initial_publication: initial.clone(),
             recent_from: 2,
             recent_geometry: "decoupled-2k-8k".into(),
-            archive_geometry: "decoupled-32k-32k".into(),
+            archive_geometry: archive_geometry.into(),
             rpc_url: format!("http://{address}"),
             rpc_cookie: cookie,
             fleet_command: hook.clone(),
