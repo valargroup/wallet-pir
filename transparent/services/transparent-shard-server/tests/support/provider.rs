@@ -463,9 +463,14 @@ async fn archive_readiness_and_setup_are_checked_over_real_http() {
     assert_eq!(client.get(&setup).send().await.unwrap().status(), 200);
     let held = terminal_hold.hold_query_slot().await;
     let capacity = client.get(&setup).send().await.unwrap();
-    assert_eq!(capacity.status(),503);
-    assert_eq!(capacity.headers()["retry-after"],"1","explicit terminal capacity must remain retryable");
-    drop(capacity);drop(held);
+    assert_eq!(capacity.status(), 503);
+    assert_eq!(
+        capacity.headers()["retry-after"],
+        "1",
+        "explicit terminal capacity must remain retryable"
+    );
+    drop(capacity);
+    drop(held);
     for fault in 1..=4 {
         mode.store(fault, Ordering::SeqCst);
         assert_eq!(
