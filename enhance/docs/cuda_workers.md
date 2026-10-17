@@ -142,7 +142,10 @@ metadata and isolated CUDA validation scripts. Successful CI establishes build
 provenance; live CUDA correctness remains a deployment gate.
 
 Use **Deploy Enhance CUDA worker** with `ref` set to a full main-ancestor SHA
-whose full CI succeeded. Start with `mode=preflight`, then use `mode=deploy`.
+whose full CI succeeded. `mode=preflight` runs the hardware checks without activation;
+`mode=deploy` runs those same checks and then activates the release. The operator
+comes from the workflow dispatch revision, independently of the qualified service
+artifact revision; both revisions are retained in the CI receipt.
 The workflow accepts only the optional GPU worker, takes the shared production
 lock, and preserves its state root, arguments, CUDA library path and placement.
 Preflight uploads verified validation binaries and runs fresh loopback fixture
@@ -154,6 +157,10 @@ Deployment swaps the server binary transactionally, verifies native v9/CUDA
 health and executable identity, then runs public exact-answer queries at 1 QPS
 for 60 seconds after a paced 10-second warmup. Acceptance requires zero errors,
 GPU evaluation counter growth, router availability, and no worker restart or OOM.
+The verifier shares one existing 60-second publication recovery budget between
+initial eligibility and final current-generation membership. A generation that
+advances during the measured queries must converge before commit. Router readiness
+loss after measurement and any process, restart or OOM drift still fail immediately.
 Repeat deploys rerun validation without restarting an unchanged unit. No deliberate
 production failover or throughput qualification is part of this workflow.
 
@@ -168,6 +175,34 @@ account. Credentials remain runtime material. The independent oracle must use
 public canonical records at positions in the current native dataset.
 
 Transaction journals and baseline persist under `/var/lib/wallet-pir-deploy/cuda`.
+Under the production lock, the operator creates that directory with mode `0700`,
+or tightens an existing root-owned directory without replacing its ledger.
+Symlinks, foreign ownership and group- or world-writable directories are refused.
+If an earlier reviewed deployment used another ledger, `expected_current_sha256`
+may name its verified running GPU hash. Review that deployment's committed receipt
+first. Under the lock, adoption requires that exact running hash at its immutable
+release path, the same unit files, and byte-identical settings except the executable
+path. Arguments, limits, file changes and unfinished transactions still refuse.
+The workflow retains the prior baseline bytes and both baseline digests in its
+private evidence. It does not replace or reset transaction history. Omit the input
+for ordinary deployments; baseline drift then remains a refusal.
+
+A stale pre-repair public oracle may be corrected with `oracle_replacement` and
+`oracle_sha256`. The replacement must come from the independent canonical extractor;
+review its retained provenance first. Under the production lock the operator keeps
+all positions in order and permits only missing fee metadata to be filled (the
+existing native v9 fee-repair policy). It retains both exact oracle files and their
+digests. Ciphertext, expiry, transparent flags and already-known fees cannot change.
+The same zero-error public query gate still runs after deployment.
+
+For an explicit GPU rollback, run this same workflow with `mode=rollback` and the
+exact `transaction` from its deployment receipt. `ref` supplies a qualified CUDA
+client bundle for verification; the server restored is the transaction's retained
+previous executable. Rollback uses the same ephemeral CI identity, production
+lock, unit-conflict checks and native CUDA health checks, then repeats public
+exact-answer queries and GPU progress checks. It refuses transactions for other
+workers and does not accept baseline adoption in rollback mode.
+
 Any activation or post-deploy verification failure rolls back touched targets.
 The workflow uploads metadata, smoke results, public query reports and rollback
 status even on failure. For an interrupted transaction, resume the existing
