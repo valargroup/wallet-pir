@@ -180,6 +180,36 @@ class CudaFleet(Fleet):
         self.assertEqual(runner.baseline_path.read_bytes(), original)
         self.assertEqual(list(evidence.iterdir()), [])
 
+    def test_gpu_rollback_refuses_paths_outside_its_canonical_ledger(self):
+        runner = self.enhance_fleet()
+        with patch.object(deploy.Journal, 'load') as load:
+            with self.assertRaisesRegex(Exception, 'canonical GPU transaction'):
+                deploy.rollback_verified_gpu(runner, '../other-ledger/transaction', Mock())
+            load.assert_not_called()
+
+    def test_gpu_rollback_refuses_a_transaction_for_other_targets(self):
+        runner = self.enhance_fleet()
+        runner.targets = runner.targets[:1]
+        foreign = SimpleNamespace(hosts=[{'host':'unrelated','unit':'other.service'}])
+        with patch.object(deploy.Journal, 'load', return_value=foreign), patch.object(runner, 'rollback') as rollback:
+            with self.assertRaisesRegex(Exception, 'exactly the selected GPU'):
+                deploy.rollback_verified_gpu(runner, 'enhance-explicit-transaction', Mock())
+            rollback.assert_not_called()
+
+    def test_gpu_rollback_cannot_pass_when_public_verification_fails(self):
+        runner = self.enhance_fleet()
+        runner.targets = runner.targets[:1]
+        target = runner.targets[0]
+        journal = SimpleNamespace(hosts=[{'host':target.host,'unit':target.unit,
+                                        'previous':{'exe_sha256':OLD_SHA}}])
+        runner.inventory.services['enhance']['exact_check'] = {
+            'host':'coordinator','argv':['verifier','--sha256',NEW_SHA],'timeout':60}
+        with patch.object(deploy.Journal, 'load', return_value=journal), \
+                patch.object(runner, 'rollback', return_value=journal), \
+                patch.object(runner, 'run_exact_check', side_effect=ValueError('public oracle failed')):
+            with self.assertRaisesRegex(ValueError, 'public oracle failed'):
+                deploy.rollback_verified_gpu(runner, 'enhance-explicit-transaction', Mock())
+
     def test_repeat_validation_checks_exact_answers_without_restarting(self):
         runner = self.enhance_fleet()
         result = runner.deploy(OLD_SHA, verify_noop=True)

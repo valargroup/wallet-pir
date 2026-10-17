@@ -134,9 +134,30 @@ def adopt_reviewed_baseline(deployer, current, expected, held, evidence):
             'current_baseline_sha256': hashlib.sha256(after_raw).hexdigest()}
 
 
+def rollback_verified_gpu(deployer, transaction, held):
+    """Restore this GPU transaction, then verify public CUDA answers with runtime credentials."""
+    if not re.fullmatch(r'enhance-[A-Za-z0-9-]{1,160}', transaction):
+        raise DeployError('rollback requires a canonical GPU transaction identifier')
+    journal = Journal.load(deployer.state_dir, 'enhance', transaction)
+    target = deployer.targets[0]
+    if (journal is None or len(journal.hosts) != 1
+            or (journal.hosts[0]['host'], journal.hosts[0]['unit']) != (target.host, target.unit)):
+        raise DeployError('CUDA rollback requires a transaction for exactly the selected GPU worker')
+    expected = journal.hosts[0]['previous']['exe_sha256']
+    if not isinstance(expected, str) or not re.fullmatch(r'[0-9a-f]{64}', expected):
+        raise DeployError('GPU rollback requires a retained previous executable')
+    restored = deployer.rollback(transaction)
+    held.verify()
+    check = dict(descriptors.exact_check(deployer.service, deployer.inventory))
+    check['argv'] = list(check['argv'])
+    check['argv'][check['argv'].index('--sha256') + 1] = expected
+    deployer.run_exact_check(check, restored, expected)
+    return restored, expected
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('mode', choices=['preflight', 'deploy'])
+    parser.add_argument('mode', choices=['preflight', 'deploy', 'rollback'])
     parser.add_argument('--inventory', type=Path, required=True)
     parser.add_argument('--archive', type=Path, required=True)
     parser.add_argument('--sha', required=True)
@@ -144,10 +165,15 @@ def main():
     parser.add_argument('--evidence-dir', type=Path, required=True)
     parser.add_argument('--ssh-key', type=Path, required=True)
     parser.add_argument('--known-hosts', type=Path, required=True)
+    parser.add_argument('--transaction', help='exact GPU transaction to restore in rollback mode')
     parser.add_argument('--expected-current-sha256', help='reviewed running GPU hash for adoption of a stale baseline')
     args = parser.parse_args()
     if args.expected_current_sha256 is not None and not re.fullmatch(r"[0-9a-f]{64}", args.expected_current_sha256):
         parser.error("--expected-current-sha256 must be a full lowercase SHA-256")
+    if args.mode == 'rollback' and (not args.transaction or args.expected_current_sha256 is not None):
+        parser.error('rollback requires --transaction and permits no baseline adoption')
+    if args.mode != 'rollback' and args.transaction:
+        parser.error('--transaction belongs only to rollback')
     if os.geteuid() != 0:
         parser.error('run on the root coordinator deployment runner')
     try:
@@ -196,6 +222,11 @@ def main():
             deployer.lock = held
             deployer.check_identities([inventory.lock.get('host')])
             latest = Journal.load(args.state_dir, 'enhance')
+            if args.mode == 'rollback':
+                restored, expected = rollback_verified_gpu(deployer, args.transaction, held)
+                result.update(passed=True, binary_sha256=expected, transaction=restored.id,
+                              transaction_status=restored.status)
+                return
             if latest and latest.status not in FINAL:
                 raise DeployError('unfinished transaction; resume rollback before CUDA deployment')
             current = executor.probe_unit(target.host, target.unit)

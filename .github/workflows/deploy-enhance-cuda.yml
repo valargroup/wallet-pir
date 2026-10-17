@@ -12,8 +12,12 @@ on:
         required: true
         default: preflight
         type: choice
-        options: [preflight, deploy]
+        options: [preflight, deploy, rollback]
 
+      transaction:
+        description: Exact GPU transaction to restore in rollback mode
+        required: false
+        type: string
       expected_current_sha256:
         description: Optional reviewed running GPU hash to adopt an old baseline; unit arguments and limits must match
         required: false
@@ -79,15 +83,19 @@ jobs:
           SOURCE_RUN: ${{ steps.release.outputs.run-id }}
           OPERATOR_SHA: ${{ github.sha }}
           EXPECTED_CURRENT_SHA256: ${{ inputs.expected_current_sha256 }}
+          TRANSACTION: ${{ inputs.transaction }}
         run: |
           set -euo pipefail
           printf '{"source_run":"%s","revision":"%s","deployment_run":"%s","operator_revision":"%s"}\n' \
             "$SOURCE_RUN" "$SHA" "$GITHUB_RUN_ID" "$OPERATOR_SHA" > "$RUNNER_TEMP/cuda-ci-$GITHUB_RUN_ID.json"
-          baseline_args=()
+          operation_args=()
           if [[ -n "$EXPECTED_CURRENT_SHA256" ]]; then
-            baseline_args+=(--expected-current-sha256 "$EXPECTED_CURRENT_SHA256")
+            operation_args+=(--expected-current-sha256 "$EXPECTED_CURRENT_SHA256")
           fi
-          python3 enhance/ops/scripts/deploy-cuda.py "$MODE" "${baseline_args[@]}" \
+          if [[ -n "$TRANSACTION" ]]; then
+            operation_args+=(--transaction "$TRANSACTION")
+          fi
+          python3 enhance/ops/scripts/deploy-cuda.py "$MODE" "${operation_args[@]}" \
             --inventory /etc/enhance-pir/cuda-deploy-inventory.json \
             --archive cuda-artifact/enhance-pir-native-cuda.tar.gz --sha "$SHA" \
             --state-dir /var/lib/wallet-pir-deploy/cuda \

@@ -183,6 +183,14 @@ The workflow retains the prior baseline bytes and both baseline digests in its
 private evidence. It does not replace or reset transaction history. Omit the input
 for ordinary deployments; baseline drift then remains a refusal.
 
+For an explicit GPU rollback, run this same workflow with `mode=rollback` and the
+exact `transaction` from its deployment receipt. `ref` supplies a qualified CUDA
+client bundle for verification; the server restored is the transaction's retained
+previous executable. Rollback uses the same ephemeral CI identity, production
+lock, unit-conflict checks and native CUDA health checks, then repeats public
+exact-answer queries and GPU progress checks. It refuses transactions for other
+workers and does not accept baseline adoption in rollback mode.
+
 Any activation or post-deploy verification failure rolls back touched targets.
 The workflow uploads metadata, smoke results, public query reports and rollback
 status even on failure. For an interrupted transaction, resume the existing
