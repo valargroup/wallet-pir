@@ -71,7 +71,7 @@ fn prepared_fixture(through: u64) -> &'static Path {
     }
 }
 
-fn prepared_publication(root: &Path, through: u64) -> (PathBuf, ShardSet) {
+pub(super) fn prepared_publication(root: &Path, through: u64) -> (PathBuf, ShardSet) {
     let fixture = prepared_fixture(through);
     let directory = root.join("publication");
     copy_fixture_tree(&fixture.join("publication"), &directory);
