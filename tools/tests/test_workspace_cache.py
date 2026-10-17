@@ -61,10 +61,10 @@ class WorkspaceCacheOracle(unittest.TestCase):
     def git(self, *args):
         return subprocess.check_output(['git', *args], cwd=self.root, stderr=subprocess.PIPE)
 
-    def build(self, failure=None):
+    def build(self, failure=None, selection=()):
         toolchain = __import__('tomllib').loads((ROOT / 'rust-toolchain.toml').read_text())['toolchain']['channel']
         command = ['rustup', 'run', toolchain, 'cargo'] if shutil.which('rustup') else ['cargo']
-        result = subprocess.run([*command, 'build', '--profile', 'release-fast', '--offline', '--message-format=json'],
+        result = subprocess.run([*command, 'build', '--profile', 'release-fast', '--offline', '--message-format=json', *selection],
                                 cwd=self.root, env=self.env, capture_output=True, text=True, timeout=25)
         if failure:
             self.assertNotEqual(result.returncode, 0)
@@ -96,6 +96,51 @@ class WorkspaceCacheOracle(unittest.TestCase):
         self.assertTrue(any(not entry['fresh'] for entry in artifacts))
         self.assertEqual(behavior, 'rust-A|include-A|build-A')
         self.seal()
+
+    def test_verified_all_workspace_snapshot_does_not_prepare_affected_feature_graph(self):
+        # A second workspace root enables an extra feature on a shared leaf.
+        # A valid archive/source-mtime hit cannot make its wider Cargo unit
+        # interchangeable with the affected root's narrower unit.
+        manifest = self.root / 'Cargo.toml'
+        manifest.write_text(manifest.read_text().replace(
+            '[workspace]\n', '[dependencies]\nfeature-leaf = { path="leaf" }\n'
+            '[workspace]\nmembers=["owner"]\n'))
+        for name, extra in [('leaf', '[features]\nwide=[]\n'),
+                            ('owner', '[dependencies]\nfeature-leaf={path="../leaf",features=["wide"]}\n')]:
+            directory = self.root / name
+            (directory / 'src').mkdir(parents=True)
+            (directory / 'Cargo.toml').write_text(
+                f'[package]\nname="feature-{name}"\nversion="0.1.0"\nedition="2021"\n{extra}')
+        (self.root / 'leaf/src/lib.rs').write_text(
+            'pub fn value() -> bool { cfg!(feature="wide") }\n')
+        (self.root / 'owner/src/lib.rs').write_text(
+            'pub fn value() -> bool { feature_leaf::value() }\n')
+        source = self.root / 'src/main.rs'
+        source.write_text(source.read_text().replace('"rust-A|{}|{}",', '"rust-A|{}|{}|{}", feature_leaf::value(),'))
+        self.commit('feature-unification fixture')
+        self.restore()
+        _, behavior = self.build(selection=['--workspace'])
+        self.assertEqual(behavior, 'rust-A|true|include-A|build-A')
+        self.seal()
+        self.archive_roundtrip()
+        self.checkout()
+        with redirect_stdout(io.StringIO()) as output:
+            self.restore()
+        self.assertIn('"metadata": "verified"', output.getvalue())
+        self.assertIn('"new_source_mtimes": 0', output.getvalue())
+        affected = ['-p', 'cache-oracle']
+        artifacts, behavior = self.build(selection=affected)
+        self.assertEqual(behavior, 'rust-A|false|include-A|build-A')
+        self.assertTrue(any(entry['target']['name'] == 'feature_leaf' and not entry['fresh']
+                            for entry in artifacts))
+        # Seal only after the actual affected graph has also been prepared.
+        self.seal()
+        self.archive_roundtrip()
+        self.checkout()
+        self.restore()
+        artifacts, behavior = self.build(selection=affected)
+        self.assertEqual(behavior, 'rust-A|false|include-A|build-A')
+        self.assertTrue(artifacts and all(entry['fresh'] for entry in artifacts))
 
     def test_action_lifecycle_seals_metadata_and_reports_cargo_separately(self):
         env = {'RUNNER_TEMP': str(self.area / 'runner')}

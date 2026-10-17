@@ -336,7 +336,14 @@ For an unmerged PR, apply the `prepare-hosted-cache` label to explicitly run
 `pull_request` merge ref on the existing hosted runner, read-only repository
 permissions and no persisted checkout credentials. It compiles **and validates**
 all fast units with a separate 30-minute cold-preparation allowance; every test
-keeps its 30-second limit. Only successful preparation saves a ref-isolated
+keeps its 30-second limit. It then compiles and validates the ordinary affected
+selection against the event's actual PR base SHA before sealing. Cargo unifies
+dependency features across selected packages: an all-workspace build can enable
+extra features (for example `clap/env` and `reqwest/stream`) and does not prepare
+every narrower affected graph. A verified source-mtime/cache-key hit alone
+therefore does not establish fresh Cargo units. All-workspace preparation and
+validation remain intact, as do the separate main and complete warm correctness
+gates. Only successful preparation saves a ref-isolated
 snapshot. This is not the routine fast gate or a latency pass. Remove/reapply the
 label after a head update; no synchronize event automatically repeats preparation.
 Concurrency belongs to the label-filtered job: unrelated label events cannot
