@@ -94,7 +94,7 @@ and local evidence only.
 | Native PIR profile | `wallet-libraries/zakura/transparent-native` over `wallet-libraries/zakura/pir-native` | Transparent's seeds and scheme identity over the two-mask ReinspiRING helpers all three products share |
 | Ingest, census, publish | `transparent/services/transparent-filter-server` | Resolve events, persist journal, seal and build shards, serve filters |
 | Server backend | `transparent/crates/transparent-server-backend` | Verify publications, prepare native runtimes, bound memory and cache persisted or shipped runtimes |
-| Raw PIR runtime | `shared/pir-runtime` | Scan profile parameters and opaque `PreparedDatabase` handles for preparation, persisted coefficient loading and evaluation, shared with Enhance |
+| Raw PIR runtime | `shared/pir-runtime` | Retained P16 adapter uses shared scan parameters and `PreparedDatabase`; current Directory, Pages and TxDirectory tables all select P8. Enhance and Status are the active u16 consumers |
 | Retrieval service | `transparent/services/transparent-shard-server` | Verify publication, bound runtime cache, revision-addressed setup/query |
 | Wallet | `wallet-libraries/zakura/pir-transparent/src/engine` | Local matching, private retrieval, validation, ledger replay |
 | Wallet store | `wallet-libraries/zakura/pir-transparent/src/engine_store.rs` | Reference durable store on SQLite |

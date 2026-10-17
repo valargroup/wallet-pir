@@ -8,6 +8,7 @@ use ipir_sp::{
     server::{CrsBlock, MatvecBackend},
     IPIRServer, ProductionSimplePirParams, SimplePirProfile,
 };
+use pir_runtime::evaluation::{build_from_le_u16, PreparedDatabase};
 #[cfg(not(feature = "native-reinspiring"))]
 use pir_runtime::packing::{PackingKeys, PackingSetup, PreparedPacking};
 use rayon::prelude::*;
@@ -33,7 +34,7 @@ fn packing_setup() -> PackingSetup<'static> {
 pub(super) struct Unit {
     bytes_digest: Hash,
     pub(super) rows: Vec<u8>,
-    db: IPIRServer<u16>,
+    db: PreparedDatabase,
     hint: Vec<CrsBlock>,
 }
 /// Update H = A * D in Z_q[X]/(X^d+1) for at most 4096 changed
@@ -390,12 +391,16 @@ impl Generation {
                 reused += 1;
                 continue;
             }
-            let values = bytes
-                .chunks_exact(2)
-                .map(|x| u16::from_le_bytes([x[0], x[1]]));
-            let db =
+            // Snapshot rows are already verified, row-major little-endian u16.
+            // The shared loader enforces full consumption without keeping a
+            // second database copy and preserves a kernel-construction error.
+            let mut reader = bytes;
+            let db = build_from_le_u16(&mut reader, bytes.len() / 2, |values| {
                 IPIRServer::try_from_profile_with_backend(&local, values, false, true, backend)
-                    .map_err(|_| Error::Unavailable)?;
+                    .map(PreparedDatabase::new)
+            })
+            .map_err(|_| Error::Unavailable)?
+            .map_err(|_| Error::Unavailable)?;
             let base = previous
                 .filter(|prev| {
                     prev.manifest.network == snapshot.network && prev.manifest.salt == snapshot.salt
@@ -561,7 +566,7 @@ impl Generation {
     /// Differential oracle: compare composed hints with upstream full-database preprocessing.
     pub fn verify_full_hint(&self, snapshot: &index::Snapshot) -> Result<(), Error> {
         let p = profile();
-        let db = IPIRServer::from_profile(
+        let db = PreparedDatabase::new(IPIRServer::from_profile(
             p,
             snapshot
                 .rows
@@ -569,7 +574,7 @@ impl Generation {
                 .map(|v| u16::from_le_bytes([v[0], v[1]])),
             false,
             true,
-        );
+        ));
         let masks = query_masks(&snapshot.network, &snapshot.salt)?;
         let expected = unit_hint(&db, &masks)?;
         for (block_i, block) in expected.iter().enumerate() {
@@ -608,16 +613,14 @@ fn query_masks(network: &Hash, salt: &Hash) -> Result<Vec<Vec<u64>>, Error> {
 }
 
 /// Hint contribution H = A * D for the rows covered by `masks`.
-fn unit_hint(db: &IPIRServer<u16>, masks: &[Vec<u64>]) -> Result<Vec<CrsBlock>, Error> {
+fn unit_hint(db: &PreparedDatabase, masks: &[Vec<u64>]) -> Result<Vec<CrsBlock>, Error> {
     #[cfg(feature = "native-reinspiring")]
     {
         enhance_serving::runtime::native_runtime::hint(db, masks).map_err(|_| Error::Pir)
     }
     #[cfg(not(feature = "native-reinspiring"))]
     {
-        Ok(db
-            .perform_offline_precomputation_simplepir(profile().rlwe(), masks)
-            .crs_blocks)
+        Ok(db.hint(profile().rlwe(), masks))
     }
 }
 

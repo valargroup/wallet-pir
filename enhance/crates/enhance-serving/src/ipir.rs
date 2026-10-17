@@ -470,7 +470,8 @@ impl PreparedShard {
             .map_err(|error| {
                 tracing::error!(%error, "matrix-vector preparation failed");
                 InspiringError::Internal("matrix-vector preparation failed")
-            })?;
+            })
+            .map(PreparedDatabase::new)?;
         let first_poly = query_row_start / rlwe.d;
         let poly_count = layout.shard_rows / rlwe.d;
         let setup = global_setup
@@ -482,16 +483,14 @@ impl PreparedShard {
         let crs_blocks = crate::runtime::native_runtime::hint(&server, setup)
             .map_err(InspiringError::PreprocessMismatch)?;
         #[cfg(not(feature = "native-reinspiring"))]
-        let crs_blocks = server
-            .perform_offline_precomputation_simplepir(rlwe, setup)
-            .crs_blocks;
+        let crs_blocks = server.hint(rlwe, setup);
 
         Ok(Self {
             runtime: ShardRuntime {
                 shard_id,
                 query_row_start,
                 rows_sha256,
-                server: PreparedDatabase::new(server),
+                server,
             },
             crs_blocks,
         })

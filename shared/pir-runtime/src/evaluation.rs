@@ -25,6 +25,13 @@ impl PreparedDatabase {
         self.server.db_rows_padded()
     }
 
+    /// Upstream public hint preparation; setup masks are product-owned.
+    pub fn hint(&self, rlwe: &RlweParams, setup: &[Vec<u64>]) -> Vec<ipir_sp::server::CrsBlock> {
+        self.server
+            .perform_offline_precomputation_simplepir(rlwe, setup)
+            .crs_blocks
+    }
+
     pub fn try_multiply_query(
         &self,
         rlwe: &RlweParams,

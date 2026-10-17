@@ -44,7 +44,8 @@ pub fn rlwe() -> &'static RlweParams {
     RLWE.get_or_init(|| {
         pir_runtime::params::p16q48(32768, ITEM_SIZE_BITS)
             .expect("pinned profile")
-            .0
+            .rlwe()
+            .clone()
     })
 }
 
