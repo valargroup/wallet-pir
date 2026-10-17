@@ -11,6 +11,23 @@ resident serving packing objects in this mode. See the
 [rollout evidence](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/enhance/evidence/architecture2-2026-09-24/README.md) and
 [qualification](qualification.md) for measured limits and outstanding gates.
 
+## Ingestion application
+
+`enhance_pir_server::application` owns the coordinator's polling loop, recovery,
+inventory reconciliation and canonical or isolated-fixture ingestion. `collect`
+revokes before journal rewind and commits validated records independently of
+publication. Its returned pass borrows the source, journal and coordinator;
+`publish` observes capacity and uses the existing checked publication operation,
+including canonical anchor revalidation before activation. Failed preparation
+leaves the journal available for retry or restart. The executable configures the
+source and listeners and calls this application API.
+
+Status already owns observation and publication in the application's
+`status::source` and `status::publisher`: source checkpoints remain a cache,
+observations carry their original freshness, and failed preparation cannot grant
+serving authority. Serving packages continue to consume prepared publications
+without depending on ingestion or the chain reader.
+
 ## Data and query path
 
 Each commitment-tree position identifies a 653-byte suffix record. There are

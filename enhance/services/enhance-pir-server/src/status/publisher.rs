@@ -685,6 +685,158 @@ mod query_transport_tests {
         );
         assert!(data["operations"]["init"]["arrivals"].as_u64().unwrap() >= 1);
     }
+    /// Exercise the existing publisher API at its HTTP control/source boundaries:
+    /// neither failed refresh preparation nor failed anchor revalidation may advance
+    /// authority or replace the previously committed public observation.
+    #[tokio::test]
+    async fn refresh_preparation_and_source_failures_keep_committed_observation_and_retry() {
+        use axum::response::IntoResponse;
+        use serde_json::{json, Value};
+        let root = tempfile::tempdir().unwrap();
+        let snapshot = fixture::snapshot(8, false).unwrap();
+        let public = Arc::new(vec![1, 2, 3]);
+        let manifest = Manifest {
+            protocol: PROTOCOL.into(),
+            network: snapshot.network,
+            salt: snapshot.salt,
+            generation: 1,
+            recovery_epoch: 1,
+            coverage_start: snapshot.start,
+            anchor_height: snapshot.height,
+            anchor_hash: snapshot.anchor,
+            observed_ms: now_ms(),
+            entries: snapshot.entries,
+            rows_digest: snapshot.digest,
+            public_digest: Sha256::digest(public.as_slice()).into(),
+        };
+        let refuse_prepare = Arc::new(AtomicBool::new(true));
+        let role = Router::new()
+            .route(
+                "/control/prepare-refresh",
+                post({
+                    let refuse = refuse_prepare.clone();
+                    move |Json(input): Json<Activate>| {
+                        let refuse = refuse.clone();
+                        async move {
+                            if refuse.load(Ordering::SeqCst) {
+                                return StatusCode::SERVICE_UNAVAILABLE.into_response();
+                            }
+                            Json(Ready {
+                                binding: input.binding,
+                                artifact_digest: input.manifest.public_digest,
+                                manifest: input.manifest,
+                            })
+                            .into_response()
+                        }
+                    }
+                }),
+            )
+            .route(
+                "/control/activate",
+                post(|Json(input): Json<Activate>| async move {
+                    Json(Ready {
+                        binding: input.binding,
+                        artifact_digest: input.manifest.public_digest,
+                        manifest: input.manifest,
+                    })
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let origin = format!("http://{}", listener.local_addr().unwrap());
+        let role_task = tokio::spawn(async move { axum::serve(listener, role).await.unwrap() });
+        let source_down = Arc::new(AtomicBool::new(true));
+        let rpc_routes = Router::new().route(
+            "/",
+            post({
+                let source_down = source_down.clone();
+                let anchor = snapshot.anchor;
+                move |Json(request): Json<Value>| {
+                    let source_down = source_down.clone();
+                    async move {
+                        assert_eq!(request["method"], "getblockhash");
+                        if source_down.load(Ordering::SeqCst) {
+                            return StatusCode::SERVICE_UNAVAILABLE.into_response();
+                        }
+                        Json(
+                            json!({"result": zakura_server_chain::hash::display(&anchor),
+                        "error": null, "id": request["id"]}),
+                        )
+                        .into_response()
+                    }
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let rpc_origin = format!("http://{}", listener.local_addr().unwrap());
+        let rpc_task =
+            tokio::spawn(async move { axum::serve(listener, rpc_routes).await.unwrap() });
+        std::fs::write(root.path().join("cookie"), "test:test").unwrap();
+        let rpc = ZakuraClient::from_cookie_file(&rpc_origin, &root.path().join("cookie")).unwrap();
+        let mut config = config();
+        config.state_dir = root.path().join("publisher");
+        config.worker_origin = origin.clone();
+        config.router_origin = origin;
+        config.salt_hex = hex::encode(snapshot.salt);
+        let publisher = Publisher::new(config).unwrap();
+        *publisher.controller.write().unwrap() = Some(Controller::new(Generation::public_only(
+            manifest.clone(),
+            public,
+        )));
+        publisher.healthy.store(true, Ordering::SeqCst);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let init = format!("http://{}/v1/status/init", listener.local_addr().unwrap());
+        let routes = publisher.routes();
+        let public_task = tokio::spawn(async move { axum::serve(listener, routes).await.unwrap() });
+        let mut authority = authority::Authority::open(
+            root.path().join("authority"),
+            snapshot.network,
+            snapshot.salt,
+        )
+        .unwrap();
+        authority.commit(&manifest).unwrap();
+        let identity = authority.next_identity().unwrap();
+        let bindings = [
+            Binding {
+                epoch: 1,
+                incarnation: "worker".into(),
+            },
+            Binding {
+                epoch: 1,
+                incarnation: "router".into(),
+            },
+        ];
+        let observed = source::Observation {
+            snapshot,
+            observed_ms: manifest.observed_ms,
+            collect_ms: 0.,
+            blocks: 1,
+            mempool: 0,
+            retained_forks: 0,
+        };
+        for preparation_fails in [true, false] {
+            refuse_prepare.store(preparation_fails, Ordering::SeqCst);
+            assert!(publisher
+                .publish(&observed, &mut authority, &bindings, &rpc)
+                .await
+                .is_err());
+            assert_eq!(authority.next_identity().unwrap(), identity);
+            let served: Manifest = reqwest::get(&init).await.unwrap().json().await.unwrap();
+            assert_eq!(served, manifest);
+        }
+        source_down.store(false, Ordering::SeqCst);
+        let activated = publisher
+            .publish(&observed, &mut authority, &bindings, &rpc)
+            .await
+            .unwrap();
+        assert_eq!(activated.generation, identity.0);
+        assert_eq!(activated.observed_ms, observed.observed_ms);
+        let served: Manifest = reqwest::get(init).await.unwrap().json().await.unwrap();
+        assert_eq!(served, activated);
+        role_task.abort();
+        rpc_task.abort();
+        public_task.abort();
+    }
+
     #[test]
     fn per_client_slots_cap_concurrency_and_evict_idle_keys() {
         let slots = ClientSlots::new(PER_CLIENT_CONCURRENCY);

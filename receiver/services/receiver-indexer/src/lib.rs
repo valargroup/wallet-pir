@@ -3,6 +3,7 @@
 //! keeps the payments recoverable with the zero outgoing viewing key, and publishes them
 //! as receiver directory revisions. The binary is `receiver-directory`; see
 //! `receiver/README.md`.
+pub mod application;
 pub mod blocks;
 pub mod canonical;
 pub mod near;

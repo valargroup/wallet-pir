@@ -9,6 +9,7 @@
 pub use enhance_serving::*;
 use pir_control::admission;
 
+pub mod application;
 pub mod ingest;
 pub mod rebuild;
 /// Status serving plus its chain observation, publication and CLI.
