@@ -514,8 +514,8 @@ async fn application_collection_commits_survive_preparation_refusal_restart_and_
     let root = tempfile::tempdir().unwrap();
     std::fs::write(root.path().join("cookie"), "test:test").unwrap();
     let source = Source::Canonical {
-        rpc: ZakuraClient::from_cookie_file(&rpc_url, &root.path().join("cookie")).unwrap(),
-        prevouts: Prevouts::new(100),
+        rpc: ZakuraClient::from_cookie_file(&rpc_url, root.path().join("cookie")).unwrap(),
+        prevouts: Box::new(Prevouts::new(100)),
     };
     let refuse = Arc::new(AtomicBool::new(true));
     let mut workers = Vec::new();

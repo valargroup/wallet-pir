@@ -771,7 +771,7 @@ mod query_transport_tests {
         let rpc_task =
             tokio::spawn(async move { axum::serve(listener, rpc_routes).await.unwrap() });
         std::fs::write(root.path().join("cookie"), "test:test").unwrap();
-        let rpc = ZakuraClient::from_cookie_file(&rpc_origin, &root.path().join("cookie")).unwrap();
+        let rpc = ZakuraClient::from_cookie_file(&rpc_origin, root.path().join("cookie")).unwrap();
         let mut config = config();
         config.state_dir = root.path().join("publisher");
         config.worker_origin = origin.clone();
