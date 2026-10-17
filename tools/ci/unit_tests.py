@@ -29,7 +29,9 @@ def execute(programs, jobs, *, budget=False):
         env[key] = os.pathsep.join([str(Path(binary).parent), library_directory, env.get(key, '')])
         if budget:
             from test_budget import execute as timed_execute
-            with tempfile.TemporaryDirectory(prefix='wallet-pir-test-program-') as scratch:
+            # Keep Unix socket paths below macOS's 104-byte address limit even
+            # when the caller's TMPDIR is a long per-user or runner path.
+            with tempfile.TemporaryDirectory(prefix='wp-', dir='/tmp') as scratch:
                 env.update(TMPDIR=scratch, TMP=scratch, TEMP=scratch)
                 count = timed_execute([binary, *program['args']], cwd=directory, env=env,
                                       report=env.get('WALLET_PIR_CASE_LOG'),

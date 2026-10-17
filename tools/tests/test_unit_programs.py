@@ -35,6 +35,8 @@ class ProgramTests(unittest.TestCase):
             scratch = []
             def execute(command, **kwargs):
                 directory = Path(kwargs['env']['TMPDIR'])
+                self.assertLess(len(str(directory)), 40)
+                self.assertEqual(directory.parent, Path('/tmp'))
                 (directory / 'unfinished-upload').write_bytes(b'partial body')
                 scratch.append(directory)
                 if fails:
