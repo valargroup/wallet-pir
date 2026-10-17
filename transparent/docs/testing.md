@@ -25,6 +25,15 @@ changing the 30-second case / 180-second warm correctness budgets. Production
 load, HTTP and full service qualification remain separate release gates; fixture
 timings do not qualify a deployment.
 
+When the standard fast selection includes `transparent-filter-server`, helpers
+still overlap the Rust compilation, then finish before Rust test execution starts.
+Publisher archive preparation already runs apart from other Rust programs in the
+integrated fast runner; this barrier also removes helper contention during that
+CPU window. It preserves the selected helpers, cases, cold fixture caches and
+30-second case guard. The wait remains inside the measured fast command and its
+180-second warm budget. This can lengthen warm runs when helpers outlast
+compilation; full hosted selection still needs qualification on its exact head.
+
 ## Running the deployed suite
 
 Run `make transparent-regression` against the default public origins, or set
