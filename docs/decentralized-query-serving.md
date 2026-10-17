@@ -129,6 +129,35 @@ authority to serve it. Products that currently require controller renewal retain
 that requirement through an authenticated control path. A feed update alone must
 not silently grant indefinite authority.
 
+#### Hierarchy generation handover
+
+Once a publisher has built and finalized an amended hierarchy, it atomically
+advances its current generation and stops offering the previous generation as a
+publication/bootstrap target. New query servers bootstrap against the current
+generation. Existing query servers detect it through polling and initiate their
+update. Unchanged artifacts referenced by the new generation remain reusable.
+
+Each query server keeps its old generation active, including the metadata and
+setup needed by wallets, while downloading, verifying and loading the replacement.
+It switches the router and worker's serving view atomically only when the new
+generation is ready. Discovery continues to advertise its actual active generation
+until that switch. A superseded download whose artifacts are no longer available
+reconciles current publisher state and retries without stopping the active view.
+Before activating a candidate, check that it has not already been superseded.
+
+Routine supersession is not revocation. Retiring the publisher's old generation
+must not by itself invalidate query servers still serving it during a normal
+handover. Preserve product-specific authority renewal, freshness and reorg checks;
+confirmed invalidation or expired authority may still require refusal. Already
+admitted requests retain their generation under existing request-lifetime rules.
+After a switch, stale wallet sessions use the product's existing refresh/refusal
+behavior; never interpret an old encrypted request against new-generation data.
+
+The normal handover has no gap in the node's serving readiness. Budget the
+candidate alongside the active material so preparation cannot evict the serving
+view. Treat hierarchy generations separately from routine per-block publication
+revisions, which retain their product-specific behavior.
+
 **Deliverable:** a publication source interface and verifier that operate without
 our source checkout, private paths, indexer credentials or SSH deployment machinery.
 
@@ -145,8 +174,8 @@ resource budget and archive peers, and owns TLS and upgrades.
 
 A local publication manager follows the configured holdings independently of
 wallet requests. It downloads, stages and verifies candidates, then activates them
-atomically. Interrupted downloads and restarts resume safely without making
-partial publications available.
+atomically while continuing to serve the previous valid generation. Interrupted
+downloads and restarts resume safely without making partial publications available.
 
 Lightweight mode requires compatible prepared material. Missing or incompatible
 material produces a clear preparation refusal instead of silently starting an
@@ -322,6 +351,11 @@ independent correctness oracles. Exercise:
   recovery after missed revisions, and unavailable delta bases. Qualify up to 100
   consumers, including simultaneous bootstrap and continued updates under query
   load; retain product-specific freshness and authority gates.
+- Hierarchy generation handover under continuous client load: old-generation
+  service continues while the publisher offers only the new generation; activation
+  and advertised coverage switch together. Exercise failed preparation, interrupted
+  downloads, a superseded candidate, admitted old-generation requests and a new
+  node joining during the transition. Check reorg revocation separately.
 
 Measure startup and update cost, steady-state memory, disk, synchronization
 bandwidth and query performance together. Include packing costs, temporary
