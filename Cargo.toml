@@ -18,6 +18,7 @@ members = [
     "src/transparent/transparent-blocks",
     "src/transparent/transparent-server-backend",
     "src/transparent/transparent-ingest",
+    "src/transparent/transparent-journal",
     # Services and operational dashboard.
     "src/enhance/enhance-pir-server",
     "src/status/status-pir-server",

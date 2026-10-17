@@ -835,12 +835,12 @@ pub fn collect(args: &[String]) -> Result<Value, AnyError> {
     let pins: BTreeMap<_, _> = [
         (
             "reader_events",
-            include_bytes!("../../../../../src/transparent/transparent-ingest/src/events.rs")
+            include_bytes!("../../../../../src/transparent/transparent-journal/src/events.rs")
                 .as_slice(),
         ),
         (
             "reader_sidecar",
-            include_bytes!("../../../../../src/transparent/transparent-ingest/src/display_journal.rs")
+            include_bytes!("../../../../../src/transparent/transparent-journal/src/display_journal.rs")
                 .as_slice(),
         ),
         // The codecs, event metadata and native budget reference are
