@@ -446,6 +446,27 @@ async fn manager_checks_inventory_and_required_files_on_unchanged_maps() {
     std::fs::write(&tls.control, "").unwrap();
     let repaired = follow.poll_once().await.unwrap();
     assert_eq!(repaired.downloaded_files, 1);
+    task.abort();
+    let _ = task.await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn manager_refuses_changed_holdings_on_an_unchanged_map() {
+    let root = tempfile::tempdir().unwrap();
+    let (directory, set) = publication(root.path());
+    prepare_recent(&directory, &set);
+    let rpc = canonical_rpc(root.path(), &set).await;
+    let owner = authority(
+        &directory,
+        Some(Finalized::prepare(&directory, &set, 2).unwrap()),
+        rpc.client.clone(),
+    );
+    let tls = tls(root.path(), owner.clone()).await;
+    let state = root.path().join("provider");
+    let mut follow = manager(&tls, &state);
+    follow.poll_once().await.unwrap();
+    let live = follow.live().unwrap();
+    let (origin, task) = worker(live.clone()).await;
     // Changing only holdings is a full inventory change, never an unchanged map
     // shortcut. PR2 preserves the existing owner assignment fence.
     let prepared =
