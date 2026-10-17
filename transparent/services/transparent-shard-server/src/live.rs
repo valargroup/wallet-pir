@@ -397,7 +397,7 @@ impl LiveService {
             .fallback(dispatch)
             .layer(axum::middleware::from_fn_with_state(
                 telemetry,
-                pir_observability::observe,
+                transparent_server_backend::http::observe,
             ))
             .with_state(self.clone())
     }

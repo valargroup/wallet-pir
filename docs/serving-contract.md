@@ -134,3 +134,21 @@ It counts running and queued requests together, starts the deadline before the
 upload so reception time counts against it, budgets body bytes before reading,
 and answers overload with 503 and `Retry-After`. Folding it into the shared
 queue would change what wallets see.
+
+## HTTP resource lifetimes and observations
+
+`pir-control` supplies bounded body reading and `admission::spawn_admitted`,
+which moves admission and prepared handles into blocking execution and returns
+ownership with the result. Dropping the awaiting request cannot release resources
+while that work continues. Products decide when completed work releases admission.
+`http::retain` holds resources until the transport drops a response body, preserving
+its framing and hints; `http::guarded` also checks a product fence before emitting
+buffered bytes. Enhance uses the fenced body; Receiver retains query admission and
+its publication, and Transparent retains prepared handles and query memory.
+
+`pir-observability::ObservedBody` counts polled frames through product callbacks.
+Enhance keeps its existing metric families and starts processing time after upload;
+Transparent and Receiver retain their handler-duration and cancellation accounting.
+Their adapters classify paths into fixed labels before calling shared observation;
+shared code never recognizes product URLs. Limits, deadline origins, admission
+ordering, revocation checks, retries and HTTP refusals remain product policy.

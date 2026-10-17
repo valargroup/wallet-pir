@@ -162,7 +162,7 @@ impl Authority {
             .fallback(public_request)
             .layer(axum::middleware::from_fn_with_state(
                 self.0.telemetry.clone(),
-                pir_observability::observe,
+                transparent_server_backend::http::observe,
             ))
             .with_state(self.clone())
     }

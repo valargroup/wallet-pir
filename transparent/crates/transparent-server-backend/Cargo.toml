@@ -10,6 +10,7 @@ repository = "https://github.com/valargroup/wallet-pir"
 portable-kernel = []
 
 [dependencies]
+axum = "0.7"
 pir-observability = { version = "=0.1.0", path = "../../../shared/pir-observability" }
 pir-runtime = { version = "=0.1.0", path = "../../../shared/pir-runtime" }
 hex = "0.4"
@@ -33,4 +34,5 @@ transparent-shard = { package = "zakura-transparent-shard", git = "https://githu
 rustix = { version = "1.1", features = ["fs", "process", "thread"] }
 
 [dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
 tempfile = "3"

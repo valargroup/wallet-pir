@@ -951,6 +951,7 @@ dependencies = [
  "libc",
  "memmap2",
  "pir-control",
+ "pir-observability",
  "pir-runtime",
  "prometheus",
  "rand 0.8.5",
@@ -2206,6 +2207,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "hex",
+ "http-body",
  "rand 0.8.5",
  "serde",
  "sha2 0.10.9",
@@ -3739,6 +3741,7 @@ dependencies = [
 name = "transparent-server-backend"
 version = "0.1.0-rc.4"
 dependencies = [
+ "axum",
  "hex",
  "ipir-sp",
  "memmap2",
@@ -3754,6 +3757,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
+ "tower",
  "tracing",
  "zakura-transparent-events",
  "zakura-transparent-filter",

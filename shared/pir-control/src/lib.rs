@@ -17,6 +17,8 @@
 #[cfg(feature = "admission")]
 pub mod admission;
 pub mod durable;
+#[cfg(feature = "admission")]
+pub mod http;
 
 use serde::Serialize;
 use std::sync::OnceLock;

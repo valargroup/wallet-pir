@@ -134,6 +134,21 @@ pub async fn read_body(body: Body, limit: usize, deadline: Duration) -> Result<B
         .map_err(BodyError::Read)
 }
 
+/// Move admission and prepared handles into blocking execution. Cancelling the
+/// awaiting request cannot release them while work is still running. On success
+/// the caller chooses whether to retain them in its response or release them.
+pub fn spawn_admitted<G, R, F>(guard: G, work: F) -> tokio::task::JoinHandle<(R, G)>
+where
+    G: Send + 'static,
+    R: Send + 'static,
+    F: FnOnce(&G) -> R + Send + 'static,
+{
+    tokio::task::spawn_blocking(move || {
+        let result = work(&guard);
+        (result, guard)
+    })
+}
+
 /// The client a proxied request came from: the first `X-Forwarded-For`
 /// address, else `X-Real-IP`, else the socket peer if known, else `unknown`.
 ///
@@ -215,6 +230,51 @@ impl Drop for ClientSlot {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn cancelled_blocking_wait_retains_admission_and_prepared_handle() {
+        let permits = Arc::new(Semaphore::new(1));
+        let clients = ClientSlots::new(1);
+        let prepared = Arc::new(());
+        let weak = Arc::downgrade(&prepared);
+        struct Released(Option<tokio::sync::oneshot::Sender<()>>);
+        impl Drop for Released {
+            fn drop(&mut self) {
+                let _ = self.0.take().unwrap().send(());
+            }
+        }
+        let (done_tx, done_rx) = tokio::sync::oneshot::channel();
+        let guard = (
+            permits.clone().acquire_owned().await.unwrap(),
+            clients.try_acquire("client").unwrap(),
+            prepared,
+            Released(Some(done_tx)),
+        );
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let blocking = spawn_admitted(guard, move |_| {
+            started_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+        });
+        let waiter = tokio::spawn(async move {
+            let result = blocking.await;
+            drop(result);
+        });
+        started_rx.await.unwrap();
+        waiter.abort();
+        assert!(waiter.await.unwrap_err().is_cancelled());
+        assert_eq!(permits.available_permits(), 0);
+        assert!(clients.try_acquire("client").is_none());
+        assert!(weak.upgrade().is_some());
+        release_tx.send(()).unwrap();
+        tokio::time::timeout(Duration::from_secs(5), done_rx)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(weak.upgrade().is_none());
+        assert_eq!(permits.available_permits(), 1);
+        assert!(clients.try_acquire("client").is_some());
+    }
 
     #[tokio::test]
     async fn without_a_fast_path_a_full_queue_refuses_even_with_a_free_permit() {
