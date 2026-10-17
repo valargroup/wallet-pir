@@ -146,9 +146,11 @@ publication. Reference arithmetic and one encrypted HTTP/restart smoke remain
 separate; CUDA compilation and
 configuration checks use one native-plus-CUDA feature set. Commit/abort decision
 tests use durable controller state and small HTTP peers; worker tests separately
-check reservation accounting and restart behavior. The encrypted HTTP smoke
-retains a failed commit delivery, a later healthy publication, retry and restart
-with production runtimes.
+check reservation accounting and restart behavior. The encrypted HTTP smoke separates publication progress from durable restart.
+One case retains a failed commit delivery, a later healthy publication and retry
+with two real workers. The other checks encrypted answers before and after a
+durable coordinator restart with a fresh wallet. Both keep production runtimes
+and a 30-second deadline.
 
 Transparent concurrency coverage pairs four publication layouts with four wallet
 shapes instead of running their Cartesian product. Each pair still compares real
