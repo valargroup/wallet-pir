@@ -3870,7 +3870,10 @@ component. `baseline` records both components.
   must match the controller's `<fleet.json state_dir>/<map_sha256>.assignment.json` (native
   `Assignment::digest` and `worker_digest`, recomputed in declaration order); `warm_runtimes` must
   equal `target_runtimes` with no `prewarm_failed`. Display workers must be `ready`, `warm` and
-  report `covered_through`.
+  report `covered_through`. After a worker becomes HTTP-ready, the operator waits within the
+  controller's existing readiness budget for publication to recover from failed control calls
+  during the restart. It then repeats the publication and ownership checks. A controller that
+  remains stalled causes rollback; worker HTTP readiness alone cannot commit the upgrade.
 - History refuses unless the controller holds `follow_journal: false`, the full-v3 journal, the
   full-v12 publication root and no `ship_runtimes`. Display refuses unless its controller runs
   `--root <root>` without `--geometry`.

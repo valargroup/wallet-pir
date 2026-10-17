@@ -431,12 +431,30 @@ class UpgradeDeployer(Deployer):
         self.ex.write(load['host'], root + '/pins.json', data, 0o644)
         return pins
 
+    def wait_for_controller(self):
+        """Let the controller recover from a worker restart within its own readiness budget.
+
+        A warm worker can answer HTTP before the controller retries a failed
+        control call. Publication and ownership checks still run after recovery.
+        """
+        timeout = self.upgrade.controller.role.ready_timeout
+        deadline = self.clock() + timeout
+        while True:
+            _, problems = self.upgrade.authority_problems(self.ex)
+            if not problems:
+                return
+            if self.clock() >= deadline:
+                raise DeployError('controller did not resume publication within %ss: %s'
+                                  % (timeout, '; '.join(problems)))
+            self.sleep(self.poll_seconds)
+
     def activate(self, journal, index, sha):
         if self.upgrade.request['component'] == 'workers':
             self.pause_load(journal)
         super().activate(journal, index, sha)
         record = journal.hosts[index]
         if self.upgrade.request['component'] == 'workers':
+            self.wait_for_controller()
             # A restarted worker must come back owning the controller's current assignment.
             problems = self.upgrade.ready_problems(self.ex, record['key'], record['host'],
                                                    record['verify']['ready_url'] or record['verify']['health'])

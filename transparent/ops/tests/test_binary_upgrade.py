@@ -562,6 +562,39 @@ class DisplayUpgrade(Harness):
         self.assertEqual(code, 0, lines)
         self.assertEqual(self.fake.probe_unit('coordinator', DISPLAY_CONTROLLER)['exe_sha256'], sha256(CTRL_NEW))
 
+    def test_worker_waits_for_controller_to_resume_publication(self):
+        self.assertEqual(self.run_cli('baseline')[0], 0)
+        shape = self.fake.health_shapes[('coordinator', DISPLAY_CONTROLLER)]
+        recovering = [4]
+
+        def controller_status(ready_, exe):
+            document = shape(ready_, exe)
+            worker = self.fake.probe_unit('gpu', DISPLAY_WORKER)
+            if worker['exe_sha256'] == sha256(NEW) and recovering[0]:
+                recovering[0] -= 1
+                return {**document, 'stalled': True}
+            return document
+
+        self.fake.health_shapes[('coordinator', DISPLAY_CONTROLLER)] = controller_status
+        code, lines = self.run_cli('deploy', '--binary', str(self.binary), '--skip-exact-check')
+        self.assertEqual(code, 0, lines)
+        self.assertEqual(recovering[0], 0)
+        self.assertEqual(self.fake.probe_unit('gpu', DISPLAY_WORKER)['exe_sha256'], sha256(NEW))
+
+    def test_worker_that_leaves_controller_stalled_rolls_back(self):
+        self.assertEqual(self.run_cli('baseline')[0], 0)
+        shape = self.fake.health_shapes[('coordinator', DISPLAY_CONTROLLER)]
+
+        def controller_status(ready_, exe):
+            worker = self.fake.probe_unit('gpu', DISPLAY_WORKER)
+            return {**shape(ready_, exe), 'stalled': worker['exe_sha256'] == sha256(NEW)}
+
+        self.fake.health_shapes[('coordinator', DISPLAY_CONTROLLER)] = controller_status
+        code, lines = self.run_cli('deploy', '--binary', str(self.binary), '--skip-exact-check')
+        self.assertEqual(code, 1, lines)
+        self.assertTrue(any('controller did not resume publication' in line for line in lines), lines)
+        self.assertEqual(self.fake.probe_unit('gpu', DISPLAY_WORKER)['exe_sha256'], sha256(OLD))
+
     def test_display_controller_upgrade_keeps_run_arguments(self):
         self.run_cli('baseline')
         self.write_request(component='controller')
