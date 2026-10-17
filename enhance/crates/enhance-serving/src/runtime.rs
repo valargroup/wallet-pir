@@ -12,17 +12,11 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 use enhance_pir::protocol::*;
 use enhance_pir::types::{ITEM_SIZE_BITS, RECORDS_PER_ROW, RECORD_BYTES};
 use inspiring::RlweParams;
-#[cfg(not(feature = "native-reinspiring"))]
-use inspiring::{QueryPackPreprocessed, TopKeyImages};
-#[cfg(not(feature = "native-reinspiring"))]
-use ipir_sp::serialize::{deserialize_packing_keys, serialized_packing_keys_len};
 use ipir_sp::server::CrsBlock;
 #[cfg(not(feature = "native-reinspiring"))]
-use ipir_sp::server::{
-    build_pack_preprocessed_blocks, pack_intermediate_blocks, published_c1_rows,
-};
-#[cfg(not(feature = "native-reinspiring"))]
 use ipir_sp::YpirSchemeParams;
+#[cfg(not(feature = "native-reinspiring"))]
+use pir_runtime::packing::{PackingKeys, PackingSetup, PreparedPacking};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -48,13 +42,10 @@ pub fn modulus() -> u64 {
 pub fn rlwe() -> &'static RlweParams {
     static RLWE: OnceLock<RlweParams> = OnceLock::new();
     RLWE.get_or_init(|| {
-        ipir_sp::params_for_simplepir_profile(
-            32768,
-            ITEM_SIZE_BITS,
-            ipir_sp::SimplePirProfile::P16Q48,
-        )
-        .expect("pinned profile")
-        .0
+        pir_runtime::params::p16q48(32768, ITEM_SIZE_BITS)
+            .expect("pinned profile")
+            .rlwe()
+            .clone()
     })
 }
 
@@ -271,8 +262,7 @@ pub struct Packing {
     _charge: super::packing_budget::Charge,
     pub params: YpirSchemeParams,
     pub public: Vec<u8>,
-    preprocessed: Vec<QueryPackPreprocessed<'static>>,
-    top: Option<TopKeyImages<'static>>,
+    material: Option<PreparedPacking<'static>>,
     mapped: Option<inspiring::prepared::MappedPrepared<'static>>,
 }
 
@@ -282,13 +272,11 @@ impl Packing {
         out.write_all(&(self.params.db_rows as u64).to_le_bytes())
             .map_err(|e| e.to_string())?;
         out.write_all(&self.public).map_err(|e| e.to_string())?;
-        inspiring::prepared::write(
-            out,
-            rlwe(),
-            &self.preprocessed,
-            self.top.as_ref().ok_or("cannot rewrite mapped artifact")?,
-        )
-        .map_err(|e| e.to_string())
+        self.material
+            .as_ref()
+            .ok_or("cannot rewrite mapped artifact")?
+            .write(out, rlwe())
+            .map_err(|e| e.to_string())
     }
     /// Read-only mappings own their file pages through all in-flight query pins.
     /// Router artifacts are immutable: downloads replace inodes atomically and
@@ -323,8 +311,7 @@ impl Packing {
             _charge: charge,
             params,
             public,
-            preprocessed: Vec::new(),
-            top: None,
+            material: None,
             mapped: Some(mapped),
         })
     }
@@ -337,18 +324,17 @@ impl Packing {
         let began = std::time::Instant::now();
         let mut charge = super::packing_budget::Charge::prepare(budget)?;
         let params = parameters(logical_rows)?;
-        let preprocessed =
-            build_pack_preprocessed_blocks(rlwe(), hint).map_err(|e| e.to_string())?;
-        let public = published_c1_rows(&preprocessed, rlwe().q);
-        let top = TopKeyImages::build(rlwe());
+        let material =
+            PreparedPacking::prepare(rlwe(), hint, PackingSetup::new(rlwe()), None, |_| false)
+                .map_err(|e| e.to_string())?;
+        let public = material.public_rows(rlwe().q);
         charge.resident();
         crate::prepared_packing::observe_preparation(began.elapsed());
         Ok(Self {
             _charge: charge,
             params,
             public,
-            preprocessed,
-            top: Some(top),
+            material: Some(material),
             mapped: None,
         })
     }
@@ -385,13 +371,13 @@ impl Packing {
         {
             return Err("query session mismatch".into());
         }
-        let packing_len = serialized_packing_keys_len(rlwe());
+        let packing_len = PackingKeys::encoded_len(rlwe());
         let switched_len = (self.params.db_rows * self.params.query_bits).div_ceil(8);
         if body.len() != HEADER_BYTES + packing_len + switched_len {
             return Err("query framing length mismatch".into());
         }
         // Validate packing keys before sending any evaluation work.
-        deserialize_packing_keys(rlwe(), &body[HEADER_BYTES..HEADER_BYTES + packing_len])
+        PackingKeys::decode(rlwe(), &body[HEADER_BYTES..HEADER_BYTES + packing_len])
             .map_err(|e| e.to_string())?;
         deserialize_first_dim_query(rlwe(), &self.params, &body[HEADER_BYTES + packing_len..])
             .map_err(|e| e.to_string())
@@ -408,25 +394,23 @@ impl Packing {
         {
             return Err("invalid worker intermediate".into());
         }
-        let len = serialized_packing_keys_len(rlwe());
-        let keys = deserialize_packing_keys(rlwe(), &body[HEADER_BYTES..HEADER_BYTES + len])
+        let len = PackingKeys::encoded_len(rlwe());
+        let keys = PackingKeys::decode(rlwe(), &body[HEADER_BYTES..HEADER_BYTES + len])
             .map_err(|e| e.to_string())?;
+        let q_prime_1 = self.params.q_prime_1;
         let packed = if let Some(mapped) = &self.mapped {
-            mapped.pack(intermediate, &keys)
+            mapped
+                .pack(intermediate, keys.upstream())
+                .map(|packed| pir_runtime::packing::response_bodies(&packed, q_prime_1))
         } else {
-            pack_intermediate_blocks(
-                intermediate,
-                &keys,
-                self.top.as_ref().expect("owned packing top images"),
-                &self.preprocessed,
-            )
+            self.material
+                .as_ref()
+                .expect("owned packing material")
+                .pack(intermediate, &keys, q_prime_1)
         }
         .map_err(|e| e.to_string())?;
         let mut response = binding.encode();
-        response.extend(ipir_sp::modulus_switch::serialize_rlwe_response_bodies(
-            &packed,
-            self.params.q_prime_1,
-        ));
+        response.extend(packed);
         Ok(response)
     }
 }
@@ -664,6 +648,82 @@ mod tests {
             row[..8].copy_from_slice(&(start + i as u64).to_le_bytes());
         }
         Ok(bytes)
+    }
+
+    /// Deterministic bytes for fixed-input regression vectors.
+    #[cfg(not(feature = "native-reinspiring"))]
+    fn stream(label: &[u8], len: usize) -> Vec<u8> {
+        (0u64..)
+            .flat_map(|i| {
+                Sha256::new()
+                    .chain_update(label)
+                    .chain_update(i.to_le_bytes())
+                    .finalize()
+            })
+            .take(len)
+            .collect()
+    }
+
+    /// Pins public material and the packed answer for fixed records, setup
+    /// seed and query bytes. The digests were captured on the base commit
+    /// before the shared runtime extraction; they must never change.
+    #[cfg(not(feature = "native-reinspiring"))]
+    #[test]
+    fn fixed_inputs_pin_public_material_and_answer() {
+        let dir = tempfile::tempdir().unwrap();
+        let coverage = Lifecycle::default()
+            .coverage(67, Geometry::default())
+            .unwrap();
+        let plan = plan(coverage.shards[0].clone(), records).unwrap();
+        let mut engine = Engine::new(dir.path());
+        let (eval, _) = engine.prepare(plan.clone(), records).unwrap();
+        let hint = eval.hint().unwrap();
+        let pack = Packing::new(4096, &hint, &crate::PackingBudget::coordinator()).unwrap();
+        let mut hint_digest = Sha256::new();
+        for value in hint.iter().flat_map(|b| b.rows.iter().flatten()) {
+            hint_digest.update(value.to_le_bytes());
+        }
+        let binding = QueryBinding {
+            generation: 1,
+            shard_id: 0,
+            epoch: Sha256::digest(&pack.public)[..8].try_into().unwrap(),
+            recovery_epoch: 0,
+            session_id: [3; 32],
+            request_id: [4; 16],
+            anchor_hash: [5; 32],
+        };
+        let q = rlwe().q;
+        let keys: Vec<u64> = stream(b"keys", PackingKeys::encoded_len(rlwe()) * 2)
+            .chunks_exact(8)
+            .map(|c| u64::from_le_bytes(c.try_into().unwrap()) % q)
+            .collect();
+        let mut body = binding.encode();
+        let keys = ipir_sp::bits::u64s_to_contiguous_bytes(
+            &keys,
+            ipir_sp::modulus_switch::modulus_bits(q),
+        );
+        body.extend(&keys[..PackingKeys::encoded_len(rlwe())]);
+        body.extend(stream(
+            b"query",
+            (pack.params.db_rows * pack.params.query_bits).div_ceil(8),
+        ));
+        let rows = pack.params.db_rows;
+        let coefficients = pack.query_coefficients(&body, binding, rows).unwrap();
+        let answer = pack
+            .pack(&body, &eval.evaluate(&coefficients).unwrap(), rows)
+            .unwrap();
+        assert_eq!(
+            [
+                hex::encode(hint_digest.finalize()),
+                hex::encode(Sha256::digest(&pack.public)),
+                hex::encode(Sha256::digest(&answer)),
+            ],
+            [
+                "03c4b6b973673c506b1f12f18605daddbab033ec3c40a4a055fac538a833e361",
+                "89b1ad472659862a987130688c0e967189695e66d1eba518c2b950938f9f84df",
+                "045515ff10f14273c2a4118093407e9563add14410c8ad2392d5e277ae60db20",
+            ]
+        );
     }
 
     #[test]

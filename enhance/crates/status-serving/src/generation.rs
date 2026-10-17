@@ -3,52 +3,38 @@
 use super::{index, profile};
 use enhance_pir::status::*;
 #[cfg(not(feature = "native-reinspiring"))]
-use inspiring::QueryPackPreprocessed;
-use inspiring::TopKeyImages;
-#[cfg(not(feature = "native-reinspiring"))]
-use ipir_sp::{
-    server::{pack_intermediate_blocks, published_c1_rows},
-    IPIRClient,
-};
+use ipir_sp::IPIRClient;
 use ipir_sp::{
     server::{CrsBlock, MatvecBackend},
     IPIRServer, ProductionSimplePirParams, SimplePirProfile,
 };
+use pir_runtime::evaluation::{build_from_le_u16, PreparedDatabase};
+#[cfg(not(feature = "native-reinspiring"))]
+use pir_runtime::packing::{PackingKeys, PackingSetup, PreparedPacking};
 use rayon::prelude::*;
 use sha2::{Digest, Sha256};
 #[cfg(not(feature = "native-reinspiring"))]
 use std::sync::OnceLock;
 use std::{sync::Arc, time::Instant};
 
-/// Ciphertext modulus of the selected Status profile.
-fn modulus() -> u64 {
-    #[cfg(feature = "native-reinspiring")]
-    {
-        enhance_pir::native::Q
-    }
-    #[cfg(not(feature = "native-reinspiring"))]
-    {
-        profile().rlwe().q
-    }
-}
+/// Ciphertext modulus of the selected Status profile, which is Enhance's.
+use enhance_serving::runtime::modulus;
 
 /// Router-side packing material for one d-column hint block.
-#[cfg(not(feature = "native-reinspiring"))]
-type PackingBlock = QueryPackPreprocessed<'static>;
 #[cfg(feature = "native-reinspiring")]
 type PackingBlock = Arc<reinspiring::native::NativePreprocessed>;
 
 #[cfg(not(feature = "native-reinspiring"))]
-fn top_images() -> Arc<TopKeyImages<'static>> {
-    static TOP: OnceLock<Arc<TopKeyImages<'static>>> = OnceLock::new();
-    TOP.get_or_init(|| Arc::new(TopKeyImages::build(profile().rlwe())))
+fn packing_setup() -> PackingSetup<'static> {
+    static TOP: OnceLock<PackingSetup<'static>> = OnceLock::new();
+    TOP.get_or_init(|| PackingSetup::new(profile().rlwe()))
         .clone()
 }
 
 pub(super) struct Unit {
     bytes_digest: Hash,
     pub(super) rows: Vec<u8>,
-    db: IPIRServer<u16>,
+    db: PreparedDatabase,
     hint: Vec<CrsBlock>,
 }
 /// Update H = A * D in Z_q[X]/(X^d+1) for at most 4096 changed
@@ -125,8 +111,10 @@ pub struct Generation {
     manifest: Manifest,
     public: Arc<Vec<u8>>,
     pub(super) units: Vec<Arc<Unit>>,
+    #[cfg(feature = "native-reinspiring")]
     pub(super) packing: Arc<Vec<PackingBlock>>,
-    pub(super) top: Option<Arc<TopKeyImages<'static>>>,
+    #[cfg(not(feature = "native-reinspiring"))]
+    packing: Option<Arc<PreparedPacking<'static>>>,
     pub(super) packing_digests: Vec<Hash>,
 }
 
@@ -191,8 +179,10 @@ impl Generation {
             manifest,
             public,
             units: Vec::new(),
+            #[cfg(feature = "native-reinspiring")]
             packing: Arc::new(Vec::new()),
-            top: None,
+            #[cfg(not(feature = "native-reinspiring"))]
+            packing: None,
             packing_digests: Vec::new(),
         }
     }
@@ -222,7 +212,6 @@ impl Generation {
         worker.manifest = router.manifest;
         worker.public = router.public;
         worker.packing = router.packing;
-        worker.top = router.top;
         worker.packing_digests = router.packing_digests;
         stats.packing_ms = started.elapsed().as_secs_f64() * 1000.;
         stats.total_ms += stats.packing_ms;
@@ -337,57 +326,33 @@ impl Generation {
                 public: Arc::new(public),
                 units: Vec::new(),
                 packing: Arc::new(packing),
-                top: None,
                 packing_digests,
             })
         }
         #[cfg(not(feature = "native-reinspiring"))]
         {
-            let top = top_images();
-            let packing: Vec<_> = blocks
-                .par_iter()
-                .enumerate()
-                .map(|(i, block)| {
-                    if let Some(old) = previous
-                        .filter(|g| g.packing_digests.get(i) == packing_digests.get(i))
-                        .and_then(|g| g.packing.get(i))
-                    {
-                        // Upstream's precomputation owns immutable matrices. Copy the
-                        // exact values rather than rebuilding unchanged CRS blocks.
-                        return Ok(QueryPackPreprocessed {
-                            params: old.params,
-                            collapse_a_final_ntt: old.collapse_a_final_ntt.clone(),
-                            digits_ntt: old.digits_ntt.clone(),
-                        });
-                    }
-                    QueryPackPreprocessed::build_with_top(p.rlwe(), &block.to_ntt(p.rlwe()), &top)
-                        .map_err(|_| Error::Pir)
-                })
-                .collect::<Result<_, _>>()?;
-            // Measure public preprocessing transport cost before moving preparation
-            // across hosts. Includes fixed-shape matrix values, excluding framing.
-            let packing_matrix_bytes: usize = packing
-                .iter()
-                .map(|block| {
-                    (block.collapse_a_final_ntt.data.len()
-                        + block.digits_ntt.iter().map(|m| m.data.len()).sum::<usize>())
-                        * 8
-                })
-                .sum();
+            let packing = PreparedPacking::prepare(
+                p.rlwe(),
+                &blocks,
+                packing_setup(),
+                previous.and_then(|g| g.packing.as_deref()),
+                |i| previous.is_some_and(|g| g.packing_digests.get(i) == packing_digests.get(i)),
+            )
+            .map_err(|_| Error::Pir)?;
+            let packing_matrix_bytes = packing.coefficient_bytes();
             tracing::info!(
                 hint_bytes = bytes.len(),
                 packing_matrix_bytes,
                 preparation_threads = rayon::current_num_threads(),
                 "Status packing material geometry"
             );
-            let public = published_c1_rows(&packing, p.rlwe().q);
+            let public = packing.public_rows(p.rlwe().q);
             manifest.public_digest = Sha256::digest(&public).into();
             Ok(Self {
                 manifest,
                 public: Arc::new(public),
                 units: Vec::new(),
-                packing: Arc::new(packing),
-                top: Some(top),
+                packing: Some(Arc::new(packing)),
                 packing_digests,
             })
         }
@@ -426,12 +391,16 @@ impl Generation {
                 reused += 1;
                 continue;
             }
-            let values = bytes
-                .chunks_exact(2)
-                .map(|x| u16::from_le_bytes([x[0], x[1]]));
-            let db =
+            // Snapshot rows are already verified, row-major little-endian u16.
+            // The shared loader enforces full consumption without keeping a
+            // second database copy and preserves a kernel-construction error.
+            let mut reader = bytes;
+            let db = build_from_le_u16(&mut reader, bytes.len() / 2, |values| {
                 IPIRServer::try_from_profile_with_backend(&local, values, false, true, backend)
-                    .map_err(|_| Error::Unavailable)?;
+                    .map(PreparedDatabase::new)
+            })
+            .map_err(|_| Error::Unavailable)?
+            .map_err(|_| Error::Unavailable)?;
             let base = previous
                 .filter(|prev| {
                     prev.manifest.network == snapshot.network && prev.manifest.salt == snapshot.salt
@@ -455,8 +424,10 @@ impl Generation {
         let database_hint_ms = start.elapsed().as_secs_f64() * 1000.;
         let packing_ms = 0.;
         let public = Vec::new();
-        let packing = Vec::new();
-        let top = None;
+        #[cfg(feature = "native-reinspiring")]
+        let packing = Arc::new(Vec::new());
+        #[cfg(not(feature = "native-reinspiring"))]
+        let packing = None;
         let manifest = Manifest {
             protocol: PROTOCOL.into(),
             network: snapshot.network,
@@ -486,8 +457,7 @@ impl Generation {
                 manifest,
                 public: Arc::new(public),
                 units,
-                packing: Arc::new(packing),
-                top,
+                packing,
                 packing_digests: Vec::new(),
             },
             stats,
@@ -496,18 +466,15 @@ impl Generation {
     #[cfg(not(feature = "native-reinspiring"))]
     pub fn coefficients(&self, bytes: &[u8]) -> Result<Vec<u64>, Error> {
         let p = profile();
-        let keys_len = ipir_sp::serialize::serialized_packing_keys_len(p.rlwe());
+        let keys_len = PackingKeys::encoded_len(p.rlwe());
         if bytes.len() != HEADER_BYTES + keys_len + ROWS * 48 / 8
             || &bytes[..4] != QUERY_MAGIC
             || bytes[4..36] != self.manifest.id()
         {
             return Err(Error::Malformed);
         }
-        ipir_sp::serialize::deserialize_packing_keys(
-            p.rlwe(),
-            &bytes[HEADER_BYTES..HEADER_BYTES + keys_len],
-        )
-        .map_err(|_| Error::Malformed)?;
+        PackingKeys::decode(p.rlwe(), &bytes[HEADER_BYTES..HEADER_BYTES + keys_len])
+            .map_err(|_| Error::Malformed)?;
         Ok(ipir_sp::IPIRSimpleQuery::from_switched_bytes(
             &bytes[HEADER_BYTES + keys_len..],
             ROWS,
@@ -532,9 +499,8 @@ impl Generation {
             #[cfg(not(feature = "native-reinspiring"))]
             let partial = unit.db.try_multiply_query(p.rlwe(), query);
             let partial = partial.map_err(|_| Error::Unavailable)?;
-            for (a, b) in out.iter_mut().zip(partial) {
-                *a = ((u128::from(*a) + u128::from(b)) % u128::from(modulus())) as u64;
-            }
+            pir_runtime::evaluation::add_intermediate_assign_mod(&mut out, &partial, modulus())
+                .map_err(|_| Error::Pir)?;
         }
         Ok(out)
     }
@@ -581,37 +547,26 @@ impl Generation {
     #[cfg(not(feature = "native-reinspiring"))]
     pub fn pack(&self, body: &[u8], values: &[u64]) -> Result<Vec<u8>, Error> {
         self.coefficients(body)?;
-        if self.packing.is_empty() {
-            return Err(Error::Unavailable);
-        }
+        let packing = self.packing.as_ref().ok_or(Error::Unavailable)?;
         let p = profile();
         if values.len() != p.ypir().db_cols || values.iter().any(|v| *v >= p.rlwe().q) {
             return Err(Error::Malformed);
         }
-        let len = ipir_sp::serialize::serialized_packing_keys_len(p.rlwe());
-        let keys = ipir_sp::serialize::deserialize_packing_keys(
-            p.rlwe(),
-            &body[HEADER_BYTES..HEADER_BYTES + len],
-        )
-        .map_err(|_| Error::Malformed)?;
-        let ciphertexts = pack_intermediate_blocks(
-            values,
-            &keys,
-            self.top.as_deref().ok_or(Error::Unavailable)?,
-            &self.packing,
-        )
-        .map_err(|_| Error::Pir)?;
+        let len = PackingKeys::encoded_len(p.rlwe());
+        let keys = PackingKeys::decode(p.rlwe(), &body[HEADER_BYTES..HEADER_BYTES + len])
+            .map_err(|_| Error::Malformed)?;
         let mut response = body[..HEADER_BYTES].to_vec();
-        response.extend(ipir_sp::modulus_switch::serialize_rlwe_response_bodies(
-            &ciphertexts,
-            p.ypir().q_prime_1,
-        ));
+        response.extend(
+            packing
+                .pack(values, &keys, p.ypir().q_prime_1)
+                .map_err(|_| Error::Pir)?,
+        );
         Ok(response)
     }
     /// Differential oracle: compare composed hints with upstream full-database preprocessing.
     pub fn verify_full_hint(&self, snapshot: &index::Snapshot) -> Result<(), Error> {
         let p = profile();
-        let db = IPIRServer::from_profile(
+        let db = PreparedDatabase::new(IPIRServer::from_profile(
             p,
             snapshot
                 .rows
@@ -619,7 +574,7 @@ impl Generation {
                 .map(|v| u16::from_le_bytes([v[0], v[1]])),
             false,
             true,
-        );
+        ));
         let masks = query_masks(&snapshot.network, &snapshot.salt)?;
         let expected = unit_hint(&db, &masks)?;
         for (block_i, block) in expected.iter().enumerate() {
@@ -658,16 +613,14 @@ fn query_masks(network: &Hash, salt: &Hash) -> Result<Vec<Vec<u64>>, Error> {
 }
 
 /// Hint contribution H = A * D for the rows covered by `masks`.
-fn unit_hint(db: &IPIRServer<u16>, masks: &[Vec<u64>]) -> Result<Vec<CrsBlock>, Error> {
+fn unit_hint(db: &PreparedDatabase, masks: &[Vec<u64>]) -> Result<Vec<CrsBlock>, Error> {
     #[cfg(feature = "native-reinspiring")]
     {
         enhance_serving::runtime::native_runtime::hint(db, masks).map_err(|_| Error::Pir)
     }
     #[cfg(not(feature = "native-reinspiring"))]
     {
-        Ok(db
-            .perform_offline_precomputation_simplepir(profile().rlwe(), masks)
-            .crs_blocks)
+        Ok(db.hint(profile().rlwe(), masks))
     }
 }
 
@@ -716,5 +669,66 @@ mod incremental_tests {
         assert_eq!(stats.incremental_units, 2);
         restored.verify_full_hint(&snapshot).unwrap();
         assert_eq!(base.hint_bytes().unwrap(), restored.hint_bytes().unwrap());
+    }
+}
+
+#[cfg(all(test, not(feature = "native-reinspiring")))]
+mod fixed_input_tests {
+    use super::*;
+    use crate::fixture;
+
+    /// Deterministic bytes for fixed-input regression vectors.
+    fn stream(label: &[u8], len: usize) -> Vec<u8> {
+        (0u64..)
+            .flat_map(|i| {
+                Sha256::new()
+                    .chain_update(label)
+                    .chain_update(i.to_le_bytes())
+                    .finalize()
+            })
+            .take(len)
+            .collect()
+    }
+
+    /// Pins public material, the hint and the packed answer for a fixed
+    /// snapshot and fixed query bytes. The digests were captured on the base
+    /// commit before the shared runtime extraction; they must never change.
+    #[test]
+    fn fixed_inputs_pin_public_material_and_answer() {
+        let snapshot = fixture::snapshot(32, false).unwrap();
+        let (generation, _) =
+            Generation::prepare(&snapshot, 1, 1, 1, None, MatvecBackend::Cpu).unwrap();
+        let p = profile();
+        let q = p.rlwe().q;
+        let keys_len = ipir_sp::serialize::serialized_packing_keys_len(p.rlwe());
+        let keys: Vec<u64> = stream(b"keys", keys_len * 2)
+            .chunks_exact(8)
+            .map(|c| u64::from_le_bytes(c.try_into().unwrap()) % q)
+            .collect();
+        let keys = ipir_sp::bits::u64s_to_contiguous_bytes(
+            &keys,
+            ipir_sp::modulus_switch::modulus_bits(q),
+        );
+        let mut body = QUERY_MAGIC.to_vec();
+        body.extend(generation.manifest().id());
+        body.resize(HEADER_BYTES, 9);
+        body.extend(&keys[..keys_len]);
+        body.extend(stream(b"query", ROWS * 48 / 8));
+        let coefficients = generation.coefficients(&body).unwrap();
+        let answer = generation
+            .pack(&body, &generation.evaluate(&coefficients).unwrap())
+            .unwrap();
+        assert_eq!(
+            [
+                hex::encode(Sha256::digest(generation.hint_bytes().unwrap())),
+                hex::encode(Sha256::digest(generation.public().as_slice())),
+                hex::encode(Sha256::digest(&answer)),
+            ],
+            [
+                "ef108747cdf42c14c9c325f095a8f1c83daf12646fc6bf29309c8a0ced551967",
+                "239f00cb0991ec663dc0dd57fa78b2944d0a766a222e7f666b356915652bc7b0",
+                "1d34ae677cedc62f9be5dacb537ccc6311d212020c6a29663de05065eda5ea43",
+            ]
+        );
     }
 }

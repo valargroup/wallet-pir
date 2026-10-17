@@ -45,6 +45,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "609cbd309625938ba70c115147a21b4c0db9fdf5" }
 
 [dev-dependencies]
+# Independent Status client for the real HTTP runtime regression.
+zakura-pir-status = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "609cbd309625938ba70c115147a21b4c0db9fdf5" }
 enhance-serving = { path = "../../crates/enhance-serving", features = ["fault-injection"] }
 zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "609cbd309625938ba70c115147a21b4c0db9fdf5", features = ["testing"] }
 # Independent wallet Enhance client, which is native-only, and the synthetic

@@ -11,6 +11,7 @@ portable-kernel = []
 
 [dependencies]
 pir-observability = { version = "=0.1.0", path = "../../../shared/pir-observability" }
+pir-runtime = { version = "=0.1.0", path = "../../../shared/pir-runtime" }
 hex = "0.4"
 ipir-sp = "=0.1.0-rc.7"
 memmap2 = "0.9"

@@ -465,6 +465,21 @@ observation (`status::source`) and publication (`status::publisher`), and the
 there. `tools/ci/boundary.py` enforces these rules for every dependency kind and
 for resolved workspace and standalone graphs.
 
+Raw PIR integration that Enhance shares with Status or Transparent lives in
+`shared/pir-runtime`: the P16Q48 profile parameters, packing-key decoding and
+response packing (opaque `PackingSetup`, `PreparedPacking` and `PackingKeys`
+handles), intermediate accumulation and streaming stored coefficients into an
+opaque `PreparedDatabase` used by Enhance and Status. Transparent retains its
+P16 adapter, but all current table variants select P8; it is not counted as an
+active P16 consumer. The shared loader
+rejects incomplete reads and constructors that leave coefficients unconsumed;
+accumulation validates the entire contribution before changing its destination.
+Status keeps digest-based block reuse while shared packing owns the matrices. Preparation, evaluation and
+packing stay separate calls, so workers evaluate and the packing router or
+coordinator packs. Record layouts, framing, session checks, setup seeds and the
+native profile stay in `enhance-serving` and `status-serving`; Status takes its
+modulus from `enhance-serving`.
+
 ## Validation and deployment
 
 The validation suite includes independent server/wallet session vectors, malformed
