@@ -182,12 +182,13 @@ async fn canonical_rpc(root: &Path, set: &ShardSet) -> CanonicalRpc {
     let genesis = Arc::new(RwLock::new(set.map.genesis_hash.clone()));
     let available = Arc::new(AtomicBool::new(true));
     let state = (hash.clone(), genesis.clone(), available.clone());
+    type RpcState = (
+        Arc<RwLock<Option<String>>>,
+        Arc<RwLock<String>>,
+        Arc<AtomicBool>,
+    );
     async fn rpc(
-        State((hash, genesis, available)): State<(
-            Arc<RwLock<Option<String>>>,
-            Arc<RwLock<String>>,
-            Arc<AtomicBool>,
-        )>,
+        State((hash, genesis, available)): State<RpcState>,
         axum::Json(request): axum::Json<serde_json::Value>,
     ) -> impl IntoResponse {
         assert_eq!(request["method"], "getblockhash");
