@@ -47,6 +47,9 @@ fn advance(owner: &Authority, directory: &Path, set: &ShardSet) {
 // This asks for an occupied producer row, re-deriving the native profile
 // independently and comparing decrypted bytes to the original publication.
 async fn query(origin: &str, set: &ShardSet) {
+    drop(query_and_upload(origin, set).await);
+}
+async fn query_and_upload(origin: &str, set: &ShardSet) -> Vec<u8> {
     use transparent_server_backend::shardset::{Table, TableRef};
     let shard = set.get(1).unwrap();
     let source = shard
@@ -89,7 +92,7 @@ async fn query(origin: &str, set: &ShardSet) {
             "{origin}/v2/shards/1/revisions/{}/query/directory",
             shard.digest
         ))
-        .body(body)
+        .body(body.clone())
         .send()
         .await
         .unwrap();
@@ -98,6 +101,7 @@ async fn query(origin: &str, set: &ShardSet) {
     assert_eq!(&bytes[..8], &binding);
     let decoded = profile.decode(&secret, &params, &bytes[16..]).unwrap();
     assert_eq!(decoded, source[row * width..(row + 1) * width]);
+    body
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -518,7 +522,7 @@ async fn control_write_failure(pause_at: Option<u32>, failed_record: &str) {
     follow.poll_once().await.unwrap();
     let live = follow.live().unwrap();
     let (origin, task) = worker(live.clone()).await;
-    query(&origin, &set).await;
+    let encrypted = query_and_upload(&origin, &set).await;
     if failed_record == "both" {
         owner.0.distribution_revision.store(99, Ordering::Release);
     }
@@ -572,13 +576,14 @@ async fn control_write_failure(pause_at: Option<u32>, failed_record: &str) {
         get(&origin, "/v2/shards/init").await.status(),
         StatusCode::SERVICE_UNAVAILABLE
     );
-    // Refuse encrypted requests too, before parsing/evaluation of their body.
+    // Reuse the exact valid encrypted request whose answer was independently
+    // checked before invalidation. A binding/framing error cannot fake refusal.
     let response = reqwest::Client::new()
         .post(format!(
             "{origin}/v2/shards/1/revisions/{}/query/directory",
             set.get(1).unwrap().digest
         ))
-        .body(vec![0u8; 8])
+        .body(encrypted)
         .send()
         .await
         .unwrap();
