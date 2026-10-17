@@ -67,47 +67,57 @@ fn record(position: u64) -> Vec<u8> {
     .to_vec()
 }
 
+async fn workers(
+    root: &std::path::Path,
+    count: usize,
+    reject_commit: Arc<AtomicBool>,
+) -> (Vec<Listening>, Vec<Group>) {
+    let mut listeners = Vec::new();
+    let mut replicas = Vec::new();
+    for index in 0..count {
+        let worker = Worker::open(&root.join(format!("worker-{index}"))).unwrap();
+        let rejected = reject_commit.clone();
+        let router = worker.router().layer(axum::middleware::from_fn(
+            move |request: axum::extract::Request, next: axum::middleware::Next| {
+                let rejected = rejected.clone();
+                async move {
+                    use axum::response::IntoResponse;
+                    if index == 0
+                        && request.uri().path() == "/internal/commit"
+                        && rejected.load(Ordering::SeqCst)
+                    {
+                        axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response()
+                    } else {
+                        next.run(request).await
+                    }
+                }
+            },
+        ));
+        let listening = serve(router).await;
+        replicas.push(Replica {
+            name: format!("worker-{index}"),
+            url: listening.url.clone(),
+            incarnation: String::new(),
+            ledger: Ledger::default(),
+        });
+        listeners.push(listening);
+    }
+    let groups = vec![Group {
+        placement_policy: Default::default(),
+        id: "smoke".into(),
+        sequence: 0,
+        replicas,
+    }];
+    (listeners, groups)
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn encrypted_http_answers_survive_restart_and_reject_malformed_queries() {
+async fn encrypted_publication_advances_while_another_commit_is_pending() {
+    let phase = std::cell::Cell::new("starting listeners");
     tokio::time::timeout(Duration::from_secs(30), async {
         let root = tempfile::tempdir().unwrap();
-        let mut listeners = Vec::new();
-        let mut replicas = Vec::new();
         let reject_commit = Arc::new(AtomicBool::new(false));
-        for index in 0..2 {
-            let worker = Worker::open(&root.path().join(format!("worker-{index}"))).unwrap();
-            let rejected = reject_commit.clone();
-            let router = worker.router().layer(axum::middleware::from_fn(
-                move |request: axum::extract::Request, next: axum::middleware::Next| {
-                    let rejected = rejected.clone();
-                    async move {
-                        use axum::response::IntoResponse;
-                        if index == 0
-                            && request.uri().path() == "/internal/commit"
-                            && rejected.load(Ordering::SeqCst)
-                        {
-                            axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response()
-                        } else {
-                            next.run(request).await
-                        }
-                    }
-                },
-            ));
-            let listening = serve(router).await;
-            replicas.push(Replica {
-                name: format!("worker-{index}"),
-                url: listening.url.clone(),
-                incarnation: String::new(),
-                ledger: Ledger::default(),
-            });
-            listeners.push(listening);
-        }
-        let groups = vec![Group {
-            placement_policy: Default::default(),
-            id: "smoke".into(),
-            sequence: 0,
-            replicas,
-        }];
+        let (_listeners, groups) = workers(root.path(), 2, reject_commit.clone()).await;
         let state_dir = root.path().join("coordinator");
         let coordinator = Coordinator::open(&state_dir, groups.clone()).unwrap();
         let mut journal = RecordJournal::open(
@@ -125,22 +135,13 @@ async fn encrypted_http_answers_survive_restart_and_reject_malformed_queries() {
             .unwrap();
         // Both workers prepare the first assignment, but one loses its commit
         // acknowledgement. Its healthy peer must still publish the next block.
+        phase.set("publishing the first block");
         reject_commit.store(true, Ordering::SeqCst);
         coordinator
             .publish(&journal, 3428143, "01".repeat(32))
             .await
             .unwrap();
         let http = serve(coordinator.clone().router()).await;
-        let mut client = EnhancePirClient::connect(&http.url).await.unwrap();
-        assert_eq!(
-            client
-                .query_position_with_timing(66)
-                .await
-                .unwrap()
-                .0
-                .as_ref(),
-            record(66)
-        );
         // Keep one real commit unacknowledged while its healthy peer publishes
         // again. This bridges the small decision-delivery tests to real worker
         // preparation, publication selection and encrypted wallet answers.
@@ -154,11 +155,13 @@ async fn encrypted_http_answers_survive_restart_and_reject_malformed_queries() {
         journal
             .append_block(3428144, "02".repeat(32), &[record(67)])
             .unwrap();
+        phase.set("publishing while a commit is pending");
         coordinator
             .publish(&journal, 3428144, "02".repeat(32))
             .await
             .unwrap();
         assert_eq!(read_state().pending_commits, pending);
+        phase.set("querying the new publication");
         let mut current = EnhancePirClient::connect(&http.url).await.unwrap();
         assert_eq!(
             current
@@ -169,7 +172,7 @@ async fn encrypted_http_answers_survive_restart_and_reject_malformed_queries() {
                 .as_ref(),
             record(67)
         );
-        drop(current);
+        phase.set("retrying the pending commit");
         reject_commit.store(false, Ordering::SeqCst);
         coordinator.reconcile().await.unwrap();
         assert!(read_state().pending_commits.is_empty());
@@ -184,11 +187,60 @@ async fn encrypted_http_answers_survive_restart_and_reject_malformed_queries() {
             .unwrap();
         assert!(malformed.status().is_client_error());
         let _ = malformed.bytes().await.unwrap();
+    })
+    .await
+    .unwrap_or_else(|_| {
+        panic!(
+            "encrypted HTTP smoke exceeded its deadline while {}",
+            phase.get()
+        )
+    });
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn encrypted_http_answers_survive_coordinator_restart() {
+    let phase = std::cell::Cell::new("publishing the initial block");
+    tokio::time::timeout(Duration::from_secs(30), async {
+        let root = tempfile::tempdir().unwrap();
+        let (_listeners, groups) = workers(root.path(), 2, Arc::new(AtomicBool::new(false))).await;
+        let state_dir = root.path().join("coordinator");
+        let coordinator = Coordinator::open(&state_dir, groups.clone()).unwrap();
+        let mut journal = RecordJournal::open(
+            root.path().join("journal"),
+            DatabaseId::Enhance,
+            ENHANCE_LAYOUT,
+        )
+        .unwrap();
+        journal
+            .append_block(
+                3428143,
+                "01".repeat(32),
+                &(0..67).map(record).collect::<Vec<_>>(),
+            )
+            .unwrap();
+        coordinator
+            .publish(&journal, 3428143, "01".repeat(32))
+            .await
+            .unwrap();
+        let http = serve(coordinator.clone().router()).await;
+        phase.set("querying before restart");
+        let mut client = EnhancePirClient::connect(&http.url).await.unwrap();
+        assert_eq!(
+            client
+                .query_position_with_timing(66)
+                .await
+                .unwrap()
+                .0
+                .as_ref(),
+            record(66)
+        );
         drop(client);
         http.stop().await;
         drop(coordinator);
+        phase.set("restoring the coordinator from disk");
         let restored = Coordinator::open(&state_dir, groups).unwrap();
         let restored_http = serve(restored.router()).await;
+        phase.set("querying after restart with a fresh wallet");
         let mut client = EnhancePirClient::connect(&restored_http.url).await.unwrap();
         assert_eq!(
             client
@@ -201,5 +253,10 @@ async fn encrypted_http_answers_survive_restart_and_reject_malformed_queries() {
         );
     })
     .await
-    .expect("encrypted HTTP smoke exceeded its deadline");
+    .unwrap_or_else(|_| {
+        panic!(
+            "encrypted restart exceeded its deadline while {}",
+            phase.get()
+        )
+    });
 }

@@ -3,7 +3,7 @@
 Cargo unifies features for the complete selection. Unit tests and the named
 fast integration targets share that build; campaign targets are never selected.
 Test programs retain their package directory, Cargo environment and existing
-slow-case exclusions. At most two programs execute together.
+slow-case exclusions. At most three ordinary programs execute together; integration programs run alone.
 """
 import json
 import os
@@ -21,7 +21,7 @@ def test_names(binary, directory, *, ignored=False):
     return {line[:-6] for line in listing.splitlines() if line.endswith(': test')}
 
 
-def execute(selected, *, offline=False, compile_only=False, jobs=2):
+def execute(selected, *, offline=False, compile_only=False, jobs=3):
     from integration_tests import inventory
     registry = inventory()
     slow = json.loads((ROOT / 'tools/ci/slow-tests.json').read_text())
@@ -108,7 +108,7 @@ def execute(selected, *, offline=False, compile_only=False, jobs=2):
             discovered_units[name].update(names)
         exclusions = [] if integration else list(slow.get(name, {}))
         programs.append(dict(executable=binary, directory=directory, package=name,
-                             version=package['version'],
+                             version=package['version'], exclusive=integration, case_count=len(names),
                              args=[arg for case in exclusions for arg in ('--skip', case)]))
     if actual_integrations != expected_integrations or expected_units - actual_units:
         raise ValueError(f'fast test executables mismatch: missing_units={sorted(expected_units-actual_units)}, '
@@ -120,6 +120,9 @@ def execute(selected, *, offline=False, compile_only=False, jobs=2):
         stale = set(slow.get(name, {})) - discovered
         if stale:
             raise ValueError(f'{name}: stale slow-test classification: {sorted(stale)}')
+    # Cargo can report a freshly rebuilt large executable last. Start binaries
+    # with more discovered cases first so that work overlaps smaller programs.
+    programs.sort(key=lambda program: program['case_count'], reverse=True)
     run(['python3', 'tools/ci/reclaim-build-cache.py'], env=env, stage='reclaim')
     with tempfile.TemporaryDirectory(prefix='wallet-pir-fast-tests-') as directory:
         root = Path(directory)
@@ -128,5 +131,6 @@ def execute(selected, *, offline=False, compile_only=False, jobs=2):
         cache = root / 'public-fixtures'
         cache.mkdir()
         env['WALLET_PIR_TEST_RUNTIME_CACHE'] = str(cache)
-        run(['python3', 'tools/ci/unit_tests.py', str(plan), '--jobs', str(jobs)],
+        env['WALLET_PIR_ENFORCE_BUDGET'] = '1'
+        run(['python3', 'tools/ci/unit_tests.py', str(plan), '--budget', '--jobs', str(jobs)],
             env=env, stage='tests:fast-programs')

@@ -60,10 +60,14 @@ and stale ancestry cannot leave unchecked changes behind.
 Rust feedback compiles the selected unit tests, CLI test binaries and named fast
 integration targets together in one `release-fast` Cargo invocation. Campaign
 targets are excluded from that build. Local and CI checks then execute at most
-two Cargo-reported test programs concurrently. Cases within each program stay
+three Cargo-reported unit-test programs concurrently. Fast integration programs run
+first, one at a time, to keep encrypted HTTP working sets apart. Binaries with
+more discovered cases start first, so newly compiled targets reported last by
+Cargo can overlap smaller programs. Cases within each program stay
 serial, preserving process-local immutable public fixtures within the fast runner’s
 6-GiB ceiling. Explicit feature or test-filter checks use one program at a time.
-Each program keeps its package directory and Cargo environment; fast integration
+The fast runner enforces the 30-second limit for every Rust case, including
+setup and teardown inside the case. Each program keeps its package directory and Cargo environment; fast integration
 targets must contain an enabled, unignored case, and unit exclusions must still
 match discovered tests. Cold cache preparation compiles the same target selection.
 The package-qualified full-geometry/cache, multi-unit preparation, RPC publication
@@ -76,7 +80,13 @@ integration targets, doctests, binary unit tests and all-feature lint run in
 selected job fails or is skipped. This avoids compiling every integration target just
 to exclude its tests at runtime. Affected helper
 checks run concurrently with Rust; selected operations suites run in
-four parallel make slots, and failures in any task fail fast CI.
+four parallel make slots. Deployment unittest modules use two separate processes,
+retaining every discovered case and each module's fixtures. The package
+transaction module has independent test classes and is explicitly split by class;
+class fixtures stay together, and modules with module fixtures cannot opt in. Each case keeps its
+own mutable deployment tree; negative variants may restore a real transaction
+checkpoint after proving that an untampered copy still recovers. Failures in any
+task fail fast CI.
 
 Every workspace integration target must be classified exactly once.
 `make check-tools` validates the registry against manifests and integration source files without invoking Rust, rejecting new
@@ -139,9 +149,11 @@ publication. Reference arithmetic and one encrypted HTTP/restart smoke remain
 separate; CUDA compilation and
 configuration checks use one native-plus-CUDA feature set. Commit/abort decision
 tests use durable controller state and small HTTP peers; worker tests separately
-check reservation accounting and restart behavior. The encrypted HTTP smoke
-retains a failed commit delivery, a later healthy publication, retry and restart
-with production runtimes.
+check reservation accounting and restart behavior. The encrypted HTTP smoke separates publication progress from durable restart.
+One case retains a failed commit delivery, a later healthy publication and retry
+with two real workers. The other checks encrypted answers before and after a
+durable coordinator restart with a fresh wallet. Both keep production runtimes
+and a 30-second deadline.
 
 Transparent concurrency coverage pairs four publication layouts with four wallet
 shapes instead of running their Cartesian product. Each pair still compares real
