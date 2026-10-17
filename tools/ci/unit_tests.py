@@ -64,7 +64,7 @@ def execute(programs, jobs, *, budget=False):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('plan', type=Path)
-    parser.add_argument('--jobs', type=int, choices=(1, 2), required=True)
+    parser.add_argument('--jobs', type=int, choices=(1, 2, 3), required=True)
     parser.add_argument('--budget', action='store_true', help='time every case and enforce the correctness budget')
     args = parser.parse_args()
     if args.budget:

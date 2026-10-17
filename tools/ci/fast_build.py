@@ -3,7 +3,7 @@
 Cargo unifies features for the complete selection. Unit tests and the named
 fast integration targets share that build; campaign targets are never selected.
 Test programs retain their package directory, Cargo environment and existing
-slow-case exclusions. At most two programs execute together.
+slow-case exclusions. At most three ordinary programs execute together; integration programs run alone.
 """
 import json
 import os
@@ -21,7 +21,7 @@ def test_names(binary, directory, *, ignored=False):
     return {line[:-6] for line in listing.splitlines() if line.endswith(': test')}
 
 
-def execute(selected, *, offline=False, compile_only=False, jobs=2):
+def execute(selected, *, offline=False, compile_only=False, jobs=3):
     from integration_tests import inventory
     registry = inventory()
     slow = json.loads((ROOT / 'tools/ci/slow-tests.json').read_text())
