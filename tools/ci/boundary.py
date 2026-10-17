@@ -92,7 +92,8 @@ PIPELINE_UTILITIES = {
     'windows_aarch64_gnullvm', 'windows_aarch64_msvc', 'windows_i686_gnu',
     'windows_i686_gnullvm', 'windows_i686_msvc', 'windows_x86_64_gnu',
     'windows_x86_64_gnullvm', 'windows_x86_64_msvc', 'redox_syscall', 'bitflags',
-    'hermit-abi',
+    'hermit-abi', 'log', 'once_cell', 'tracing', 'tracing-attributes',
+    'tracing-core', 'valuable',
 }
 
 RECEIVER = {'receiver-pir-server'}

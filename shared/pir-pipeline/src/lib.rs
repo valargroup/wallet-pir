@@ -175,7 +175,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let published = advance(
+        let published: Result<Input<usize>, ()> = advance(
             input,
             |records| async move {
                 tokio::time::sleep(Duration::from_secs(2)).await;
