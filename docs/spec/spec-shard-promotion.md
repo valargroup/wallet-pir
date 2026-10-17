@@ -10,7 +10,8 @@ normative promotion rules; update both documents when those rules change.
 
 ## Scope and terminology
 
-The keywords MUST and MUST NOT express requirements.
+The keywords MUST and MUST NOT express requirements. MAY expresses a permitted
+choice.
 
 - **Publisher:** the service that constructs and publishes a hierarchy and its
   serving artifacts.
@@ -24,10 +25,39 @@ The keywords MUST and MUST NOT express requirements.
   wallet requests.
 - **Ready generation:** a generation whose required artifacts have been fetched,
   verified and loaded for that query server's serving responsibilities.
+- **Full Query Server:** a provider covering the full history, with shards held
+  in memory on one machine when they fit or distributed across multiple machines.
+- **Recent Only Query Server:** a server holding the recent tier for its supported
+  service configuration, without retaining the full archive locally.
 
 Different query servers may temporarily have different active generations while
 they update. A publisher's current generation and a query server's active
 generation are distinct state.
+
+## Server capacity and promotion policy
+
+A Full Query Server MAY distribute its shards across machines as history grows.
+Its full dataset is not required to fit on one 64 GB host. This specification does
+not require disk-backed archive queries as the way to provide full coverage.
+
+The complete recent holdings for a supported Recent Only service configuration
+MUST be serviceable on one 64 GB RAM host. The host budget MUST include resident
+PIR data and prepared runtime material, the embedded router, query workspace at
+the supported serving load, generation-handover overlap and scratch space, and
+system overhead. Shared unchanged artifacts need not be counted twice. A machine
+serving multiple products MUST account for their combined footprint.
+
+The publisher's promotion policy MUST keep recent holdings within that supported
+host budget, including ordinary generation handover. The archive's growth or a
+Full Query Server's total footprint MUST NOT imply that Recent Only servers need
+larger hosts. Exact recent-window sizes, promotion batches and cadence remain to
+be qualified; the 64 GB requirement is not a claim of measured capacity.
+
+At the advertised supported serving load, query p99 during promotion MUST be no
+more than 1.10 times the matched no-promotion baseline. Qualification MUST cover
+transfer, verification, loading, activation and cleanup, using the same hardware,
+dataset, offered load and query mix. Errors and timeouts MUST be reported alongside
+latency so rejecting requests cannot establish compliance.
 
 ## Publisher requirements
 
@@ -105,6 +135,11 @@ A conforming implementation demonstrates:
 - Router and worker activation do not mix generations; admitted requests preserve
   their binding and stale sessions receive the existing product behavior.
 - Reorg invalidation and expired authority still cause the required refusals.
+- Recent Only service and generation handover fit on a 64 GB RAM host at the
+  supported serving load, including transient memory and system overhead.
+- Matched promotion measurements satisfy the 10% query-p99 interference bound.
+- Full coverage can place in-memory shards across machines without changing the
+  recent-tier capacity contract.
 
 Wire encoding, endpoint names, polling intervals, promotion thresholds and changes
 to shard geometry are not specified here. No new wallet protocol or additional

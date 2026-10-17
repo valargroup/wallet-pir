@@ -52,6 +52,36 @@ Enhance and Status packing routers perform computation, beyond forwarding HTTP;
 their preparation, packing material and resource use belong in the provider's
 requirements alongside evaluation.
 
+### Full and Recent Only capacity
+
+A Full Query Server provides full-history coverage. It can keep all shards in
+memory on one machine while they fit, or distribute them across machines as the
+dataset grows. Full coverage does not require that all history fit on one host,
+and disk-backed archive serving is not the assumed capacity model.
+
+The complete recent holdings for a supported Recent Only configuration must fit
+on a **64 GB RAM host**. This is a total host requirement: include the embedded
+router, prepared PIR runtimes, query workspace at the supported load, temporary
+old/new generation overlap, loading scratch space and system overhead. A
+multi-product installation must account for the combined footprint. Reuse of
+unchanged artifacts can reduce handover overhead; do not assume every generation
+requires a second full copy.
+
+This gives publishers a common recent-tier capacity target instead of making
+promotion depend on each provider's process memory or a Full provider's archive
+size. Define a bounded recent window and promotion batches against that target.
+Query RPS affects local concurrency and available update resources; it does not
+define which historical ranges belong to the archive. The supported load must
+leave enough resources to continue updating.
+
+Qualify ordinary promotion to increase query p99 by no more than **10%** against a
+matched no-promotion baseline, including all transfer, verification, loading,
+activation and cleanup stages. A long interval alone cannot establish that bound.
+Window sizes and actual promotion cadence remain open until growth, memory and
+handover cost are measured. The [specification](spec/spec-shard-promotion.md#server-capacity-and-promotion-policy)
+owns these capacity and interference requirements; they are not yet measured
+guarantees.
+
 Reuse these foundations:
 
 - [External worker roles](operations.md#external-workers) provide product-owned
@@ -360,6 +390,10 @@ independent correctness oracles. Exercise:
   and advertised coverage switch together. Exercise failed preparation, interrupted
   downloads, a superseded candidate, admitted old-generation requests and a new
   node joining during the transition. Check reorg revocation separately.
+- Recent Only operation on a 64 GB RAM host, including candidate overlap and
+  query workspace, with at most 10% p99 increase during promotion at the supported
+  serving load. Test Full-provider placement across multiple in-memory machines
+  separately from the Recent Only host budget.
 
 Measure startup and update cost, steady-state memory, disk, synchronization
 bandwidth and query performance together. Include packing costs, temporary
