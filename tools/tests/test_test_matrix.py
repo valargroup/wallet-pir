@@ -88,6 +88,21 @@ class MatrixTests(unittest.TestCase):
                     self.assertIn(package + '/full-tests',
                                   matrix.package_features(package, context, packages))
 
+    def test_database_reader_binaries_remain_in_full_qualification(self):
+        registry, contexts, targets, packages, _ = self.plan
+        keys = registry['transparent-publisher']['targets']
+        commands = matrix.cargo_commands(keys, contexts, targets, packages)
+        for binary in ('transparent-event-ingest', 'shard-cutoff',
+                       'journal-inventory', 'compact-export'):
+            key = f'transparent:transparent-filter-server:bin:{binary}'
+            self.assertIn(key, keys)
+            selected = [command for _, _, covered, command in commands
+                        if any(target['target'] == binary for target in covered)]
+            self.assertTrue(selected, binary)
+            for command in selected:
+                features = command[command.index('--features') + 1].split(',')
+                self.assertIn('transparent-filter-server/rocksdb-reader', features)
+
     def receipts(self, family):
         registry, _, _, _, digest = self.plan
         return [dict(shard=name, family=family, sha='a' * 40, inventory=digest,

@@ -153,3 +153,9 @@ failures visible. Compare the same workload, host, flags and population before
 and after; local execution excludes Actions queue/setup. The warm CI target is
 three minutes; deployment's prepared-artifact target remains two minutes. These
 are targets until measured on the updated workflow.
+
+Direct node database readers in `transparent-filter-server` require
+`--features rocksdb-reader`: `transparent-event-ingest`, `shard-cutoff`,
+`journal-inventory` and `compact-export`. Ordinary RPC-based server builds omit
+that feature and do not compile RocksDB. Full qualification and the workflows
+that build the database-reader tools enable it explicitly.
