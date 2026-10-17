@@ -555,7 +555,7 @@ async fn archive_readiness_and_setup_are_checked_over_real_http() {
                     map.shards[0].manifest_digest
                 ))
                 .header("content-length", body.len())
-                .body(axum::body::Body::from(body))
+                .body(axum::body::Body::from(body.clone()))
                 .unwrap(),
         )
         .await
@@ -579,6 +579,29 @@ async fn archive_readiness_and_setup_are_checked_over_real_http() {
         .await
         .unwrap();
     assert!(health["work_memory_reserved_bytes"].as_u64().unwrap() > 0);
+    let capacity = client.get(&setup).send().await.unwrap();
+    assert_eq!(capacity.status(), 503);
+    assert_eq!(capacity.headers()["retry-after"], "1");
+    capacity.bytes().await.unwrap();
+    body[..8].copy_from_slice(&transparent_shard::manifest::query_binding(
+        &map.shards[1].manifest_digest,
+        "directory",
+    ));
+    let independent = client
+        .post(format!(
+            "{origin}/v2/shards/1/revisions/{}/query/directory",
+            map.shards[1].manifest_digest
+        ))
+        .body(body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        independent.status(),
+        200,
+        "EOF-held archive reply must not consume local execution"
+    );
+    independent.bytes().await.unwrap();
     drop(retained);
     assert_eq!(
         transparent_shard_server::metrics::Metrics::get(&state.metrics().body_bytes_in_flight),
@@ -619,17 +642,6 @@ async fn archive_upload_overload_and_disconnect_release_existing_admission() {
         &map.shards[0].manifest_digest,
         "directory",
     ));
-    let held = state.hold_query_slot().await;
-    let response = client
-        .post(format!("{origin}{path}"))
-        .body(body.clone())
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(response.status(), 503);
-    assert_eq!(response.headers()["retry-after"], "1");
-    drop(response);
-    drop(held);
     let mut connection = tokio::net::TcpStream::connect(origin.trim_start_matches("http://"))
         .await
         .unwrap();
@@ -653,6 +665,15 @@ async fn archive_upload_overload_and_disconnect_release_existing_admission() {
     })
     .await
     .unwrap();
+    let response = client
+        .post(format!("{origin}{path}"))
+        .body(body.clone())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 503);
+    assert_eq!(response.headers()["retry-after"], "1");
+    response.bytes().await.unwrap();
     drop(connection);
     tokio::time::timeout(std::time::Duration::from_secs(1), async {
         loop {
@@ -944,4 +965,289 @@ async fn owner_qualifies_archive_and_retains_inflight_ownership_across_handover(
     );
     archive_server.abort();
     serving.abort();
+}
+
+// Delay actual upstream response bodies, after the terminal has accepted the
+// request. Signalling from poll_frame proves the remote operation is blocked.
+struct ArchiveStallBody {
+    body: axum::body::Body,
+    gate: std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>,
+    opened: bool,
+}
+impl http_body::Body for ArchiveStallBody {
+    type Data = axum::body::Bytes;
+    type Error = axum::Error;
+    fn poll_frame(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
+        if !self.opened {
+            std::task::ready!(self.gate.as_mut().poll(cx));
+            self.opened = true;
+        }
+        std::pin::Pin::new(&mut self.body).poll_frame(cx)
+    }
+    fn size_hint(&self) -> http_body::SizeHint {
+        self.body.size_hint()
+    }
+}
+
+async fn recent_survives_archive_stall(operation: &str, stage: &str, ending: &str) {
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::time::Duration;
+    let dir = tempfile::tempdir().unwrap();
+    let map = fixture(dir.path(), &DECOUPLED_2K_8K);
+    let terminal = terminal(dir.path(), &map);
+    terminal.spawn_prewarm().await.unwrap();
+    let terminal_metrics = terminal.metrics().clone();
+    let enabled = Arc::new(AtomicBool::new(false));
+    let entered = Arc::new(tokio::sync::Notify::new());
+    let release = Arc::new(tokio::sync::Notify::new());
+    let calls = Arc::new(AtomicUsize::new(0));
+    let app = router(terminal).layer(axum::middleware::from_fn({
+        let enabled = enabled.clone();
+        let entered = entered.clone();
+        let release = release.clone();
+        let calls = calls.clone();
+        let stage = stage.to_string();
+        move |request: axum::extract::Request, next: axum::middleware::Next| {
+            let stall = enabled.load(Ordering::SeqCst)
+                && match stage.as_str() {
+                    "ready" => request.uri().path() == "/v1/ready",
+                    "setup" => request.uri().path().contains("/setup/"),
+                    "query" => request.uri().path().contains("/query/"),
+                    _ => unreachable!(),
+                };
+            let entered = entered.clone();
+            let release = release.clone();
+            let calls = calls.clone();
+            async move {
+                let mut response = next.run(request).await;
+                if stall {
+                    assert_eq!(response.status(), 200);
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    let body = std::mem::replace(response.body_mut(), axum::body::Body::empty());
+                    *response.body_mut() = axum::body::Body::new(ArchiveStallBody {
+                        body,
+                        opened: false,
+                        gate: Box::pin(async move {
+                            entered.notify_one();
+                            release.notified().await
+                        }),
+                    });
+                }
+                response
+            }
+        }
+    }));
+    let (archive, archive_server) = serve_app(app).await;
+    let profile = transparent_native::TableProfile::new(
+        transparent_shard::manifest::SCHEMA,
+        DECOUPLED_2K_8K.name,
+        "directory",
+        DECOUPLED_2K_8K.directory_rows,
+        DECOUPLED_2K_8K.directory_row_bytes as u32,
+    )
+    .unwrap();
+    let producer = std::fs::read(
+        dir.path()
+            .join(&map.shards[1].manifest_digest)
+            .join("directory.0.bin"),
+    )
+    .unwrap();
+    let row_bytes = DECOUPLED_2K_8K.directory_row_bytes;
+    let row = producer
+        .chunks_exact(row_bytes)
+        .position(|r| r[..4] != [0; 4])
+        .unwrap();
+    let expected = &producer[row * row_bytes..(row + 1) * row_bytes];
+    let (secret, upload) = profile.prepare(row).unwrap();
+    let body = |id: usize| {
+        let mut body = transparent_shard::manifest::query_binding(
+            &map.shards[id].manifest_digest,
+            "directory",
+        )
+        .to_vec();
+        body.extend_from_slice(&upload);
+        body
+    };
+    // Exactly enough for the compiled local maximum plus this one forward.
+    let mut local_reserve = 0u64;
+    for geometry in transparent_shard::layout::PROFILES {
+        for table in transparent_shard_server::shardset::Table::HISTORY {
+            let shared =
+                transparent_shard_server::runtime::SharedParams::build(geometry, table).unwrap();
+            local_reserve = local_reserve.max((shared.query_bytes() as u64).div_ceil(1024) * 1024);
+        }
+    }
+    let state = recent_with_config(
+        dir.path(),
+        &map,
+        Archive::new(&archive, vec![]).unwrap(),
+        ServiceConfig {
+            query_slots: 1,
+            max_waiters: 0,
+            readiness: ReadinessMode::Warm,
+            max_body_bytes: local_reserve + (body(1).len() as u64).div_ceil(1024) * 1024,
+            query_deadline: Duration::from_secs(5),
+            ..ServiceConfig::default()
+        },
+    );
+    state.spawn_prewarm().await.unwrap();
+    let (origin, server) = serve(state.clone()).await;
+    let path = |id: usize, op: &str| {
+        format!(
+            "{origin}/v2/shards/{id}/revisions/{}/{op}/directory{}",
+            map.shards[id].manifest_digest,
+            if op == "setup" { "/0" } else { "" }
+        )
+    };
+    let client = reqwest::Client::new();
+    let setup: serde_json::Value = client
+        .get(path(1, "setup"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let masks = base64::Engine::decode(
+        &base64::engine::general_purpose::STANDARD,
+        setup["public_params"].as_str().unwrap(),
+    )
+    .unwrap();
+    let local = || client.post(path(1, "query")).body(body(1)).send();
+    let check = |answer: &[u8]| {
+        assert_eq!(&answer[..8], &body(1)[..8]);
+        assert_eq!(
+            profile.decode(&secret, &masks, &answer[16..]).unwrap(),
+            expected
+        );
+    };
+    let baseline = local().await.unwrap();
+    assert_eq!(baseline.status(), 200);
+    check(&baseline.bytes().await.unwrap());
+    enabled.store(true, Ordering::SeqCst);
+    let request = if operation == "setup" {
+        client.get(path(0, "setup"))
+    } else {
+        client.post(path(0, "query")).body(body(0))
+    };
+    let forwarding = tokio::spawn(async move { request.send().await.unwrap() });
+    tokio::time::timeout(Duration::from_secs(2), entered.notified())
+        .await
+        .unwrap();
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert!(
+        !forwarding.is_finished(),
+        "forward must still await its blocked upstream body"
+    );
+    if stage == "query" {
+        assert_eq!(
+            transparent_shard_server::metrics::Metrics::get(&terminal_metrics.queries),
+            1,
+            "terminal accepted exactly one encrypted submission before its answer stalled"
+        );
+    }
+    let response = local().await.unwrap();
+    assert_eq!(
+        response.status(),
+        200,
+        "valid recent query must survive archive {operation}/{stage} stall"
+    );
+    check(&response.bytes().await.unwrap());
+    let capacity = client.get(path(0, "setup")).send().await.unwrap();
+    assert_eq!(capacity.status(), 503);
+    assert_eq!(capacity.headers()["retry-after"], "1");
+    capacity.bytes().await.unwrap();
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        1,
+        "overload must refuse before remote work"
+    );
+    // Isolation must not expand the original local evaluation capacity.
+    let held = state.hold_query_slot().await;
+    let capacity = local().await.unwrap();
+    assert_eq!(capacity.status(), 503);
+    assert_eq!(capacity.headers()["retry-after"], "1");
+    capacity.bytes().await.unwrap();
+    drop(held);
+    match ending {
+        "release" => {
+            enabled.store(false, Ordering::SeqCst);
+            release.notify_one();
+            let response = forwarding.await.unwrap();
+            assert_eq!(response.status(), 200);
+            response.bytes().await.unwrap();
+        }
+        "disconnect" => {
+            forwarding.abort();
+            assert!(forwarding.await.unwrap_err().is_cancelled());
+        }
+        "deadline" => {
+            let response = tokio::time::timeout(Duration::from_secs(6), forwarding)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(response.status(), 503);
+            assert!(
+                response.headers().get("retry-after").is_none(),
+                "uncertain timeout must not invite replay"
+            );
+            response.bytes().await.unwrap();
+        }
+        _ => unreachable!(),
+    }
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while transparent_shard_server::metrics::Metrics::get(&state.metrics().query_queue_depth)
+            != 0
+        {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("disconnect/deadline/body drop must release the forwarding place");
+    assert_eq!(
+        transparent_shard_server::metrics::Metrics::get(&state.metrics().body_bytes_in_flight),
+        0
+    );
+    enabled.store(false, Ordering::SeqCst);
+    release.notify_one();
+    if stage == "query" {
+        assert_eq!(
+            transparent_shard_server::metrics::Metrics::get(&terminal_metrics.queries),
+            1,
+            "stalled accepted answer is never replayed"
+        );
+    }
+    let response = local().await.unwrap();
+    assert_eq!(response.status(), 200);
+    check(&response.bytes().await.unwrap());
+    server.stop().await;
+    archive_server.stop().await;
+}
+#[tokio::test]
+async fn recent_query_survives_archive_query_readiness_stall() {
+    recent_survives_archive_stall("query", "ready", "release").await
+}
+#[tokio::test]
+async fn recent_query_survives_archive_setup_readiness_stall() {
+    recent_survives_archive_stall("setup", "ready", "release").await
+}
+#[tokio::test]
+async fn recent_query_survives_archive_setup_body_stall() {
+    recent_survives_archive_stall("setup", "setup", "release").await
+}
+#[tokio::test]
+async fn recent_query_survives_archive_accepted_answer_body_stall() {
+    recent_survives_archive_stall("query", "query", "release").await
+}
+
+#[tokio::test]
+async fn recent_query_survives_archive_disconnect_after_acceptance() {
+    recent_survives_archive_stall("query", "query", "disconnect").await
+}
+#[tokio::test]
+async fn recent_query_survives_archive_deadline_after_acceptance() {
+    recent_survives_archive_stall("query", "query", "deadline").await
 }

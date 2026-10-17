@@ -181,6 +181,7 @@ pub struct Inner {
     params: HashMap<ParamsKey, Arc<SharedParams>>,
     cache: Arc<RuntimeCache>,
     admission: Arc<Admission>,
+    forwarding_admission: Arc<Admission>,
     metrics: Arc<Metrics>,
     max_query_bytes: usize,
     warm: WarmState,
@@ -393,16 +394,34 @@ impl ServiceState {
         }
         Metrics::set(&metrics.target_runtimes, target as u64);
         let prewarm_slots = cache.prewarm_concurrency();
+        let admission = previous
+            .map(|s| s.inner.admission.clone())
+            .unwrap_or_else(|| Arc::new(Admission::new(config.admission(), metrics.clone())));
+        let forwarding_admission = match previous {
+            Some(state) => state.inner.forwarding_admission.clone(),
+            None => {
+                // Reserve uploads for the original local execution capacity,
+                // even when later snapshots introduce another approved geometry.
+                // This derives parameters only; no PIR runtime is constructed.
+                let mut largest = 0u64;
+                for geometry in transparent_shard::layout::PROFILES {
+                    for table in Table::HISTORY {
+                        let bytes = SharedParams::build(geometry, table)?.query_bytes() as u64;
+                        largest = largest.max(bytes.div_ceil(1024) * 1024);
+                    }
+                }
+                Arc::new(
+                    admission.forwarding(largest.saturating_mul(config.query_slots.max(1) as u64)),
+                )
+            }
+        };
         Ok(Self {
             inner: Arc::new(Inner {
                 set,
                 params,
                 cache,
-                admission: previous
-                    .map(|s| s.inner.admission.clone())
-                    .unwrap_or_else(|| {
-                        Arc::new(Admission::new(config.admission(), metrics.clone()))
-                    }),
+                admission,
+                forwarding_admission,
                 metrics,
                 max_query_bytes,
                 warm: WarmState {
@@ -676,6 +695,10 @@ impl ServiceState {
             max_query_bytes: self.max_query_bytes(),
             map_digest: &self.inner.set.map_digest,
         }
+    }
+
+    pub(crate) fn forwarding_admission(&self) -> &Admission {
+        &self.inner.forwarding_admission
     }
 
     pub fn metrics(&self) -> &Arc<Metrics> {

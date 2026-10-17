@@ -318,9 +318,25 @@ manifest and setup identity. Query replies must have the exact segment framing,
 revision/table prefix and qualified mask epochs. The wallet retains its own
 validation. Readiness is an observation, not a lease or a completeness proof.
 
-Forwarding uses the existing admission/body budget and deadlines. Setup and
-query responses retain the admitted snapshot/resources through transport drop;
-forwarded answer buffers reserve shared work memory. A transport failure after
+Forwarding has one separate process-wide admission place for setup or query,
+including upload, every remote wait and reply-body lifetime, with no forwarding
+queue. Recent execution keeps its original configured slots and waiting places;
+another archive operation receives the existing capacity refusal before remote
+work. Active, candidate and retained snapshots share both admission lanes.
+The aggregate upload-byte semaphore and upload/query deadlines are unchanged.
+Forwarding may use only the surplus after reserving the largest compiled history
+query (rounded to KiB) for each local execution slot. Local requests can still use
+the full configured body budget when forwarding is idle. If the configured budget
+has no sufficient surplus, archive queries fail capacity admission; it is never
+enlarged implicitly. Thus there are at most `query_slots + max_waiters + 1`
+admitted requests, of which at most one forwards, with the original aggregate
+body-byte ceiling and local evaluation concurrency. Queue/body/cancellation
+counters include both roles; local slot utilization excludes remote waits.
+Setup and query responses retain admission and the snapshot through transport
+drop; forwarded answer buffers still reserve the same shared work memory and
+respect its total cgroup headroom guard. This adds a bounded forwarding control
+operation, not a local evaluation or a second memory ceiling. Operators must
+include its buffers and bounded metadata/setup replies in the total host budget. A transport failure after
 query submission never causes another encrypted submission. Explicit upstream
 refusals retain their existing status and retry delay. Failed qualification or an
 uncertain/invalid answer returns the existing non-capacity 503 without a retry

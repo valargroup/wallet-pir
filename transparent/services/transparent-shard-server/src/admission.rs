@@ -176,6 +176,32 @@ impl Admission {
         }
     }
 
+    /// A single forwarding operation, including upload and reply-body lifetime.
+    /// It never borrows local waiting/evaluation places. Both roles still charge
+    /// the SAME body semaphore. Cap the forward below the headroom needed by all
+    /// local execution slots; unused headroom remains available to local waiters.
+    /// `local_body_bytes` covers the compiled geometry registry, so replacing a
+    /// publication cannot silently shrink the local reserve.
+    pub(crate) fn forwarding(&self, local_body_bytes: u64) -> Self {
+        let total = self.config.max_body_bytes / BODY_UNIT;
+        let reserved = local_body_bytes.div_ceil(BODY_UNIT);
+        Self {
+            waiters: Arc::new(Semaphore::new(1)),
+            body: self.body.clone(),
+            slots: Arc::new(Semaphore::new(1)),
+            config: AdmissionConfig {
+                query_slots: 1,
+                max_waiters: 0,
+                max_body_bytes: total.saturating_sub(reserved) * BODY_UNIT,
+                ..self.config
+            },
+            // Upload/queue/cancellation counters include both roles. Do not
+            // overwrite the local execution-slot gauge or time remote waits as
+            // local evaluation utilization: forwarding only uses Pending.
+            metrics: self.metrics.clone(),
+        }
+    }
+
     pub fn config(&self) -> &AdmissionConfig {
         &self.config
     }
@@ -191,6 +217,10 @@ impl Admission {
         let body = match body_bytes {
             None => None,
             Some(bytes) => {
+                if bytes as u64 > self.config.max_body_bytes {
+                    Metrics::incr(&self.metrics.body_budget_rejections);
+                    return Err(AdmissionError::BodyBudget);
+                }
                 let permits = (bytes as u64).div_ceil(BODY_UNIT);
                 let permits = u32::try_from(permits).map_err(|_| AdmissionError::BodyBudget)?;
                 Some(
@@ -286,6 +316,58 @@ mod tests {
             },
             Arc::new(Metrics::default()),
         )
+    }
+
+    #[tokio::test]
+    async fn forwarding_reserves_local_capacity_with_one_aggregate_body_budget() {
+        let local = admission(2, 2, 8192);
+        // Two original local evaluation slots, each requiring at most 2 KiB.
+        let remote = local.forwarding(4096);
+        assert_eq!(Metrics::get(&local.metrics.query_slots), 2);
+        let forwarding = remote.try_enter(Some(4096)).unwrap();
+        assert_eq!(
+            remote.try_enter(None).err(),
+            Some(AdmissionError::QueueFull)
+        );
+        let a = local
+            .wait_slot(local.try_enter(Some(2048)).unwrap())
+            .await
+            .unwrap();
+        let b = local
+            .wait_slot(local.try_enter(Some(2048)).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(
+            local.try_enter(Some(1)).err(),
+            Some(AdmissionError::BodyBudget)
+        );
+        assert_eq!(Metrics::get(&local.metrics.body_bytes_in_flight), 8192);
+        drop(forwarding);
+        let queued = local.try_enter(Some(4096)).unwrap();
+        assert_eq!(
+            remote.try_enter(Some(1)).err(),
+            Some(AdmissionError::BodyBudget)
+        );
+        drop(queued);
+        drop(a);
+        drop(b);
+        // Local-only operation retains its original whole body capacity.
+        let all = local.try_enter(Some(8192)).unwrap();
+        drop(all);
+        assert_eq!(
+            remote.try_enter(Some(4097)).err(),
+            Some(AdmissionError::BodyBudget)
+        );
+        let recovered = remote.try_enter(Some(4096)).unwrap();
+        drop(recovered);
+        assert_eq!(Metrics::get(&local.metrics.body_bytes_in_flight), 0);
+        // A small configured total cannot be enlarged to fit a forward.
+        let no_surplus = local.forwarding(8192);
+        assert_eq!(
+            no_surplus.try_enter(Some(1)).err(),
+            Some(AdmissionError::BodyBudget)
+        );
+        assert!(no_surplus.try_enter(None).is_ok());
     }
 
     #[tokio::test]

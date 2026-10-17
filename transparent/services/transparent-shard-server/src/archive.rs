@@ -31,23 +31,11 @@ struct Setup {
 }
 // A completed reply still owns admission until its transport releases it.
 // Completing on drop avoids counting a successfully produced reply as cancelled.
-enum ReplyAdmission {
-    Setup(Option<crate::admission::Pending>),
-    Query(Option<crate::admission::Admitted>),
-}
+struct ReplyAdmission(Option<crate::admission::Pending>);
 impl Drop for ReplyAdmission {
     fn drop(&mut self) {
-        match self {
-            Self::Setup(pending) => {
-                if let Some(pending) = pending.take() {
-                    pending.complete();
-                }
-            }
-            Self::Query(admitted) => {
-                if let Some(admitted) = admitted.take() {
-                    admitted.complete();
-                }
-            }
+        if let Some(pending) = self.0.take() {
+            pending.complete();
         }
     }
 }
@@ -401,7 +389,7 @@ impl Archive {
             }
             Err(error) => return RequestError::Bad(error).into_response(worker.map_digest),
         };
-        let pending = match worker.admission.try_enter(None) {
+        let pending = match state.forwarding_admission().try_enter(None) {
             Ok(p) => p,
             Err(e) => return RequestError::from(e).into_response(worker.map_digest),
         };
@@ -420,7 +408,7 @@ impl Archive {
                 [("content-type", "application/json")],
                 pir_control::http::retain(
                     axum::body::Body::from(bytes),
-                    (ReplyAdmission::Setup(Some(pending)), state.clone()),
+                    (ReplyAdmission(Some(pending)), state.clone()),
                 ),
             )
                 .into_response(),
@@ -465,7 +453,7 @@ impl Archive {
                 )
                 .await;
         }
-        let pending = match worker.admission.try_enter(Some(expected)) {
+        let pending = match state.forwarding_admission().try_enter(Some(expected)) {
             Ok(p) => p,
             Err(e) => {
                 return worker
@@ -497,10 +485,6 @@ impl Archive {
             return RequestError::Bad("query binding mismatch".into())
                 .into_response(worker.map_digest);
         }
-        let admitted = match worker.admission.wait_slot(pending).await {
-            Ok(a) => a,
-            Err(e) => return RequestError::from(e).into_response(worker.map_digest),
-        };
         let response_bytes = match shape
             .shared
             .response_bytes()
@@ -513,13 +497,13 @@ impl Archive {
         };
         let memory = match worker
             .work_memory
-            .reserve_query(response_bytes, admitted.remaining())
+            .reserve_query(response_bytes, pending.remaining())
             .await
         {
             Some(memory) => memory,
             None => return RequestError::Overloaded.into_response(worker.map_digest),
         };
-        let result = tokio::time::timeout(admitted.remaining(), async {
+        let result = tokio::time::timeout(pending.remaining(), async {
             let ready = self.check(state, id, digest).await?;
             let mut epochs = Vec::new();
             for segment in 0..shape.segments {
@@ -592,7 +576,7 @@ impl Archive {
                 let body = std::mem::replace(response.body_mut(), axum::body::Body::empty());
                 *response.body_mut() = pir_control::http::retain(
                     body,
-                    (ReplyAdmission::Query(Some(admitted)), memory, state.clone()),
+                    (ReplyAdmission(Some(pending)), memory, state.clone()),
                 );
                 response
             }
