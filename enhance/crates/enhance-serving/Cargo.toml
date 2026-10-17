@@ -6,6 +6,8 @@ description = "Enhance PIR coordinator and worker serving runtime; no chain read
 publish = false
 
 [features]
+# Restore the larger ordinary-domain test campaigns during full qualification.
+qualification-tests = []
 default = []
 native-reinspiring = ["enhance-pir/native-reinspiring", "dep:pir-native", "dep:reinspiring", "ipir-sp/native-reinspiring"]
 cuda = ["ipir-sp/cuda", "dep:simplepir-kernel"]

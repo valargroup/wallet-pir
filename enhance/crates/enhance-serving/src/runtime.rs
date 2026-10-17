@@ -1076,114 +1076,134 @@ mod tests {
 
     #[test]
     fn partial_preparation_failure_preserves_published_and_retries() {
-        partial_preparation_failure(MatvecConfig::default());
+        partial_preparation_failure(MatvecConfig::default(), false);
+    }
+
+    #[test]
+    fn cached_partial_preparation_failure_preserves_published_and_retries() {
+        partial_preparation_failure(MatvecConfig::default(), true);
     }
 
     #[cfg(feature = "cuda")]
     #[test]
     #[ignore = "requires NVIDIA GPU and NVRTC"]
     fn cuda_partial_preparation_failure_preserves_published_and_retries() {
-        partial_preparation_failure(MatvecConfig {
-            matvec_backend: crate::matvec::Backend::Cuda,
-            cuda_device: None,
-        });
+        for cached in [false, true] {
+            partial_preparation_failure(
+                MatvecConfig {
+                    matvec_backend: crate::matvec::Backend::Cuda,
+                    cuda_device: None,
+                },
+                cached,
+            );
+        }
     }
 
-    fn partial_preparation_failure(backend: MatvecConfig) {
+    fn partial_preparation_failure(backend: MatvecConfig, cached: bool) {
         use crate::matvec::testing::{scoped, Faults};
         use std::sync::atomic::Ordering::SeqCst;
-        for cached in [false, true] {
-            let root = tempfile::tempdir().unwrap();
-            let old_plan = plan(
-                Lifecycle::default()
-                    .coverage(67, Geometry::default())
-                    .unwrap()
-                    .shards[0]
-                    .clone(),
-                records,
-            )
-            .unwrap();
-            let candidate = plan(
-                Lifecycle::default()
-                    .coverage(8192 * 33 + 17, Geometry::default())
-                    .unwrap()
-                    .shards[0]
-                    .clone(),
-                records,
-            )
-            .unwrap();
-            assert_eq!(candidate.units.len(), 2);
-            assert!(candidate.units.iter().all(|u| !old_plan.units.contains(u)));
-            let mut engine = Engine::with_backend(root.path(), backend);
-            let faults = Arc::new(Faults::default());
-            let published = scoped(&faults, || engine.prepare(old_plan, records))
+        let root = tempfile::tempdir().unwrap();
+        let old_plan = plan(
+            Lifecycle::default()
+                .coverage(67, Geometry::default())
                 .unwrap()
-                .0;
-            let query = vec![1; published.plan.shard.logical_rows as usize];
-            let before = published.evaluate(&query).unwrap();
-            let published_sizes = engine.live_sizes();
-            let published_bytes = faults.live_bytes.load(SeqCst);
-            if cached {
-                // Populate candidate artifacts through an independent CPU engine.
-                let mut cache = Engine::new(root.path());
-                drop(cache.prepare(candidate.clone(), records).unwrap());
-            }
-            faults
-                .fail_prepare_at
-                .store(faults.prepare_calls.load(SeqCst) + 2, SeqCst);
-            let mut reads = 0;
-            let failed = scoped(&faults, || {
-                engine.prepare(candidate.clone(), |start, count| {
-                    assert!(
-                        !cached,
-                        "backend failure must not rebuild a cached artifact"
-                    );
-                    reads += 1;
-                    records(start, count)
-                })
-            });
-            assert!(failed.is_err());
-            assert_eq!(
-                faults.prepare_calls.load(SeqCst),
-                3,
-                "must fail after preparing two candidate units"
-            );
-            assert_eq!(reads, if cached { 0 } else { 2 });
-            assert_eq!(
-                faults.live_bytes.load(SeqCst),
-                published_bytes,
-                "partial candidate kernels must be dropped"
-            );
-            assert_eq!(engine.live_sizes(), published_sizes);
-            assert_eq!(published.evaluate(&query).unwrap(), before);
-            faults.fail_prepare_at.store(0, SeqCst);
-            let retry = scoped(&faults, || {
-                engine.prepare(candidate.clone(), |start, count| {
-                    assert!(!cached, "cached retry must not require canonical history");
-                    records(start, count)
-                })
-            })
+                .shards[0]
+                .clone(),
+            records,
+        )
+        .unwrap();
+        // Both fixtures prepare two new units and fail on the second.
+        // The valid composed tail uses smaller 4K/2K units; qualification
+        // also exercises the original ordinary 8K/2K domain.
+        let geometry = Geometry::default();
+        let shard = if cfg!(feature = "qualification-tests") || cfg!(feature = "cuda") {
+            Lifecycle::default()
+                .coverage(8192 * 33 + 17, geometry)
+                .unwrap()
+                .shards[0]
+                .clone()
+        } else {
+            Lifecycle::default()
+                .coverage(
+                    geometry.max_shard_rows * RECORDS_PER_ROW as u64 + 17,
+                    geometry,
+                )
+                .unwrap()
+                .shards[1]
+                .clone()
+        };
+        let candidate = plan(shard, records).unwrap();
+        assert_eq!(candidate.units.len(), 2);
+        assert!(candidate.units.iter().all(|u| !old_plan.units.contains(u)));
+        let mut engine = Engine::with_backend(root.path(), backend);
+        let faults = Arc::new(Faults::default());
+        let published = scoped(&faults, || engine.prepare(old_plan, records))
             .unwrap()
             .0;
-            let oracle_root = tempfile::tempdir().unwrap();
-            let oracle = Engine::new(oracle_root.path())
-                .prepare(candidate, records)
-                .unwrap()
-                .0;
-            let candidate_query = vec![1; retry.plan.shard.logical_rows as usize];
-            assert_eq!(
-                retry.evaluate(&candidate_query).unwrap(),
-                oracle.evaluate(&candidate_query).unwrap()
-            );
-            assert_eq!(published.evaluate(&query).unwrap(), before);
-            drop(retry);
-            engine.collect_unused().unwrap();
-            assert_eq!(engine.live_sizes(), published_sizes);
-            assert_eq!(faults.live_bytes.load(SeqCst), published_bytes);
-            drop(published);
-            engine.collect_unused().unwrap();
-            assert_eq!(faults.live_bytes.load(SeqCst), 0);
+        let query = vec![1; published.plan.shard.logical_rows as usize];
+        let before = published.evaluate(&query).unwrap();
+        let published_sizes = engine.live_sizes();
+        let published_bytes = faults.live_bytes.load(SeqCst);
+        if cached {
+            // Populate candidate artifacts through an independent CPU engine.
+            let mut cache = Engine::new(root.path());
+            drop(cache.prepare(candidate.clone(), records).unwrap());
         }
+        faults
+            .fail_prepare_at
+            .store(faults.prepare_calls.load(SeqCst) + 2, SeqCst);
+        let mut reads = 0;
+        let failed = scoped(&faults, || {
+            engine.prepare(candidate.clone(), |start, count| {
+                assert!(
+                    !cached,
+                    "backend failure must not rebuild a cached artifact"
+                );
+                reads += 1;
+                records(start, count)
+            })
+        });
+        assert!(failed.is_err());
+        assert_eq!(
+            faults.prepare_calls.load(SeqCst),
+            3,
+            "must fail after preparing two candidate units"
+        );
+        assert_eq!(reads, if cached { 0 } else { 2 });
+        assert_eq!(
+            faults.live_bytes.load(SeqCst),
+            published_bytes,
+            "partial candidate kernels must be dropped"
+        );
+        assert_eq!(engine.live_sizes(), published_sizes);
+        assert_eq!(published.evaluate(&query).unwrap(), before);
+        faults.fail_prepare_at.store(0, SeqCst);
+        let retry = scoped(&faults, || {
+            engine.prepare(candidate.clone(), |start, count| {
+                assert!(!cached, "cached retry must not require canonical history");
+                records(start, count)
+            })
+        })
+        .unwrap()
+        .0;
+        let oracle_root = tempfile::tempdir().unwrap();
+        let oracle = Engine::new(oracle_root.path())
+            .prepare(candidate, records)
+            .unwrap()
+            .0;
+        let candidate_query = vec![1; retry.plan.shard.logical_rows as usize];
+        assert_eq!(
+            retry.evaluate(&candidate_query).unwrap(),
+            oracle.evaluate(&candidate_query).unwrap()
+        );
+        assert_eq!(published.evaluate(&query).unwrap(), before);
+        drop(retry);
+        engine.collect_unused().unwrap();
+        assert_eq!(engine.live_sizes(), published_sizes);
+        assert_eq!(faults.live_bytes.load(SeqCst), published_bytes);
+        drop(published);
+        engine.collect_unused().unwrap();
+        assert_eq!(faults.live_bytes.load(SeqCst), 0);
     }
 
     #[test]

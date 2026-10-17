@@ -46,7 +46,9 @@ cases and never establishes an enforced timing pass.
 Explicit full commands (`make test`, `make check-full`, full package families and
 the qualification matrix) enable the declared `qualification-tests` features.
 These restore the original deployed geometry combinations, mixed-size archive
-preparation, full publication sequence and longer display histories. The same
+preparation, full publication sequence, longer display histories and the larger
+Enhance multi-unit failure fixture. Cold and cached preparation failures are
+separate cases so each keeps its own deadline. The same
 unit assertions run in both configurations; full integration campaigns and
 released-client checks remain classified separately. Fast builds reject this
 feature if it leaks into their actual executable artifacts. Use
