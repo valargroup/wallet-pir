@@ -165,6 +165,20 @@ The normative rules are in the [shard promotion specification](spec/spec-shard-p
 Keep that specification and this architectural explanation aligned as the design
 evolves.
 
+Start with ownership changes of already sealed, immutable shards. Promotion moves
+a shard from recent to archive holdings; it does not split, merge, renumber or
+repack the shard. Its boundaries, identifiers, digests, PIR geometry, serving bytes
+and setup stay the same. Full providers may keep it in memory throughout. Sealing
+the mutable tail and re-cutting existing shards are separate operations outside
+this first promotion design.
+
+The hierarchy generation coordinates publishers and query servers internally.
+Wallets keep using the existing metadata, setup and query interfaces and their
+existing shard, revision and session identities. Holdings and routes can change
+through those interfaces without adding a wallet generation field or changing
+manifest schemas. Future shard reorganization needs its own specification and
+wallet compatibility qualification.
+
 Once a publisher has built and finalized an amended hierarchy, it atomically
 advances its current generation and stops offering the previous generation as a
 publication/bootstrap target. New query servers bootstrap against the current
@@ -174,8 +188,11 @@ update. Unchanged artifacts referenced by the new generation remain reusable.
 Each query server keeps its old generation active, including the metadata and
 setup needed by wallets, while downloading, verifying and loading the replacement.
 It switches the router and worker's serving view atomically only when the new
-generation is ready. Discovery continues to advertise its actual active generation
-until that switch. A superseded download whose artifacts are no longer available
+generation is ready, including eligible destinations for shards whose routes
+change. Publisher finalization alone does not mean those destinations are ready;
+each query server verifies them under the existing routing and authority rules.
+Discovery continues to advertise its actual active generation until that switch.
+A superseded download whose artifacts are no longer available
 reconciles current publisher state and retries without stopping the active view.
 Before activating a candidate, check that it has not already been superseded.
 
@@ -185,7 +202,9 @@ handover. Preserve product-specific authority renewal, freshness and reorg check
 confirmed invalidation or expired authority may still require refusal. Already
 admitted requests retain their generation under existing request-lifetime rules.
 After a switch, stale wallet sessions use the product's existing refresh/refusal
-behavior; never interpret an old encrypted request against new-generation data.
+behavior. Whether served locally or forwarded, an encrypted request retains its
+exact shard, revision and session binding; moving ownership cannot change its
+data or setup.
 
 The normal handover has no gap in the node's serving readiness. Budget the
 candidate alongside the active material so preparation cannot evict the serving
@@ -390,6 +409,11 @@ independent correctness oracles. Exercise:
   and advertised coverage switch together. Exercise failed preparation, interrupted
   downloads, a superseded candidate, admitted old-generation requests and a new
   node joining during the transition. Check reorg revocation separately.
+- Ownership-only promotion with an unchanged wallet client: exercise metadata,
+  setup and encrypted queries before, during and after the move, including
+  forwarding across independently updating providers and a destination that is
+  not ready. Check unchanged shard identities, boundaries, bytes and setup;
+  reject shard rewriting as ownership-only promotion.
 - Recent Only operation on a 64 GB RAM host, including candidate overlap and
   query workspace, with at most 10% p99 increase during promotion at the supported
   serving load. Test Full-provider placement across multiple in-memory machines
@@ -415,8 +439,10 @@ must keep working without automatic discovery or permissionless registration.
 Start publication synchronization with request/response polling; subscriptions
 remain an optional later optimization of update detection.
 Keep wallet protocols, record layouts, session identities, validation and
-persisted formats unchanged. Introduce no new consensus mechanism, incentive
-system, PIR primitive or universal ingestion framework.
+persisted formats unchanged. Initial promotion changes ownership of immutable
+shards; re-cutting, merging and repacking shards are outside this version.
+Introduce no new consensus mechanism, incentive system, PIR primitive or universal
+ingestion framework.
 
 This plan does not authorize deployment or expand an existing refactor task.
 Implement phases as focused changes; keep source completion, qualification and
