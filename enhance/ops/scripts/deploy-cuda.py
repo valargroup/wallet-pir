@@ -45,7 +45,7 @@ def validate_inventory(inventory, service):
     return target
 
 
-def preflight_inputs(args):
+def preflight_inputs(args, *, require_private_state=True):
     # Check coordinator prerequisites before extracting/staging any artifact.
     for path, private in [(args.ssh_key, True), (args.known_hosts, False), (args.inventory, False)]:
         info = path.lstat()
@@ -55,10 +55,30 @@ def preflight_inputs(args):
             raise ValueError('deployment input permissions are too broad')
     if args.state_dir.exists() or args.state_dir.is_symlink():
         info = args.state_dir.lstat()
-        if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o077:
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_mode & (0o077 if require_private_state else 0o022):
             raise ValueError('deployment state directory must be private and root-owned')
     if not shutil.which('ssh') or not shutil.which('scp'):
         raise ValueError('deployment runner requires ssh and scp')
+
+
+def prepare_state_directory(path, held):
+    """Protect the existing root-owned ledger under the production lock.
+
+    Older provisioning created it with ordinary directory permissions. Tighten
+    only that directory; never replace it or change any retained transaction.
+    Symlinks, foreign ownership and writable shared directories still refuse.
+    """
+    held.verify()
+    path.mkdir(mode=0o700, exist_ok=True)
+    descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        info = os.fstat(descriptor)
+        if info.st_uid != 0 or info.st_mode & 0o022:
+            raise ValueError('deployment state directory must be root-owned and not shared-writable')
+        if info.st_mode & 0o077:
+            os.fchmod(descriptor, 0o700)
+    finally:
+        os.close(descriptor)
 
 
 def main():
@@ -75,7 +95,7 @@ def main():
     if os.geteuid() != 0:
         parser.error('run on the root coordinator deployment runner')
     try:
-        preflight_inputs(args)
+        preflight_inputs(args, require_private_state=False)
     except (OSError, ValueError) as error:
         parser.error(str(error))
     args.evidence_dir = args.evidence_dir.resolve()
@@ -114,6 +134,8 @@ def main():
     result = {'passed': False, 'mode': args.mode, 'revision': args.sha, 'binary_sha256': digest}
     try:
         with production_lock(inventory, executor) as held:
+            prepare_state_directory(args.state_dir, held)
+            preflight_inputs(args)
             deployer.lock_factory = lambda: contextlib.nullcontext(held)
             deployer.lock = held
             deployer.check_identities([inventory.lock.get('host')])

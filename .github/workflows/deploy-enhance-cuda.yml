@@ -41,7 +41,7 @@ jobs:
           [[ "$status" == identical || "$status" == behind ]]
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.ref }}
+          ref: ${{ github.sha }}
           persist-credentials: false
       - name: Resolve qualified native CUDA artifact
         id: release
@@ -72,10 +72,11 @@ jobs:
           SHA: ${{ inputs.ref }}
           MODE: ${{ inputs.mode }}
           SOURCE_RUN: ${{ steps.release.outputs.run-id }}
+          OPERATOR_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          printf '{"source_run":"%s","revision":"%s","deployment_run":"%s"}\n' \
-            "$SOURCE_RUN" "$SHA" "$GITHUB_RUN_ID" > "$RUNNER_TEMP/cuda-ci-$GITHUB_RUN_ID.json"
+          printf '{"source_run":"%s","revision":"%s","deployment_run":"%s","operator_revision":"%s"}\n' \
+            "$SOURCE_RUN" "$SHA" "$GITHUB_RUN_ID" "$OPERATOR_SHA" > "$RUNNER_TEMP/cuda-ci-$GITHUB_RUN_ID.json"
           python3 enhance/ops/scripts/deploy-cuda.py "$MODE" \
             --inventory /etc/enhance-pir/cuda-deploy-inventory.json \
             --archive cuda-artifact/enhance-pir-native-cuda.tar.gz --sha "$SHA" \

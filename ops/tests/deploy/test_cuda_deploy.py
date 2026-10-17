@@ -8,7 +8,7 @@ import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, Mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from test_wallet_pir_deploy import Fleet, OLD_SHA, NEW_SHA, ENHANCE, ROOT, SERVICES
@@ -58,6 +58,41 @@ class CoordinatorPreflight(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'permissions|private'):
                 self.check()
             path.chmod(0o700 if path.is_dir() else 0o600)
+
+    def test_locked_preparation_tightens_existing_ledger_without_replacing_it(self):
+        path = self.args.state_dir
+        retained = path / 'transaction.json'
+        retained.write_text('retained receipt')
+        before = (path.stat().st_ino, retained.stat().st_ino)
+        path.chmod(0o755)
+        held = Mock()
+        original = deploy.os.fstat
+        with patch.object(deploy.os, 'fstat', side_effect=lambda fd: SimpleNamespace(st_uid=0, st_mode=original(fd).st_mode)):
+            deploy.prepare_state_directory(path, held)
+        held.verify.assert_called_once()
+        self.assertEqual(path.stat().st_mode & 0o777, 0o700)
+        self.assertEqual((path.stat().st_ino, retained.stat().st_ino), before)
+        self.assertEqual(retained.read_text(), 'retained receipt')
+        self.check()
+
+    def test_state_preparation_refuses_lost_lock_and_untrusted_directories(self):
+        path = self.args.state_dir
+        path.chmod(0o755)
+        held = Mock()
+        held.verify.side_effect = RuntimeError('lost lock')
+        with self.assertRaisesRegex(RuntimeError, 'lost lock'):
+            deploy.prepare_state_directory(path, held)
+        self.assertEqual(path.stat().st_mode & 0o777, 0o755)
+        held = Mock()
+        for owner, mode in [(1, 0o40755), (0, 0o40777)]:
+            with patch.object(deploy.os, 'fstat', return_value=SimpleNamespace(st_uid=owner, st_mode=mode)):
+                with self.assertRaisesRegex(ValueError, 'root-owned'):
+                    deploy.prepare_state_directory(path, held)
+            self.assertEqual(path.stat().st_mode & 0o777, 0o755)
+        path.rmdir()
+        path.symlink_to(self.root, target_is_directory=True)
+        with self.assertRaises(OSError):
+            deploy.prepare_state_directory(path, held)
 
     def test_symlink_non_owner_and_missing_capability_fail(self):
         self.args.ssh_key.unlink()

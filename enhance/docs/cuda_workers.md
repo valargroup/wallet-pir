@@ -142,7 +142,10 @@ metadata and isolated CUDA validation scripts. Successful CI establishes build
 provenance; live CUDA correctness remains a deployment gate.
 
 Use **Deploy Enhance CUDA worker** with `ref` set to a full main-ancestor SHA
-whose full CI succeeded. Start with `mode=preflight`, then use `mode=deploy`.
+whose full CI succeeded. `mode=preflight` runs the hardware checks without activation;
+`mode=deploy` runs those same checks and then activates the release. The operator
+comes from the workflow dispatch revision, independently of the qualified service
+artifact revision; both revisions are retained in the CI receipt.
 The workflow accepts only the optional GPU worker, takes the shared production
 lock, and preserves its state root, arguments, CUDA library path and placement.
 Preflight uploads verified validation binaries and runs fresh loopback fixture
@@ -168,6 +171,9 @@ account. Credentials remain runtime material. The independent oracle must use
 public canonical records at positions in the current native dataset.
 
 Transaction journals and baseline persist under `/var/lib/wallet-pir-deploy/cuda`.
+Under the production lock, the operator creates that directory with mode `0700`,
+or tightens an existing root-owned directory without replacing its ledger.
+Symlinks, foreign ownership and group- or world-writable directories are refused.
 Any activation or post-deploy verification failure rolls back touched targets.
 The workflow uploads metadata, smoke results, public query reports and rollback
 status even on failure. For an interrupted transaction, resume the existing
