@@ -150,5 +150,7 @@ its publication, and Transparent retains prepared handles and query memory.
 Enhance keeps its existing metric families and starts processing time after upload;
 Transparent and Receiver retain their handler-duration and cancellation accounting.
 Their adapters classify paths into fixed labels before calling shared observation;
-shared code never recognizes product URLs. Limits, deadline origins, admission
+shared code never recognizes product URLs. Adapters retain the historical fixed
+categories for product-shaped unmatched paths too, preserving their 404 metrics.
+Limits, deadline origins, admission
 ordering, revocation checks, retries and HTTP refusals remain product policy.

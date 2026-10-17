@@ -21,9 +21,37 @@ pub use publication::{Publication, Publications};
 use receiver_pir::{query_bytes, Error, HEADER_BYTES, MAGIC, MAX_ROWS};
 use std::{sync::Arc, time::Duration};
 
-/// The receiver directory's route categories; session IDs never become labels.
+// Preserve the historical bounded categories for unmatched product-shaped
+// paths as well as this service's registered routes.
+/// Only a fixed endpoint category survives classification. No dynamic path segment is retained.
 fn endpoint(path: &str) -> Option<&'static str> {
-    let route = path.strip_prefix("/v1/receiver/")?;
+    if path == "/v2/shards/init" {
+        Some("init")
+    } else if path == "/v2/shards" || path == "/v2/filters/shards" {
+        Some("map")
+    } else if path.starts_with("/v2/filters/") || path.starts_with("/v1/filters/") {
+        Some("filter")
+    } else if path.starts_with("/v2/shards/") && path.ends_with("/manifest") {
+        Some("manifest")
+    } else if path.starts_with("/v2/shards/") && path.contains("/setup/") {
+        Some("setup")
+    } else if let Some(route) = path.strip_prefix("/v1/receiver/") {
+        receiver_endpoint(route)
+    } else if path.starts_with("/v2/shards/") && path.contains("/query/") {
+        if path.ends_with("/directory") {
+            Some("query_directory")
+        } else if path.ends_with("/pages") {
+            Some("query_pages")
+        } else {
+            Some("query_other")
+        }
+    } else {
+        None
+    }
+}
+
+/// The receiver directory's route categories; session IDs never become labels.
+fn receiver_endpoint(route: &str) -> Option<&'static str> {
     Some(match route.split('/').next()? {
         "init" => "receiver_init",
         "public" => "receiver_public",
@@ -298,6 +326,34 @@ async fn query(State(s): State<Service>, request: Request) -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn foreign_product_shaped_404_keeps_its_existing_metric_category() {
+        let (query_url, task) = serve(
+            Publications::default(),
+            Arc::new(Queue::new(1, 1, WAIT, true)),
+        )
+        .await;
+        let origin = query_url.strip_suffix("/v1/receiver/query").unwrap();
+        let http = reqwest::Client::new();
+        let refused = http
+            .get(format!("{origin}/v2/shards/init"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(refused.status(), StatusCode::NOT_FOUND);
+        drop(refused);
+        let metrics = http
+            .get(format!("{origin}/metrics"))
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap();
+        assert!(metrics.contains("pir_http_responses_total{endpoint=\"init\",code=\"4xx\"} 1"));
+        task.abort();
+    }
 
     #[tokio::test]
     async fn query_response_retains_admission_and_publication_until_transport_drop() {

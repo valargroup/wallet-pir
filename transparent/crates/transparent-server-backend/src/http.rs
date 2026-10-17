@@ -11,8 +11,10 @@ pub async fn observe(State(metrics): State<HttpMetrics>, request: Request, next:
     pir_observability::observe(metrics, label, request, next).await
 }
 
+// Preserve historical classification even for product-shaped 404s. These
+// mappings are product policy; the shared observer receives only fixed labels.
 /// Only a fixed endpoint category survives classification. No dynamic path segment is retained.
-pub fn endpoint(path: &str) -> Option<&'static str> {
+fn endpoint(path: &str) -> Option<&'static str> {
     if path == "/v2/shards/init" {
         Some("init")
     } else if path == "/v2/shards" || path == "/v2/filters/shards" {
@@ -23,6 +25,8 @@ pub fn endpoint(path: &str) -> Option<&'static str> {
         Some("manifest")
     } else if path.starts_with("/v2/shards/") && path.contains("/setup/") {
         Some("setup")
+    } else if let Some(route) = path.strip_prefix("/v1/receiver/") {
+        receiver_endpoint(route)
     } else if path.starts_with("/v2/shards/") && path.contains("/query/") {
         if path.ends_with("/directory") {
             Some("query_directory")
@@ -34,6 +38,20 @@ pub fn endpoint(path: &str) -> Option<&'static str> {
     } else {
         None
     }
+}
+
+/// The receiver directory's route categories; session IDs never become labels.
+fn receiver_endpoint(route: &str) -> Option<&'static str> {
+    Some(match route.split('/').next()? {
+        "init" => "receiver_init",
+        "public" => "receiver_public",
+        "query" => "receiver_query",
+        "rows" => "receiver_rows",
+        "witness" => "receiver_witness",
+        "filters" => "receiver_filters",
+        "health" => "receiver_health",
+        _ => return None,
+    })
 }
 
 #[cfg(test)]
@@ -64,7 +82,7 @@ mod tests {
             assert_eq!(endpoint(path), Some(label));
         }
         assert_eq!(endpoint("/metrics"), None);
-        assert_eq!(endpoint("/v1/receiver/query"), None);
+        assert_eq!(endpoint("/v1/receiver/query"), Some("receiver_query"));
     }
 
     #[tokio::test]
@@ -82,6 +100,7 @@ mod tests {
                 observe,
             ));
         let response = app
+            .clone()
             .oneshot(
                 Request::post("/v2/shards/private/revisions/secret/query/pages")
                     .body(Body::empty())
@@ -92,6 +111,16 @@ mod tests {
         axum::body::to_bytes(response.into_body(), 100)
             .await
             .unwrap();
+        let foreign = app
+            .oneshot(
+                Request::get("/v1/receiver/query")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(foreign.status(), axum::http::StatusCode::NOT_FOUND);
+        drop(foreign);
         let text = metrics.render();
         for family in [
             "arrivals_total",
@@ -112,6 +141,9 @@ mod tests {
         assert!(text
             .contains("pir_http_duration_seconds_bucket{endpoint=\"query_pages\",le=\"0.001\"}"));
         assert!(text.contains("pir_http_duration_seconds_count{endpoint=\"query_pages\"} 1"));
+        assert!(
+            text.contains("pir_http_responses_total{endpoint=\"receiver_query\",code=\"4xx\"} 1")
+        );
         assert!(!text.contains("private"));
         assert!(!text.contains("secret"));
     }
