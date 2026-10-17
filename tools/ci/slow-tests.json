@@ -25,10 +25,6 @@
   "enhance-pir-server": {
     "status::source::tests::live_rpc_candidate_revalidates_before_durable_publication": "Measured 1.40s locally: real RPC candidate revalidation and durable publication; full CI retains the complete test."
   },
-  "pir-apm": {
-    "fleet::integration_tests::failed_and_slow_workers_do_not_block_pages_or_good_samples": "Real HTTP stalled-worker timeout and scrape isolation; full CI retains real-time integration coverage.",
-    "packing_fleet::tests::discovery_pages_and_failed_scrapes_preserve_last_valid_sample": "Real HTTP stalled-worker timeout and scrape isolation; full CI retains real-time integration coverage."
-  },
   "transparent-shard": {
     "build::tests::a_reorg_reproduces_everything_sealed_below_it": "Measured about 24s in warm CI: rebuilds and compares the entire sealed chain after a fork. Full qualification retains the independent rebuild; bounded reorg/publication and wallet transition checks remain fast.",
     "build::tests::sealed_shards_are_byte_stable_under_tail_growth": "Measured about 12s in warm CI: repeatedly rebuilds full sealed tables through tail growth. Full qualification retains every byte comparison; bounded publication and schema/layout checks remain fast."

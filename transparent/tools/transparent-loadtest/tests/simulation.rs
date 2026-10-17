@@ -78,7 +78,7 @@ async fn service(dir: &Path, fault: Fault) -> (String, ServiceState) {
                 if path.ends_with("/filter") {
                     match fault {
                         Fault::SlowFirstFilter if calls.fetch_add(1, Ordering::SeqCst) == 0 => {
-                            tokio::time::sleep(Duration::from_secs(5)).await
+                            tokio::time::sleep(Duration::from_millis(250)).await
                         }
                         Fault::SlowFilter => tokio::time::sleep(Duration::from_secs(30)).await,
                         Fault::RefuseFilter => {
@@ -314,7 +314,7 @@ async fn twenty_users_sustained_replacement_and_drain() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn hard_deadline_refusal_and_publication_failure_remain_unsuccessful() {
+async fn a_measured_deadline_remains_unsuccessful() {
     let dir = tempfile::tempdir().unwrap();
     fixture(dir.path(), &[9999, 10000]);
     let (base, _) = service(dir.path(), Fault::SlowFilter).await;
@@ -326,6 +326,12 @@ async fn hard_deadline_refusal_and_publication_failure_remain_unsuccessful() {
         .as_str()
         .unwrap()
         .contains("Measured recovery exceeded its 1 second deadline"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_filter_refusal_remains_unsuccessful() {
+    let dir = tempfile::tempdir().unwrap();
+    fixture(dir.path(), &[9999, 10000]);
     let (base, _) = service(dir.path(), Fault::RefuseFilter).await;
     let report = run(dir.path(), &base, "refusal", "wave", 2, 10, false).await;
     assert_eq!(report["summary"]["outcomes"]["failed"], 2);
@@ -343,6 +349,12 @@ async fn hard_deadline_refusal_and_publication_failure_remain_unsuccessful() {
             .unwrap()
             > 0.0
     );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_publication_drift_remains_unsuccessful() {
+    let dir = tempfile::tempdir().unwrap();
+    fixture(dir.path(), &[9999, 10000]);
     let (base, _) = service(dir.path(), Fault::Drift).await;
     let report = run(dir.path(), &base, "drift", "wave", 1, 10, false).await;
     assert_eq!(report["publication_stable"], false);
@@ -437,8 +449,7 @@ async fn supervisor_interrupt_finalizes_and_worker_crash_is_counted() {
 
 /// A receive before the catch-up window must resolve a spend inside it without
 /// counting the preparatory restore as measured load or importing future events.
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn catch_up_seeds_prior_history_and_keeps_measurement_separate() {
+fn catch_up_fixture() -> (tempfile::TempDir, Value) {
     let dir = tempfile::tempdir().unwrap();
     fixture(dir.path(), &[1]);
     let path = dir.path().join("sample.json");
@@ -459,45 +470,63 @@ async fn catch_up_seeds_prior_history_and_keeps_measurement_separate() {
     sample["clients"][0]["expected_digest"] = json!(hex::encode(hash.finalize()));
     sample["clients"][0]["journal_events"] = json!(events.len());
     fs::write(&path, serde_json::to_vec(&sample).unwrap()).unwrap();
+    (dir, sample)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn sqlite_catch_up_keeps_prior_history_outside_measurement() {
+    check_catch_up_store("sqlite").await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn memory_catch_up_keeps_prior_history_outside_measurement() {
+    check_catch_up_store("memory").await;
+}
+
+async fn check_catch_up_store(store: &str) {
+    let (dir, _) = catch_up_fixture();
     let (base, _) = service(dir.path(), Fault::None).await;
-    for store in ["sqlite", "memory"] {
-        let config = json!({"schema":"transparent-scenario-v1","name":store,"mode":"wave","sample":"sample.json","shard_url":base,"profiles":{"test":1},"store":store,"recovery_deadline_seconds":120,"metrics_targets":{"missing-worker":"http://127.0.0.1:1/metrics"}});
-        let report = run_config(dir.path(), store, config).await;
-        assert_eq!(report["success"], true);
-        let user = &report["users"][0];
-        assert_eq!(user["seeded_events"], 1);
-        assert_eq!(user["events"], 1);
-        assert_eq!(user["events_exact"], true);
-        assert_eq!(user["unresolved_spends"], 0);
-        assert_eq!(user["outcome"], "exact");
-        let totals: f64 = user["stages"]
-            .as_object()
-            .unwrap()
-            .values()
-            .map(|s| s["calls"].as_f64().unwrap())
-            .sum();
-        assert_eq!(user["http_totals"]["calls"], totals);
-        let prep: Value = serde_json::from_slice(
-            &fs::read(
-                dir.path()
-                    .join(store)
-                    .join("preparation/batch-0/report.json"),
-            )
-            .unwrap(),
+    let config = json!({"schema":"transparent-scenario-v1","name":store,"mode":"wave","sample":"sample.json","shard_url":base,"profiles":{"test":1},"store":store,"recovery_deadline_seconds":120,"metrics_targets":{"missing-worker":"http://127.0.0.1:1/metrics"}});
+    let report = run_config(dir.path(), store, config).await;
+    assert_eq!(report["success"], true);
+    let user = &report["users"][0];
+    assert_eq!(user["seeded_events"], 1);
+    assert_eq!(user["events"], 1);
+    assert_eq!(user["events_exact"], true);
+    assert_eq!(user["unresolved_spends"], 0);
+    assert_eq!(user["outcome"], "exact");
+    let totals: f64 = user["stages"]
+        .as_object()
+        .unwrap()
+        .values()
+        .map(|s| s["calls"].as_f64().unwrap())
+        .sum();
+    assert_eq!(user["http_totals"]["calls"], totals);
+    let prep: Value = serde_json::from_slice(
+        &fs::read(
+            dir.path()
+                .join(store)
+                .join("preparation/batch-0/report.json"),
         )
-        .unwrap();
-        assert_eq!(prep["success"], true);
-        assert!(prep["finished_at"].as_f64().unwrap() <= report["started_at"].as_f64().unwrap());
-        assert_eq!(report["summary"]["started"], 1);
-        assert!(
-            prep["summary"]["stages"]["filters"]["calls"]
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(prep["success"], true);
+    assert!(prep["finished_at"].as_f64().unwrap() <= report["started_at"].as_f64().unwrap());
+    assert_eq!(report["summary"]["started"], 1);
+    assert!(
+        prep["summary"]["stages"]["filters"]["calls"]
+            .as_f64()
+            .unwrap()
+            > report["summary"]["stages"]["filters"]["calls"]
                 .as_f64()
                 .unwrap()
-                > report["summary"]["stages"]["filters"]["calls"]
-                    .as_f64()
-                    .unwrap()
-        );
-    }
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn catch_up_retries_the_public_map_before_measurement() {
+    let (dir, _) = catch_up_fixture();
     let (retry_base, _) = service(dir.path(), Fault::RetryMap).await;
     let retry = run(dir.path(), &retry_base, "retry-map", "wave", 1, 120, false).await;
     assert_eq!(retry["success"], true);
@@ -507,6 +536,13 @@ async fn catch_up_seeds_prior_history_and_keeps_measurement_separate() {
     assert!(requests
         .lines()
         .any(|line| serde_json::from_str::<Value>(line).unwrap()["status"] == 502));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_bad_catch_up_oracle_stops_the_measured_wave() {
+    let (dir, mut sample) = catch_up_fixture();
+    let path = dir.path().join("sample.json");
+    let (base, _) = service(dir.path(), Fault::None).await;
     // A bad oracle must stop preparation, never bless the measured wave.
     sample["clients"][0]["expected_digest"] = json!("incorrect");
     fs::write(&path, serde_json::to_vec(&sample).unwrap()).unwrap();

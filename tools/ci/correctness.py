@@ -19,6 +19,7 @@ import threading
 import time
 import uuid
 
+from test_budget import case_seconds
 from full_packages import inventory
 from integration_tests import inventory as integration_inventory
 from stage import ROOT, run, install_cancellation, stop
@@ -123,6 +124,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--record-only', action='store_true')
     parser.add_argument('--offline', action='store_true')
+    parser.add_argument('--case-seconds', type=case_seconds, default=30,
+                        help='per-case deadline, including setup and teardown (default: 30)')
     args = parser.parse_args()
     if sys.platform != 'linux' and not args.record_only:
         parser.error('complete correctness requires Linux for the exporter executing-image check; '
@@ -153,7 +156,7 @@ def main():
             cache = temporary / 'public-fixtures'
             cache.mkdir()
             env = {key: value for key, value in os.environ.items() if not key.startswith('QUALIFY_')}
-            env.update(WALLET_PIR_CASE_LOG=str(case_log), WALLET_PIR_ENFORCE_BUDGET='0' if args.record_only else '1',
+            env.update(WALLET_PIR_CASE_LOG=str(case_log), WALLET_PIR_CASE_SECONDS=str(args.case_seconds), WALLET_PIR_ENFORCE_BUDGET='0' if args.record_only else '1',
                        WALLET_PIR_ARTIFACT_LOG=str(output / 'artifacts.jsonl'),
                        WALLET_PIR_STAGE_LOG=str(output / 'stages.jsonl'),
                        WALLET_PIR_TEST_RUNTIME_CACHE=str(cache),
@@ -185,7 +188,8 @@ def main():
         report = dict(passed=passed and (args.record_only or elapsed < 180),
                       seconds=round(elapsed, 3), enforced=not args.record_only,
                       source=source, artifacts=units,
-                      cases=len(cases), over_budget=[case for case in cases if case['seconds'] >= 30],
+                      cases=len(cases), case_seconds=args.case_seconds,
+                      over_budget=[case for case in cases if case['seconds'] >= args.case_seconds],
                       slowest=sorted(cases, key=lambda case: case['seconds'], reverse=True)[:15])
         (output / 'result.json').write_text(json.dumps(report, indent=2) + '\n')
         (output.parent / 'latest.json').write_text(json.dumps(dict(report= str(output / 'result.json'), **report), indent=2) + '\n')
