@@ -59,6 +59,10 @@ path = "src/bin/filter-sweep.rs"
 name = "txid-display-controller"
 path = "src/bin/txid-display-controller.rs"
 
+[features]
+# Keep large test campaigns explicit; production behavior is unchanged.
+qualification-tests = []
+
 [dependencies]
 pir-pipeline = { path = "../../../shared/pir-pipeline" }
 pir-control = { path = "../../../shared/pir-control", features = ["admission"] }

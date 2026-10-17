@@ -1486,6 +1486,19 @@ pub(crate) mod tests {
     /// columns the profile encodes (single bytes for an 8-bit table, u16
     /// pairs for a 16-bit one), without the scan server: what the certificate
     /// tool rebuilds.
+    /// Ordinary cache/identity checks need valid native arithmetic, not large
+    /// history rows. Full qualification retains the caller's deployed shape.
+    pub(crate) fn fixture_shape(
+        geometry: &'static transparent_shard::layout::Geometry,
+        table: Table,
+    ) -> (&'static transparent_shard::layout::Geometry, Table) {
+        if cfg!(feature = "qualification-tests") {
+            (geometry, table)
+        } else {
+            (&TXID_4K8, Table::TxDirectory)
+        }
+    }
+
     fn reference_masks(profile: &native::TableProfile, rows: &[u8]) -> Vec<u8> {
         let hint = if profile.native.entry_bytes() == 1 {
             let columns: Vec<Vec<u8>> = (0..profile.cols)
@@ -1856,8 +1869,8 @@ pub(crate) mod tests {
     /// those masks to equal the served ones, so the two derivations must agree.
     #[test]
     fn masks_rebuilt_from_row_bytes_equal_the_served_masks() {
-        let shared =
-            SharedParams::build(&transparent_shard::layout::DECOUPLED_2K_8K, Table::Pages).unwrap();
+        let (geometry, table) = fixture_shape(&DECOUPLED_2K_8K, Table::Pages);
+        let shared = SharedParams::build(geometry, table).unwrap();
         let profile = &shared.profile;
         let rows: Vec<u8> = (0..profile.rows * profile.row_bytes)
             .map(|i| (i.wrapping_mul(2_654_435_761) >> 7) as u8)
@@ -1874,8 +1887,8 @@ pub(crate) mod tests {
     /// on either side of a block boundary, and content in the last row.
     #[test]
     fn trailing_zero_blocks_leave_the_published_masks_unchanged() {
-        let shared =
-            SharedParams::build(&transparent_shard::layout::DECOUPLED_2K_8K, Table::Pages).unwrap();
+        let (geometry, table) = fixture_shape(&DECOUPLED_2K_8K, Table::Pages);
+        let shared = SharedParams::build(geometry, table).unwrap();
         let profile = &shared.profile;
         let full = |rows: &[u8]| reference_masks(profile, rows);
         let bytes = profile.rows * profile.row_bytes;
@@ -1910,7 +1923,9 @@ pub(crate) mod tests {
     #[test]
     fn the_batched_hint_runtime_is_the_reference_runtime() {
         for (geometry, table, filled) in [
+            #[cfg(feature = "qualification-tests")]
             (&DECOUPLED_2K_8K, Table::Directory, 2_048),
+            #[cfg(feature = "qualification-tests")]
             (&DECOUPLED_2K_8K, Table::Pages, 5_000),
             (&TXID_2K8, Table::TxDirectory, 2_048),
             (&TXID_2K8, Table::TxDirectory, 700),

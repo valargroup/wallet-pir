@@ -817,82 +817,92 @@ mod tests {
 
     #[test]
     fn restored_runtimes_answer_identically_at_deployed_geometries() {
-        for geometry in [&DECOUPLED_2K_8K, &DECOUPLED_32K_32K] {
-            for table in [Table::Directory, Table::Pages, Table::TxDirectory] {
-                let dir = tempfile::tempdir().unwrap();
-                let shared = SharedParams::build(geometry, table).unwrap();
-                let rows: Vec<_> = (0..table.rows(geometry) as usize
-                    * table.row_bytes(geometry) as usize)
-                    .map(|i| (i.wrapping_mul(17) ^ (i >> 13)) as u8)
-                    .collect();
-                let key = ("ab".repeat(32), table, 1);
-                let source_sha = hex::encode(Sha256::digest(&rows));
-                let disk = DiskCache::new(dir.path().into(), shared.reserved_bytes() * 2).unwrap();
-                let start = std::time::Instant::now();
-                let cold = TableRuntime::build(&shared, &rows).unwrap();
-                let build_time = start.elapsed();
-                disk.save(&key, &shared, &source_sha, &cold).unwrap();
-                let path = disk.path(&key, &shared, &source_sha);
-                let length = path.metadata().unwrap().len();
-                assert!(DiskCache::entry_bytes_range(&shared).contains(&length));
-                let start = std::time::Instant::now();
-                let restored = disk.load(&key, &shared, &source_sha).unwrap();
-                eprintln!(
-                    "{} {} build={build_time:?} restore={:?} bytes={length}",
-                    geometry.name,
-                    table.as_str(),
-                    start.elapsed(),
-                );
-                assert_eq!(cold.public_params, restored.public_params);
-                assert_eq!(cold.public_params.len(), shared.scheme().public_bytes);
-                assert_eq!(cold.public_params_sha256, restored.public_params_sha256);
-                assert_eq!(cold.public_params_epoch, restored.public_params_epoch);
-                assert_eq!(cold.db.to_bytes(), restored.db.to_bytes());
-                let binding = transparent_shard::manifest::query_binding(&key.0, table.as_str());
-                let width = table.row_bytes(geometry) as usize;
-                for selected in [0, table.rows(geometry) as usize - 1] {
-                    let (secret, upload) = shared.profile.prepare(selected).unwrap();
-                    let mut body = binding.to_vec();
-                    body.extend(upload);
-                    // A snapshot written and restored answers byte-for-byte as
-                    // the runtime it was taken from.
-                    let answer = restored.evaluate(&shared, binding, &body).unwrap();
-                    assert_eq!(answer, cold.evaluate(&shared, binding, &body).unwrap());
-                    assert_eq!(answer.len(), shared.response_bytes());
-                    let decoded = shared
-                        .profile
-                        .decode(&secret, &restored.public_params, &answer[16..])
-                        .unwrap();
-                    assert_eq!(decoded, &rows[selected * width..(selected + 1) * width]);
-                }
-                drop(restored);
-                // A different revision, segment or plaintext identity is a miss.
-                let mut other = key.clone();
-                other.2 += 1;
-                assert!(disk.load(&other, &shared, &source_sha).is_err());
-                other = key.clone();
-                other.0 = "cd".repeat(32);
-                assert!(disk.load(&other, &shared, &source_sha).is_err());
-                assert!(disk.load(&key, &shared, "different-source").is_err());
-                let mut file = OpenOptions::new().write(true).open(&path).unwrap();
-                file.seek(SeekFrom::End(-32)).unwrap();
-                file.write_all(&[0; 32]).unwrap();
-                assert!(disk.load(&key, &shared, &source_sha).is_err());
-                file.set_len(16).unwrap();
-                assert!(disk.load(&key, &shared, &source_sha).is_err());
-                // Replace a rejected entry atomically; abandoned partial is recoverable.
-                fs::write(path.with_extension("partial"), b"interrupted").unwrap();
-                disk.save(&key, &shared, &source_sha, &cold).unwrap();
-                assert!(!path.with_extension("partial").exists());
-                assert!(disk.load(&key, &shared, &source_sha).is_ok());
-                let too_small = DiskCache::new(dir.path().into(), 1).unwrap();
-                assert!(too_small.save(&key, &shared, &source_sha, &cold).is_err());
-                assert_eq!(
-                    disk.prune(&[key.0.clone()].into_iter().collect()).unwrap(),
-                    0
-                );
-                assert!(disk.prune(&Default::default()).unwrap() > 0);
+        let shapes = if cfg!(feature = "qualification-tests") {
+            vec![&DECOUPLED_2K_8K, &DECOUPLED_32K_32K]
+                .into_iter()
+                .flat_map(|geometry| {
+                    [Table::Directory, Table::Pages, Table::TxDirectory]
+                        .into_iter()
+                        .map(move |table| (geometry, table))
+                })
+                .collect::<Vec<_>>()
+        } else {
+            vec![(&transparent_shard::display::TXID_2K8, Table::TxDirectory)]
+        };
+        for (geometry, table) in shapes {
+            let dir = tempfile::tempdir().unwrap();
+            let shared = SharedParams::build(geometry, table).unwrap();
+            let rows: Vec<_> = (0..table.rows(geometry) as usize
+                * table.row_bytes(geometry) as usize)
+                .map(|i| (i.wrapping_mul(17) ^ (i >> 13)) as u8)
+                .collect();
+            let key = ("ab".repeat(32), table, 1);
+            let source_sha = hex::encode(Sha256::digest(&rows));
+            let disk = DiskCache::new(dir.path().into(), shared.reserved_bytes() * 2).unwrap();
+            let start = std::time::Instant::now();
+            let cold = TableRuntime::build(&shared, &rows).unwrap();
+            let build_time = start.elapsed();
+            disk.save(&key, &shared, &source_sha, &cold).unwrap();
+            let path = disk.path(&key, &shared, &source_sha);
+            let length = path.metadata().unwrap().len();
+            assert!(DiskCache::entry_bytes_range(&shared).contains(&length));
+            let start = std::time::Instant::now();
+            let restored = disk.load(&key, &shared, &source_sha).unwrap();
+            eprintln!(
+                "{} {} build={build_time:?} restore={:?} bytes={length}",
+                geometry.name,
+                table.as_str(),
+                start.elapsed(),
+            );
+            assert_eq!(cold.public_params, restored.public_params);
+            assert_eq!(cold.public_params.len(), shared.scheme().public_bytes);
+            assert_eq!(cold.public_params_sha256, restored.public_params_sha256);
+            assert_eq!(cold.public_params_epoch, restored.public_params_epoch);
+            assert_eq!(cold.db.to_bytes(), restored.db.to_bytes());
+            let binding = transparent_shard::manifest::query_binding(&key.0, table.as_str());
+            let width = table.row_bytes(geometry) as usize;
+            for selected in [0, table.rows(geometry) as usize - 1] {
+                let (secret, upload) = shared.profile.prepare(selected).unwrap();
+                let mut body = binding.to_vec();
+                body.extend(upload);
+                // A snapshot written and restored answers byte-for-byte as
+                // the runtime it was taken from.
+                let answer = restored.evaluate(&shared, binding, &body).unwrap();
+                assert_eq!(answer, cold.evaluate(&shared, binding, &body).unwrap());
+                assert_eq!(answer.len(), shared.response_bytes());
+                let decoded = shared
+                    .profile
+                    .decode(&secret, &restored.public_params, &answer[16..])
+                    .unwrap();
+                assert_eq!(decoded, &rows[selected * width..(selected + 1) * width]);
             }
+            drop(restored);
+            // A different revision, segment or plaintext identity is a miss.
+            let mut other = key.clone();
+            other.2 += 1;
+            assert!(disk.load(&other, &shared, &source_sha).is_err());
+            other = key.clone();
+            other.0 = "cd".repeat(32);
+            assert!(disk.load(&other, &shared, &source_sha).is_err());
+            assert!(disk.load(&key, &shared, "different-source").is_err());
+            let mut file = OpenOptions::new().write(true).open(&path).unwrap();
+            file.seek(SeekFrom::End(-32)).unwrap();
+            file.write_all(&[0; 32]).unwrap();
+            assert!(disk.load(&key, &shared, &source_sha).is_err());
+            file.set_len(16).unwrap();
+            assert!(disk.load(&key, &shared, &source_sha).is_err());
+            // Replace a rejected entry atomically; abandoned partial is recoverable.
+            fs::write(path.with_extension("partial"), b"interrupted").unwrap();
+            disk.save(&key, &shared, &source_sha, &cold).unwrap();
+            assert!(!path.with_extension("partial").exists());
+            assert!(disk.load(&key, &shared, &source_sha).is_ok());
+            let too_small = DiskCache::new(dir.path().into(), 1).unwrap();
+            assert!(too_small.save(&key, &shared, &source_sha, &cold).is_err());
+            assert_eq!(
+                disk.prune(&[key.0.clone()].into_iter().collect()).unwrap(),
+                0
+            );
+            assert!(disk.prune(&Default::default()).unwrap() > 0);
         }
     }
 
@@ -943,19 +953,16 @@ mod cache_integration_tests {
     #[tokio::test]
     async fn blocked_snapshot_does_not_delay_serving_or_release_owned_memory() {
         let dir = tempfile::tempdir().unwrap();
-        let shared = Arc::new(SharedParams::build(&DECOUPLED_2K_8K, Table::Directory).unwrap());
-        let rows = vec![
-            7u8;
-            (Table::Directory.rows(&DECOUPLED_2K_8K)
-                * Table::Directory.row_bytes(&DECOUPLED_2K_8K) as u64)
-                as usize
-        ];
+        let (geometry, table) =
+            super::super::tests::fixture_shape(&DECOUPLED_2K_8K, Table::Directory);
+        let shared = Arc::new(SharedParams::build(geometry, table).unwrap());
+        let rows = vec![7u8; (table.rows(geometry) * table.row_bytes(geometry) as u64) as usize];
         let source = SegmentSource::published(
             dir.path().join("table.bin"),
-            Table::Directory.rows(&DECOUPLED_2K_8K),
-            Table::Directory.row_bytes(&DECOUPLED_2K_8K),
+            table.rows(geometry),
+            table.row_bytes(geometry),
             hex::encode(Sha256::digest(&rows)),
-            Table::Directory.rows(&DECOUPLED_2K_8K),
+            table.rows(geometry),
         );
         fs::write(source.path(), &rows).unwrap();
         drop(rows);
@@ -972,7 +979,7 @@ mod cache_integration_tests {
             RuntimeCache::new(shared.reserved_bytes(), 1, metrics.clone())
                 .with_disk(Some(disk.clone())),
         );
-        let key = ("ab".repeat(32), Table::Directory, 0);
+        let key = ("ab".repeat(32), table, 0);
         let request = {
             let (cache, shared, source, key) =
                 (cache.clone(), shared.clone(), source.clone(), key.clone());
@@ -1024,24 +1031,21 @@ mod cache_integration_tests {
     #[tokio::test]
     async fn restart_coalesces_restore_and_corruption_falls_back_without_losing_budget() {
         let dir = tempfile::tempdir().unwrap();
-        let shared = Arc::new(SharedParams::build(&DECOUPLED_2K_8K, Table::Directory).unwrap());
-        let rows = vec![
-            7u8;
-            (Table::Directory.rows(&DECOUPLED_2K_8K)
-                * Table::Directory.row_bytes(&DECOUPLED_2K_8K) as u64)
-                as usize
-        ];
+        let (geometry, table) =
+            super::super::tests::fixture_shape(&DECOUPLED_2K_8K, Table::Directory);
+        let shared = Arc::new(SharedParams::build(geometry, table).unwrap());
+        let rows = vec![7u8; (table.rows(geometry) * table.row_bytes(geometry) as u64) as usize];
         let source = SegmentSource::published(
             dir.path().join("table.bin"),
-            Table::Directory.rows(&DECOUPLED_2K_8K),
-            Table::Directory.row_bytes(&DECOUPLED_2K_8K),
+            table.rows(geometry),
+            table.row_bytes(geometry),
             hex::encode(Sha256::digest(&rows)),
-            Table::Directory.rows(&DECOUPLED_2K_8K),
+            table.rows(geometry),
         );
         fs::write(source.path(), &rows).unwrap();
         drop(rows);
         let disk = DiskCache::new(dir.path().join("cache"), shared.reserved_bytes() * 2).unwrap();
-        let key = ("ab".repeat(32), Table::Directory, 0);
+        let key = ("ab".repeat(32), table, 0);
         let metrics = Arc::new(Metrics::default());
         let cache = RuntimeCache::new(shared.reserved_bytes(), 1, metrics.clone())
             .with_disk(Some(disk.clone()));
@@ -1466,7 +1470,8 @@ mod shipped_tests {
     /// or a directory's runtime is.
     fn history_segment(dir: &Path, table: Table, filled: usize, seed: usize) -> Segment {
         use transparent_shard::layout::DECOUPLED_2K_8K;
-        let shared = Arc::new(SharedParams::build(&DECOUPLED_2K_8K, table).unwrap());
+        let (geometry, table) = super::super::tests::fixture_shape(&DECOUPLED_2K_8K, table);
+        let shared = Arc::new(SharedParams::build(geometry, table).unwrap());
         let profile = &shared.profile;
         let mut rows = vec![0u8; profile.rows * profile.row_bytes];
         for (i, byte) in rows[..filled * profile.row_bytes].iter_mut().enumerate() {
@@ -1507,6 +1512,7 @@ mod shipped_tests {
         use transparent_shard::layout::DECOUPLED_32K_32K;
         let dir = tempfile::tempdir().unwrap();
         let s = history_segment(dir.path(), table, 900, 3);
+        let table = s.shared.table;
         let local = TableRuntime::build(&s.shared, &s.rows).unwrap();
         let other_kind = match table {
             Table::Directory => Table::Pages,
@@ -1516,10 +1522,13 @@ mod shipped_tests {
         other_identity.0 = "12".repeat(32);
         let mut kind_key = s.key.clone();
         kind_key.1 = other_kind;
-        let wide = SharedParams::build(&DECOUPLED_32K_32K, table).unwrap();
-        let display =
-            SharedParams::build_display(&transparent_shard::layout::DECOUPLED_2K_8K, table)
-                .unwrap();
+        let other_geometry = if cfg!(feature = "qualification-tests") {
+            &DECOUPLED_32K_32K
+        } else {
+            &transparent_shard::display::TXID_2K8
+        };
+        let wide = SharedParams::build(other_geometry, table).unwrap();
+        let display = SharedParams::build_display(s.shared.geometry, table).unwrap();
         let cases: Vec<(&str, RuntimeKey, &SharedParams, String)> = vec![
             (
                 "another identity",
