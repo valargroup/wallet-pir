@@ -1,5 +1,6 @@
 {
   "transparent-filter-server": {
+    "controller::tests::shipped_runtimes_are_prepared_linked_and_offered_with_the_candidate": "Exceeded the 30-second case deadline in hosted PR preparation: cold-builds deployed archive runtimes and hands them over. Full CI retains every mixed-geometry assertion; fast controller refusals and encrypted HTTP checks retain source verification, runtime write failure, cold preparation and cache recovery.",
     "controller::tests::rpc_follow_publishes_empty_blocks_and_recovers_a_sealed_reorg": "Runs RPC follow, real publication/fleet subprocesses and reorg cancellation end to end.",
     "txid_display::controller::tests::incremental_stepping_reproduces_bootstrap": "Measured 7.7s locally: about 40 full 2,048-row display shard builds (16 MiB each) across three bootstraps and two stepped runs; full CI retains the equivalence check.",
     "txid_display::controller::tests::verify_reproduces_a_running_root": "Measured 10.5s locally: five complete re-bootstraps of a display root (queued, running, after a reorg, and two tampered records); full CI retains the comparison.",
