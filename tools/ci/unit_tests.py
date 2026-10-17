@@ -25,6 +25,13 @@ def execute(programs, jobs, *, budget=False):
         env = dict(os.environ, RUST_TEST_THREADS='1', CARGO_MANIFEST_DIR=directory,
                    CARGO_MANIFEST_PATH=str(Path(directory) / 'Cargo.toml'),
                    CARGO_PKG_NAME=program['package'], CARGO_PKG_VERSION=program['version'])
+        if program['package'] == 'transparent-filter-server' and not program.get('integration'):
+            # Publisher correctness builds full archive runtimes. Serving keeps
+            # half the CPUs for queries; serial unit cases have no query load.
+            # Bound this process's build pool without changing serving defaults
+            # or an explicitly selected qualification environment.
+            cpus = len(os.sched_getaffinity(0)) if hasattr(os, 'sched_getaffinity') else (os.cpu_count() or 1)
+            env.setdefault('TRANSPARENT_BUILD_THREADS', str(min(cpus, 4)))
         key = 'DYLD_FALLBACK_LIBRARY_PATH' if sys.platform == 'darwin' else 'LD_LIBRARY_PATH'
         env[key] = os.pathsep.join([str(Path(binary).parent), library_directory, env.get(key, '')])
         if budget:
