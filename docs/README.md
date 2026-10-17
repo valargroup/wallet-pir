@@ -12,6 +12,7 @@
 - [Serving contract](serving-contract.md): process identity, serving authority and refusal codes across Enhance, Status and Transparent.
 - [Decentralized query serving](decentralized-query-serving.md): phased plan for independent providers, prepared publications, embedded router/worker deployments and service discovery.
 - [Shard promotion specification](spec/spec-shard-promotion.md): normative hierarchy generation advancement and continuous query-server handover rules.
+- [Multi-server wallet specification](spec/spec-multi-server-wallet.md): tier-unaware wallet endpoints, provider routing and the initial fixed Valargroup archive upstream.
 - [Control sessions](control-sessions.md): the shared supervised SSH control transport and the restricted forwarding account (Status observed on the shared supervisor in dated captures; the restricted account and other products not adopted).
 
 `roman_notes.md` is preserved personal working material, including local edits.

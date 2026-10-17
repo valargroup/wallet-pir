@@ -24,6 +24,12 @@ Publication authority and distribution remain separate dependencies: distributin
 query endpoints does not itself remove trust in indexers or guarantee publisher
 availability.
 
+The [multi-server wallet specification](spec/spec-multi-server-wallet.md) defines
+the wallet-facing contract: configured provider endpoints offer complete required
+coverage without the wallet classifying their local storage as recent or archive.
+Initially, each recent provider uses a fixed Valargroup archive upstream. Provider
+lists do not imply automatic wallet discovery or failover.
+
 ## Responsibilities and boundaries
 
 | Responsibility | Owns |
@@ -254,6 +260,12 @@ Use the embedded worker when it holds the exact requested publication and
 qualifies to serve it. Route other coverage to explicitly configured providers
 that support that publication and profile. Registration alone does not establish
 loaded coverage, readiness, authority or encrypted-answer correctness.
+
+For the initial scope, supply one fixed Valargroup archive upstream in provider
+configuration. Archive discovery, choosing among archive providers and automatic
+archive failover are later work. If that upstream is unavailable, independent
+valid recent queries remain local and serviceable; archive-dependent requests
+fail explicitly under the existing product rules.
 
 Preserve encrypted framing, session binding, response validation and existing
 retry restrictions, including uncertain evaluation acceptance. Bound forwarding
