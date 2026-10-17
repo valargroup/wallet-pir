@@ -28,6 +28,12 @@ success establishes correctness, not compliance with the timing budget. Cold
 dependency preparation and CI queue/setup time must be reported separately;
 local timings do not establish CI-runner performance.
 
+Use `--case-seconds 5` to measure or enforce the tighter local per-test target.
+The same limit applies to Rust and Python, including each case's setup and
+cleanup. `--record-only --case-seconds 5` retains every case and lists all
+five-second overruns in its receipt. Diagnostic success establishes correctness;
+only an enforced passing run establishes compliance with the selected budget.
+
 Native tests compile once with a consistent feature set, then run Cargo-reported
 executables with at most two programs active and one case per program. Mutable
 service state is fresh; only immutable public runtime material is shared within

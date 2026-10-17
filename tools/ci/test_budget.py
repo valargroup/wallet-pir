@@ -5,6 +5,7 @@ stalled case has a deadline, rather than waiting for its final newline. Test
 output remains captured by libtest; no nightly flags or compiler overrides.
 """
 import json
+import math
 import os
 import re
 import selectors
@@ -48,8 +49,16 @@ def record(path, entry):
             os.close(descriptor)
 
 
-def execute(command, *, cwd, env, seconds=30, report=None, enforce=True):
+def case_seconds(value):
+    seconds = float(value)
+    if not math.isfinite(seconds) or seconds <= 0:
+        raise ValueError('case budget must be a finite positive number of seconds')
+    return seconds
+
+
+def execute(command, *, cwd, env, seconds=None, report=None, enforce=True):
     """Run one serial test executable and refuse missing or unfinished cases."""
+    seconds = case_seconds(env.get("WALLET_PIR_CASE_SECONDS", 30) if seconds is None else seconds)
     options = [*command, '--test-threads=1', '--color=never', '--format=pretty']
     listed = subprocess.check_output([*options, '--list'], cwd=cwd, env=env, text=True)
     expected = {line[:-6] for line in listed.splitlines() if line.endswith(': test')}

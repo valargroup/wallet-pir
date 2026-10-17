@@ -282,7 +282,7 @@ impl World {
             } else {
                 assert!(std::time::Instant::now() < deadline, "{what}: no health");
             }
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            tokio::time::sleep(Duration::from_millis(10)).await;
         }
     }
 
@@ -368,8 +368,77 @@ async fn replacing_the_record_during_the_canonical_rpc_prevents_activation() {
     );
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum StagedCase {
+    Payments,
+    WrongRevision,
+    Partial,
+    Network,
+    Noncanonical,
+    Witness,
+    Rows,
+    Relative,
+    Rotation,
+    LatestRecord,
+    Restart,
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn staged_publications_verify_rotate_survive_restart_and_follow_reorgs() {
+async fn a_staged_publication_serves_exact_encrypted_payments() {
+    check_staged_publication(StagedCase::Payments).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_wrong_revision_keeps_the_valid_publication_serving() {
+    check_staged_publication(StagedCase::WrongRevision).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn partial_staging_keeps_the_valid_publication_serving() {
+    check_staged_publication(StagedCase::Partial).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn another_network_keeps_the_valid_publication_serving() {
+    check_staged_publication(StagedCase::Network).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_noncanonical_candidate_keeps_the_valid_publication_serving() {
+    check_staged_publication(StagedCase::Noncanonical).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_corrupt_witness_keeps_the_valid_publication_serving() {
+    check_staged_publication(StagedCase::Witness).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn corrupt_rows_keep_the_valid_publication_serving() {
+    check_staged_publication(StagedCase::Rows).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_relative_record_keeps_the_valid_publication_serving() {
+    check_staged_publication(StagedCase::Relative).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_valid_rotation_keeps_its_predecessors_grace() {
+    check_staged_publication(StagedCase::Rotation).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_latest_record_activates_after_a_reorg_during_grace() {
+    check_staged_publication(StagedCase::LatestRecord).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn restart_rechecks_the_record_and_reorgs_revoke_serving() {
+    check_staged_publication(StagedCase::Restart).await;
+}
+
+async fn check_staged_publication(case: StagedCase) {
     let world = World::new().await;
     let root = world.root.path().join("publications");
     let mut served = Vec::new();
@@ -387,19 +456,54 @@ async fn staged_publications_verify_rotate_survive_restart_and_follow_reorgs() {
         .await;
     assert_eq!(health["publication"]["loaded"]["revision"], a_rev);
     assert_eq!(health["indexer"]["mode"], "serve-publication");
-    let mut found = world.lookup(activation() + 1, [0xa1; 32]).await;
-    found.sort_by_key(|payment| payment.position);
-    let expected: Vec<_> = (0..2)
-        .map(|page| {
-            let mut payment = common::record(page, 2).payment;
-            payment.height = activation() + 1;
-            payment.block_hash = [0xa1; 32];
-            payment.position = [0u64, 5][page as usize];
-            payment.cmx = [[1u8; 32], [6u8; 32]][page as usize];
-            payment
-        })
-        .collect();
-    assert_eq!(found, expected, "the exact payments over encrypted PIR");
+    if case == StagedCase::Payments {
+        let mut found = world.lookup(activation() + 1, [0xa1; 32]).await;
+        found.sort_by_key(|payment| payment.position);
+        let expected: Vec<_> = (0..2)
+            .map(|page| {
+                let mut payment = common::record(page, 2).payment;
+                payment.height = activation() + 1;
+                payment.block_hash = [0xa1; 32];
+                payment.position = [0u64, 5][page as usize];
+                payment.cmx = [[1u8; 32], [6u8; 32]][page as usize];
+                payment
+            })
+            .collect();
+        assert_eq!(found, expected, "the exact payments over encrypted PIR");
+
+        return;
+    }
+
+    if case == StagedCase::Restart {
+        drop(worker);
+        std::fs::write(
+            world.root.path().join("state/serve-publication.json"),
+            json!({"loaded": {"directory": root.join("stale"), "revision": "00".repeat(32)}})
+                .to_string(),
+        )
+        .unwrap();
+        let _worker = world.start();
+        world
+            .until("restart", &mut served, |h| {
+                h["serving"] == a_id && h["publication"]["loaded"]["revision"] == a_rev.as_str()
+            })
+            .await;
+        world.node.set(activation() + 1, [0x0a; 32]);
+        let health = world
+            .until("reorg after restart", &mut served, |h| {
+                h["serving"].is_null() && refusal(h).0 == "noncanonical"
+            })
+            .await;
+        assert!(health["epoch"].as_u64().unwrap() >= 1);
+        let init = world
+            .client
+            .get(format!("{}/v1/receiver/init", world.origin))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(init.status(), reqwest::StatusCode::SERVICE_UNAVAILABLE);
+        return;
+    }
 
     // Every bad record is refused while the valid publication keeps serving.
     let refuse =
@@ -407,95 +511,113 @@ async fn staged_publications_verify_rotate_survive_restart_and_follow_reorgs() {
     let (b, b_witness) = publication(2, [0xb2; 32]);
     world.node.set(activation() + 2, [0xb2; 32]);
     let (b_dir, b_rev) = stage(&root, "b", &b, Some(&b_witness));
-    // The wrong revision: B's files staged under a name the record expects.
-    let wrong = root.join("wrong-revision");
-    std::fs::create_dir_all(&wrong).unwrap();
-    let other_rev = "cd".repeat(32);
-    for ext in ["json", "rows", "filters", "witness"] {
+    if !matches!(case, StagedCase::Rotation | StagedCase::LatestRecord) {
+        // The wrong revision: B's files staged under a name the record expects.
+        let wrong = root.join("wrong-revision");
+        std::fs::create_dir_all(&wrong).unwrap();
+        let other_rev = "cd".repeat(32);
+        for ext in ["json", "rows", "filters", "witness"] {
+            std::fs::copy(
+                b_dir.join(format!("{b_rev}.{ext}")),
+                wrong.join(format!("{other_rev}.{ext}")),
+            )
+            .unwrap();
+        }
+        // Partial staging: the manifest without its rows.
+        let partial = root.join("partial");
+        std::fs::create_dir_all(&partial).unwrap();
         std::fs::copy(
-            b_dir.join(format!("{b_rev}.{ext}")),
-            wrong.join(format!("{other_rev}.{ext}")),
+            b_dir.join(format!("{b_rev}.json")),
+            partial.join(format!("{b_rev}.json")),
         )
         .unwrap();
+        // Another network.
+        let (mut other_net, _) = publication(2, [0xb2; 32]);
+        other_net.manifest.genesis = [1; 32];
+        let other_net = Snapshot::build(other_net.manifest, &[], &[]).unwrap();
+        let (net_dir, net_rev) = stage(&root, "network", &other_net, None);
+        // An anchor the node does not have.
+        let (fork, fork_witness) = publication(3, [0xf0; 32]);
+        world.node.set(activation() + 3, [0xc3; 32]);
+        let (fork_dir, fork_rev) = stage(&root, "fork", &fork, Some(&fork_witness));
+        // A corrupt witness.
+        let mut bad_witness = b_witness.clone();
+        let last = bad_witness.len() - 1;
+        bad_witness[last] ^= 1;
+        let (witness_dir, witness_rev) = stage(&root, "witness", &b, Some(&bad_witness));
+        // A same-length corrupt rows file.
+        let (rows_dir, rows_rev) = stage(&root, "rows", &b, Some(&b_witness));
+        let rows_path = rows_dir.join(format!("{rows_rev}.rows"));
+        let mut rows = std::fs::read(&rows_path).unwrap();
+        rows[0] ^= 1;
+        std::fs::write(&rows_path, rows).unwrap();
+        let mut checked = false;
+        for (variant, (dir, rev), (name, kind, contains)) in [
+            (
+                StagedCase::WrongRevision,
+                (wrong.clone(), other_rev.clone()),
+                refuse("wrong revision", "invalid_source", "record expects"),
+            ),
+            (
+                StagedCase::Partial,
+                (partial.clone(), b_rev.clone()),
+                refuse("partial staging", "invalid_source", "rows"),
+            ),
+            (
+                StagedCase::Network,
+                (net_dir, net_rev),
+                refuse("wrong network", "invalid_source", "not for mainnet"),
+            ),
+            (
+                StagedCase::Noncanonical,
+                (fork_dir, fork_rev),
+                refuse("noncanonical anchor", "noncanonical", "canonical chain"),
+            ),
+            (
+                StagedCase::Witness,
+                (witness_dir, witness_rev),
+                refuse("corrupt witness", "invalid_source", "witness"),
+            ),
+            (
+                StagedCase::Rows,
+                (rows_dir, rows_rev),
+                refuse("corrupt rows", "invalid_source", "publication"),
+            ),
+        ] {
+            if case != variant {
+                continue;
+            }
+            checked = true;
+            world.assign(&dir, &rev);
+            let health = world
+                .until(name, &mut served, |h| {
+                    h["publication"]["assigned"]["revision"] == rev.as_str()
+                        && h["publication"]["assigned"]["directory"] == dir.to_str().unwrap()
+                        && !refusal(h).0.is_empty()
+                })
+                .await;
+            assert_eq!(refusal(&health).0, kind, "{name}: {health:#}");
+            assert!(refusal(&health).1.contains(contains), "{name}: {health:#}");
+            assert_eq!(
+                health["serving"], a_id,
+                "{name} left the valid publication serving"
+            );
+        }
+        if case == StagedCase::Relative {
+            checked = true;
+            point(
+                &world.record,
+                json!({"directory": "relative", "revision": a_rev}),
+            );
+            world
+                .until("malformed record", &mut served, |h| {
+                    refusal(h).1.contains("absolute") && h["serving"] == a_id
+                })
+                .await;
+        }
+        assert!(checked, "a refusal scenario must exercise its bad record");
+        return;
     }
-    // Partial staging: the manifest without its rows.
-    let partial = root.join("partial");
-    std::fs::create_dir_all(&partial).unwrap();
-    std::fs::copy(
-        b_dir.join(format!("{b_rev}.json")),
-        partial.join(format!("{b_rev}.json")),
-    )
-    .unwrap();
-    // Another network.
-    let (mut other_net, _) = publication(2, [0xb2; 32]);
-    other_net.manifest.genesis = [1; 32];
-    let other_net = Snapshot::build(other_net.manifest, &[], &[]).unwrap();
-    let (net_dir, net_rev) = stage(&root, "network", &other_net, None);
-    // An anchor the node does not have.
-    let (fork, fork_witness) = publication(3, [0xf0; 32]);
-    world.node.set(activation() + 3, [0xc3; 32]);
-    let (fork_dir, fork_rev) = stage(&root, "fork", &fork, Some(&fork_witness));
-    // A corrupt witness.
-    let mut bad_witness = b_witness.clone();
-    let last = bad_witness.len() - 1;
-    bad_witness[last] ^= 1;
-    let (witness_dir, witness_rev) = stage(&root, "witness", &b, Some(&bad_witness));
-    // A same-length corrupt rows file.
-    let (rows_dir, rows_rev) = stage(&root, "rows", &b, Some(&b_witness));
-    let rows_path = rows_dir.join(format!("{rows_rev}.rows"));
-    let mut rows = std::fs::read(&rows_path).unwrap();
-    rows[0] ^= 1;
-    std::fs::write(&rows_path, rows).unwrap();
-    for ((dir, rev), (name, kind, contains)) in [
-        (
-            (wrong.clone(), other_rev.clone()),
-            refuse("wrong revision", "invalid_source", "record expects"),
-        ),
-        (
-            (partial.clone(), b_rev.clone()),
-            refuse("partial staging", "invalid_source", "rows"),
-        ),
-        (
-            (net_dir, net_rev),
-            refuse("wrong network", "invalid_source", "not for mainnet"),
-        ),
-        (
-            (fork_dir, fork_rev),
-            refuse("noncanonical anchor", "noncanonical", "canonical chain"),
-        ),
-        (
-            (witness_dir, witness_rev),
-            refuse("corrupt witness", "invalid_source", "witness"),
-        ),
-        (
-            (rows_dir, rows_rev),
-            refuse("corrupt rows", "invalid_source", "publication"),
-        ),
-    ] {
-        world.assign(&dir, &rev);
-        let health = world
-            .until(name, &mut served, |h| {
-                h["publication"]["assigned"]["revision"] == rev.as_str()
-                    && h["publication"]["assigned"]["directory"] == dir.to_str().unwrap()
-                    && !refusal(h).0.is_empty()
-            })
-            .await;
-        assert_eq!(refusal(&health).0, kind, "{name}: {health:#}");
-        assert!(refusal(&health).1.contains(contains), "{name}: {health:#}");
-        assert_eq!(
-            health["serving"], a_id,
-            "{name} left the valid publication serving"
-        );
-    }
-    point(
-        &world.record,
-        json!({"directory": "relative", "revision": a_rev}),
-    );
-    world
-        .until("malformed record", &mut served, |h| {
-            refusal(h).1.contains("absolute") && h["serving"] == a_id
-        })
-        .await;
 
     // A valid update activates; the displaced revision keeps its grace.
     world.assign(&b_dir, &b_rev);
@@ -513,12 +635,16 @@ async fn staged_publications_verify_rotate_survive_restart_and_follow_reorgs() {
         old.status().is_success(),
         "the predecessor serves its grace"
     );
-    assert_eq!(world.lookup(activation() + 2, [0xb2; 32]).await.len(), 2);
+    if case == StagedCase::Rotation {
+        assert_eq!(world.lookup(activation() + 2, [0xb2; 32]).await.len(), 2);
+        return;
+    }
 
     // Rapid replacement while B's predecessor is in its grace: C is superseded by D
     // before it can activate. A confirmed reorg of B, found by the independent guard
     // while D waits, revokes everything; D, still canonical, then activates.
     let (c, c_witness) = publication(3, [0xc3; 32]);
+    world.node.set(activation() + 3, [0xc3; 32]);
     let (c_dir, c_rev) = stage(&root, "c", &c, Some(&c_witness));
     let (d, d_witness) = publication(4, [0xd4; 32]);
     world.node.set(activation() + 4, [0xd4; 32]);
@@ -553,37 +679,7 @@ async fn staged_publications_verify_rotate_survive_restart_and_follow_reorgs() {
         "the reorged revision is revoked"
     );
 
-    // Restart: the status report is never authority; the record is verified again.
     drop(worker);
-    std::fs::write(
-        world.root.path().join("state/serve-publication.json"),
-        json!({"loaded": {"directory": a_dir, "revision": a_rev}}).to_string(),
-    )
-    .unwrap();
-    let worker = world.start();
-    world
-        .until("restart", &mut served, |h| {
-            h["serving"] == d_id && h["publication"]["loaded"]["revision"] == d_rev.as_str()
-        })
-        .await;
-
-    // A confirmed reorg of the only served anchor: revoked, re-checked, refused.
-    world.node.set(activation() + 4, [0x0d; 32]);
-    let health = world
-        .until("reorg of D", &mut served, |h| {
-            h["serving"].is_null() && refusal(h).0 == "noncanonical"
-        })
-        .await;
-    assert!(health["epoch"].as_u64().unwrap() >= 1);
-    let init = world
-        .client
-        .get(format!("{}/v1/receiver/init", world.origin))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(init.status(), reqwest::StatusCode::SERVICE_UNAVAILABLE);
-    drop(worker);
-    let _ = &world.rpc;
 }
 
 #[tokio::test]

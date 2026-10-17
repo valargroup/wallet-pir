@@ -1272,8 +1272,28 @@ mod tests {
     /// A reorg at a page-shard boundary, at a directory-shard boundary and
     /// inside a page shard republishes from the open directory shard, and
     /// every directory shard sealed below the fork is the same revision.
+    enum ForkBoundary {
+        Directory,
+        Page,
+        InsidePage,
+    }
+
     #[test]
-    fn a_reorg_republishes_only_what_holds_a_changed_block() {
+    fn a_directory_boundary_reorg_republishes_only_changed_blocks() {
+        check_reorg(ForkBoundary::Directory);
+    }
+
+    #[test]
+    fn a_page_boundary_reorg_republishes_only_changed_blocks() {
+        check_reorg(ForkBoundary::Page);
+    }
+
+    #[test]
+    fn a_reorg_inside_a_page_republishes_only_changed_blocks() {
+        check_reorg(ForkBoundary::InsidePage);
+    }
+
+    fn check_reorg(boundary: ForkBoundary) {
         let root = tempfile::tempdir().unwrap();
         let zero = BlockHash::from_internal_bytes([0; 32]);
         let build = |name: &str, fork_at: Option<u64>| {
@@ -1291,39 +1311,35 @@ mod tests {
         let sealed: Vec<_> = before.shards.iter().filter(|s| s.sealed).collect();
         assert!(sealed.len() >= 2);
         let first = read_manifest(&base, sealed[0]);
-        let mut forks = vec![
-            sealed[0].end_height + 1,
-            first.page_children[0].end_height + 1,
-            first.page_children[0].start_height + 1,
-        ];
-        forks.sort();
-        forks.dedup();
-        for fork in forks {
-            let journal = build(&format!("fork{fork}"), Some(fork));
-            let output = root.path().join(format!("out{fork}"));
-            let after = publish_with(
-                &single_tier(&output, Some(&base), 59),
-                &journal,
-                zero,
-                &small,
-            )
-            .unwrap();
-            transparent_server_backend::shardset::ShardSet::open(&output, 3).unwrap();
-            for entry in before
+        let fork = match boundary {
+            ForkBoundary::Directory => sealed[0].end_height + 1,
+            ForkBoundary::Page => first.page_children[0].end_height + 1,
+            ForkBoundary::InsidePage => first.page_children[0].start_height + 1,
+        };
+        let journal = build(&format!("fork{fork}"), Some(fork));
+        let output = root.path().join(format!("out{fork}"));
+        let after = publish_with(
+            &single_tier(&output, Some(&base), 59),
+            &journal,
+            zero,
+            &small,
+        )
+        .unwrap();
+        transparent_server_backend::shardset::ShardSet::open(&output, 3).unwrap();
+        for entry in before
+            .shards
+            .iter()
+            .filter(|e| e.sealed && e.end_height < fork)
+        {
+            assert_eq!(&after.shards[entry.shard_id as usize], entry, "fork {fork}");
+        }
+        assert!(
+            after
                 .shards
                 .iter()
-                .filter(|e| e.sealed && e.end_height < fork)
-            {
-                assert_eq!(&after.shards[entry.shard_id as usize], entry, "fork {fork}");
-            }
-            assert!(
-                after
-                    .shards
-                    .iter()
-                    .any(|e| e.end_height >= fork && !before.shards.contains(e)),
-                "fork {fork} changed something"
-            );
-        }
+                .any(|e| e.end_height >= fork && !before.shards.contains(e)),
+            "fork {fork} changed something"
+        );
     }
 
     /// The choice option never changes an existing digest: a republication
