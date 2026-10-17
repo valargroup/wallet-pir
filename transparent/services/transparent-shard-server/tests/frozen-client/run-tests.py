@@ -16,6 +16,7 @@ import time
 HARNESS = Path(__file__).resolve().parent
 REPO = next(p for p in HARNESS.parents if (p / "tools/ci/test_budget.py").is_file())
 sys.path.insert(0, str(REPO / "tools/ci"))
+sys.path.insert(0, str(REPO / "shared/dev"))
 import test_budget  # noqa: E402
 from target_lease import local_target  # noqa: E402
 from target_lease import inherited_fds  # noqa: E402
