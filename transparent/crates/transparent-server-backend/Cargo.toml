@@ -23,11 +23,11 @@ sysinfo = "0.36"
 thiserror = "2"
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
-zakura-transparent-private-shared = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "854391d9e5355c1b5087cb383e855c442b378658" }
-zakura-transparent-private-server = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "854391d9e5355c1b5087cb383e855c442b378658" }
+zakura-transparent-private-shared = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "e5195d59c2d5dc9fdca2b2486d4949f19eba5529" }
+zakura-transparent-private-server = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "e5195d59c2d5dc9fdca2b2486d4949f19eba5529" }
 # The native profile's operations; `client` too, for the runtime self-check,
 # which prepares and decodes one query against every table it loads.
-zakura-pir-native = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "854391d9e5355c1b5087cb383e855c442b378658", features = ["client", "server"] }
+zakura-pir-native = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "e5195d59c2d5dc9fdca2b2486d4949f19eba5529", features = ["client", "server"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 rustix = { version = "1.1", features = ["fs", "process", "thread"] }

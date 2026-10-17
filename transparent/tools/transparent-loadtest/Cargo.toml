@@ -19,9 +19,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time", "signal"] }
-zakura-transparent-private-shared = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "854391d9e5355c1b5087cb383e855c442b378658" }
-zakura-transparent-private-server = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "854391d9e5355c1b5087cb383e855c442b378658" }
-zakura-transparent-private-wallet = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "854391d9e5355c1b5087cb383e855c442b378658", default-features = false, features = ["engine-store", "reqwest"] }
+zakura-transparent-private-shared = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "e5195d59c2d5dc9fdca2b2486d4949f19eba5529" }
+zakura-transparent-private-server = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "e5195d59c2d5dc9fdca2b2486d4949f19eba5529" }
+zakura-transparent-private-wallet = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "e5195d59c2d5dc9fdca2b2486d4949f19eba5529", default-features = false, features = ["engine-store", "reqwest"] }
 
 sysinfo = "0.36"
 
