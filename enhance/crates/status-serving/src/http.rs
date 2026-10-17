@@ -45,7 +45,7 @@ impl HttpState {
 pub async fn init(State(s): State<HttpState>) -> Result<Json<Manifest>, StatusCode> {
     let g = s.controller.current();
     s.controller.check(&g)?;
-    Ok(Json(g.manifest.clone()))
+    Ok(Json(g.manifest().clone()))
 }
 /// Response body over shared immutable material, without copying it.
 struct SharedBytes(Arc<Vec<u8>>);
@@ -67,7 +67,7 @@ pub async fn session(
         .map_err(|_| StatusCode::BAD_REQUEST)?;
     let g = s.controller.resolve(id)?;
     s.controller.check(&g)?;
-    Ok(shared_bytes(g.public.clone()))
+    Ok(shared_bytes(g.public().clone()))
 }
 pub async fn bounded(mut response: reqwest::Response, limit: usize) -> Result<Vec<u8>, StatusCode> {
     if !response.status().is_success() {

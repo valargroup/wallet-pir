@@ -561,7 +561,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     let (height, hash) = if let Some(rpc) = &rpc {
                         let tip = rpc.tip_height().await?;
                         let mut ancestor = None;
-                        for block in journal.records.blocks().iter().rev() {
+                        for block in journal.records().blocks().iter().rev() {
                             if block.height <= tip
                                 && rpc.block_hash_display(block.height).await? == block.hash
                             {
@@ -588,11 +588,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                             .highest_committed()
                             .ok_or("empty canonical journal")?
                     } else {
-                        let target = if journal.records.tree_size() == 0 {
+                        let target = if journal.tree_size() == 0 {
                             fixture_records
                         } else {
                             journal
-                                .records
                                 .tree_size()
                                 .checked_add(fixture_append_records)
                                 .ok_or("fixture overflow")?
@@ -600,8 +599,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                         if target == 0 || target > 23 * 32768 * 33 {
                             return Err("fixture outside fleet coverage".into());
                         }
-                        while journal.records.tree_size() < target {
-                            let start = journal.records.tree_size();
+                        while journal.tree_size() < target {
+                            let start = journal.tree_size();
                             let count = (target - start).min(4096);
                             let records: Vec<_> = (start..start + count)
                                 .map(|p| {
@@ -610,19 +609,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                     r
                                 })
                                 .collect();
-                            let height = journal
-                                .committed_height()
-                                .map_or(enhance_pir::ACTIVATION_HEIGHT, |h| h + 1);
-                            journal.records.append_block(
-                                height,
-                                format!("{height:064x}"),
-                                &records,
-                            )?;
+                            journal.append_fixture_block(&records)?;
                         }
                         journal.highest_committed().ok_or("empty fixture")?
                     };
                     coordinator.observe_capacity(
-                        journal.records.tree_size(),
+                        journal.tree_size(),
                         std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)?
                             .as_secs(),
@@ -637,7 +629,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     }
                     let verify_hash = hash.clone();
                     coordinator
-                        .publish_checked(&journal.records, height, hash, || async {
+                        .publish_checked(journal.records(), height, hash, || async {
                             if let Some(rpc) = &rpc {
                                 if rpc
                                     .block_hash_display(height)

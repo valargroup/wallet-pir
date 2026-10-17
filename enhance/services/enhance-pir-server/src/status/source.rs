@@ -525,7 +525,7 @@ mod tests {
         )
         .unwrap();
         let (number, epoch) = authority.next_identity().unwrap();
-        let (mut candidate, _) = Generation::prepare(
+        let (candidate, _) = Generation::prepare(
             &observed.snapshot,
             number,
             epoch,
@@ -535,13 +535,13 @@ mod tests {
         )
         .unwrap();
         let verified = source.observe(&client).await.unwrap();
-        assert_eq!(verified.snapshot.digest, candidate.manifest.rows_digest);
-        assert_eq!(verified.snapshot.anchor, candidate.manifest.anchor_hash);
-        candidate.manifest.observed_ms = verified.observed_ms;
-        authority.commit(&candidate.manifest).unwrap();
+        assert_eq!(verified.snapshot.digest, candidate.manifest().rows_digest);
+        assert_eq!(verified.snapshot.anchor, candidate.manifest().anchor_hash);
+        let candidate = candidate.reobserved(verified.observed_ms);
+        authority.commit(candidate.manifest()).unwrap();
         let controller = Controller::new(candidate);
-        assert_eq!(controller.current().manifest.generation, 1);
-        assert_eq!(controller.current().manifest.recovery_epoch, 1);
+        assert_eq!(controller.current().manifest().generation, 1);
+        assert_eq!(controller.current().manifest().recovery_epoch, 1);
         drop(authority);
         let restarted = Authority::open(
             dir.path().join("authority"),

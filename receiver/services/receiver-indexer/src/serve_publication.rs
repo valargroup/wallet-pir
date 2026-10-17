@@ -158,14 +158,26 @@ impl Config {
 
 /// What the operator's record names: an immutable publication directory and the
 /// revision it must hold.
+///
+/// Built only by [`PublicationRecord::read`], which checks the record's
+/// structure (an absolute directory and a 64-digit lowercase hex revision).
+/// It does not verify the publication or its chain anchor; activation does.
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct PublicationRecord {
-    pub directory: PathBuf,
-    pub revision: String,
+    directory: PathBuf,
+    revision: String,
 }
 
 impl PublicationRecord {
+    pub fn directory(&self) -> &Path {
+        &self.directory
+    }
+
+    pub fn revision(&self) -> &str {
+        &self.revision
+    }
+
     /// Reads the record. A record that is missing, oversized or malformed is a
     /// refusal of that record, never of the publication already served.
     pub fn read(path: &Path) -> std::result::Result<Self, Refusal> {

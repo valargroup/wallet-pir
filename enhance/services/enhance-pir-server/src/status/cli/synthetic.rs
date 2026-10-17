@@ -31,7 +31,7 @@ fn generation(
         "{}",
         json!({"phase":"index","ms":index_ms,"entries":snapshot.entries,"evicted_blocks":snapshot.evicted_blocks,"coverage_start":snapshot.start})
     );
-    let (mut generation, stats) = Generation::prepare(
+    let (generation, stats) = Generation::prepare(
         &snapshot,
         if advanced { 2 } else { 1 },
         0,
@@ -44,8 +44,8 @@ fn generation(
         json!({"phase":"preparation","advanced":advanced,"stats":stats,"twenty_second_preparation_gate":stats.total_ms<=20_000.})
     );
     // A fresh check of the immutable synthetic oracle, not a live node observation.
-    generation.manifest.observed_ms = status::now_ms();
-    status::telemetry::preparation(index_ms, &stats, &snapshot, &generation.manifest);
+    let generation = generation.reobserved(status::now_ms());
+    status::telemetry::preparation(index_ms, &stats, &snapshot, generation.manifest());
     Ok((generation, snapshot))
 }
 
@@ -204,7 +204,7 @@ async fn check_cases(
     entries: usize,
     advanced: bool,
 ) -> Result<(), AnyError> {
-    controller.reaffirm_fixture(controller.current().manifest.rows_digest)?;
+    controller.reaffirm_fixture(controller.current().manifest().rows_digest)?;
     let client = connect(http, origin, advanced).await?;
     for (id, expected) in fixture::cases(entries, advanced) {
         let observed = lookup(
@@ -219,7 +219,7 @@ async fn check_cases(
     }
     // Exercise different buckets rather than repeatedly testing only four txids.
     for ordinal in 3..19 {
-        controller.reaffirm_fixture(controller.current().manifest.rows_digest)?;
+        controller.reaffirm_fixture(controller.current().manifest().rows_digest)?;
         let sampled = connect(http, origin, advanced).await?;
         let (id, expected) =
             fixture::case_at(entries, advanced, sampled.manifest.coverage_start, ordinal);
@@ -236,7 +236,7 @@ async fn check_cases(
             "sampled oracle mismatch",
         )?;
     }
-    controller.reaffirm_fixture(controller.current().manifest.rows_digest)?;
+    controller.reaffirm_fixture(controller.current().manifest().rows_digest)?;
     let client = connect(http, origin, advanced).await?;
     let error = lookup(http, origin, &client, fixture::txid(u64::MAX), None)
         .await
@@ -531,9 +531,9 @@ pub async fn validate(entries: usize, cuda: bool, state_dir: PathBuf) -> Result<
         json!({"phase":"update","changed_rows":next_snapshot.changed_rows(&snapshot)})
     );
     next.verify_full_hint(&next_snapshot)?;
-    let rebuilt_router = Generation::prepare_router(next.manifest.clone(), &next.hint_bytes()?)?;
+    let rebuilt_router = Generation::prepare_router(next.manifest().clone(), &next.hint_bytes()?)?;
     require(
-        rebuilt_router.public == next.public,
+        rebuilt_router.public() == next.public(),
         "reused packing differs from full reconstruction",
     )?;
     drop(rebuilt_router);
@@ -544,7 +544,7 @@ pub async fn validate(entries: usize, cuda: bool, state_dir: PathBuf) -> Result<
     let (retry_txid, retry_expected) = fixture::case_at(
         entries,
         true,
-        controller.current().manifest.coverage_start,
+        controller.current().manifest().coverage_start,
         7,
     );
     let accepted = |manifest: &Manifest| {
@@ -558,7 +558,7 @@ pub async fn validate(entries: usize, cuda: bool, state_dir: PathBuf) -> Result<
         wallet
             .lookup(
                 retry_txid,
-                Some(controller.current().manifest.anchor_height),
+                Some(controller.current().manifest().anchor_height),
                 accepted,
             )
             .await?
@@ -566,32 +566,37 @@ pub async fn validate(entries: usize, cuda: bool, state_dir: PathBuf) -> Result<
         "initial wallet lookup failed",
     )?;
     for _ in 0..2 {
-        let mut replacement = (*controller.current()).clone();
-        replacement.manifest.generation += 1;
-        replacement.manifest.observed_ms = status::now_ms();
+        let current = controller.current();
+        let replacement = current.reidentified(
+            current.manifest().generation + 1,
+            current.manifest().recovery_epoch,
+            status::now_ms(),
+        );
         controller.activate(replacement)?;
     }
     require(
         wallet
             .lookup(
                 retry_txid,
-                Some(controller.current().manifest.anchor_height),
+                Some(controller.current().manifest().anchor_height),
                 accepted,
             )
             .await?
             == retry_expected,
         "wallet did not recover from evicted-session conflict",
     )?;
-    let mut recovered = (*controller.current()).clone();
-    recovered.manifest.generation += 1;
-    recovered.manifest.recovery_epoch += 1;
-    recovered.manifest.observed_ms = status::now_ms();
+    let current = controller.current();
+    let recovered = current.reidentified(
+        current.manifest().generation + 1,
+        current.manifest().recovery_epoch + 1,
+        status::now_ms(),
+    );
     controller.activate(recovered)?;
     require(
         wallet
             .lookup(
                 retry_txid,
-                Some(controller.current().manifest.anchor_height),
+                Some(controller.current().manifest().anchor_height),
                 accepted,
             )
             .await?
@@ -602,7 +607,7 @@ pub async fn validate(entries: usize, cuda: bool, state_dir: PathBuf) -> Result<
         "{}",
         json!({"phase":"wallet_session_retry","passed":true,"cases":["evicted_session_409","recovery_epoch_410"]})
     );
-    controller.reaffirm_fixture(controller.current().manifest.rows_digest)?;
+    controller.reaffirm_fixture(controller.current().manifest().rows_digest)?;
     let failure_client = connect(&http, &origin, true).await?;
     let failure_query =
         failure_client.prepare(&fixture::txid(u64::MAX - 1), None, status::now_ms())?;
@@ -621,7 +626,7 @@ pub async fn validate(entries: usize, cuda: bool, state_dir: PathBuf) -> Result<
         json!({"phase":"worker_loss","passed":true,"http_status":failed.status().as_u16()})
     );
     require(
-        old_client.manifest.id() != controller.current().manifest.id(),
+        old_client.manifest.id() != controller.current().manifest().id(),
         "update identity unchanged",
     )?;
     let stale_id = hex::encode(old_client.manifest.id());
@@ -643,11 +648,13 @@ pub async fn validate(entries: usize, cuda: bool, state_dir: PathBuf) -> Result<
             == 503,
         "stale source served",
     )?;
-    let mut recovery = (*controller.current()).clone();
-    let revoked_id = hex::encode(recovery.manifest.id());
-    recovery.manifest.generation += 1;
-    recovery.manifest.recovery_epoch += 1;
-    recovery.manifest.observed_ms = status::now_ms();
+    let current = controller.current();
+    let revoked_id = hex::encode(current.manifest().id());
+    let recovery = current.reidentified(
+        current.manifest().generation + 1,
+        current.manifest().recovery_epoch + 1,
+        status::now_ms(),
+    );
     controller.activate(recovery)?;
     require(
         http.get(format!("{origin}/v1/status/session/{revoked_id}"))

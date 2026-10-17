@@ -21,7 +21,7 @@ use super::service::{self, json, DisplayRuntime, DisplayState};
 use super::set::{DisplayRevision, DisplaySet, MAP_FILE};
 use super::{serves, DisplayRole};
 use crate::control::persist;
-use crate::live::{PreparationOutcome, Refusal};
+use crate::live::{PreparationOutcome, PreparingGuard, Refusal};
 use crate::metrics::Snapshot;
 use crate::runtime::RuntimeHandle;
 use crate::shardset::VerificationReport;
@@ -103,13 +103,6 @@ struct Preparing {
     map_sha256: String,
     started: std::time::Instant,
     phase: &'static str,
-}
-
-struct PreparingGuard<'a>(&'a RwLock<Option<Preparing>>);
-impl Drop for PreparingGuard<'_> {
-    fn drop(&mut self) {
-        *self.0.write().unwrap() = None;
-    }
 }
 
 /// Clears the record of a stage in progress however the stage ends.
@@ -421,12 +414,14 @@ impl DisplayLive {
         }) {
             return Ok(prepared(&candidate.state, candidate.built));
         }
-        *self.0.preparing.write().unwrap() = Some(Preparing {
-            map_sha256: publication.map_sha256.clone(),
-            started,
-            phase: "loading",
-        });
-        let _preparing = PreparingGuard(&self.0.preparing);
+        let _preparing = PreparingGuard::record(
+            &self.0.preparing,
+            Preparing {
+                map_sha256: publication.map_sha256.clone(),
+                started,
+                phase: "loading",
+            },
+        );
         // Release an obsolete candidate's pins before reserving anew.
         *self.0.candidate.lock().await = None;
         let staged: Vec<DisplayRevision> = self

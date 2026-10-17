@@ -225,8 +225,8 @@ impl Publisher {
             .unwrap()
             .as_ref()
             .map(Controller::current);
-        if let Some(previous) = previous.filter(|g| same_source(snapshot, &g.manifest)) {
-            let mut refreshed = previous.manifest.clone();
+        if let Some(previous) = previous.filter(|g| same_source(snapshot, g.manifest())) {
+            let mut refreshed = previous.manifest().clone();
             refreshed.generation = generation;
             refreshed.observed_ms = observed.observed_ms;
             for (origin, binding) in [
@@ -248,7 +248,13 @@ impl Publisher {
                 }
             }
             return self
-                .commit_activate(authority, bindings, refreshed, previous.public.clone(), rpc)
+                .commit_activate(
+                    authority,
+                    bindings,
+                    refreshed,
+                    previous.public().clone(),
+                    rpc,
+                )
                 .await;
         }
         // Immutable candidate bytes are durable before remote preparation begins.

@@ -60,6 +60,28 @@ control status, `publication.refusal` on Receiver health) and in the
 operations `worker-report`, which keeps process, identity, publication,
 preparation and readiness separate and never infers encrypted correctness.
 
+## Publication owners and serving handles
+
+In each product one owner turns prepared candidates into the active view and
+decides retention and revocation; request handlers only borrow an immutable
+handle to what is active. Prepared state keeps its fields private, so callers
+read it through accessors and change it only through the owner's operations:
+
+| | Prepared candidate | Owner | Handle given to requests |
+|---|---|---|---|
+| Enhance | `EnhanceJournal` appends and rewinds (continuity checked); `PreparedShard` → `CachedShard` on persist or verified load | coordinator; router and ingress `ControlledView` | `Arc` of the activated view or shard |
+| Status | `Generation`; identity changes only by `reidentified`/`reobserved`, content only by preparing anew | `Controller`, distributed roles | `Arc<Generation>` |
+| Transparent | staged candidate under the control socket | shard and display `live` modules | active publication runtimes |
+| Receiver | `PublicationRecord::read` | `serve-publication` loop | `Publication` |
+
+Constructors say which checks they make. Structural checks (lengths, ordering,
+hex form, layout) happen when a record or manifest is read or prepared;
+cryptographic checks (artifact digests, public parameters) happen when an
+artifact is loaded or a view is prepared; chain-anchor acceptance happens only
+in the owner, immediately before activation. Shared code provides only the
+durability mechanisms in `shared/pir-control`; each owner keeps its own
+authority and retention rules above.
+
 ## Publication identity
 
 Status and Receiver name a publication by a domain-separated SHA-256 of their

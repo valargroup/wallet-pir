@@ -352,14 +352,17 @@ async fn health(State(s): State<Service>) -> Json<Health> {
         cached_rows: state
             .preparation_cache
             .as_ref()
-            .map(|g| g.manifest.rows_digest),
-        active: state.controller.as_ref().map(|c| c.current().manifest.id()),
+            .map(|g| g.manifest().rows_digest),
+        active: state
+            .controller
+            .as_ref()
+            .map(|c| c.current().manifest().id()),
         ready: !state.poisoned
             && state.contact.live()
             && state
                 .controller
                 .as_ref()
-                .is_some_and(|c| c.current().manifest.fresh(now_ms()).is_ok()),
+                .is_some_and(|c| c.current().manifest().fresh(now_ms()).is_ok()),
     })
 }
 async fn fence(
@@ -414,10 +417,10 @@ async fn prepare(
             return Err(StatusCode::CONFLICT);
         }
         if let Some((g, digest)) = &state.candidate {
-            if g.manifest == p.manifest && digest == &p.artifact_digest {
+            if g.manifest() == &p.manifest && digest == &p.artifact_digest {
                 return Ok(Json(Ready {
                     binding: p.binding,
-                    manifest: g.manifest.clone(),
+                    manifest: g.manifest().clone(),
                     artifact_digest: *digest,
                 }));
             }
@@ -466,7 +469,7 @@ async fn prepare(
             let base = if bytes.len() < ROWS * ROW_BYTES {
                 previous.as_ref().map(|g| {
                     (
-                        g.manifest.rows_digest,
+                        g.manifest().rows_digest,
                         g.units
                             .iter()
                             .flat_map(|u| u.rows.iter().copied())
@@ -505,7 +508,7 @@ async fn prepare(
                         },
                     )
                 })?;
-            g.manifest = manifest;
+            g.assign_manifest(manifest);
             Ok(g)
         }
     })
@@ -519,7 +522,7 @@ async fn prepare(
         } else {
             None
         };
-        let digest = artifact.as_ref().map_or(g.manifest.public_digest, |a| {
+        let digest = artifact.as_ref().map_or(g.manifest().public_digest, |a| {
             Sha256::digest(a.as_slice()).into()
         });
         Ok((g, artifact, digest))
@@ -532,7 +535,7 @@ async fn prepare(
         fetch_ms,
         prepare_ms,
         total_ms = began.elapsed().as_millis(),
-        source_age_ms = now_ms().saturating_sub(g.manifest.observed_ms),
+        source_age_ms = now_ms().saturating_sub(g.manifest().observed_ms),
         "Status role preparation"
     );
     let _control = s.control.lock().await;
@@ -541,12 +544,12 @@ async fn prepare(
     // all serving requires a new matching prepare/activation decision.
     release_off_runtime(state.preparation_cache.replace(Arc::new(g.clone())));
     s.check(&state, &p.binding)?;
-    g.manifest
+    g.manifest()
         .fresh(now_ms())
         .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
     let ready = Ready {
         binding: p.binding,
-        manifest: g.manifest.clone(),
+        manifest: g.manifest().clone(),
         artifact_digest: digest,
     };
     release_off_runtime(state.candidate.replace((g, digest)));
@@ -580,7 +583,7 @@ async fn prepare_refresh(
         return Err(StatusCode::CONFLICT);
     }
     let previous = c.current();
-    let mut expected = previous.manifest.clone();
+    let mut expected = previous.manifest().clone();
     if a.manifest.observed_ms < expected.observed_ms {
         return Err(StatusCode::CONFLICT);
     }
@@ -590,7 +593,7 @@ async fn prepare_refresh(
         return Err(StatusCode::CONFLICT);
     }
     let mut g = (*previous).clone();
-    g.manifest = a.manifest.clone();
+    g.assign_manifest(a.manifest.clone());
     release_off_runtime(state.candidate.replace((g, a.manifest.public_digest)));
     release_off_runtime(state.candidate_artifact.take());
     Ok(Json(Ready {
@@ -615,7 +618,7 @@ async fn activate(
             .fresh(now_ms())
             .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
         if let Some(c) = &state.controller {
-            if c.current().manifest == a.manifest {
+            if c.current().manifest() == &a.manifest {
                 return Ok(Json(Ready {
                     binding: a.binding,
                     manifest: a.manifest.clone(),
@@ -624,7 +627,7 @@ async fn activate(
             }
         }
         let (candidate, _) = state.candidate.as_ref().ok_or(StatusCode::CONFLICT)?;
-        let mut expected = candidate.manifest.clone();
+        let mut expected = candidate.manifest().clone();
         // The worker binds the router's public digest only at the durable activation decision.
         if s.role == Role::Worker {
             expected.public_digest = a.manifest.public_digest;
@@ -658,7 +661,7 @@ async fn activate(
     state.poisoned = true;
     let (mut candidate, _) = state.candidate.take().unwrap();
     release_off_runtime(state.candidate_artifact.take());
-    candidate.manifest = a.manifest.clone();
+    candidate.assign_manifest(a.manifest.clone());
     if let Some(c) = &state.controller {
         release_off_runtime(
             c.activate_deferring_release(candidate)
@@ -720,10 +723,11 @@ async fn public(State(s): State<Service>, Path(id): Path<String>) -> Result<Byte
     let shared = {
         let state = s.state.lock().await;
         let (g, _) = state.candidate.as_ref().ok_or(StatusCode::NOT_FOUND)?;
-        if s.role != Role::Router || hex::encode(g.manifest.public_digest) != id || state.poisoned {
+        if s.role != Role::Router || hex::encode(g.manifest().public_digest) != id || state.poisoned
+        {
             return Err(StatusCode::NOT_FOUND);
         }
-        g.public.clone()
+        g.public().clone()
     };
     Ok(shared_bytes(shared))
 }
@@ -774,8 +778,8 @@ mod tests {
         .unwrap()
     }
     fn material(epoch: u64, generation: u64) -> Generation {
-        Generation {
-            manifest: Manifest {
+        Generation::public_only(
+            Manifest {
                 protocol: PROTOCOL.into(),
                 network: [1; 32],
                 salt: [2; 32],
@@ -789,12 +793,8 @@ mod tests {
                 rows_digest: [4; 32],
                 public_digest: [5; 32],
             },
-            public: Arc::new(Vec::new()),
-            units: Vec::new(),
-            packing: Arc::new(Vec::new()),
-            top: None,
-            packing_digests: Vec::new(),
-        }
+            Arc::new(Vec::new()),
+        )
     }
     async fn establish(s: &Service, epoch: u64) -> Binding {
         let binding = Binding {
@@ -889,7 +889,7 @@ mod tests {
         let s = open(Role::Worker, dir.path());
         let binding = establish(&s, 7).await;
         let g = material(7, 3);
-        let manifest = g.manifest.clone();
+        let manifest = g.manifest().clone();
         s.state.lock().await.candidate = Some((g, [6; 32]));
         let _ = activate(
             State(s.clone()),
@@ -919,7 +919,7 @@ mod tests {
         let s = open(Role::Router, dir.path());
         let b = establish(&s, 1).await;
         let g = material(1, 1);
-        let manifest = g.manifest.clone();
+        let manifest = g.manifest().clone();
         s.state.lock().await.candidate = Some((g, [6; 32]));
         let a = Activate {
             binding: b,
@@ -939,7 +939,7 @@ mod tests {
         let s = open(Role::Router, dir.path());
         let b = establish(&s, 1).await;
         let g = material(1, 1);
-        let manifest = g.manifest.clone();
+        let manifest = g.manifest().clone();
         s.state.lock().await.candidate = Some((g, [6; 32]));
         let mut a = Activate {
             binding: b,
@@ -960,7 +960,7 @@ mod tests {
         let g = material(1, 1);
         let mut a = Activate {
             binding: b,
-            manifest: g.manifest.clone(),
+            manifest: g.manifest().clone(),
         };
         s.state.lock().await.candidate = Some((g, [6; 32]));
         let _ = activate(State(s.clone()), Json(a.clone())).await.unwrap();
@@ -979,7 +979,7 @@ mod tests {
             .await
             .unwrap();
         let _ = activate(State(s.clone()), Json(a.clone())).await.unwrap();
-        assert_eq!(s.serving().await.unwrap().current().manifest, a.manifest);
+        assert_eq!(s.serving().await.unwrap().current().manifest(), &a.manifest);
     }
 
     #[tokio::test]
@@ -987,11 +987,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let s = open(Role::Router, dir.path());
         let b = establish(&s, 1).await;
-        let mut g = material(1, 1);
-        g.manifest.observed_ms = now_ms() - MAX_AGE_MS - 1;
+        let g = material(1, 1).reobserved(now_ms() - MAX_AGE_MS - 1);
         let a = Activate {
             binding: b,
-            manifest: g.manifest.clone(),
+            manifest: g.manifest().clone(),
         };
         s.state.lock().await.controller = Some(Controller::new(g));
         s.state.lock().await.fence.generation = 1;
@@ -1010,7 +1009,7 @@ mod tests {
         let g = material(1, 1);
         let a = Activate {
             binding: b,
-            manifest: g.manifest.clone(),
+            manifest: g.manifest().clone(),
         };
         s.state.lock().await.candidate = Some((g, [6; 32]));
         let _ = activate(State(s.clone()), Json(a.clone())).await.unwrap();
@@ -1020,7 +1019,7 @@ mod tests {
         assert!(s.serving().await.is_err());
         let _ = heartbeat(State(s.clone()), Json(a.clone())).await.unwrap();
         assert_eq!(
-            s.serving().await.unwrap().current().manifest.observed_ms,
+            s.serving().await.unwrap().current().manifest().observed_ms,
             a.manifest.observed_ms
         );
     }

@@ -41,7 +41,7 @@ impl Controller {
         let views = self.views.read().unwrap();
         std::iter::once(&views.active)
             .chain(views.retained.iter())
-            .find(|g| g.manifest.id() == id)
+            .find(|g| g.manifest().id() == id)
             .cloned()
             .ok_or(StatusCode::CONFLICT)
     }
@@ -58,11 +58,11 @@ impl Controller {
     /// instead of freeing them under the views lock. Freeing a generation's
     /// packing material can take long enough to stall every query waiting on it.
     pub fn activate_deferring_release(&self, g: Generation) -> Result<Vec<Arc<Generation>>, Error> {
-        g.manifest.fresh(now_ms())?;
+        g.manifest().fresh(now_ms())?;
         let mut views = self.views.write().unwrap();
-        if g.manifest.generation <= views.active.manifest.generation
-            || g.manifest.recovery_epoch < views.active.manifest.recovery_epoch
-            || g.manifest.network != views.active.manifest.network
+        if g.manifest().generation <= views.active.manifest().generation
+            || g.manifest().recovery_epoch < views.active.manifest().recovery_epoch
+            || g.manifest().network != views.active.manifest().network
         {
             return Err(Error::Malformed);
         }
@@ -87,11 +87,11 @@ impl Controller {
     }
     pub(super) fn check(&self, g: &Generation) -> Result<(), StatusCode> {
         if self.revoked.load(Ordering::SeqCst)
-            || self.current().manifest.recovery_epoch != g.manifest.recovery_epoch
+            || self.current().manifest().recovery_epoch != g.manifest().recovery_epoch
         {
             return Err(StatusCode::GONE);
         }
-        g.manifest
+        g.manifest()
             .fresh(now_ms())
             .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)
     }
@@ -105,8 +105,8 @@ mod controller_tests {
     use std::time::Duration;
 
     fn generation() -> Generation {
-        Generation {
-            manifest: Manifest {
+        Generation::public_only(
+            Manifest {
                 protocol: PROTOCOL.into(),
                 network: [1; 32],
                 salt: [2; 32],
@@ -120,12 +120,8 @@ mod controller_tests {
                 rows_digest: [4; 32],
                 public_digest: [5; 32],
             },
-            public: Arc::new(Vec::new()),
-            units: Vec::new(),
-            packing: Arc::new(Vec::new()),
-            top: None,
-            packing_digests: Vec::new(),
-        }
+            Arc::new(Vec::new()),
+        )
     }
 
     #[tokio::test]
@@ -181,7 +177,7 @@ mod controller_tests {
         }
         let mut body = vec![0; HEADER_BYTES];
         body[..4].copy_from_slice(QUERY_MAGIC);
-        body[4..36].copy_from_slice(&controller.current().manifest.id());
+        body[4..36].copy_from_slice(&controller.current().manifest().id());
         let request = query(State(state), Bytes::from(body));
         tokio::pin!(request);
         assert!(
@@ -196,8 +192,7 @@ mod controller_tests {
 
     #[tokio::test]
     async fn source_freshness_is_rechecked_after_admission_wait() {
-        let mut g = generation();
-        g.manifest.observed_ms = now_ms() - MAX_AGE_MS + 100;
+        let g = generation().reobserved(now_ms() - MAX_AGE_MS + 100);
         let controller = Controller::new(g);
         let state = HttpState::new(controller.clone(), "http://127.0.0.1:1".into());
         let mut held = Vec::new();
@@ -206,7 +201,7 @@ mod controller_tests {
         }
         let mut body = vec![0; HEADER_BYTES];
         body[..4].copy_from_slice(QUERY_MAGIC);
-        body[4..36].copy_from_slice(&controller.current().manifest.id());
+        body[4..36].copy_from_slice(&controller.current().manifest().id());
         let request = query(State(state), Bytes::from(body));
         tokio::pin!(request);
         assert!(
@@ -222,21 +217,25 @@ mod controller_tests {
     fn rapid_activation_bounds_retention_and_recovery_fences_old_sessions() {
         let base = generation();
         let controller = Controller::new(base.clone());
-        let first = base.manifest.id();
-        let mut second = base.clone();
-        second.manifest.generation = 2;
-        let second_id = second.manifest.id();
+        let first = base.manifest().id();
+        let second = base.reidentified(
+            2,
+            base.manifest().recovery_epoch,
+            base.manifest().observed_ms,
+        );
+        let second_id = second.manifest().id();
         controller.activate(second).unwrap();
         assert!(controller.resolve(first).is_ok());
-        let mut third = base.clone();
-        third.manifest.generation = 3;
-        let third_id = third.manifest.id();
+        let third = base.reidentified(
+            3,
+            base.manifest().recovery_epoch,
+            base.manifest().observed_ms,
+        );
+        let third_id = third.manifest().id();
         controller.activate(third).unwrap();
         assert_eq!(controller.resolve(first).err(), Some(StatusCode::CONFLICT));
         assert!(controller.resolve(second_id).is_ok());
-        let mut recovered = base;
-        recovered.manifest.generation = 4;
-        recovered.manifest.recovery_epoch = 1;
+        let recovered = base.reidentified(4, 1, base.manifest().observed_ms);
         controller.activate(recovered).unwrap();
         let revoked = controller.resolve(third_id).unwrap();
         assert_eq!(controller.check(&revoked), Err(StatusCode::GONE));
@@ -246,48 +245,79 @@ mod controller_tests {
     fn deferred_activation_hands_back_unpinned_generations_only() {
         let base = generation();
         let controller = Controller::new(base.clone());
-        let mut second = base.clone();
-        second.manifest.generation = 2;
+        let second = base.reidentified(
+            2,
+            base.manifest().recovery_epoch,
+            base.manifest().observed_ms,
+        );
         assert!(controller
             .activate_deferring_release(second)
             .unwrap()
             .is_empty());
         // Generation 1 is now retained only by the controller, so the next
         // activation evicts it and returns it to the caller to free.
-        let mut third = base.clone();
-        third.manifest.generation = 3;
+        let third = base.reidentified(
+            3,
+            base.manifest().recovery_epoch,
+            base.manifest().observed_ms,
+        );
         let evicted = controller.activate_deferring_release(third).unwrap();
         assert_eq!(
             evicted
                 .iter()
-                .map(|g| g.manifest.generation)
+                .map(|g| g.manifest().generation)
                 .collect::<Vec<_>>(),
             vec![1]
         );
         // A generation pinned by an in-flight request is kept, not evicted.
         let pinned = controller.current();
-        let mut fourth = base.clone();
-        fourth.manifest.generation = 4;
+        let fourth = base.reidentified(
+            4,
+            base.manifest().recovery_epoch,
+            base.manifest().observed_ms,
+        );
         assert!(controller
             .activate_deferring_release(fourth)
             .unwrap()
             .iter()
-            .all(|g| g.manifest.generation != 3));
-        let mut fifth = base;
-        fifth.manifest.generation = 5;
+            .all(|g| g.manifest().generation != 3));
+        let fifth = base.reidentified(
+            5,
+            base.manifest().recovery_epoch,
+            base.manifest().observed_ms,
+        );
         let evicted = controller.activate_deferring_release(fifth).unwrap();
-        assert!(evicted.iter().all(|g| g.manifest.generation != 3));
+        assert!(evicted.iter().all(|g| g.manifest().generation != 3));
         drop(pinned);
+    }
+
+    #[test]
+    fn identity_transitions_keep_the_prepared_material() {
+        let base = generation();
+        let observed = base.reobserved(base.manifest().observed_ms + 7);
+        let mut expected = base.manifest().clone();
+        expected.observed_ms += 7;
+        assert_eq!(observed.manifest(), &expected);
+        assert!(Arc::ptr_eq(observed.public(), base.public()));
+
+        let next = observed.reidentified(9, 2, expected.observed_ms + 1);
+        expected.generation = 9;
+        expected.recovery_epoch = 2;
+        expected.observed_ms += 1;
+        assert_eq!(next.manifest(), &expected);
+        assert_eq!(next.manifest().rows_digest, base.manifest().rows_digest);
+        assert_eq!(next.manifest().public_digest, base.manifest().public_digest);
+        assert!(Arc::ptr_eq(next.public(), base.public()));
+        // The source generation is left as it was.
+        assert_eq!(base.manifest().generation, 1);
     }
 
     #[test]
     fn stale_candidate_cannot_be_activated() {
         let base = generation();
         let controller = Controller::new(base.clone());
-        let mut stale = base;
-        stale.manifest.generation = 2;
-        stale.manifest.observed_ms = now_ms() - MAX_AGE_MS - 1;
+        let stale = base.reidentified(2, base.manifest().recovery_epoch, now_ms() - MAX_AGE_MS - 1);
         assert_eq!(controller.activate(stale), Err(Error::Stale));
-        assert_eq!(controller.current().manifest.generation, 1);
+        assert_eq!(controller.current().manifest().generation, 1);
     }
 }

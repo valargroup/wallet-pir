@@ -13,8 +13,14 @@ pub enum IngestError {
     Invariant(String),
 }
 
+/// The coordinator's durable Enhance record journal.
+///
+/// The inner record store is private so every append and rewind goes through
+/// the continuity checks here: a block's height must advance and its records
+/// must extend the journal to the block's tree size. Readers that publish or
+/// inspect the journal borrow it read-only through [`EnhanceJournal::records`].
 pub struct EnhanceJournal {
-    pub records: RecordJournal,
+    records: RecordJournal,
 }
 
 impl EnhanceJournal {
@@ -26,6 +32,15 @@ impl EnhanceJournal {
                 ENHANCE_LAYOUT,
             )?,
         })
+    }
+
+    /// Read-only view of the committed records, for publication and inspection.
+    pub fn records(&self) -> &RecordJournal {
+        &self.records
+    }
+
+    pub fn tree_size(&self) -> u64 {
+        self.records.tree_size()
     }
 
     pub fn committed_height(&self) -> Option<u64> {
@@ -78,6 +93,31 @@ impl EnhanceJournal {
         }
         Ok(())
     }
+
+    /// Appends synthetic fixture records as the next block.
+    ///
+    /// The block takes the next height (the activation height for an empty
+    /// journal) and a hash derived from that height, so fixture journals keep
+    /// the same layout as before. Returns the appended height.
+    pub fn append_fixture_block<R: AsRef<[u8]>>(
+        &mut self,
+        records: &[R],
+    ) -> Result<u64, IngestError> {
+        self.records.ensure_healthy()?;
+        let height = self
+            .committed_height()
+            .map_or(enhance_pir::ACTIVATION_HEIGHT, |h| h + 1);
+        self.records
+            .append_block(height, format!("{height:064x}"), records)?;
+        Ok(height)
+    }
+}
+
+#[cfg(test)]
+impl EnhanceJournal {
+    fn fail_after_for_test(&mut self, stage: &'static str) {
+        self.records.fail_after(stage);
+    }
 }
 
 #[cfg(test)]
@@ -100,7 +140,7 @@ mod tests {
             }],
         };
         journal.append_block(&block).unwrap();
-        journal.records.fail_after("manifest_write");
+        journal.fail_after_for_test("manifest_write");
         assert!(journal.rewind_to_height(None).is_err());
         assert!(journal.append_block(&block).is_err());
     }
@@ -116,9 +156,32 @@ mod tests {
             tree_size: 1,
         };
         journal.append_block(&block).unwrap();
-        assert_eq!(journal.records.tree_size(), 1);
+        assert_eq!(journal.tree_size(), 1);
         assert_eq!(journal.committed_height(), Some(3_428_143));
         assert!(directory.path().join("enhance/records.bin").exists());
         assert!(!directory.path().join("action").exists());
+    }
+
+    #[test]
+    fn fixture_blocks_advance_height_through_the_journal() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut journal = EnhanceJournal::open(directory.path()).unwrap();
+        let records = vec![vec![0u8; enhance_pir::RECORD_BYTES]; 2];
+        assert_eq!(
+            journal.append_fixture_block(&records).unwrap(),
+            enhance_pir::ACTIVATION_HEIGHT
+        );
+        assert_eq!(
+            journal.append_fixture_block(&records[..1]).unwrap(),
+            enhance_pir::ACTIVATION_HEIGHT + 1
+        );
+        assert_eq!(journal.tree_size(), 3);
+        let (height, hash) = journal.highest_committed().unwrap();
+        assert_eq!(hash, format!("{height:064x}"));
+
+        journal.fail_after_for_test("manifest_write");
+        assert!(journal.append_fixture_block(&records).is_err());
+        assert!(journal.append_fixture_block(&records).is_err());
+        assert_eq!(journal.tree_size(), 3);
     }
 }

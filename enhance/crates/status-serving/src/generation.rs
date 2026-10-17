@@ -110,10 +110,20 @@ fn incremental_hint(old: &Unit, bytes: &[u8], setup: &[u64]) -> Option<Vec<CrsBl
     Some(hint)
 }
 
+/// One prepared Status generation: its manifest and public parameters, and on
+/// workers the serving units and packing material.
+///
+/// A `Generation` is a candidate until a publication owner (the `Controller`
+/// or a distributed role) activates it; from then on request handlers hold it
+/// only through an immutable `Arc`. Its fields are private so the manifest
+/// always describes the material beside it: content changes only by preparing
+/// a new generation, and identity (generation number, recovery epoch,
+/// observation time) changes only through [`Generation::reidentified`] and
+/// [`Generation::reobserved`], which copy the material unchanged.
 #[derive(Clone)]
 pub struct Generation {
-    pub manifest: Manifest,
-    pub public: Arc<Vec<u8>>,
+    manifest: Manifest,
+    public: Arc<Vec<u8>>,
     pub(super) units: Vec<Arc<Unit>>,
     pub(super) packing: Arc<Vec<PackingBlock>>,
     pub(super) top: Option<Arc<TopKeyImages<'static>>>,
@@ -132,6 +142,48 @@ pub struct Preparation {
 }
 
 impl Generation {
+    pub fn manifest(&self) -> &Manifest {
+        &self.manifest
+    }
+
+    /// The serialized public parameters wallets download for this generation.
+    pub fn public(&self) -> &Arc<Vec<u8>> {
+        &self.public
+    }
+
+    /// The same prepared material under a new identity from the authority.
+    ///
+    /// Used when an observation matches the active content: the publication
+    /// owner issues a new generation number and recovery epoch rather than
+    /// preparing identical material again. Checks nothing; the caller obtains
+    /// the identity from its authority and observation from a verified source.
+    pub fn reidentified(&self, generation: u64, recovery_epoch: u64, observed_ms: u64) -> Self {
+        let mut next = self.clone();
+        next.manifest.generation = generation;
+        next.manifest.recovery_epoch = recovery_epoch;
+        next.manifest.observed_ms = observed_ms;
+        next
+    }
+
+    /// The same generation, observed again at `observed_ms`.
+    ///
+    /// Only the freshness time changes; the identity and material stay. The
+    /// caller must have re-verified that the source still serves this content.
+    pub fn reobserved(&self, observed_ms: u64) -> Self {
+        let mut next = self.clone();
+        next.manifest.observed_ms = observed_ms;
+        next
+    }
+
+    /// Adopts the manifest a distributed controller assigned to this material.
+    ///
+    /// Crate-private: only the distributed roles call it, after checking the
+    /// assigned manifest against their own (same content; only the identity,
+    /// observation time and, on workers, the router's public digest differ).
+    pub(crate) fn assign_manifest(&mut self, manifest: Manifest) {
+        self.manifest = manifest;
+    }
+
     /// A coordinator's generation: the manifest and public parameters only, with
     /// no serving units; the workers hold the database.
     pub fn public_only(manifest: Manifest, public: Arc<Vec<u8>>) -> Self {

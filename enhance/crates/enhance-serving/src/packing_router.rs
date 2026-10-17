@@ -45,20 +45,28 @@ pub struct RouterRegistration {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ServingSnapshot {
-    pub manifest: Manifest,
-    pub routes: BTreeMap<u64, Vec<String>>,
+    pub(crate) manifest: Manifest,
+    pub(crate) routes: BTreeMap<u64, Vec<String>>,
     #[serde(default)]
-    pub preferred: BTreeMap<u64, Vec<String>>,
+    pub(crate) preferred: BTreeMap<u64, Vec<String>>,
     /// Domain -> (owned artifact filename, SHA-256 of the complete artifact).
-    pub artifacts: BTreeMap<u64, crate::prepared_packing::Artifact>,
+    pub(crate) artifacts: BTreeMap<u64, crate::prepared_packing::Artifact>,
 }
 
+/// The serving view a controller sends to `/control/prepare`: up to
+/// `RETAINED_GENERATIONS` snapshots under one controller epoch and fence.
+///
+/// Fields are crate-private: only the controller (`serving_control`) builds a
+/// view, and the router checks it structurally (version, ordering, routes,
+/// revoked sessions) and against each artifact's public parameters before it
+/// becomes a candidate. An activated view is held behind an `Arc` and never
+/// changes; a new assignment is a new view.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct View {
-    pub version: u16,
-    pub controller_epoch: u64,
-    pub snapshots: Vec<ServingSnapshot>,
-    pub revocation: Revocation,
+    pub(crate) version: u16,
+    pub(crate) controller_epoch: u64,
+    pub(crate) snapshots: Vec<ServingSnapshot>,
+    pub(crate) revocation: Revocation,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
