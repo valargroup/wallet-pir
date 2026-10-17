@@ -1,7 +1,7 @@
 //! Wallets reach this service through wallet-libraries' receiver client
 //! (`zakura-receiver-pir`). These tests drive that
 //! client against the production router over real HTTP, so its manifest, filter, PIR,
-//! row-file, witness and revision handling interoperate with these routes byte for byte.
+//! witness and revision handling interoperate with these routes byte for byte.
 #[path = "../../../crates/receiver-store/tests/common/mod.rs"]
 mod common;
 use common::{manifest, receiver, record};
@@ -63,11 +63,10 @@ async fn serve(publication: Publication) -> Running {
 }
 
 /// A wallet's transport over reqwest: no redirects, 410 as [`Error::Revision`], and
-/// a body refused once it crosses its limit. It counts encrypted queries and row files.
+/// a body refused once it crosses its limit. It counts encrypted queries.
 struct Http {
     client: reqwest::Client,
     queries: AtomicUsize,
-    row_files: AtomicUsize,
 }
 
 impl Http {
@@ -79,16 +78,12 @@ impl Http {
                 .build()
                 .unwrap(),
             queries: AtomicUsize::new(0),
-            row_files: AtomicUsize::new(0),
         }
     }
 }
 
 impl Transport for Http {
     async fn get(&self, url: &str, limit: usize) -> Result<Vec<u8>, Error> {
-        if url.contains("/v1/receiver/rows/") {
-            self.row_files.fetch_add(1, Ordering::Relaxed);
-        }
         read(self.client.get(url), limit).await
     }
     async fn post(&self, url: &str, body: Vec<u8>, limit: usize) -> Result<Vec<u8>, Error> {
@@ -115,54 +110,47 @@ async fn read(request: reqwest::RequestBuilder, limit: usize) -> Result<Vec<u8>,
     Ok(body)
 }
 
-async fn connect<'a>(
-    origin: &str,
-    http: &'a Http,
-    remaining: usize,
-) -> Result<DirectoryClient<&'a Http>, Error> {
+/// Connects over PIR to the publication `origin` advertises.
+async fn connect<'a>(origin: &str, http: &'a Http) -> Result<DirectoryClient<&'a Http>, Error> {
     let manifest = DirectoryClient::fetch_manifest(origin, http).await?;
-    DirectoryClient::connect_manifest(origin, http, accepted(), manifest, remaining).await
+    DirectoryClient::connect_manifest(origin, http, accepted(), manifest, 0).await
 }
 
-/// The library client reads a two-page history over this service's PIR, and the same
-/// history from its row file when the remaining work makes the file cheaper.
+/// The library client reads a two-page history over this service's PIR, one encrypted
+/// query per page.
 #[tokio::test]
-async fn the_library_client_looks_up_over_pir_and_the_row_file() {
+async fn the_library_client_looks_up_over_pir() {
     let server = serve(Publication::verified(
         Server::new(snapshot(2)).unwrap(),
         None,
     ))
     .await;
-    for (remaining, row_file) in [(0, false), (1_000_000, true)] {
-        let http = Http::new();
-        let mut client = connect(&server.origin, &http, remaining).await.unwrap();
-        let payments = client.lookup(receiver(), accepted()).await.unwrap();
-        let expected: Vec<_> = (0..2).map(|page| record(page, 2).payment).collect();
-        assert_eq!(payments.len(), 2);
-        for (payment, expected) in payments.iter().zip(&expected) {
-            assert_eq!(
-                (
-                    payment.position,
-                    payment.txid,
-                    payment.tx_index,
-                    payment.cmx
-                ),
-                (
-                    expected.position,
-                    expected.txid,
-                    expected.tx_index,
-                    expected.cmx
-                ),
-            );
-        }
-        let queries = http.queries.load(Ordering::Relaxed);
-        let row_files = http.row_files.load(Ordering::Relaxed);
-        assert_eq!((queries > 0, row_files), (!row_file, usize::from(row_file)));
-        // A receiver without payments reads as empty, not as an error.
-        let mut other = receiver();
-        other[0] ^= 1;
-        assert!(client.lookup(other, accepted()).await.unwrap().is_empty());
+    let http = Http::new();
+    let mut client = connect(&server.origin, &http).await.unwrap();
+    let payments = client.lookup(receiver(), accepted()).await.unwrap();
+    let expected: Vec<_> = (0..2).map(|page| record(page, 2).payment).collect();
+    assert_eq!(payments.len(), 2);
+    for (payment, expected) in payments.iter().zip(&expected) {
+        assert_eq!(
+            (
+                payment.position,
+                payment.txid,
+                payment.tx_index,
+                payment.cmx
+            ),
+            (
+                expected.position,
+                expected.txid,
+                expected.tx_index,
+                expected.cmx
+            ),
+        );
     }
+    assert_eq!(http.queries.load(Ordering::Relaxed), 2);
+    // A receiver without payments reads as empty, not as an error.
+    let mut other = receiver();
+    other[0] ^= 1;
+    assert!(client.lookup(other, accepted()).await.unwrap().is_empty());
 }
 
 /// The library client checks the publication's filter file against its manifest and
@@ -199,14 +187,14 @@ async fn the_library_client_downloads_the_common_witness_file() {
     ))
     .await;
     let http = Http::new();
-    let client = connect(&server.origin, &http, 0).await.unwrap();
+    let client = connect(&server.origin, &http).await.unwrap();
     assert_eq!(client.witnesses().await.unwrap(), proof);
     let server = serve(Publication::verified(
         Server::new(snapshot(0)).unwrap(),
         None,
     ))
     .await;
-    let client = connect(&server.origin, &http, 0).await.unwrap();
+    let client = connect(&server.origin, &http).await.unwrap();
     assert!(client.witnesses().await.is_err());
 }
 
@@ -220,7 +208,7 @@ async fn a_revoked_publication_is_a_revision_to_the_library_client() {
     ))
     .await;
     let http = Http::new();
-    let mut client = connect(&server.origin, &http, 0).await.unwrap();
+    let mut client = connect(&server.origin, &http).await.unwrap();
     server.publications.revoke();
     assert!(matches!(
         client.lookup(receiver(), accepted()).await,
