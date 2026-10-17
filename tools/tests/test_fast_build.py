@@ -105,7 +105,7 @@ class FastBuildTests(unittest.TestCase):
         self.execute(jobs=3)
         self.assertEqual(self.calls[-1][0][-2:], ['--jobs', '3'])
 
-    def test_filter_library_shares_the_bounded_pool_without_changing_cases_or_arguments(self):
+    def test_filter_library_runs_alone_without_changing_cases_or_arguments(self):
         self.execute()
         baseline = {p['executable']: p for p in self.plans[0]}
         self.calls.clear()
@@ -118,7 +118,7 @@ class FastBuildTests(unittest.TestCase):
         self.assertEqual(set(plan), set(baseline))
         self.assertEqual(self.plans[0][0]['executable'], '/fixture/a-a')
         self.assertEqual({binary: p['exclusive'] for binary, p in plan.items()}, {
-            '/fixture/a-a': False,
+            '/fixture/a-a': True,
             '/fixture/a-client': False,
             '/fixture/a-smoke': False,
             '/fixture/b-b': False,

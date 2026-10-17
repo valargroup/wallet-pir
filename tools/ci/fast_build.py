@@ -3,8 +3,8 @@
 Cargo unifies features for the complete selection. Unit tests and the named
 fast integration targets share that build; campaign targets are never selected.
 Test programs retain their package directory, Cargo environment and existing
-slow-case exclusions. At most three programs execute together, including HTTP
-integration programs and the filter library.
+slow-case exclusions. The filter library runs alone. At most three other
+programs, including HTTP integration programs, then execute together.
 """
 import json
 import os
@@ -108,12 +108,13 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3):
             actual_units.add(identity)
             discovered_units[name].update(names)
         exclusions = [] if integration else list(slow.get(name, {}))
-        # Keep the shared pool bounded instead of serializing
-        # complete HTTP and publisher suites before all other tests.
+        # The filter library builds full archive runtimes on every CPU. Beside
+        # the encrypted HTTP smokes, those smokes miss the 30s case deadline on
+        # the 4-core hosted runner, so the library runs alone first.
         programs.append(dict(executable=binary, directory=directory, package=name,
                              version=package['version'],
                              integration=integration,
-                             exclusive=False,
+                             exclusive=name == 'transparent-filter-server' and 'lib' in target['kind'],
                              case_count=len(names),
                              args=[arg for case in exclusions for arg in ('--skip', case)]))
     if actual_integrations != expected_integrations or expected_units - actual_units:
@@ -126,8 +127,8 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3):
         stale = set(slow.get(name, {})) - discovered
         if stale:
             raise ValueError(f'{name}: stale slow-test classification: {sorted(stale)}')
-    # Start the long publisher suite immediately. HTTP programs use the remaining
-    # slots before ordinary units, so neither forms a serial preparation wave.
+    # The publisher library is exclusive and runs before this pool. HTTP programs
+    # take the remaining slots ahead of ordinary units.
     def queue_key(program):
         publisher = (program['package'] == 'transparent-filter-server'
                      and not program['integration'] and program['case_count'] > 0)

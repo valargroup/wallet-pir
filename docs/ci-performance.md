@@ -101,10 +101,11 @@ and stale ancestry cannot leave unchecked changes behind.
 Rust feedback compiles the selected unit tests, CLI test binaries and named fast
 integration targets together in one `release-fast` Cargo invocation. Campaign
 targets are excluded from that build. Local and CI checks then execute at most
-three Cargo-reported test programs concurrently. The long publisher suite starts
-immediately, with HTTP integration programs ahead of ordinary units in the remaining
-slots. This overlaps preparation and execution while bounding simultaneous working
-sets. Within each group, binaries with more discovered cases start first,
+three Cargo-reported test programs concurrently. The publisher library builds
+full archive runtimes and runs alone first, so those cases keep the CPUs they
+need to finish within 30 seconds and the encrypted HTTP smokes are not starved
+on a 4-core runner. HTTP integration programs then use the pool ahead of
+ordinary units. Within each group, binaries with more discovered cases start first,
 independently of Cargo's artifact order. Cases within each program stay
 serial, preserving process-local immutable public fixtures within the fast runner’s
 6-GiB ceiling. Explicit feature or test-filter checks use one program at a time.
