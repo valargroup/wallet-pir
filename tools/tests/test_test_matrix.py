@@ -96,6 +96,30 @@ class MatrixTests(unittest.TestCase):
         for broken in ([], receipts[:-1], receipts + [receipts[0]]):
             with self.assertRaises(ValueError): self.verify(broken)
 
+    def test_baseline_comparison_rejects_changed_cases_ignored_state_and_features(self):
+        for changed in (None, 'tests', 'ignored', 'features'):
+            with self.subTest(changed=changed), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                receipts = root / 'receipts'
+                receipts.mkdir()
+                rows = self.receipts('receiver')
+                identity = 'receiver:receiver-pir-server:http'
+                cases = {identity: dict(tests=['encrypted_round_trip'], ignored=[], features=['default'])}
+                rows[0]['cases'] = copy.deepcopy(cases)
+                if changed:
+                    rows[0]['cases'][identity][changed] = ['unexpected']
+                for index, row in enumerate(rows):
+                    (receipts / f'{index}.json').write_text(json.dumps(row))
+                baseline = root / 'baseline.json'
+                baseline.write_text(json.dumps(dict(sha='a' * 40, family='receiver', passed=True, cases=cases)))
+                with patch.object(matrix, 'source_identity', return_value='a' * 40), \
+                        patch.object(matrix, 'workflow_identity', return_value=rows[0]['workflow']):
+                    if changed:
+                        with self.assertRaisesRegex(ValueError, 'inventory differs'):
+                            matrix.compare_baseline('receiver', receipts, baseline, self.plan)
+                    else:
+                        matrix.compare_baseline('receiver', receipts, baseline, self.plan)
+
     def test_failed_or_cancelled_commands_never_write_a_success_receipt(self):
         import subprocess
         for failure in (subprocess.CalledProcessError(1, 'cargo'), KeyboardInterrupt()):
