@@ -30,7 +30,7 @@ HELPERS = OPS | {'check-docs', 'check-tools', 'check-reports'}
 
 def feedback_tooling(path):
     return path == '.gitignore' or path.startswith(('tools/ci/', 'tools/tests/',
-        '.github/workflows/ci', '.github/actions/rust-setup/'))
+        '.github/workflows/ci', '.github/actions/rust-setup/', '.github/actions/qualify-artifacts/'))
 
 
 def workspace_packages(root=ROOT):

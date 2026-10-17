@@ -299,7 +299,7 @@ class IntegrityTests(unittest.TestCase):
     def test_release_build_produces_every_default_bundle_binary(self):
         # Each CPU candidate must contain every binary its family publishes.
         workflow = (ROOT / '.github/workflows/ci-full.yml').read_text()
-        job = workflow.split('\n  release:\n', 1)[1].split('\n  release-cuda:\n', 1)[0]
+        job = (ROOT / '.github/actions/qualify-artifacts/action.yml').read_text()
         qualification = load('qualification')
         release = load('release')
         for family in ['receiver', 'transparent', 'enhance']:
@@ -325,7 +325,7 @@ class IntegrityTests(unittest.TestCase):
     def test_operations_package_is_published_without_rust(self):
         workflow = (ROOT / '.github/workflows/ci-full.yml').read_text()
         build = workflow.split('\n  build:\n', 1)[1].split('\n  release:\n', 1)[0]
-        release = workflow.split('\n  release:\n', 1)[1].split('\n  release-cuda:\n', 1)[0]
+        release = (ROOT / '.github/actions/qualify-artifacts/action.yml').read_text()
         self.assertIn("if: inputs.family == 'ops'", build)
         self.assertIn('qualification.py assemble --family ops', build)
         self.assertIn("if: inputs.family != 'ops'", build)
