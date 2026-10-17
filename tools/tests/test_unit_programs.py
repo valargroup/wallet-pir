@@ -19,6 +19,12 @@ import test_budget
 
 
 class ProgramTests(unittest.TestCase):
+    def setUp(self):
+        # Fixture program timings must not look like real CI execution.
+        output = patch("sys.stdout", new=io.StringIO())
+        output.start()
+        self.addCleanup(output.stop)
+
     def test_program_timings_identify_success_and_failure(self):
         program = dict(executable='/deps/p', directory='/p', package='p', version='1', args=[])
         for fails in (False, True):

@@ -220,12 +220,12 @@ def changed_paths(base='', head='HEAD', *, local=True, root=ROOT):
 
 
 
-def rust_checks(selected, *, features='', test='', test_target='', offline=False, compile_only=False, unit_jobs=1, before_tests=None):
+def rust_checks(selected, *, features='', test='', test_target='', offline=False, compile_only=False, unit_jobs=1):
     if not selected:
         return
     if not (features or test or test_target):
         from fast_build import execute
-        return execute(selected, offline=offline, compile_only=compile_only, jobs=unit_jobs, before_tests=before_tests)
+        return execute(selected, offline=offline, compile_only=compile_only, jobs=unit_jobs)
     metadata = json.loads(subprocess.check_output(['cargo', 'metadata', '--locked', '--no-deps', '--format-version', '1', *(['--offline'] if offline else [])], cwd=ROOT, **inherited_fds()))
     run(['cargo', 'fmt', '--all', '--check'], stage='format')
     options = ['--locked', '--profile', 'release-fast']
@@ -374,16 +374,13 @@ def main():
     run(['python3', 'tools/ci/workflow_paths.py'], stage='workflow-paths')
     with local_target(ROOT, enabled=bool(selected['packages'])), ThreadPoolExecutor(max_workers=4) as pool:
         futures = []
-        before_tests = None
         if selected['helpers'] and not args.compile_only:
             from helpers import targets
             helper_env = dict(os.environ, OFFLINE='1') if args.offline else os.environ.copy()
             helpers = pool.submit(run, ['make', '-j4', *targets(selected['helpers'])],
                                   env=helper_env, stage='helpers')
             futures.append(helpers)
-            if 'transparent-filter-server' in selected['packages']:
-                before_tests = helpers.result
-        futures.append(pool.submit(rust_checks, selected['packages'], features=args.features, test=args.test, test_target=args.test_target, offline=args.offline, compile_only=args.compile_only, unit_jobs=args.unit_jobs, before_tests=before_tests))
+        futures.append(pool.submit(rust_checks, selected['packages'], features=args.features, test=args.test, test_target=args.test_target, offline=args.offline, compile_only=args.compile_only, unit_jobs=args.unit_jobs))
         errors = []
         for future in futures:
             try:

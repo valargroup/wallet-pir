@@ -80,8 +80,10 @@ setup and teardown inside the case. Each program keeps its package directory and
 targets must contain an enabled, unignored case, and unit exclusions must still
 match discovered tests. Cold cache preparation compiles the same target selection.
 The package-qualified full-geometry/cache, multi-unit preparation, shipped-runtime
-identity matrices, retained-publication rebuild matrices, RPC publication and real
-HTTP retry cases run only in full CI;
+identity matrices, retained-publication rebuild matrices, repeated HTTPS bootstrap
+fault/canonicality/budget matrices, RPC publication and real HTTP retry cases run
+only in full CI. Verified prepared-publication bootstrap over real HTTPS and its
+withdrawal refusal remain fast;
 `tools/ci/slow-tests.json` records the exact names and reasons. Binary unit tests run as well as library targets. For affected packages, fast CI also
 runs the integration targets classified as `fast` in
 [`tools/ci/integration-tests.json`](../tools/ci/integration-tests.json). The remaining
@@ -89,7 +91,10 @@ integration targets, doctests, binary unit tests and all-feature lint run in
 **CI full**, nightly or on request. The aggregate completion check fails if a
 selected job fails or is skipped. This avoids compiling every integration target just
 to exclude its tests at runtime. Affected helper
-checks run concurrently with Rust; selected operations suites run in
+checks overlap both Rust compilation and execution; completing helper checks
+is not a prerequisite to starting native tests. The gate still requires both
+suites to pass. Cargo writers remain sequential in each target; tooling oracles
+use separate fixture targets. Selected operations suites run in
 four parallel make slots. Deployment unittest modules use two separate processes,
 retaining each module's fixtures. Fast deployment feedback selects exact discovered
 case IDs from `tools/ci/deploy-fast-tests.json`: installation and upgrade, lock
