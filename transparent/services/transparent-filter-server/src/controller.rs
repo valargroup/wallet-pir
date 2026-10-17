@@ -1768,17 +1768,12 @@ print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('re
         }
         journal.commit().unwrap();
         let initial = root.path().join("initial");
-        // This case checks publication preparation, linking and failure ordering
-        // with sealed archive and mutable recent shards at a bounded geometry.
-        // Full 32k runtime/HTTP coverage stays in
-        // restored_runtimes_answer_identically_at_deployed_geometries and
-        // wallet_sync::a_wallet_syncs_across_a_geometry_boundary_exactly.
         let options = PublishOptions {
             data_dir: journal_dir.clone(),
             output: initial.clone(),
             previous: None,
             recent_geometry: "decoupled-2k-8k".into(),
-            archive_geometry: Some("decoupled-2k-8k".into()),
+            archive_geometry: Some("decoupled-32k-32k".into()),
             recent_from: Some(2),
             zakura_rpc_url: String::new(),
             zakura_cookie: cookie.clone(),
@@ -1814,7 +1809,7 @@ print(json.dumps({'ok':True,'upstreams':[],'workers':{},'retained_publication':b
             initial_publication: initial.clone(),
             recent_from: 2,
             recent_geometry: "decoupled-2k-8k".into(),
-            archive_geometry: "decoupled-2k-8k".into(),
+            archive_geometry: "decoupled-32k-32k".into(),
             rpc_url: format!("http://{address}"),
             rpc_cookie: cookie,
             fleet_command: hook.clone(),
@@ -2002,7 +1997,7 @@ print(json.dumps({'ok':True,'upstreams':[],'workers':{},'retained_publication':b
         let unwritable = config.publication_root.join("candidate-unwritable");
         // Permission failure is independent of archive size. Publish a real
         // recent-only candidate so this negative case does not rebuild the
-        // archive runtimes already checked above.
+        // large archive runtimes already checked above.
         let mut recent_only = options;
         recent_only.output = unwritable.clone();
         recent_only.archive_geometry = None;
