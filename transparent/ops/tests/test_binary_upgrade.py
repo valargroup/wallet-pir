@@ -330,6 +330,62 @@ class HistoryUpgrade(Harness):
         self.assertEqual(code, 0, lines)
         self.assertEqual(self.fake.probe_unit('coordinator', CONTROLLER)['exe_sha256'], sha256(CTRL_OLD))
 
+    def adapter_request(self, **settings):
+        adapter = self.binary.parent / 'fleet.py'
+        adapter.write_text('#!/usr/bin/python3\nprint("adapter")\n')
+        spec = {'sha256': sha256(adapter.read_bytes()), 'previous_configuration': json.dumps(CONFIG)}
+        spec['configuration'] = json.dumps({**CONFIG, 'fleet_command': binary_upgrade.adapter_path(spec), **settings})
+        self.write_request(lambda request: request.update(staging_adapter=spec), component='controller')
+        return adapter, spec
+
+    def test_controller_updates_adapter_and_rollback_restores_configuration(self):
+        self.assertEqual(self.run_cli('baseline')[0], 0)
+        adapter, spec = self.adapter_request()
+        code, lines = self.run_cli('deploy', '--binary', str(self.controller_binary), '--staging-adapter', str(adapter),
+                                   '--skip-exact-check')
+        self.assertEqual(code, 0, lines)
+        self.assertEqual(self.fake.read('coordinator', CONFIG_PATH), spec['configuration'])
+        self.assertEqual(self.fake.sha256('coordinator', binary_upgrade.adapter_path(spec)), spec['sha256'])
+        self.assertEqual(self.run_cli('status')[0], 0)
+        code, lines = self.run_cli('rollback')
+        self.assertEqual(code, 0, lines)
+        self.assertEqual(self.fake.read('coordinator', CONFIG_PATH), json.dumps(CONFIG))
+        self.assertEqual(self.fake.probe_unit('coordinator', CONTROLLER)['exe_sha256'], sha256(CTRL_OLD))
+        self.assertEqual(self.fake.read('coordinator', SCRIPT), '#!python')
+
+    def test_adapter_cannot_change_publication_settings(self):
+        self.run_cli('baseline')
+        adapter, _ = self.adapter_request(source_sha='changed')
+        code, lines = self.run_cli('deploy', '--binary', str(self.controller_binary), '--staging-adapter', str(adapter),
+                                   '--skip-exact-check')
+        self.assertEqual(code, 1, lines)
+        self.assertTrue(any('may change only controller fleet_command' in line for line in lines), lines)
+        self.assertEqual(self.fake.read('coordinator', CONFIG_PATH), json.dumps(CONFIG))
+        self.assertEqual(self.fake.probe_unit('coordinator', CONTROLLER)['exe_sha256'], sha256(CTRL_OLD))
+
+    def test_failed_controller_adapter_upgrade_restores_previous_configuration(self):
+        self.run_cli('baseline')
+        adapter, _ = self.adapter_request()
+        self.controller_shift = {'phase': 'halted'}
+        code, lines = self.run_cli('deploy', '--binary', str(self.controller_binary), '--staging-adapter', str(adapter),
+                                   '--skip-exact-check')
+        self.assertEqual(code, 1, lines)
+        self.assertEqual(self.fake.read('coordinator', CONFIG_PATH), json.dumps(CONFIG))
+        self.assertEqual(self.fake.probe_unit('coordinator', CONTROLLER)['exe_sha256'], sha256(CTRL_OLD))
+
+    def test_adapter_rejects_wrong_source_bytes_and_existing_corruption(self):
+        self.run_cli('baseline')
+        adapter, spec = self.adapter_request()
+        adapter.write_text('wrong bytes')
+        code, lines = self.run_cli('preflight', '--binary', str(self.controller_binary), '--staging-adapter', str(adapter))
+        self.assertEqual(code, 1, lines)
+        self.assertTrue(any('checksum-bound' in line for line in lines), lines)
+        self.fake.mkdir('coordinator', str(Path(binary_upgrade.adapter_path(spec)).parent), 0o755)
+        self.fake.write('coordinator', binary_upgrade.adapter_path(spec), b'wrong bytes', 0o755)
+        code, lines = self.run_cli('preflight', '--binary', str(self.controller_binary), '--staging-adapter', str(adapter))
+        self.assertEqual(code, 1, lines)
+        self.assertTrue(any('immutable staging adapter path' in line for line in lines), lines)
+
     def test_observer_restart_failure_rolls_back_verified_workers(self):
         self.run_cli('baseline')
         systemctl = self.fake.systemctl
@@ -561,6 +617,39 @@ class DisplayUpgrade(Harness):
         code, lines = self.run_cli('deploy', '--binary', str(self.controller_binary), '--skip-exact-check')
         self.assertEqual(code, 0, lines)
         self.assertEqual(self.fake.probe_unit('coordinator', DISPLAY_CONTROLLER)['exe_sha256'], sha256(CTRL_NEW))
+
+    def test_worker_waits_for_controller_to_resume_publication(self):
+        self.assertEqual(self.run_cli('baseline')[0], 0)
+        shape = self.fake.health_shapes[('coordinator', DISPLAY_CONTROLLER)]
+        recovering = [4]
+
+        def controller_status(ready_, exe):
+            document = shape(ready_, exe)
+            worker = self.fake.probe_unit('gpu', DISPLAY_WORKER)
+            if worker['exe_sha256'] == sha256(NEW) and recovering[0]:
+                recovering[0] -= 1
+                return {**document, 'stalled': True}
+            return document
+
+        self.fake.health_shapes[('coordinator', DISPLAY_CONTROLLER)] = controller_status
+        code, lines = self.run_cli('deploy', '--binary', str(self.binary), '--skip-exact-check')
+        self.assertEqual(code, 0, lines)
+        self.assertEqual(recovering[0], 0)
+        self.assertEqual(self.fake.probe_unit('gpu', DISPLAY_WORKER)['exe_sha256'], sha256(NEW))
+
+    def test_worker_that_leaves_controller_stalled_rolls_back(self):
+        self.assertEqual(self.run_cli('baseline')[0], 0)
+        shape = self.fake.health_shapes[('coordinator', DISPLAY_CONTROLLER)]
+
+        def controller_status(ready_, exe):
+            worker = self.fake.probe_unit('gpu', DISPLAY_WORKER)
+            return {**shape(ready_, exe), 'stalled': worker['exe_sha256'] == sha256(NEW)}
+
+        self.fake.health_shapes[('coordinator', DISPLAY_CONTROLLER)] = controller_status
+        code, lines = self.run_cli('deploy', '--binary', str(self.binary), '--skip-exact-check')
+        self.assertEqual(code, 1, lines)
+        self.assertTrue(any('controller did not resume publication' in line for line in lines), lines)
+        self.assertEqual(self.fake.probe_unit('gpu', DISPLAY_WORKER)['exe_sha256'], sha256(OLD))
 
     def test_display_controller_upgrade_keeps_run_arguments(self):
         self.run_cli('baseline')

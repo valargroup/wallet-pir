@@ -195,6 +195,7 @@ def register(commands):
                                       help='worker or controller binary upgrade of the current v12 history or 4k8 display fleet')
         command.add_argument('--request', required=True)
         command.add_argument('--request-sha256', required=True)
+        command.add_argument('--staging-adapter', help='checksum-bound History staging adapter for an explicit controller update')
         if name in ('preflight', 'deploy'):
             command.add_argument('--binary', help="local binary of the request's component; omit when already staged")
         if name == 'preflight':
@@ -476,6 +477,7 @@ def binary_upgrade(args, executor, out, **options):
     targets, component = upgrade.component(executor)
     deployer = module.UpgradeDeployer(upgrade, action, component, inventory, executor, args.state_dir, args.baseline,
                                       out=out, **options)
+    deployer.staging_adapter = getattr(args, 'staging_adapter', None)
     # The baseline records both components, so either transaction is covered.
     deployer.targets = upgrade.workers + [upgrade.controller] if action == 'baseline' else targets
     workers = upgrade.workers
