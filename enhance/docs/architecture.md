@@ -294,6 +294,15 @@ memory but increases the number of units read and summed for every hint rebuild.
 The 8K cap retains that publication and evaluation tradeoff; it does not qualify
 an additional sealed shard for placement.
 
+For a canonical plain domain with one aligned unit, the worker validates the
+unit's complete MPH1 shape, digest and clean EOF, then streams its pinned
+publication directly. The unit's setup offset and output parameters must match
+the domain; unallocated domain rows are prescribed zero padding. This avoids
+decoding, re-encoding and persisting an identical combined hint. Other domains
+use the existing combiner. Streaming still verifies the pinned file, including
+after retirement unlinks it, and each peer still builds and supplies its own
+material for comparison. Status uses its separate hint encoding and owner.
+
 ## Confirmation and recovery
 
 A shard is growing, full but provisional, or sealed. Sealing requires 1,000

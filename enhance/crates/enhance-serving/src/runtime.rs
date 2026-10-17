@@ -255,6 +255,54 @@ impl Evaluation {
         }
         combined.ok_or_else(|| "empty query domain".into())
     }
+
+    /// Borrow the existing MPH1 publication only when the generic combiner is
+    /// the identity operation. Construction by Engine binds the layout, setup
+    /// slice and padded rows; this check also excludes partial/composed domains
+    /// and incompatible output parameters. Unallocated domain rows are zero.
+    pub(crate) fn verified_hint_artifact(
+        &self,
+    ) -> Result<Option<crate::artifact::PublicationArtifact>, String> {
+        let ([unit], [identity], [spec]) = (
+            self.units.as_slice(),
+            self.plan.units.as_slice(),
+            self.plan.shard.units.as_slice(),
+        ) else {
+            return Ok(None);
+        };
+        let params = parameters(self.plan.shard.logical_rows)?;
+        let runtime = unit.runtime();
+        let local = runtime.server.params();
+        let layout = DatabaseLayout {
+            shard_rows: identity.allocated_rows as usize,
+            ..ENHANCE_LAYOUT
+        };
+        let (ring, expected) = crate::ipir::shard_parameters(&layout).map_err(|e| e.to_string())?;
+        if self.plan.validate().is_err()
+            || self.plan.shard.composed()
+            || spec.local_row_start != 0
+            || identity.allocated_rows > self.plan.shard.logical_rows
+            || !layout.shard_rows.is_multiple_of(rlwe().d)
+            || runtime.query_row_start != 0
+            || runtime.shard_id != self.plan.shard.id
+            || runtime.rows_sha256 != identity.content_sha256
+            || ring.d != rlwe().d
+            || ring.q != rlwe().q
+            || local.db_rows != expected.db_rows
+            || local.db_cols != expected.db_cols
+            || local.p != expected.p
+            || local.db_cols != params.db_cols
+            || local.p != params.p
+        {
+            return Ok(None);
+        }
+        // The same scanner as hint(), without allocating decoded matrices.
+        // Includes the pinned reader's digest, exact length and clean EOF.
+        unit.publication()
+            .validate(params.db_cols / rlwe().d, rlwe().d)
+            .map_err(|e| e.to_string())?;
+        Ok(Some(unit.publication().clone()))
+    }
 }
 
 #[cfg(not(feature = "native-reinspiring"))]
@@ -769,6 +817,95 @@ mod tests {
         assert!(unit_rows(shard, &short, &mut records).is_err());
     }
 
+    #[test]
+    fn hint_artifact_excludes_partial_misaligned_and_status_layouts() {
+        let dir = tempfile::tempdir().unwrap();
+        let coverage = Lifecycle::default()
+            .coverage(67, Geometry::default())
+            .unwrap();
+        let domain = plan(coverage.shards[0].clone(), records).unwrap();
+        let eval = Engine::new(dir.path())
+            .prepare(domain.clone(), records)
+            .unwrap()
+            .0;
+        assert!(eval.verified_hint_artifact().unwrap().is_some());
+        let mut partial = domain.clone();
+        partial.shard = Lifecycle::default()
+            .coverage(8192 * RECORDS_PER_ROW as u64 + 17, Geometry::default())
+            .unwrap()
+            .shards[0]
+            .clone();
+        for plan in [partial, {
+            let mut misaligned = domain.clone();
+            misaligned.units[0].local_row_start = 1;
+            misaligned.shard.units[0].local_row_start = 1;
+            misaligned
+        }] {
+            let fallback = Evaluation {
+                plan,
+                units: eval.units.clone(),
+            };
+            assert!(fallback.verified_hint_artifact().unwrap().is_none());
+            // Preserve the generic partial contribution, with no new rewrite.
+            assert_eq!(fallback.hint().unwrap(), eval.hint().unwrap());
+        }
+
+        // A real persisted unit with the Status row layout has a different
+        // output width, even though its degree and plaintext profile agree.
+        let layout = DatabaseLayout {
+            record_bytes: enhance_pir::status::ROW_BYTES,
+            records_per_row: 1,
+            shard_rows: domain.units[0].allocated_rows as usize,
+            pir_profile: ipir_sp::SimplePirProfile::P16Q48,
+        };
+        let (_, params) = crate::ipir::shard_parameters(&layout).unwrap();
+        #[cfg(not(feature = "native-reinspiring"))]
+        let setup = ipir_sp::IPIRClient::from_profile(
+            params.num_items,
+            params.item_size_bits,
+            layout.pir_profile,
+        )
+        .unwrap()
+        .generate_public_query_setup_simplepir_from_seed(setup_seed(domain.shard.id))
+        .polys()
+        .to_vec();
+        #[cfg(feature = "native-reinspiring")]
+        let setup = enhance_pir::native::public_query_masks(
+            setup_seed(domain.shard.id),
+            params.db_rows,
+            params.db_cols,
+        );
+        let status_rows = vec![0; layout.shard_bytes()];
+        let mut status_domain = domain;
+        status_domain.units[0].content_sha256 = hex::encode(Sha256::digest(&status_rows));
+        let status = PreparedShard::build(
+            &layout,
+            status_domain.shard.id,
+            0,
+            status_domain.units[0].content_sha256.clone(),
+            &status_rows,
+            rlwe(),
+            &setup,
+        )
+        .unwrap()
+        .persist(
+            &dir.path().join("status-layout"),
+            DatabaseId::Enhance,
+            &layout,
+            rlwe(),
+        )
+        .unwrap();
+        let unsupported = Evaluation {
+            plan: status_domain,
+            units: vec![Arc::new(status)],
+        };
+        assert!(unsupported.verified_hint_artifact().unwrap().is_none());
+        assert!(
+            unsupported.hint().is_err(),
+            "generic shape refusal is unchanged"
+        );
+    }
+
     fn round_trip_and_restart(backend: MatvecConfig) {
         let dir = tempfile::tempdir().unwrap();
         let coverage = Lifecycle::default()
@@ -1057,6 +1194,7 @@ mod tests {
         );
         let mut engine = Engine::new(directory.path());
         let evaluation = engine.prepare(domain, records).unwrap().0;
+        assert!(evaluation.verified_hint_artifact().unwrap().is_none());
         let mut rows = records(0, shard.records as usize).unwrap();
         rows.resize(16384 * ENHANCE_LAYOUT.row_bytes(), 0);
         // Native masks are expanded once at full size for every logical size.
