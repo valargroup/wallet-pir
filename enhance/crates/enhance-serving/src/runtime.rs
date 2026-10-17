@@ -14,15 +14,13 @@ use enhance_pir::types::{ITEM_SIZE_BITS, RECORDS_PER_ROW, RECORD_BYTES};
 use inspiring::RlweParams;
 #[cfg(not(feature = "native-reinspiring"))]
 use inspiring::{QueryPackPreprocessed, TopKeyImages};
-#[cfg(not(feature = "native-reinspiring"))]
-use ipir_sp::serialize::{deserialize_packing_keys, serialized_packing_keys_len};
 use ipir_sp::server::CrsBlock;
 #[cfg(not(feature = "native-reinspiring"))]
-use ipir_sp::server::{
-    build_pack_preprocessed_blocks, pack_intermediate_blocks, published_c1_rows,
-};
+use ipir_sp::server::{build_pack_preprocessed_blocks, published_c1_rows};
 #[cfg(not(feature = "native-reinspiring"))]
 use ipir_sp::YpirSchemeParams;
+#[cfg(not(feature = "native-reinspiring"))]
+use pir_runtime::packing::PackingKeys;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -48,13 +46,9 @@ pub fn modulus() -> u64 {
 pub fn rlwe() -> &'static RlweParams {
     static RLWE: OnceLock<RlweParams> = OnceLock::new();
     RLWE.get_or_init(|| {
-        ipir_sp::params_for_simplepir_profile(
-            32768,
-            ITEM_SIZE_BITS,
-            ipir_sp::SimplePirProfile::P16Q48,
-        )
-        .expect("pinned profile")
-        .0
+        pir_runtime::params::p16q48(32768, ITEM_SIZE_BITS)
+            .expect("pinned profile")
+            .0
     })
 }
 
@@ -385,13 +379,13 @@ impl Packing {
         {
             return Err("query session mismatch".into());
         }
-        let packing_len = serialized_packing_keys_len(rlwe());
+        let packing_len = PackingKeys::encoded_len(rlwe());
         let switched_len = (self.params.db_rows * self.params.query_bits).div_ceil(8);
         if body.len() != HEADER_BYTES + packing_len + switched_len {
             return Err("query framing length mismatch".into());
         }
         // Validate packing keys before sending any evaluation work.
-        deserialize_packing_keys(rlwe(), &body[HEADER_BYTES..HEADER_BYTES + packing_len])
+        PackingKeys::decode(rlwe(), &body[HEADER_BYTES..HEADER_BYTES + packing_len])
             .map_err(|e| e.to_string())?;
         deserialize_first_dim_query(rlwe(), &self.params, &body[HEADER_BYTES + packing_len..])
             .map_err(|e| e.to_string())
@@ -408,25 +402,26 @@ impl Packing {
         {
             return Err("invalid worker intermediate".into());
         }
-        let len = serialized_packing_keys_len(rlwe());
-        let keys = deserialize_packing_keys(rlwe(), &body[HEADER_BYTES..HEADER_BYTES + len])
+        let len = PackingKeys::encoded_len(rlwe());
+        let keys = PackingKeys::decode(rlwe(), &body[HEADER_BYTES..HEADER_BYTES + len])
             .map_err(|e| e.to_string())?;
+        let q_prime_1 = self.params.q_prime_1;
         let packed = if let Some(mapped) = &self.mapped {
-            mapped.pack(intermediate, &keys)
+            mapped
+                .pack(intermediate, keys.upstream())
+                .map(|packed| pir_runtime::packing::response_bodies(&packed, q_prime_1))
         } else {
-            pack_intermediate_blocks(
+            pir_runtime::packing::pack(
                 intermediate,
                 &keys,
                 self.top.as_ref().expect("owned packing top images"),
                 &self.preprocessed,
+                q_prime_1,
             )
         }
         .map_err(|e| e.to_string())?;
         let mut response = binding.encode();
-        response.extend(ipir_sp::modulus_switch::serialize_rlwe_response_bodies(
-            &packed,
-            self.params.q_prime_1,
-        ));
+        response.extend(packed);
         Ok(response)
     }
 }
@@ -709,7 +704,7 @@ mod tests {
             anchor_hash: [5; 32],
         };
         let q = rlwe().q;
-        let keys: Vec<u64> = stream(b"keys", serialized_packing_keys_len(rlwe()) * 2)
+        let keys: Vec<u64> = stream(b"keys", PackingKeys::encoded_len(rlwe()) * 2)
             .chunks_exact(8)
             .map(|c| u64::from_le_bytes(c.try_into().unwrap()) % q)
             .collect();
@@ -718,7 +713,7 @@ mod tests {
             &keys,
             ipir_sp::modulus_switch::modulus_bits(q),
         );
-        body.extend(&keys[..serialized_packing_keys_len(rlwe())]);
+        body.extend(&keys[..PackingKeys::encoded_len(rlwe())]);
         body.extend(stream(
             b"query",
             (pack.params.db_rows * pack.params.query_bits).div_ceil(8),

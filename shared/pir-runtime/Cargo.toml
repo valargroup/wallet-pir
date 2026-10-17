@@ -1,0 +1,11 @@
+[package]
+name = "pir-runtime"
+version = "0.1.0"
+edition = "2021"
+description = "Raw PIR parameter, evaluation and packing integration shared by the Enhance, Status and Transparent serving libraries"
+license = "MIT"
+repository = "https://github.com/valargroup/wallet-pir"
+
+[dependencies]
+inspiring = "=0.1.0-rc.3"
+ipir-sp = "=0.1.0-rc.7"

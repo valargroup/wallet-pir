@@ -6,31 +6,21 @@ use enhance_pir::status::*;
 use inspiring::QueryPackPreprocessed;
 use inspiring::TopKeyImages;
 #[cfg(not(feature = "native-reinspiring"))]
-use ipir_sp::{
-    server::{pack_intermediate_blocks, published_c1_rows},
-    IPIRClient,
-};
+use ipir_sp::{server::published_c1_rows, IPIRClient};
 use ipir_sp::{
     server::{CrsBlock, MatvecBackend},
     IPIRServer, ProductionSimplePirParams, SimplePirProfile,
 };
+#[cfg(not(feature = "native-reinspiring"))]
+use pir_runtime::packing::PackingKeys;
 use rayon::prelude::*;
 use sha2::{Digest, Sha256};
 #[cfg(not(feature = "native-reinspiring"))]
 use std::sync::OnceLock;
 use std::{sync::Arc, time::Instant};
 
-/// Ciphertext modulus of the selected Status profile.
-fn modulus() -> u64 {
-    #[cfg(feature = "native-reinspiring")]
-    {
-        enhance_pir::native::Q
-    }
-    #[cfg(not(feature = "native-reinspiring"))]
-    {
-        profile().rlwe().q
-    }
-}
+/// Ciphertext modulus of the selected Status profile, which is Enhance's.
+use enhance_serving::runtime::modulus;
 
 /// Router-side packing material for one d-column hint block.
 #[cfg(not(feature = "native-reinspiring"))]
@@ -496,18 +486,15 @@ impl Generation {
     #[cfg(not(feature = "native-reinspiring"))]
     pub fn coefficients(&self, bytes: &[u8]) -> Result<Vec<u64>, Error> {
         let p = profile();
-        let keys_len = ipir_sp::serialize::serialized_packing_keys_len(p.rlwe());
+        let keys_len = PackingKeys::encoded_len(p.rlwe());
         if bytes.len() != HEADER_BYTES + keys_len + ROWS * 48 / 8
             || &bytes[..4] != QUERY_MAGIC
             || bytes[4..36] != self.manifest.id()
         {
             return Err(Error::Malformed);
         }
-        ipir_sp::serialize::deserialize_packing_keys(
-            p.rlwe(),
-            &bytes[HEADER_BYTES..HEADER_BYTES + keys_len],
-        )
-        .map_err(|_| Error::Malformed)?;
+        PackingKeys::decode(p.rlwe(), &bytes[HEADER_BYTES..HEADER_BYTES + keys_len])
+            .map_err(|_| Error::Malformed)?;
         Ok(ipir_sp::IPIRSimpleQuery::from_switched_bytes(
             &bytes[HEADER_BYTES + keys_len..],
             ROWS,
@@ -532,9 +519,8 @@ impl Generation {
             #[cfg(not(feature = "native-reinspiring"))]
             let partial = unit.db.try_multiply_query(p.rlwe(), query);
             let partial = partial.map_err(|_| Error::Unavailable)?;
-            for (a, b) in out.iter_mut().zip(partial) {
-                *a = ((u128::from(*a) + u128::from(b)) % u128::from(modulus())) as u64;
-            }
+            pir_runtime::evaluation::add_intermediate_assign_mod(&mut out, &partial, modulus())
+                .map_err(|_| Error::Pir)?;
         }
         Ok(out)
     }
@@ -588,24 +574,20 @@ impl Generation {
         if values.len() != p.ypir().db_cols || values.iter().any(|v| *v >= p.rlwe().q) {
             return Err(Error::Malformed);
         }
-        let len = ipir_sp::serialize::serialized_packing_keys_len(p.rlwe());
-        let keys = ipir_sp::serialize::deserialize_packing_keys(
-            p.rlwe(),
-            &body[HEADER_BYTES..HEADER_BYTES + len],
-        )
-        .map_err(|_| Error::Malformed)?;
-        let ciphertexts = pack_intermediate_blocks(
-            values,
-            &keys,
-            self.top.as_deref().ok_or(Error::Unavailable)?,
-            &self.packing,
-        )
-        .map_err(|_| Error::Pir)?;
+        let len = PackingKeys::encoded_len(p.rlwe());
+        let keys = PackingKeys::decode(p.rlwe(), &body[HEADER_BYTES..HEADER_BYTES + len])
+            .map_err(|_| Error::Malformed)?;
         let mut response = body[..HEADER_BYTES].to_vec();
-        response.extend(ipir_sp::modulus_switch::serialize_rlwe_response_bodies(
-            &ciphertexts,
-            p.ypir().q_prime_1,
-        ));
+        response.extend(
+            pir_runtime::packing::pack(
+                values,
+                &keys,
+                self.top.as_deref().ok_or(Error::Unavailable)?,
+                &self.packing,
+                p.ypir().q_prime_1,
+            )
+            .map_err(|_| Error::Pir)?,
+        );
         Ok(response)
     }
     /// Differential oracle: compare composed hints with upstream full-database preprocessing.

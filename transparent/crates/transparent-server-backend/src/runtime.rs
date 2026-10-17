@@ -96,12 +96,7 @@ pub(crate) fn database_server(
 /// dithered query; the 49 here only keeps the shape, and with it every runtime
 /// disk-cache key, what it was before dithered queries.
 pub fn transport_params(rows: u64, row_bytes: u32) -> Result<YpirSchemeParams, String> {
-    let (_, mut params) = ipir_sp::params_for_simplepir_profile(
-        rows,
-        row_bytes as u64 * 8,
-        ipir_sp::SimplePirProfile::P16Q48,
-    )
-    .map_err(|error| error.to_string())?;
+    let (_, mut params) = pir_runtime::params::p16q48(rows, row_bytes as u64 * 8)?;
     params.query_bits = native::QUERY_BITS;
     params.q_prime_1 = 1 << native::RESPONSE_BITS;
     Ok(params)

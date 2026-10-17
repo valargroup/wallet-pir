@@ -951,6 +951,7 @@ dependencies = [
  "libc",
  "memmap2",
  "pir-control",
+ "pir-runtime",
  "prometheus",
  "rand 0.8.5",
  "reinspiring",
@@ -2243,6 +2244,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "pir-runtime"
+version = "0.1.0"
+dependencies = [
+ "inspiring",
+ "ipir-sp",
+]
+
+[[package]]
 name = "pkcs8"
 version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3208,6 +3217,7 @@ dependencies = [
  "ipir-sp",
  "libc",
  "pir-control",
+ "pir-runtime",
  "prometheus",
  "rand 0.8.5",
  "rayon",
@@ -3733,6 +3743,7 @@ dependencies = [
  "ipir-sp",
  "memmap2",
  "pir-observability",
+ "pir-runtime",
  "rayon",
  "reinspiring",
  "rustix 1.1.4",

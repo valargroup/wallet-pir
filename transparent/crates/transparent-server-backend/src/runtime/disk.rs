@@ -210,31 +210,14 @@ impl DiskCache {
         reader: &mut impl Read,
     ) -> io::Result<ipir_sp::server::IPIRServer<u16>> {
         let profile = &shared.profile;
-        let mut error = None;
-        let n = profile.rows * profile.cols;
-        // The constructor consumes exactly n logical column-major coefficients
-        // and recreates padding and the locally selected CPU kernel. I/O failures
-        // yield placeholders to satisfy its iterator contract, then fail below.
-        // Every u16 is a canonical plaintext at p = 2^16.
-        let mut buffer = [0u8; 8192];
-        let coefficients = (0..n).map(|index| {
-            let offset = index % (buffer.len() / 2);
-            if offset == 0 && error.is_none() {
-                let count = (n - index).min(buffer.len() / 2);
-                if let Err(e) = reader.read_exact(&mut buffer[..count * 2]) {
-                    error = Some(e);
-                }
-            }
-            if error.is_some() {
-                return 0;
-            }
-            u16::from_le_bytes([buffer[offset * 2], buffer[offset * 2 + 1]])
-        });
-        let server = super::database_server(shared, coefficients, true);
-        match error {
-            Some(error) => Err(error),
-            None => Ok(server),
-        }
+        // The constructor consumes exactly the logical column-major
+        // coefficients and recreates padding and the locally selected CPU
+        // kernel. Every u16 is a canonical plaintext at p = 2^16.
+        pir_runtime::evaluation::build_from_le_u16(
+            reader,
+            profile.rows * profile.cols,
+            |coefficients| super::database_server(shared, coefficients, true),
+        )
     }
 
     /// The cross-process lock bounds concurrent writes. No active/rollback entry
