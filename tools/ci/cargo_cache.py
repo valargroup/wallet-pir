@@ -38,6 +38,8 @@ import urllib.parse
 import urllib.request
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / 'tools/ci'))
+import workspace_cache  # noqa: E402
 sys.path.insert(0, str(ROOT / 'shared/dev'))
 from target_lease import build_flags  # noqa: E402
 
@@ -455,9 +457,14 @@ def prepare(args, env):
         mode = 'lookup' if args.lookup_only else 'restore'
         key = hosted_key(record)
         # rust-cache appends the runner OS and Node architecture to `shared-key`.
-        # Fast keys have rust-cache's own manifest/environment suffixes. Its
-        # exact restored ref is not exposed; do not guess it from candidate refs.
+        # Fast snapshots have a source-tree suffix below. A fallback's exact
+        # restored ref is not exposed; do not guess it from candidate refs.
         refs = None if args.lane == 'fast' else cache_refs(f'{PREFIX}-{key}-Linux-x64', env)
+        workspace_prefix = None
+        if args.lane == 'fast':
+            tree = subprocess.check_output(['git', 'rev-parse', 'HEAD^{tree}'], cwd=ROOT, text=True).strip()
+            workspace_prefix = f'v2-wallet-pir-workspace-{record["compatibility"]}-'
+            key = f'{workspace_prefix}{record["lock"]}-{tree}'
     directory = state_dir(env)
     directory.mkdir(parents=True, exist_ok=True)
     stages = directory / 'stages.jsonl'
@@ -470,12 +477,17 @@ def prepare(args, env):
     if env.get('GITHUB_OUTPUT') and key:
         with open(env['GITHUB_OUTPUT'], 'a') as out:
             out.write(f'shared-key={key}\n')
+            if args.lane == 'fast':
+                out.write(f'workspace-key={key}\nworkspace-prefix={workspace_prefix}\n')
 
 
 def restored(args, env):
     path = state_dir(env) / f'{args.lane}.json'
     state = json.loads(path.read_text())
     state['restored'] = time.time()
+    if args.lane == 'fast' and state['mode'] != 'persistent':
+        workspace_cache.restore(ROOT, Path(state['target']), state['record']['compatibility'],
+                                state_dir(env) / 'workspace-pending')
     state['before'] = snapshot(state['target'])
     state['status'] = restore_status(state['mode'], args.cache_hit, state['refs_before_restore'],
                                      state['ref'], existed=state['existed'], populated=bool(state['before']))
@@ -509,6 +521,9 @@ def report(env):
     for path in lanes:
         state = json.loads(path.read_text())
         before = state.get('before')
+        pending = directory / 'workspace-pending'
+        if state['record']['lane'] == 'fast' and state['mode'] != 'persistent' and pending.is_file():
+            workspace_cache.seal(ROOT, Path(state['target']), state['record']['compatibility'], pending)
         result = {
             **{key: state['record'][key] for key in ('lane', 'scope', 'identity', 'toolchain', 'profile')},
             'key': state['key'], 'restore': state.get('status', 'not-recorded'),
