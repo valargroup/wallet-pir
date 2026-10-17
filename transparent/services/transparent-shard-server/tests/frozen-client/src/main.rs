@@ -24,7 +24,8 @@ impl HttpExchange for Exchange {
             .get("retry-after")
             .and_then(|s| s.to_str().ok())
             .map(str::to_owned);
-        let limit = if status == 200 {
+        let success = (200..300).contains(&status);
+        let limit = if success {
             request.limit
         } else {
             request.error_limit
@@ -32,10 +33,10 @@ impl HttpExchange for Exchange {
         let mut body = Vec::new();
         response
             .by_ref()
-            .take(limit as u64 + 1)
+            .take(limit as u64 + u64::from(success))
             .read_to_end(&mut body)
             .map_err(|_| HttpFailure::Unreachable)?;
-        if body.len() > limit {
+        if success && body.len() > limit {
             return Err(HttpFailure::TooLarge);
         }
         Ok(HttpReply {

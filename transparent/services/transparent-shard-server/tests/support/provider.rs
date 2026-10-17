@@ -13,11 +13,14 @@ use transparent_shard_server::{
 };
 
 fn fixture(dir: &std::path::Path, archive_geometry: &'static Geometry) -> ShardMap {
+    fixture_in(dir, archive_geometry, false)
+}
+fn fixture_in(dir: &std::path::Path, archive_geometry: &'static Geometry, paged: bool) -> ShardMap {
     let mut shards = Vec::new();
     let mut parent = String::new();
     for id in 0..2 {
         let start = FIRST + id * 2;
-        let events = if id == 0 {
+        let mut events = if id == 0 {
             vec![(
                 script(1),
                 TransparentEvent::Receive(ReceiveEvent {
@@ -58,6 +61,32 @@ fn fixture(dir: &std::path::Path, archive_geometry: &'static Geometry) -> ShardM
                 ),
             ]
         };
+        if id == 0 && paged {
+            events.push((
+                script(1),
+                TransparentEvent::Receive(ReceiveEvent {
+                    metadata: None,
+                    height: (FIRST + 1) as u32,
+                    txid: Txid([4; 32]),
+                    transaction_index: 0,
+                    output_index: 0,
+                    value: 7,
+                    coinbase: false,
+                }),
+            ));
+            events.push((
+                script(1),
+                TransparentEvent::Spend(SpendEvent {
+                    metadata: None,
+                    height: (FIRST + 1) as u32,
+                    spending_txid: Txid([5; 32]),
+                    transaction_index: 1,
+                    input_index: 0,
+                    spent_txid: Txid([4; 32]),
+                    spent_output_index: 0,
+                }),
+            ));
+        }
         let (_, entry) = revision::write(
             dir,
             &revision::Revision {
@@ -168,11 +197,14 @@ impl Server {
     }
 }
 async fn serve(state: ServiceState) -> (String, Server) {
+    serve_app(router(state)).await
+}
+async fn serve_app(app: axum::Router) -> (String, Server) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let (stop, stopped) = tokio::sync::oneshot::channel();
     let task = tokio::spawn(async move {
-        axum::serve(listener, router(state))
+        axum::serve(listener, app)
             .with_graceful_shutdown(async {
                 let _ = stopped.await;
             })
@@ -207,7 +239,7 @@ fn terminal(dir: &std::path::Path, map: &ShardMap) -> ServiceState {
     )
     .unwrap()
 }
-async fn frozen(origin: String, tag: u32, birthday: u64) -> serde_json::Value {
+async fn frozen_output(origin: String, tag: u32, birthday: u64) -> std::process::Output {
     let binary = std::env::var("WALLET_PIR_FROZEN_CLIENT")
         .expect("build the isolated frozen client and set WALLET_PIR_FROZEN_CLIENT");
     let script = hex::encode(script(tag).as_slice());
@@ -216,6 +248,10 @@ async fn frozen(origin: String, tag: u32, birthday: u64) -> serde_json::Value {
         .output()
         .await
         .unwrap();
+    output
+}
+async fn frozen(origin: String, tag: u32, birthday: u64) -> serde_json::Value {
+    let output = frozen_output(origin, tag, birthday).await;
     assert!(
         output.status.success(),
         "frozen client: {}",
@@ -262,11 +298,36 @@ async fn distinct_archive_geometry_is_declared_without_archive_runtime_or_reacha
 #[ignore = "explicit frozen released391 process qualification; build isolated harness first"]
 async fn released391_recovers_archive_and_recent_then_recent_during_archive_outage() {
     let dir = tempfile::tempdir().unwrap();
-    let map = fixture(dir.path(), &DECOUPLED_2K_8K);
+    let map = fixture_in(dir.path(), &DECOUPLED_2K_8K, true);
     let terminal = terminal(dir.path(), &map);
     terminal.spawn_prewarm().await.unwrap();
     let archive_metrics = terminal.metrics().clone();
-    let (archive, archive_server) = serve(terminal).await;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let corrupt = Arc::new(AtomicBool::new(false));
+    let corruption = corrupt.clone();
+    let app = router(terminal).layer(axum::middleware::from_fn(
+        move |request: axum::extract::Request, next: axum::middleware::Next| {
+            let corrupt = corruption.load(Ordering::SeqCst);
+            async move {
+                let query = request.uri().path().contains("/query/");
+                let mut response = next.run(request).await;
+                if query && corrupt && response.status().is_success() {
+                    let mut bytes = axum::body::to_bytes(
+                        std::mem::replace(response.body_mut(), axum::body::Body::empty()),
+                        1 << 20,
+                    )
+                    .await
+                    .unwrap()
+                    .to_vec();
+                    bytes[0] ^= 1;
+                    response.headers_mut().remove("content-length");
+                    *response.body_mut() = axum::body::Body::from(bytes);
+                }
+                response
+            }
+        },
+    ));
+    let (archive, archive_server) = serve_app(app).await;
     let state = recent(dir.path(), &map, Archive::new(&archive, vec![]).unwrap());
     let (origin, server) = serve(state).await;
     let recovered = frozen(origin.clone(), 1, FIRST).await;
@@ -274,13 +335,28 @@ async fn released391_recovers_archive_and_recent_then_recent_during_archive_outa
     assert_eq!(
         recovered,
         serde_json::json!({"covered_through":FIRST+3,"matched_shards":[0,1],"utxos":[],"unresolved":0,
-        "spends":[{"spent_txid":"01".repeat(32),"spent_index":0,"spending_txid":"02".repeat(32),"input_index":0,"height":FIRST+2,"value":123456,"script":hex::encode(script(1).as_slice())}],
-        "history":[{"txid":"01".repeat(32),"height":FIRST,"received":123456,"spent":0},{"txid":"02".repeat(32),"height":FIRST+2,"received":0,"spent":123456}]})
+        "spends":[{"spent_txid":"04".repeat(32),"spent_index":0,"spending_txid":"05".repeat(32),"input_index":0,"height":FIRST+1,"value":7,"script":hex::encode(script(1).as_slice())},
+        {"spent_txid":"01".repeat(32),"spent_index":0,"spending_txid":"02".repeat(32),"input_index":0,"height":FIRST+2,"value":123456,"script":hex::encode(script(1).as_slice())}],
+        "history":[{"txid":"01".repeat(32),"height":FIRST,"received":123456,"spent":0},
+        {"txid":"04".repeat(32),"height":FIRST+1,"received":7,"spent":0},{"txid":"05".repeat(32),"height":FIRST+1,"received":0,"spent":7},
+        {"txid":"02".repeat(32),"height":FIRST+2,"received":0,"spent":123456}]})
     );
     assert_eq!(
         transparent_shard_server::metrics::Metrics::get(&archive_metrics.queries),
-        2,
+        3,
         "recent execution must remain local"
+    );
+    corrupt.store(true, Ordering::SeqCst);
+    let before = transparent_shard_server::metrics::Metrics::get(&archive_metrics.queries);
+    let failed = frozen_output(origin.clone(), 1, FIRST).await;
+    assert!(
+        !failed.status.success(),
+        "original released client must refuse an uncertain answer"
+    );
+    assert_eq!(
+        transparent_shard_server::metrics::Metrics::get(&archive_metrics.queries),
+        before + 1,
+        "original released client must not replay the uncertain submission"
     );
     archive_server.stop().await;
     let recent = frozen(origin.clone(), 2, FIRST + 2).await;
@@ -432,16 +508,11 @@ async fn archive_readiness_and_setup_are_checked_over_real_http() {
     for fault in 5..=7 {
         mode.store(fault, Ordering::SeqCst);
         let before = transparent_shard_server::metrics::Metrics::get(&archive_metrics.queries);
-        assert_eq!(
-            client
-                .post(&query)
-                .body(body.clone())
-                .send()
-                .await
-                .unwrap()
-                .status(),
-            503,
-            "response fault {fault}"
+        let failed = client.post(&query).body(body.clone()).send().await.unwrap();
+        assert_eq!(failed.status(), 503, "response fault {fault}");
+        assert!(
+            failed.headers().get("retry-after").is_none(),
+            "uncertain answers must not invite replay"
         );
         assert_eq!(
             transparent_shard_server::metrics::Metrics::get(&archive_metrics.queries),

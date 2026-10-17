@@ -186,9 +186,9 @@ and live owner check precede listener binding. Startup source failure refuses to
 listen; restart retries through the operator's normal process supervisor. A saved
 predecessor can recover through fresh exact-anchor checks while a newer candidate
 fails to download; the saved pointer alone grants no authority. After
-startup, synchronization runs independently of wallet requests. This is a recent
-worker, **not a complete history provider**: the accounting-only archive row does
-not qualify a route. PR3 still owns complete-history composition.
+startup, synchronization runs independently of wallet requests. Without the
+fixed archive option below, this remains a recent worker, **not a complete history
+provider**: the accounting-only archive row does not qualify a route.
 
 The manager holds the same exclusive directory lock as bootstrap. Its serving
 owner retains that lock across cancellation and blocking activation work, so a
@@ -322,8 +322,10 @@ Forwarding uses the existing admission/body budget and deadlines. Setup and
 query responses retain the admitted snapshot/resources through transport drop;
 forwarded answer buffers reserve shared work memory. A transport failure after
 query submission never causes another encrypted submission. Explicit upstream
-refusals retain their existing status and retry delay. Failed qualification
-returns 503; it never returns successful empty history or performs public lookup.
+refusals retain their existing status and retry delay. Failed qualification or an
+uncertain/invalid answer returns the existing non-capacity 503 without a retry
+delay, so the released client does not replay an uncertain encrypted query. It
+never returns successful empty history or performs public lookup.
 Independent valid recent operations do not consult the archive and remain
 available during its outage. `/v1/ready` describes local readiness and separately
 identifies forwarding with `archive_forwarding`; it does not attest complete

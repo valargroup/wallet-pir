@@ -1,6 +1,9 @@
 //! One trusted terminal archive. No wallet destination, redirect, retry or fallback.
 use crate::{
-    request::RequestError, runtime::SharedParams, service::ServiceState, shardset::TableRef,
+    request::{json, RequestError},
+    runtime::SharedParams,
+    service::ServiceState,
+    shardset::TableRef,
 };
 use axum::{
     extract::Request,
@@ -44,6 +47,48 @@ impl Drop for ReplyAdmission {
                 if let Some(admitted) = admitted.take() {
                     admitted.complete();
                 }
+            }
+        }
+    }
+}
+enum Failure {
+    Unavailable(String),
+    Capacity {
+        retry: axum::http::HeaderValue,
+        body: Vec<u8>,
+    },
+}
+impl From<&str> for Failure {
+    fn from(message: &str) -> Self {
+        Self::Unavailable(message.into())
+    }
+}
+impl From<String> for Failure {
+    fn from(message: String) -> Self {
+        Self::Unavailable(message)
+    }
+}
+impl From<Failure> for String {
+    fn from(failure: Failure) -> Self {
+        match failure {
+            Failure::Unavailable(message) => message,
+            Failure::Capacity { .. } => "archive capacity refused qualification".into(),
+        }
+    }
+}
+impl Failure {
+    fn into_response(self) -> Response {
+        match self {
+            Self::Unavailable(_) => Archive::unavailable(),
+            Self::Capacity { retry, body } => {
+                let mut response = (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    [("content-type", "application/json")],
+                    body,
+                )
+                    .into_response();
+                response.headers_mut().insert("retry-after", retry);
+                response
             }
         }
     }
@@ -117,7 +162,7 @@ impl Archive {
             rows,
         })
     }
-    async fn bytes(mut response: reqwest::Response, limit: usize) -> Result<Vec<u8>, String> {
+    async fn bytes(mut response: reqwest::Response, limit: usize) -> Result<Vec<u8>, Failure> {
         if response.content_length().is_some_and(|n| n > limit as u64) {
             return Err("archive response too large".into());
         }
@@ -134,7 +179,7 @@ impl Archive {
         }
         Ok(bytes)
     }
-    async fn get(&self, path: &str, limit: usize) -> Result<Vec<u8>, String> {
+    async fn get(&self, path: &str, limit: usize) -> Result<Vec<u8>, Failure> {
         let response = self
             .client
             .get(self.origin.join(path).map_err(|e| e.to_string())?)
@@ -143,11 +188,17 @@ impl Archive {
             .await
             .map_err(|_| "archive unavailable")?;
         if response.status() != StatusCode::OK {
+            if response.status() == StatusCode::SERVICE_UNAVAILABLE {
+                if let Some(retry) = response.headers().get("retry-after").cloned() {
+                    let body = Self::bytes(response, 4096).await?;
+                    return Err(Failure::Capacity { retry, body });
+                }
+            }
             return Err("archive refused qualification".into());
         }
         Self::bytes(response, limit).await
     }
-    async fn ready(&self) -> Result<Value, String> {
+    async fn ready(&self) -> Result<Value, Failure> {
         let ready: Value = serde_json::from_slice(&self.get("/v1/ready", 65536).await?)
             .map_err(|_| "invalid archive readiness")?;
         // A configured provider is never a terminal archive, even if its address
@@ -166,7 +217,7 @@ impl Archive {
         }
         Ok(ready)
     }
-    async fn check(&self, state: &ServiceState, id: u64, digest: &str) -> Result<Value, String> {
+    async fn check(&self, state: &ServiceState, id: u64, digest: &str) -> Result<Value, Failure> {
         let ready = self.ready().await?;
         let init: Value = serde_json::from_slice(&self.get("/v2/shards/init", 1 << 20).await?)
             .map_err(|_| "invalid archive initialization")?;
@@ -227,7 +278,7 @@ impl Archive {
         }
         Ok(ready)
     }
-    async fn unchanged(&self, ready: &Value) -> Result<(), String> {
+    async fn unchanged(&self, ready: &Value) -> Result<(), Failure> {
         let after = self.ready().await?;
         if after["map_sha256"] != ready["map_sha256"]
             || after["incarnation"] != ready["incarnation"]
@@ -245,7 +296,7 @@ impl Archive {
         table: TableRef,
         segment: usize,
         shape: &Shape,
-    ) -> Result<Setup, String> {
+    ) -> Result<Setup, Failure> {
         if segment >= shape.segments {
             return Err("unknown segment".into());
         }
@@ -323,10 +374,16 @@ impl Archive {
                     .await?;
             }
         }
-        self.unchanged(&ready).await
+        self.unchanged(&ready).await.map_err(Into::into)
     }
     fn unavailable() -> Response {
-        RequestError::Busy("fixed archive unavailable or incompatible").into_response("")
+        // The frozen wallet retries 502/504 and 503 with Retry-After. A lost
+        // answer may follow acceptance: this is the existing non-capacity 503,
+        // with NO delay, so it cannot trigger an uncertain encrypted replay.
+        json(
+            StatusCode::SERVICE_UNAVAILABLE,
+            serde_json::json!({"error":"fixed archive unavailable or incompatible"}),
+        )
     }
     pub(crate) async fn setup(
         &self,
@@ -354,7 +411,7 @@ impl Archive {
                 .segment(state, id, digest, table, segment as usize, &shape)
                 .await?;
             self.unchanged(&ready).await?;
-            Ok::<_, String>(setup.bytes)
+            Ok::<_, Failure>(setup.bytes)
         })
         .await;
         match result {
@@ -367,7 +424,8 @@ impl Archive {
                 ),
             )
                 .into_response(),
-            _ => Self::unavailable(),
+            Ok(Err(failure)) => failure.into_response(),
+            Err(_) => Self::unavailable(),
         }
     }
     pub(crate) async fn query(
@@ -459,7 +517,7 @@ impl Archive {
             .await
         {
             Some(memory) => memory,
-            None => return Self::unavailable(),
+            None => return RequestError::Overloaded.into_response(worker.map_digest),
         };
         let result = tokio::time::timeout(admitted.remaining(), async {
             let ready = self.check(state, id, digest).await?;
@@ -519,7 +577,7 @@ impl Archive {
                     return Err("archive response binding mismatch".into());
                 }
             }
-            Ok::<_, String>(
+            Ok::<_, Failure>(
                 (
                     StatusCode::OK,
                     [("content-type", "application/octet-stream")],
@@ -538,7 +596,8 @@ impl Archive {
                 );
                 response
             }
-            _ => Self::unavailable(),
+            Ok(Err(failure)) => failure.into_response(),
+            Err(_) => Self::unavailable(),
         }
     }
 }

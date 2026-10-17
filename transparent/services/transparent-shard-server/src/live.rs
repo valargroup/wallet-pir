@@ -365,10 +365,9 @@ impl LiveService {
                     .set()
                     .scope()
                     .is_some_and(|held| !held.assigned.is_subset(&next.assigned))
+                    && old.archive().is_none()
                 {
-                    if old.archive().is_none() {
-                        return Err(Refusal::Admission("local retirement requires a qualified archive route; recent-worker mode has none".into()));
-                    }
+                    return Err(Refusal::Admission("local retirement requires a qualified archive route; recent-worker mode has none".into()));
                 }
             }
         }
