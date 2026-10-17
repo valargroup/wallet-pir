@@ -40,6 +40,19 @@ fn retain_fixture(name: &str, source: &std::path::Path) {
     }
     copy(source, &target);
 }
+fn retain_file(name: &str, source: &std::path::Path) {
+    let Some(output) = std::env::var_os("WALLET_PIR_QUALIFICATION_OUTPUT") else {
+        return;
+    };
+    let target = std::path::PathBuf::from(output).join(name);
+    assert!(
+        !target.exists(),
+        "qualification inputs must never be overwritten"
+    );
+    if std::fs::hard_link(source, &target).is_err() {
+        std::fs::copy(source, &target).unwrap();
+    }
+}
 fn fixture_in(dir: &std::path::Path, archive_geometry: &'static Geometry, paged: bool) -> ShardMap {
     let mut shards = Vec::new();
     let mut parent = String::new();

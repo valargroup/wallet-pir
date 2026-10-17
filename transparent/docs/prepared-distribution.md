@@ -359,6 +359,10 @@ each HTTP case under the existing 30-second guard. It retains executable hashes,
 build times, resolved sources, case results and before/after raw host/cgroup
 observations in a new ignored output directory. Those host snapshots are shared-host
 diagnostics, not peak-memory measurement or proof of isolation.
+The independent-process case retains the actual service/operations archives,
+prepared producer files and current/inventory bytes before temporary teardown;
+the runner hashes every retained input. Its source guard uses the shared
+correctness identity, including tracked changes and untracked source inputs.
 
 The frozen-process cases in `assignment::provider` compare complete historical
 receive/spend recovery with source-event oracles, including actual 32k archive

@@ -1,43 +1,5 @@
 # Remaining work for the transparent PIR recovery beta
 
-## Independent history provider qualification
-
-The [approved PR5 outcome](recent-provider-plan.md#pr-5-qualify-the-complete-slice)
-remains open. [Executable fixture coverage](prepared-distribution.md#embedded-history-endpoint-and-fixed-archive)
-is correctness evidence, not a qualified operating envelope or rollout approval.
-
-- [ ] Execute original Vizor v0.0.60/build 195 artifacts at the fixed existing
-  origin with valid TLS and isolated test data: recent/historical restore,
-  continued sync, restart and publication handover; preserve same-origin display.
-  The frozen released391/c085 library harness cannot satisfy this gate.
-- [ ] Qualify real controller publication updates with two provider processes
-  and independent frozen-client oracles under continuous queries: bootstrap,
-  restore/rescan, publisher/archive outages, staging/activation restart, reorg and
-  ownership-only shard moves. Retain page-only identity/setup/process-change
-  negatives, archive readiness/accepted-body stalls with recent success, and
-  aggregate admission/retained-view bounds through handover.
-- [ ] Establish complete Recent Only holdings and supported load on a suitable
-  existing isolated 64 GB host. Measure total host memory including router,
-  prepared data, query workspace, old/candidate/retained overlap, scratch and OS.
-  Shared-host small-fixture readings cannot establish this configuration.
-- [ ] At matched supported hardware/data/load/query mix, measure all update and
-  handover stages against a no-update baseline: p99 increase at most 10%, with
-  errors, rejection and timeout counts alongside successful latency.
-- [ ] Run 10 then 100 logical HTTP distribution consumers with real artifact
-  transfer and conditional polling; separate synchronized bootstrap and ordinary
-  updates. Measure publisher CPU/bandwidth, serving interference and bounded
-  overload admission without provisioning more query hosts.
-- [ ] Retain exact source, executable/source hashes, dataset/profile, offered
-  load, errors/timeouts and immutable raw inputs for each claim; publish measured
-  limits and explicit pass/fail/unavailable results. Enforce every CPU correctness
-  case below 30 seconds and complete warm coverage below 180 seconds including
-  incremental compilation/setup/teardown/tools/lint; diagnose the complete run
-  with `correctness.py --record-only`, retaining full-only and frozen coverage.
-
-Suitable isolated hardware and unchanged-application fixture access are named
-qualification gates when unavailable; continue correctness without upgrading the
-wallet or weakening validation. No deployment or new infrastructure is authorized.
-
 Attempt 12 activated a fresh v11 publication after the archive roster correction,
 then canonical verification refused a worker warm-publication attestation.
 The failed native status body was not retained, so future preparation is a
@@ -93,6 +55,45 @@ Updated 2026-09-28. This owns milestone definitions, execution order and the
 authoritative outstanding checklist for the opt-in, recovery-only macOS beta. [Status](status.md) summarizes accepted
 work; [deployment](deployment.md) owns all operating thresholds. Historical gate
 numbers are reconciled below rather than retained as a second release checklist.
+
+## Independent history provider qualification
+
+The [approved PR5 outcome](recent-provider-plan.md#pr-5-qualify-the-complete-slice)
+remains open. [Executable fixture coverage](prepared-distribution.md#embedded-history-endpoint-and-fixed-archive)
+is correctness evidence, not a qualified operating envelope or rollout approval.
+
+- [ ] Execute original Vizor v0.0.60/build 195 artifacts at the fixed existing
+  origin with valid TLS and isolated test data: recent/historical restore,
+  continued sync, restart and publication handover; preserve same-origin display.
+  The frozen released391/c085 library harness cannot satisfy this gate.
+- [ ] Qualify real controller publication updates with two provider processes
+  and independent frozen-client oracles under continuous queries: bootstrap,
+  restore/rescan, publisher/archive outages, staging/activation restart, reorg and
+  ownership-only shard moves. Retain page-only identity/setup/process-change
+  negatives, archive readiness/accepted-body stalls with recent success, and
+  aggregate admission/retained-view bounds through handover.
+- [ ] Establish complete Recent Only holdings and supported load on a suitable
+  existing isolated 64 GB host. Measure total host memory including router,
+  prepared data, query workspace, old/candidate/retained overlap, scratch and OS.
+  Shared-host small-fixture readings cannot establish this configuration.
+- [ ] At matched supported hardware/data/load/query mix, measure all update and
+  handover stages against a no-update baseline: p99 increase at most 10%, with
+  errors, rejection and timeout counts alongside successful latency.
+- [ ] Run 10 then 100 logical HTTP distribution consumers with real artifact
+  transfer and conditional polling; separate synchronized bootstrap and ordinary
+  updates. Measure publisher CPU/bandwidth, serving interference and bounded
+  overload admission without provisioning more query hosts.
+- [ ] Retain exact source, executable/source hashes, dataset/profile, offered
+  load, errors/timeouts and immutable raw inputs for each claim; publish measured
+  limits and explicit pass/fail/unavailable results. Enforce every CPU correctness
+  case below 30 seconds and complete warm coverage below 180 seconds including
+  incremental compilation/setup/teardown/tools/lint; diagnose the complete run
+  with `correctness.py --record-only`, retaining full-only and frozen coverage.
+
+Suitable isolated hardware and unchanged-application fixture access are named
+qualification gates when unavailable; continue correctness without upgrading the
+wallet or weakening validation. No deployment or new infrastructure is authorized.
+
 
 ## Transparent operations after the 2026-10-09 redeploy
 

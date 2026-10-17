@@ -159,9 +159,6 @@ async fn installation_case(case: Case) {
     let source = root.join("publisher-data");
     std::fs::create_dir(&source).unwrap();
     let map = fixture(&source, &DECOUPLED_2K_8K);
-    if matches!(case, Case::Independent) {
-        retain_fixture("independent-processes", &source);
-    }
     let set = ShardSet::open(&source, 0).unwrap();
     let prepared =
         transparent_server_backend::prebuild::prepare_publication(&set, &source, &[], &|| false)
@@ -180,6 +177,20 @@ async fn installation_case(case: Case) {
         eligibility: distribution::Eligibility::Canonical,
         invalidated_from: None,
     };
+    if matches!(case, Case::Independent) {
+        // Keep the actual prepared producer inputs and pointer/inventory, not
+        // merely source rows or hashes of temporary archives after teardown.
+        retain_fixture("independent-prepared-inputs", &source);
+        let records = root.join("publication-records");
+        std::fs::create_dir(&records).unwrap();
+        std::fs::write(
+            records.join("current.json"),
+            serde_json::to_vec(&current).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(records.join("inventory.json"), finalized.bytes()).unwrap();
+        retain_fixture("independent-publication-records", &records);
+    }
     let mut replies = BTreeMap::<String, Vec<u8>>::new();
     replies.insert(
         "/provider/v1/current".into(),
@@ -339,6 +350,10 @@ async fn installation_case(case: Case) {
     let sha = sha.trim();
     let package = format!("import sys; from pathlib import Path; sys.path.insert(0,{:?}); from wallet_pir_ops import release,bundle; r=Path({:?}); release.assemble({:?},r/'build',r/'artifacts','transparent-shard'); release.extract(r/'artifacts/transparent-shard.tar.gz',r/'binary',{:?},'transparent-shard'); bundle.assemble(r/'ops.tar.gz',{:?}); bundle.extract(r/'ops.tar.gz',r/'ops',{:?})",repo.join("ops/lib").to_str().unwrap(),root.to_str().unwrap(),sha,sha,sha,sha);
     command(&["python3", "-B", "-c", &package], root).await;
+    if matches!(case, Case::Independent) {
+        retain_fixture("independent-service-release", &root.join("artifacts"));
+        retain_file("independent-operations.tar.gz", &root.join("ops.tar.gz"));
+    }
     let renderer = root.join("ops/ops/scripts/wallet-pir-roles.py");
     command(&["python3", renderer.to_str().unwrap(), "--help"], root).await;
     assert!(!root.join("ops/.git").exists());

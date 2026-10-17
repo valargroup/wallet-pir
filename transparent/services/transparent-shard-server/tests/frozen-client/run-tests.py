@@ -18,6 +18,8 @@ REPO = next(p for p in HARNESS.parents if (p / "tools/ci/test_budget.py").is_fil
 sys.path.insert(0, str(REPO / "tools/ci"))
 import test_budget  # noqa: E402
 from target_lease import local_target  # noqa: E402
+from target_lease import inherited_fds  # noqa: E402
+from correctness import source_identity  # noqa: E402
 
 
 def host_snapshot():
@@ -62,18 +64,19 @@ def main():
 def qualify(args):
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
-    head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=REPO, text=True).strip()
+    source = source_identity()
+    head = source["head"]
     difference = subprocess.check_output(["git", "diff", "--binary", "HEAD"], cwd=REPO)
     (output / "source.diff").write_bytes(difference)
     (output / "host-before.json").write_text(json.dumps(host_snapshot(), indent=2) + "\n")
     started = time.monotonic()
-    subprocess.run(["cargo", "build", "--locked", "--profile", "release-fast", "--manifest-path", str(HARNESS / "Cargo.toml")], cwd=REPO, check=True)
+    subprocess.run(["cargo", "build", "--locked", "--profile", "release-fast", "--manifest-path", str(HARNESS / "Cargo.toml")], cwd=REPO, check=True, **inherited_fds())
     client_build_seconds = time.monotonic() - started
-    subprocess.run([sys.executable, str(HARNESS / "verify-sources.py"), "--output", str(output / "sources")], cwd=REPO, check=True)
+    subprocess.run([sys.executable, str(HARNESS / "verify-sources.py"), "--output", str(output / "sources")], cwd=REPO, check=True, **inherited_fds())
     metadata = json.loads((output / "sources/metadata.json").read_text())
     client = Path(metadata["target_directory"]) / "release-fast/frozen-provider-client"
     started = time.monotonic()
-    compilation = subprocess.run(["cargo", "test", "--locked", "--profile", "release-fast", "-p", "transparent-shard-server", "--test", "assignment", "--no-run", "--message-format=json"], cwd=REPO, text=True, stdout=subprocess.PIPE)
+    compilation = subprocess.run(["cargo", "test", "--locked", "--profile", "release-fast", "-p", "transparent-shard-server", "--test", "assignment", "--no-run", "--message-format=json"], cwd=REPO, text=True, stdout=subprocess.PIPE, **inherited_fds())
     compiled = compilation.stdout
     server_build_seconds = time.monotonic() - started
     (output / "server-build.jsonl").write_text(compiled)
@@ -87,6 +90,7 @@ def qualify(args):
     provider = next(Path(m["executable"]) for m in messages if m.get("reason") == "compiler-artifact" and
                     m.get("target", {}).get("name") == "transparent-shard-server" and m.get("executable"))
     receipt = {"head": head,
+               "source": source,
                "status": subprocess.check_output(["git", "status", "--porcelain"], cwd=REPO, text=True),
                "source_diff_sha256": hashlib.sha256(difference).hexdigest(),
                "client_build_seconds": client_build_seconds, "server_build_seconds": server_build_seconds,
@@ -102,8 +106,7 @@ def qualify(args):
     passed = False
     try:
         test_budget.execute([executable, "provider::", "--include-ignored"], cwd=REPO, env=env, report=str(output / "cases.jsonl"))
-        if (subprocess.check_output(["git", "diff", "--binary", "HEAD"], cwd=REPO) != difference or
-                subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=REPO, text=True).strip() != head):
+        if source_identity() != source:
             raise RuntimeError("source changed during qualification; results do not establish this snapshot")
         passed = True
     finally:
