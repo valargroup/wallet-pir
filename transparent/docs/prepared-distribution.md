@@ -219,8 +219,10 @@ positive applicable invalidation is applied through the existing owner's durable
 `active.invalid.json` fence. `revocation-floor.json` additionally records the
 highest revision and cumulative exact digests at which revocation was observed,
 before changing that fence. Startup replays this intent even if the process died
-before the owner's fence write.
-Only a higher revision with fresh exact candidate-anchor attestations can clear
+before the owner's fence write. If intent persistence fails, the owner still
+fences memory and attempts its own durable record; startup binds otherwise
+unrecorded owner revocations to the previously observed source revision before
+polling. Only a higher revision with fresh exact candidate-anchor attestations can clear
 revoked digest entries. Neither the process-local epoch nor the most recent
 invalidation range is a cumulative history. The manager checks exact anchors of
 all retained revisions on changed snapshots; source failure cannot prove an

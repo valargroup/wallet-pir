@@ -265,12 +265,20 @@ async fn manager_persists_invalidation_and_refuses_equal_revision_reenable_after
     owner.0.distribution_revision.fetch_add(1, Ordering::AcqRel);
     owner.0.invalidated_from.store(2, Ordering::Release);
     owner.0.withdrawn.store(true, Ordering::Release);
+    // An intent-write failure must still fence memory and the owner's own
+    // durable record. Startup then reconciles the two records conservatively.
+    std::fs::create_dir(state.join("revocation-floor.tmp")).unwrap();
     assert!(follow.poll_once().await.is_err());
     assert_eq!(
         get(&origin, "/v2/shards/init").await.status(),
         StatusCode::SERVICE_UNAVAILABLE
     );
     assert!(state.join("active.invalid.json").exists());
+    let intent: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(state.join("revocation-floor.json")).unwrap())
+            .unwrap();
+    assert_eq!(intent["revision"], 0);
+    std::fs::remove_dir(state.join("revocation-floor.tmp")).unwrap();
     task.abort();
     let _ = task.await;
     drop(live);

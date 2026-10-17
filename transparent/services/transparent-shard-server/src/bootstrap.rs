@@ -137,6 +137,19 @@ impl Source {
         }
         Ok(bytes)
     }
+    pub(crate) fn observed_revision(&self, directory: &std::path::Path) -> Result<u64, Error> {
+        match std::fs::read(directory.join("publisher-high-water.json")) {
+            Ok(bytes) => {
+                let saved: HighWater = serde_json::from_slice(&bytes)?;
+                if saved.origin != self.origin.as_str() {
+                    return Err("publisher origin change".into());
+                }
+                Ok(saved.current.revision)
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(0),
+            Err(e) => Err(e.into()),
+        }
+    }
     pub(crate) fn observe(
         &self,
         directory: &std::path::Path,

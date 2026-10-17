@@ -43,6 +43,23 @@ impl Manager {
             .open(config.directory.join("bootstrap.lock"))?;
         lock.try_lock()
             .map_err(|_| "another publication consumer owns this directory")?;
+        let invalid: BTreeSet<String> =
+            match std::fs::read(config.directory.join("active.invalid.json")) {
+                Ok(bytes) => serde_json::from_slice(&bytes)?,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => BTreeSet::new(),
+                Err(e) => return Err(e.into()),
+            };
+        let mut intent = floor(&config.directory)?;
+        if !invalid.is_subset(&intent.digests) {
+            // If one of the two durability writes failed, conservatively bind
+            // otherwise unrecorded owner revocations to the last observed source
+            // revision before polling again. Equal-revision recovery stays shut.
+            intent.revision = intent
+                .revision
+                .max(source.observed_revision(&config.directory)?);
+            intent.digests.extend(invalid);
+            persist(&config.directory.join("revocation-floor.json"), &intent)?;
+        }
         service.readiness = ReadinessMode::Warm;
         // No disk-cache restore/build path in this mode, including after restart.
         Ok(Self {
@@ -379,8 +396,12 @@ async fn revoke_digests(
     intent.digests.extend(digests.iter().cloned());
     // Exact revocation intent precedes the owner's fence. Restart replays it
     // even if the process died before active.invalid.json reached disk.
-    persist(&root.join("revocation-floor.json"), &intent)?;
-    live.revoke_exact(digests).await?;
+    let durable = persist(&root.join("revocation-floor.json"), &intent);
+    // Storage failure cannot leave known orphaned material serving. The owner
+    // still fences in memory and attempts its own durable write before we fail.
+    let fenced = live.revoke_exact(digests).await;
+    durable?;
+    fenced?;
     Ok(())
 }
 
