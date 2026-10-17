@@ -71,8 +71,8 @@ fn prepared_fixture(through: u64) -> &'static Path {
     static FIRST: std::sync::LazyLock<PathBuf> = std::sync::LazyLock::new(|| build(2));
     static NEXT: std::sync::LazyLock<PathBuf> = std::sync::LazyLock::new(|| build(3));
     match through {
-        2 => &*FIRST,
-        3 => &*NEXT,
+        2 => &FIRST,
+        3 => &NEXT,
         _ => panic!("no prepared publication fixture through height {through}"),
     }
 }
