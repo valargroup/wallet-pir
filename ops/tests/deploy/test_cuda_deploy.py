@@ -110,6 +110,57 @@ class CoordinatorPreflight(unittest.TestCase):
                 self.check()
 
 
+class CudaPublicationConvergence(unittest.TestCase):
+    def setUp(self):
+        self.now = 0.0
+        self.poll = 0
+        self.worker_url = 'http://gpu'
+        self.config = {'router_url':'http://router','coordinator_url':'http://coordinator'}
+        self.members = [[10],[11]]
+        self.router_ready = True
+        self.identity = {'pid':7,'oom':0,'restarts':0}
+
+    def fetch(self,url):
+        if url.startswith(self.worker_url):
+            index = min(self.poll,len(self.members)-1)
+            self.poll += 1
+            return json.dumps({'protocol':deploy.PROTOCOL,'published':self.members[index],
+                               'matvec':{'matvec_backend':'cuda','cuda_device':0}})
+        if url.startswith(self.config['router_url']):
+            return json.dumps({'protocol':deploy.PROTOCOL,'ready':self.router_ready,
+                               'preferred_workers':{self.worker_url:True}})
+        return json.dumps({'generation':11})
+
+    def wait(self,budget=60,**extra):
+        def sleep(seconds):self.now += seconds
+        return verify.wait_for_publication(self.worker_url,self.config,lambda:self.identity,
+                                           {'pid':7,'oom':0,'restarts':0},budget,
+                                           fetcher=self.fetch,clock=lambda:self.now,sleep=sleep,**extra)
+
+    def test_generation_that_advances_during_queries_must_converge_before_commit(self):
+        coordinator,worker,_,remaining = self.wait()
+        self.assertIn(coordinator['generation'],worker['published'])
+        self.assertEqual(self.now,2)
+        self.assertEqual(remaining,58)
+
+    def test_both_convergence_checks_share_one_existing_wait_budget(self):
+        _,_,_,remaining = self.wait()
+        self.now += 70  # The paced queries are outside the readiness wait budget.
+        self.members = [[10]]
+        with self.assertRaisesRegex(ValueError,'shared readiness budget'):
+            self.wait(budget=remaining)
+        self.assertEqual(self.now,130)
+
+    def test_post_query_readiness_loss_and_identity_drift_are_immediate_failures(self):
+        self.router_ready = False
+        with self.assertRaisesRegex(ValueError,'router is not ready'):self.wait()
+        self.assertEqual(self.now,0)
+        self.router_ready = True
+        self.identity = {'pid':8,'oom':0,'restarts':0}
+        with self.assertRaisesRegex(ValueError,'identity, OOM or restart'):self.wait()
+        self.assertEqual(self.now,0)
+
+
 class FeeOracleRepair(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()

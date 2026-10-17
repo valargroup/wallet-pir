@@ -157,6 +157,10 @@ Deployment swaps the server binary transactionally, verifies native v9/CUDA
 health and executable identity, then runs public exact-answer queries at 1 QPS
 for 60 seconds after a paced 10-second warmup. Acceptance requires zero errors,
 GPU evaluation counter growth, router availability, and no worker restart or OOM.
+The verifier shares one existing 60-second publication recovery budget between
+initial eligibility and final current-generation membership. A generation that
+advances during the measured queries must converge before commit. Router readiness
+loss after measurement and any process, restart or OOM drift still fail immediately.
 Repeat deploys rerun validation without restarting an unchanged unit. No deliberate
 production failover or throughput qualification is part of this workflow.
 
