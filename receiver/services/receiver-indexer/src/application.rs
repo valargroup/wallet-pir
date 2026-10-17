@@ -605,8 +605,7 @@ pub fn unix_now() -> i64 {
 }
 
 #[cfg(test)]
-#[path = "../../../crates/receiver-store/tests/common/mod.rs"]
-mod common;
+use crate::probe::common;
 
 #[cfg(test)]
 mod tests {

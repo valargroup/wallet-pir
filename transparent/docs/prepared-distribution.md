@@ -355,7 +355,10 @@ repository wrapper. From the repository root, run
 `python3 transparent/services/transparent-shard-server/tests/frozen-client/run-tests.py --output .local-pir/provider-qualification-<new-id>`
 inside that wrapper. It records resolved metadata, the isolated lock digest,
 crate/source-byte checks and build preparation times separately, then executes
-each HTTP case under the existing 30-second guard. It retains executable hashes,
+each HTTP case under the existing 30-second guard. The runner enforces that fixed
+limit explicitly, independently of inherited `WALLET_PIR_CASE_SECONDS`, and runs
+lightweight override/receipt/failure controls before building. These hermetic
+controls do not replace the real client cases. It retains executable hashes,
 build times, resolved sources, case results and before/after raw host/cgroup
 observations in a new ignored output directory. Those host snapshots are shared-host
 diagnostics, not peak-memory measurement or proof of isolation.
