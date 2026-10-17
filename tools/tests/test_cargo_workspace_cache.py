@@ -1,4 +1,8 @@
-"""Real Cargo checkout/cache oracle: actual fresh flags and executable behavior."""
+"""Real Cargo checkout/cache oracle: actual fresh flags and executable behavior.
+
+Keep this long oracle early in alphabetical discovery so the bounded helper
+pool overlaps it with the short tooling suites.
+"""
 from contextlib import redirect_stdout
 import argparse
 import io
@@ -302,7 +306,7 @@ class WorkspaceCacheOutputIsolationTests(unittest.TestCase):
                 env[name] = str(path)
             result = subprocess.run(
                 [sys.executable, '-m', 'unittest',
-                 'test_workspace_cache.WorkspaceCacheOracle.test_managed_external_target_still_prepares_restores_and_builds'],
+                 'test_cargo_workspace_cache.WorkspaceCacheOracle.test_managed_external_target_still_prepares_restores_and_builds'],
                 cwd=ROOT / 'tools/tests', env=env, capture_output=True, text=True, timeout=60)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             for name in names:
