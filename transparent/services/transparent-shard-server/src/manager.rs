@@ -111,8 +111,8 @@ impl Manager {
         self.synchronization.write().unwrap()["in_progress"] = true.into();
         let result = self.reconcile().await;
         let at = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)?
-            .as_secs();
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs());
         let mut sync = self.synchronization.write().unwrap();
         *sync = match &result {
             Ok(progress) => {

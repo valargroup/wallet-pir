@@ -102,7 +102,7 @@ def history_provider(settings, *, release, template=None):
     import ipaddress
     import re
     from urllib.parse import urlsplit
-    from wallet_pir_ops.role_config import address, settings_of, worker as render_worker, set_service
+    from wallet_pir_ops.role_config import address, settings_of, worker as render_worker, set_service, number
     s = settings_of(settings, ('listen', 'state_dir', 'publisher', 'publisher_network',
                               'publisher_genesis', 'archive_upstream'),
                     ('publisher_ca', 'archive_ca', 'cache_bytes', 'bootstrap_max_bytes',
@@ -133,8 +133,10 @@ def history_provider(settings, *, release, template=None):
             path = directory(s[name])
             reads.append(path)
             arguments += ['--' + name.replace('_', '-'), path]
-    arguments += _sizes(s, ('cache_bytes', 'bootstrap_max_bytes', 'query_slots', 'query_waiters',
+    arguments += _sizes(s, ('cache_bytes', 'bootstrap_max_bytes', 'query_slots',
                             'body_bytes', 'query_deadline_secs', 'upload_deadline_secs'))
+    if 'query_waiters' in s:
+        arguments += ['--query-waiters', number(s['query_waiters'], 'query_waiters')]
     executable = directory(release) + '/transparent-shard-server'
     source = ROOT / 'transparent/ops/deploy/transparent-history-provider.role.service'
     rendered = render_worker(source.read_text() if template is None else template,
