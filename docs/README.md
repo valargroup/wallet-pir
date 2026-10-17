@@ -11,6 +11,7 @@
 - [Evidence](../evidence/README.md): retained measurements and their provenance.
 - [Serving contract](serving-contract.md): process identity, serving authority and refusal codes across Enhance, Status and Transparent.
 - [Decentralized query serving](decentralized-query-serving.md): phased plan for independent providers, prepared publications, embedded router/worker deployments and service discovery.
+- [Shard promotion specification](spec/spec-shard-promotion.md): normative hierarchy generation advancement and continuous query-server handover rules.
 - [Control sessions](control-sessions.md): the shared supervised SSH control transport and the restricted forwarding account (Status observed on the shared supervisor in dated captures; the restricted account and other products not adopted).
 - [Repository cleanup](cleanup-2026-09-14.md): removed material, retained dependencies and historical source revision.
 - [Repository rename consumers](repository-rename-consumers.md): downstream URLs to update after the `wallet-pir` rename.

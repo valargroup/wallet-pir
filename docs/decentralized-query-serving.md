@@ -131,6 +131,10 @@ not silently grant indefinite authority.
 
 #### Hierarchy generation handover
 
+The normative rules are in the [shard promotion specification](spec/spec-shard-promotion.md).
+Keep that specification and this architectural explanation aligned as the design
+evolves.
+
 Once a publisher has built and finalized an amended hierarchy, it atomically
 advances its current generation and stops offering the previous generation as a
 publication/bootstrap target. New query servers bootstrap against the current
