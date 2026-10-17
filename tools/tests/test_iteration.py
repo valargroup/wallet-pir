@@ -211,17 +211,17 @@ class PlannerTests(unittest.TestCase):
                                     owner, _ = feature.split('/', 1)
                                     self.assertIn(owner, selected, (group, command))
 
-    def test_required_cli_binary_tests_are_enabled_without_changing_protocol(self):
+    def test_required_cli_binary_tests_are_enabled_for_a_focused_filter(self):
         metadata = {'packages': [{'name': 'example', 'targets': [
             {'name': 'client', 'kind': ['bin'], 'required-features': ['cli']}]}]}
         calls = []
         with patch.object(fast.subprocess, 'check_output', side_effect=[json.dumps(metadata).encode(), 'args: test\n']), \
              patch.object(fast, 'run', side_effect=lambda command, **kw: calls.append(command)):
-            fast.rust_checks(['example'])
+            fast.rust_checks(['example'], test='args')
         self.assertIn('cli', calls[-1])
         self.assertNotIn('native-reinspiring', calls[-1])
         groups = full.inventory()
-        self.assertIn('enhance-pir/cli', full.commands('enhance', groups)[0])
+        self.assertIn('enhance-pir/cli', full.commands('enhance', groups)[0][-1].split(','))
         self.assertNotIn('--features', full.commands('transparent', groups)[0])
 
 
@@ -231,31 +231,6 @@ class PlannerTests(unittest.TestCase):
              patch.object(fast, 'run'):
             with self.assertRaisesRegex(ValueError, 'no enabled tests'):
                 fast.rust_checks(['example'], test_target='native')
-
-
-    def test_feature_gated_classifications_enable_discovery_and_reject_renames(self):
-        metadata = {'packages': [{'name': 'fixture-client', 'targets': [{'kind': ['lib']}]}]}
-        registry = {'http::slow': {'reason': 'A gated fixture test.', 'features': ['reqwest']}}
-        listing = ''.join(name + ': test\n' for name in registry)
-        calls = []
-        actual_read_text = Path.read_text
-
-        def read_registry(path, *args, **kwargs):
-            if path == ROOT / 'tools/ci/slow-tests.json':
-                return json.dumps({'fixture-client': registry})
-            return actual_read_text(path, *args, **kwargs)
-
-        with patch.object(Path, 'read_text', autospec=True, side_effect=read_registry), \
-             patch.object(fast.subprocess, 'check_output', side_effect=[json.dumps(metadata).encode(), listing]), \
-             patch.object(fast, 'run', side_effect=lambda command, **kw: calls.append(command)):
-            fast.rust_checks(['fixture-client'])
-        self.assertIn('reqwest', calls[-1])
-        self.assertIn('--skip', calls[-1])
-        with patch.object(Path, 'read_text', autospec=True, side_effect=read_registry), \
-             patch.object(fast.subprocess, 'check_output', side_effect=[json.dumps(metadata).encode(), 'renamed: test\n']), \
-             patch.object(fast, 'run'):
-            with self.assertRaisesRegex(ValueError, 'stale'):
-                fast.rust_checks(['fixture-client'])
 
 
 

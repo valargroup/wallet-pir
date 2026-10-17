@@ -24,6 +24,12 @@ Publication authority and distribution remain separate dependencies: distributin
 query endpoints does not itself remove trust in indexers or guarantee publisher
 availability.
 
+The [multi-server wallet specification](spec/spec-multi-server-wallet.md) defines
+the wallet-facing contract: configured provider endpoints offer complete required
+coverage without the wallet classifying their local storage as recent or archive.
+Initially, each recent provider uses a fixed Valargroup archive upstream. Provider
+lists do not imply automatic wallet discovery or failover.
+
 ## Responsibilities and boundaries
 
 | Responsibility | Owns |
@@ -51,6 +57,36 @@ and combined holdings apply only where the product supports their semantics.
 Enhance and Status packing routers perform computation, beyond forwarding HTTP;
 their preparation, packing material and resource use belong in the provider's
 requirements alongside evaluation.
+
+### Full and Recent Only capacity
+
+A Full Query Server provides full-history coverage. It can keep all shards in
+memory on one machine while they fit, or distribute them across machines as the
+dataset grows. Full coverage does not require that all history fit on one host,
+and disk-backed archive serving is not the assumed capacity model.
+
+The complete recent holdings for a supported Recent Only configuration must fit
+on a **64 GB RAM host**. This is a total host requirement: include the embedded
+router, prepared PIR runtimes, query workspace at the supported load, temporary
+old/new generation overlap, loading scratch space and system overhead. A
+multi-product installation must account for the combined footprint. Reuse of
+unchanged artifacts can reduce handover overhead; do not assume every generation
+requires a second full copy.
+
+This gives publishers a common recent-tier capacity target instead of making
+promotion depend on each provider's process memory or a Full provider's archive
+size. Define a bounded recent window and promotion batches against that target.
+Query RPS affects local concurrency and available update resources; it does not
+define which historical ranges belong to the archive. The supported load must
+leave enough resources to continue updating.
+
+Qualify ordinary promotion to increase query p99 by no more than **10%** against a
+matched no-promotion baseline, including all transfer, verification, loading,
+activation and cleanup stages. A long interval alone cannot establish that bound.
+Window sizes and actual promotion cadence remain open until growth, memory and
+handover cost are measured. The [specification](spec/spec-shard-promotion.md#server-capacity-and-promotion-policy)
+owns these capacity and interference requirements; they are not yet measured
+guarantees.
 
 Reuse these foundations:
 
@@ -129,6 +165,58 @@ authority to serve it. Products that currently require controller renewal retain
 that requirement through an authenticated control path. A feed update alone must
 not silently grant indefinite authority.
 
+#### Hierarchy generation handover
+
+The normative rules are in the [shard promotion specification](spec/spec-shard-promotion.md).
+Keep that specification and this architectural explanation aligned as the design
+evolves.
+
+Start with ownership changes of already sealed, immutable shards. Promotion moves
+a shard from recent to archive holdings; it does not split, merge, renumber or
+repack the shard. Its boundaries, identifiers, digests, PIR geometry, serving bytes
+and setup stay the same. Full providers may keep it in memory throughout. Sealing
+the mutable tail and re-cutting existing shards are separate operations outside
+this first promotion design.
+
+The hierarchy generation coordinates publishers and query servers internally.
+Wallets keep using the existing metadata, setup and query interfaces and their
+existing shard, revision and session identities. Holdings and routes can change
+through those interfaces without adding a wallet generation field or changing
+manifest schemas. Future shard reorganization needs its own specification and
+wallet compatibility qualification.
+
+Once a publisher has built and finalized an amended hierarchy, it atomically
+advances its current generation and stops offering the previous generation as a
+publication/bootstrap target. New query servers bootstrap against the current
+generation. Existing query servers detect it through polling and initiate their
+update. Unchanged artifacts referenced by the new generation remain reusable.
+
+Each query server keeps its old generation active, including the metadata and
+setup needed by wallets, while downloading, verifying and loading the replacement.
+It switches the router and worker's serving view atomically only when the new
+generation is ready, including eligible destinations for shards whose routes
+change. Publisher finalization alone does not mean those destinations are ready;
+each query server verifies them under the existing routing and authority rules.
+Discovery continues to advertise its actual active generation until that switch.
+A superseded download whose artifacts are no longer available
+reconciles current publisher state and retries without stopping the active view.
+Before activating a candidate, check that it has not already been superseded.
+
+Routine supersession is not revocation. Retiring the publisher's old generation
+must not by itself invalidate query servers still serving it during a normal
+handover. Preserve product-specific authority renewal, freshness and reorg checks;
+confirmed invalidation or expired authority may still require refusal. Already
+admitted requests retain their generation under existing request-lifetime rules.
+After a switch, stale wallet sessions use the product's existing refresh/refusal
+behavior. Whether served locally or forwarded, an encrypted request retains its
+exact shard, revision and session binding; moving ownership cannot change its
+data or setup.
+
+The normal handover has no gap in the node's serving readiness. Budget the
+candidate alongside the active material so preparation cannot evict the serving
+view. Treat hierarchy generations separately from routine per-block publication
+revisions, which retain their product-specific behavior.
+
 **Deliverable:** a publication source interface and verifier that operate without
 our source checkout, private paths, indexer credentials or SSH deployment machinery.
 
@@ -145,8 +233,8 @@ resource budget and archive peers, and owns TLS and upgrades.
 
 A local publication manager follows the configured holdings independently of
 wallet requests. It downloads, stages and verifies candidates, then activates them
-atomically. Interrupted downloads and restarts resume safely without making
-partial publications available.
+atomically while continuing to serve the previous valid generation. Interrupted
+downloads and restarts resume safely without making partial publications available.
 
 Lightweight mode requires compatible prepared material. Missing or incompatible
 material produces a clear preparation refusal instead of silently starting an
@@ -172,6 +260,12 @@ Use the embedded worker when it holds the exact requested publication and
 qualifies to serve it. Route other coverage to explicitly configured providers
 that support that publication and profile. Registration alone does not establish
 loaded coverage, readiness, authority or encrypted-answer correctness.
+
+For the initial scope, supply one fixed Valargroup archive upstream in provider
+configuration. Archive discovery, choosing among archive providers and automatic
+archive failover are later work. If that upstream is unavailable, independent
+valid recent queries remain local and serviceable; archive-dependent requests
+fail explicitly under the existing product rules.
 
 Preserve encrypted framing, session binding, response validation and existing
 retry restrictions, including uncertain evaluation acceptance. Bound forwarding
@@ -322,6 +416,20 @@ independent correctness oracles. Exercise:
   recovery after missed revisions, and unavailable delta bases. Qualify up to 100
   consumers, including simultaneous bootstrap and continued updates under query
   load; retain product-specific freshness and authority gates.
+- Hierarchy generation handover under continuous client load: old-generation
+  service continues while the publisher offers only the new generation; activation
+  and advertised coverage switch together. Exercise failed preparation, interrupted
+  downloads, a superseded candidate, admitted old-generation requests and a new
+  node joining during the transition. Check reorg revocation separately.
+- Ownership-only promotion with an unchanged wallet client: exercise metadata,
+  setup and encrypted queries before, during and after the move, including
+  forwarding across independently updating providers and a destination that is
+  not ready. Check unchanged shard identities, boundaries, bytes and setup;
+  reject shard rewriting as ownership-only promotion.
+- Recent Only operation on a 64 GB RAM host, including candidate overlap and
+  query workspace, with at most 10% p99 increase during promotion at the supported
+  serving load. Test Full-provider placement across multiple in-memory machines
+  separately from the Recent Only host budget.
 
 Measure startup and update cost, steady-state memory, disk, synchronization
 bandwidth and query performance together. Include packing costs, temporary
@@ -343,8 +451,10 @@ must keep working without automatic discovery or permissionless registration.
 Start publication synchronization with request/response polling; subscriptions
 remain an optional later optimization of update detection.
 Keep wallet protocols, record layouts, session identities, validation and
-persisted formats unchanged. Introduce no new consensus mechanism, incentive
-system, PIR primitive or universal ingestion framework.
+persisted formats unchanged. Initial promotion changes ownership of immutable
+shards; re-cutting, merging and repacking shards are outside this version.
+Introduce no new consensus mechanism, incentive system, PIR primitive or universal
+ingestion framework.
 
 This plan does not authorize deployment or expand an existing refactor task.
 Implement phases as focused changes; keep source completion, qualification and

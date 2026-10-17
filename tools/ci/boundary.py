@@ -141,7 +141,8 @@ def manifests(root=ROOT):
         if directory != root and '.git' in (*children, *files):
             children[:] = []
             continue
-        children[:] = sorted(child for child in children if child not in {'.git', 'target'})
+        children[:] = sorted(child for child in children if child not in {'.git', 'target'}
+                             and not (directory == root and child == '.local-pir'))
         if 'Cargo.toml' in files:
             paths.append(directory / 'Cargo.toml')
     for path in sorted(paths):

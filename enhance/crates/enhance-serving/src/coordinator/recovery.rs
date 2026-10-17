@@ -361,3 +361,6 @@ impl Coordinator {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests;
