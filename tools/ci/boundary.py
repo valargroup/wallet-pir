@@ -346,7 +346,8 @@ def standalone_metadata(names):
     features other workspace members unify into them (such as the indexer's
     receiver crypto).
 
-    Seed from the committed lockfile so compatible versions stay pinned. The
+    Seed from the committed lockfile and source overrides so dependencies retain
+    the workspace's pinned identities. The
     temporary consumer adds only its own root; it cannot modify repository files.
     Dependencies have already been fetched by the locked workspace metadata check.
     """
@@ -358,6 +359,20 @@ def standalone_metadata(names):
                  'version = "0.0.0"', 'edition = "2021"', '[workspace]', '[dependencies]']
         for name in sorted(names):
             lines.append(f'{name} = {{ path = {json.dumps(str(ROOT / folders[name]))} }}')
+        patches = tomllib.loads((ROOT / 'Cargo.toml').read_text()).get('patch', {})
+        for source, dependencies in patches.items():
+            lines.append(f'[patch.{json.dumps(source)}]')
+            for name, specification in dependencies.items():
+                if isinstance(specification, dict):
+                    specification = dict(specification)
+                    if 'path' in specification:
+                        specification['path'] = str((ROOT / specification['path']).resolve())
+                    value = '{ ' + ', '.join(
+                        f'{json.dumps(key)} = {json.dumps(value)}'
+                        for key, value in specification.items()) + ' }'
+                else:
+                    value = json.dumps(specification)
+                lines.append(f'{json.dumps(name)} = {value}')
         (root / 'Cargo.toml').write_text('\n'.join(lines) + '\n')
         (root / 'src').mkdir()
         (root / 'src/lib.rs').write_text('')
