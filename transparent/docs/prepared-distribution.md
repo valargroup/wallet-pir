@@ -277,14 +277,17 @@ owner, including subsequent preparation and query cache misses; it does not add
 a field to the existing publication JSON. Restart with that same provider
 configuration. Existing fleet/static modes retain their optional-runtime policy.
 Do not reinterpret a managed root as a static/fleet publication or restore older
-high-water/revocation records to bypass fencing. Reverting the manager requires
-stopping this mode and retaining its safety records; no publisher artifacts or
-wallet formats require migration. Before using a reader that ignores
-either fallback file, reconcile the maximum revision/digest union into the
-primary intent and the newest complete source record into the primary
-high-water while stopped, preserving negative eligibility at equal revisions and
-refusing contradictory identities, or retain a fallback-aware reader. Dropping either
-fallback record is not a safe rollback.
+high-water/revocation records to bypass fencing. Before stopping managed mode,
+repair/reconcile any otherwise unpersisted exact negative revision/digest bound
+held by the live process into durable safety state. Then stop this mode and retain
+its safety records; no publisher artifacts or wallet formats require migration.
+Before using a reader that ignores either fallback file, reconcile the maximum
+revision/digest union into the primary intent and the newest complete source
+record into the primary high-water while stopped, preserving negative eligibility
+at equal revisions and refusing contradictory identities, or retain a
+fallback-aware reader. Code revert or safety-file deletion alone is not a safe
+rollback. If all applicable exact safety writes remain unavailable, process or
+power loss can still lose the memory-only bound.
 
 A changed inventory is reconciled even when its map digest is unchanged. The
 existing same-map/different-worker-assignment fence remains in force. Required
