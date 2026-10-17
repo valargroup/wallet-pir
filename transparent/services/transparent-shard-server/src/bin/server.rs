@@ -168,7 +168,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             max_download_bytes: cli.bootstrap_max_bytes,
             roots,
         };
-        if !cli.verify_only {
+        if !cli.verify_only || cli.archive_upstream.is_some() {
             let service = ServiceConfig {
                 cache_bytes: cli.cache_bytes,
                 build_slots: cli.build_slots,
@@ -201,9 +201,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     return Err(error);
                 }
             }
-            let live = manager.live().ok_or("provider did not activate")?;
+            if cli.verify_only {
+                // Same strict managed loader, owner and archive configuration as
+                // startup. No listener; saved bytes never bypass fresh authority.
+                let live = manager.live().ok_or("provider did not activate")?;
+                println!(
+                    "{}",
+                    serde_json::to_string(
+                        &live
+                            .command(transparent_shard_server::live::Command::Status)
+                            .await?
+                    )?
+                );
+                return Ok(());
+            }
+            let app = manager.router()?;
             let listener = tokio::net::TcpListener::bind(cli.listen).await?;
-            let app = live.router();
             let polling = tokio::spawn(manager.run());
             axum::serve(listener, app).await?;
             polling.abort();

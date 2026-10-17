@@ -1,5 +1,9 @@
 """One inventory-style settings object per external worker role, shared by tests."""
 SETTINGS = {
+    ('transparent-history', 'provider'): {
+        'listen': '127.0.0.1:8092', 'state_dir': '/var/lib/transparent-provider',
+        'publisher': 'https://publisher.example.invalid', 'archive_upstream': 'https://archive.example.invalid',
+        'publisher_network': 'main', 'publisher_genesis': '00' * 32},
     ('enhance', 'external-worker'): {
         'listen': '127.0.0.1:8091', 'data_dir': '/srv/enhance-worker',
         'credentials': ['/etc/enhance-worker/internal-token.env'], 'limits': {'MemoryMax': '7G'}},

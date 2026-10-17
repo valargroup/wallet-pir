@@ -24,6 +24,7 @@ pub struct Manager {
     /// Exact-anchor negatives need their own revision floor: eligible Current
     /// alone does not encode them. Retain it before any fallible intent I/O.
     revocations: Revocations,
+    synchronization: std::sync::Arc<std::sync::RwLock<serde_json::Value>>,
 }
 #[derive(Debug, serde::Serialize)]
 pub struct Progress {
@@ -75,6 +76,9 @@ impl Manager {
             live: None,
             current: None,
             revocations: intent,
+            synchronization: std::sync::Arc::new(std::sync::RwLock::new(
+                serde_json::json!({"state":"not-polled"}),
+            )),
         })
     }
     pub fn with_archive(mut self, archive: std::sync::Arc<crate::archive::Archive>) -> Self {
@@ -84,7 +88,43 @@ impl Manager {
     pub fn live(&self) -> Option<LiveService> {
         self.live.clone()
     }
+    /// Private operational route; the operator TLS proxy must expose wallet paths only.
+    /// It reads actual owner/runtime state and the last completed source/archive
+    /// observations. No timestamp is serving authority or a freshness lease.
+    pub fn router(&self) -> Result<axum::Router, Error> {
+        let live = self.live().ok_or("provider did not activate")?;
+        let sync = self.synchronization.clone();
+        Ok(live.router().route(
+            "/v1/provider-status",
+            axum::routing::get(move || {
+                let live = live.clone();
+                let sync = sync.clone();
+                async move {
+                    let mut status = live.provider_observations();
+                    status["synchronization"] = sync.read().unwrap().clone();
+                    axum::Json(status)
+                }
+            }),
+        ))
+    }
     pub async fn poll_once(&mut self) -> Result<Progress, Error> {
+        self.synchronization.write().unwrap()["in_progress"] = true.into();
+        let result = self.reconcile().await;
+        let at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs());
+        let mut sync = self.synchronization.write().unwrap();
+        *sync = match &result {
+            Ok(progress) => {
+                serde_json::json!({"in_progress":false,"completed_unix":at,"state":"synchronized","progress":progress})
+            }
+            Err(error) => {
+                serde_json::json!({"in_progress":false,"completed_unix":at,"state":"refused","error":error.to_string()})
+            }
+        };
+        result
+    }
+    async fn reconcile(&mut self) -> Result<Progress, Error> {
         self.source.reset_budget();
         if let Some(live) = &self.live {
             live.collect_memory().await?;

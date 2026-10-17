@@ -1,0 +1,15 @@
+{
+  "listen": "127.0.0.1:8092",
+  "state_dir": "/var/lib/transparent-provider",
+  "publisher": "https://publisher.example.invalid",
+  "publisher_network": "main",
+  "publisher_genesis": "00040fe8ec8471911baa1db1266ea15dd06b4a8a5c453883c000b031973dce08",
+  "archive_upstream": "https://archive.example.invalid",
+  "cache_bytes": 34359738368,
+  "bootstrap_max_bytes": 68719476736,
+  "query_slots": 2,
+  "query_waiters": 8,
+  "body_bytes": 67108864,
+  "query_deadline_secs": 30,
+  "upload_deadline_secs": 10
+}

@@ -235,12 +235,12 @@ def external_workers(args, service, inventory):
     from .transaction import Journal
     if args.command == 'rollback':
         journal = Journal.load(args.state_dir, service.name, args.transaction)
-        return journal is not None and all(service.roles[r['role']].mode == 'role' for r in journal.hosts)
+        return journal is not None and all(service.roles[r['role']].mode == 'role' and service.roles[r['role']].shared_lifecycle for r in journal.hosts)
     only = getattr(args, 'only', None)
     if not only:
         return False
     selected = descriptors.select(descriptors.targets(service, inventory), only)
-    return all(t.role.mode == 'role' for t in selected)
+    return all(t.role.mode == 'role' and t.role.shared_lifecycle for t in selected)
 
 
 def parser():

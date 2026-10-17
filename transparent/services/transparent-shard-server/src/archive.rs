@@ -19,6 +19,7 @@ use transparent_shard::manifest::query_binding;
 pub struct Archive {
     origin: reqwest::Url,
     client: reqwest::Client,
+    observation: std::sync::RwLock<Value>,
 }
 struct Shape {
     shared: SharedParams,
@@ -108,6 +109,7 @@ impl Archive {
         }
         Ok(Arc::new(Self {
             origin,
+            observation: std::sync::RwLock::new(serde_json::json!({"state":"unobserved"})),
             client: client.build().map_err(|e| e.to_string())?,
         }))
     }
@@ -205,7 +207,25 @@ impl Archive {
         }
         Ok(ready)
     }
+    pub(crate) fn observation(&self) -> Value {
+        self.observation.read().unwrap().clone()
+    }
     async fn check(&self, state: &ServiceState, id: u64, digest: &str) -> Result<Value, Failure> {
+        let result = self.check_identity(state, id, digest).await;
+        *self.observation.write().unwrap() = serde_json::json!({
+            "state":if result.is_ok() {"identity-checked"} else {"refused"},
+            "checked_unix":std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs()),
+            "shard_id":id,"manifest_digest":digest,
+            "terminal_identity":result.as_ref().ok(),
+        });
+        result
+    }
+    async fn check_identity(
+        &self,
+        state: &ServiceState,
+        id: u64,
+        digest: &str,
+    ) -> Result<Value, Failure> {
         let ready = self.ready().await?;
         let init: Value = serde_json::from_slice(&self.get("/v2/shards/init", 1 << 20).await?)
             .map_err(|_| "invalid archive initialization")?;

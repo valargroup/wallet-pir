@@ -467,6 +467,33 @@ impl LiveService {
         )
     }
 
+    pub(crate) fn provider_observations(&self) -> serde_json::Value {
+        let active = self.0.active.read().unwrap();
+        let state = &active.state;
+        let invalid = self.0.invalid.read().unwrap();
+        let coverage: Vec<_> = state
+            .set()
+            .map
+            .shards
+            .iter()
+            .map(|s| {
+                serde_json::json!({"shard_id":s.shard_id,"start_height":s.start_height,
+                "end_height":s.end_height,"manifest_digest":s.manifest_digest,
+                "local":state.set().is_assigned(s.shard_id),
+                "revoked":invalid.contains(&s.manifest_digest)})
+            })
+            .collect();
+        serde_json::json!({
+            "binary_sha256":pir_control::binary_sha256(),
+            "incarnation":pir_control::Identity::process().incarnation,
+            "verified_publication":{"map_sha256":active.publication.map_sha256},
+            "runtime_readiness":{"warm":state.is_warm(),"invalidated":state.is_invalidated(),
+                "required":state.required_material(),"preparation":state.preparation()},
+            "active_coverage":coverage,
+            "archive_reachability":state.archive().map(|a| a.observation()),
+        })
+    }
+
     pub fn router(&self) -> Router {
         let telemetry = self.0.active.read().unwrap().state.metrics().http.clone();
         Router::new()

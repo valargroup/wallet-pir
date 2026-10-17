@@ -33,7 +33,7 @@ The contract governs intended behavior; code establishes implementation; deploym
 
 13. [First independent history provider plan](recent-provider-plan.md): approved PR stack for HTTPS publication synchronization, embedded recent serving and a fixed Valargroup archive upstream.
 
-14. [Prepared publication bootstrap](prepared-distribution.md): opt-in PR1 verification checkpoint, HTTPS trust/replay rules and remaining activation gate.
+14. [Prepared history distribution and standalone provider](prepared-distribution.md): HTTPS trust/replay rules, release artifacts, provider configuration and operator lifecycle.
 
 ## Product boundaries
 
