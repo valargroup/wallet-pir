@@ -28,7 +28,59 @@ pub struct Current {
     pub revision: u64,
     pub recovery_epoch: u64,
     pub inventory_sha256: String,
+    pub network: String,
+    pub genesis_hash: String,
+    pub anchor_height: u64,
+    pub anchor_hash: String,
+    pub eligibility: Eligibility,
+    /// A journal-only invalidation above the anchor does not revoke this
+    /// canonical publication, but still fences in-progress bootstrap attempts.
+    pub invalidated_from: Option<u64>,
 }
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Eligibility {
+    Canonical,
+    Withdrawn,
+    Noncanonical,
+}
+
+impl Current {
+    pub fn eligible(&self) -> bool {
+        self.eligibility == Eligibility::Canonical
+            && self
+                .invalidated_from
+                .is_none_or(|from| from > self.anchor_height)
+    }
+
+    /// Equal-revision state may only become less eligible. The ingestion loop
+    /// can withdraw immediately before discovering the exact fork/advancing
+    /// its epoch. A fresh good poll must never undo that observed withdrawal.
+    pub fn succeeds(&self, previous: &Self) -> bool {
+        if self.revision != previous.revision {
+            return self.revision > previous.revision;
+        }
+        let mut same = previous.clone();
+        same.eligibility = self.eligibility;
+        self == &same && (!self.eligible() || previous.eligible())
+    }
+}
+
+/// A live publisher attestation from its existing canonicality source. This is
+/// neither indexed-data completeness proof nor permission to serve a revision.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AnchorCheck {
+    pub schema: String,
+    pub revision: u64,
+    pub recovery_epoch: u64,
+    pub genesis_hash: String,
+    pub height: u64,
+    pub hash: String,
+    pub canonical: bool,
+}
+
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum Kind {

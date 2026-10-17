@@ -5,7 +5,7 @@ use transparent_server_backend::distribution::{Finalized, Kind};
 use transparent_server_backend::shardset::ShardSet;
 use transparent_shard_server::bootstrap;
 
-fn authority(directory: &Path, distribution: Option<Finalized>) -> Authority {
+fn authority(directory: &Path, distribution: Option<Finalized>, rpc: NodeClient) -> Authority {
     let mut public = read_public(directory.to_path_buf(), Vec::new()).unwrap();
     public.distribution = distribution;
     Authority(Arc::new(Inner {
@@ -20,6 +20,8 @@ fn authority(directory: &Path, distribution: Option<Finalized>) -> Authority {
         epoch: AtomicU64::new(0),
         distribution_revision: AtomicU64::new(1),
         distribution_slots: Arc::new(tokio::sync::Semaphore::new(4)),
+        canonicality: Some(rpc),
+        invalidated_from: AtomicU64::new(u64::MAX),
         publication_gate: std::sync::Mutex::new(()),
         last_init: std::sync::Mutex::new(None),
         status: RwLock::new(serde_json::json!({})),
@@ -63,7 +65,16 @@ fn publication(root: &Path) -> (PathBuf, ShardSet) {
             Vec::new()
         };
         journal
-            .append_block(h, BlockHash::from_internal_bytes([h as u8; 32]), &events)
+            .append_block(
+                h,
+                if h == 0 {
+                    BlockHash::from_display_hex(transparent_filter::MAINNET_GENESIS_DISPLAY)
+                        .unwrap()
+                } else {
+                    BlockHash::from_internal_bytes([h as u8; 32])
+                },
+                &events,
+            )
             .unwrap();
     }
     journal.commit().unwrap();
@@ -147,6 +158,66 @@ fn prepare_recent(directory: &Path, set: &ShardSet) {
         })
         .unwrap();
     assert!(prepared.failures.is_empty());
+}
+
+struct CanonicalRpc {
+    client: NodeClient,
+    hash: Arc<RwLock<Option<String>>>,
+    genesis: Arc<RwLock<String>>,
+    task: tokio::task::JoinHandle<()>,
+}
+impl Drop for CanonicalRpc {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+async fn canonical_rpc(root: &Path, set: &ShardSet) -> CanonicalRpc {
+    let hash = Arc::new(RwLock::new(Some(
+        set.map.shards.last().unwrap().terminal_block_hash.clone(),
+    )));
+    let genesis = Arc::new(RwLock::new(set.map.genesis_hash.clone()));
+    let state = (hash.clone(), genesis.clone());
+    async fn rpc(
+        State((hash, genesis)): State<(Arc<RwLock<Option<String>>>, Arc<RwLock<String>>)>,
+        axum::Json(request): axum::Json<serde_json::Value>,
+    ) -> impl IntoResponse {
+        assert_eq!(request["method"], "getblockhash");
+        let result = if request["params"][0] == 0 {
+            Some(genesis.read().unwrap().clone())
+        } else if request["params"][0] == 1 {
+            Some(BlockHash::from_internal_bytes([1; 32]).to_display_hex())
+        } else if request["params"][0] == 2 {
+            hash.read().unwrap().clone()
+        } else {
+            None
+        };
+        axum::Json(match result {
+            Some(hash) => serde_json::json!({"id":request["id"],"result":hash,"error":null}),
+            None => {
+                serde_json::json!({"id":request["id"],"result":null,"error":{"code":-8,"message":"node unavailable"}})
+            }
+        })
+    }
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let task = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            Router::new()
+                .route("/", axum::routing::post(rpc))
+                .with_state(state),
+        )
+        .await
+        .unwrap();
+    });
+    let cookie = root.join("node-cookie");
+    std::fs::write(&cookie, "fixture:fixture").unwrap();
+    CanonicalRpc {
+        client: crate::zakura::connect(format!("http://{address}"), cookie).unwrap(),
+        hash,
+        genesis,
+        task,
+    }
 }
 
 struct Tls {
@@ -242,9 +313,25 @@ async fn https_bootstrap_verifies_real_prepared_recent_without_archive_tables() 
     // Incomplete preparation must fail finalization, never produce a current.
     assert!(Finalized::prepare(&directory, &set, 2).is_err());
     prepare_recent(&directory, &set);
+    // A full-length native file with a valid identity/header but corrupted
+    // body cannot be finalized just because preprocessing previously completed.
+    let native = std::fs::read_dir(&directory)
+        .unwrap()
+        .map(Result::unwrap)
+        .find(|e| e.path().extension().is_some_and(|x| x == "runtime"))
+        .unwrap()
+        .path();
+    let good = std::fs::read(&native).unwrap();
+    let mut bad = good.clone();
+    bad[64] ^= 1;
+    publication::write_atomic(&native, &bad).unwrap();
+    assert!(Finalized::prepare(&directory, &set, 2).is_err());
+    publication::write_atomic(&native, &good).unwrap();
+    drop((good, bad));
     let finalized = Finalized::prepare(&directory, &set, 2).unwrap();
     let expected = finalized.inventory().clone();
-    let owner = authority(&directory, Some(finalized));
+    let rpc = canonical_rpc(root.path(), &set).await;
+    let owner = authority(&directory, Some(finalized), rpc.client.clone());
     let tls = tls(root.path(), owner.clone()).await;
     let report = bootstrap::verify(config(&tls, root.path().join("provider")))
         .await
@@ -280,7 +367,7 @@ async fn https_bootstrap_verifies_real_prepared_recent_without_archive_tables() 
         .await
         .err()
         .unwrap();
-    assert!(error.to_string().contains("503"));
+    assert!(error.to_string().contains("withdrawn"));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -288,9 +375,11 @@ async fn https_bootstrap_fails_closed_on_origin_network_and_transport_errors() {
     let root = tempfile::tempdir().unwrap();
     let (directory, set) = publication(root.path());
     prepare_recent(&directory, &set);
+    let rpc = canonical_rpc(root.path(), &set).await;
     let owner = authority(
         &directory,
         Some(Finalized::prepare(&directory, &set, 2).unwrap()),
+        rpc.client.clone(),
     );
     let tls = tls(root.path(), owner.clone()).await;
     let mut wrong = config(&tls, root.path().join("wrong-network"));
@@ -368,6 +457,134 @@ async fn https_bootstrap_fails_closed_on_origin_network_and_transport_errors() {
         .unwrap()
         .to_string()
         .contains("replay"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn https_bootstrap_consumes_canonicality_withdrawal_and_recovery_state() {
+    let root = tempfile::tempdir().unwrap();
+    let (directory, set) = publication(root.path());
+    prepare_recent(&directory, &set);
+    let rpc = canonical_rpc(root.path(), &set).await;
+    let owner = authority(
+        &directory,
+        Some(Finalized::prepare(&directory, &set, 2).unwrap()),
+        rpc.client.clone(),
+    );
+    let tls = tls(root.path(), owner.clone()).await;
+    let provider = root.path().join("provider");
+    // The same endpoint can revalidate an older retained public anchor without
+    // publisher disk access or an archive evaluation table.
+    let client = reqwest::Client::builder()
+        .add_root_certificate(tls.cert.clone())
+        .https_only(true)
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+    let older = BlockHash::from_internal_bytes([1; 32]).to_display_hex();
+    let checked: transparent_server_backend::distribution::AnchorCheck = client
+        .get(format!("{}/provider/v1/anchors/1/{older}", tls.origin))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(checked.canonical);
+    assert_eq!(checked.height, 1);
+    assert_eq!(checked.hash, older);
+    let wrong: transparent_server_backend::distribution::AnchorCheck = client
+        .get(format!(
+            "{}/provider/v1/anchors/1/{}",
+            tls.origin,
+            "99".repeat(32)
+        ))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(!wrong.canonical);
+    // Same production NodeClient/genesis/anchor checks as controller activation;
+    // provider traffic still uses only the authenticated publisher HTTPS origin.
+    *rpc.hash.write().unwrap() = Some("77".repeat(32));
+    assert!(bootstrap::verify(config(&tls, provider.clone()))
+        .await
+        .err()
+        .unwrap()
+        .to_string()
+        .contains("noncanonical"));
+    *rpc.hash.write().unwrap() = Some(set.map.shards.last().unwrap().terminal_block_hash.clone());
+    // A later good answer cannot undo an observed bad equal revision.
+    assert!(bootstrap::verify(config(&tls, provider.clone()))
+        .await
+        .err()
+        .unwrap()
+        .to_string()
+        .contains("replay"));
+    owner.0.distribution_revision.fetch_add(1, Ordering::AcqRel);
+    let recovered = bootstrap::verify(config(&tls, provider.clone()))
+        .await
+        .unwrap();
+    assert!(!recovered.serving);
+    // Explicit invalidation is consumed and retained even before downloading.
+    {
+        let _gate = owner.0.publication_gate.lock().unwrap();
+        owner.0.epoch.fetch_add(1, Ordering::AcqRel);
+        owner.0.distribution_revision.fetch_add(1, Ordering::AcqRel);
+        owner.0.invalidated_from.store(1, Ordering::Release);
+        owner.0.withdrawn.store(true, Ordering::Release);
+    }
+    assert!(bootstrap::verify(config(&tls, provider.clone()))
+        .await
+        .err()
+        .unwrap()
+        .to_string()
+        .contains("withdrawn"));
+    let water: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(provider.join("publisher-high-water.json")).unwrap())
+            .unwrap();
+    assert_eq!(water["current"]["invalidated_from"], 1);
+    assert_eq!(water["current"]["eligibility"], "withdrawn");
+    // The controller can retain an older canonical anchor when only a later
+    // journal suffix forked. Recovery advances epoch/revision before reoffering.
+    {
+        let _gate = owner.0.publication_gate.lock().unwrap();
+        owner.0.epoch.fetch_add(1, Ordering::AcqRel);
+        owner.0.distribution_revision.fetch_add(1, Ordering::AcqRel);
+        owner.0.invalidated_from.store(3, Ordering::Release);
+        owner.0.withdrawn.store(false, Ordering::Release);
+    }
+    let retained = bootstrap::verify(config(&tls, provider.clone()))
+        .await
+        .unwrap();
+    assert_eq!(retained.current.invalidated_from, Some(3));
+    assert!(retained.current.eligible());
+    // Node/source failure or a wrong-network canonicality source cannot verify
+    // an otherwise intact candidate; failure is not a freshness renewal.
+    *rpc.hash.write().unwrap() = None;
+    assert!(
+        bootstrap::verify(config(&tls, root.path().join("source-outage")))
+            .await
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("503")
+    );
+    *rpc.hash.write().unwrap() = Some(set.map.shards.last().unwrap().terminal_block_hash.clone());
+    *rpc.genesis.write().unwrap() = "88".repeat(32);
+    assert!(
+        bootstrap::verify(config(&tls, root.path().join("source-network")))
+            .await
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("503")
+    );
 }
 
 #[test]

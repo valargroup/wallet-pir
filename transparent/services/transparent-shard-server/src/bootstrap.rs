@@ -1,6 +1,7 @@
 //! One-shot HTTPS bootstrap verification. No persisted download is serving
 //! authority. This entry point intentionally cannot start a wallet listener:
-//! continuous canonicality/invalidation ownership belongs to the manager.
+//! fresh publisher canonicality attestation is checked around verification.
+//! Continuous reconciliation/activation belongs to the manager.
 use crate::{
     assignment::{GeneratedBy, WorkerRole},
     router::{plan, RosterEntry},
@@ -103,22 +104,12 @@ impl Source {
         }
         Ok(bytes)
     }
-    async fn current(&self, directory: &std::path::Path) -> Result<Current, Error> {
-        let current: Current = serde_json::from_slice(&self.small("current", 16 << 10).await?)?;
-        if current.schema != distribution::SCHEMA
-            || current.revision == 0
-            || !distribution::is_digest(&current.inventory_sha256)
-        {
-            return Err("invalid publisher current record".into());
-        }
+    fn observe(&self, directory: &std::path::Path, current: &Current) -> Result<(), Error> {
         let path = directory.join("publisher-high-water.json");
         match std::fs::read(&path) {
             Ok(bytes) => {
                 let saved: HighWater = serde_json::from_slice(&bytes)?;
-                if saved.origin != self.origin.as_str()
-                    || current.revision < saved.current.revision
-                    || (current.revision == saved.current.revision && current != saved.current)
-                {
+                if saved.origin != self.origin.as_str() || !current.succeeds(&saved.current) {
                     return Err(
                         "publisher origin change, replay or contradictory current record".into(),
                     );
@@ -136,6 +127,55 @@ impl Source {
                 current: current.clone(),
             },
         )?;
+        Ok(())
+    }
+
+    async fn check_anchor(
+        &self,
+        directory: &std::path::Path,
+        current: &Current,
+    ) -> Result<(), Error> {
+        let check: distribution::AnchorCheck = serde_json::from_slice(
+            &self
+                .small(
+                    &format!("anchors/{}/{}", current.anchor_height, current.anchor_hash),
+                    16 << 10,
+                )
+                .await?,
+        )?;
+        if check.revision != current.revision || check.recovery_epoch != current.recovery_epoch {
+            return Err("publication superseded during canonicality validation".into());
+        }
+        if check.schema != distribution::SCHEMA
+            || check.genesis_hash != current.genesis_hash
+            || check.height != current.anchor_height
+            || check.hash != current.anchor_hash
+        {
+            return Err("canonicality attestation has another identity/recovery snapshot".into());
+        }
+        if !check.canonical {
+            let mut rejected = current.clone();
+            rejected.eligibility = distribution::Eligibility::Noncanonical;
+            self.observe(directory, &rejected)?;
+            return Err("candidate anchor is noncanonical".into());
+        }
+        Ok(())
+    }
+
+    async fn current(&self, directory: &std::path::Path) -> Result<Current, Error> {
+        let current: Current = serde_json::from_slice(&self.small("current", 16 << 10).await?)?;
+        if current.schema != distribution::SCHEMA
+            || current.revision == 0
+            || !distribution::is_digest(&current.inventory_sha256)
+            || !distribution::is_digest(&current.genesis_hash)
+            || !distribution::is_digest(&current.anchor_hash)
+        {
+            return Err("invalid publisher current record".into());
+        }
+        self.observe(directory, &current)?;
+        if !current.eligible() {
+            return Err("publisher current publication is withdrawn or noncanonical".into());
+        }
         Ok(current)
     }
 }
@@ -154,6 +194,9 @@ pub async fn verify(config: Config) -> Result<Report, Error> {
     lock.try_lock()
         .map_err(|_| "another bootstrap owns this directory")?;
     let current = source.current(&config.directory).await?;
+    if current.network != config.network || current.genesis_hash != config.genesis_hash {
+        return Err("prepared publication chain identity mismatch".into());
+    }
     let raw = source
         .small(
             &format!("inventories/{}", current.inventory_sha256),
@@ -228,6 +271,12 @@ pub async fn verify(config: Config) -> Result<Report, Error> {
                 let map: transparent_filter::ShardMap =
                     serde_json::from_slice(&std::fs::read(&target)?)?;
                 inventory.validate_map(&map)?;
+                let end = map.shards.last().ok_or("empty publication")?;
+                if current.anchor_height != end.end_height
+                    || current.anchor_hash != end.terminal_block_hash
+                {
+                    return Err("canonicality attestation names another publication anchor".into());
+                }
             }
             downloaded_bytes += artifact.bytes;
             downloaded_files += 1;
@@ -298,6 +347,7 @@ pub async fn verify(config: Config) -> Result<Report, Error> {
         }
         // HTTP current, not files or a last-success timestamp, is the bootstrap
         // freshness source. Supersession/withdrawal/outage cannot activate it.
+        source.check_anchor(&config.directory, &current).await?;
         if source.current(&config.directory).await? != current {
             return Err("publication superseded during bootstrap".into());
         }

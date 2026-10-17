@@ -113,6 +113,9 @@ struct Inner {
     epoch: AtomicU64,
     distribution_revision: AtomicU64,
     distribution_slots: Arc<tokio::sync::Semaphore>,
+    /// The existing producer canonicality source, never provider credentials.
+    canonicality: Option<NodeClient>,
+    invalidated_from: AtomicU64,
     publication_gate: std::sync::Mutex<()>,
     /// The last `/v2/shards/init` answer assembled from the workers, with the
     /// map it describes. Activation switches the workers to the next map a
@@ -427,6 +430,8 @@ pub async fn run(config: Config) -> Result<(), BoxError> {
         epoch: AtomicU64::new(0),
         distribution_revision: AtomicU64::new(distribution_revision),
         distribution_slots: Arc::new(tokio::sync::Semaphore::new(4)),
+        canonicality: Some(rpc.clone()),
+        invalidated_from: AtomicU64::new(u64::MAX),
         publication_gate: std::sync::Mutex::new(()),
         last_init: std::sync::Mutex::new(None),
         status: RwLock::new(serde_json::json!({"phase":"starting"})),
@@ -552,6 +557,7 @@ async fn invalidate(config: &Config, authority: &Authority, from: u64) -> Result
             authority.0.withdrawn.store(true, Ordering::Release);
         }
         authority.0.epoch.fetch_add(1, Ordering::AcqRel);
+        authority.0.invalidated_from.store(from, Ordering::Release);
         if config.distribute_prepared {
             authority.0.distribution_revision.store(
                 advance_distribution_revision(&config.publication_root)?,
@@ -954,6 +960,10 @@ async fn publish_once(
             );
         }
         *authority.0.active.write().unwrap() = Arc::new(candidate);
+        authority
+            .0
+            .invalidated_from
+            .store(u64::MAX, Ordering::Release);
         authority.0.withdrawn.store(false, Ordering::Release);
         for name in ["activation.json", "withdrawn.json"] {
             let p = config.publication_root.join(name);
@@ -1140,18 +1150,53 @@ fn advance_distribution_revision(root: &Path) -> Result<u64, BoxError> {
     Ok(next)
 }
 
+/// Use the existing owner canonicality input, not prepared-file parsing. A
+/// source outage/identity failure proves nothing; a same-network hash mismatch
+/// is positive noncanonical evidence. Snapshot fencing brackets both RPC reads.
+async fn check_distribution_anchor(
+    authority: &Authority,
+    current: &transparent_server_backend::distribution::Current,
+    height: u64,
+    hash: &str,
+) -> Result<bool, BoxError> {
+    let _permit = authority
+        .0
+        .distribution_slots
+        .clone()
+        .try_acquire_owned()
+        .map_err(|_| "distribution canonicality admission full")?;
+    let rpc = authority
+        .0
+        .canonicality
+        .as_ref()
+        .ok_or("canonicality source unavailable")?;
+    if rpc.block_hash_display(0).await? != current.genesis_hash {
+        return Err("canonicality source changed network".into());
+    }
+    let canonical = rpc.block_hash_display(height).await? == hash;
+    // As in the existing canonical guard, a repointed/wrong-network node
+    // cannot supply positive reorg evidence.
+    if !canonical && rpc.block_hash_display(0).await? != current.genesis_hash {
+        return Err("canonicality source changed network".into());
+    }
+    let _gate = authority.0.publication_gate.lock().unwrap();
+    if authority.0.epoch.load(Ordering::Acquire) != current.recovery_epoch
+        || authority.0.distribution_revision.load(Ordering::Acquire) != current.revision
+    {
+        return Err("canonicality snapshot superseded".into());
+    }
+    Ok(canonical)
+}
+
 async fn distribution_request(authority: Authority, request: Request) -> Response {
-    use transparent_server_backend::distribution::{self, Current};
+    use transparent_server_backend::distribution::{self, Current, Eligibility};
     if request.method() != axum::http::Method::GET || request.uri().query().is_some() {
         return StatusCode::METHOD_NOT_ALLOWED.into_response();
     }
     // Capture current, withdrawal and epoch under the same gate that commits
     // the public pointer and withdraws orphaned coverage.
-    let (active, current) = {
+    let (active, mut current) = {
         let _gate = authority.0.publication_gate.lock().unwrap();
-        if authority.0.withdrawn.load(Ordering::Acquire) {
-            return unavailable();
-        }
         let active = authority.0.active.read().unwrap().clone();
         let Some(finalized) = &active.distribution else {
             return unavailable();
@@ -1161,6 +1206,19 @@ async fn distribution_request(authority: Authority, request: Request) -> Respons
             revision: authority.0.distribution_revision.load(Ordering::Acquire),
             recovery_epoch: authority.0.epoch.load(Ordering::Acquire),
             inventory_sha256: finalized.sha256().to_string(),
+            network: active.filters.map().network.clone(),
+            genesis_hash: active.filters.map().genesis_hash.clone(),
+            anchor_height: active.publication.height,
+            anchor_hash: active.publication.hash.clone(),
+            eligibility: if authority.0.withdrawn.load(Ordering::Acquire) {
+                Eligibility::Withdrawn
+            } else {
+                Eligibility::Canonical
+            },
+            invalidated_from: match authority.0.invalidated_from.load(Ordering::Acquire) {
+                u64::MAX => None,
+                h => Some(h),
+            },
         };
         (active, current)
     };
@@ -1169,8 +1227,66 @@ async fn distribution_request(authority: Authority, request: Request) -> Respons
         .path()
         .strip_prefix(distribution::PREFIX)
         .unwrap();
+    if let Some(anchor) = suffix.strip_prefix("anchors/") {
+        let Some((height, hash)) = anchor.split_once('/') else {
+            return StatusCode::NOT_FOUND.into_response();
+        };
+        let Ok(height) = height.parse::<u64>() else {
+            return StatusCode::NOT_FOUND.into_response();
+        };
+        if !distribution::is_digest(hash) {
+            return StatusCode::NOT_FOUND.into_response();
+        }
+        let canonical = match check_distribution_anchor(&authority, &current, height, hash).await {
+            Ok(canonical) => canonical,
+            Err(_) => return unavailable(),
+        };
+        return (
+            [("cache-control", "no-store")],
+            axum::Json(distribution::AnchorCheck {
+                schema: distribution::SCHEMA.into(),
+                revision: current.revision,
+                recovery_epoch: current.recovery_epoch,
+                genesis_hash: current.genesis_hash,
+                height,
+                hash: hash.into(),
+                canonical,
+            }),
+        )
+            .into_response();
+    }
     if suffix == "current" {
+        if current.eligible() {
+            match check_distribution_anchor(
+                &authority,
+                &current,
+                current.anchor_height,
+                &current.anchor_hash,
+            )
+            .await
+            {
+                Ok(true) => {}
+                Ok(false) => current.eligibility = Eligibility::Noncanonical,
+                Err(_) => return unavailable(),
+            }
+            // Never attest a candidate across withdrawal, recovery or a pointer
+            // change that happened while the canonicality request was pending.
+            let _gate = authority.0.publication_gate.lock().unwrap();
+            if authority.0.epoch.load(Ordering::Acquire) != current.recovery_epoch
+                || authority.0.distribution_revision.load(Ordering::Acquire) != current.revision
+                || authority.0.active.read().unwrap().publication.map_sha256
+                    != active.publication.map_sha256
+            {
+                return unavailable();
+            }
+            if authority.0.withdrawn.load(Ordering::Acquire) {
+                current.eligibility = Eligibility::Withdrawn;
+            }
+        }
         return ([("cache-control", "no-store")], axum::Json(current)).into_response();
+    }
+    if !current.eligible() {
+        return unavailable();
     }
     let finalized = active.distribution.as_ref().unwrap();
     if suffix == format!("inventories/{}", finalized.sha256()) {
@@ -1704,6 +1820,8 @@ print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('re
             epoch: AtomicU64::new(0),
             distribution_revision: AtomicU64::new(1),
             distribution_slots: Arc::new(tokio::sync::Semaphore::new(4)),
+            canonicality: None,
+            invalidated_from: AtomicU64::new(u64::MAX),
             publication_gate: std::sync::Mutex::new(()),
             last_init: std::sync::Mutex::new(None),
             status: RwLock::new(serde_json::json!({})),
@@ -1970,6 +2088,8 @@ print(json.dumps({'ok':True,'upstreams':[],'workers':{},'retained_publication':b
             epoch: AtomicU64::new(0),
             distribution_revision: AtomicU64::new(1),
             distribution_slots: Arc::new(tokio::sync::Semaphore::new(4)),
+            canonicality: None,
+            invalidated_from: AtomicU64::new(u64::MAX),
             publication_gate: std::sync::Mutex::new(()),
             last_init: std::sync::Mutex::new(None),
             status: RwLock::new(serde_json::json!({})),
