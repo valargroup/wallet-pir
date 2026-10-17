@@ -138,13 +138,22 @@ async fn start(binary: &Path, args: &[String], cwd: &Path, origin: &str) -> toki
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn checkout_free_artifacts_support_queries_and_restart() {
-    installation_case(false).await;
+    installation_case(Case::Restart).await;
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn checkout_free_artifacts_refuse_missing_and_incompatible_runtimes() {
-    installation_case(true).await;
+    installation_case(Case::Invalid).await;
 }
-async fn installation_case(invalid_material: bool) {
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn independent_processes_recover_during_peer_restart_and_outages() {
+    installation_case(Case::Independent).await;
+}
+enum Case {
+    Restart,
+    Invalid,
+    Independent,
+}
+async fn installation_case(case: Case) {
     let root = tempfile::tempdir().unwrap();
     let root = root.path();
     let source = root.join("publisher-data");
@@ -168,6 +177,20 @@ async fn installation_case(invalid_material: bool) {
         eligibility: distribution::Eligibility::Canonical,
         invalidated_from: None,
     };
+    if matches!(case, Case::Independent) {
+        // Keep the actual prepared producer inputs and pointer/inventory, not
+        // merely source rows or hashes of temporary archives after teardown.
+        retain_fixture("independent-prepared-inputs", &source);
+        let records = root.join("publication-records");
+        std::fs::create_dir(&records).unwrap();
+        std::fs::write(
+            records.join("current.json"),
+            serde_json::to_vec(&current).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(records.join("inventory.json"), finalized.bytes()).unwrap();
+        retain_fixture("independent-publication-records", &records);
+    }
     let mut replies = BTreeMap::<String, Vec<u8>>::new();
     replies.insert(
         "/provider/v1/current".into(),
@@ -327,6 +350,10 @@ async fn installation_case(invalid_material: bool) {
     let sha = sha.trim();
     let package = format!("import sys; from pathlib import Path; sys.path.insert(0,{:?}); from wallet_pir_ops import release,bundle; r=Path({:?}); release.assemble({:?},r/'build',r/'artifacts','transparent-shard'); release.extract(r/'artifacts/transparent-shard.tar.gz',r/'binary',{:?},'transparent-shard'); bundle.assemble(r/'ops.tar.gz',{:?}); bundle.extract(r/'ops.tar.gz',r/'ops',{:?})",repo.join("ops/lib").to_str().unwrap(),root.to_str().unwrap(),sha,sha,sha,sha);
     command(&["python3", "-B", "-c", &package], root).await;
+    if matches!(case, Case::Independent) {
+        retain_fixture("independent-service-release", &root.join("artifacts"));
+        retain_file("independent-operations.tar.gz", &root.join("ops.tar.gz"));
+    }
     let renderer = root.join("ops/ops/scripts/wallet-pir-roles.py");
     command(&["python3", renderer.to_str().unwrap(), "--help"], root).await;
     assert!(!root.join("ops/.git").exists());
@@ -364,7 +391,7 @@ async fn installation_case(invalid_material: bool) {
         .map(|v| v.as_str().unwrap().to_string())
         .collect();
     let binary = root.join("binary/transparent-shard-server");
-    if invalid_material {
+    if matches!(case, Case::Invalid) {
         corrupt_runtime.store(false, std::sync::atomic::Ordering::Release);
         for (mode, name) in [(1, "missing"), (2, "incompatible")] {
             inventory_fault.store(mode, std::sync::atomic::Ordering::Release);
@@ -420,7 +447,25 @@ async fn installation_case(invalid_material: bool) {
         archive_server.stop().await;
         return;
     }
-    // Real install/start preflight, then independent process startups from those same arguments.
+    let args = &check[..check.len() - 1];
+    if matches!(case, Case::Independent) {
+        // Startup performs strict verification itself. The separate installation
+        // cases above/below own negative and positive verify-only coverage.
+        corrupt_runtime.store(false, std::sync::atomic::Ordering::Release);
+        independent_processes(
+            root,
+            &binary,
+            args,
+            &origin,
+            &set,
+            (&mut publisher_tls, &mut archive_tls),
+        )
+        .await;
+        publisher_server.stop().await;
+        archive_server.stop().await;
+        return;
+    }
+    // Real install/start preflight, then process startups from those same arguments.
     let refused = tokio::process::Command::new(&binary)
         .args(&check)
         .current_dir(root)
@@ -444,7 +489,6 @@ async fn installation_case(invalid_material: bool) {
         "{}",
         String::from_utf8_lossy(&preflight.stderr)
     );
-    let args = &check[..check.len() - 1];
     for _ in 0..2 {
         let mut child = start(&binary, args, root, &origin).await;
         let before = status(&origin).await;
@@ -509,4 +553,133 @@ async fn installation_case(invalid_material: bool) {
     assert!(!refused.status.success());
     publisher_server.stop().await;
     archive_server.stop().await;
+}
+
+async fn independent_processes(
+    root: &Path,
+    binary: &Path,
+    args: &[String],
+    origin: &str,
+    set: &ShardSet,
+    transports: (&mut tokio::process::Child, &mut tokio::process::Child),
+) {
+    let second = root.join("second");
+    std::fs::create_dir(&second).unwrap();
+    let socket = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = socket.local_addr().unwrap();
+    drop(socket);
+    let second_origin = format!("http://{addr}");
+    let mut second_args = args.to_vec();
+    for (flag, value) in [
+        ("--listen", addr.to_string()),
+        ("--shard-dir", second.join("state").display().to_string()),
+    ] {
+        let at = second_args.iter().position(|a| a == flag).unwrap() + 1;
+        second_args[at] = value;
+    }
+    let (mut first, mut other) = tokio::join!(
+        start(binary, args, root, origin),
+        start(binary, &second_args, &second, &second_origin)
+    );
+    assert_ne!(first.id(), other.id(), "independent OS processes");
+    assert!(root.join("state/active.json").is_file());
+    assert!(second.join("state/active.json").is_file());
+    for endpoint in [origin, second_origin.as_str()] {
+        let observed = status(endpoint).await;
+        assert_eq!(
+            observed["verified_publication"]["map_sha256"],
+            set.map_digest
+        );
+        assert_eq!(observed["runtime_readiness"]["required"], true);
+        assert_eq!(observed["runtime_readiness"]["preparation"]["built"], 0);
+        if std::env::var_os("WALLET_PIR_FROZEN_CLIENT").is_some() {
+            let recovered = frozen(endpoint.into(), 1, FIRST).await;
+            // Source-event oracle, independent of native table generation.
+            assert_eq!(
+                recovered,
+                serde_json::json!({
+                    "covered_through": FIRST+3, "matched_shards": [0,1], "utxos": [], "unresolved": 0,
+                    "spends": [{"spent_txid":"01".repeat(32),"spent_index":0,
+                        "spending_txid":"02".repeat(32),"input_index":0,"height":FIRST+2,
+                        "value":123456,"script":hex::encode(script(1).as_slice())}],
+                    "history":[{"txid":"01".repeat(32),"height":FIRST,"received":123456,"spent":0},
+                        {"txid":"02".repeat(32),"height":FIRST+2,"received":0,"spent":123456}]
+                })
+            );
+        } else {
+            row_query(endpoint, set, 0).await;
+            row_query(endpoint, set, 1).await;
+        }
+    }
+    // A fresh process must recover its own durable state; the other provider
+    // answers real encrypted local work throughout that restart.
+    first.kill().await.unwrap();
+    first.wait().await.unwrap();
+    let ready = std::sync::atomic::AtomicBool::new(false);
+    let (restarted, queries) = tokio::join!(
+        async {
+            let child = start(binary, args, root, origin).await;
+            ready.store(true, std::sync::atomic::Ordering::Release);
+            child
+        },
+        async {
+            let mut queries = 0;
+            loop {
+                row_query(&second_origin, set, 1).await;
+                queries += 1;
+                if ready.load(std::sync::atomic::Ordering::Acquire) {
+                    break queries;
+                }
+            }
+        }
+    );
+    assert!(
+        queries > 0,
+        "one-at-a-time encrypted load spans peer restart"
+    );
+    first = restarted;
+    if std::env::var_os("WALLET_PIR_FROZEN_CLIENT").is_some() {
+        assert_eq!(
+            frozen(origin.into(), 1, FIRST).await,
+            frozen(second_origin.clone(), 1, FIRST).await,
+            "restarted provider recovers the same independently checked ledger"
+        );
+    }
+    row_query(origin, set, 0).await;
+    row_query(origin, set, 1).await;
+    // Publisher transport loss cannot revoke the valid active view. Losing
+    // archive transport subsequently refuses historical work, never an empty
+    // recovery, while each provider's valid recent worker stays independent.
+    transports.0.kill().await.unwrap();
+    transports.0.wait().await.unwrap();
+    for endpoint in [origin, second_origin.as_str()] {
+        tokio::time::timeout(std::time::Duration::from_secs(8), async {
+            while status(endpoint).await["synchronization"]["state"] != "refused" {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("publisher outage must reach the real manager poll");
+        row_query(endpoint, set, 0).await;
+        row_query(endpoint, set, 1).await;
+    }
+    transports.1.kill().await.unwrap();
+    transports.1.wait().await.unwrap();
+    for endpoint in [origin, second_origin.as_str()] {
+        let digest = &set.map.shards[0].manifest_digest;
+        assert_eq!(
+            reqwest::get(format!(
+                "{endpoint}/v2/shards/0/revisions/{digest}/setup/directory/0"
+            ))
+            .await
+            .unwrap()
+            .status(),
+            503
+        );
+        row_query(endpoint, set, 1).await;
+    }
+    first.kill().await.unwrap();
+    first.wait().await.unwrap();
+    other.kill().await.unwrap();
+    other.wait().await.unwrap();
 }

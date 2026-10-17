@@ -355,9 +355,30 @@ repository wrapper. From the repository root, run
 `python3 transparent/services/transparent-shard-server/tests/frozen-client/run-tests.py --output .local-pir/provider-qualification-<new-id>`
 inside that wrapper. It records resolved metadata, the isolated lock digest,
 crate/source-byte checks and build preparation times separately, then executes
-each HTTP case under the existing 30-second guard. The explicit frozen-process integration case in
-`assignment::provider` compares historical receive/spend recovery with original
-source events and checks recent recovery during archive outage. Library execution
+each HTTP case under the existing 30-second guard. The runner enforces that fixed
+limit explicitly, independently of inherited `WALLET_PIR_CASE_SECONDS`, and runs
+lightweight override/receipt/failure controls before building. These hermetic
+controls do not replace the real client cases. It retains executable hashes,
+build times, resolved sources, case results and before/after raw host/cgroup
+observations in a new ignored output directory. Those host snapshots are shared-host
+diagnostics, not peak-memory measurement or proof of isolation.
+The independent-process case retains the actual service/operations archives,
+prepared producer files and current/inventory bytes before temporary teardown;
+the runner hashes every retained input. Its source guard uses the shared
+correctness identity, including tracked changes and untracked source inputs.
+
+The frozen-process cases in `assignment::provider` compare complete historical
+receive/spend recovery with source-event oracles, including actual 32k archive
+directory/page execution with 2k recent execution. Directory corruption, page-only
+answer corruption and page-only setup-epoch mismatch must refuse recovery without
+replaying uncertain submissions. The installation fixture also starts two independent
+provider processes with separate state directories, recovers through each endpoint,
+restarts one while the other answers encrypted work, and checks active service after
+publisher loss plus recent success/explicit historical refusal after archive loss.
+This installation fixture serves production-finalized artifacts over HTTPS; it is
+not the controller publication/update campaign. Ordinary CPU runs use exact source
+rows; the explicit frozen harness additionally checks each endpoint's source-event
+ledger oracle. Library execution
 is not unchanged-application execution. The fixed Vizor build's existing-origin
 TLS and same-origin display smoke remains mandatory; no application rebuild,
 upgrade, TLS bypass, production DNS or routing change is authorized here.
