@@ -38,6 +38,13 @@ fn publication(root: &Path) -> (PathBuf, ShardSet) {
     publication_through(root, 2)
 }
 fn publication_through(root: &Path, through: u64) -> (PathBuf, ShardSet) {
+    publication_with_geometry(root, through, "decoupled-32k-32k")
+}
+fn publication_with_geometry(
+    root: &Path,
+    through: u64,
+    archive_geometry: &str,
+) -> (PathBuf, ShardSet) {
     let journal_dir = root.join("journal");
     let mut journal =
         EventStore::open(&journal_dir, transparent_filter::MAINNET_GENESIS_DISPLAY, 0).unwrap();
@@ -88,7 +95,7 @@ fn publication_through(root: &Path, through: u64) -> (PathBuf, ShardSet) {
             output: output.clone(),
             previous: None,
             recent_geometry: "decoupled-2k-8k".into(),
-            archive_geometry: Some("decoupled-32k-32k".into()),
+            archive_geometry: Some(archive_geometry.into()),
             recent_from: Some(2),
             zakura_rpc_url: String::new(),
             zakura_cookie: root.join("unused"),

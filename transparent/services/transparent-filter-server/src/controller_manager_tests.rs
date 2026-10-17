@@ -144,6 +144,20 @@ async fn manager_reuses_immutable_transfers_and_serves_through_failed_update() {
         );
         query(&origin, &set).await;
     }
+    // A restart during a failed update recovers the complete predecessor only
+    // after live source checks; failure of the new transfer still leaves it up.
+    task.abort();
+    let _ = task.await;
+    drop(live);
+    drop(follow);
+    std::fs::write(&tls.control, "missing").unwrap();
+    let mut follow = manager(&tls, &state);
+    assert!(follow.poll_once().await.is_err());
+    let live = follow
+        .live()
+        .expect("freshly checked predecessor survives restart/update failure");
+    let (origin, task) = worker(live.clone()).await;
+    query(&origin, &set).await;
     std::fs::write(&tls.control, "").unwrap();
     let updated = follow.poll_once().await.unwrap();
     assert!(updated.downloaded_files > 0);
@@ -385,7 +399,7 @@ async fn manager_restarts_interrupted_staging_and_rejects_superseded_activation(
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn manager_checks_inventory_and_required_files_on_unchanged_maps() {
     let root = tempfile::tempdir().unwrap();
-    let (directory, set) = publication(root.path());
+    let (directory, set) = publication_with_geometry(root.path(), 2, "decoupled-2k-8k");
     prepare_recent(&directory, &set);
     let original = Finalized::prepare(&directory, &set, 2).unwrap();
     let runtime = original
@@ -426,6 +440,10 @@ async fn manager_checks_inventory_and_required_files_on_unchanged_maps() {
     assert_eq!(repaired.downloaded_files, 1);
     // Changing only holdings is a full inventory change, never an unchanged map
     // shortcut. PR2 preserves the existing owner assignment fence.
+    let prepared =
+        transparent_server_backend::prebuild::prepare_publication(&set, &directory, &[], &|| false)
+            .unwrap();
+    assert!(prepared.failures.is_empty());
     let mut public = read_public(directory.clone(), Vec::new()).unwrap();
     public.distribution = Some(Finalized::prepare(&directory, &set, 0).unwrap());
     *owner.0.active.write().unwrap() = Arc::new(public);
