@@ -11,9 +11,10 @@ import os
 from pathlib import Path
 import stat
 import subprocess
+import tempfile
 import time
 
-SCHEMA = 1
+SCHEMA = 2
 METADATA = '.wallet-pir-sources.json'
 
 
@@ -21,10 +22,21 @@ def digest(value):
     return hashlib.sha256(value).hexdigest()
 
 
+def tracked(root):
+    return subprocess.check_output(['git', 'ls-files', '-z'], cwd=root).split(b'\0')
+
+
+def linked(root):
+    # A symlink can alias another tracked file whose restored mtime would hide
+    # different bytes at the original input path. Do not reuse any outputs in
+    # such a checkout, including links to external/untracked destinations.
+    return any(any(p.is_symlink() for p in (root / os.fsdecode(name), *(root / os.fsdecode(name)).parents))
+               for name in tracked(root) if name)
+
+
 def files(root):
-    paths = subprocess.check_output(['git', 'ls-files', '-z'], cwd=root).split(b'\0')
     result = {}
-    for name in paths:
+    for name in tracked(root):
         if not name:
             continue
         relative = os.fsdecode(name)
@@ -35,7 +47,7 @@ def files(root):
                 continue
             info = path.stat()
             if stat.S_ISREG(info.st_mode):
-                result[relative] = [digest(path.read_bytes()), info.st_mtime_ns]
+                result[relative] = [digest(path.read_bytes()), info.st_mtime_ns, stat.S_IMODE(info.st_mode)]
         except FileNotFoundError:
             pass
     return result
@@ -72,6 +84,13 @@ def restore(root, target, identity, pending):
     Capture the inputs BEFORE compilation; sealing them is a separate step.
     """
     root, target = root.resolve(), target.resolve()
+    symlinks = linked(root)
+    if symlinks and target.exists():
+        # Preserve the restored archive for inspection, outside the saved path.
+        # Never edit Cargo fingerprints or follow/touch a symlink destination.
+        unused = Path(tempfile.mkdtemp(prefix=target.name + '-unused-', dir=target.parent))
+        target.rename(unused / 'target')
+    target.mkdir(parents=True, exist_ok=True)
     current = files(root)
     previous = {}
     status = 'miss'
@@ -84,12 +103,16 @@ def restore(root, target, identity, pending):
         previous = record['files']
         require(isinstance(previous, dict))
         for name, entry in previous.items():
-            require(isinstance(name, str) and isinstance(entry, list) and len(entry) == 2)
+            require(isinstance(name, str) and isinstance(entry, list) and len(entry) == 3)
             require(isinstance(entry[0], str) and len(entry[0]) == 64)
             require(type(entry[1]) is int and 0 < entry[1] <= record['captured_ns'])
+            require(type(entry[2]) is int and 0 <= entry[2] <= 0o7777)
         status = 'verified'
     except (OSError, ValueError, KeyError, TypeError):
         previous = {}
+    if symlinks:
+        previous = {}
+        status = 'symlink-cold'
     # Future-dated cache timestamps may cost reuse, but cannot make changed
     # inputs look fresh. Do not mutate restored fingerprints to manufacture hits.
     newest = max((p.stat().st_mtime_ns for p in target.rglob('*') if p.is_file()), default=0)
@@ -97,8 +120,9 @@ def restore(root, target, identity, pending):
     reused = 0
     for name, entry in current.items():
         old = previous.get(name)
-        stamp = old[1] if old and old[0] == entry[0] else changed_time
-        reused += bool(old and old[0] == entry[0])
+        matches = bool(old and old[0] == entry[0] and old[2] == entry[2])
+        stamp = old[1] if matches else changed_time
+        reused += matches
         path = root / name
         os.utime(path, ns=(path.stat().st_atime_ns, stamp))
         entry[1] = stamp

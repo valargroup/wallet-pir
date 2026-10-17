@@ -267,24 +267,49 @@ exact entry complete for a later broader selection. Other hosted lanes keep
 `cache-on-failure`; persistent targets and release caches are unchanged.
 
 [`workspace_cache.py`](../tools/ci/workspace_cache.py) captures tracked regular
-files before compilation. After work, it seals their content hashes and mtimes
+files before compilation. After work, it seals their content hashes, modes and mtimes
 alongside a checksum and a signature of Cargo fingerprint bytes **and mtimes**.
-On restore, only unchanged bytes at the same checkout path and compatibility
+On restore, only unchanged bytes and modes at the same checkout path and compatibility
 identity regain their captured source timestamps. Changed files, or missing,
 corrupt, stale or incompatible metadata, receive timestamps newer than restored
-fingerprints. Symlinks, external/untracked inputs and directory timestamps are
-not normalized. Cargo independently checks every unit, feature, environment,
+fingerprints. Metadata schema 2 rejects older records lacking mode identity.
+Any tracked path that is or traverses a symlink disables target reuse entirely:
+the restored target is moved to a uniquely named `fast-unused-*` sibling outside
+the saved path, and Cargo starts with an empty target. This includes symlinks to
+external or untracked destinations; neither link nor destination is touched.
+These unused directories live only on the ephemeral hosted runner. This chooses
+extra compilation over trying to prove alias topology safe. External/untracked
+inputs and directory timestamps are otherwise not normalized. Cargo independently
+checks every unit, feature, environment,
 build-script dependency and output; conservative extra rebuilds remain possible.
 The signature prevents an old source record from blessing newer outputs built
 from different bytes even when Cargo fingerprint contents are identical.
 
 The new cache layout needs a separately measured first successful cold preparation
-(or parent-owned diagnostic) before repeat hosted timing can qualify. It does not
-restore older rust-cache archives with a different path/version layout. Complete
+before repeat hosted timing can qualify. It does not restore older rust-cache archives with a different path/version layout. Complete
 targets may cost more archive/storage time than rust-cache's pruned targets.
 Reverting the action/helper restores the old keys and behavior; v2 snapshots stay
 ref-scoped and expire under GitHub's existing retention policy, without deletion
 or cache migration. No dependent product format or published artifact changes.
+
+For an unmerged PR, apply the `prepare-hosted-cache` label to explicitly run
+[Prepare hosted PR cache](../.github/workflows/ci-pr-prepare.yml). It uses the real
+`pull_request` merge ref on the existing hosted runner, read-only repository
+permissions and no persisted checkout credentials. It compiles **and validates**
+all fast units with a separate 30-minute cold-preparation allowance; every test
+keeps its 30-second limit. Only successful preparation saves a ref-isolated
+snapshot. This is not the routine fast gate or a latency pass. Remove/reapply the
+label after a head update; no synchronize event automatically repeats preparation.
+Then rerun the ordinary CI job at the same PR merge SHA and verify actual Cargo
+fresh flags, executed tests, matched key/ref and complete warm duration including
+archive/cleanup under 180 seconds. Branch dispatch does not warm the PR merge ref.
+An already-existing partial exact snapshot cannot be filled in: prepare the next
+source-tree key before routine Rust validation, without deleting old entries.
+The parent owns this hosted sequence and independent review; local tooling-only
+checks do not prove it. Reversal removes this optional workflow/label trigger;
+existing snapshots remain ref-scoped and expire normally, with no cache deletion,
+release artifacts or product state migration. The main-only primer guard and
+routine limits remain unchanged.
 
 Main uses persistent targets; the separate
 [Prime hosted Cargo caches](../.github/workflows/ci-cache.yml) workflow can prepare

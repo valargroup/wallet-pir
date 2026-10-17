@@ -1,0 +1,50 @@
+name: Prepare hosted PR cache
+
+# Explicit cold preparation in the actual PR merge-ref context. Remove/reapply
+# the label to prepare a newer head; routine PR checks keep their own 180s cap.
+on:
+  pull_request:
+    branches: [main]
+    types: [labeled]
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: prepare-hosted-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -Dwarnings -C target-cpu=x86-64-v3
+  CFLAGS: -mpclmul
+  CXXFLAGS: -mpclmul
+
+jobs:
+  prepare:
+    if: github.event.label.name == 'prepare-hosted-cache'
+    name: Cold preparation (not routine fast validation)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/rust-setup
+        with:
+          lane: fast
+          scope: affected
+      - name: Compile all fast units
+        run: umask 022 && TMPDIR="$RUNNER_TEMP" python3 tools/ci/fast.py --all --compile-only
+      - name: Validate prepared fast units
+        run: umask 022 && TMPDIR="$RUNNER_TEMP" python3 tools/ci/fast.py --all --unit-jobs 3
+      # Required: metadata sealing failures must prevent a successful snapshot.
+      - name: Seal and report prepared Cargo state
+        run: umask 022 && python3 tools/ci/cargo_cache.py report
+      - name: Report preparation timings separately
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: umask 022 && python3 tools/ci/timings.py --run "$GITHUB_RUN_ID"

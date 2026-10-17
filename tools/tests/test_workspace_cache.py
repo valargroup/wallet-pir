@@ -50,11 +50,15 @@ class WorkspaceCacheOracle(unittest.TestCase):
     def git(self, *args):
         return subprocess.check_output(['git', *args], cwd=self.root, stderr=subprocess.PIPE)
 
-    def build(self):
+    def build(self, failure=None):
         toolchain = __import__('tomllib').loads((ROOT / 'rust-toolchain.toml').read_text())['toolchain']['channel']
         command = ['rustup', 'run', toolchain, 'cargo'] if shutil.which('rustup') else ['cargo']
         result = subprocess.run([*command, 'build', '--profile', 'release-fast', '--offline', '--message-format=json'],
                                 cwd=self.root, env=self.env, capture_output=True, text=True, timeout=25)
+        if failure:
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(failure, result.stderr)
+            return
         self.assertEqual(result.returncode, 0, result.stderr)
         artifacts = [json.loads(line) for line in result.stdout.splitlines() if line.startswith('{')]
         artifacts = [entry for entry in artifacts if entry.get('reason') == 'compiler-artifact']
@@ -105,6 +109,63 @@ class WorkspaceCacheOracle(unittest.TestCase):
         self.restore()
         self.assertTrue(all(entry['fresh'] for entry in self.build()[0]))
 
+    def archive_roundtrip(self):
+        self.sequence += 1
+        archive = self.area / f'cache-{self.sequence}.tar'
+        subprocess.run(['tar', '--posix', '-cf', str(archive), '-C', str(self.area), 'target'], check=True)
+        self.target.rename(self.area / f'original-target-{self.sequence}')
+        subprocess.run(['tar', '-xf', str(archive), '-C', str(self.area)], check=True)
+
+    def commit(self, message):
+        self.git('add', '.')
+        self.git('-c', 'user.name=Oracle', '-c', 'user.email=oracle@example.invalid', 'commit', '-qm', message)
+
+    def symlink_input(self, name, alternate, before, after, expected):
+        path = self.root / name
+        destination = path.with_name(alternate)
+        destination.write_text(path.read_text().replace(before, after))
+        self.commit('tracked alternate before baseline')
+        self.baseline()
+        self.archive_roundtrip()
+        path.unlink()
+        path.symlink_to(alternate)
+        self.commit('replace regular input with symlink')
+        self.checkout()
+        self.restore()
+        artifacts, behavior = self.build()
+        self.assertEqual(behavior, expected)
+        self.assertTrue(artifacts and all(not entry['fresh'] for entry in artifacts), artifacts)
+
+    def test_symlink_main_rebuilds_after_clone_and_tar(self):
+        self.symlink_input('src/main.rs', 'alternate.rs', 'rust-A', 'rust-LINK',
+                           'rust-LINK|include-A|build-A')
+
+    def test_symlink_include_rebuilds_after_clone_and_tar(self):
+        self.symlink_input('src/included.txt', 'alternate.txt', 'include-A', 'include-LINK',
+                           'rust-A|include-LINK|build-A')
+
+    def test_symlink_build_input_rebuilds_after_clone_and_tar(self):
+        self.symlink_input('build.txt', 'alternate.txt', 'build-A', 'build-LINK',
+                           'rust-A|include-A|build-LINK')
+
+    def test_executable_mode_loss_reruns_generator_and_fails_after_clone_and_tar(self):
+        generator = self.root / 'generator.sh'
+        generator.write_text('#!/bin/sh\nprintf build-A\n')
+        generator.chmod(0o755)
+        (self.root / 'build.rs').write_text(
+            'fn main() { println!("cargo::rerun-if-changed=generator.sh"); '
+            'let out = std::process::Command::new("./generator.sh").output().unwrap(); '
+            'assert!(out.status.success()); '
+            'println!("cargo::rustc-env=BUILT={}", String::from_utf8(out.stdout).unwrap()); }')
+        self.commit('executable generator')
+        self.baseline()
+        self.archive_roundtrip()
+        generator.chmod(0o644)
+        self.commit('generator loses executable permission')
+        self.checkout()
+        self.restore()
+        self.build(failure='Permission denied')
+
     def test_fresh_checkout_reuses_real_archived_outputs(self):
         self.baseline()
         # GNU tar's POSIX format is also used by actions/cache. Exercise its
@@ -149,6 +210,23 @@ class WorkspaceCacheOracle(unittest.TestCase):
                 artifacts, behavior = self.build()
                 self.assertTrue(all(entry['fresh'] for entry in artifacts), artifacts)
                 self.assertEqual(behavior, expected)
+
+    def test_legacy_metadata_without_modes_is_a_safe_miss(self):
+        self.baseline()
+        metadata = self.target / workspace_cache.METADATA
+        envelope = json.loads(metadata.read_text())
+        envelope['record']['schema'] = 1
+        for entry in envelope['record']['files'].values():
+            entry.pop()
+        envelope['checksum'] = workspace_cache.digest(workspace_cache.encoded(envelope['record']))
+        metadata.write_text(json.dumps(envelope))
+        self.checkout()
+        for name in ('src/main.rs', 'src/included.txt', 'build.rs', 'build.txt'):
+            os.utime(self.root / name, ns=(1, 1))
+        self.restore()
+        artifacts, behavior = self.build()
+        self.assertTrue(any(not entry['fresh'] for entry in artifacts))
+        self.assertEqual(behavior, 'rust-A|include-A|build-A')
 
     def test_missing_corrupt_wrong_identity_and_stale_metadata_are_safe_misses(self):
         self.baseline()
