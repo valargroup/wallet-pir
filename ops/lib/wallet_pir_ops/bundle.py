@@ -24,7 +24,7 @@ PREFIXES = ('ops/lib/', 'ops/scripts/', 'ops/deploy/', 'ops/infra/',
 EXACT = {'transparent/__init__.py', 'transparent/ops/__init__.py',
          'enhance/__init__.py', 'enhance/ops/__init__.py',
          'receiver/__init__.py', 'receiver/ops/__init__.py',
-         'tools/ci/release.py', 'docs/operations.md'}
+         'tools/ci/release.py', 'docs/operations.md', 'transparent/docs/prepared-distribution.md'}
 EXTENSIONS = {'.py', '.sh', '.toml', '.service', '.timer', '.in', '.caddy', '.tf', '.tftpl', '.yaml'}
 MAX_BYTES = 32 * 1024 * 1024
 REQUIRED = {'ops/scripts/wallet-pir-deploy.py', 'ops/scripts/wallet-pir-roles.py',
@@ -32,7 +32,11 @@ REQUIRED = {'ops/scripts/wallet-pir-deploy.py', 'ops/scripts/wallet-pir-roles.py
             'ops/lib/wallet_pir_ops/__init__.py', 'ops/lib/wallet_pir_ops/deploy/host_helper.py',
             'ops/lib/wallet_pir_ops/release.py', 'transparent/ops/lib/deploy_cli.py',
             'transparent/ops/lib/roles.py', 'receiver/ops/digitalocean/service.toml',
-            'enhance/ops/lib/roles.py', 'receiver/ops/lib/roles.py'}
+            'enhance/ops/lib/roles.py', 'receiver/ops/lib/roles.py',
+            'transparent/docs/prepared-distribution.md',
+            'transparent/ops/deploy/history-provider.example.json',
+            'transparent/ops/deploy/history-provider.caddy',
+            'transparent/ops/deploy/transparent-history-provider.role.service'}
 
 
 def mode(name):

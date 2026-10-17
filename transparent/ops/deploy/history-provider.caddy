@@ -1,0 +1,11 @@
+# Replace this reserved example name with the operator's owned TLS hostname.
+# The operator supplies DNS, a valid certificate and Caddy's own resource budget.
+provider.example.invalid {
+    @history path /v2/shards /v2/shards/* /v2/filters/shards /v2/filters/shards/*
+    handle @history {
+        reverse_proxy 127.0.0.1:8092
+    }
+    handle {
+        respond 404
+    }
+}

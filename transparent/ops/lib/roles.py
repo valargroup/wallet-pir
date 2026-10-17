@@ -97,6 +97,55 @@ def history_worker(settings, *, release, template=None):
                          writable=writes, readonly=reads, settings=s, check=(*arguments, '--verify-only'))
 
 
+def history_provider(settings, *, release, template=None):
+    """Autonomous HTTPS consumer; no fleet assignment, controller or local build."""
+    import ipaddress
+    import re
+    from urllib.parse import urlsplit
+    from wallet_pir_ops.role_config import address, settings_of, worker as render_worker, set_service
+    s = settings_of(settings, ('listen', 'state_dir', 'publisher', 'publisher_network',
+                              'publisher_genesis', 'archive_upstream'),
+                    ('publisher_ca', 'archive_ca', 'cache_bytes', 'bootstrap_max_bytes',
+                     'query_slots', 'query_waiters', 'body_bytes', 'query_deadline_secs',
+                     'upload_deadline_secs'))
+    listen = address(s['listen'], 'listen')
+    host, port = listen.rsplit(':', 1)
+    if not ipaddress.ip_address(host.strip('[]')).is_loopback or not 0 < int(port) < 65536:
+        raise ValueError('provider listen must be loopback; expose wallet routes through operator TLS')
+    state = directory(s['state_dir'])
+    arguments = ['--listen', listen, '--shard-dir', state]
+    for name in ('publisher', 'archive_upstream'):
+        value = s[name]
+        if not isinstance(value, str):
+            raise ValueError(name + ' must be an explicit trusted HTTPS origin')
+        origin = urlsplit(value)
+        if (origin.scheme != 'https' or not origin.hostname or origin.username is not None
+                or origin.password is not None or origin.path not in ('', '/')
+                or origin.query or origin.fragment or any(c.isspace() for c in value)):
+            raise ValueError(name + ' must be an explicit trusted HTTPS origin')
+        arguments += ['--' + name.replace('_', '-'), value]
+    if s['publisher_network'] != 'main' or not isinstance(s['publisher_genesis'], str) or not re.fullmatch('[0-9a-f]{64}', s['publisher_genesis']):
+        raise ValueError('publisher_network must be main and publisher_genesis a lowercase digest')
+    arguments += ['--publisher-network', s['publisher_network'], '--publisher-genesis', s['publisher_genesis']]
+    reads = [directory(release)]
+    for name in ('publisher_ca', 'archive_ca'):
+        if name in s:
+            path = directory(s[name])
+            reads.append(path)
+            arguments += ['--' + name.replace('_', '-'), path]
+    arguments += _sizes(s, ('cache_bytes', 'bootstrap_max_bytes', 'query_slots', 'query_waiters',
+                            'body_bytes', 'query_deadline_secs', 'upload_deadline_secs'))
+    executable = directory(release) + '/transparent-shard-server'
+    source = ROOT / 'transparent/ops/deploy/transparent-history-provider.role.service'
+    rendered = render_worker(source.read_text() if template is None else template,
+                             executable, arguments, writable=[state], readonly=reads,
+                             settings=s, check=(*arguments, '--verify-only'))
+    # Every supervised start/restart uses the same strict loader as install.
+    from dataclasses import replace
+    return replace(rendered, unit=set_service(rendered.unit, {
+        'ExecStartPre': shlex.join([executable, *rendered.check])}))
+
+
 def display_worker(settings, *, release, template=None):
     """`transparent-txid-server` for one display role, under the display controller.
 

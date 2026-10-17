@@ -7,7 +7,7 @@
 driver = "transparent-history"
 root = "/opt/transparent-publisher"
 binary = "transparent-shard-server"
-order = ["worker", "external-worker", "controller"]
+order = ["worker", "external-worker", "provider", "controller"]
 ancillary = ["routing"]
 
 [services.transparent-history.roles.worker]
@@ -29,6 +29,17 @@ renderer = "transparent.ops.lib.roles:history_worker"
 optional = true
 # /v1/ready carries identity and `ready`, and answers 503 until the loaded set
 # is warm; /v1/health carries no readiness.
+health = "http://{listen}/v1/ready"
+ready = { field = "ready", equals = true }
+ready_timeout = 900
+
+# Standalone history only; no fleet inventory is needed by the role renderer.
+[services.transparent-history.roles.provider]
+unit = "transparent-history-provider.service"
+mode = "role"
+template = "transparent-history-provider.role.service"
+renderer = "transparent.ops.lib.roles:history_provider"
+optional = true
 health = "http://{listen}/v1/ready"
 ready = { field = "ready", equals = true }
 ready_timeout = 900

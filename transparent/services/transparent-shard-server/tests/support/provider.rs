@@ -1251,3 +1251,6 @@ async fn recent_query_survives_archive_disconnect_after_acceptance() {
 async fn recent_query_survives_archive_deadline_after_acceptance() {
     recent_survives_archive_stall("query", "query", "deadline").await
 }
+
+#[path = "provider_install.rs"]
+mod install;

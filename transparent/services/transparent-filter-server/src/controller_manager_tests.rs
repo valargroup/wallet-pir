@@ -121,7 +121,24 @@ async fn manager_reuses_immutable_transfers_and_serves_through_failed_update() {
     let first = follow.poll_once().await.unwrap();
     assert!(first.downloaded_files > 0);
     let live = follow.live().unwrap();
-    let (origin, task) = worker(live.clone()).await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let app = follow.router().unwrap();
+    let task = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let observed: serde_json::Value = get(&origin, "/v1/provider-status")
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(observed["synchronization"]["state"], "synchronized");
+    assert_eq!(
+        observed["verified_publication"]["map_sha256"],
+        set.map_digest
+    );
+    assert_eq!(observed["runtime_readiness"]["required"], true);
+    assert_eq!(observed["archive_reachability"], serde_json::Value::Null);
     query(&origin, &set).await;
     let count = artifact_requests(&tls);
     let unchanged = follow.poll_once().await.unwrap();
@@ -142,6 +159,17 @@ async fn manager_reuses_immutable_transfers_and_serves_through_failed_update() {
     for fault in ["truncated", "corrupt", "missing"] {
         std::fs::write(&tls.control, fault).unwrap();
         assert!(follow.poll_once().await.is_err(), "{fault}");
+        let observed: serde_json::Value = get(&origin, "/v1/provider-status")
+            .await
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(observed["synchronization"]["state"], "refused");
+        assert_eq!(
+            observed["verified_publication"]["map_sha256"],
+            set.map_digest
+        );
+        assert_eq!(observed["runtime_readiness"]["warm"], true);
         assert_eq!(
             live.command(Command::Status).await.unwrap()["active"]["map_sha256"],
             set.map_digest

@@ -361,3 +361,134 @@ source events and checks recent recovery during archive outage. Library executio
 is not unchanged-application execution. The fixed Vizor build's existing-origin
 TLS and same-origin display smoke remains mandatory; no application rebuild,
 upgrade, TLS bypass, production DNS or routing change is authorized here.
+
+## Standalone installation from release artifacts
+
+This prepares an operator-owned **Transparent history only** installation. It
+neither installs on our fleet nor establishes qualified release performance.
+Use Linux x86-64 with the release's supported CPU/OS ABI, Python 3.11+ (standard
+library only), a service supervisor, and an operator TLS reverse proxy. Keep the
+current [Vizor baseline](wallet-adapter.md#fixed-vizor-provider-qualification-baseline)
+fixed; its existing origin/configuration constraints still apply. Do not change
+an application binary, disable TLS, or assume it can select a new provider.
+
+Obtain `wallet-pir-ops-<full-sha>` and `transparent-shard-<full-sha>` from a
+qualified existing service/full release run at the **same immutable revision**.
+Use that run's authenticated artifact download and digest/provenance verification
+as described in the [release workflow](../../docs/operations.md). Fast CI and
+locally assembled `release-fast` artifacts are test smokes, not qualified fat-LTO
+`release` binaries. No source checkout, Rust toolchain, private inventory,
+controller credential, chain RPC credential or deployment file is needed at
+runtime. The operations archive carries the renderer, registry, Python imports,
+service templates, this guide and public examples. The binary archive retains
+its existing `transparent-shard` kind and binary names.
+
+In a new operator staging directory, unpack the authenticated operations archive
+(`wallet-pir-ops.tar.gz`) into `ops-release`, then verify its installed contents
+and extract the binary archive using that release's verifier. Replace `SHA` with
+the full approved revision, and use absolute paths for `PWD` and all settings:
+
+```sh
+mkdir ops-release
+# Run only after authenticating the downloaded artifact and its recorded digest.
+tar -xzf wallet-pir-ops.tar.gz -C ops-release
+python3 ops-release/ops/scripts/wallet-pir-bundle.py self-check --sha "$SHA"
+python3 ops-release/tools/ci/release.py extract --sha "$SHA" --kind transparent-shard \
+  --archive transparent-shard.tar.gz --output "$PWD/history-release"
+python3 ops-release/ops/scripts/wallet-pir-roles.py --help
+cp ops-release/transparent/ops/deploy/history-provider.example.json provider.json
+```
+
+Edit `provider.json`: replace the reserved `.example.invalid` publisher and
+archive names with **explicitly approved trusted HTTPS origins**. No production
+publisher/archive hostname is assigned by this plan. Production distribution
+origin selection is a rollout input, not something inferred from source. The
+archive is one fixed trusted terminal Valargroup address, with no discovery,
+wallet-supplied destinations or switching. The example's mainnet genesis must
+match the approved publisher. `publisher_ca`/`archive_ca`, when needed, name
+operator-installed PEM trust roots outside writable state; ordinary certificate
+and hostname validation stays enabled.
+
+Canonicality comes from the publisher's live `anchors/{height}/{hash}` HTTPS
+attestations, delegated to its existing NodeClient chain checks. The provider
+trusts that configured publisher for these checks and indexed completeness;
+locally verified files/digests are not chain proofs or offline authority. There
+is no second provider RPC implementation or local node requirement.
+
+`state_dir` owns downloads, immutable object reuse, staging and replay/revocation
+records. Keep it on durable local storage, writable only by the service account,
+separate from the release and CA files. Its object store is the download cache;
+there is no optional local runtime cache/build fallback in provider mode. Disk
+retention remains manual and unbounded: reserve space for objects, active and
+candidate trees and retained predecessors. Preserve all safety records during
+upgrade/restart; do not reinterpret this root as a static shard directory.
+
+The example reserves a 32 GiB resident runtime cache, two local query slots,
+eight waiters, a 64 MiB aggregate body budget, and a 64 GiB per-attempt transfer
+cap. Its 48G MemoryHigh/56G MemoryMax leave room on a 64 GB host for the OS and
+TLS proxy. These are initial **budgets**, not a measured supported load or proof
+that any publisher's holdings fit. Count candidate overlap, setup/reply buffers,
+workspace and scratch within the total host budget; PR5 resource and interference
+qualification remains required. Too little cache/transfer budget refuses loading.
+
+Render without contacting a host or reading private inventory:
+
+```sh
+python3 ops-release/ops/scripts/wallet-pir-roles.py --service transparent-history \
+  --role provider --settings provider.json --release "$PWD/history-release" > role.json
+```
+
+`role.json` describes the unit, writable `directories`, and the exact loader
+`check` arguments. Create only those directories, owned by a dedicated
+`transparent-provider` user/group; install the rendered `unit` as
+`transparent-history-provider.service` through your local service manager.
+Before enabling it, run `history-release/transparent-shard-server` with the
+`check` argument array as that user. This real preflight downloads/verifies and
+prewarms required material and checks live authority through the managed owner;
+it may prime state but opens no listener. The unit repeats the same check in
+`ExecStartPre` on every start/restart. Missing, corrupt or incompatible runtimes
+refuse preparation/start/restart and later cache misses, without local builds.
+Existing fleet/static optional preparation policy is unchanged.
+
+Use `history-provider.caddy` from the same operations release as the TLS route
+example. Set your owned hostname, listener and certificate policy. Expose only
+its existing history wallet paths; keep `/v1/*` and `/metrics` on loopback. The
+renderer refuses public listeners and runs no control socket or additional
+product service. Keep other wallet products on their existing services.
+For a disposable smoke without systemd, run the extracted binary with `check`
+minus its final `--verify-only`, then stop that subprocess and repeat the same
+command with the same state root; wallet queries must succeed after both starts.
+
+Inspect `http://127.0.0.1:8092/v1/provider-status` locally. Its independent axes are:
+
+- `synchronization`: the manager's last completed attempt/progress or error and
+  whether another attempt is in progress; a failure may coexist with valid service.
+- `verified_publication`: the actual owner's loaded map digest, not a downloaded
+  candidate or an assertion that the publisher still offers it.
+- `runtime_readiness`: resident warmth, required-material policy, preparation
+  counters and invalidation. Warmth alone is not archive readiness or authority.
+- `active_coverage`: each current range/revision, local ownership and revocation;
+  nonlocal metadata alone does not prove an eligible archive route.
+- `archive_reachability`: initially `unobserved`, then the last real terminal
+  readiness/network/profile/exact-manifest identity check's result and time.
+  `identity-checked` does not promise future reachability or successful setup/query;
+  each operation still checks setup/runtime/session identity independently.
+
+Use `/v1/ready` for local readiness, and logs plus these axes to diagnose failed
+updates. Check HTTPS trust, publisher availability/canonicality, disk permissions,
+budgets and prepared material before restarting. Publisher outage at startup
+refuses listening; an ordinary failed update preserves an otherwise valid active
+view. Archive failure explicitly refuses dependent requests while independent
+recent queries remain local. No endpoint infers readiness from an address string.
+
+To upgrade, authenticate same-revision operations/binary artifacts in new release
+directories, render/preflight against the existing state root while the service
+is stopped (its directory lock forbids concurrent consumers), then install the
+new unit and restart. Check identity/status and repeat recent/historical wallet
+queries. Preserve the prior binaries, unit and durable state for rollback; follow
+the safety-record reconciliation requirements above before using any older
+reader. Code reversion alone must not erase revocation observations.
+
+To remove an installation, stop/disable its history provider unit and withdraw
+only its operator TLS route. Retain state/safety records, artifacts and unit for
+review and recovery. No data or resource deletion is part of this procedure.

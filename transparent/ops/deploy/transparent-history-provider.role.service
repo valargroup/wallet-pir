@@ -1,0 +1,26 @@
+# Standalone Transparent history provider. Only loopback administration is exposed.
+[Unit]
+Description=Transparent PIR history provider
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=transparent-provider
+Group=transparent-provider
+ExecStart=/bin/false
+Restart=on-failure
+RestartSec=10
+TimeoutStartSec=900
+LimitNOFILE=65536
+Environment=RUST_LOG=info
+MemoryHigh=48G
+MemoryMax=56G
+MemorySwapMax=0
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

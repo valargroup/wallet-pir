@@ -1,0 +1,61 @@
+"""Standalone role policy: explicit origins, private administration and strict loader."""
+import copy
+import json
+from pathlib import Path
+import shlex
+import sys
+import unittest
+
+ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(ROOT / 'ops/lib'))
+sys.path.insert(0, str(ROOT))
+from transparent.ops.lib.roles import history_provider  # noqa: E402
+from wallet_pir_ops.deploy import units  # noqa: E402
+
+
+class ProviderRole(unittest.TestCase):
+    def setUp(self):
+        self.settings = json.loads((ROOT / 'transparent/ops/deploy/history-provider.example.json').read_text())
+
+    def test_public_example_renders_only_history_with_identical_install_and_restart_checks(self):
+        role = history_provider(self.settings, release='/opt/provider/release')
+        service = units.effective([role.unit])['Service']
+        start = shlex.split(units.exec_start(units.effective([role.unit])))
+        self.assertEqual(start[0], '/opt/provider/release/transparent-shard-server')
+        self.assertEqual(shlex.split(service['ExecStartPre'][0]), start + ['--verify-only'])
+        self.assertEqual(list(role.check), start[1:] + ['--verify-only'])
+        self.assertEqual(role.directories, (self.settings['state_dir'],))
+        self.assertNotIn('--control-socket', start)
+        self.assertNotIn('--assignment', start)
+        self.assertNotIn('--runtime-cache-dir', start)
+        self.assertNotIn('EnvironmentFile', service)
+        self.assertEqual(service['User'], 'transparent-provider')
+        self.assertEqual(role.files, {})
+
+    def test_invalid_or_ambiguous_inputs_refused_before_install(self):
+        for patch in ({'listen': '0.0.0.0:8092'}, {'listen': '127.0.0.1:0'},
+                      {'publisher': 'http://publisher.example.invalid'},
+                      {'archive_upstream': 'https://user:secret@archive.example.invalid'},
+                      {'archive_upstream': 'https://archive.example.invalid/forward'},
+                      {'publisher_genesis': 'wrong'}, {'publisher_network': 'other'},
+                      {'publisher_ca': '/var/lib/transparent-provider/root.pem'},
+                      {'state_dir': '/opt/provider/release/state'},
+                      {'assignment': '/srv/fleet/assignment.json'}, {'query_slots': False}):
+            with self.subTest(patch=patch), self.assertRaises(ValueError):
+                history_provider({**self.settings, **patch}, release='/opt/provider/release')
+        missing = copy.deepcopy(self.settings)
+        del missing['archive_upstream']
+        with self.assertRaises(ValueError):
+            history_provider(missing, release='/opt/provider/release')
+
+    def test_tls_example_exposes_only_existing_history_wallet_routes(self):
+        text = (ROOT / 'transparent/ops/deploy/history-provider.caddy').read_text()
+        self.assertIn('/v2/filters/shards', text)
+        self.assertIn('/v2/shards', text)
+        self.assertNotIn('/v1/', text)
+        self.assertNotIn('/metrics', text)
+        self.assertIn('respond 404', text)
+
+
+if __name__ == '__main__':
+    unittest.main()
