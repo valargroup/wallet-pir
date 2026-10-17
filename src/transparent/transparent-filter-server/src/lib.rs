@@ -6,6 +6,7 @@ pub mod metrics;
 pub mod service;
 pub mod shard_filters;
 pub mod shard_matches;
+#[cfg(feature = "rocksdb-reader")]
 pub mod state;
 pub mod store;
 

@@ -194,3 +194,9 @@ Temporarily, CI lets PR and main validation run to completion without a
 three-minute cancellation. Pushes to main enforce that target in a final timing
 check; PRs and manual runs only report timings. The check measures job start
 through validation and reporting, excluding queue time and final cleanup.
+
+Direct node database readers in `transparent-filter-server` require
+`--features rocksdb-reader`: `transparent-event-ingest`, `shard-cutoff`,
+`journal-inventory` and `compact-export`. Ordinary RPC-based server builds omit
+that feature and do not compile RocksDB. Full qualification and the workflows
+that build the database-reader tools enable it explicitly.

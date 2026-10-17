@@ -51,6 +51,7 @@ def commands(group, groups, lint=False, compile_only=False):
                     'enhance-pir-server/native-reinspiring', 'status-pir-server/native-reinspiring',
           'enhance-pir-load-test/native-reinspiring'],
         'shared': ['pir-control/admission'],
+        'transparent': ['transparent-filter-server/rocksdb-reader'],
     }.get(group, []) + qualification_features(names)
     result = [[*runner, '--locked', '--profile', 'release-fast',
                *[arg for name in names for arg in ('-p', name)],
