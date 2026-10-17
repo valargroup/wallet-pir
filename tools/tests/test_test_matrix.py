@@ -86,6 +86,14 @@ class MatrixTests(unittest.TestCase):
             matrix.verify_receipts('receiver', root, self.plan, 'a' * 40,
                                    {'GITHUB_RUN_ID': '123', 'GITHUB_RUN_ATTEMPT': '2'})
 
+    def test_qualification_rejects_a_bounded_executable_in_place_of_full_fixtures(self):
+        package = copy.deepcopy(self.plan[3]['transparent-server-backend'])
+        artifact = dict(package_id=package['id'],
+                        target=dict(name='transparent_server_backend', kind=['lib']),
+                        executable='/not-executed', features=[])
+        with self.assertRaisesRegex(ValueError, 'qualification fixture feature missing'):
+            matrix.test_programs([artifact], 'transparent', {package['name']: package}, {})
+
     def test_receipts_require_every_shard_and_the_exact_source_and_attempt(self):
         receipts = self.receipts('receiver')
         self.verify(receipts)
