@@ -12,7 +12,24 @@ on:
         required: true
         default: preflight
         type: choice
-        options: [preflight, deploy]
+        options: [preflight, deploy, rollback]
+
+      oracle_replacement:
+        description: Optional root-owned canonical fee-corrected oracle path; every existing position must remain
+        required: false
+        type: string
+      oracle_sha256:
+        description: Reviewed SHA-256 of the independent replacement oracle
+        required: false
+        type: string
+      transaction:
+        description: Exact GPU transaction to restore in rollback mode
+        required: false
+        type: string
+      expected_current_sha256:
+        description: Optional reviewed running GPU hash to adopt an old baseline; unit arguments and limits must match
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -41,7 +58,7 @@ jobs:
           [[ "$status" == identical || "$status" == behind ]]
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.ref }}
+          ref: ${{ github.sha }}
           persist-credentials: false
       - name: Resolve qualified native CUDA artifact
         id: release
@@ -72,11 +89,26 @@ jobs:
           SHA: ${{ inputs.ref }}
           MODE: ${{ inputs.mode }}
           SOURCE_RUN: ${{ steps.release.outputs.run-id }}
+          OPERATOR_SHA: ${{ github.sha }}
+          EXPECTED_CURRENT_SHA256: ${{ inputs.expected_current_sha256 }}
+          TRANSACTION: ${{ inputs.transaction }}
+          ORACLE_REPLACEMENT: ${{ inputs.oracle_replacement }}
+          ORACLE_SHA256: ${{ inputs.oracle_sha256 }}
         run: |
           set -euo pipefail
-          printf '{"source_run":"%s","revision":"%s","deployment_run":"%s"}\n' \
-            "$SOURCE_RUN" "$SHA" "$GITHUB_RUN_ID" > "$RUNNER_TEMP/cuda-ci-$GITHUB_RUN_ID.json"
-          python3 enhance/ops/scripts/deploy-cuda.py "$MODE" \
+          printf '{"source_run":"%s","revision":"%s","deployment_run":"%s","operator_revision":"%s"}\n' \
+            "$SOURCE_RUN" "$SHA" "$GITHUB_RUN_ID" "$OPERATOR_SHA" > "$RUNNER_TEMP/cuda-ci-$GITHUB_RUN_ID.json"
+          operation_args=()
+          if [[ -n "$EXPECTED_CURRENT_SHA256" ]]; then
+            operation_args+=(--expected-current-sha256 "$EXPECTED_CURRENT_SHA256")
+          fi
+          if [[ -n "$TRANSACTION" ]]; then
+            operation_args+=(--transaction "$TRANSACTION")
+          fi
+          if [[ -n "$ORACLE_REPLACEMENT" || -n "$ORACLE_SHA256" ]]; then
+            operation_args+=(--oracle-replacement "$ORACLE_REPLACEMENT" --oracle-sha256 "$ORACLE_SHA256")
+          fi
+          python3 enhance/ops/scripts/deploy-cuda.py "$MODE" "${operation_args[@]}" \
             --inventory /etc/enhance-pir/cuda-deploy-inventory.json \
             --archive cuda-artifact/enhance-pir-native-cuda.tar.gz --sha "$SHA" \
             --state-dir /var/lib/wallet-pir-deploy/cuda \
