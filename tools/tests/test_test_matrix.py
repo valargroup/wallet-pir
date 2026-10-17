@@ -64,8 +64,11 @@ class MatrixTests(unittest.TestCase):
         self.assertFalse(matrix.package_features('enhance-serving', contexts['reference'], packages))
         self.assertNotIn('enhance-pir-server/native-reinspiring', native)
         commands = matrix.cargo_commands(registry['enhance-cuda-check']['targets'], contexts, targets, packages)
-        self.assertEqual({cmd[3][cmd[3].index('-p') + 1] for cmd in commands},
+        self.assertEqual(len(commands), 1)
+        command = commands[0][3]
+        self.assertEqual({command[i + 1] for i, arg in enumerate(command) if arg == '-p'},
                          {'enhance-serving', 'status-serving', 'enhance-pir-server', 'enhance-pir-load-test'})
+        self.assertEqual(command[command.index('--features') + 1], ','.join(matrix.CUDA))
         self.assertTrue(all('--all-targets' in cmd[3] for cmd in commands))
 
     def receipts(self, family):

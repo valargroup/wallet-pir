@@ -151,7 +151,21 @@ def cargo_commands(keys, contexts, targets, packages):
         category = target['kind'] if target['kind'] in ('doc', 'example', 'check') else 'program'
         batches[target['variant'], target['package'], category].append(target)
     commands = []
+    checks = [target for (variant, package, category), selected in batches.items()
+              if category == 'check' for target in selected]
+    if checks:
+        # Keep CUDA's all-targets check in the original unified feature graph;
+        # splitting it by package would rebuild dependencies with different flags.
+        packages_to_check = sorted({target['package'] for target in checks})
+        if set(packages_to_check) != set(contexts['cuda']['packages']):
+            raise ValueError('CUDA all-targets check must retain every original package')
+        command = ['cargo', 'check', '--locked',
+                   *[arg for package in packages_to_check for arg in ('-p', package)],
+                   '--all-targets', '--features', ','.join(CUDA)]
+        commands.append(('cuda', 'check', checks, command))
     for (variant, package, category), selected in batches.items():
+        if category == 'check':
+            continue
         context = contexts[variant]
         base = ['--locked', '-p', package]
         if category != 'check':
@@ -161,9 +175,7 @@ def cargo_commands(keys, contexts, targets, packages):
         features = package_features(package, context, packages)
         if features:
             base += ['--features', ','.join(features)]
-        if category == 'check':
-            command = ['cargo', 'check', *base, '--all-targets']
-        elif category == 'doc':
+        if category == 'doc':
             command = ['cargo', 'test', *base, '--doc']
         elif category == 'example':
             command = ['cargo', 'build', *base, *[arg for t in selected for arg in ('--example', t['target'])]]
