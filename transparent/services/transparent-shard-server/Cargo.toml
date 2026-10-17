@@ -31,6 +31,7 @@ path = "src/bin/txid-server.rs"
 portable-kernel = ["transparent-server-backend/portable-kernel"]
 
 [dependencies]
+pir-pipeline = { path = "../../../shared/pir-pipeline" }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 transparent-server-backend = { path = "../../crates/transparent-server-backend" }
 pir-control = { version = "=0.1.0", path = "../../../shared/pir-control", features = ["admission"] }

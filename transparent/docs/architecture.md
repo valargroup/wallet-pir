@@ -118,8 +118,18 @@ activation intent, and the existing checked pointer commit, invalidation and
 unfinished-activation records remain product owned. Only preparation's existing
 fleet wait is cancellable on invalidation. Activation completes its existing
 post-checks. Boundary waits retain the input notification and publication deadline;
-phase timings do not grant serving authority. The HTTPS manager still owns its
-separate acquisition loop and source/safety policy.
+phase timings do not grant serving authority.
+
+The HTTPS history manager uses the same acquisition/preparation/publication
+phases, with borrowed product tokens carrying its exclusive source and owner.
+Acquisition applies authenticated source observations and recovery fences before
+returning work; an unchanged response skips preparation and publication. Strict
+staging and required-runtime prewarm prepare the candidate. Publication delegates
+to the existing serialized owner, which qualifies archive retirement and rechecks
+current, exact anchors and recovery floors before the atomic activation. The
+shared boundary wait retains sequential transfers and the manager's existing
+jitter/backoff; it does not cancel an in-progress pass. HTTPS trust, safety records,
+restart recovery and required-runtime policy remain product owned.
 
 The query worker serves maps and range filters at the same paths as the public
 filter origin. Wallets can use one origin or configure separate public and
