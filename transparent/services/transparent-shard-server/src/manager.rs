@@ -20,6 +20,9 @@ pub struct Manager {
     live: Option<LiveService>,
     /// Only a successfully activated snapshot may supply a conditional token.
     current: Option<Current>,
+    /// Exact-anchor negatives need their own revision floor: eligible Current
+    /// alone does not encode them. Retain it before any fallible intent I/O.
+    revocations: Revocations,
 }
 #[derive(Debug, serde::Serialize)]
 pub struct Progress {
@@ -69,6 +72,7 @@ impl Manager {
             _lock: std::sync::Arc::new(lock),
             live: None,
             current: None,
+            revocations: intent,
         })
     }
     pub fn live(&self) -> Option<LiveService> {
@@ -81,11 +85,10 @@ impl Manager {
         }
         let current = poll_snapshot(
             &mut self.source,
-            &self.config.directory,
+            &self.config,
             self.live.as_ref(),
             self.current.as_ref(),
-            &self.config.network,
-            &self.config.genesis_hash,
+            &mut self.revocations,
         )
         .await?;
         let Some(current) = current else {
@@ -112,6 +115,7 @@ impl Manager {
                 &self.config.directory,
                 self.live.as_ref(),
                 &current,
+                &mut self.revocations,
             )
             .await?;
         }
@@ -153,7 +157,9 @@ impl Manager {
             )?
         };
         if initial {
-            live.fence_recovered(&floor(&self.config.directory)?.digests)?;
+            live.fence_recovered(
+                &combined_floor(&self.config.directory, &mut self.revocations)?.digests,
+            )?;
         }
         let status = live.command(Command::Status).await?;
         let expected = status["active"]["map_sha256"]
@@ -167,9 +173,9 @@ impl Manager {
             })
             .await?;
         }
-        let root = &self.config.directory;
-        let network = &self.config.network;
-        let genesis = &self.config.genesis_hash;
+        let config = &self.config;
+        let root = &config.directory;
+        let revocations = &mut self.revocations;
         let source = &mut self.source;
         let checked_live = live.clone();
         let map_path = staged.directory.join("shards.json");
@@ -181,7 +187,7 @@ impl Manager {
             || async {
                 let result: Result<(), Error> = async {
                     let latest =
-                        poll_snapshot(source, root, Some(&checked_live), None, network, genesis)
+                        poll_snapshot(source, config, Some(&checked_live), None, revocations)
                             .await?
                             .ok_or("missing fresh current")?;
                     if latest != current || !latest.eligible() {
@@ -203,22 +209,24 @@ impl Manager {
                                 &checked_live,
                                 &latest,
                                 BTreeSet::from([shard.manifest_digest.clone()]),
+                                revocations,
                             )
                             .await?;
                             return Err("candidate anchor is noncanonical".into());
                         }
                         keep.insert(shard.manifest_digest.clone());
                     }
-                    if latest.revision > floor(root)?.revision {
+                    if latest.revision > combined_floor(root, revocations)?.revision {
                         checked_live.restore_verified(&keep)?;
-                        let mut intent = floor(root)?;
+                        let mut intent = combined_floor(root, revocations)?;
                         intent.digests.retain(|digest| !keep.contains(digest));
                         persist_floor(root, &intent)?;
+                        *revocations = intent;
                     }
                     // Anchor checks cannot authorize a candidate across a source
                     // pointer/recovery change. Never use 304 for this final read.
                     let final_current =
-                        poll_snapshot(source, root, Some(&checked_live), None, network, genesis)
+                        poll_snapshot(source, config, Some(&checked_live), None, revocations)
                             .await?
                             .ok_or("missing final current")?;
                     if final_current != latest {
@@ -293,27 +301,27 @@ impl Manager {
             record,
             self._lock.clone(),
         )?;
-        live.fence_recovered(&floor(&self.config.directory)?.digests)?;
+        live.fence_recovered(
+            &combined_floor(&self.config.directory, &mut self.revocations)?.digests,
+        )?;
         let checked = live.clone();
         let source = &mut self.source;
-        let root = &self.config.directory;
-        let network = &self.config.network;
-        let genesis = &self.config.genesis_hash;
+        let config = &self.config;
+        let revocations = &mut self.revocations;
         live.activate_checked(
             publication.map_sha256.clone(),
             publication.map_sha256,
             true,
             || async {
                 let result: Result<(), Error> = async {
-                    let latest =
-                        poll_snapshot(source, root, Some(&checked), None, network, genesis)
-                            .await?
-                            .ok_or("missing recovery current")?;
+                    let latest = poll_snapshot(source, config, Some(&checked), None, revocations)
+                        .await?
+                        .ok_or("missing recovery current")?;
                     if &latest != current {
                         return Err("recovery snapshot superseded".into());
                     }
                     let final_current =
-                        poll_snapshot(source, root, Some(&checked), None, network, genesis)
+                        poll_snapshot(source, config, Some(&checked), None, revocations)
                             .await?
                             .ok_or("missing recovery recheck")?;
                     if latest != final_current {
@@ -351,7 +359,7 @@ impl Manager {
         }
     }
 }
-#[derive(Default, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Revocations {
     revision: u64,
@@ -371,15 +379,36 @@ fn floor(root: &Path) -> Result<Revocations, Error> {
     primary.digests.extend(fallback.digests);
     Ok(primary)
 }
+fn combined_floor(root: &Path, memory: &mut Revocations) -> Result<Revocations, Error> {
+    let mut storage_error = None;
+    for name in ["revocation-floor.json", "revocation-fallback.json"] {
+        match read_floor(&root.join(name)) {
+            Ok(durable) => {
+                memory.revision = memory.revision.max(durable.revision);
+                memory.digests.extend(durable.digests);
+            }
+            Err(error) => {
+                storage_error.get_or_insert(error);
+            }
+        }
+    }
+    if let Some(error) = storage_error {
+        return Err(error);
+    }
+    Ok(memory.clone())
+}
 fn persist_floor(root: &Path, intent: &Revocations) -> Result<(), Error> {
     // A failed primary write is still an error. Retain the SAME exact source
     // revision/digests through an independent atomic path before owner fencing;
     // a stale high-water cannot reconstruct a missed revision after restart.
     let primary = persist(&root.join("revocation-floor.json"), intent);
-    if primary.is_err() || root.join("revocation-fallback.json").exists() {
-        persist(&root.join("revocation-fallback.json"), intent)?;
-    }
+    let fallback = if primary.is_err() || root.join("revocation-fallback.json").exists() {
+        persist(&root.join("revocation-fallback.json"), intent)
+    } else {
+        Ok(())
+    };
     primary?;
+    fallback?;
     Ok(())
 }
 async fn revoke(
@@ -387,6 +416,7 @@ async fn revoke(
     live: &LiveService,
     current: &Current,
     from: u64,
+    memory: &mut Revocations,
 ) -> Result<(), Error> {
     let status = live.command(Command::Status).await?;
     let mut digests = BTreeSet::new();
@@ -403,31 +433,30 @@ async fn revoke(
             );
         }
     }
-    revoke_digests(root, live, current, digests).await
+    revoke_digests(root, live, current, digests, memory).await
 }
 async fn revoke_digests(
     root: &Path,
     live: &LiveService,
     current: &Current,
     digests: BTreeSet<String>,
+    memory: &mut Revocations,
 ) -> Result<(), Error> {
+    memory.revision = memory.revision.max(current.revision);
+    memory.digests.extend(digests.iter().cloned());
     let durable = (|| -> Result<(), Error> {
-        let saved = floor(root);
-        let mut intent = match &saved {
-            Ok(saved) => Revocations {
-                revision: saved.revision,
-                digests: saved.digests.clone(),
-            },
-            Err(_) => read_floor(&root.join("revocation-fallback.json"))?,
-        };
-        intent.revision = intent.revision.max(current.revision);
-        intent.digests.extend(digests.iter().cloned());
+        let saved = combined_floor(root, memory);
         if let Err(error) = saved {
-            // Preserve this negative evidence even when the primary cannot be
-            // read/parsed; the corrupt primary remains a startup/activation error.
-            persist(&root.join("revocation-fallback.json"), &intent)?;
+            // Preserve evidence in the existing fallback if readable; never
+            // discard the in-process bound when any read or write also fails.
+            if let Ok(fallback) = read_floor(&root.join("revocation-fallback.json")) {
+                memory.revision = memory.revision.max(fallback.revision);
+                memory.digests.extend(fallback.digests);
+                let _ = persist(&root.join("revocation-fallback.json"), memory);
+            }
             return Err(error);
         }
+        let intent = memory.clone();
         persist_floor(root, &intent)
     })();
     // Storage failure cannot leave known orphaned material serving. The owner
@@ -443,11 +472,12 @@ async fn apply_snapshot(
     root: &Path,
     live: Option<&LiveService>,
     current: &Current,
+    memory: &mut Revocations,
 ) -> Result<(), Error> {
     let Some(live) = live else {
         if !current.eligible() {
-            let mut intent = floor(root)?;
-            intent.revision = intent.revision.max(current.revision);
+            memory.revision = memory.revision.max(current.revision);
+            let intent = combined_floor(root, memory)?;
             persist_floor(root, &intent)?;
         }
         return Ok(());
@@ -461,7 +491,7 @@ async fn apply_snapshot(
             .iter()
             .any(|s| s["end_height"].as_u64().is_some_and(|h| h >= from))
         {
-            revoke(root, live, current, from).await?;
+            revoke(root, live, current, from, memory).await?;
         }
     }
     if !current.eligible() {
@@ -473,7 +503,7 @@ async fn apply_snapshot(
             })
             .filter_map(|s| s["digest"].as_str().map(str::to_string))
             .collect();
-        revoke_digests(root, live, current, digests).await?;
+        revoke_digests(root, live, current, digests, memory).await?;
     }
     // Revalidate all retained anchors after missed revisions, rather than infer
     // their validity from the publisher's most recent invalidation range.
@@ -493,6 +523,7 @@ async fn apply_snapshot(
                     .as_str()
                     .ok_or("owner missing digest")?
                     .into()]),
+                memory,
             )
             .await?;
         }
@@ -505,29 +536,38 @@ async fn apply_snapshot(
 /// become invalidation evidence; a 304 never grants new authority.
 async fn poll_snapshot(
     source: &mut Source,
-    root: &Path,
+    config: &Config,
     live: Option<&LiveService>,
     previous: Option<&Current>,
-    network: &str,
-    genesis: &str,
+    memory: &mut Revocations,
 ) -> Result<Option<Current>, Error> {
-    let Some(current) = source.poll(root, previous, network, genesis).await? else {
+    let root = &config.directory;
+    let Some((current, read_error)) = source
+        .poll(root, previous, &config.network, &config.genesis_hash)
+        .await?
+    else {
         return Ok(None);
     };
-    let recorded = floor(root);
-    if let Ok(bound) = &recorded {
-        if current.revision < bound.revision {
-            return Err("publisher replay below durable revocation revision".into());
-        }
-        if current.revision == bound.revision
-            && current.eligible()
-            && source.observed_revision(root)? < bound.revision
-        {
-            return Err("equal revision lacks a durable exact source identity".into());
+    let recorded = combined_floor(root, memory);
+    if current.revision < memory.revision {
+        return Err("publisher replay below observed revocation revision".into());
+    }
+    let mut source_storage = Ok(());
+    if current.revision == memory.revision && current.eligible() {
+        match source.observed_revision(root) {
+            Ok(revision) if revision < memory.revision => {
+                return Err("equal revision lacks a durable exact source identity".into());
+            }
+            Err(error) => source_storage = Err(error),
+            _ => {}
         }
     }
     let durable = source.observe(root, &current);
-    let applied = apply_snapshot(source, root, live, &current).await;
+    let applied = apply_snapshot(source, root, live, &current, memory).await;
+    if let Some(error) = read_error {
+        return Err(error);
+    }
+    source_storage?;
     durable?;
     applied?;
     recorded?;

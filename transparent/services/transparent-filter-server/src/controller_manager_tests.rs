@@ -496,7 +496,10 @@ async fn manager_refuses_changed_holdings_on_an_unchanged_map() {
 // A validated withdrawal must reach the owner even when any one control-record
 // write fails. Run the same probe at the ordinary and both activation polls.
 async fn control_write_failure(pause_at: Option<u32>, failed_record: &str) {
-    let failed_records = if failed_record == "both" {
+    let high_water_fault = failed_record.split_once(':');
+    let failed_records = if let Some((_, record)) = high_water_fault {
+        vec![record]
+    } else if failed_record == "both" {
         vec![
             "publisher-high-water.tmp",
             "publisher-high-water-fallback.tmp",
@@ -518,11 +521,20 @@ async fn control_write_failure(pause_at: Option<u32>, failed_record: &str) {
     );
     let tls = tls(root.path(), owner.clone()).await;
     let state = root.path().join("provider");
+    if high_water_fault.is_some() {
+        owner.0.distribution_revision.store(10, Ordering::Release);
+    }
     let mut follow = manager(&tls, &state);
     follow.poll_once().await.unwrap();
     let live = follow.live().unwrap();
     let (origin, task) = worker(live.clone()).await;
     let encrypted = query_and_upload(&origin, &set).await;
+    let saved_high_water = std::fs::read(state.join("publisher-high-water.json")).unwrap();
+    if let Some((_, record)) = high_water_fault {
+        if record.contains("fallback") {
+            std::fs::write(state.join(record), &saved_high_water).unwrap();
+        }
+    }
     if failed_record == "both" {
         owner.0.distribution_revision.store(99, Ordering::Release);
     }
@@ -535,7 +547,9 @@ async fn control_write_failure(pause_at: Option<u32>, failed_record: &str) {
         });
         entered(&tls).await;
         for record in &failed_records {
-            if failed_record == "malformed" {
+            if failed_record == "malformed"
+                || high_water_fault.is_some_and(|(kind, _)| kind == "parse")
+            {
                 std::fs::write(state.join(record), b"{").unwrap();
                 continue;
             }
@@ -558,7 +572,9 @@ async fn control_write_failure(pause_at: Option<u32>, failed_record: &str) {
         result
     } else {
         for record in &failed_records {
-            if failed_record == "malformed" {
+            if failed_record == "malformed"
+                || high_water_fault.is_some_and(|(kind, _)| kind == "parse")
+            {
                 std::fs::write(state.join(record), b"{").unwrap();
                 continue;
             }
@@ -567,11 +583,98 @@ async fn control_write_failure(pause_at: Option<u32>, failed_record: &str) {
             }
             std::fs::create_dir(state.join(record)).unwrap();
         }
+        if let Some((_, failed)) = high_water_fault {
+            // A broken safety file is not permission to call every error a
+            // revocation: outage, malformed transport, wrong network, replay,
+            // and a contradictory READABLE companion all preserve active A.
+            rpc.available.store(false, Ordering::Release);
+            assert!(follow.poll_once().await.is_err());
+            rpc.available.store(true, Ordering::Release);
+            assert_eq!(
+                get(&origin, "/v2/shards/init").await.status(),
+                StatusCode::OK
+            );
+            std::fs::write(&tls.control, "malformed-current").unwrap();
+            assert!(follow.poll_once().await.is_err());
+            std::fs::write(&tls.control, "").unwrap();
+            assert_eq!(
+                get(&origin, "/v2/shards/init").await.status(),
+                StatusCode::OK
+            );
+            *rpc.genesis.write().unwrap() = "ff".repeat(32);
+            assert!(follow.poll_once().await.is_err());
+            *rpc.genesis.write().unwrap() = set.map.genesis_hash.clone();
+            assert_eq!(
+                get(&origin, "/v2/shards/init").await.status(),
+                StatusCode::OK
+            );
+            owner.0.distribution_revision.store(9, Ordering::Release);
+            owner.0.withdrawn.store(true, Ordering::Release);
+            assert!(follow.poll_once().await.is_err());
+            assert_eq!(
+                get(&origin, "/v2/shards/init").await.status(),
+                StatusCode::OK
+            );
+            owner.0.distribution_revision.store(11, Ordering::Release);
+            let other = if failed.contains("fallback") {
+                "publisher-high-water.json"
+            } else {
+                "publisher-high-water-fallback.json"
+            };
+            let mut contradiction: serde_json::Value =
+                serde_json::from_slice(&saved_high_water).unwrap();
+            contradiction["current"]["revision"] = serde_json::json!(12);
+            std::fs::write(
+                state.join(other),
+                serde_json::to_vec(&contradiction).unwrap(),
+            )
+            .unwrap();
+            assert!(follow.poll_once().await.is_err());
+            assert_eq!(
+                get(&origin, "/v2/shards/init").await.status(),
+                StatusCode::OK
+            );
+            // A readable origin mismatch also remains a refusal, never evidence.
+            contradiction["current"]["revision"] = serde_json::json!(10);
+            contradiction["origin"] = serde_json::json!("https://another.invalid/");
+            std::fs::write(
+                state.join(other),
+                serde_json::to_vec(&contradiction).unwrap(),
+            )
+            .unwrap();
+            assert!(follow.poll_once().await.is_err());
+            assert_eq!(
+                get(&origin, "/v2/shards/init").await.status(),
+                StatusCode::OK
+            );
+            std::fs::write(state.join(other), &saved_high_water).unwrap();
+            // Reuse an independently validated encrypted answer while storage
+            // is still broken, proving the controls did not silently fence it.
+            query(&origin, &set).await;
+        }
         owner.0.withdrawn.store(true, Ordering::Release);
         owner.0.invalidated_from.store(2, Ordering::Release);
         follow.poll_once().await
     };
-    assert!(result.is_err());
+    let error = result.unwrap_err().to_string();
+    if let Some((kind, record)) = high_water_fault {
+        assert!(
+            error.contains(if kind == "read" { "directory" } else { "EOF" }),
+            "original high-water storage error: {error}"
+        );
+        // A new Source has no trusted in-process baseline. The same malformed
+        // or unreadable record must refuse before constructing any owner.
+        let startup_root = root.path().join("startup-provider");
+        std::fs::create_dir(&startup_root).unwrap();
+        if kind == "read" {
+            std::fs::create_dir(startup_root.join(record)).unwrap();
+        } else {
+            std::fs::write(startup_root.join(record), b"{").unwrap();
+        }
+        let mut startup = manager(&tls, &startup_root);
+        assert!(startup.poll_once().await.is_err());
+        assert!(startup.live().is_none());
+    }
     assert_eq!(
         get(&origin, "/v2/shards/init").await.status(),
         StatusCode::SERVICE_UNAVAILABLE
@@ -589,10 +692,14 @@ async fn control_write_failure(pause_at: Option<u32>, failed_record: &str) {
         .unwrap();
     assert_eq!(response.status(), StatusCode::CONFLICT);
     for record in &failed_records {
-        if failed_record == "malformed" {
+        if failed_record == "malformed" || high_water_fault.is_some_and(|(kind, _)| kind == "parse")
+        {
             std::fs::remove_file(state.join(record)).unwrap();
         } else {
             std::fs::remove_dir(state.join(record)).unwrap();
+        }
+        if high_water_fault.is_some() {
+            std::fs::write(state.join(record), &saved_high_water).unwrap();
         }
     }
     owner.0.withdrawn.store(false, Ordering::Release);
@@ -880,6 +987,128 @@ async fn manager_rejects_replayed_different_map_below_durable_revocation_floor()
     restarted.poll_once().await.unwrap();
     let (origin, task) = worker(restarted.live().unwrap()).await;
     query(&origin, &next_set).await;
+    task.abort();
+    let _ = task.await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn manager_primary_read_failure_at_poll_still_fences_http() {
+    control_write_failure(None, "read:publisher-high-water.json").await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn manager_primary_read_failure_at_guard_still_fences_http() {
+    control_write_failure(Some(2), "read:publisher-high-water.json").await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn manager_primary_parse_failure_at_poll_still_fences_http() {
+    control_write_failure(None, "parse:publisher-high-water.json").await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn manager_primary_parse_failure_at_guard_still_fences_http() {
+    control_write_failure(Some(3), "parse:publisher-high-water.json").await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn manager_fallback_read_failure_at_poll_still_fences_http() {
+    control_write_failure(None, "read:publisher-high-water-fallback.json").await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn manager_fallback_read_failure_at_guard_still_fences_http() {
+    control_write_failure(Some(2), "read:publisher-high-water-fallback.json").await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn manager_fallback_parse_failure_at_poll_still_fences_http() {
+    control_write_failure(None, "parse:publisher-high-water-fallback.json").await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn manager_fallback_parse_failure_at_guard_still_fences_http() {
+    control_write_failure(Some(3), "parse:publisher-high-water-fallback.json").await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn manager_double_intent_write_failure_retains_exact_negative_revision() {
+    let root = tempfile::tempdir().unwrap();
+    let (directory, set) = publication(root.path());
+    prepare_recent(&directory, &set);
+    let rpc = canonical_rpc(root.path(), &set).await;
+    let owner = authority(
+        &directory,
+        Some(Finalized::prepare(&directory, &set, 2).unwrap()),
+        rpc.client.clone(),
+    );
+    let tls = tls(root.path(), owner.clone()).await;
+    let state = root.path().join("provider");
+    let mut follow = manager(&tls, &state);
+    follow.poll_once().await.unwrap();
+    let (origin, task) = worker(follow.live().unwrap()).await;
+    let encrypted = query_and_upload(&origin, &set).await;
+    for name in ["revocation-floor.tmp", "revocation-fallback.tmp"] {
+        std::fs::create_dir(state.join(name)).unwrap();
+    }
+    owner.0.distribution_revision.store(100, Ordering::Release);
+    std::fs::write(&tls.control, "pause-anchor").unwrap();
+    let work = tokio::spawn(async move {
+        let result = follow.poll_once().await;
+        (follow, result)
+    });
+    entered(&tls).await;
+    // The actual producer already returned eligible Current100. Its delegated
+    // source now rejects the exact anchor without changing that revision.
+    *rpc.hash.write().unwrap() = Some("ff".repeat(32));
+    std::fs::write(&tls.control, "").unwrap();
+    let (mut follow, result) = work.await.unwrap();
+    let error = result.unwrap_err().to_string();
+    assert!(
+        error.contains("directory"),
+        "original intent storage error: {error}"
+    );
+    let high_water: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(state.join("publisher-high-water.json")).unwrap())
+            .unwrap();
+    assert_eq!(high_water["current"]["revision"], 100);
+    assert_eq!(high_water["current"]["eligibility"], "canonical");
+    let intent: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(state.join("revocation-floor.json")).unwrap())
+            .unwrap();
+    assert_eq!(
+        intent["revision"], 0,
+        "both exact intent writes really failed"
+    );
+    assert_eq!(
+        get(&origin, "/v2/shards/init").await.status(),
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+    for name in ["revocation-floor.tmp", "revocation-fallback.tmp"] {
+        std::fs::remove_dir(state.join(name)).unwrap();
+    }
+    *rpc.hash.write().unwrap() = Some(set.map.shards.last().unwrap().terminal_block_hash.clone());
+    assert!(
+        follow.poll_once().await.is_err(),
+        "same revision cannot erase exact-anchor negative"
+    );
+    assert_eq!(
+        get(&origin, "/v2/shards/init").await.status(),
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+    let response = reqwest::Client::new()
+        .post(format!(
+            "{origin}/v2/shards/1/revisions/{}/query/directory",
+            set.get(1).unwrap().digest
+        ))
+        .body(encrypted)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    owner.0.distribution_revision.store(101, Ordering::Release);
+    follow.poll_once().await.unwrap();
+    query(&origin, &set).await;
     task.abort();
     let _ = task.await;
 }

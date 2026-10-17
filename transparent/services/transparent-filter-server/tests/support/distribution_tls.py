@@ -25,6 +25,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
         with Path(control + ".requests").open("a") as requests:
             requests.write(self.path + "\n")
         fault = Path(control).read_text().strip()
+        if fault == "malformed-current" and self.path.endswith("/current"):
+            self.send_response(200)
+            self.send_header("Content-Length", "1")
+            self.end_headers()
+            self.wfile.write(b"{")
+            return
         if fault == "refused-body":
             body = b"refused" * 1024
             self.send_response(503)
@@ -50,6 +56,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 Path(control + ".entered").touch()
                 while Path(control).read_text().strip() == fault:
                     time.sleep(0.01)
+        if fault == "pause-anchor" and "/anchors/" in self.path:
+            Path(control + ".entered").touch()
+            while Path(control).read_text().strip() == fault:
+                time.sleep(0.01)
         if fault == "pause-artifact" and "/artifacts/" in self.path:
             Path(control + ".entered").touch()
             while Path(control).read_text().strip() == "pause-artifact":

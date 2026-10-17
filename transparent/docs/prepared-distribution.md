@@ -235,8 +235,20 @@ fences memory and attempts its own durable record. This also applies when the
 high-water write fails after a validated source response, at ordinary polling,
 activation rechecks and recovery rechecks; invalidation cannot disappear behind
 a control-record storage error. A process retains its observed revision/digest
-floor even if that write fails. Malformed, replayed or failed transport responses
-remain errors rather than revocation evidence. Startup binds otherwise
+floor even if both intent writes fail, including a separate exact-anchor negative
+following an eligible Current at that revision. All activation and clearing gates
+combine this in-memory bound with both durable records. Repairing storage does
+not permit same-revision recovery. If every applicable exact safety write is
+unavailable, a process or power loss cannot be promised to preserve that negative
+observation; the in-process bound is not a universal durability guarantee.
+
+When an already-running Source has a trusted complete in-memory Current, an
+unreadable or malformed high-water record does not hide a freshly authenticated,
+identity-checked and replay-ordered negative response from the owner. Every
+readable companion record must still agree. The owner fences affected material,
+while the original storage error remains visible and activation is refused.
+Startup without that trusted baseline stays closed. Malformed, replayed or failed
+transport responses remain errors rather than revocation evidence. Startup binds otherwise
 unrecorded owner revocations to the previously observed source revision before
 polling. A failed primary intent write/read also attempts the exact revision and
 digests in `revocation-fallback.json`, independently of the high-water write.

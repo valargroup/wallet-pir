@@ -159,29 +159,15 @@ impl Source {
         }
         Ok(revision)
     }
+    // Storage errors are distinct from contradictory/replayed evidence. Once
+    // this exclusively owned Source has a trusted full observation, it can
+    // order a negative response despite an unreadable record, but may not use
+    // that response to activate. Check EVERY readable record before returning.
     fn validate_observation(
         &self,
         directory: &std::path::Path,
         current: &Current,
-    ) -> Result<(), Error> {
-        for name in [
-            "publisher-high-water.json",
-            "publisher-high-water-fallback.json",
-        ] {
-            match std::fs::read(directory.join(name)) {
-                Ok(bytes) => {
-                    let saved: HighWater = serde_json::from_slice(&bytes)?;
-                    if saved.origin != self.origin.as_str() || !current.succeeds(&saved.current) {
-                        return Err(
-                            "publisher origin change, replay or contradictory current record"
-                                .into(),
-                        );
-                    }
-                }
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(error) => return Err(error.into()),
-            }
-        }
+    ) -> Result<Option<Error>, Error> {
         if self
             .observed
             .as_ref()
@@ -189,17 +175,52 @@ impl Source {
         {
             return Err("publisher replay or contradictory in-memory current record".into());
         }
-        Ok(())
+        let mut storage_error = None;
+        for name in [
+            "publisher-high-water.json",
+            "publisher-high-water-fallback.json",
+        ] {
+            let saved = match std::fs::read(directory.join(name)) {
+                Ok(bytes) => match serde_json::from_slice::<HighWater>(&bytes) {
+                    Ok(saved) => Some(saved),
+                    Err(error) => {
+                        storage_error.get_or_insert_with(|| error.into());
+                        None
+                    }
+                },
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                Err(error) => {
+                    storage_error.get_or_insert_with(|| error.into());
+                    None
+                }
+            };
+            if let Some(saved) = saved {
+                if saved.origin != self.origin.as_str() || !current.succeeds(&saved.current) {
+                    return Err(
+                        "publisher origin change, replay or contradictory current record".into(),
+                    );
+                }
+            }
+        }
+        if self.observed.is_none() {
+            if let Some(error) = storage_error.take() {
+                return Err(error);
+            }
+        }
+        Ok(storage_error)
     }
     pub(crate) fn observe(
         &mut self,
         directory: &std::path::Path,
         current: &Current,
     ) -> Result<(), Error> {
-        self.validate_observation(directory, current)?;
+        let storage_error = self.validate_observation(directory, current)?;
         // A failed durable write cannot erase a positive observation in this
         // process. The manager still applies its exact revocation to the owner.
         self.observed = Some(current.clone());
+        if let Some(error) = storage_error {
+            return Err(error);
+        }
         // Keep the full source identity as well as its revision: an equal
         // revision must not substitute another inventory after a write failure.
         let saved = HighWater {
@@ -256,7 +277,7 @@ impl Source {
         previous: Option<&Current>,
         network: &str,
         genesis: &str,
-    ) -> Result<Option<Current>, Error> {
+    ) -> Result<Option<(Current, Option<Error>)>, Error> {
         if self.downloaded >= self.budget {
             return Err(self.budget_error());
         }
@@ -306,8 +327,10 @@ impl Source {
         }
         // Persistence belongs to the manager after returning the authenticated,
         // replay-checked snapshot, so write failure cannot hide invalidation.
-        self.validate_observation(directory, &current)?;
-        Ok(Some(current))
+        let storage_error = self.validate_observation(directory, &current)?;
+        // Carry the FIRST read failure across the manager handoff, even if a
+        // second read succeeds. Negative evidence still fences; activation fails.
+        Ok(Some((current, storage_error)))
     }
     pub(crate) async fn anchor(
         &mut self,
