@@ -481,10 +481,11 @@ async fn canonical_cli_ingests_rpc_rewinds_reorg_and_restarts_without_duplicatio
     }
 }
 
-/// The product application commits independently of remote preparation; failures
-/// retain the committed source records and a restart reuses that exact journal.
+/// The application commits independently of remote preparation refusal. Exercise
+/// collection/restart/reorg directly without duplicating cold-runtime qualification;
+/// the canonical CLI case above retains successful publication and encrypted recovery.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn application_collection_survives_preparation_failure_restart_and_reorg() {
+async fn application_collection_commits_survive_preparation_refusal_restart_and_reorg() {
     use enhance_pir_server::{
         application::{collect, Source},
         capacity,
@@ -580,16 +581,10 @@ async fn application_collection_survives_preparation_failure_restart_and_reorg()
         journal.records().read_records(0, 1).unwrap(),
         expected[84..]
     );
-    refuse.store(false, Ordering::SeqCst);
+    // Drain the refused candidate before restart. Successful cold preparation and
+    // encrypted recovery remain covered by the unchanged canonical CLI case above;
+    // this direct API case bounds collection/refusal/recovery independently of it.
     coordinator.reconcile().await.unwrap();
-    collect(&mut journal, &coordinator, &source)
-        .await
-        .unwrap()
-        .publish(capacity::Policy::default())
-        .await
-        .unwrap();
-    let manifest = coordinator.manifest().await.unwrap();
-    assert_eq!(manifest.anchor_block_hash, state.blocks[0].1);
     drop(journal);
     drop(coordinator);
     let mut journal = EnhanceJournal::open(root.path()).unwrap();
@@ -609,6 +604,10 @@ async fn application_collection_survives_preparation_failure_restart_and_reorg()
     drop(collect(&mut journal, &coordinator, &source).await.unwrap());
     assert_eq!(journal.tree_size(), 2);
     assert_eq!(journal.highest_committed().unwrap().1, state.blocks[1].1);
+    assert!(
+        coordinator.manifest().await.is_none(),
+        "collection cannot activate"
+    );
     for worker in workers {
         worker.abort();
     }
