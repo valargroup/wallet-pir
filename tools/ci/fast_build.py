@@ -3,8 +3,9 @@
 Cargo unifies features for the complete selection. Unit tests and the named
 fast integration targets share that build; campaign targets are never selected.
 Test programs retain their package directory, Cargo environment and existing
-slow-case exclusions. The filter library runs alone. At most three other
-programs, including HTTP integration programs, then execute together.
+slow-case exclusions. On fewer than 8 cores the filter library runs alone;
+otherwise at most three programs, including that library and HTTP integration
+programs, execute together.
 """
 import json
 import os
@@ -13,6 +14,21 @@ import subprocess
 import tempfile
 
 from stage import ROOT, run, inherited_fds
+
+
+def available_cpus():
+    if hasattr(os, 'sched_getaffinity'):
+        return len(os.sched_getaffinity(0))
+    return os.cpu_count() or 1
+
+
+def publisher_runs_alone(name, kinds):
+    """Archive builds take every core of a 4-core hosted runner.
+
+    The 8-core fast runner still has cores left when the publisher keeps four
+    build threads, so it stays in the shared pool there.
+    """
+    return name == 'transparent-filter-server' and 'lib' in kinds and available_cpus() < 8
 
 
 def test_names(binary, directory, *, ignored=False):
@@ -108,13 +124,13 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3):
             actual_units.add(identity)
             discovered_units[name].update(names)
         exclusions = [] if integration else list(slow.get(name, {}))
-        # The filter library builds full archive runtimes on every CPU. Beside
-        # the encrypted HTTP smokes, those smokes miss the 30s case deadline on
-        # the 4-core hosted runner, so the library runs alone first.
+        # Full archive runtimes use every core on a 4-core runner and push the
+        # encrypted HTTP smokes past their 30s deadline. Run that library alone
+        # there; an 8-core runner still has cores left for the shared pool.
         programs.append(dict(executable=binary, directory=directory, package=name,
                              version=package['version'],
                              integration=integration,
-                             exclusive=name == 'transparent-filter-server' and 'lib' in target['kind'],
+                             exclusive=publisher_runs_alone(name, target['kind']),
                              case_count=len(names),
                              args=[arg for case in exclusions for arg in ('--skip', case)]))
     if actual_integrations != expected_integrations or expected_units - actual_units:
@@ -127,8 +143,8 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3):
         stale = set(slow.get(name, {})) - discovered
         if stale:
             raise ValueError(f'{name}: stale slow-test classification: {sorted(stale)}')
-    # The publisher library is exclusive and runs before this pool. HTTP programs
-    # take the remaining slots ahead of ordinary units.
+    # On a 4-core runner the publisher is exclusive and finishes before this
+    # pool. On more cores it starts first in the pool. HTTP programs are next.
     def queue_key(program):
         publisher = (program['package'] == 'transparent-filter-server'
                      and not program['integration'] and program['case_count'] > 0)

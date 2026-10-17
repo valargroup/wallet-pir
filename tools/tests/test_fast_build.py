@@ -43,7 +43,7 @@ class FastBuildTests(unittest.TestCase):
         self.ignored = {}
         self.calls, self.plans = [], []
 
-    def execute(self, *, compile_only=False, jobs=2):
+    def execute(self, *, compile_only=False, jobs=2, cpus=4):
         original_read = Path.read_text
 
         def read(path, *args, **kwargs):
@@ -65,7 +65,8 @@ class FastBuildTests(unittest.TestCase):
                 self.plans.append(json.loads(Path(command[2]).read_text()))
                 self.assertTrue(Path(kwargs['env']['WALLET_PIR_TEST_RUNTIME_CACHE']).is_dir())
 
-        with patch.object(integration_tests, 'inventory', return_value=self.registry), \
+        with patch.object(fast_build, 'available_cpus', return_value=cpus), \
+                patch.object(integration_tests, 'inventory', return_value=self.registry), \
                 patch.object(Path, 'read_text', autospec=True, side_effect=read), \
                 patch.object(fast_build.subprocess, 'check_output', side_effect=output), \
                 patch.object(fast_build, 'run', side_effect=run), \
@@ -105,7 +106,7 @@ class FastBuildTests(unittest.TestCase):
         self.execute(jobs=3)
         self.assertEqual(self.calls[-1][0][-2:], ['--jobs', '3'])
 
-    def test_filter_library_runs_alone_without_changing_cases_or_arguments(self):
+    def test_filter_library_runs_alone_on_a_four_core_runner_and_shares_eight(self):
         self.execute()
         baseline = {p['executable']: p for p in self.plans[0]}
         self.calls.clear()
@@ -130,6 +131,11 @@ class FastBuildTests(unittest.TestCase):
         runner, options = self.calls[-1]
         self.assertIn('--budget', runner)
         self.assertEqual(options['env']['WALLET_PIR_ENFORCE_BUDGET'], '1')
+        self.calls.clear()
+        self.plans.clear()
+        self.execute(cpus=8)
+        self.assertFalse(self.plans[0][0]['exclusive'])
+        self.assertEqual(self.plans[0][0]['executable'], '/fixture/a-a')
 
     def test_discovered_case_count_orders_units_after_http_independently_of_cargo_output(self):
         self.listings['/fixture/b-b'] = {f'case_{i}' for i in range(7)}

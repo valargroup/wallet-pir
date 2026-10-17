@@ -102,10 +102,11 @@ Rust feedback compiles the selected unit tests, CLI test binaries and named fast
 integration targets together in one `release-fast` Cargo invocation. Campaign
 targets are excluded from that build. Local and CI checks then execute at most
 three Cargo-reported test programs concurrently. The publisher library builds
-full archive runtimes and runs alone first, so those cases keep the CPUs they
-need to finish within 30 seconds and the encrypted HTTP smokes are not starved
-on a 4-core runner. HTTP integration programs then use the pool ahead of
-ordinary units. Within each group, binaries with more discovered cases start first,
+full archive runtimes on every core of a 4-core hosted runner, so it runs alone
+there before the pool; beside it, the encrypted HTTP smokes miss the 30-second
+case deadline. The 8-core fast runner keeps it in the pool, where four build
+threads leave cores for those smokes. HTTP integration programs use the pool
+ahead of ordinary units. Within each group, binaries with more discovered cases start first,
 independently of Cargo's artifact order. Cases within each program stay
 serial, preserving process-local immutable public fixtures within the fast runner’s
 6-GiB ceiling. Explicit feature or test-filter checks use one program at a time.
