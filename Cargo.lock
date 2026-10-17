@@ -3688,6 +3688,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "transparent-blocks",
+ "transparent-journal",
  "transparent-server-backend",
  "transparent-shard-server",
  "zakura-server-chain",
@@ -3696,6 +3697,20 @@ dependencies = [
  "zakura-transparent-native",
  "zakura-transparent-shard",
  "zakura-transparent-txid-client",
+]
+
+[[package]]
+name = "transparent-journal"
+version = "0.1.0-rc.4"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "thiserror 2.0.18",
+ "zakura-transparent-events",
+ "zakura-transparent-filter",
+ "zakura-transparent-shard",
 ]
 
 [[package]]
@@ -3734,7 +3749,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
- "transparent-filter-server",
+ "transparent-journal",
  "transparent-shard-server",
  "zakura-pir-transparent",
  "zakura-transparent-events",

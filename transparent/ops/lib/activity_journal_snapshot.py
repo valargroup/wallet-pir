@@ -90,7 +90,7 @@ MACHINE_ID = Path('/etc/machine-id')
 OWNER = 0
 statvfs = os.statvfs
 
-# transparent-filter-server/src/events.rs and display_journal.rs, version 3.
+# transparent-journal/src/events.rs and display_journal.rs, version 3.
 FORMAT_VERSION = 3
 START_HEIGHT = 0
 RECORD_BYTES = 48

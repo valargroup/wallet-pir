@@ -10,6 +10,8 @@
       "transparent:transparent-blocks:doc:transparent_blocks",
       "transparent:transparent-blocks:lib:transparent_blocks",
       "transparent:transparent-blocks:test:recovery",
+      "transparent:transparent-journal:doc:transparent_journal",
+      "transparent:transparent-journal:lib:transparent_journal",
       "transparent:transparent-loadtest:bin:transparent-filter-cli",
       "transparent:transparent-loadtest:bin:transparent-loadtest",
       "transparent:transparent-loadtest:bin:txid-quality-canary",

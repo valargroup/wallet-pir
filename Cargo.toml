@@ -13,6 +13,7 @@ members = [
     "enhance/crates/enhance-serving",
     "enhance/crates/status-serving",
     "transparent/crates/transparent-blocks",
+    "transparent/crates/transparent-journal",
     "transparent/crates/transparent-server-backend",
     # Services and operational dashboard.
     "enhance/services/enhance-pir-server",

@@ -75,6 +75,7 @@ rocksdb-reader = ["zakura-server-chain/rocksdb"]
 full-tests = []
 
 [dependencies]
+transparent-journal = { path = "../../crates/transparent-journal" }
 pir-pipeline = { path = "../../../shared/pir-pipeline" }
 pir-control = { path = "../../../shared/pir-control", features = ["admission"] }
 pir-observability = { path = "../../../shared/pir-observability" }

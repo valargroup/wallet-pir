@@ -112,7 +112,8 @@ fn truncate(path: &Path, len: u64) -> Result<(), EventStoreError> {
 }
 
 impl EventStore {
-    pub(crate) fn directory(&self) -> &Path {
+    /// Directory containing the journal and its committed display sidecars.
+    pub fn directory(&self) -> &Path {
         &self.dir
     }
     pub fn version(&self) -> u16 {
@@ -492,7 +493,7 @@ impl EventStore {
     /// process writes, which must never write beside it. A reader checks
     /// [`Self::still_committed`] afterwards, because the writer may have
     /// rewritten the suffix while it was copied.
-    pub(crate) fn snapshot_suffix(
+    pub fn snapshot_suffix(
         &self,
         first: u64,
         temp_dir: &Path,
@@ -1120,7 +1121,7 @@ mod durability_tests {
 }
 
 /// Decode one indexed record from a locked journal or immutable suffix snapshot.
-pub(crate) fn read_event_record(
+pub fn read_event_record(
     file: &mut File,
     entry: BlockEntry,
     end: u64,
