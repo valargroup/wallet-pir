@@ -11,6 +11,8 @@ import uuid
 
 ROOT = Path(__file__).resolve().parents[2]
 DRIVER = ROOT / 'tools/ci/python_tests.py'
+sys.path.insert(0, str(ROOT / 'tools/ci'))
+from stage import inherited_fds
 
 
 class PythonTestDriverTests(unittest.TestCase):
@@ -19,7 +21,7 @@ class PythonTestDriverTests(unittest.TestCase):
         env.pop('WALLET_PIR_FIXTURE_MODULE_OWNER', None)
         return subprocess.run([sys.executable, str(DRIVER), str(directory / 'suite'),
                                '--jobs', str(jobs)], cwd=directory, env=env,
-                              capture_output=True, text=True, timeout=15)
+                              capture_output=True, text=True, timeout=15, **inherited_fds(env))
 
     def test_modules_keep_their_fixtures_and_caller_directory_on_two_isolated_workers(self):
         with tempfile.TemporaryDirectory() as temporary:
