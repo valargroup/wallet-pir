@@ -9,6 +9,7 @@ failure restores the touched units in reverse order and checks that the
 previous executable is running again.
 """
 from dataclasses import dataclass, field
+from concurrent.futures import ThreadPoolExecutor
 import difflib
 import hashlib
 import json
@@ -421,29 +422,44 @@ class Deployer:
     def stage(self, hosts, sha, binary, journal=None):
         """Install the binary as `/opt/<svc>/releases/<sha256>/<binary>` and run its self-check there.
 
-        Adds an immutable release directory only; no unit or process changes.
+        Upload to independent hosts together; finish every upload before any
+        activation or lock release, including when one host fails. Journal
+        writes stay on the caller thread. No unit or process changes here.
         """
-        path = self.service.release_binary(sha)
+        hosts = list(dict.fromkeys(hosts))
+        if not hosts:
+            return
         for host in hosts:
             self.lock.verify()
-            current = self.ex.sha256(host, path)
-            if current is None:
-                if binary is None:
-                    raise DeployError('%s: release %s is not staged and no binary was given' % (host, sha[:12]))
-                partial = '%s/releases/.partial-%s' % (self.service.root, journal.id if journal else sha)
-                if journal:
-                    journal.event('staging', host=host)
-                self.ex.mkdir(host, partial, 0o755)
-                self.ex.upload(host, binary, '%s/%s' % (partial, self.service.binary), 0o755)
-                if self.ex.sha256(host, '%s/%s' % (partial, self.service.binary)) != sha:
-                    raise DeployError('%s: uploaded binary does not match %s' % (host, sha))
-                self.ex.rename(host, partial, self.service.release_dir(sha))
-            elif current != sha:
-                raise DeployError('%s: immutable release %s holds different bytes (%s)' % (host, path, current))
-            code, output = self.ex.run(host, [path, *self.service.self_check], SELF_CHECK_SECONDS)
-            if code:
-                raise DeployError('%s: staged binary failed its self-check (exit %d): %s' % (host, code, output[-500:]))
-            self.out('%s: staged %s and it runs' % (host, path))
+            if journal:
+                journal.event('staging', host=host)
+        partial = '%s/releases/.partial-%s' % (self.service.root, journal.id if journal else sha)
+        with ThreadPoolExecutor(max_workers=min(4, len(hosts))) as pool:
+            futures = [pool.submit(self.stage_host, host, sha, binary, partial) for host in hosts]
+            for future in futures:
+                future.result()
+
+    def stage_host(self, host, sha, binary, partial):
+        """Verify or upload one immutable release under the caller's lock."""
+        path = self.service.release_binary(sha)
+        self.lock.verify()
+        current = self.ex.sha256(host, path)
+        if current is None:
+            if binary is None:
+                raise DeployError('%s: release %s is not staged and no binary was given' % (host, sha[:12]))
+            self.ex.mkdir(host, partial, 0o755)
+            self.lock.verify()
+            self.ex.upload(host, binary, '%s/%s' % (partial, self.service.binary), 0o755)
+            if self.ex.sha256(host, '%s/%s' % (partial, self.service.binary)) != sha:
+                raise DeployError('%s: uploaded binary does not match %s' % (host, sha))
+            self.lock.verify()
+            self.ex.rename(host, partial, self.service.release_dir(sha))
+        elif current != sha:
+            raise DeployError('%s: immutable release %s holds different bytes (%s)' % (host, path, current))
+        code, output = self.ex.run(host, [path, *self.service.self_check], SELF_CHECK_SECONDS)
+        if code:
+            raise DeployError('%s: staged binary failed its self-check (exit %d): %s' % (host, code, output[-500:]))
+        self.out('%s: staged %s and it runs' % (host, path))
 
     def activate(self, journal, index, sha):
         record = journal.hosts[index]

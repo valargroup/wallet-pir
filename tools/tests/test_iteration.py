@@ -145,7 +145,7 @@ class PlannerTests(unittest.TestCase):
         for name in ['pir-control', 'pir-observability', 'pir-monitor', 'transparent-blocks']:
             command = next(command for group in groups for command in full.commands(group, groups) if '-p' in command and name in command)
             self.assertIn('tools/ci/full-test.sh', command)
-        self.assertIn('needs: [complete]', workflow)
+        self.assertIn('needs: [complete, build-cuda]', workflow)
         self.assertIn('validate-transparent-elastic-infra', workflow)
 
     def test_full_coverage_rejects_unclassified_or_duplicate_packages(self):
@@ -344,7 +344,7 @@ class IntegrityTests(unittest.TestCase):
         # over rustup's default. Every command and the cache must share the
         # compiler recorded in the CUDA ABI manifest.
         workflow = (ROOT / '.github/workflows/ci-full.yml').read_text()
-        cuda_job = workflow.split('\n  release-cuda:\n', 1)[1]
+        cuda_job = workflow.split('\n  build-cuda:\n', 1)[1].split('\n  release-cuda:\n', 1)[0]
         metadata = load('release').CUDA_BUILD
         self.assertIn('    env:\n      RUSTUP_TOOLCHAIN: ' + metadata['rust'], cuda_job)
 

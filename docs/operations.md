@@ -187,6 +187,11 @@ interface supports plan, preflight, deploy, status and rollback over the existin
 engine; the CLI consumes that interface. Mixed CPU/GPU releases emit one JSON
 result per artifact group, each with its binary digest and separate transaction.
 
+Immutable binary staging uploads to up to four hosts concurrently under the
+production lock. Every upload and binary self-check finishes before activation.
+A staging failure waits for the other uploads to finish before releasing the
+lock; no units restart. Activation and rollback keep their descriptor order.
+
 Enhance, Status and Receiver use the ordinary binary lifecycle:
 
 ```sh

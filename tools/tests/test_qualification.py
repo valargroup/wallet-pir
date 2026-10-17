@@ -6,6 +6,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import tarfile
 import tempfile
 import time
 import unittest
@@ -49,6 +50,42 @@ def complete_jobs(family):
 
 
 class QualificationTests(unittest.TestCase):
+    def test_cuda_publication_rechecks_archive_integrity_abi_and_clean_source(self):
+        kind = 'enhance-pir-native-cuda'
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / 'target'
+            (target / 'release').mkdir(parents=True)
+            (target / 'release/server').write_bytes(b'candidate binary')
+            with patch.object(release, 'BINARIES', {kind: ['server']}), \
+                    patch.object(release, 'FILES', {kind: []}):
+                for dirty in [False, True]:
+                    output = root / str(dirty)
+                    with patch.object(release.subprocess, 'check_output', return_value=b'edited' if dirty else b''):
+                        release.assemble(SHA, target, output / kind, kind, release.CUDA_BUILD)
+                    if dirty:
+                        with self.assertRaisesRegex(ValueError, 'candidate source was dirty'):
+                            q.verify('enhance', SHA, output, cuda=True)
+                    else:
+                        q.verify('enhance', SHA, output, cuda=True)
+                        archive = output / kind / (kind + '.tar.gz')
+                        archive.write_bytes(b'broken archive')
+                        with self.assertRaises(tarfile.ReadError):
+                            q.verify('enhance', SHA, output, cuda=True)
+        with self.assertRaisesRegex(ValueError, 'CUDA candidates belong to Enhance'):
+            q.verify('receiver', SHA, Path('/unused'), cuda=True)
+
+    def test_tests_use_hosted_runners_while_cpu_candidates_keep_the_build_runner(self):
+        workflow = (ROOT / '.github/workflows/ci-full.yml').read_text()
+        for name in ['transparent-lint', 'transparent-test', 'enhance-lint',
+                     'enhance-test', 'shared-test', 'receiver-test']:
+            job = re.split(r'\n  [a-z][\w-]*:\n', workflow.split(f'\n  {name}:\n', 1)[1])[0]
+            self.assertIn('    runs-on: ubuntu-24.04\n', job)
+            self.assertNotIn('vars.WALLET_PIR_BUILD_RUNNER', job)
+        build = workflow.split('\n  build:\n', 1)[1].split('\n  release:\n', 1)[0]
+        self.assertIn('vars.WALLET_PIR_BUILD_RUNNER', build)
+        self.assertIn('    needs: [select, validate-ops]\n', build)
+
     def test_qualification_rejects_dirty_candidates_before_publication(self):
         def extract(_archive, destination, _sha, _kind):
             destination.mkdir()
@@ -68,7 +105,7 @@ class QualificationTests(unittest.TestCase):
 
     def test_publication_survives_skipped_other_families_but_requires_its_gates(self):
         workflow = (ROOT / '.github/workflows/ci-full.yml').read_text()
-        for name, gates in [('release', ['complete', 'build']), ('release-cuda', ['complete'])]:
+        for name, gates in [('release', ['complete', 'build']), ('release-cuda', ['complete', 'build-cuda'])]:
             job = workflow.split(f'\n  {name}:\n', 1)[1]
             expression = re.search(r'^    if: (.+)$', job, re.M).group(1)
 
@@ -93,6 +130,21 @@ class QualificationTests(unittest.TestCase):
             for gate in gates:
                 for result in ['failure', 'skipped', 'cancelled', 'queued']:
                     self.assertFalse(permitted({**passed, gate: result}), (name, gate, result))
+
+    def test_cuda_compiles_before_qualification_but_publishes_only_after_it(self):
+        workflow = (ROOT / '.github/workflows/ci-full.yml').read_text()
+        build = workflow.split('\n  build-cuda:\n', 1)[1].split('\n  release-cuda:\n', 1)[0]
+        publish = workflow.split('\n  release-cuda:\n', 1)[1]
+        self.assertIn('    needs: [select, validate-ops]\n', build)
+        self.assertNotIn('needs.complete', build)
+        self.assertIn('tools/ci/build-cuda.sh', build)
+        self.assertIn('name: candidate-native-cuda-${{ github.sha }}', build)
+        self.assertNotIn('name: enhance-pir-native-cuda-${{ github.sha }}', build)
+        self.assertIn('    needs: [complete, build-cuda]\n', publish)
+        self.assertIn('name: candidate-native-cuda-${{ github.sha }}', publish)
+        self.assertIn('qualification.py verify --family enhance --cuda', publish)
+        self.assertNotIn('tools/ci/build-cuda.sh', publish)
+        self.assertIn('name: enhance-pir-native-cuda-${{ github.sha }}', publish)
 
     def test_main_has_a_separate_runner_setting_from_legacy_branch_workflows(self):
         workflow = (ROOT / '.github/workflows/ci.yml').read_text()

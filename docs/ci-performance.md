@@ -126,11 +126,16 @@ main revision captured by dispatch; newer pushes do not cancel manual runs.
 Receiver, Transparent, Enhance/Status and the operations package qualify
 independently, using the existing full family suites, shared tests and helper
 checks. Common helper, shared-library and infrastructure checks run once per qualification, before service-specific native work. Helpers run on hosted runners to reserve the fast queue for main. Operations archives
-assemble on hosted runners without Rust, so they never queue behind native tests. Candidate release builds may run
-alongside testing in separate target lanes; candidate archives are uploaded under
+assemble on hosted runners without Rust. Full tests and lint run on separate
+Ubuntu 24.04 hosted runners; CPU release builds use the dedicated build runner.
+CPU and Ubuntu 22.04 CUDA candidate builds start alongside family testing;
+candidate archives are uploaded under
 an ineligible name and re-verified before qualified publication. Each family
 publishes immediately after its required checks pass. Failure in another family
 cannot authorize or prevent that publication. CPU artifacts do not wait for CUDA.
+CUDA candidates use an ineligible artifact
+name until Enhance qualification and candidate compilation both pass; publication
+rechecks archive contents, ABI metadata and clean source provenance.
 
 Only **CI / Fast checks** validates automatically on main pushes and PRs.
 Dependency cache priming runs independently on relevant main changes.
@@ -219,12 +224,14 @@ an out-of-memory failure. Service stops allow 30 seconds before forced cleanup.
 Both limit Cargo to four
 build processes. A build cannot occupy the fast service's queue, but both services
 share the host CPU and disk, so latency must also be measured under contention.
-The single build slot serializes full-CI jobs. Enhance and Transparent share
-its `full-test` and `full-lint` lanes so common dependencies are compiled once
-per profile instead of once per product. Transparent full tests run two test cases at a time
+The single build slot serializes CPU release builds, while full tests and lint
+use independent hosted Ubuntu runners with their own lane/scope caches. Initial
+hosted qualification may need cold compilation; a successful hosted cache prime
+for fast feedback alone does not establish warm full-test or lint caches.
+Transparent full tests run two test cases at a time
 (`RUST_TEST_THREADS=2`), while Enhance tests run serially: the simulation fixtures each start multithreaded services,
-and eight simultaneous fixtures can trigger memory admission overloads inside
-the build service’s 9-GiB limit. Each test retains its internal concurrency. `tools/ci/full-test.sh` compiles
+and too many simultaneous fixtures can exhaust a hosted runner
+or trigger service memory admission refusals. Each test retains its internal concurrency. `tools/ci/full-test.sh` compiles
 the suite first, then asks Linux to discard clean file-cache pages for Cargo
 outputs before running tests. Build artifacts remain on disk. This prevents
 compiler cache from consuming the memory headroom used by service admission

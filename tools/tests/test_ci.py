@@ -966,13 +966,15 @@ class CacheWorkflowTests(unittest.TestCase):
     def test_trusted_build_pool_and_main_cache_writes_are_main_only(self):
         full = self.workflows['ci-full.yml']
         pools = [line for line in full.splitlines() if 'runs-on' in line and 'WALLET_PIR_BUILD_RUNNER' in line]
-        self.assertGreaterEqual(len(pools), 5)
+        self.assertEqual(len(pools), 1)
         for line in pools:
             # The release job is main-only through its job condition instead.
             if 'pull_request' in line:
                 self.assertIn("github.ref == 'refs/heads/main'", line)
         release = full.split('\n  release:\n', 1)[1].split('\n\n', 1)[0]
         self.assertIn("github.ref == 'refs/heads/main'", release)
+        build = full.split('\n  build:\n', 1)[1].split('    steps:\n', 1)[0]
+        self.assertIn("github.ref == 'refs/heads/main'", build)
         prime = self.workflows['ci-cache.yml']
         self.assertIn("if: github.ref == 'refs/heads/main'", prime)
         self.assertNotIn('pull_request', prime)
@@ -1024,7 +1026,7 @@ class CacheWorkflowTests(unittest.TestCase):
 
     def test_cuda_cache_identity_sees_the_build_script_flags(self):
         script = (ROOT / 'tools/ci/build-cuda.sh').read_text()
-        job = self.workflows['ci-full.yml'].split('\n  release-cuda:\n', 1)[1]
+        job = self.workflows['ci-full.yml'].split('\n  build-cuda:\n', 1)[1].split('\n  release-cuda:\n', 1)[0]
         self.assertIn("export RUSTFLAGS='-C target-cpu=x86-64-v3 -C target-feature=+pclmulqdq'", script)
         self.assertIn('      RUSTFLAGS: -C target-cpu=x86-64-v3 -C target-feature=+pclmulqdq\n', job)
         self.assertIn('export CFLAGS=-mpclmul CXXFLAGS=-mpclmul', script)
