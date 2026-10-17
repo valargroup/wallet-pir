@@ -30,6 +30,29 @@ class ProgramTests(unittest.TestCase):
                 unit_tests.execute([program], 1, budget=True)
                 self.assertEqual(execute.call_args.kwargs['enforce'], enforced)
 
+    def test_publisher_unit_build_pool_is_scoped_bounded_and_respects_explicit_settings(self):
+        programs = [dict(executable='/deps/' + name, directory='/p', package=package,
+                         version='1', args=[], integration=integration)
+                    for name, package, integration in [
+                        ('publisher', 'transparent-filter-server', False),
+                        ('http', 'transparent-filter-server', True),
+                        ('other', 'other', False)]]
+        for cpus, configured, expected in [(2, None, '2'), (4, None, '4'),
+                                            (16, None, '4'), (4, '1', '1')]:
+            with self.subTest(cpus=cpus, configured=configured), patch.dict(os.environ), \
+                    patch.object(unit_tests.os, 'sched_getaffinity', return_value=set(range(cpus)), create=True), \
+                    patch.object(unit_tests.subprocess, 'check_output', return_value='/rust/lib\n'), \
+                    patch.object(unit_tests, 'run') as run:
+                os.environ.pop('TRANSPARENT_BUILD_THREADS', None)
+                if configured is not None:
+                    os.environ['TRANSPARENT_BUILD_THREADS'] = configured
+                unit_tests.execute(programs, 1)
+                environments = {call.args[0][0]: call.kwargs['env'] for call in run.call_args_list}
+                self.assertEqual(environments['/deps/publisher']['TRANSPARENT_BUILD_THREADS'], expected)
+                for name in ('http', 'other'):
+                    self.assertEqual(environments['/deps/' + name].get('TRANSPARENT_BUILD_THREADS'), configured)
+                self.assertEqual(os.environ.get('TRANSPARENT_BUILD_THREADS'), configured)
+
     def test_timed_program_scratch_is_removed_after_success_and_failure(self):
         for fails in (False, True):
             scratch = []
