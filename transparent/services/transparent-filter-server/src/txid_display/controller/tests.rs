@@ -1912,51 +1912,54 @@ async fn shared_display_lifecycle_serves_before_and_after_ordered_seals_and_rest
     // The oracle comes from the journal source fixture, not a read-back of the
     // controller's published rows. Query both the archive and advanced recent.
     let mut wallet = display_world::Wallet::at(&origin);
-    wallet.found(&chain_records(0, 100)[0], 100);
+    wallet.found(&chain_records(0, 101)[0], 101);
     wallet.found(&chain_records(0, 112)[0], 112);
-    let commands = log.lock().unwrap();
-    for seal in &active.seals {
-        let stage = commands
-            .iter()
-            .position(|(w, c)| {
-                w == "archive"
-                    && c["operation"] == "stage"
-                    && c["directory"]
-                        .as_str()
-                        .is_some_and(|p| p.ends_with(&seal.digest))
-            })
-            .unwrap();
-        let named = |worker: &str| {
-            commands
+    {
+        let commands = log.lock().unwrap();
+        for seal in &active.seals {
+            let stage = commands
+                .iter()
+                .position(|(w, c)| {
+                    w == "archive"
+                        && c["operation"] == "stage"
+                        && c["directory"]
+                            .as_str()
+                            .is_some_and(|p| p.ends_with(&seal.digest))
+                })
+                .unwrap();
+            let named = |worker: &str| {
+                commands
+                    .iter()
+                    .enumerate()
+                    .find(|(_, (w, c))| {
+                        if w != worker || c["operation"] != "prepare" {
+                            return false;
+                        }
+                        c["sealed"]
+                            .as_array()
+                            .unwrap()
+                            .iter()
+                            .any(|digest| digest == &seal.digest)
+                    })
+                    .map(|(i, _)| i)
+                    .unwrap()
+            };
+            let archive_prepare = named("archive");
+            let activated = commands
                 .iter()
                 .enumerate()
-                .find(|(_, (w, c))| {
-                    if w != worker || c["operation"] != "prepare" {
-                        return false;
-                    }
-                    c["sealed"]
-                        .as_array()
-                        .unwrap()
-                        .iter()
-                        .any(|digest| digest == &seal.digest)
+                .find(|(i, (w, c))| {
+                    *i > archive_prepare && w == "archive" && c["operation"] == "activate"
                 })
-                .map(|(i, _)| i)
                 .unwrap()
-        };
-        let archive_prepare = named("archive");
-        let activated = commands
-            .iter()
-            .enumerate()
-            .find(|(i, (w, c))| {
-                *i > archive_prepare && w == "archive" && c["operation"] == "activate"
-            })
-            .unwrap()
-            .0;
-        assert!(
-            stage < archive_prepare && archive_prepare < activated && activated < named("recent")
-        );
+                .0;
+            assert!(
+                stage < archive_prepare
+                    && archive_prepare < activated
+                    && activated < named("recent")
+            );
+        }
     }
-    drop(commands);
     drop(controller);
     let mut restarted = Controller::open(
         &root,
