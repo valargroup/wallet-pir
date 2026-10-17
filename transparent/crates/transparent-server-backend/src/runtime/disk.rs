@@ -208,7 +208,7 @@ impl DiskCache {
     fn read_wide(
         shared: &SharedParams,
         reader: &mut impl Read,
-    ) -> io::Result<ipir_sp::server::IPIRServer<u16>> {
+    ) -> io::Result<pir_runtime::evaluation::PreparedDatabase> {
         let profile = &shared.profile;
         // The constructor consumes exactly the logical column-major
         // coefficients and recreates padding and the locally selected CPU
@@ -216,8 +216,15 @@ impl DiskCache {
         pir_runtime::evaluation::build_from_le_u16(
             reader,
             profile.rows * profile.cols,
-            |coefficients| super::database_server(shared, coefficients, true),
-        )
+            |coefficients| {
+                Ok::<_, std::convert::Infallible>(super::database_server(
+                    shared,
+                    coefficients,
+                    true,
+                ))
+            },
+        )?
+        .map_err(|never| match never {})
     }
 
     /// The cross-process lock bounds concurrent writes. No active/rollback entry

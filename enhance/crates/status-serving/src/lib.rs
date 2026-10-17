@@ -30,7 +30,7 @@ use axum::{
 };
 use enhance_pir::status::*;
 use http::{bounded, evaluate, query, serving_http_client, HttpState};
-use ipir_sp::{server::MatvecBackend, ProductionSimplePirParams, SimplePirProfile};
+use ipir_sp::{server::MatvecBackend, ProductionSimplePirParams};
 use sha2::{Digest, Sha256};
 use std::{
     sync::atomic::Ordering,
@@ -47,8 +47,7 @@ pub fn now_ms() -> u64 {
 pub fn profile() -> &'static ProductionSimplePirParams {
     static P: OnceLock<ProductionSimplePirParams> = OnceLock::new();
     P.get_or_init(|| {
-        let p = ProductionSimplePirParams::new(ROWS as u64, ITEM_BITS, SimplePirProfile::P16Q48)
-            .expect("fixed status profile");
+        let p = pir_runtime::params::p16q48(ROWS as u64, ITEM_BITS).expect("fixed status profile");
         assert_eq!(p.ypir().db_cols, 6144);
         assert_eq!(p.ypir().db_cols * 2, ROW_BYTES);
         assert_eq!(ROWS * ROW_BYTES, 96 * 1024 * 1024);

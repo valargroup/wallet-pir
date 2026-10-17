@@ -19,7 +19,8 @@
       "note_recovery",
       "row_repair_http",
       "rpc",
-      "status_wallet"
+      "status_wallet",
+      "status_wallet_http"
     ]
   },
   "receiver-indexer": {

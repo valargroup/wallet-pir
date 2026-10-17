@@ -5,10 +5,15 @@
 //! or coordinator packs; a Transparent worker does both locally):
 //!
 //! - [`params`]: the pinned SimplePIR profile parameters;
-//! - [`evaluation`]: loading a prepared database from its stored coefficients
-//!   and combining evaluation contributions;
-//! - [`packing`]: validating a query's packing keys and packing an
-//!   intermediate into the serialized response bodies.
+//! - [`evaluation`]: opaque `PreparedDatabase` handles, loading their stored
+//!   coefficients and combining evaluation contributions. Enhance loads persisted
+//!   coefficients; Status prepares verified snapshot rows through the same loader.
+//!   Transparent retains a P16 adapter, while its current tables select P8;
+//! - [`packing`]: opaque `PackingSetup`, `PreparedPacking` and `PackingKeys`
+//!   handles; preparing hint blocks, validating query keys and packing an
+//!   intermediate into serialized response bodies. Products never borrow raw
+//!   top images or preprocessed blocks from these handles. Mapped artifacts
+//!   retain the upstream opaque mapping handle and unchanged file format.
 //!
 //! Everything here calls the upstream cryptography (ipir-sp, inspiring)
 //! unchanged: no parameter, algorithm or byte format is chosen here. Record

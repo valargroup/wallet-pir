@@ -467,8 +467,14 @@ for resolved workspace and standalone graphs.
 
 Raw PIR integration that Enhance shares with Status or Transparent lives in
 `shared/pir-runtime`: the P16Q48 profile parameters, packing-key decoding and
-response packing (an opaque `PackingKeys` handle), intermediate accumulation and
-streaming stored coefficients into a database. Preparation, evaluation and
+response packing (opaque `PackingSetup`, `PreparedPacking` and `PackingKeys`
+handles), intermediate accumulation and streaming stored coefficients into an
+opaque `PreparedDatabase` used by Enhance and Status. Transparent retains its
+P16 adapter, but all current table variants select P8; it is not counted as an
+active P16 consumer. The shared loader
+rejects incomplete reads and constructors that leave coefficients unconsumed;
+accumulation validates the entire contribution before changing its destination.
+Status keeps digest-based block reuse while shared packing owns the matrices. Preparation, evaluation and
 packing stay separate calls, so workers evaluate and the packing router or
 coordinator packs. Record layouts, framing, session checks, setup seeds and the
 native profile stay in `enhance-serving` and `status-serving`; Status takes its

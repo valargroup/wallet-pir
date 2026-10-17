@@ -55,6 +55,7 @@ use crate::metrics::Metrics;
 use crate::shardset::{SegmentSource, Table};
 use ipir_sp::server::IPIRServer;
 use ipir_sp::YpirSchemeParams;
+use pir_runtime::evaluation::PreparedDatabase;
 use rayon::prelude::*;
 use reinspiring::native_kernel::PreparedU16Query;
 use sha2::{Digest, Sha256};
@@ -80,13 +81,13 @@ pub(crate) fn database_server(
     shared: &SharedParams,
     coefficients: impl Iterator<Item = u16>,
     transposed: bool,
-) -> IPIRServer<u16> {
+) -> PreparedDatabase {
     let transport = shared.transport.clone().expect("a 16-bit table");
     #[cfg(feature = "portable-kernel")]
     let server = IPIRServer::<u16>::new(transport, coefficients, transposed, true);
     #[cfg(not(feature = "portable-kernel"))]
     let server = IPIRServer::<u16>::new_auto_kernel(transport, coefficients, transposed, true);
-    server
+    PreparedDatabase::new(server)
 }
 
 /// The first-dimension scan shape for one 16-bit table: full 16-bit plaintexts, one
@@ -96,7 +97,9 @@ pub(crate) fn database_server(
 /// dithered query; the 49 here only keeps the shape, and with it every runtime
 /// disk-cache key, what it was before dithered queries.
 pub fn transport_params(rows: u64, row_bytes: u32) -> Result<YpirSchemeParams, String> {
-    let (_, mut params) = pir_runtime::params::p16q48(rows, row_bytes as u64 * 8)?;
+    let mut params = pir_runtime::params::p16q48(rows, row_bytes as u64 * 8)?
+        .ypir()
+        .clone();
     params.query_bits = native::QUERY_BITS;
     params.q_prime_1 = 1 << native::RESPONSE_BITS;
     Ok(params)
@@ -409,7 +412,7 @@ fn sample_row(rows: &[u8], row_bytes: usize, table_rows: usize) -> usize {
 /// A runtime's encoded database.
 pub(crate) enum Database {
     /// A 16-bit table's coefficients, scanned by ipir-sp's server.
-    Wide(IPIRServer<u16>),
+    Wide(PreparedDatabase),
     /// An 8-bit table's bytes, one per coefficient, in the byte kernel's
     /// interleaved layout ([`interleave`]).
     Bytes(Vec<u8>),
