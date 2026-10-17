@@ -13,14 +13,31 @@ resident serving packing objects in this mode. See the
 
 ## Ingestion application
 
-`enhance_pir_server::application` owns the coordinator's polling loop, recovery,
-inventory reconciliation and canonical or isolated-fixture ingestion. `collect`
-revokes before journal rewind and commits validated records independently of
-publication. Its returned pass borrows the source, journal and coordinator;
-`publish` observes capacity and uses the existing checked publication operation,
-including canonical anchor revalidation before activation. Failed preparation
+`enhance_pir_server::application` supplies product operations to the internal
+`shared/pir-pipeline` lifecycle. Shared supervision waits the existing poll delay
+after each complete pass, with explicit product retry/stop policy. Recovery and
+inventory reconciliation still precede collection. `collect` revokes before
+journal rewind and commits validated records independently of publication; its
+work token borrows the source, journal and coordinator without copying records.
+Shared preparation observes capacity and skips an unchanged anchor, then shared
+publication invokes the coordinator's checked operation. Distributed preparation,
+canonical revalidation and activation stay together under the coordinator's
+existing publication permit and durable recovery contract. Failed preparation
 leaves the journal available for retry or restart. The executable configures the
 source and listeners and calls this application API.
+
+The shared component owns no journal, manifest, authority, serialization or work
+queue. Acquisition returns typed work, unchanged or deferred outcomes; preparation
+and owner publication consume product tokens. Separately running acquisition,
+publication and heartbeat tasks can compose these operations and boundary waits
+without coalescing ordered archive work. Internal progress callbacks and phase
+timing do not confer freshness. Cancellation is observed between complete passes;
+outer application cancellation retains its existing recovery contract. Enhance
+and Receiver currently use the standard path only. Future prepared-publication
+sources can supply product-owned work through the same internal acquisition seam;
+there are no new wallet routes, flags or HTTP sources in these products. Serving
+libraries cannot depend on this ingestion component, and its dependency checks
+allow only Tokio and its utility graph, including dev/build/target edges.
 
 Status already owns observation and publication in the application's
 `status::source` and `status::publisher`: source checkpoints remain a cache,

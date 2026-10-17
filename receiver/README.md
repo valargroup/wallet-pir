@@ -25,13 +25,20 @@ admission (`pir-control`), metrics (`pir-observability`) and the PIR profile
 wallet-libraries' server-only chain adapters (`zakura-server-chain`), which decode
 blocks, count note positions and recover receivers.
 
-The indexer's `receiver_indexer::application` owns refresh orchestration. Its
-`collect` phase reconciles and commits through the concrete chain client and
-store; the returned pass borrows those dependencies until `publish` builds from
-one provider capture and writes files or prepares and activates. Preparation
-failure keeps committed progress for retry. `receiver-directory` configures these
-calls and independently wires the HTTP server, canonical guard and provider feed;
-the guard continues checking served anchors throughout both phases.
+The indexer's `receiver_indexer::application` supplies operations to the internal
+`shared/pir-pipeline` lifecycle. Shared supervision retains the poll delay after
+each complete pass and the product's retry policy. Shared acquisition reconciles
+and commits through the concrete chain client and store; its work token borrows
+those dependencies. Shared preparation consumes that token, building from one
+provider capture, and passes the prepared product candidate to owner publication.
+The final canonical check and epoch-fenced atomic activation remain product owned;
+one-shot publication still writes the same files. Preparation failure keeps
+committed progress for retry. `receiver-directory` configures these calls and
+independently wires the HTTP server, canonical guard and provider feed; the guard
+continues checking served anchors throughout both phases. No persisted formats,
+wallet protocols, routes or status fields change. This standard-path adapter adds
+no HTTP source. The shared acquisition seam accepts product work without owning a
+store, protocol, queue or authority ([lifecycle boundaries](../enhance/docs/architecture.md#ingestion-application)).
 
 ## Node RPC policy
 

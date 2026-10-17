@@ -21,6 +21,7 @@ native-reinspiring = ["enhance-serving/native-reinspiring", "status-serving/nati
 cuda = ["enhance-serving/cuda", "status-serving/cuda", "ipir-sp/cuda"]
 
 [dependencies]
+pir-pipeline = { path = "../../../shared/pir-pipeline" }
 # Serving libraries this application composes with chain reading and ingestion.
 enhance-serving = { path = "../../crates/enhance-serving" }
 status-serving = { path = "../../crates/status-serving" }

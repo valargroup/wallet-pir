@@ -4,8 +4,9 @@ use crate::{
     canonical::{check_serving, freshest, is_canonical},
     verify,
 };
+use pir_pipeline::{FailurePolicy, Input};
 use receiver_directory::snapshot::{Snapshot, MAX_ROWS};
-use receiver_pir_server::Publications;
+use receiver_pir_server::{Publication, Publications};
 use receiver_store::{Config as StoreConfig, Error, ProviderStore, Store};
 use std::{
     io::Write,
@@ -67,16 +68,46 @@ pub async fn run(
     state: &mut State,
     poll: std::time::Duration,
 ) {
-    loop {
-        let started = std::time::Instant::now();
-        if let Err(error) = refresh(config, nodes, genesis, Some(publications), state).await {
-            warn!(%error, "ingestion or publication deferred");
-        }
-        info!(
-            elapsed_ms = started.elapsed().as_millis() as u64,
-            "receiver refresh"
-        );
-        tokio::time::sleep(poll).await;
+    // Outer shutdown still belongs to the caller; no phase is newly cancellable.
+    let _ = pir_pipeline::supervise(
+        &mut Ingestion {
+            config,
+            nodes,
+            genesis,
+            publications,
+            state,
+        },
+        poll,
+        std::future::pending(),
+    )
+    .await;
+}
+
+struct Ingestion<'a> {
+    config: &'a Config,
+    nodes: &'a [NodeClient],
+    genesis: [u8; 32],
+    publications: &'a Publications,
+    state: &'a mut State,
+}
+impl pir_pipeline::Task for Ingestion<'_> {
+    type Error = Box<dyn std::error::Error + Send + Sync>;
+    async fn run(&mut self) -> Result<()> {
+        refresh(
+            self.config,
+            self.nodes,
+            self.genesis,
+            Some(self.publications),
+            self.state,
+        )
+        .await
+    }
+    fn failed(&mut self, error: &Self::Error) -> FailurePolicy {
+        warn!(%error, "ingestion or publication deferred");
+        FailurePolicy::NextPoll
+    }
+    fn finished(&mut self, elapsed: std::time::Duration) {
+        info!(elapsed_ms = elapsed.as_millis() as u64, "receiver refresh");
     }
 }
 
@@ -149,6 +180,43 @@ pub struct Collected<'a> {
 /// Grace-period backpressure returns `None` without collecting or preparing.
 /// The caller must keep the independent canonical guard running throughout both phases.
 pub async fn collect<'a>(
+    args: &'a Config,
+    rpc: &'a NodeClient,
+    node_tip: u64,
+    store: &'a mut Store,
+    serving: Option<&'a Publications>,
+    genesis: [u8; 32],
+    refresh_started: std::time::Instant,
+) -> Result<Option<Collected<'a>>> {
+    let input = pir_pipeline::acquire(
+        async {
+            Ok::<_, Box<dyn std::error::Error + Send + Sync>>(
+                match collect_inner(
+                    args,
+                    rpc,
+                    node_tip,
+                    store,
+                    serving,
+                    genesis,
+                    refresh_started,
+                )
+                .await?
+                {
+                    Some(work) => Input::Work(work),
+                    None => Input::Deferred,
+                },
+            )
+        },
+        &mut (),
+    )
+    .await?;
+    Ok(match input {
+        Input::Work(work) => Some(work),
+        Input::Unchanged | Input::Deferred => None,
+    })
+}
+
+async fn collect_inner<'a>(
     args: &'a Config,
     rpc: &'a NodeClient,
     node_tip: u64,
@@ -250,11 +318,26 @@ pub async fn collect<'a>(
     }))
 }
 
-impl Collected<'_> {
+impl<'a> Collected<'a> {
     /// Build from committed records and one complete provider capture, then write
     /// files or prepare and activate in memory. Preparation failures keep commits;
     /// anchor revalidation and the captured publication fence govern activation.
-    pub async fn publish(self, provider_store: &ProviderStore, state: &mut State) -> Result<()> {
+    pub async fn publish(self, provider_store: &ProviderStore, state: &'a mut State) -> Result<()> {
+        pir_pipeline::advance(
+            Input::Work(self),
+            |work| work.prepare(provider_store, state),
+            |candidate| candidate.activate(),
+            &mut (),
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn prepare(
+        self,
+        provider_store: &ProviderStore,
+        state: &'a mut State,
+    ) -> Result<Input<Prepared<'a>>> {
         let Self {
             args,
             rpc,
@@ -282,7 +365,7 @@ impl Collected<'_> {
                 && serving.anchors().first() == Some(&active.anchor)
                 && (active.inputs, &active.report) == (inputs, &report)
             {
-                return Ok(());
+                return Ok(Input::Unchanged);
             }
         }
         let started = std::time::Instant::now();
@@ -354,19 +437,86 @@ impl Collected<'_> {
         "excluded_coinbase_actions":store.counts()?.1,"rows":rows,"row_bytes":snapshot.data.len(),
         "filter_bytes":snapshot.filters.len(),"filter_sets":snapshot.manifest.filters.iter()
             .map(|set| (set.label.clone(), set.count)).collect::<std::collections::BTreeMap<_, _>>()});
-        let Some(serving) = serving else {
-            // A one-shot run's only output is its publication's files.
+        let candidate = if serving.is_some() {
             let started = std::time::Instant::now();
-            write_publication(&args.data_dir.join("publications"), &snapshot, witnesses)?;
-            log_stage("directory_write", started);
-            println!("{summary}");
-            return Ok(());
+            let publication =
+                tokio::task::spawn_blocking(move || prepare_snapshot(snapshot, witnesses))
+                    .await??;
+            log_stage("pir_prepare", started);
+            Candidate::Serving(publication)
+        } else {
+            Candidate::Files {
+                snapshot,
+                witnesses,
+            }
         };
-        let started = std::time::Instant::now();
-        let end_height = snapshot.manifest.end_height;
-        let publication =
-            tokio::task::spawn_blocking(move || prepare_snapshot(snapshot, witnesses)).await??;
-        log_stage("pir_prepare", started);
+        Ok(Input::Work(Prepared {
+            candidate,
+            args,
+            rpc,
+            serving,
+            epoch,
+            active,
+            inputs,
+            report,
+            refresh_started,
+            revision,
+            summary,
+        }))
+    }
+}
+
+enum Candidate {
+    Serving(Publication),
+    Files {
+        snapshot: Snapshot,
+        witnesses: Option<Vec<u8>>,
+    },
+}
+
+struct Prepared<'a> {
+    candidate: Candidate,
+    args: &'a Config,
+    rpc: &'a NodeClient,
+    serving: Option<&'a Publications>,
+    epoch: Option<u64>,
+    active: &'a mut Option<Active>,
+    inputs: [u8; 32],
+    report: serde_json::Value,
+    refresh_started: std::time::Instant,
+    revision: String,
+    summary: serde_json::Value,
+}
+impl Prepared<'_> {
+    async fn activate(self) -> Result<()> {
+        let Self {
+            candidate,
+            args,
+            rpc,
+            serving,
+            epoch,
+            active,
+            inputs,
+            report,
+            refresh_started,
+            revision,
+            summary,
+        } = self;
+        let publication = match candidate {
+            Candidate::Files {
+                snapshot,
+                witnesses,
+            } => {
+                let started = std::time::Instant::now();
+                write_publication(&args.data_dir.join("publications"), &snapshot, witnesses)?;
+                log_stage("directory_write", started);
+                println!("{summary}");
+                return Ok(());
+            }
+            Candidate::Serving(publication) => publication,
+        };
+        let serving = serving.expect("serving candidate has publication owner");
+        let end_height = publication.manifest().end_height;
         let started = std::time::Instant::now();
         let anchor = publication.manifest();
         if !is_canonical(rpc, anchor.end_height, anchor.end_hash).await? {
@@ -801,6 +951,88 @@ mod tests {
         assert_eq!(next["directory"]["end_height"], height);
         assert_eq!(next["directory"]["records"], 1);
         assert_ne!(next, first);
+    }
+
+    /// Invalidation after real preparation must fence activation without discarding
+    /// the independently committed input. A new pass recovers through the same API.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn shared_pipeline_invalidation_between_preparation_and_activation() {
+        let mut paused = Paused::new(|_| {}).await;
+        let mut store = paused.store();
+        let provider = paused.provider();
+        let height = crate::blocks::ironwood_activation();
+        let work = collect(
+            &paused.args,
+            &paused.rpc,
+            u64::from(height),
+            &mut store,
+            Some(&paused.publications),
+            Network::Mainnet.genesis_hash(),
+            std::time::Instant::now(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let result = pir_pipeline::advance(
+            Input::Work(work),
+            |work| async {
+                let candidate = work.prepare(&provider, &mut paused.state).await?;
+                paused.publications.revoke();
+                Ok(candidate)
+            },
+            |candidate| candidate.activate(),
+            &mut (),
+        )
+        .await;
+        assert!(result.is_err());
+        assert!(paused.publications.anchors().is_empty());
+        assert!(paused.state.active.is_none());
+        assert_eq!(store.tip().unwrap().height, height);
+        drop(store);
+        paused.refresh().await.unwrap();
+        assert_eq!(paused.get("init").await["directory"]["end_height"], height);
+    }
+
+    /// A response admitted under the old revision retains its immutable bytes
+    /// while the shared lifecycle activates a different provider capture.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn shared_pipeline_handover_keeps_an_admitted_old_publication_response() {
+        use sha2::{Digest, Sha256};
+        let mut paused = Paused::new(|_| {}).await;
+        paused.refresh().await.unwrap();
+        let old = paused.get("init").await;
+        let old_manifest: receiver_pir::Manifest = serde_json::from_value(old.clone()).unwrap();
+        let response = reqwest::get(format!(
+            "{}/v1/receiver/rows/{}",
+            paused.origin,
+            hex::encode(old_manifest.id().unwrap())
+        ))
+        .await
+        .unwrap();
+        assert!(response.status().is_success());
+        // Both completed feeds change the filter capture and thus the revision.
+        for feed in [crate::near::Feed::Payouts, crate::near::Feed::Refunds] {
+            paused
+                .provider()
+                .record(
+                    feed.name(),
+                    Some(NOW - 100),
+                    &[(super::common::receiver(), true, NOW - 50)],
+                    &[],
+                    NOW - 50,
+                    NOW - 10,
+                )
+                .unwrap();
+        }
+        paused.refresh().await.unwrap();
+        assert_ne!(paused.get("init").await, old);
+        let bytes = response.bytes().await.unwrap();
+        // This empty index has an independently known all-zero row oracle.
+        assert!(bytes.iter().all(|byte| *byte == 0));
+        assert_eq!(
+            <[u8; 32]>::from(Sha256::digest(&bytes)),
+            old_manifest.directory.data_sha256
+        );
     }
 
     /// A refresh with nothing new keeps the publication, and a changed report

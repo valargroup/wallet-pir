@@ -916,6 +916,7 @@ dependencies = [
  "inspiring",
  "ipir-sp",
  "pir-control",
+ "pir-pipeline",
  "rayon",
  "reinspiring",
  "reqwest",
@@ -2247,6 +2248,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "pir-pipeline"
+version = "0.1.0"
+dependencies = [
+ "tokio",
+]
+
+[[package]]
 name = "pir-runtime"
 version = "0.1.0"
 dependencies = [
@@ -2617,6 +2625,7 @@ dependencies = [
  "axum",
  "clap",
  "hex",
+ "pir-pipeline",
  "receiver-pir-server",
  "receiver-store",
  "reqwest",
