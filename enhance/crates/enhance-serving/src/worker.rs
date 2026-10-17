@@ -1012,6 +1012,9 @@ async fn hint(State(w): State<Worker>, Path(shard): Path<u64>) -> ApiResult<Resp
     };
     let artifact = tokio::task::spawn_blocking(move || {
         let _permit = permit;
+        if let Some(artifact) = eval.verified_hint_artifact()? {
+            return Ok(artifact);
+        }
         let blocks = eval.hint()?;
         let name = digest(eval.plan());
         let hash = crate::artifact::write_atomic_cold(&root, &name, |f| {
