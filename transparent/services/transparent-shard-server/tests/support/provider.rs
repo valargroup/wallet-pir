@@ -434,9 +434,11 @@ async fn released_recovery(archive_geometry: &'static Geometry) {
         3,
         "recent execution must remain local"
     );
-    // The released client pipelines two different page queries. Both may have
-    // reached evaluation before it receives either corrupted reply.
-    for (fault, evaluations) in [(1, 1), (2, 3), (3, 1)] {
+    // Without a public choice table the released client always fetches both
+    // directory candidates for privacy, even if the first contains a hit.
+    // This fixture then needs one historical page. A bad page setup must stop
+    // before that page evaluation, after the two valid directory evaluations.
+    for (fault, directory_queries, page_queries) in [(1, 1, 0), (2, 2, 1), (3, 2, 0)] {
         corrupt.store(fault, Ordering::SeqCst);
         submissions.lock().unwrap().clear();
         let before = transparent_shard_server::metrics::Metrics::get(&archive_metrics.queries);
@@ -446,11 +448,25 @@ async fn released_recovery(archive_geometry: &'static Geometry) {
         );
         assert_eq!(
             transparent_shard_server::metrics::Metrics::get(&archive_metrics.queries),
-            before + evaluations,
+            before + directory_queries + page_queries,
             "fault {fault}: refuse mismatched setup before evaluation; never replay an uncertain submission"
         );
         let trace = submissions.lock().unwrap();
-        assert_eq!(trace.len(), evaluations as usize);
+        assert_eq!(trace.len(), (directory_queries + page_queries) as usize);
+        assert_eq!(
+            trace
+                .iter()
+                .filter(|(path, _)| path.ends_with("/query/directory"))
+                .count(),
+            directory_queries as usize
+        );
+        assert_eq!(
+            trace
+                .iter()
+                .filter(|(path, _)| path.contains("/query/pages-"))
+                .count(),
+            page_queries as usize
+        );
         assert_eq!(
             trace
                 .iter()
