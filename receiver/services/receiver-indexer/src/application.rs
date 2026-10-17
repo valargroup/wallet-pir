@@ -11,7 +11,7 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
 };
-use tracing::info;
+use tracing::{info, warn};
 use zakura_receiver_crypto::witness::WitnessCache;
 #[cfg(test)]
 use zakura_server_chain::Network;
@@ -54,6 +54,30 @@ struct Active {
 pub struct State {
     active: Option<Active>,
     witness_cache: WitnessCache,
+}
+
+/// Poll the product refresh operation, retaining its state across source or
+/// preparation failures. The caller wires the independent canonical guard and HTTP
+/// tasks, and drops this future on shutdown just as it drops either serving task.
+pub async fn run(
+    config: &Config,
+    nodes: &[NodeClient],
+    genesis: [u8; 32],
+    publications: &Publications,
+    state: &mut State,
+    poll: std::time::Duration,
+) {
+    loop {
+        let started = std::time::Instant::now();
+        if let Err(error) = refresh(config, nodes, genesis, Some(publications), state).await {
+            warn!(%error, "ingestion or publication deferred");
+        }
+        info!(
+            elapsed_ms = started.elapsed().as_millis() as u64,
+            "receiver refresh"
+        );
+        tokio::time::sleep(poll).await;
+    }
 }
 
 /// Brings the index to the requested end on the canonical chain of the freshest of

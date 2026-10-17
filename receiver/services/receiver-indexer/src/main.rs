@@ -13,7 +13,7 @@ use std::{
     path::PathBuf,
     time::Duration,
 };
-use tracing::{info, warn};
+use tracing::info;
 use tracing_subscriber::EnvFilter;
 use zakura_server_chain::{Network, NodeClient};
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
@@ -190,22 +190,14 @@ async fn main() -> Result<()> {
         });
     }
     let http = tokio::spawn(async move { axum::serve(listener, app).await });
-    let refresh_loop = async {
-        loop {
-            let started = std::time::Instant::now();
-            if let Err(error) =
-                application::refresh(&config, &nodes, genesis, Some(&publications), &mut state)
-                    .await
-            {
-                warn!(%error, "ingestion or publication deferred");
-            }
-            info!(
-                elapsed_ms = started.elapsed().as_millis() as u64,
-                "receiver refresh"
-            );
-            tokio::time::sleep(Duration::from_secs(args.poll_seconds)).await;
-        }
-    };
+    let refresh_loop = application::run(
+        &config,
+        &nodes,
+        genesis,
+        &publications,
+        &mut state,
+        Duration::from_secs(args.poll_seconds),
+    );
     tokio::select! {
         result = http => { result??; },
         result = guard => { result?; return Err("canonical guard stopped".into()); },
