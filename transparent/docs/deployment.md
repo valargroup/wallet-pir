@@ -3855,6 +3855,11 @@ component. `baseline` records both components.
 
 - **Release identity** is the request's `release.git_sha` and `release.binary_sha256`; a mutating
   command also requires the installed operations package to name that Git revision.
+- An explicit History controller request may include `staging_adapter: {sha256, configuration, previous_configuration}`.
+  The adapter is staged once at `/opt/transparent-publisher/v12/adapters/<sha256>/transparent-live-fleet.py`
+  from `--staging-adapter`; its bytes must match the request. The prior configuration must match its pinned digest; the new configuration may differ only in
+  `fleet_command`. The locked transaction retains and restores the prior controller configuration
+  with its binary. It never overwrites the old immutable source or enables runtime shipping.
 - **Publication identity** is pinned separately: v12 `publication.source_sha` (the controller's
   `source_sha`, for example `fb90519b`), or the 4k8 display `root` (run mode takes no `--geometry`;
   `<root>/display-root.json`, pinned under `controller.files`, fixes txid-4k8); the controller's
