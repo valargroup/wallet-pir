@@ -21,3 +21,5 @@ pub mod live;
 pub use transparent_server_backend::{
     assignment, memory, metrics, prebuild, procmem, runtime, shardset,
 };
+
+pub mod bootstrap;

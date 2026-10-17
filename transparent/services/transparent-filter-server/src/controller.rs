@@ -70,6 +70,10 @@ pub struct Config {
     /// Off unless set: workers then build every runtime themselves.
     #[serde(default)]
     pub ship_runtimes: bool,
+    /// Offer the opt-in prepared-publication distribution API. Requires shipped
+    /// runtimes; existing deployments keep their existing preparation policy.
+    #[serde(default)]
+    pub distribute_prepared: bool,
 }
 
 impl Config {
@@ -95,6 +99,7 @@ pub struct ActivePublication {
 struct Public {
     publication: ActivePublication,
     filters: ShardFilters,
+    distribution: Option<transparent_server_backend::distribution::Finalized>,
 }
 struct Inner {
     cycle_duration: pir_observability::Distribution,
@@ -106,6 +111,11 @@ struct Inner {
     active: RwLock<Arc<Public>>,
     withdrawn: AtomicBool,
     epoch: AtomicU64,
+    distribution_revision: AtomicU64,
+    distribution_slots: Arc<tokio::sync::Semaphore>,
+    /// The existing producer canonicality source, never provider credentials.
+    canonicality: Option<NodeClient>,
+    invalidated_from: AtomicU64,
     publication_gate: std::sync::Mutex<()>,
     /// The last `/v2/shards/init` answer assembled from the workers, with the
     /// map it describes. Activation switches the workers to the next map a
@@ -354,10 +364,14 @@ fn read_public(directory: PathBuf, upstreams: Vec<String>) -> Result<Public, Box
     Ok(Public {
         publication,
         filters,
+        distribution: None,
     })
 }
 
 pub async fn run(config: Config) -> Result<(), BoxError> {
+    if config.distribute_prepared && !config.ship_runtimes {
+        return Err("prepared distribution requires ship_runtimes".into());
+    }
     std::fs::create_dir_all(&config.publication_root)?;
     let lock = std::fs::OpenOptions::new()
         .create(true)
@@ -367,6 +381,13 @@ pub async fn run(config: Config) -> Result<(), BoxError> {
         .open(config.publication_root.join("controller.lock"))?;
     lock.try_lock()
         .map_err(|e| format!("another publication controller owns this root: {e}"))?;
+    // Reserve a revision before exposing any state. A restarted controller
+    // cannot replay a former current pointer, even if it reuses its map.
+    let distribution_revision = if config.distribute_prepared {
+        advance_distribution_revision(&config.publication_root)?
+    } else {
+        0
+    };
     let rpc = crate::zakura::connect(&config.rpc_url, &config.rpc_cookie)?;
     let existing = EventStore::open_existing(&config.data_dir)?;
     if existing.start_height() != 0 || existing.genesis_hash() != rpc.block_hash_display(0).await? {
@@ -407,6 +428,10 @@ pub async fn run(config: Config) -> Result<(), BoxError> {
         active: RwLock::new(Arc::new(public)),
         withdrawn: AtomicBool::new(true),
         epoch: AtomicU64::new(0),
+        distribution_revision: AtomicU64::new(distribution_revision),
+        distribution_slots: Arc::new(tokio::sync::Semaphore::new(4)),
+        canonicality: Some(rpc.clone()),
+        invalidated_from: AtomicU64::new(u64::MAX),
         publication_gate: std::sync::Mutex::new(()),
         last_init: std::sync::Mutex::new(None),
         status: RwLock::new(serde_json::json!({"phase":"starting"})),
@@ -532,6 +557,13 @@ async fn invalidate(config: &Config, authority: &Authority, from: u64) -> Result
             authority.0.withdrawn.store(true, Ordering::Release);
         }
         authority.0.epoch.fetch_add(1, Ordering::AcqRel);
+        authority.0.invalidated_from.store(from, Ordering::Release);
+        if config.distribute_prepared {
+            authority.0.distribution_revision.store(
+                advance_distribution_revision(&config.publication_root)?,
+                Ordering::Release,
+            );
+        }
         publication::write_atomic(
             &config.publication_root.join("withdrawn.json"),
             &serde_json::to_vec(&serde_json::json!({"from_height":from,"acknowledged":false}))?,
@@ -833,6 +865,27 @@ async fn publish_once(
     } else {
         None
     };
+    if config.distribute_prepared {
+        // Reuse the exact verified set just used to prepare the candidate.
+        // This does not turn optional fleet fallback into a distribution promise.
+        let set = authority
+            .0
+            .prepared_set
+            .lock()
+            .unwrap()
+            .take()
+            .ok_or("prepared distribution has no verified candidate")?;
+        let root = directory.clone();
+        let cutoff = config.recent_from;
+        let (set, distribution) = tokio::task::spawn_blocking(move || {
+            let result =
+                transparent_server_backend::distribution::Finalized::prepare(&root, &set, cutoff);
+            (set, result)
+        })
+        .await?;
+        *authority.0.prepared_set.lock().unwrap() = Some(set);
+        candidate.distribution = Some(distribution?);
+    }
     let mut request = serde_json::json!({"operation":"prepare","directory":directory,"map_sha256":candidate.publication.map_sha256,"recent_from":config.recent_from,"source_sha":config.source_sha});
     if runtimes.is_some() {
         // The runtimes are plain files of the candidate directory itself.
@@ -900,7 +953,17 @@ async fn publish_once(
             &config.publication_root.join("active.json"),
             &serde_json::to_vec(&candidate.publication)?,
         )?;
+        if config.distribute_prepared {
+            authority.0.distribution_revision.store(
+                advance_distribution_revision(&config.publication_root)?,
+                Ordering::Release,
+            );
+        }
         *authority.0.active.write().unwrap() = Arc::new(candidate);
+        authority
+            .0
+            .invalidated_from
+            .store(u64::MAX, Ordering::Release);
         authority.0.withdrawn.store(false, Ordering::Release);
         for name in ["activation.json", "withdrawn.json"] {
             let p = config.publication_root.join(name);
@@ -1073,8 +1136,223 @@ fn init_for_map(
         .map(|(_, value)| value.clone())
 }
 
+fn advance_distribution_revision(root: &Path) -> Result<u64, BoxError> {
+    advance_distribution_revision_with_sync(root, |directory| directory.sync_all())
+}
+
+// Keep the strict fence local: publication::write_atomic has a
+// best-effort directory sync and cannot acknowledge this durable authority floor.
+fn advance_distribution_revision_with_sync(
+    root: &Path,
+    sync_directory: impl FnOnce(&std::fs::File) -> std::io::Result<()>,
+) -> Result<u64, BoxError> {
+    use std::io::Write;
+    // Opening before rename also refuses directory-open errors before changing
+    // the counter. A post-rename sync error leaves an uncertain reservation on
+    // disk, but no caller may expose it; the next successful call skips it.
+    let directory = std::fs::File::open(root)?;
+    let path = root.join("distribution-revision.json");
+    let previous: u64 = match std::fs::read(&path) {
+        Ok(bytes) => serde_json::from_slice(&bytes)?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => 0,
+        Err(error) => return Err(error.into()),
+    };
+    let next = previous
+        .checked_add(1)
+        .ok_or("distribution revision exhausted")?;
+    let temporary = path.with_extension("tmp");
+    let mut file = std::fs::File::create(&temporary)?;
+    file.write_all(&serde_json::to_vec(&next)?)?;
+    file.sync_all()?;
+    drop(file);
+    std::fs::rename(&temporary, &path)?;
+    sync_directory(&directory)?;
+    Ok(next)
+}
+
+/// Use the existing owner canonicality input, not prepared-file parsing. A
+/// source outage/identity failure proves nothing; a same-network hash mismatch
+/// is positive noncanonical evidence. Snapshot fencing brackets both RPC reads.
+async fn check_distribution_anchor(
+    authority: &Authority,
+    current: &transparent_server_backend::distribution::Current,
+    height: u64,
+    hash: &str,
+) -> Result<bool, BoxError> {
+    let _permit = authority
+        .0
+        .distribution_slots
+        .clone()
+        .try_acquire_owned()
+        .map_err(|_| "distribution canonicality admission full")?;
+    let rpc = authority
+        .0
+        .canonicality
+        .as_ref()
+        .ok_or("canonicality source unavailable")?;
+    if rpc.block_hash_display(0).await? != current.genesis_hash {
+        return Err("canonicality source changed network".into());
+    }
+    let canonical = rpc.block_hash_display(height).await? == hash;
+    // As in the existing canonical guard, a repointed/wrong-network node
+    // cannot supply positive reorg evidence.
+    if !canonical && rpc.block_hash_display(0).await? != current.genesis_hash {
+        return Err("canonicality source changed network".into());
+    }
+    let _gate = authority.0.publication_gate.lock().unwrap();
+    if authority.0.epoch.load(Ordering::Acquire) != current.recovery_epoch
+        || authority.0.distribution_revision.load(Ordering::Acquire) != current.revision
+    {
+        return Err("canonicality snapshot superseded".into());
+    }
+    Ok(canonical)
+}
+
+async fn distribution_request(authority: Authority, request: Request) -> Response {
+    use transparent_server_backend::distribution::{self, Current, Eligibility};
+    if request.method() != axum::http::Method::GET || request.uri().query().is_some() {
+        return StatusCode::METHOD_NOT_ALLOWED.into_response();
+    }
+    // Capture current, withdrawal and epoch under the same gate that commits
+    // the public pointer and withdraws orphaned coverage.
+    let (active, mut current) = {
+        let _gate = authority.0.publication_gate.lock().unwrap();
+        let active = authority.0.active.read().unwrap().clone();
+        let Some(finalized) = &active.distribution else {
+            return unavailable();
+        };
+        let current = Current {
+            schema: distribution::SCHEMA.into(),
+            revision: authority.0.distribution_revision.load(Ordering::Acquire),
+            recovery_epoch: authority.0.epoch.load(Ordering::Acquire),
+            inventory_sha256: finalized.sha256().to_string(),
+            network: active.filters.map().network.clone(),
+            genesis_hash: active.filters.map().genesis_hash.clone(),
+            anchor_height: active.publication.height,
+            anchor_hash: active.publication.hash.clone(),
+            eligibility: if authority.0.withdrawn.load(Ordering::Acquire) {
+                Eligibility::Withdrawn
+            } else {
+                Eligibility::Canonical
+            },
+            invalidated_from: match authority.0.invalidated_from.load(Ordering::Acquire) {
+                u64::MAX => None,
+                h => Some(h),
+            },
+        };
+        (active, current)
+    };
+    let suffix = request
+        .uri()
+        .path()
+        .strip_prefix(distribution::PREFIX)
+        .unwrap();
+    if let Some(anchor) = suffix.strip_prefix("anchors/") {
+        let Some((height, hash)) = anchor.split_once('/') else {
+            return StatusCode::NOT_FOUND.into_response();
+        };
+        let Ok(height) = height.parse::<u64>() else {
+            return StatusCode::NOT_FOUND.into_response();
+        };
+        if !distribution::is_digest(hash) {
+            return StatusCode::NOT_FOUND.into_response();
+        }
+        let canonical = match check_distribution_anchor(&authority, &current, height, hash).await {
+            Ok(canonical) => canonical,
+            Err(_) => return unavailable(),
+        };
+        return (
+            [("cache-control", "no-store")],
+            axum::Json(distribution::AnchorCheck {
+                schema: distribution::SCHEMA.into(),
+                revision: current.revision,
+                recovery_epoch: current.recovery_epoch,
+                genesis_hash: current.genesis_hash,
+                height,
+                hash: hash.into(),
+                canonical,
+            }),
+        )
+            .into_response();
+    }
+    if suffix == "current" {
+        if current.eligible() {
+            match check_distribution_anchor(
+                &authority,
+                &current,
+                current.anchor_height,
+                &current.anchor_hash,
+            )
+            .await
+            {
+                Ok(true) => {}
+                Ok(false) => current.eligibility = Eligibility::Noncanonical,
+                Err(_) => return unavailable(),
+            }
+            // Never attest a candidate across withdrawal, recovery or a pointer
+            // change that happened while the canonicality request was pending.
+            let _gate = authority.0.publication_gate.lock().unwrap();
+            if authority.0.epoch.load(Ordering::Acquire) != current.recovery_epoch
+                || authority.0.distribution_revision.load(Ordering::Acquire) != current.revision
+                || authority.0.active.read().unwrap().publication.map_sha256
+                    != active.publication.map_sha256
+            {
+                return unavailable();
+            }
+            if authority.0.withdrawn.load(Ordering::Acquire) {
+                current.eligibility = Eligibility::Withdrawn;
+            }
+        }
+        return ([("cache-control", "no-store")], axum::Json(current)).into_response();
+    }
+    if !current.eligible() {
+        return unavailable();
+    }
+    let finalized = active.distribution.as_ref().unwrap();
+    if suffix == format!("inventories/{}", finalized.sha256()) {
+        return (
+            [
+                ("content-type", "application/json"),
+                ("cache-control", "public, max-age=31536000, immutable"),
+            ],
+            finalized.bytes().to_vec(),
+        )
+            .into_response();
+    }
+    let Some(sha256) = suffix.strip_prefix("artifacts/") else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let Some(path) = finalized.file(sha256) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    // Immutable file handles survive ordinary pointer retirement; they never
+    // authorize activation. The consumer rechecks current after verification.
+    let permit = match authority.0.distribution_slots.clone().try_acquire_owned() {
+        Ok(permit) => permit,
+        Err(_) => return unavailable(),
+    };
+    let file = match tokio::fs::File::open(path).await {
+        Ok(file) => file,
+        Err(_) => return unavailable(),
+    };
+    (
+        [
+            ("content-type", "application/octet-stream"),
+            ("cache-control", "public, max-age=31536000, immutable"),
+        ],
+        pir_control::http::retain(
+            axum::body::Body::from_stream(tokio_util::io::ReaderStream::new(file)),
+            (permit, active),
+        ),
+    )
+        .into_response()
+}
+
 async fn public_request(State(authority): State<Authority>, request: Request) -> Response {
     let path = request.uri().path();
+    if path.starts_with(transparent_server_backend::distribution::PREFIX) {
+        return distribution_request(authority, request).await;
+    }
     let epoch = authority.0.epoch.load(Ordering::Acquire);
     let routed = routed_recent_replicas(authority.0.membership.as_deref());
     if path == "/v1/status" {
@@ -1548,6 +1826,7 @@ print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('re
             follow_journal: false,
             snapshot_dir: None,
             ship_runtimes: false,
+            distribute_prepared: false,
         };
         let authority = Authority(Arc::new(Inner {
             cycle_duration: Default::default(),
@@ -1559,6 +1838,10 @@ print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('re
             active: RwLock::new(Arc::new(read_public(initial, Vec::new()).unwrap())),
             withdrawn: AtomicBool::new(false),
             epoch: AtomicU64::new(0),
+            distribution_revision: AtomicU64::new(1),
+            distribution_slots: Arc::new(tokio::sync::Semaphore::new(4)),
+            canonicality: None,
+            invalidated_from: AtomicU64::new(u64::MAX),
             publication_gate: std::sync::Mutex::new(()),
             last_init: std::sync::Mutex::new(None),
             status: RwLock::new(serde_json::json!({})),
@@ -1822,6 +2105,7 @@ print(json.dumps({'ok':True,'upstreams':[],'workers':{},'retained_publication':b
             follow_journal: false,
             snapshot_dir: None,
             ship_runtimes: true,
+            distribute_prepared: false,
         };
         let authority = Authority(Arc::new(Inner {
             cycle_duration: Default::default(),
@@ -1833,6 +2117,10 @@ print(json.dumps({'ok':True,'upstreams':[],'workers':{},'retained_publication':b
             active: RwLock::new(Arc::new(read_public(initial, Vec::new()).unwrap())),
             withdrawn: AtomicBool::new(false),
             epoch: AtomicU64::new(0),
+            distribution_revision: AtomicU64::new(1),
+            distribution_slots: Arc::new(tokio::sync::Semaphore::new(4)),
+            canonicality: None,
+            invalidated_from: AtomicU64::new(u64::MAX),
             publication_gate: std::sync::Mutex::new(()),
             last_init: std::sync::Mutex::new(None),
             status: RwLock::new(serde_json::json!({})),
@@ -2037,3 +2325,7 @@ print(json.dumps({'ok':True,'upstreams':[],'workers':{},'retained_publication':b
         server.abort();
     }
 }
+
+#[cfg(test)]
+#[path = "controller_distribution_tests.rs"]
+mod distribution_tests;

@@ -1,0 +1,404 @@
+//! One-shot HTTPS bootstrap verification. No persisted download is serving
+//! authority. This entry point intentionally cannot start a wallet listener:
+//! fresh publisher canonicality attestation is checked around verification.
+//! Continuous reconciliation/activation belongs to the manager.
+use crate::{
+    assignment::{GeneratedBy, WorkerRole},
+    router::{plan, RosterEntry},
+    runtime::disk::ShippedRuntimes,
+    service::{ReadinessMode, ServiceConfig, ServiceState},
+    shardset::{LoadOptions, LoadScope, ShardSet},
+};
+use serde::{Deserialize, Serialize};
+use std::{path::PathBuf, sync::Arc};
+use tokio::io::AsyncWriteExt;
+use transparent_server_backend::distribution::{self, Current, Error, Inventory};
+
+pub struct Config {
+    pub publisher: String,
+    pub network: String,
+    pub genesis_hash: String,
+    pub directory: PathBuf,
+    pub cache_bytes: u64,
+    /// Hard transfer budget for one bootstrap, including metadata.
+    pub max_download_bytes: u64,
+    /// Additional trusted roots, never a TLS verification bypass.
+    pub roots: Vec<reqwest::Certificate>,
+}
+#[derive(Serialize)]
+pub struct Report {
+    pub current: Current,
+    pub map_sha256: String,
+    pub directory: PathBuf,
+    pub downloaded_bytes: u64,
+    pub downloaded_files: usize,
+    pub archive_tables_downloaded: usize,
+    /// Verified material only: neither readiness nor serving authority.
+    pub serving: bool,
+    pub runtime_preparation: serde_json::Value,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct HighWater {
+    origin: String,
+    current: Current,
+}
+
+struct Source {
+    origin: reqwest::Url,
+    client: reqwest::Client,
+    budget: u64,
+    downloaded: u64,
+}
+impl Source {
+    fn new(config: &Config) -> Result<Self, Error> {
+        let origin = reqwest::Url::parse(&config.publisher)?;
+        if origin.scheme() != "https"
+            || origin.host_str().is_none()
+            || !origin.username().is_empty()
+            || origin.password().is_some()
+            || origin.path() != "/"
+            || origin.query().is_some()
+            || origin.fragment().is_some()
+        {
+            return Err("publisher must be an explicit HTTPS origin without credentials, path, query or fragment".into());
+        }
+        let mut builder = reqwest::Client::builder()
+            .https_only(true)
+            .redirect(reqwest::redirect::Policy::none())
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .timeout(std::time::Duration::from_secs(120));
+        for root in &config.roots {
+            builder = builder.add_root_certificate(root.clone());
+        }
+        Ok(Self {
+            origin,
+            client: builder.build()?,
+            budget: config.max_download_bytes,
+            downloaded: 0,
+        })
+    }
+    fn budget_error(&self) -> Error {
+        format!(
+            "prepared publication exceeds download budget ({} body bytes consumed, cap {})",
+            self.downloaded, self.budget
+        )
+        .into()
+    }
+    async fn get(&mut self, suffix: &str) -> Result<reqwest::Response, Error> {
+        if self.downloaded >= self.budget {
+            return Err(self.budget_error());
+        }
+        let url = self
+            .origin
+            .join(&format!("{}{}", distribution::PREFIX, suffix))?;
+        let mut response = self
+            .client
+            .get(url)
+            .header("cache-control", "no-cache")
+            .send()
+            .await?;
+        if response.status() != reqwest::StatusCode::OK {
+            // Refused response bytes consume the same attempt budget. Never
+            // retry or reset accounting after a status or validation failure.
+            while self.chunk(&mut response).await?.is_some() {}
+            return Err(format!(
+                "publisher refused distribution with HTTP {}",
+                response.status()
+            )
+            .into());
+        }
+        Ok(response)
+    }
+    async fn chunk(
+        &mut self,
+        response: &mut reqwest::Response,
+    ) -> Result<Option<axum::body::Bytes>, Error> {
+        let chunk = response.chunk().await?;
+        if let Some(bytes) = &chunk {
+            self.downloaded = self
+                .downloaded
+                .checked_add(bytes.len() as u64)
+                .ok_or("download budget overflow")?;
+            if self.downloaded > self.budget {
+                return Err(self.budget_error());
+            }
+        }
+        Ok(chunk)
+    }
+    async fn small(&mut self, suffix: &str, limit: usize) -> Result<Vec<u8>, Error> {
+        let mut response = self.get(suffix).await?;
+        let mut bytes = Vec::new();
+        while let Some(chunk) = self.chunk(&mut response).await? {
+            if chunk.len() > limit.saturating_sub(bytes.len()) {
+                return Err("distribution metadata exceeds limit".into());
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        Ok(bytes)
+    }
+    fn observe(&self, directory: &std::path::Path, current: &Current) -> Result<(), Error> {
+        let path = directory.join("publisher-high-water.json");
+        match std::fs::read(&path) {
+            Ok(bytes) => {
+                let saved: HighWater = serde_json::from_slice(&bytes)?;
+                if saved.origin != self.origin.as_str() || !current.succeeds(&saved.current) {
+                    return Err(
+                        "publisher origin change, replay or contradictory current record".into(),
+                    );
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+        // Observing a newer record fences an older one even when its transfer
+        // subsequently fails. A restart must contact HTTPS current again.
+        crate::control::persist(
+            &path,
+            &HighWater {
+                origin: self.origin.to_string(),
+                current: current.clone(),
+            },
+        )?;
+        Ok(())
+    }
+
+    async fn check_anchor(
+        &mut self,
+        directory: &std::path::Path,
+        current: &Current,
+    ) -> Result<(), Error> {
+        let check: distribution::AnchorCheck = serde_json::from_slice(
+            &self
+                .small(
+                    &format!("anchors/{}/{}", current.anchor_height, current.anchor_hash),
+                    16 << 10,
+                )
+                .await?,
+        )?;
+        if check.revision != current.revision || check.recovery_epoch != current.recovery_epoch {
+            return Err("publication superseded during canonicality validation".into());
+        }
+        if check.schema != distribution::SCHEMA
+            || check.genesis_hash != current.genesis_hash
+            || check.height != current.anchor_height
+            || check.hash != current.anchor_hash
+        {
+            return Err("canonicality attestation has another identity/recovery snapshot".into());
+        }
+        if !check.canonical {
+            let mut rejected = current.clone();
+            rejected.eligibility = distribution::Eligibility::Noncanonical;
+            self.observe(directory, &rejected)?;
+            return Err("candidate anchor is noncanonical".into());
+        }
+        Ok(())
+    }
+
+    async fn current(&mut self, directory: &std::path::Path) -> Result<Current, Error> {
+        let current: Current = serde_json::from_slice(&self.small("current", 16 << 10).await?)?;
+        if current.schema != distribution::SCHEMA
+            || current.revision == 0
+            || !distribution::is_digest(&current.inventory_sha256)
+            || !distribution::is_digest(&current.genesis_hash)
+            || !distribution::is_digest(&current.anchor_hash)
+        {
+            return Err("invalid publisher current record".into());
+        }
+        self.observe(directory, &current)?;
+        if !current.eligible() {
+            return Err("publisher current publication is withdrawn or noncanonical".into());
+        }
+        Ok(current)
+    }
+}
+
+pub async fn verify(config: Config) -> Result<Report, Error> {
+    let mut source = Source::new(&config)?;
+    std::fs::create_dir_all(&config.directory)?;
+    if !std::fs::symlink_metadata(&config.directory)?.is_dir() {
+        return Err("bootstrap root must be a real directory".into());
+    }
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(config.directory.join("bootstrap.lock"))?;
+    lock.try_lock()
+        .map_err(|_| "another bootstrap owns this directory")?;
+    let current = source.current(&config.directory).await?;
+    if current.network != config.network || current.genesis_hash != config.genesis_hash {
+        return Err("prepared publication chain identity mismatch".into());
+    }
+    let raw = source
+        .small(
+            &format!("inventories/{}", current.inventory_sha256),
+            16 << 20,
+        )
+        .await?;
+    if distribution::digest(&raw) != current.inventory_sha256 {
+        return Err("inventory digest mismatch".into());
+    }
+    let inventory: Inventory = serde_json::from_slice(&raw)?;
+    inventory.validate(&config.network, &config.genesis_hash)?;
+    let total = inventory
+        .artifacts
+        .iter()
+        .filter(|f| f.kind.local())
+        .try_fold(source.downloaded, |n, f| n.checked_add(f.bytes))
+        .ok_or("download budget overflow")?;
+    if total > config.max_download_bytes {
+        return Err("prepared publication exceeds download budget".into());
+    }
+    // New private staging tree; never join untrusted paths into an existing
+    // publication or follow its symlinks. Failed trees remain non-authoritative.
+    let stage = config.directory.join(format!(
+        "staging-{}-{}",
+        current.revision,
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_nanos()
+    ));
+    std::fs::create_dir(&stage)?;
+    let result = async {
+        let mut downloaded_files = 0;
+        let map_artifact = inventory
+            .artifacts
+            .iter()
+            .find(|f| f.path == "shards.json")
+            .ok_or("missing map")?;
+        for artifact in std::iter::once(map_artifact).chain(
+            inventory
+                .artifacts
+                .iter()
+                .filter(|f| f.kind.local() && f.path != "shards.json"),
+        ) {
+            let target = stage.join(&artifact.path);
+            std::fs::create_dir_all(target.parent().ok_or("artifact has no parent")?)?;
+            let mut output = tokio::fs::OpenOptions::new()
+                .create_new(true)
+                .write(true)
+                .open(&target)
+                .await?;
+            let mut response = source
+                .get(&format!("artifacts/{}", artifact.sha256))
+                .await?;
+            let mut remaining = artifact.bytes;
+            while let Some(chunk) = source.chunk(&mut response).await? {
+                if chunk.len() as u64 > remaining {
+                    return Err("artifact exceeds declared length".into());
+                }
+                output.write_all(&chunk).await?;
+                remaining -= chunk.len() as u64;
+            }
+            if remaining != 0 {
+                return Err("artifact incomplete".into());
+            }
+            output.sync_all().await?;
+            drop(output);
+            let file = artifact.clone();
+            let path = target.clone();
+            tokio::task::spawn_blocking(move || distribution::verify_file(&path, &file)).await??;
+            if artifact.path == "shards.json" {
+                let map: transparent_filter::ShardMap =
+                    serde_json::from_slice(&std::fs::read(&target)?)?;
+                inventory.validate_map(&map)?;
+                let end = map.shards.last().ok_or("empty publication")?;
+                if current.anchor_height != end.end_height
+                    || current.anchor_hash != end.terminal_block_hash
+                {
+                    return Err("canonicality attestation names another publication anchor".into());
+                }
+            }
+            downloaded_files += 1;
+        }
+        let map: transparent_filter::ShardMap =
+            serde_json::from_slice(&std::fs::read(stage.join("shards.json"))?)?;
+        map.validate_supported()?;
+        if distribution::digest(&serde_json::to_vec(&map)?) != inventory.map_sha256 {
+            return Err("downloaded map has another publication identity".into());
+        }
+        // Reuse the production assignment planner, with an explicitly inert
+        // archive row for cost/accounting only. Nothing here qualifies routes.
+        let mut roster = vec![RosterEntry {
+            id: "provider".into(),
+            role: WorkerRole::RecentReplica,
+            replica_group: Some("recent".into()),
+            ssh_host: String::new(),
+            upstream: "127.0.0.1:0".into(),
+            cache_bytes: config.cache_bytes,
+            archive_range: None,
+        }];
+        if inventory.recent_from_shard > 0 {
+            roster.push(RosterEntry {
+                id: "archive-metadata-only".into(),
+                role: WorkerRole::ArchiveOwner,
+                replica_group: None,
+                ssh_host: String::new(),
+                upstream: "unconfigured.invalid:0".into(),
+                cache_bytes: u64::MAX,
+                archive_range: None,
+            });
+        }
+        let assignment = plan(
+            &map,
+            &inventory.map_sha256,
+            &roster,
+            inventory.recent_from_shard,
+            0.15,
+            GeneratedBy {
+                tool: "HTTPS bootstrap verifier".into(),
+                source_sha: None,
+                generated_at: "not-serving".into(),
+            },
+        )?;
+        let options = LoadOptions {
+            scope: LoadScope::Assigned {
+                assignment: Arc::new(assignment),
+                worker_id: "provider".into(),
+            },
+            ..LoadOptions::whole(0)
+        };
+        let root = stage.clone();
+        let set =
+            tokio::task::spawn_blocking(move || ShardSet::open_with(&root, &options)).await??;
+        let state = ServiceState::build_with_runtimes(
+            set,
+            ServiceConfig {
+                cache_bytes: config.cache_bytes,
+                readiness: ReadinessMode::Warm,
+                ..ServiceConfig::default()
+            },
+            None,
+            Some(ShippedRuntimes::required(stage.clone())),
+        )?;
+        state.spawn_prewarm().await?;
+        if !state.is_warm() {
+            return Err("required prepared publication failed production loader/self-check".into());
+        }
+        // HTTP current, not files or a last-success timestamp, is the bootstrap
+        // freshness source. Supersession/withdrawal/outage cannot activate it.
+        source.check_anchor(&config.directory, &current).await?;
+        if source.current(&config.directory).await? != current {
+            return Err("publication superseded during bootstrap".into());
+        }
+        let runtime_preparation = state.preparation();
+        drop(state);
+        crate::control::persist(&stage.join("verified-inventory.json"), &inventory)?;
+        Ok(Report {
+            current,
+            map_sha256: inventory.map_sha256,
+            directory: stage.clone(),
+            downloaded_bytes: source.downloaded,
+            downloaded_files,
+            archive_tables_downloaded: 0,
+            serving: false,
+            runtime_preparation,
+        })
+    }
+    .await;
+    if result.is_err() {
+        let _ = std::fs::remove_dir_all(&stage);
+    }
+    result
+}

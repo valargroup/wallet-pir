@@ -18,6 +18,19 @@ use transparent_shard_server::shardset::{
     about = "Private retrieval from a published transparent shard set"
 )]
 struct Cli {
+    /// Verify a prepared recent publication from an authenticated HTTPS origin.
+    /// This bootstrap checkpoint never starts a wallet listener.
+    #[arg(long, requires_all = ["verify_only", "publisher_network", "publisher_genesis"])]
+    publisher: Option<String>,
+    #[arg(long, requires = "publisher")]
+    publisher_network: Option<String>,
+    #[arg(long, requires = "publisher")]
+    publisher_genesis: Option<String>,
+    /// Optional private CA, with ordinary hostname and certificate validation.
+    #[arg(long, requires = "publisher")]
+    publisher_ca: Option<PathBuf>,
+    #[arg(long, default_value_t = 64 << 30)]
+    bootstrap_max_bytes: u64,
     /// Loopback by default. Deployment exposes only the required wallet routes
     /// through its proxy and keeps operational endpoints private.
     #[arg(long, default_value = "127.0.0.1:8092")]
@@ -123,6 +136,38 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
         .init();
     let mut cli = Cli::parse();
+    if let Some(publisher) = cli.publisher {
+        if cli.control_socket.is_some()
+            || cli.assignment.is_some()
+            || cli.runtime_cache_dir.is_some()
+        {
+            return Err("HTTPS bootstrap verification requires its own directory and no fleet/cache configuration".into());
+        }
+        let roots = cli
+            .publisher_ca
+            .map(
+                |path| -> Result<_, Box<dyn std::error::Error + Send + Sync>> {
+                    Ok(reqwest::Certificate::from_pem(&std::fs::read(path)?)?)
+                },
+            )
+            .transpose()?
+            .into_iter()
+            .collect();
+        let report = transparent_shard_server::bootstrap::verify(
+            transparent_shard_server::bootstrap::Config {
+                publisher,
+                network: cli.publisher_network.unwrap(),
+                genesis_hash: cli.publisher_genesis.unwrap(),
+                directory: cli.shard_dir,
+                cache_bytes: cli.cache_bytes,
+                max_download_bytes: cli.bootstrap_max_bytes,
+                roots,
+            },
+        )
+        .await?;
+        println!("{}", serde_json::to_string(&report)?);
+        return Ok(());
+    }
     let active_record = cli
         .active_record
         .clone()
