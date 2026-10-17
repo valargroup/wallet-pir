@@ -994,7 +994,7 @@ mod tests {
     }
 
     /// A response admitted under the old revision retains its immutable bytes
-    /// while the shared lifecycle activates a different provider capture.
+    /// while the shared lifecycle activates different rows at the next anchor.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn shared_pipeline_handover_keeps_an_admitted_old_publication_response() {
         use sha2::{Digest, Sha256};
@@ -1010,22 +1010,41 @@ mod tests {
         .await
         .unwrap();
         assert!(response.status().is_success());
-        // Both completed feeds change the filter capture and thus the revision.
-        for feed in [crate::near::Feed::Payouts, crate::near::Feed::Refunds] {
-            paused
-                .provider()
-                .record(
-                    feed.name(),
-                    Some(NOW - 100),
-                    &[(super::common::receiver(), true, NOW - 50)],
-                    &[],
-                    NOW - 50,
-                    NOW - 10,
-                )
-                .unwrap();
-        }
+        // Reuse the same valid public record as the preparation/restart case;
+        // writable store and publication ownership remain independent.
+        let height = crate::blocks::ironwood_activation() + 1;
+        let mut record = super::common::record(0, 1);
+        record.payment.height = height;
+        record.payment.block_hash = [4; 32];
+        record.payment.position = 0;
+        verify::append(
+            &mut paused.store(),
+            &receiver_store::IndexedBlock {
+                height,
+                hash: [4; 32],
+                parent: [3; 32],
+                start_position: 0,
+                end_position: 1,
+                coinbase_actions: 0,
+                commitments: vec![record.payment.cmx],
+                payments: vec![(record.receiver, record.payment)],
+            },
+        )
+        .unwrap();
+        *paused.node.tip.lock().unwrap() = u64::from(height);
+        paused
+            .node
+            .hashes
+            .lock()
+            .unwrap()
+            .insert(u64::from(height), [4; 32]);
         paused.refresh().await.unwrap();
-        assert_ne!(paused.get("init").await, old);
+        let next: receiver_pir::Manifest =
+            serde_json::from_value(paused.get("init").await).unwrap();
+        assert_ne!(
+            next.directory.data_sha256,
+            old_manifest.directory.data_sha256
+        );
         let bytes = response.bytes().await.unwrap();
         // This empty index has an independently known all-zero row oracle.
         assert!(bytes.iter().all(|byte| *byte == 0));
