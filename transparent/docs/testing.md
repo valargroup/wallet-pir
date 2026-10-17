@@ -427,3 +427,12 @@ passed all eleven deployed cases under the documented bounded retry policy.
 Its evidence preserves the original failures, the exact source/binary identity,
 full repository checks and every HTTP attempt. Application-level M3 closure and
 service availability remain separately tracked in [remaining work](remaining-work.md).
+
+When the standard fast selection includes `transparent-filter-server`, helpers
+still overlap the Rust compilation, then finish before Rust test execution starts.
+Publisher archive preparation already runs apart from other Rust programs in the
+integrated fast runner; this barrier also removes helper contention during that
+CPU window. It preserves the selected helpers, cases, cold fixture caches and
+30-second case guard. The wait remains inside the measured fast command and its
+180-second warm budget. This can lengthen warm runs when helpers outlast
+compilation; full hosted selection still needs qualification on its exact head.

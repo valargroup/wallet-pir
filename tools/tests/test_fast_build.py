@@ -41,7 +41,7 @@ class FastBuildTests(unittest.TestCase):
         self.ignored = {}
         self.calls, self.plans = [], []
 
-    def execute(self, *, compile_only=False, jobs=2):
+    def execute(self, *, compile_only=False, jobs=2, before_tests=None):
         original_read = Path.read_text
 
         def read(path, *args, **kwargs):
@@ -68,7 +68,7 @@ class FastBuildTests(unittest.TestCase):
                 patch.object(fast_build.subprocess, 'check_output', side_effect=output), \
                 patch.object(fast_build, 'run', side_effect=run), \
                 patch.dict(os.environ, QUALIFY_PUBLICATIONS='100000'):
-            fast_build.execute(['a', 'b'], offline=True, compile_only=compile_only, jobs=jobs)
+            fast_build.execute(['a', 'b'], offline=True, compile_only=compile_only, jobs=jobs, before_tests=before_tests)
 
     def test_one_build_preserves_units_binaries_fast_targets_and_package_specific_exclusions(self):
         self.execute()
@@ -110,6 +110,27 @@ class FastBuildTests(unittest.TestCase):
         self.execute(compile_only=True)
         self.assertEqual(self.calls[-1][0], baseline)
         self.assertEqual(len(self.calls), 2)
+
+    def test_helper_barrier_drains_after_compile_before_any_test_program(self):
+        def drained():
+            self.assertEqual(self.calls[-1][0][:2], ['cargo', 'test'])
+            self.assertEqual(self.plans, [])
+            self.calls.append((['helpers-drained'], {}))
+        self.execute(before_tests=drained)
+        commands = [command for command, _ in self.calls]
+        self.assertLess(commands.index(['helpers-drained']),
+                        next(i for i, command in enumerate(commands)
+                             if command[:2] == ['python3', 'tools/ci/unit_tests.py']))
+        self.assertEqual(len(self.plans[0]), len(self.artifacts))
+
+    def test_failed_helpers_prevent_execution_and_compile_only_never_waits(self):
+        def failed():
+            raise RuntimeError('helper failed')
+        with self.assertRaisesRegex(RuntimeError, 'helper failed'):
+            self.execute(before_tests=failed)
+        self.assertEqual(self.plans, [])
+        self.execute(compile_only=True, before_tests=failed)
+        self.assertEqual(self.plans, [])
 
     def test_missing_library_cli_or_integration_artifacts_fail_before_execution(self):
         original = self.artifacts
