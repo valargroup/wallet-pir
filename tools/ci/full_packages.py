@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import tomllib
 from fast import ROOT, workspace_packages
 from stage import run
 
@@ -29,6 +30,15 @@ def inventory(packages=None, groups=None):
     return groups
 
 
+def qualification_features(names):
+    """Enable declared test campaigns only in explicit full qualification."""
+    selected = set(names)
+    return sorted(package['name'] + '/qualification-tests'
+                  for package in workspace_packages() if package['name'] in selected
+                  and 'qualification-tests' in tomllib.loads(
+                      Path(package['manifest_path']).read_text()).get('features', {}))
+
+
 def commands(group, groups, lint=False, compile_only=False):
     names = groups[group]
     if lint:
@@ -40,7 +50,7 @@ def commands(group, groups, lint=False, compile_only=False):
                     'enhance-serving/native-reinspiring', 'status-serving/native-reinspiring',
                     'enhance-pir-server/native-reinspiring', 'enhance-pir-load-test/native-reinspiring'],
         'shared': ['pir-control/admission'],
-    }.get(group, [])
+    }.get(group, []) + qualification_features(names)
     result = [[*runner, '--locked', '--profile', 'release-fast',
                *[arg for name in names for arg in ('-p', name)],
                *(['--features', ','.join(features)] if features else [])]]

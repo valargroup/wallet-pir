@@ -413,8 +413,13 @@ The optional `stress` input repeats each family's encrypted HTTP/recovery smoke
 50 times with fresh service state and no test retries. It remains preemptible
 and does not publish release artifacts.
 
-Fast coverage includes an encrypted HTTP smoke for Receiver, Transparent and
-Enhance. Transparent checks a nonzero row against public source bytes, refuses
+Fast coverage includes every bounded unit test and an encrypted HTTP smoke for
+Receiver, Transparent and Enhance. The former named slow-unit exclusions have
+been removed. Default fixtures keep complete failure/recovery assertions with
+supported narrow inputs; explicit full runners enable `qualification-tests` to
+restore deployed geometry combinations and larger history/publication runs.
+Complete CPU correctness uses the same bounded native selection and retains its
+reference, exporter, documentation and lint checks under the 180-second limit. Transparent checks a nonzero row against public source bytes, refuses
 malformed input before preparation, and repeats after a cache restore and
 corruption. Enhance verifies encrypted records after draining the old listener
 and reopening durable coordinator state. Listener readiness/shutdown use bound
