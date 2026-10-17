@@ -47,6 +47,8 @@ struct HighWater {
 struct Source {
     origin: reqwest::Url,
     client: reqwest::Client,
+    budget: u64,
+    downloaded: u64,
 }
 impl Source {
     fn new(config: &Config) -> Result<Self, Error> {
@@ -72,19 +74,34 @@ impl Source {
         Ok(Self {
             origin,
             client: builder.build()?,
+            budget: config.max_download_bytes,
+            downloaded: 0,
         })
     }
-    async fn get(&self, suffix: &str) -> Result<reqwest::Response, Error> {
+    fn budget_error(&self) -> Error {
+        format!(
+            "prepared publication exceeds download budget ({} body bytes consumed, cap {})",
+            self.downloaded, self.budget
+        )
+        .into()
+    }
+    async fn get(&mut self, suffix: &str) -> Result<reqwest::Response, Error> {
+        if self.downloaded >= self.budget {
+            return Err(self.budget_error());
+        }
         let url = self
             .origin
             .join(&format!("{}{}", distribution::PREFIX, suffix))?;
-        let response = self
+        let mut response = self
             .client
             .get(url)
             .header("cache-control", "no-cache")
             .send()
             .await?;
         if response.status() != reqwest::StatusCode::OK {
+            // Refused response bytes consume the same attempt budget. Never
+            // retry or reset accounting after a status or validation failure.
+            while self.chunk(&mut response).await?.is_some() {}
             return Err(format!(
                 "publisher refused distribution with HTTP {}",
                 response.status()
@@ -93,10 +110,26 @@ impl Source {
         }
         Ok(response)
     }
-    async fn small(&self, suffix: &str, limit: usize) -> Result<Vec<u8>, Error> {
+    async fn chunk(
+        &mut self,
+        response: &mut reqwest::Response,
+    ) -> Result<Option<axum::body::Bytes>, Error> {
+        let chunk = response.chunk().await?;
+        if let Some(bytes) = &chunk {
+            self.downloaded = self
+                .downloaded
+                .checked_add(bytes.len() as u64)
+                .ok_or("download budget overflow")?;
+            if self.downloaded > self.budget {
+                return Err(self.budget_error());
+            }
+        }
+        Ok(chunk)
+    }
+    async fn small(&mut self, suffix: &str, limit: usize) -> Result<Vec<u8>, Error> {
         let mut response = self.get(suffix).await?;
         let mut bytes = Vec::new();
-        while let Some(chunk) = response.chunk().await? {
+        while let Some(chunk) = self.chunk(&mut response).await? {
             if chunk.len() > limit.saturating_sub(bytes.len()) {
                 return Err("distribution metadata exceeds limit".into());
             }
@@ -131,7 +164,7 @@ impl Source {
     }
 
     async fn check_anchor(
-        &self,
+        &mut self,
         directory: &std::path::Path,
         current: &Current,
     ) -> Result<(), Error> {
@@ -162,7 +195,7 @@ impl Source {
         Ok(())
     }
 
-    async fn current(&self, directory: &std::path::Path) -> Result<Current, Error> {
+    async fn current(&mut self, directory: &std::path::Path) -> Result<Current, Error> {
         let current: Current = serde_json::from_slice(&self.small("current", 16 << 10).await?)?;
         if current.schema != distribution::SCHEMA
             || current.revision == 0
@@ -181,7 +214,7 @@ impl Source {
 }
 
 pub async fn verify(config: Config) -> Result<Report, Error> {
-    let source = Source::new(&config)?;
+    let mut source = Source::new(&config)?;
     std::fs::create_dir_all(&config.directory)?;
     if !std::fs::symlink_metadata(&config.directory)?.is_dir() {
         return Err("bootstrap root must be a real directory".into());
@@ -212,7 +245,7 @@ pub async fn verify(config: Config) -> Result<Report, Error> {
         .artifacts
         .iter()
         .filter(|f| f.kind.local())
-        .try_fold(raw.len() as u64, |n, f| n.checked_add(f.bytes))
+        .try_fold(source.downloaded, |n, f| n.checked_add(f.bytes))
         .ok_or("download budget overflow")?;
     if total > config.max_download_bytes {
         return Err("prepared publication exceeds download budget".into());
@@ -228,7 +261,6 @@ pub async fn verify(config: Config) -> Result<Report, Error> {
     ));
     std::fs::create_dir(&stage)?;
     let result = async {
-        let mut downloaded_bytes = raw.len() as u64;
         let mut downloaded_files = 0;
         let map_artifact = inventory
             .artifacts
@@ -252,7 +284,7 @@ pub async fn verify(config: Config) -> Result<Report, Error> {
                 .get(&format!("artifacts/{}", artifact.sha256))
                 .await?;
             let mut remaining = artifact.bytes;
-            while let Some(chunk) = response.chunk().await? {
+            while let Some(chunk) = source.chunk(&mut response).await? {
                 if chunk.len() as u64 > remaining {
                     return Err("artifact exceeds declared length".into());
                 }
@@ -278,7 +310,6 @@ pub async fn verify(config: Config) -> Result<Report, Error> {
                     return Err("canonicality attestation names another publication anchor".into());
                 }
             }
-            downloaded_bytes += artifact.bytes;
             downloaded_files += 1;
         }
         let map: transparent_filter::ShardMap =
@@ -358,7 +389,7 @@ pub async fn verify(config: Config) -> Result<Report, Error> {
             current,
             map_sha256: inventory.map_sha256,
             directory: stage.clone(),
-            downloaded_bytes,
+            downloaded_bytes: source.downloaded,
             downloaded_files,
             archive_tables_downloaded: 0,
             serving: false,

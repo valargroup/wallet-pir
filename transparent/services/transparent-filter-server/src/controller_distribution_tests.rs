@@ -600,3 +600,125 @@ fn distribution_revisions_survive_opens_and_refuse_corrupt_state() {
     .unwrap();
     assert!(advance_distribution_revision(root.path()).is_err());
 }
+
+#[test]
+fn distribution_revision_refuses_directory_sync_failure_before_acknowledgement() {
+    let root = tempfile::tempdir().unwrap();
+    let mut offered = advance_distribution_revision(root.path()).unwrap();
+    let attempted = advance_distribution_revision_with_sync(root.path(), |_| {
+        Err(std::io::Error::other("injected directory sync failure"))
+    });
+    // Same propagation/store order used at the controller's authority boundary:
+    // failure cannot replace the acknowledged in-memory revision.
+    if let Ok(revision) = &attempted {
+        offered = *revision;
+    }
+    assert!(attempted
+        .unwrap_err()
+        .to_string()
+        .contains("injected directory sync failure"));
+    assert_eq!(offered, 1);
+    // Rename may have landed even though durability is uncertain. Never roll
+    // back or reuse that reservation in a subsequent successful open.
+    assert_eq!(advance_distribution_revision(root.path()).unwrap(), 3);
+    let missing = root.path().join("missing");
+    assert!(advance_distribution_revision(&missing).is_err());
+    assert!(!missing.exists());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn https_bootstrap_charges_all_response_bytes_at_exact_budget_boundary() {
+    let root = tempfile::tempdir().unwrap();
+    let (directory, set) = publication(root.path());
+    prepare_recent(&directory, &set);
+    let finalized = Finalized::prepare(&directory, &set, 2).unwrap();
+    // Independent producer-byte oracle, including both live current responses
+    // and the canonicality attestation. Never derive the cap from Report.
+    let material_bytes = finalized.bytes().len() as u64
+        + finalized
+            .inventory()
+            .artifacts
+            .iter()
+            .filter(|f| f.kind.local())
+            .map(|f| std::fs::metadata(directory.join(&f.path)).unwrap().len())
+            .sum::<u64>();
+    let rpc = canonical_rpc(root.path(), &set).await;
+    let owner = authority(&directory, Some(finalized), rpc.client.clone());
+    let tls = tls(root.path(), owner).await;
+    let client = reqwest::Client::builder()
+        .add_root_certificate(tls.cert.clone())
+        .build()
+        .unwrap();
+    let current_bytes = client
+        .get(format!("{}/provider/v1/current", tls.origin))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .bytes()
+        .await
+        .unwrap();
+    let current: transparent_server_backend::distribution::Current =
+        serde_json::from_slice(&current_bytes).unwrap();
+    let anchor_bytes = client
+        .get(format!(
+            "{}/provider/v1/anchors/{}/{}",
+            tls.origin, current.anchor_height, current.anchor_hash
+        ))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .bytes()
+        .await
+        .unwrap();
+    let exact = material_bytes + 2 * current_bytes.len() as u64 + anchor_bytes.len() as u64;
+    for cap in [
+        0,
+        1,
+        current_bytes.len() as u64,
+        current_bytes.len() as u64 + 1,
+        exact - 1,
+    ] {
+        std::fs::write(tls.control.with_extension("requests"), "").unwrap();
+        let mut limited = config(&tls, root.path().join(format!("cap-{cap}")));
+        limited.max_download_bytes = cap;
+        assert!(
+            bootstrap::verify(limited)
+                .await
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("download budget"),
+            "cap={cap}"
+        );
+        if cap <= current_bytes.len() as u64 {
+            let requests = std::fs::read_to_string(tls.control.with_extension("requests")).unwrap();
+            assert!(
+                !requests.contains("/inventories/"),
+                "tiny cap fetched inventory: {requests}"
+            );
+            if cap == 0 {
+                assert!(requests.is_empty());
+            }
+        }
+    }
+    // Even a refused HTTP body consumes the budget before status refusal.
+    std::fs::write(&tls.control, "refused-body").unwrap();
+    let mut refused = config(&tls, root.path().join("refused-body"));
+    refused.max_download_bytes = 64;
+    assert!(bootstrap::verify(refused)
+        .await
+        .err()
+        .unwrap()
+        .to_string()
+        .contains("download budget"));
+    std::fs::write(&tls.control, "").unwrap();
+    let mut limited = config(&tls, root.path().join("exact"));
+    limited.max_download_bytes = exact;
+    let report = bootstrap::verify(limited).await.unwrap();
+    assert_eq!(report.downloaded_bytes, exact);
+    assert!(!report.serving);
+}

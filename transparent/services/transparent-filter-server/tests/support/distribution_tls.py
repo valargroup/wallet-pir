@@ -22,7 +22,19 @@ class Handler(http.server.BaseHTTPRequestHandler):
         pass
 
     def do_GET(self):
+        with Path(control + ".requests").open("a") as requests:
+            requests.write(self.path + "\n")
         fault = Path(control).read_text().strip()
+        if fault == "refused-body":
+            body = b"refused" * 1024
+            self.send_response(503)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            try:
+                self.wfile.write(body)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+            return
         if fault == "redirect":
             self.send_response(302)
             self.send_header("Location", "http://127.0.0.1:1/forbidden")

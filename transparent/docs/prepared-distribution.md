@@ -52,7 +52,10 @@ unchanged. No signing keys or distribution credentials are added.
 
 A controller open, pointer commit or invalidation reserves a durable monotonic
 revision before offering that state. Epoch, invalidation range and pointer capture
-share `publication_gate`. The current record explicitly distinguishes `canonical`,
+share `publication_gate`. Counter writes fsync the file, rename it, and require
+successful directory open/fsync before returning a revision to the owner. A failed
+post-rename sync may consume a reservation but cannot offer it; retry/open skips
+the uncertain reservation rather than rolling it back. The current record explicitly distinguishes `canonical`,
 `withdrawn` and `noncanonical`. Blocked records identify the former target for
 recovery; they do not offer it for bootstrap. A journal-only fork beyond the
 active anchor can retain that canonical publication while advancing recovery
@@ -98,7 +101,13 @@ connect/whole-request deadlines. The map is fetched first; inventory
 classifications must agree with its exact recent/archive boundary before tables
 are downloaded. Paths use a restricted relative alphabet and reject escapes,
 dot components, URL syntax, duplicate paths and symlinks in producer sources.
-Every file is checked for exact length and SHA-256.
+Every file is checked for exact length and SHA-256. One attempt-wide streaming
+counter charges all response bodies: initial and final current, inventory, anchor
+attestation and artifacts, including bytes consumed before any refusal or failed
+validation. An exhausted budget prevents the next request; metadata limits do not
+replace the remaining total budget. The successful report includes all charged
+body bytes (excluding HTTP/TLS framing); failures abort without resetting the
+counter or retrying within that attempt.
 
 An exclusive bootstrap lock protects each operator-owned directory. An atomic,
 fsynced `publisher-high-water.json` binds the normalized HTTPS origin and entire
