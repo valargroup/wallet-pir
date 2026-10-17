@@ -2,6 +2,8 @@
 //! against a JSON-RPC node the test controls.
 #[path = "../../../crates/receiver-store/tests/common/mod.rs"]
 mod common;
+#[path = "../../receiver-pir-server/tests/common/history.rs"]
+mod history;
 use axum::{extract::State, routing::post, Json, Router};
 use receiver_directory::{snapshot::Snapshot, Hash};
 use receiver_pir::{
@@ -304,11 +306,10 @@ impl World {
         let manifest = DirectoryClient::fetch_manifest(&self.origin, &http)
             .await
             .unwrap();
-        let mut client =
-            DirectoryClient::connect_manifest(&self.origin, http, accepted, manifest, 0)
-                .await
-                .unwrap();
-        client.lookup(common::receiver(), accepted).await.unwrap()
+        let client = DirectoryClient::connect_manifest(&self.origin, http, accepted, manifest)
+            .await
+            .unwrap();
+        history::history(&client, common::receiver()).await.unwrap()
     }
 }
 

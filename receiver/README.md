@@ -148,7 +148,6 @@ the session ID.
 | `GET /v1/receiver/init` | Current session manifest |
 | `GET /v1/receiver/public/:session` | Public PIR setup |
 | `POST /v1/receiver/query` | One encrypted row query |
-| `GET /v1/receiver/rows/:session` | Complete row file |
 | `GET /v1/receiver/witness/:session` | Common witness file |
 | `GET /v1/receiver/filters/:session` | Filter file |
 | `GET /v1/receiver/health` | Process identity, the served session, the indexer's report and this process's NEAR reads (operators only) |
@@ -282,15 +281,12 @@ enforces response limits while streaming, rejects redirects and maps 410 to
 `Error::Revision`. A wallet calls `fetch_manifest`, accepts the manifest's end
 block against its own chain and calls `fetch_filters`, which checks the filter
 file against the manifest. It tests its receivers with `Filter::matches` and
-calls `connect_manifest` with the remaining lookup count only if any need a
-lookup. Small jobs use PIR. Larger ones (about 400 lookups at 8192 rows)
-download the row file once and check its digest. `use_file_for_work` switches
-when new work arrives. `witnesses` fetches the common witness file, and `lookup`
-returns a receiver's complete history or an error. Over PIR it reads up to
-`MAX_PIR_PAGES` (16) pages, and loads the row file for a longer history. Reuse
-the client across batches and reconnect for a new revision. The server sees the
-mode and the number of queries, so it learns how many lookups found several
-payments, but never which receivers were looked up.
+calls `connect_manifest` only if any need a lookup. `witnesses` fetches the
+common witness file, and `page` reads one history page per encrypted query. Reuse the
+client across lookups and reconnect for a new revision. The server sees the
+number of queries, so it learns how many lookups found several payments, but
+never which receivers were looked up. The service has no row file route. It keeps
+the rows only to answer queries.
 
 ## Tests
 

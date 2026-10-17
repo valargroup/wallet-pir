@@ -56,7 +56,6 @@ fn receiver_endpoint(route: &str) -> Option<&'static str> {
         "init" => "receiver_init",
         "public" => "receiver_public",
         "query" => "receiver_query",
-        "rows" => "receiver_rows",
         "witness" => "receiver_witness",
         "filters" => "receiver_filters",
         "health" => "receiver_health",
@@ -98,11 +97,10 @@ struct Service {
 }
 
 /// The receiver categories `pir_observability` reports.
-const ENDPOINTS: [&str; 7] = [
+const ENDPOINTS: [&str; 6] = [
     "receiver_init",
     "receiver_public",
     "receiver_query",
-    "receiver_rows",
     "receiver_witness",
     "receiver_filters",
     "receiver_health",
@@ -163,14 +161,6 @@ fn router(service: Service) -> Router {
         )
         .route("/v1/receiver/query", post(query))
         .route(
-            "/v1/receiver/rows/:session",
-            get(
-                |State(s): State<Service>, Path(id): Path<String>| async move {
-                    material(&s, &id, Material::Rows)
-                },
-            ),
-        )
-        .route(
             "/v1/receiver/witness/:session",
             get(
                 |State(s): State<Service>, Path(id): Path<String>| async move {
@@ -229,7 +219,6 @@ async fn health(State(s): State<Service>) -> Response {
 enum Material {
     Public,
     Witness,
-    Rows,
     Filters,
 }
 
@@ -244,7 +233,6 @@ fn material(s: &Service, id: &str, material: Material) -> Response {
     };
     match material {
         Material::Public => binary(p.server.public().to_vec()),
-        Material::Rows => binary(Bytes::from_owner(p.server.rows())),
         Material::Filters => binary(Bytes::from_owner(p.server.filters())),
         Material::Witness => match &p.witnesses {
             Some(bytes) => binary(bytes.clone()),

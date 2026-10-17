@@ -8,6 +8,8 @@
 //! exactly the two this fixture staged: the oracle is the construction, not the server.
 #[path = "../../../crates/receiver-store/tests/common/mod.rs"]
 mod common;
+#[path = "../../receiver-pir-server/tests/common/history.rs"]
+mod history;
 use receiver_directory::{snapshot::Snapshot, Hash, Payment};
 use receiver_pir::{
     transport::{DirectoryClient, Transport},
@@ -133,10 +135,10 @@ async fn main() {
             let manifest = DirectoryClient::fetch_manifest(origin, &http)
                 .await
                 .unwrap();
-            let mut client = DirectoryClient::connect_manifest(origin, http, accepted, manifest, 0)
+            let client = DirectoryClient::connect_manifest(origin, http, accepted, manifest)
                 .await
                 .unwrap();
-            let mut found = client.lookup(common::receiver(), accepted).await.unwrap();
+            let mut found = history::history(&client, common::receiver()).await.unwrap();
             found.sort_by_key(|payment| payment.position);
             let exact = found == payments(offset, hash);
             println!(

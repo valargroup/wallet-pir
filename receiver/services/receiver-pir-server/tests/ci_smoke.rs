@@ -1,7 +1,10 @@
 //! Bounded wallet retrieval and refusal checks through a real HTTP listener.
 #[path = "../../../crates/receiver-store/tests/common/mod.rs"]
 mod common;
+#[path = "common/history.rs"]
+mod history;
 use common::{manifest, receiver, record};
+use history::history;
 use receiver_directory::snapshot::Snapshot;
 use receiver_pir::{
     server::Server,
@@ -96,24 +99,24 @@ async fn read(request: reqwest::RequestBuilder, limit: usize) -> Result<Vec<u8>,
     Ok(body)
 }
 
+/// Connects over PIR to the publication `origin` advertises, accepted at `accepted`.
 async fn connect<T: Transport>(
     origin: &str,
     http: T,
     accepted: AcceptedCoverage,
-    remaining: usize,
 ) -> Result<DirectoryClient<T>, Error> {
     let manifest = DirectoryClient::fetch_manifest(origin, &http).await?;
-    DirectoryClient::connect_manifest(origin, http, accepted, manifest, remaining).await
+    DirectoryClient::connect_manifest(origin, http, accepted, manifest).await
 }
 
 #[tokio::test]
 async fn encrypted_http_recovers_exact_payments_and_refuses_wrong_anchors() {
     tokio::time::timeout(Duration::from_secs(30), async {
         let server = serve(snapshot(2)).await;
-        let mut client = connect(&server.origin, Http(http()), accepted(), 0)
+        let client = connect(&server.origin, Http(http()), accepted())
             .await
             .unwrap();
-        let payments = client.lookup(receiver(), accepted()).await.unwrap();
+        let payments = history(&client, receiver()).await.unwrap();
         assert_eq!(
             payments,
             (0..2)
@@ -122,7 +125,7 @@ async fn encrypted_http_recovers_exact_payments_and_refuses_wrong_anchors() {
         );
         let mut wrong = accepted();
         wrong.hash[0] ^= 1;
-        assert!(client.lookup(receiver(), wrong).await.is_err());
+        assert!(connect(&server.origin, Http(http()), wrong).await.is_err());
         let malformed = http()
             .post(format!("{}/v1/receiver/query", server.origin))
             .body(vec![0; 8])
