@@ -86,10 +86,13 @@ class FastBuildTests(unittest.TestCase):
         for program in plan:
             self.assertTrue(program['directory'].endswith('/' + program['package']))
             self.assertEqual(program['version'], '1.0.0')
+            self.assertEqual(program['exclusive'], program['executable'].endswith('smoke'))
             expected = ['--skip', 'slow'] if program['package'] == 'a' and not program['executable'].endswith('smoke') else []
             self.assertEqual(program['args'], expected)
         runner, options = self.calls[-1]
         self.assertEqual(runner[-2:], ['--jobs', '2'])
+        self.assertIn('--budget', runner)
+        self.assertEqual(options['env']['WALLET_PIR_ENFORCE_BUDGET'], '1')
         self.assertNotIn('QUALIFY_PUBLICATIONS', options['env'])
         self.assertFalse(Path(options['env']['WALLET_PIR_TEST_RUNTIME_CACHE']).exists())
 

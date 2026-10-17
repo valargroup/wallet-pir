@@ -6,6 +6,7 @@ checkout's operations files under fake clean revisions and published as the
 artifacts of fake full-CI runs, which is the only way an archive qualifies.
 """
 import hashlib
+from functools import cache
 import io
 import json
 import os
@@ -31,6 +32,15 @@ A, B = 'a' * 40, 'b' * 40
 MACHINE = '0123456789abcdef0123456789abcdef'
 EXAMPLE = ROOT / 'enhance/ops/deploy/deploy-inventory.example.json'
 FILES = bundle.contents(ROOT)
+
+
+@cache
+def pristine_archive(revision):
+    """Share immutable archive bytes; every test gets a separate writable copy."""
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / (revision[:4] + '.tar.gz')
+        bundle.write_archive(path, revision, FILES, False)
+        return path.read_bytes()
 
 
 RUNS = {A: 42, B: 43}
@@ -97,7 +107,10 @@ class PackageCase(unittest.TestCase):
     def archive(self, revision, dirty=False, files=None, publish=True):
         """A clean (or dirty) archive of `revision`, published as its run's artifact unless told not to."""
         path = Path(tempfile.mkdtemp(dir=self.dir)) / ('%s.tar.gz' % revision[:4])
-        bundle.write_archive(path, revision, files or FILES, dirty)
+        if not files and not dirty:
+            path.write_bytes(pristine_archive(revision))
+        else:
+            bundle.write_archive(path, revision, files or FILES, dirty)
         if publish:
             self.github.publish(revision, path)
             self.archives[revision] = path
@@ -106,6 +119,19 @@ class PackageCase(unittest.TestCase):
     def package(self, state=None, host=None):
         return package.Package(self.inventory, host or self.host, state or self.state, layout=self.layout,
                                out=self.lines.append, inventory_path=self.inventory_path, github=self.github)
+
+    def checkpoint(self):
+        """Keep the real transaction's files, modes and links for independent fault variants."""
+        saved = tempfile.TemporaryDirectory()
+        self.addCleanup(saved.cleanup)
+        path = Path(saved.name) / 'checkpoint'
+        shutil.copytree(self.dir, path, symlinks=True)
+        return path
+
+    def restore_checkpoint(self, path):
+        shutil.rmtree(self.dir)
+        shutil.copytree(path, self.dir, symlinks=True)
+        self.host = LocalHost()
 
     def plan(self, revision=A, fleet=None, run=True, archive=None, known_hosts=None, target=None):
         """`(plan, problems, archive path)`; by default from the published artifact of `revision`'s run."""
@@ -323,6 +349,8 @@ class InstallTests(PackageCase):
             self.assertIn('unfinished schema transaction', problems)
         self.assertEqual(self.host.log, [])
 
+
+class RecoveryTests(PackageCase):
     def test_lost_lock_stops_before_the_next_step(self):
         plan, _, archive = self.plan()
         def lose(op, arguments):
@@ -335,10 +363,11 @@ class InstallTests(PackageCase):
         self.assertIsNone(self.selection())
 
     def test_rollback_stops_after_losing_its_lock_between_effects(self):
+        journal = self.install()
+        checkpoint = self.checkpoint()
         for boundary in ('selection', 'fleet', 'final'):
             with self.subTest(boundary=boundary):
-                self.setUp()
-                journal = self.install()
+                self.restore_checkpoint(checkpoint)
                 final = self.layout.transaction(journal.id) + '/final.json'
                 effect = {'selection': ('remove', self.layout.current),
                           'fleet': ('remove', self.layout.fleet), 'final': ('write', final)}[boundary]
@@ -362,44 +391,55 @@ class InstallTests(PackageCase):
                 self.assertEqual(self.package().rollback(journal.id).status, 'rolled-back')
 
     def test_reconcile_rechecks_effects_whose_completed_markers_exist(self):
-        cases = [('select', drift) for drift in ('package content', 'package mode', 'extra package file',
-                                                'fleet', 'fleet mode', 'selection')]
-        cases += [('verify', 'package content'), ('promote', 'package content')]
-        for completed, drift in cases:
-            with self.subTest(completed=completed, drift=drift):
-                self.setUp()
-                plan, _, archive = self.plan()
+        cases = {'select': ('package content', 'package mode', 'extra package file',
+                            'fleet', 'fleet mode', 'selection'),
+                 'verify': ('package content',), 'promote': ('package content',)}
+        for completed, drifts in cases.items():
+            self.setUp()
+            plan, _, archive = self.plan()
 
-                def interrupt(op, arguments):
-                    if op == 'write' and arguments['path'].endswith('-' + completed + '.done.json'):
-                        raise RemoteError('connection lost after the completed selection marker')
+            def interrupt(op, arguments):
+                if op == 'write' and arguments['path'].endswith('-' + completed + '.done.json'):
+                    raise RemoteError('connection lost after the completed selection marker')
 
-                self.host.after = interrupt
-                with self.assertRaisesRegex(package.PackageError, 'unknown until reconciled'):
-                    self.package().install(A, self.fleet, durable.digest(plan), RUNS[A])
-                self.host.after = None
-                journal = Journal.load(self.state, package.SERVICE)
-                self.assertEqual(journal.status, 'unknown')
-                directory = self.release(A) if self.release(A).exists() else Path(self.layout.staging) / journal.id
-                script = directory / 'ops/scripts/wallet-pir-deploy.py'
-                if drift == 'package content':
-                    script.write_bytes(script.read_bytes() + b'\n# changed after verification\n')
-                elif drift == 'package mode':
-                    script.chmod(0o644)
-                elif drift == 'extra package file':
-                    (self.release(A) / 'unexpected').write_text('external file')
-                elif drift == 'fleet':
-                    Path(self.layout.fleet).write_text('{"changed":true}')
-                elif drift == 'fleet mode':
-                    Path(self.layout.fleet).chmod(0o644)
-                else:
-                    Path(self.layout.current).unlink()
-                    Path(self.layout.current).symlink_to('releases/' + B)
-                self.host.log.clear()
-                with self.assertRaises(package.PackageError):
-                    self.package().reconcile(journal.id, archive, self.fleet)
-                self.assertEqual(self.host.log, [], 'completed effects must be checked before any new effect')
-                self.assertEqual(Journal.load(self.state, package.SERVICE).status, 'refused')
+            self.host.after = interrupt
+            with self.assertRaisesRegex(package.PackageError, 'unknown until reconciled'):
+                self.package().install(A, self.fleet, durable.digest(plan), RUNS[A])
+            self.host.after = None
+            journal = Journal.load(self.state, package.SERVICE)
+            self.assertEqual(journal.status, 'unknown')
+            checkpoint = self.checkpoint()
+            # A restored, untampered checkpoint must still finish successfully;
+            # the negative cases below must fail because of the introduced drift.
+            self.restore_checkpoint(checkpoint)
+            self.assertEqual(self.package().reconcile(journal.id, archive, self.fleet).status, 'committed')
+            for drift in drifts:
+                self.check_completed_drift(completed, drift, checkpoint, journal.id, archive)
+
+    def check_completed_drift(self, completed, drift, checkpoint, identifier, archive):
+        with self.subTest(completed=completed, drift=drift):
+            self.restore_checkpoint(checkpoint)
+            self.assertEqual(Journal.load(self.state, package.SERVICE).status, 'unknown')
+            directory = self.release(A) if self.release(A).exists() else Path(self.layout.staging) / identifier
+            script = directory / 'ops/scripts/wallet-pir-deploy.py'
+            if drift == 'package content':
+                script.write_bytes(script.read_bytes() + b'\n# changed after verification\n')
+            elif drift == 'package mode':
+                script.chmod(0o644)
+            elif drift == 'extra package file':
+                (self.release(A) / 'unexpected').write_text('external file')
+            elif drift == 'fleet':
+                Path(self.layout.fleet).write_text('{"changed":true}')
+            elif drift == 'fleet mode':
+                Path(self.layout.fleet).chmod(0o644)
+            else:
+                Path(self.layout.current).unlink()
+                Path(self.layout.current).symlink_to('releases/' + B)
+            self.host.log.clear()
+            with self.assertRaises(package.PackageError):
+                self.package().reconcile(identifier, archive, self.fleet)
+            self.assertEqual(self.host.log, [], 'completed effects must be checked before any new effect')
+            self.assertEqual(Journal.load(self.state, package.SERVICE).status, 'refused')
 
     def test_unfinished_transaction_blocks_another_runner_and_this_one(self):
         plan, _, archive = self.plan()
@@ -509,6 +549,8 @@ class InstallTests(PackageCase):
             self.package().rollback(identifier)
         self.assertEqual(self.host.log, [])
 
+
+class RetainedReleaseTests(PackageCase):
     def test_rollback_refuses_a_changed_selection_and_a_later_transaction(self):
         first = self.install(A)
         self.install(B)
