@@ -1,10 +1,13 @@
 """Selection, coverage, isolation and stale-result regressions for the shared gate."""
 import importlib.util
+from contextlib import nullcontext, redirect_stdout
+import io
 import json
 import os
 from pathlib import Path
 import subprocess
 import tempfile
+import threading
 import unittest
 from unittest.mock import patch
 
@@ -142,7 +145,7 @@ class PlannerTests(unittest.TestCase):
         for name in ['pir-control', 'pir-observability', 'pir-monitor', 'transparent-blocks']:
             command = next(command for group in groups for command in full.commands(group, groups) if '-p' in command and name in command)
             self.assertIn('tools/ci/full-test.sh', command)
-        self.assertIn('needs: [complete]', workflow)
+        self.assertIn('needs: [complete, build-cuda]', workflow)
         self.assertIn('validate-transparent-elastic-infra', workflow)
 
     def test_full_coverage_rejects_unclassified_or_duplicate_packages(self):
@@ -194,11 +197,44 @@ class PlannerTests(unittest.TestCase):
 
     def test_full_helper_dispatch_keeps_docs_precise_and_restores_models(self):
         self.assertEqual(helpers.targets(['check-docs'], full=True), ['check-docs'])
+        self.assertEqual(helpers.targets(['check-ops-deploy']), ['check-ops-deploy-fast'])
+        self.assertEqual(helpers.targets(['check-ops-deploy'], full=True), ['check-ops-deploy'])
         self.assertEqual(helpers.targets(['check-ops-scaler-fast'], full=True), ['check-ops-scaler'])
         self.assertEqual(set(helpers.targets(list(fast.HELPERS), full=True)),
                          (fast.HELPERS - {'check-ops-scaler-fast'}) | {'check-ops-scaler'})
         with self.assertRaisesRegex(ValueError, 'unknown helper'):
             helpers.targets(['check-docs; unsafe'])
+
+    def test_rust_execution_can_start_while_independent_helpers_are_running(self):
+        started = threading.Event()
+        helper_fails = False
+
+        def run(command, **kwargs):
+            if kwargs.get('stage') == 'helpers':
+                self.assertTrue(started.wait(1), 'Rust execution waited for the helper suite')
+                if helper_fails:
+                    raise RuntimeError('helper check failed')
+
+        def rust(selected, **kwargs):
+            # Reproduce an orchestration barrier if one is supplied. Both
+            # suites must still finish successfully before the gate can pass.
+            if kwargs.get('before_tests'):
+                kwargs['before_tests']()
+            started.set()
+
+        paths = ['ops/tests/deploy/test_ops_package.py',
+                 'transparent/services/transparent-filter-server/src/lib.rs']
+        with patch.object(sys, 'argv', ['fast.py', '--base', 'HEAD', '--committed-only']), \
+                patch.object(fast, 'changed_paths', return_value=paths), \
+                patch('hygiene.check', return_value=0), \
+                patch.object(fast, 'local_target', return_value=nullcontext()), \
+                patch.object(fast, 'run', side_effect=run), \
+                patch.object(fast, 'rust_checks', side_effect=rust), redirect_stdout(io.StringIO()):
+            fast.main()
+            started.clear()
+            helper_fails = True
+            with self.assertRaisesRegex(RuntimeError, 'helper check failed'):
+                fast.main()
 
 
     def test_full_commands_only_select_workspace_packages_and_feature_owners(self):
@@ -308,7 +344,7 @@ class IntegrityTests(unittest.TestCase):
         # over rustup's default. Every command and the cache must share the
         # compiler recorded in the CUDA ABI manifest.
         workflow = (ROOT / '.github/workflows/ci-full.yml').read_text()
-        cuda_job = workflow.split('\n  release-cuda:\n', 1)[1]
+        cuda_job = workflow.split('\n  build-cuda:\n', 1)[1].split('\n  release-cuda:\n', 1)[0]
         metadata = load('release').CUDA_BUILD
         self.assertIn('    env:\n      RUSTUP_TOOLCHAIN: ' + metadata['rust'], cuda_job)
 

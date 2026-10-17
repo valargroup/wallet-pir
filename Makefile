@@ -71,6 +71,12 @@ check-ops-deploy:
 	python3 transparent/ops/tests/test_activity_schema_operation.py
 	python3 transparent/ops/tests/test_activity_schema_baseline.py
 
+.PHONY: check-ops-deploy-fast
+check-ops-deploy-fast:
+	python3 tools/ci/python_tests.py ops/tests/deploy --jobs 2 --split-module test_ops_package --selection tools/ci/deploy-fast-tests.json
+	python3 transparent/ops/tests/test_activity_schema_operation.py
+	python3 transparent/ops/tests/test_activity_schema_baseline.py
+
 check-ops-contracts:
 	ops/scripts/check-jq-contracts.sh
 
@@ -347,7 +353,7 @@ check-tools:
 	python3 tools/ci/enhance_tests.py
 	python3 -m unittest discover -s transparent/tools/filters -p 'test_*.py'
 	python3 -m unittest discover -s transparent/tools/parent-filters -p 'test_*.py'
-	python3 -m unittest discover -s tools/tests -p 'test_*.py'
+	python3 tools/ci/python_tests.py tools/tests --jobs 2 --isolate-ci-output
 
 .PHONY: transparent-txid-demo
 transparent-txid-demo:
