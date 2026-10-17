@@ -6,7 +6,9 @@ Transparent and Receiver pack inside the worker. Their controllers still answer
 the same questions about a serving process: which executable it runs, whether it
 has restarted, whether it holds current authority, and what a refusal means to a
 caller. This document records the shared answers and the deliberate differences.
-Code that implements the shared parts lives in `shared/pir-control`.
+Code that implements the shared parts lives in `shared/pir-control`; the raw
+PIR parameter, evaluation and packing integration they share lives in
+`shared/pir-runtime`.
 
 ## Process identity
 
