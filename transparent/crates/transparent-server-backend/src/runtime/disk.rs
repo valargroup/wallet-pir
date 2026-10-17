@@ -1477,98 +1477,105 @@ mod shipped_tests {
     /// geometry's parameters, the other table kind or another native
     /// schema's parameters, are each refused and built here, once.
     #[tokio::test(flavor = "multi_thread")]
-    async fn history_files_of_another_identity_are_refused_once_each() {
+    async fn directory_files_of_another_identity_are_refused_once_each() {
+        history_identity_refusals(Table::Directory).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn page_files_of_another_identity_are_refused_once_each() {
+        history_identity_refusals(Table::Pages).await;
+    }
+
+    async fn history_identity_refusals(table: Table) {
         use transparent_shard::layout::DECOUPLED_32K_32K;
         let dir = tempfile::tempdir().unwrap();
-        for table in [Table::Directory, Table::Pages] {
-            let s = history_segment(dir.path(), table, 900, 3);
-            let local = TableRuntime::build(&s.shared, &s.rows).unwrap();
-            let other_kind = match table {
-                Table::Directory => Table::Pages,
-                _ => Table::Directory,
-            };
-            let mut other_identity = s.key.clone();
-            other_identity.0 = "12".repeat(32);
-            let mut kind_key = s.key.clone();
-            kind_key.1 = other_kind;
-            let wide = SharedParams::build(&DECOUPLED_32K_32K, table).unwrap();
-            let display =
-                SharedParams::build_display(&transparent_shard::layout::DECOUPLED_2K_8K, table)
-                    .unwrap();
-            let cases: Vec<(&str, RuntimeKey, &SharedParams, String)> = vec![
-                (
-                    "another identity",
-                    other_identity,
-                    &s.shared,
-                    s.source.sha256().to_string(),
-                ),
-                (
-                    "another source digest",
-                    s.key.clone(),
-                    &s.shared,
-                    "00".repeat(32),
-                ),
-                (
-                    "another geometry",
-                    s.key.clone(),
-                    &wide,
-                    s.source.sha256().to_string(),
-                ),
-                (
-                    "another kind",
-                    kind_key,
-                    &s.shared,
-                    s.source.sha256().to_string(),
-                ),
-                (
-                    "another native schema",
-                    s.key.clone(),
-                    &display,
-                    s.source.sha256().to_string(),
-                ),
-            ];
-            for (name, key, shared, sha) in cases {
-                assert_ne!(
-                    DiskCache::identity(&key, shared, &sha),
-                    DiskCache::identity(&s.key, &s.shared, s.source.sha256()),
-                    "{name}"
-                );
-                let shipped = candidate(dir.path(), &format!("{}-{name}", table.as_str()));
-                // Header and body as the publisher of that identity would
-                // write them, at the length that identity's layout gives.
-                let file = shipped.path(&s.key, &s.shared, s.source.sha256());
-                let mut bytes = fs::read({
-                    let staged = ShippedRuntimes::new(dir.path().join("staged"));
-                    fs::create_dir_all(staged.directory()).unwrap();
-                    staged
-                        .write(&s.key, &s.shared, s.source.sha256(), &local)
-                        .unwrap();
-                    staged.path(&s.key, &s.shared, s.source.sha256())
-                })
+        let s = history_segment(dir.path(), table, 900, 3);
+        let local = TableRuntime::build(&s.shared, &s.rows).unwrap();
+        let other_kind = match table {
+            Table::Directory => Table::Pages,
+            _ => Table::Directory,
+        };
+        let mut other_identity = s.key.clone();
+        other_identity.0 = "12".repeat(32);
+        let mut kind_key = s.key.clone();
+        kind_key.1 = other_kind;
+        let wide = SharedParams::build(&DECOUPLED_32K_32K, table).unwrap();
+        let display =
+            SharedParams::build_display(&transparent_shard::layout::DECOUPLED_2K_8K, table)
                 .unwrap();
-                bytes[..32].copy_from_slice(&DiskCache::identity(&key, shared, &sha));
-                fs::write(&file, &bytes).unwrap();
-                let metrics = Arc::new(Metrics::default());
-                let cache = RuntimeCache::new(s.shared.reserved_bytes() * 2, 1, metrics.clone());
-                let (handle, produced) = cache
-                    .get_from(
-                        s.key.clone(),
-                        s.shared.clone(),
-                        s.source.clone(),
-                        Some(shipped),
-                    )
-                    .await
-                    .unwrap();
-                assert_eq!(produced, Produced::Fallback, "{table:?} {name}");
-                assert_eq!(
-                    Metrics::get(&metrics.shipped_fallbacks),
-                    1,
-                    "{table:?} {name}"
-                );
-                assert_eq!(Metrics::get(&metrics.shipped_loads), 0, "{table:?} {name}");
-                assert_eq!(Metrics::get(&metrics.builds), 1, "{table:?} {name}");
-                assert_eq!(handle.get().public_params, local.public_params, "{name}");
-            }
+        let cases: Vec<(&str, RuntimeKey, &SharedParams, String)> = vec![
+            (
+                "another identity",
+                other_identity,
+                &s.shared,
+                s.source.sha256().to_string(),
+            ),
+            (
+                "another source digest",
+                s.key.clone(),
+                &s.shared,
+                "00".repeat(32),
+            ),
+            (
+                "another geometry",
+                s.key.clone(),
+                &wide,
+                s.source.sha256().to_string(),
+            ),
+            (
+                "another kind",
+                kind_key,
+                &s.shared,
+                s.source.sha256().to_string(),
+            ),
+            (
+                "another native schema",
+                s.key.clone(),
+                &display,
+                s.source.sha256().to_string(),
+            ),
+        ];
+        // Serialize the immutable reference runtime once. Each negative case
+        // gets its own file and a cold cache, and still performs a real fallback
+        // build; only the repeated staging write/read is shared.
+        let staged = ShippedRuntimes::new(dir.path().join("staged"));
+        fs::create_dir_all(staged.directory()).unwrap();
+        staged
+            .write(&s.key, &s.shared, s.source.sha256(), &local)
+            .unwrap();
+        let mut bytes = fs::read(staged.path(&s.key, &s.shared, s.source.sha256())).unwrap();
+        for (name, key, shared, sha) in cases {
+            assert_ne!(
+                DiskCache::identity(&key, shared, &sha),
+                DiskCache::identity(&s.key, &s.shared, s.source.sha256()),
+                "{name}"
+            );
+            let shipped = candidate(dir.path(), &format!("{}-{name}", table.as_str()));
+            // Header and body as the publisher of that identity would
+            // write them, at the length that identity's layout gives.
+            let file = shipped.path(&s.key, &s.shared, s.source.sha256());
+            bytes[..32].copy_from_slice(&DiskCache::identity(&key, shared, &sha));
+            fs::write(&file, &bytes).unwrap();
+            let metrics = Arc::new(Metrics::default());
+            let cache = RuntimeCache::new(s.shared.reserved_bytes() * 2, 1, metrics.clone());
+            let (handle, produced) = cache
+                .get_from(
+                    s.key.clone(),
+                    s.shared.clone(),
+                    s.source.clone(),
+                    Some(shipped),
+                )
+                .await
+                .unwrap();
+            assert_eq!(produced, Produced::Fallback, "{table:?} {name}");
+            assert_eq!(
+                Metrics::get(&metrics.shipped_fallbacks),
+                1,
+                "{table:?} {name}"
+            );
+            assert_eq!(Metrics::get(&metrics.shipped_loads), 0, "{table:?} {name}");
+            assert_eq!(Metrics::get(&metrics.builds), 1, "{table:?} {name}");
+            assert_eq!(handle.get().public_params, local.public_params, "{name}");
         }
     }
 

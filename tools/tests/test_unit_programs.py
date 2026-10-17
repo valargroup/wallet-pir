@@ -82,33 +82,34 @@ class ProgramTests(unittest.TestCase):
         stage.relay(process, None, 'compile', found)
         self.assertEqual(found, ['/test'])
 
-    def test_two_programs_overlap_with_one_thread_per_program_and_package_cwd(self):
-        barrier = threading.Barrier(2, timeout=5)
-        lock = threading.Lock()
-        active, peak = 0, 0
-        seen = []
+    def test_bounded_programs_overlap_with_one_thread_per_program_and_package_cwd(self):
+        for jobs in (2, 3):
+            barrier = threading.Barrier(jobs, timeout=5)
+            lock = threading.Lock()
+            active, peak = 0, 0
+            seen = []
 
-        def run(command, **kwargs):
-            nonlocal active, peak
-            with lock:
-                active += 1
-                peak = max(peak, active)
-            barrier.wait()
-            self.assertEqual(kwargs['env']['RUST_TEST_THREADS'], '1')
-            self.assertEqual(kwargs['env']['CARGO_MANIFEST_DIR'], kwargs['cwd'])
-            self.assertEqual(command[1:], ['--skip', 'campaign'])
-            self.assertIn('/deps', kwargs['env'].get('LD_LIBRARY_PATH', '') + kwargs['env'].get('DYLD_FALLBACK_LIBRARY_PATH', ''))
-            with lock:
-                seen.append(command[0])
-                active -= 1
+            def run(command, **kwargs):
+                nonlocal active, peak
+                with lock:
+                    active += 1
+                    peak = max(peak, active)
+                barrier.wait()
+                self.assertEqual(kwargs['env']['RUST_TEST_THREADS'], '1')
+                self.assertEqual(kwargs['env']['CARGO_MANIFEST_DIR'], kwargs['cwd'])
+                self.assertEqual(command[1:], ['--skip', 'campaign'])
+                self.assertIn('/deps', kwargs['env'].get('LD_LIBRARY_PATH', '') + kwargs['env'].get('DYLD_FALLBACK_LIBRARY_PATH', ''))
+                with lock:
+                    seen.append(command[0])
+                    active -= 1
 
-        programs = [dict(executable='/deps/p'+str(i), directory='/package'+str(i),
-                         package='p', version='1.0.0', args=['--skip', 'campaign']) for i in range(4)]
-        with patch.object(unit_tests.subprocess, 'check_output', return_value='/rust/lib\n'), \
-                patch.object(unit_tests, 'run', side_effect=run):
-            unit_tests.execute(programs, 2)
-        self.assertEqual(peak, 2)
-        self.assertCountEqual(seen, [p['executable'] for p in programs])
+            programs = [dict(executable='/deps/p'+str(i), directory='/package'+str(i),
+                             package='p', version='1.0.0', args=['--skip', 'campaign']) for i in range(6)]
+            with patch.object(unit_tests.subprocess, 'check_output', return_value='/rust/lib\n'), \
+                    patch.object(unit_tests, 'run', side_effect=run):
+                unit_tests.execute(programs, jobs)
+            self.assertEqual(peak, jobs)
+            self.assertCountEqual(seen, [p['executable'] for p in programs])
 
     def test_exclusive_programs_finish_before_ordinary_programs_overlap(self):
         barrier = threading.Barrier(2, timeout=5)
