@@ -1,5 +1,5 @@
 //! Read-only, coverage-matched v10 census against a recorded v9 shard map.
-//! Usage: cargo run --release -p transparent-regression --example layout_replay -- JOURNAL V9_MAP
+//! Usage: cargo run --release -p transparent-tools --example layout_replay -- JOURNAL V9_MAP
 //! Reuses the independent committed-prefix reader; never opens a writer lock.
 #[path = "../src/regression/journal.rs"]
 mod journal;

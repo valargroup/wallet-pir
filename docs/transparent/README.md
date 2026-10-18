@@ -37,13 +37,13 @@ The contract governs intended behavior; code establishes implementation; deploym
 
 ## Product boundaries
 
-Active transparent recovery uses `wallet-libraries/zakura/transparent-events`, `wallet-libraries/zakura/transparent-filter`, `wallet-libraries/zakura/transparent-shard`, `wallet-libraries/zakura/transparent-txid-client`, `wallet-libraries/zakura/pir-transparent` (`engine` and `engine_store`), `src/transparent/transparent-filter-server`, and `src/transparent/transparent-shard-server`.
+Active transparent recovery uses `wallet-libraries/zakura/transparent-events`, `wallet-libraries/zakura/transparent-filter`, `wallet-libraries/zakura/transparent-shard`, `wallet-libraries/zakura/transparent-txid-client`, `wallet-libraries/zakura/pir-transparent` (`engine` and `engine_store`), `src/transparent/transparent-publisher`, and `src/transparent/transparent-query-server`.
 
-Both services consume the shared server backend in
-`src/transparent/transparent-server-backend`; the compact-block server is a
-separate benchmark baseline.
+Both services consume the shared package
+`src/transparent/transparent-shared`; the compact-block server is a
+separate benchmark baseline in `tools/transparent`.
 
-Validation tools live under `src/transparent/`: load tests, regression fixtures, and the
+Validation tools live in the `transparent-tools` package under `tools/transparent/`: load tests, regression fixtures, and the
 current-shard `transparent-measure` command used by the backfill workflow.
 Enhance has its own [index](../enhance/README.md).
 

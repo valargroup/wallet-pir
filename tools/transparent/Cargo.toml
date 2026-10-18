@@ -76,6 +76,16 @@ path = "examples/activity-reopen.rs"
 name = "sample_recovery"
 path = "examples/sample_recovery.rs"
 
+[[example]]
+name = "transparent-txid-demo"
+path = "examples/transparent-txid-demo.rs"
+required-features = ["publisher-tools"]
+
+[[test]]
+name = "txid_shipped_runtimes"
+path = "tests/txid_shipped_runtimes.rs"
+required-features = ["publisher-tools"]
+
 [[test]]
 name = "regression_runner"
 path = "tests/regression_runner.rs"
@@ -136,3 +146,7 @@ sha2 = "0.10"
 
 [dev-dependencies]
 tempfile = "3"
+tower = { version = "0.5", features = ["util"] }
+transparent-native = { package = "zakura-transparent-native", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "b7fffbbc98d75af5ebc9c9d9da92ca19e9f0fdbd" }
+transparent-shared = { path = "../../src/transparent/transparent-shared", features = ["test-support"] }
+transparent-txid-client = { package = "zakura-transparent-txid-client", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "b7fffbbc98d75af5ebc9c9d9da92ca19e9f0fdbd", features = ["testing"] }

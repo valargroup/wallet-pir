@@ -60,8 +60,7 @@
     "full": [
       "event_codec_bounds",
       "service_round_trip",
-      "shard_filters",
-      "txid_shipped_runtimes"
+      "shard_filters"
     ]
   },
   "transparent-query-server": {
@@ -91,7 +90,8 @@
       "parent_filters",
       "regression_runner",
       "service_tools",
-      "simulation"
+      "simulation",
+      "txid_shipped_runtimes"
     ]
   },
   "pir-publisher": {
