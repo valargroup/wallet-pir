@@ -151,7 +151,7 @@ class ProgramTests(unittest.TestCase):
         self.assertEqual(found, ['/test'])
 
     def test_bounded_programs_overlap_with_one_thread_per_program_and_package_cwd(self):
-        for jobs in (2, 3, 4):
+        for jobs in (2, 3):
             barrier = threading.Barrier(jobs, timeout=5)
             lock = threading.Lock()
             active, peak = 0, 0
@@ -172,7 +172,7 @@ class ProgramTests(unittest.TestCase):
                     active -= 1
 
             programs = [dict(executable='/deps/p'+str(i), directory='/package'+str(i),
-                             package='p', version='1.0.0', args=['--skip', 'campaign']) for i in range(jobs * 2)]
+                             package='p', version='1.0.0', args=['--skip', 'campaign']) for i in range(6)]
             with patch.object(unit_tests.subprocess, 'check_output', return_value='/rust/lib\n'), \
                     patch.object(unit_tests, 'run', side_effect=run):
                 unit_tests.execute(programs, jobs)

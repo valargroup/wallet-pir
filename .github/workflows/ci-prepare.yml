@@ -60,7 +60,7 @@ jobs:
             git rev-parse HEAD > "$receipt/source.txt"
             TMPDIR="$RUNNER_TEMP" WALLET_PIR_STAGE_LOG="$PWD/$receipt/stages.jsonl" \
               timeout --signal=TERM --kill-after=5s 180s \
-              python3 tools/ci/fast.py --all --unit-jobs 4 2>&1 | tee "$receipt/run.log"
+              python3 tools/ci/fast.py --all --unit-jobs 3 2>&1 | tee "$receipt/run.log"
           done
       - name: Diagnose complete CPU correctness
         id: correctness-preparation
