@@ -1229,7 +1229,12 @@ mod shipped_tests {
     /// A `txid-2k8` segment of `table` whose first `filled` rows hold bytes
     /// drawn from `seed`, written under `dir`.
     fn segment(dir: &Path, table: Table, filled: usize, seed: usize) -> Segment {
-        let shared = Arc::new(SharedParams::build_display(&TXID_2K8, table).unwrap());
+        let geometry = if cfg!(feature = "qualification-tests") {
+            &TXID_2K8
+        } else {
+            &super::super::tests::NATIVE_INSTANCE
+        };
+        let shared = Arc::new(SharedParams::build_display(geometry, table).unwrap());
         let profile = &shared.profile;
         let mut rows = vec![0u8; profile.rows * profile.row_bytes];
         for (i, byte) in rows[..filled * profile.row_bytes].iter_mut().enumerate() {

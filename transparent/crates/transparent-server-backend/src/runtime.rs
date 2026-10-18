@@ -1482,6 +1482,24 @@ pub(crate) mod tests {
     use transparent_shard::display::{TXID_2K8, TXID_4K8};
     use transparent_shard::layout::{DECOUPLED_2K_8K, DECOUPLED_32K_32K};
 
+    // Cache units exercise the generic native API with one supported column
+    // instance. These are test domains, never advertised publication geometries.
+    // Production HTTP checks and qualification retain the registered layouts.
+    pub(crate) const NATIVE_INSTANCE: transparent_shard::layout::Geometry =
+        transparent_shard::layout::Geometry {
+            name: "test-native-instance",
+            directory_row_bytes: 2_048,
+            page_row_bytes: 2_048,
+            ..TXID_2K8
+        };
+    const TWO_NATIVE_BLOCKS: transparent_shard::layout::Geometry =
+        transparent_shard::layout::Geometry {
+            name: "test-native-two-blocks",
+            directory_rows: 4_096,
+            page_rows: 4_096,
+            ..NATIVE_INSTANCE
+        };
+
     /// The masks a table's rows publish, from the whole-table hint over the
     /// columns the profile encodes (single bytes for an 8-bit table, u16
     /// pairs for a 16-bit one), without the scan server: what the certificate
@@ -1495,7 +1513,7 @@ pub(crate) mod tests {
         if cfg!(feature = "qualification-tests") {
             (geometry, table)
         } else {
-            (&DECOUPLED_2K_8K, Table::Directory)
+            (&NATIVE_INSTANCE, Table::TxDirectory)
         }
     }
 
@@ -1869,7 +1887,11 @@ pub(crate) mod tests {
     /// those masks to equal the served ones, so the two derivations must agree.
     #[test]
     fn masks_rebuilt_from_row_bytes_equal_the_served_masks() {
-        let (geometry, table) = fixture_shape(&DECOUPLED_2K_8K, Table::Pages);
+        let (geometry, table) = if cfg!(feature = "qualification-tests") {
+            (&DECOUPLED_2K_8K, Table::Pages)
+        } else {
+            (&DECOUPLED_2K_8K, Table::Directory)
+        };
         let shared = SharedParams::build(geometry, table).unwrap();
         let profile = &shared.profile;
         let rows: Vec<u8> = (0..profile.rows * profile.row_bytes)
@@ -1886,9 +1908,13 @@ pub(crate) mod tests {
     /// masks the whole-table product does: an empty table, content ending
     /// on either side of a block boundary, and content in the last row.
     fn check_zero_tail(input: impl FnOnce(&native::TableProfile) -> (usize, usize)) {
-        // The history page profile crosses block boundaries with fewer native
-        // instances than a display row. Each boundary gets its own deadline.
-        let (geometry, table) = (&DECOUPLED_2K_8K, Table::Pages);
+        // A two-block native component covers both sides of the boundary.
+        // The independent 16-bit oracle above and HTTP retain history rows.
+        let (geometry, table) = if cfg!(feature = "qualification-tests") {
+            (&DECOUPLED_2K_8K, Table::Pages)
+        } else {
+            (&TWO_NATIVE_BLOCKS, Table::TxDirectory)
+        };
         let shared = SharedParams::build(geometry, table).unwrap();
         let profile = &shared.profile;
         let (filled, expected_blocks) = input(profile);
