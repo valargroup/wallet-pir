@@ -14,12 +14,12 @@ serde = { version = "1", features = ["derive"] }
 tempfile = "3"
 sha2 = "0.10"
 thiserror = "2"
-transparent-events = { package = "zakura-transparent-events", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "0c110882ad6d36c9d3ad811903abdf37b13d35d5" }
-transparent-filter = { package = "zakura-transparent-filter", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "0c110882ad6d36c9d3ad811903abdf37b13d35d5" }
-transparent-shard = { package = "zakura-transparent-shard", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "0c110882ad6d36c9d3ad811903abdf37b13d35d5" }
+transparent-events = { package = "zakura-transparent-events", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "129d0d6bbadaccb2a5ca82e70b7da93ca691a5aa" }
+transparent-filter = { package = "zakura-transparent-filter", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "129d0d6bbadaccb2a5ca82e70b7da93ca691a5aa" }
+transparent-shard = { package = "zakura-transparent-shard", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "129d0d6bbadaccb2a5ca82e70b7da93ca691a5aa" }
 # Transaction and block reads through the server adapter, at the revision the
 # services pin.
-zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "0c110882ad6d36c9d3ad811903abdf37b13d35d5" }
+zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "129d0d6bbadaccb2a5ca82e70b7da93ca691a5aa" }
 
 [build-dependencies]
 sha2 = "0.10"
@@ -29,9 +29,33 @@ toml = "0.8.23"
 [dev-dependencies]
 toml = "0.8.23"
 # Raw synthetic blocks for the shared extractor's tests.
-zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "0c110882ad6d36c9d3ad811903abdf37b13d35d5", features = ["testing"] }
+zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "129d0d6bbadaccb2a5ca82e70b7da93ca691a5aa", features = ["testing"] }
 
 [profile.release-fast]
 inherits = "release"
 lto = false
 codegen-units = 16
+
+# Keep Common on the same revision as the service workspace.
+[patch.crates-io]
+zakura-address = { git = "https://github.com/zakura-core/common.git", rev = "b58202174969a4d4029827de140da458dd429986" }
+zakura-bellman = { git = "https://github.com/zakura-core/common.git", rev = "b58202174969a4d4029827de140da458dd429986" }
+zakura-bls12-381 = { git = "https://github.com/zakura-core/common.git", rev = "b58202174969a4d4029827de140da458dd429986" }
+zakura-equihash = { git = "https://github.com/zakura-core/common.git", rev = "b58202174969a4d4029827de140da458dd429986" }
+zakura-halo2-gadgets = { git = "https://github.com/zakura-core/common.git", rev = "b58202174969a4d4029827de140da458dd429986" }
+zakura-halo2-legacy-pdqsort = { git = "https://github.com/zakura-core/common.git", rev = "b58202174969a4d4029827de140da458dd429986" }
+zakura-halo2-poseidon = { git = "https://github.com/zakura-core/common.git", rev = "b58202174969a4d4029827de140da458dd429986" }
+zakura-halo2-proofs = { git = "https://github.com/zakura-core/common.git", rev = "b58202174969a4d4029827de140da458dd429986" }
+zakura-jubjub = { git = "https://github.com/zakura-core/common.git", rev = "b58202174969a4d4029827de140da458dd429986" }
+zakura-note-encryption = { git = "https://github.com/zakura-core/common.git", rev = "b58202174969a4d4029827de140da458dd429986" }
+zakura-orchard = { git = "https://github.com/zakura-core/common.git", rev = "b58202174969a4d4029827de140da458dd429986" }
+zakura-orchard-legacy = { git = "https://github.com/zakura-core/common.git", rev = "b58202174969a4d4029827de140da458dd429986" }
+zakura-pairing = { git = "https://github.com/zakura-core/common.git", rev = "b58202174969a4d4029827de140da458dd429986" }
+zakura-pasta-curves = { git = "https://github.com/zakura-core/common.git", rev = "b58202174969a4d4029827de140da458dd429986" }
+zakura-primitives = { git = "https://github.com/zakura-core/common.git", rev = "b58202174969a4d4029827de140da458dd429986" }
+zakura-protocol = { git = "https://github.com/zakura-core/common.git", rev = "b58202174969a4d4029827de140da458dd429986" }
+zakura-reddsa = { git = "https://github.com/zakura-core/common.git", rev = "b58202174969a4d4029827de140da458dd429986" }
+zakura-redjubjub = { git = "https://github.com/zakura-core/common.git", rev = "b58202174969a4d4029827de140da458dd429986" }
+zakura-sapling-crypto = { git = "https://github.com/zakura-core/common.git", rev = "b58202174969a4d4029827de140da458dd429986" }
+zakura-sinsemilla = { git = "https://github.com/zakura-core/common.git", rev = "b58202174969a4d4029827de140da458dd429986" }
+zakura-transparent = { git = "https://github.com/zakura-core/common.git", rev = "b58202174969a4d4029827de140da458dd429986" }

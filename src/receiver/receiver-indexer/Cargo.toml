@@ -20,8 +20,8 @@ pir-pipeline = { path = "../../shared/pir-pipeline" }
 axum = "0.7"
 clap = { version = "4", features = ["derive", "env"] }
 hex = "0.4"
-receiver-directory = { package = "zakura-receiver-directory", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "886db40137caef486d32d5bc594b2c20b1dde75e" }
-receiver-pir = { package = "zakura-receiver-pir", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "886db40137caef486d32d5bc594b2c20b1dde75e", features = ["server"] }
+receiver-directory = { package = "zakura-receiver-directory", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "129d0d6bbadaccb2a5ca82e70b7da93ca691a5aa" }
+receiver-pir = { package = "zakura-receiver-pir", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "129d0d6bbadaccb2a5ca82e70b7da93ca691a5aa", features = ["server"] }
 receiver-store = { path = "../receiver-store" }
 receiver-pir-server = { path = "../receiver-pir-server" }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
@@ -35,8 +35,8 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Receiver address, record, recovery and proof checks, and the node reads and block
 # interpretation, from one exact wallet-libraries revision.
-zakura-receiver-crypto = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "886db40137caef486d32d5bc594b2c20b1dde75e", default-features = false, features = ["crypto"] }
-zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "886db40137caef486d32d5bc594b2c20b1dde75e" }
+zakura-receiver-crypto = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "129d0d6bbadaccb2a5ca82e70b7da93ca691a5aa", default-features = false, features = ["crypto"] }
+zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "129d0d6bbadaccb2a5ca82e70b7da93ca691a5aa" }
 
 [dev-dependencies]
-zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "886db40137caef486d32d5bc594b2c20b1dde75e", features = ["testing"] }
+zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "129d0d6bbadaccb2a5ca82e70b7da93ca691a5aa", features = ["testing"] }
