@@ -1421,8 +1421,8 @@ async fn manager_double_intent_write_failure_retains_exact_negative_revision() {
     let _ = task.await;
 }
 
-/// Standard controller/followed-journal adoption. Reuse the provider tests'
-/// immutable source fixture and native row oracle, with fresh writable owners.
+/// Standard controller/followed-journal adoption with the production sealing
+/// policy, original mixed geometries, and an independent native row oracle.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn standard_history_lifecycle_queries_advance_and_reconciles_lost_activation() {
     use std::os::unix::fs::PermissionsExt;
@@ -1432,7 +1432,7 @@ async fn standard_history_lifecycle_queries_advance_and_reconciles_lost_activati
         shardset::LoadScope,
     };
     let root = tempfile::tempdir().unwrap();
-    let (directory, set) = publication(root.path());
+    let (directory, set) = publication_through(root.path(), 2);
     let service_config = ServiceConfig {
         cache_bytes: 4 << 30,
         ..ServiceConfig::default()
