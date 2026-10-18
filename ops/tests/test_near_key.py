@@ -1,4 +1,4 @@
-"""The receiver's NEAR key installer, `receiver/ops/digitalocean/near-key.py`.
+"""The receiver's NEAR key installer, `ops/receiver/digitalocean/near-key.py`.
 
 A stub `ssh` logs its argv and runs the installer's remote program locally,
 with `/etc/receiver-pir` moved under a temporary root, so the tests see the
@@ -16,8 +16,8 @@ import textwrap
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
-SCRIPT = ROOT / 'receiver/ops/digitalocean/near-key.py'
-EXAMPLE = ROOT / 'enhance/ops/deploy/deploy-inventory.example.json'
+SCRIPT = ROOT / 'ops/receiver/digitalocean/near-key.py'
+EXAMPLE = ROOT / 'ops/enhance/deploy/deploy-inventory.example.json'
 KEY = 'pk.Abc_123-xyz~+/=='
 ID = '2026-10-09'
 

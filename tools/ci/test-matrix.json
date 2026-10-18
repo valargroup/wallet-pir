@@ -33,20 +33,20 @@
       "transparent:transparent-shard-server:bin:shard-residency",
       "transparent:transparent-shard-server:bin:shard-scaling",
       "transparent:transparent-shard-server:bin:transparent-shard-server",
-      "transparent:transparent-shard-server:bin:transparent-txid-server",
-      "transparent:transparent-shard-server:bin:txid-control",
-      "transparent:transparent-shard-server:bin:txid-inventory",
+      "transparent:txid-pir-server:bin:transparent-txid-server",
+      "transparent:txid-pir-server:bin:txid-control",
+      "transparent:txid-pir-server:bin:txid-inventory",
       "transparent:transparent-shard-server:doc:transparent_shard_server",
-      "transparent:transparent-shard-server:example:display_fixture",
+      "transparent:txid-pir-server:example:display_fixture",
       "transparent:transparent-shard-server:example:hint_bench",
       "transparent:transparent-shard-server:example:history_fixture",
       "transparent:transparent-shard-server:example:native_certificate",
       "transparent:transparent-shard-server:example:quality-canary",
       "transparent:transparent-shard-server:example:rate-query",
       "transparent:transparent-shard-server:example:soak-query",
-      "transparent:transparent-shard-server:example:txid-bandwidth",
-      "transparent:transparent-shard-server:example:txid-placement-census",
-      "transparent:transparent-shard-server:example:txid-rate",
+      "transparent:txid-pir-server:example:txid-bandwidth",
+      "transparent:txid-pir-server:example:txid-placement-census",
+      "transparent:txid-pir-server:example:txid-rate",
       "transparent:transparent-shard-server:lib:transparent_shard_server",
       "transparent:transparent-shard-server:test:ci_smoke",
       "transparent:transparent-shard-server:test:geometry_costs",
@@ -71,23 +71,29 @@
       "transparent:transparent-filter-server:bin:transparent-event-ingest",
       "transparent:transparent-filter-server:bin:transparent-filter-server",
       "transparent:transparent-filter-server:bin:transparent-publish-controller",
-      "transparent:transparent-filter-server:bin:txid-display-controller",
+      "transparent:txid-pir-server:bin:txid-display-controller",
       "transparent:transparent-filter-server:doc:transparent_filter_server",
       "transparent:transparent-filter-server:example:publication_bench",
-      "transparent:transparent-filter-server:example:transparent-txid-demo",
+      "transparent:txid-pir-server:example:transparent-txid-demo",
       "transparent:transparent-filter-server:lib:transparent_filter_server",
       "transparent:transparent-filter-server:test:compact",
       "transparent:transparent-filter-server:test:event_codec_bounds",
       "transparent:transparent-filter-server:test:service_round_trip",
       "transparent:transparent-filter-server:test:shard_filters",
-      "transparent:transparent-filter-server:test:txid_shipped_runtimes"
+      "transparent:txid-pir-server:test:txid_shipped_runtimes"
     ]
   },
   "transparent-backend": {
     "family": "transparent",
     "targets": [
+      "transparent:transparent-ingest:doc:transparent_ingest",
+      "transparent:transparent-ingest:lib:transparent_ingest",
       "transparent:transparent-server-backend:doc:transparent_server_backend",
-      "transparent:transparent-server-backend:lib:transparent_server_backend"
+      "transparent:transparent-server-backend:lib:transparent_server_backend",
+      "transparent:txid-pir-server:doc:txid_pir_server",
+      "transparent:txid-pir-server:lib:txid_pir_server",
+      "transparent:txid-serving:doc:txid_serving",
+      "transparent:txid-serving:lib:txid_serving"
     ]
   },
   "transparent-recovery": {
@@ -96,13 +102,13 @@
       "transparent:transparent-shard-server:test:assignment",
       "transparent:transparent-shard-server:test:revisions_and_cache",
       "transparent:transparent-shard-server:test:round_trip",
-      "transparent:transparent-shard-server:test:txid_client"
+      "transparent:txid-pir-server:test:txid_client"
     ]
   },
   "transparent-sharded": {
     "family": "transparent",
     "targets": [
-      "transparent:transparent-shard-server:test:txid_sharded",
+      "transparent:txid-pir-server:test:txid_sharded",
       "transparent:transparent-shard-server:test:verification_reuse",
       "transparent:transparent-shard-server:test:wallet_anchor"
     ]
@@ -134,6 +140,12 @@
       "native:pir-apm:doc:pir_apm",
       "native:pir-apm:lib:pir_apm",
       "native:pir-monitor:bin:pir-monitor",
+      "native:status-pir-server:doc:status_pir_server",
+      "native:status-pir-server:lib:status_pir_server",
+      "native:status-protocol:doc:status_protocol",
+      "native:status-protocol:lib:status_protocol",
+      "native:status-publication:doc:status_publication",
+      "native:status-publication:lib:status_publication",
       "native:status-serving:doc:status_serving",
       "native:status-serving:lib:status_serving"
     ]
@@ -149,7 +161,7 @@
     "family": "enhance",
     "targets": [
       "native:enhance-pir-server:bin:enhance-pir-server",
-      "native:enhance-pir-server:bin:status-pir",
+      "native:status-pir-server:bin:status-pir",
       "native:enhance-pir-server:doc:enhance_pir_server",
       "native:enhance-pir-server:example:native_certificate",
       "native:enhance-pir-server:example:packing_budget",
@@ -160,8 +172,8 @@
       "native:enhance-pir-server:test:matvec_config",
       "native:enhance-pir-server:test:record_layout",
       "native:enhance-pir-server:test:schema11_cutover",
-      "native:enhance-pir-server:test:status_wallet",
-      "native:enhance-pir-server:test:status_wallet_http",
+      "native:status-pir-server:test:status_wallet",
+      "native:status-pir-server:test:status_wallet_http",
       "native:enhance-serving:test:ci_smoke",
       "native:enhance-serving:test:packing_http"
     ]
@@ -199,6 +211,7 @@
       "cuda:enhance-pir-load-test:check:all",
       "cuda:enhance-pir-server:check:enhance_pir_server",
       "cuda:enhance-serving:check:enhance_serving",
+      "cuda:status-pir-server:check:status_pir_server",
       "cuda:status-serving:check:status_serving"
     ]
   },

@@ -1,5 +1,5 @@
 # The receiver directory's single indexing and serving Droplet
-# (receiver/ops/digitalocean). Opt in to manage it; the existing Droplet and DNS
+# (ops/receiver/digitalocean). Opt in to manage it; the existing Droplet and DNS
 # record are imported as its README describes, never recreated, and the firewall,
 # which does not exist yet, is created.
 variable "receiver_pir_enabled" {
@@ -16,7 +16,7 @@ resource "digitalocean_droplet" "receiver_pir" {
   ssh_keys   = var.ssh_key_ids
   monitoring = true
   ipv6       = true
-  user_data  = file("${path.module}/../../../../receiver/ops/digitalocean/cloud-init.yaml")
+  user_data  = file("${path.module}/../../../receiver/digitalocean/cloud-init.yaml")
   lifecycle {
     prevent_destroy = true
     # An imported Droplet has no keys in state, and a key change forces replacement.

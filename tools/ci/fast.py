@@ -65,14 +65,14 @@ def route(path):
     """Return helper targets/full groups, or None for an unknown path."""
     if path in {'tools/check-doc-links.sh', 'tools/check-doc-links.py'}:
         return {'check-docs', 'check-tools'}, {'ops'}
-    if path == 'enhance/ops/deploy/deploy-inventory.example.json':
+    if path == 'ops/enhance/deploy/deploy-inventory.example.json':
         # ops/tests pins the receiver's exact check.
         return {'check-ops-enhance', 'check-ops-deploy', 'check-ops-contracts', 'check-ops-shared'}, {'ops'}
-    if path.startswith('receiver/ops/'):
+    if path.startswith('ops/receiver/'):
         # ops/tests pins the receiver's edge, unit, cloud-init and runbook monitor
         # config and tests its helpers, and the deploy tests install its unit.
         return {'check-docs', 'check-ops-shared', 'check-ops-deploy'}, {'ops'}
-    if path.endswith('.md') or path.startswith(('docs/', 'evidence/', 'enhance/evidence/', 'transparent/evidence/', 'receiver/evidence/')):
+    if path.endswith('.md') or path.startswith(('docs/', 'evidence/', 'evidence/enhance/', 'evidence/transparent/', 'evidence/receiver/')):
         return {'check-docs'}, {'ops'}
     if path.startswith('.github/workflows/deploy-') or path.startswith('.github/workflows/configure-'):
         return {'check-tools', 'check-ops-contracts', 'check-ops-deploy'}, {'ops'}
@@ -91,11 +91,9 @@ def route(path):
         return {'check-ops-control-sessions'}, {'ops'}
     if path.startswith(('ops/tests/deploy/', 'ops/scripts/wallet-pir-deploy', 'ops/scripts/deploy-')):
         return {'check-ops-deploy', 'check-ops-contracts'}, {'ops'}
-    if path.startswith('ops/'):
-        return {'check-ops-shared', 'check-ops-contracts', 'check-ops-deploy'}, {'ops'}
-    if path.startswith('enhance/ops/'):
+    if path.startswith('ops/enhance/'):
         return {'check-ops-enhance', 'check-ops-deploy', 'check-ops-contracts'}, {'ops'}
-    if path.startswith('transparent/ops/'):
+    if path.startswith('ops/transparent/'):
         if 'txid_display' in path or 'txid-display' in path:
             targets = {'check-ops-txid-display'}
         elif 'scaler' in path or 'membership_model' in path:
@@ -115,9 +113,11 @@ def route(path):
         else:
             targets = {t for t in OPS if t not in {'check-ops-enhance', 'check-ops-control-sessions', 'check-ops-shared'}}
         return targets | {'check-ops-contracts'}, {'ops'}
-    if path.startswith('transparent/tools/transparent-loadtest/'):
+    if path.startswith('ops/'):
+        return {'check-ops-shared', 'check-ops-contracts', 'check-ops-deploy'}, {'ops'}
+    if path.startswith('src/transparent/transparent-loadtest/'):
         return {'check-reports'}, {'transparent', 'ops'}
-    if path.startswith(('tools/', 'transparent/tools/filters/', 'transparent/tools/parent-filters/')):
+    if path.startswith(('tools/', 'tools/transparent/filters/', 'tools/transparent/parent-filters/')):
         return {'check-tools'}, {'ops'}
     return None
 
@@ -173,7 +173,7 @@ def plan(packages, paths, *, all_checks=False):
         if package:
             if path.endswith('.md'):
                 helpers.add('check-docs'); groups.add('ops')
-            if path.startswith('transparent/tools/transparent-loadtest/'):
+            if path.startswith('src/transparent/transparent-loadtest/'):
                 helpers.add('check-reports')
             # Serialized payloads are consumed by jq/deploy scripts.
             if path.endswith('operator_payloads.rs'):

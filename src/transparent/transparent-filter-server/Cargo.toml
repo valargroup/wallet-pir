@@ -1,0 +1,105 @@
+[package]
+name = "transparent-filter-server"
+version = "0.1.0-rc.4"
+edition = "2021"
+
+[lib]
+name = "transparent_filter_server"
+path = "src/lib.rs"
+
+[[bin]]
+name = "shard-publish"
+path = "src/bin/shard-publish.rs"
+
+[[bin]]
+name = "shard-census"
+path = "src/bin/shard-census.rs"
+
+[[bin]]
+name = "transparent-event-ingest"
+path = "src/bin/event-ingest.rs"
+
+[[bin]]
+name = "transparent-filter-server"
+path = "src/bin/server.rs"
+
+[[bin]]
+name = "journal-convert-v1"
+path = "src/bin/journal-convert-v1.rs"
+
+[[bin]]
+name = "sample-redigest"
+path = "src/bin/sample-redigest.rs"
+
+[[bin]]
+name = "shard-cutoff"
+path = "src/bin/shard-cutoff.rs"
+
+[[bin]]
+name = "journal-inventory"
+path = "src/bin/journal-inventory.rs"
+
+[[bin]]
+name = "event-spotcheck"
+path = "src/bin/event-spotcheck.rs"
+
+[[bin]]
+name = "shard-verify"
+path = "src/bin/shard-verify.rs"
+
+[[bin]]
+name = "script-sample"
+path = "src/bin/script-sample.rs"
+
+[[bin]]
+name = "filter-sweep"
+path = "src/bin/filter-sweep.rs"
+
+[features]
+# Keep large test campaigns explicit; production behavior is unchanged.
+qualification-tests = []
+
+[dependencies]
+pir-pipeline = { path = "../../shared/pir-pipeline" }
+pir-control = { path = "../../shared/pir-control", features = ["admission"] }
+pir-observability = { path = "../../shared/pir-observability" }
+transparent-blocks = { path = "../transparent-blocks" }
+tempfile = "3"
+axum = "0.7"
+chrono = { version = "0.4", default-features = false, features = ["std", "serde"] }
+clap = { version = "4", features = ["derive"] }
+hex = "0.4"
+libc = "0.2"
+prometheus = { version = "0.13", default-features = false, features = ["process"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+thiserror = "2"
+tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["io"] }
+tower-http = { version = "0.5", features = ["limit", "trace"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+transparent-events = { package = "zakura-transparent-events", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "886db40137caef486d32d5bc594b2c20b1dde75e" }
+transparent-filter = { package = "zakura-transparent-filter", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "886db40137caef486d32d5bc594b2c20b1dde75e" }
+transparent-native = { package = "zakura-transparent-native", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "886db40137caef486d32d5bc594b2c20b1dde75e" }
+transparent-shard = { package = "zakura-transparent-shard", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "886db40137caef486d32d5bc594b2c20b1dde75e" }
+transparent-ingest = { path = "../../shared/transparent-ingest" }
+transparent-server-backend = { path = "../../shared/transparent-server-backend" }
+# Node reads, transparent extraction, compact blocks and the RocksDB state
+# reader, pinned to an exact wallet-libraries revision. The reader opens the
+# node's RocksDB directly: before deploying it, verify that the zakura-state
+# revision wallet-libraries pins matches the running node's database format.
+zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "886db40137caef486d32d5bc594b2c20b1dde75e", features = ["rocksdb"] }
+
+[dev-dependencies]
+base64 = "0.22"
+sysinfo = "0.36"
+transparent-shard-server = { path = "../transparent-shard-server" }
+transparent-txid-client = { package = "zakura-transparent-txid-client", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "886db40137caef486d32d5bc594b2c20b1dde75e", features = ["testing"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "json"] }
+tempfile = "3"
+tower = { version = "0.5", features = ["util"] }
+# Raw synthetic blocks for the extraction tests.
+zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "886db40137caef486d32d5bc594b2c20b1dde75e", features = ["rocksdb", "testing"] }

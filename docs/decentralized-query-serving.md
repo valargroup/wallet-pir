@@ -92,14 +92,14 @@ Reuse these foundations:
 
 - [External worker roles](operations.md#external-workers) provide product-owned
   configuration, installation and readiness reporting.
-- [Transparent architecture](../transparent/docs/architecture.md) separates
+- [Transparent architecture](transparent/architecture.md) separates
   publishers and query workers and describes recent/archive assignments and
   prepared runtimes.
-- [Enhance architecture](../enhance/docs/architecture.md) separates ingestion,
+- [Enhance architecture](enhance/architecture.md) separates ingestion,
   ingress, packing and evaluation.
-- [Status architecture](../enhance/docs/architecture_status.md) defines rolling
+- [Status architecture](status/architecture_status.md) defines rolling
   observations and their freshness and authority rules.
-- [Receiver](../receiver/README.md) has a staged-publication serving mode without
+- [Receiver](receiver/README.md) has a staged-publication serving mode without
   indexing, with canonicality checks and explicit publisher-completeness trust.
 
 These components do not yet establish autonomous provider operation. In
@@ -109,7 +109,7 @@ need explicit treatment before a node can promise lightweight operation.
 ## Implementation phases
 
 The approved next end-to-end slice is the
-[first independent Transparent history provider](../transparent/docs/recent-provider-plan.md).
+[first independent Transparent history provider](transparent/recent-provider-plan.md).
 It groups the publication, embedded-serving and fixed-archive requirements into
 a reviewable PR stack after the service-boundary refactor. Implementation and PR
 preparation are approved; the phases below remain the broader architecture.

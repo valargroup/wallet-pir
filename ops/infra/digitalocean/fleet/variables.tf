@@ -83,7 +83,7 @@ variable "enable_backups" {
   default = false
 }
 
-# The transparent two-tier fleet accepted in transparent/docs/deployment.md:
+# The transparent two-tier fleet accepted in docs/transparent/deployment.md:
 # recent replicas serving the tier from the cutoff, archive owners each holding
 # a contiguous half of the archive tier, and one router in front of both. All
 # counts default to zero so a checkout that has not adopted the fleet plans no

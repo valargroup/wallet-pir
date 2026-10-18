@@ -33,17 +33,17 @@ class WorkflowPathsTest(unittest.TestCase):
         # The 2026-10-14 break: the deploy script was deleted while ci-full.yml still ran it.
         root = self.repo({
             '.github/workflows/ci-full.yml': 'jobs:\n  x:\n    steps:\n'
-                                             '      - run: transparent/ops/scripts/deploy-filter.sh validate\n'
-                                             '      - run: python3 -B transparent/ops/tests/test_kept.py\n',
-            'transparent/ops/tests/test_kept.py': '',
+                                             '      - run: ops/transparent/scripts/deploy-filter.sh validate\n'
+                                             '      - run: python3 -B ops/transparent/tests/test_kept.py\n',
+            'ops/transparent/tests/test_kept.py': '',
         })
         self.assertEqual(workflow_paths.missing(root), [
-            '.github/workflows/ci-full.yml:4: runs transparent/ops/scripts/deploy-filter.sh, which does not exist'])
+            '.github/workflows/ci-full.yml:4: runs ops/transparent/scripts/deploy-filter.sh, which does not exist'])
 
     def test_outputs_comments_and_runner_paths_are_not_scripts(self):
         root = self.repo({
             '.github/workflows/deploy.yml': 'jobs:\n  x:\n    steps:\n'
-                                            '      # the retired transparent/ops/scripts/old.sh wrapper is gone\n'
+                                            '      # the retired ops/transparent/scripts/old.sh wrapper is gone\n'
                                             '      - run: jq . artifact/roster.json > transparent/out.json\n'
                                             '      - run: bash "$RUNNER_TEMP/tools/setup.sh" && ./tools/run.sh\n'
                                             '      - run: python3 build.py\n'

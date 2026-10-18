@@ -48,6 +48,10 @@ class InfrastructureLayout(unittest.TestCase):
                         template_dir = {'enhance': 'enhance/', 'status': 'status/',
                                         'transparent': 'transparent/', 'transparent-tx-detail': 'transparent/'}[directory]
                         text = text.replace('${path.module}/', '${path.module}/' + template_dir)
+                    # The receiver cloud-init moved from receiver/ops/ to ops/receiver/;
+                    # its bytes, and so the rendered user data, are unchanged.
+                    text = text.replace('${path.module}/../../../receiver/digitalocean/',
+                                        '${path.module}/../../../../receiver/ops/digitalocean/')
                     labels = re.findall(r'"([^"]+)"', text.split('\n')[0])
                     key = kind + ':' + '.'.join(labels)
                     self.assertNotIn(key, actual)

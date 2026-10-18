@@ -9,7 +9,7 @@ pattern = "tools/ci/*.json"
 reason = "CI registries consumed by the affected/full check planners."
 
 [[allow_data]]
-pattern = "enhance/ops/deploy/*.example.json"
+pattern = "ops/enhance/deploy/*.example.json"
 reason = "Public examples for the maintained deployment commands."
 
 [[allow_data]]
@@ -17,19 +17,19 @@ pattern = "ops/deploy/*.example.json"
 reason = "Public shared control-session configuration example."
 
 [[allow_data]]
-pattern = "transparent/ops/deploy/*.example.json"
+pattern = "ops/transparent/deploy/*.example.json"
 reason = "Public fleet-scaler configuration example."
 
 [[allow_data]]
-pattern = "enhance/crates/enhance-pir/tests/fixtures/*.json"
+pattern = "src/enhance/enhance-pir/tests/fixtures/*.json"
 reason = "Protocol regression inputs consumed by Rust tests."
 
 [[allow_data]]
-pattern = "enhance/services/enhance-pir-server/tests/fixtures/*.json"
+pattern = "src/enhance/enhance-pir-server/tests/fixtures/*.json"
 reason = "Independent Ironwood record oracle consumed by tests."
 
 [[allow_data]]
-pattern = "enhance/ops/fixtures/*.json"
+pattern = "ops/enhance/fixtures/*.json"
 reason = "Frozen operator API payloads used by operations tests."
 
 [[allow_data]]
@@ -37,129 +37,133 @@ pattern = "ops/tests/fixtures/*.json"
 reason = "DigitalOcean layout contract used by operations tests."
 
 [[allow_data]]
-pattern = "receiver/crates/receiver-store/tests/fixtures/*.json"
+pattern = "src/receiver/receiver-store/tests/fixtures/*.json"
 reason = "Receiver record and independent action oracles used by tests."
 
 [[allow_data]]
-pattern = "receiver/services/receiver-indexer/fixtures/*.json"
+pattern = "src/receiver/receiver-indexer/fixtures/*.json"
 reason = "Mainnet probe input used by the receiver indexer."
 
 [[allow_data]]
-pattern = "transparent/crates/transparent-native/testdata/*.json"
+pattern = "evidence/transparent/transparent-native/testdata/*.json"
 reason = "Frozen independent prewarm-hint known-answer oracle."
 
 [[allow_data]]
-pattern = "transparent/ops/fixtures/*.json"
+pattern = "evidence/transparent/transparent-native/testdata/*.py"
+reason = "Independent generator of the frozen prewarm-hint oracle, retained unchanged."
+
+[[allow_data]]
+pattern = "ops/transparent/fixtures/*.json"
 reason = "Frozen deployment and API payloads used by operations tests."
 
 [[allow_data]]
-pattern = "transparent/ops/benchmarks/*.json"
+pattern = "ops/transparent/benchmarks/*.json"
 reason = "Maintained block-comparison scenario and fresh input sample."
 
 [[allow_data]]
-pattern = "transparent/services/transparent-filter-server/examples/fixtures/*.json"
+pattern = "src/txid/txid-pir-server/examples/fixtures/*.json"
 reason = "Confirmed transaction input for the display example."
 
 [[allow_data]]
-pattern = "transparent/tools/transparent-loadtest/scenarios/*.json"
+pattern = "src/transparent/transparent-loadtest/scenarios/*.json"
 reason = "User-selectable scenarios consumed by the load driver."
 
 [[allow_data]]
-pattern = "transparent/tools/transparent-regression/fixtures/*.json"
+pattern = "src/transparent/transparent-regression/fixtures/*.json"
 reason = "Independent accepted-anchor regression and workflow inputs."
 
 [[allow_data]]
-pattern = "enhance/tools/noise-analysis/sampler-cdf.json"
+pattern = "src/enhance/noise-analysis/sampler-cdf.json"
 reason = "Sampling distribution input consumed by noise-analysis."
 
 [[allow_data]]
-pattern = "enhance/evidence/native-certificate-2026-09-26/*.json"
+pattern = "evidence/enhance/native-certificate-2026-09-26/*.json"
 reason = "Certificate inputs and outputs retained for the native correctness argument."
 
 [[allow_data]]
-pattern = "transparent/evidence/v12-native-certificates-2026-10-12/*.certificate.json"
+pattern = "evidence/transparent/v12-native-certificates-2026-10-12/*.certificate.json"
 reason = "Native correctness certificates for the current v12 table shapes."
 
 [[allow_data]]
-pattern = "transparent/evidence/v12-native-certificates-2026-10-12/*.report.json"
+pattern = "evidence/transparent/v12-native-certificates-2026-10-12/*.report.json"
 reason = "Checker reports interpreting the v12 certificates."
 
 [[allow_data]]
-pattern = "transparent/evidence/v12-native-certificates-2026-10-12/results.json"
+pattern = "evidence/transparent/v12-native-certificates-2026-10-12/results.json"
 reason = "Summary of the retained v12 certificate screen."
 
 [[allow_data]]
-pattern = "transparent/evidence/prewarm-hint-assurance-2026-10-04/manifest.json"
+pattern = "evidence/transparent/prewarm-hint-assurance-2026-10-04/manifest.json"
 reason = "Hash provenance required by the independent oracle regression."
 
 [[allow_data]]
-pattern = "receiver/evidence/receiver-pir-2026-09-26/manifest.json"
+pattern = "evidence/receiver/receiver-pir-2026-09-26/manifest.json"
 reason = "Source and workload provenance for the retained encrypted lookup proof."
 
 [[allow_data]]
-pattern = "receiver/evidence/receiver-pir-2026-09-26/results.json"
+pattern = "evidence/receiver/receiver-pir-2026-09-26/results.json"
 reason = "Bounded receiver encrypted lookup correctness result."
 
 [[allow_data]]
-pattern = "receiver/evidence/publication-cache-2026-09-28/manifest.json"
+pattern = "evidence/receiver/publication-cache-2026-09-28/manifest.json"
 reason = "Source and workload provenance for the retained publication-cache result."
 
 [[allow_data]]
-pattern = "receiver/evidence/publication-cache-2026-09-28/results.json"
+pattern = "evidence/receiver/publication-cache-2026-09-28/results.json"
 reason = "Bounded publication-cache correctness and timing result."
 
 [[allow_data]]
-pattern = "enhance/evidence/dithered-query-2026-10-09/*.json"
+pattern = "evidence/enhance/dithered-query-2026-10-09/*.json"
 reason = "Native dithered-query certificates, checker reports and source manifest."
 
 [[allow_data]]
-pattern = "receiver/evidence/batched-backfill-2026-09-26/*.json"
+pattern = "evidence/receiver/batched-backfill-2026-09-26/*.json"
 reason = "Bounded receiver backfill correctness result and source manifest."
 
 [[allow_data]]
-pattern = "receiver/evidence/deployment-2026-10-08/manifest.json"
+pattern = "evidence/receiver/deployment-2026-10-08/manifest.json"
 reason = "Exact source identity for the dated deployment record."
 
 [[allow_data]]
-pattern = "transparent/evidence/p8-trial-2026-10-12/manifest.json"
+pattern = "evidence/transparent/p8-trial-2026-10-12/manifest.json"
 reason = "Source identity for the 8-bit history profile certificate screen."
 
 [[allow_data]]
-pattern = "transparent/evidence/p8-trial-2026-10-12/raw/summary.json"
+pattern = "evidence/transparent/p8-trial-2026-10-12/raw/summary.json"
 reason = "Interpretation and limitations of the 8-bit table screen."
 
 [[allow_data]]
-pattern = "transparent/evidence/p8-trial-2026-10-12/raw/raw-reports.tar.gz"
+pattern = "evidence/transparent/p8-trial-2026-10-12/raw/raw-reports.tar.gz"
 reason = "Essential per-table analytical certificate reports, preserved as captured."
 
 [[allow_data]]
-pattern = "transparent/evidence/served-segment-certificates-2026-10-09/manifest.json"
+pattern = "evidence/transparent/served-segment-certificates-2026-10-09/manifest.json"
 reason = "Source identity for the served-segment native correctness screen."
 
 [[allow_data]]
-pattern = "transparent/evidence/served-segment-certificates-2026-10-09/results.json"
+pattern = "evidence/transparent/served-segment-certificates-2026-10-09/results.json"
 reason = "Summary and failed-attempt limits for the served-segment screen."
 
 [[allow_data]]
-pattern = "transparent/evidence/served-segment-certificates-2026-10-09/reports.tar.xz"
+pattern = "evidence/transparent/served-segment-certificates-2026-10-09/reports.tar.xz"
 reason = "Essential per-segment certificates and checker reports as captured."
 
 [[allow_data]]
-pattern = "transparent/evidence/txid-display-4k8-2026-10-13/manifest.json"
+pattern = "evidence/txid/txid-display-4k8-2026-10-13/manifest.json"
 reason = "Source identity for the currently linked txid display layout."
 
 [[allow_data]]
-pattern = "transparent/evidence/txid-display-4k8-2026-10-13/raw/summary.json"
+pattern = "evidence/txid/txid-display-4k8-2026-10-13/raw/summary.json"
 reason = "Interpretation of the txid display certificate and correctness screen."
 
 [[allow_data]]
-pattern = "transparent/evidence/txid-display-4k8-2026-10-13/raw/reports-and-verdicts.tar.gz"
+pattern = "evidence/txid/txid-display-4k8-2026-10-13/raw/reports-and-verdicts.tar.gz"
 reason = "Essential certificates and checker verdicts for the txid display tables."
 
 [[allow_data]]
-pattern = "transparent/tools/txid-sizing/fixtures/*.json"
+pattern = "tools/txid/txid-sizing/fixtures/*.json"
 reason = "Independent canonical codec and packing input consumed by sizing tests."
 
 [[allow_data]]
-pattern = "transparent/ops/fixtures/observation/failed-observation-20260912T003121Z.tar.gz"
+pattern = "ops/transparent/fixtures/observation/failed-observation-20260912T003121Z.tar.gz"
 reason = "Real failed observation consumed by the mandatory audit negative control."

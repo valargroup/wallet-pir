@@ -37,7 +37,7 @@ on:
       sample_path:
         description: Workload sample, relative to the checkout
         required: false
-        default: transparent/tools/transparent-regression/fixtures/load-sample-v2codec.json
+        default: src/transparent/transparent-regression/fixtures/load-sample-v2codec.json
         type: string
       steps:
         description: Concurrency steps, comma separated

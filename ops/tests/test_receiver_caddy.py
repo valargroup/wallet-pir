@@ -1,4 +1,4 @@
-"""The receiver's Caddyfile helper, `receiver/ops/digitalocean/caddy.py`.
+"""The receiver's Caddyfile helper, `ops/receiver/digitalocean/caddy.py`.
 
 A stub `ssh` runs the helper's remote program locally, with `/etc/caddy`,
 `/opt/receiver-pir` and `/proc/` moved under a temporary root. Stub `systemctl`,
@@ -20,9 +20,9 @@ import unittest
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
-SCRIPT = ROOT / 'receiver/ops/digitalocean/caddy.py'
-EXAMPLE = ROOT / 'enhance/ops/deploy/deploy-inventory.example.json'
-LIVE = (ROOT / 'receiver/ops/digitalocean/Caddyfile').read_text()
+SCRIPT = ROOT / 'ops/receiver/digitalocean/caddy.py'
+EXAMPLE = ROOT / 'ops/enhance/deploy/deploy-inventory.example.json'
+LIVE = (ROOT / 'ops/receiver/digitalocean/Caddyfile').read_text()
 
 STUB_SSH = textwrap.dedent('''\
     #!{python}

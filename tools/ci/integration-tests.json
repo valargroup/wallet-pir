@@ -18,9 +18,16 @@
       "matvec_config",
       "note_recovery",
       "row_repair_http",
-      "rpc",
-      "status_wallet",
-      "status_wallet_http"
+      "rpc"
+    ]
+  },
+  "enhance-serving": {
+    "fast": [
+      "ci_smoke"
+    ],
+    "full": [
+      "http",
+      "packing_http"
     ]
   },
   "receiver-indexer": {
@@ -45,6 +52,13 @@
       "store"
     ]
   },
+  "status-pir-server": {
+    "fast": [],
+    "full": [
+      "status_wallet",
+      "status_wallet_http"
+    ]
+  },
   "transparent-blocks": {
     "fast": [],
     "full": [
@@ -57,8 +71,7 @@
       "compact",
       "event_codec_bounds",
       "service_round_trip",
-      "shard_filters",
-      "txid_shipped_runtimes"
+      "shard_filters"
     ]
   },
   "transparent-loadtest": {
@@ -85,8 +98,6 @@
       "operator_payloads",
       "revisions_and_cache",
       "round_trip",
-      "txid_client",
-      "txid_sharded",
       "wallet_anchor",
       "wallet_continuation",
       "wallet_recut",
@@ -94,13 +105,12 @@
       "verification_reuse"
     ]
   },
-  "enhance-serving": {
-    "fast": [
-      "ci_smoke"
-    ],
+  "txid-pir-server": {
+    "fast": [],
     "full": [
-      "http",
-      "packing_http"
+      "txid_client",
+      "txid_sharded",
+      "txid_shipped_runtimes"
     ]
   }
 }

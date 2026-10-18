@@ -1,7 +1,7 @@
 # Wallet PIR production infrastructure
 
 The c-4 three-shard target below is not yet production-deployed.
-Follow the [migration and qualification gates](../../../../enhance/docs/qualification.md); do not apply this root to the legacy pair without the state moves described there.
+Follow the [migration and qualification gates](../../../../docs/enhance/qualification.md); do not apply this root to the legacy pair without the state moves described there.
 
 This Terraform root manages the shared Wallet PIR production infrastructure in
 the `wallet-pir` DigitalOcean project:
@@ -23,9 +23,9 @@ project-membership resource sets. `services.tf` passes shared references and
 
 `receiver.tf` holds the opt-in receiver
 directory Droplet, firewall and DNS record; import the existing Droplet and record as the
-[receiver deployment](../../../../receiver/ops/digitalocean/README.md#infrastructure)
-describes before enabling it. Use the [transparent deployment target](../../../../transparent/docs/deployment.md)
-and [verified-status record](../../../../transparent/docs/status.md) before changing them.
+[receiver deployment](../../../receiver/digitalocean/README.md#infrastructure)
+describes before enabling it. Use the [transparent deployment target](../../../../docs/transparent/deployment.md)
+and [verified-status record](../../../../docs/transparent/status.md) before changing them.
 The proposed transparent fleet is not established by this README. Worker pools per table, a second
 coordinator, a separate ingest host, and artifact publishing to Spaces are
 documented as a growth path in the historical `docs/archive/pir_deployment_architecture.md` §6 and
@@ -79,7 +79,7 @@ plan after that change must show only moves. Add a name before the inventory's
 `repartition` enrolls the host, and remove one only after the inventory has
 retired it and the operator has stopped it; the saved plan must then show
 exactly one destroy per removed name and one in-place project change. The
-[deployment target](../../../../transparent/docs/deployment.md) has the full
+[deployment target](../../../../docs/transparent/deployment.md) has the full
 procedure.
 
 `transparent_txid_display_port_enabled` (default false) opens port 8095 on the

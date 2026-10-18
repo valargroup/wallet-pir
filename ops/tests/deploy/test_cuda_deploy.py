@@ -23,8 +23,8 @@ def module(name, file):
     return result
 
 
-deploy = module('cuda_deploy', 'enhance/ops/scripts/deploy-cuda.py')
-verify = module('cuda_verify', 'enhance/ops/scripts/verify-cuda-deployment.py')
+deploy = module('cuda_deploy', 'ops/enhance/scripts/deploy-cuda.py')
+verify = module('cuda_verify', 'ops/enhance/scripts/verify-cuda-deployment.py')
 
 
 class CoordinatorPreflight(unittest.TestCase):

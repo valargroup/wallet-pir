@@ -48,7 +48,7 @@ class IntegrationTests(unittest.TestCase):
                                     f'{source.relative_to(ROOT)}: missing {relative}')
 
     def test_operational_filter_and_txid_canary_targets_are_service_owned(self):
-        directory = ROOT / 'transparent/tools/transparent-loadtest'
+        directory = ROOT / 'src/transparent/transparent-loadtest'
         manifest = tomllib.loads((directory / 'Cargo.toml').read_text())
         self.assertEqual(manifest['package']['name'], 'transparent-loadtest')
         for binary in ['transparent-filter-cli', 'txid-quality-canary']:

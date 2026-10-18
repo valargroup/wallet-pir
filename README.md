@@ -2,13 +2,13 @@
 
 This repository implements private retrieval services for Zcash wallets:
 
-- **[Enhance PIR](enhance/docs/README.md)** retrieves the encrypted Ironwood
+- **[Enhance PIR](docs/enhance/README.md)** retrieves the encrypted Ironwood
   output data needed to complete a note from its output position.
-- **[Transparent PIR](transparent/docs/README.md)** combines public activity
+- **[Transparent PIR](docs/transparent/README.md)** combines public activity
   filters with private script-history recovery at a wallet-accepted chain anchor.
-- **[Status PIR](enhance/docs/architecture_status.md)** observes recent transaction
+- **[Status PIR](docs/status/architecture_status.md)** observes recent transaction
   status privately through its own controller, router and worker roles.
-- **[Receiver PIR](receiver/README.md)** lets a restored wallet retrieve payments
+- **[Receiver PIR](docs/receiver/README.md)** lets a restored wallet retrieve payments
   indexed under an Ironwood receiver.
 
 Each product index links its protocol, architecture, deployment, dated status,
@@ -17,7 +17,7 @@ and outstanding acceptance gates. Implementation is not proof of live rollout.
 ## Enhance performance
 
 The current v7 deployment and its qualification limits are recorded in the
-[September 24 report](enhance/evidence/immutable-v7-2026-09-24/README.md). The
+[September 24 report](evidence/enhance/immutable-v7-2026-09-24/README.md). The
 measurement below is the historical v6 baseline.
 
 On September 23, 2026, a five-minute production test through the public HTTPS
@@ -39,9 +39,9 @@ two worker replicas served the shard. All measured and warmup answers matched
 the canonical journal oracle. The test ran against the database size and
 configuration recorded at its start, not a fixed-size synthetic fixture.
 
-See the [dated measurement record](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/enhance/evidence/query-admission-production-2026-09-23/README.md)
+See the [dated measurement record](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/evidence/enhance/query-admission-production-2026-09-23/README.md)
 for commands, raw reports and limitations. The
-[older reported result](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/enhance/evidence/reported-performance/README.md)
+[older reported result](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/evidence/enhance/reported-performance/README.md)
 remains available for historical context. The
 [APM dashboard](https://enhance-pir.valargroup.dev/apm/) shows live fleet performance.
 
@@ -49,14 +49,12 @@ remains available for historical context. The
 
 | Directory | Purpose |
 |---|---|
-| `enhance/` | Enhance crates, services, tools, operations, documentation and evidence |
-| `transparent/` | Transparent crates, services, tools, operations, documentation and evidence |
-| `receiver/` | [Receiver directory](receiver/README.md) crates, PIR service, operations and evidence |
-| `ops/` | Shared production infrastructure, coordinator configuration and deployment contracts |
-| `docs/` | Repository-wide indexes, migration records and personal working notes |
-| `evidence/` | Shared evidence policy, checksums and historical-path mappings |
-| `tools/` | Repository-wide documentation checks and their tests |
-| `demos/legacy-spendability/` | Preserved independent nullifier/witness workspace, excluded from root CI |
+| `src/<product>/` | Cargo packages for `enhance`, `status`, `transparent`, `txid` and `receiver`, including Rust development tools |
+| `src/shared/` | Focused packages shared by more than one product |
+| `ops/` | Shared production infrastructure and deployment contracts; product operations under `ops/<product>/` |
+| `docs/` | Repository-wide indexes and notes; product documentation under `docs/<product>/` |
+| `evidence/` | Evidence policy and checksums; product evidence under `evidence/<product>/` |
+| `tools/` | Repository-wide checks; standalone product scripts under `tools/<product>/` |
 
 See the [tooling index](tools/README.md) for development commands and the
 [evidence index](evidence/README.md) for measurement provenance and retention.
@@ -74,16 +72,15 @@ make transparent-sim-help
 
 Rust package and binary names are stable across the repository reorganization.
 Full-shard cryptographic tests use the optimized `release-fast` profile.
-See [development commands](docs/development.md) and [agent guidance](AGENTS.md). The legacy demos remain
-independently buildable with `make demo-check`.
+See [development commands](docs/development.md) and [agent guidance](AGENTS.md).
 
 ## Operations
 
 Start with the [fleet operator guide](docs/operations.md) for the shared topology,
 versioned operations bundle, role configuration and lifecycle interfaces.
 
-Use the [Enhance runbook](enhance/docs/deployment.md) or
-[transparent runbook](transparent/docs/deployment.md) for deployment.
+Use the [Enhance runbook](docs/enhance/deployment.md) or
+[transparent runbook](docs/transparent/deployment.md) for deployment.
 The [APM dashboard](https://enhance-pir.valargroup.dev/apm/) exposes observed
 Enhance fleet health and performance. Dated evidence describes only its recorded
 revision, workload and coverage; it does not establish present capacity.

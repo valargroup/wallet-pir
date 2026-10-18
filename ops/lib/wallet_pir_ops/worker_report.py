@@ -24,11 +24,11 @@ UNSUPPORTED = 'unsupported'
 UNOBSERVED = 'unobserved'
 # Product-local extractors, by service: `module:function(service, role, health, ready_status)`.
 EXTRACTORS = {
-    'enhance': 'enhance.ops.lib.roles:report',
-    'status': 'enhance.ops.lib.roles:report',
-    'transparent-history': 'transparent.ops.lib.roles:report',
-    'transparent-display': 'transparent.ops.lib.roles:report',
-    'receiver': 'receiver.ops.lib.roles:report',
+    'enhance': 'ops.enhance.lib.roles:report',
+    'status': 'ops.enhance.lib.roles:report',
+    'transparent-history': 'ops.transparent.lib.roles:report',
+    'transparent-display': 'ops.transparent.lib.roles:report',
+    'receiver': 'ops.receiver.lib.roles:report',
 }
 
 

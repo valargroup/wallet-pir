@@ -126,7 +126,7 @@ class CorrectnessSelectionTests(unittest.TestCase):
         self.assertTrue(any('enhance-pir' in command and 'status-serving' in command for command in calls))
         self.assertTrue(any('--doc' in command and '--workspace' in command for command in calls))
         self.assertTrue(any('--manifest-path' in command and
-                            'transparent/tools/txid-sizing/export/Cargo.toml' in command for command in calls))
+                            'tools/txid/txid-sizing/export/Cargo.toml' in command for command in calls))
         self.assertTrue(any(command[:2] == ['cargo', 'clippy'] and '--all-targets' in command
                             and 'warnings' in command for command in calls))
         self.assertNotIn('qualification-tests', correctness.FEATURES)

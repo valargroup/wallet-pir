@@ -48,7 +48,8 @@ def commands(group, groups, lint=False, compile_only=False):
     features = {
         'enhance': ['enhance-pir/cli', 'enhance-pir/native-reinspiring',
                     'enhance-serving/native-reinspiring', 'status-serving/native-reinspiring',
-                    'enhance-pir-server/native-reinspiring', 'enhance-pir-load-test/native-reinspiring'],
+                    'enhance-pir-server/native-reinspiring', 'status-pir-server/native-reinspiring',
+          'enhance-pir-load-test/native-reinspiring'],
         'shared': ['pir-control/admission'],
     }.get(group, []) + qualification_features(names)
     result = [[*runner, '--locked', '--profile', 'release-fast',
@@ -59,7 +60,7 @@ def commands(group, groups, lint=False, compile_only=False):
         # and compiled-codec contracts run first, so another service test's
         # failure cannot hide whether those contracts passed on Linux.
         result.insert(0, [*runner, '--locked', '--profile', 'release-fast',
-                          '--manifest-path', 'transparent/tools/txid-sizing/export/Cargo.toml'])
+                          '--manifest-path', 'tools/txid/txid-sizing/export/Cargo.toml'])
     return result
 
 

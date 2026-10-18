@@ -102,7 +102,7 @@ resource "cloudflare_dns_record" "transparent_txid_display_site" {
 # census runs, but it now holds production state: the v2x genesis journal
 # (journal-v2x) and the publication roots the live txid display controller
 # builds from (v4/root for txid-4k8, and the txid-2k8 root kept for rollback).
-# See transparent/docs/status.md. Do not destroy or detach it while the txid
+# See docs/transparent/status.md. Do not destroy or detach it while the txid
 # display serves from it. It is kept off the node volume so the ingest cannot
 # consume /srv/zakura's 20% headroom.
 resource "digitalocean_volume" "txid_display_genesis" {

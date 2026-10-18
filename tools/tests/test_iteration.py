@@ -52,39 +52,39 @@ class PlannerTests(unittest.TestCase):
         self.assertTrue(fast.OPS <= set(result['helpers']))
 
     def test_transparent_schema_helpers_are_not_misclassified_as_parent_filters(self):
-        for path in ['transparent/ops/lib/activity_source_stage.py',
-                     'transparent/ops/tests/test_activity_schema_operation.py',
-                     'transparent/ops/scripts/deploy-transparent-publisher.py']:
+        for path in ['ops/transparent/lib/activity_source_stage.py',
+                     'ops/transparent/tests/test_activity_schema_operation.py',
+                     'ops/transparent/scripts/deploy-transparent-publisher.py']:
             result = fast.plan(self.packages, [path])
             self.assertIn('check-ops-deploy', result['helpers'], path)
             self.assertIn('check-ops-publication', result['helpers'], path)
             self.assertEqual(result['packages'], [])
-        result = fast.plan(self.packages, ['transparent/ops/scripts/stage-transparent-parents.py'])
+        result = fast.plan(self.packages, ['ops/transparent/scripts/stage-transparent-parents.py'])
         self.assertEqual(set(result['helpers']), {'check-ops-contracts', 'check-ops-parents'})
 
     def test_txid_display_ops_route_to_their_own_check(self):
-        for path in ['transparent/ops/lib/txid_display_poc.py', 'transparent/ops/scripts/txid-display-fleet.py',
-                     'transparent/ops/deploy/txid-display-routes.caddy.in',
-                     'transparent/ops/tests/test_txid_display_router.py']:
+        for path in ['ops/transparent/lib/txid_display_poc.py', 'ops/transparent/scripts/txid-display-fleet.py',
+                     'ops/transparent/deploy/txid-display-routes.caddy.in',
+                     'ops/transparent/tests/test_txid_display_router.py']:
             result = fast.plan(self.packages, [path])
             self.assertEqual(set(result['helpers']), {'check-ops-txid-display', 'check-ops-contracts'}, path)
             self.assertEqual(result['packages'], [])
         # The history adapter's hook and the pinned firewall sources reach it too.
-        for path in ['transparent/ops/scripts/transparent-live-fleet.py',
+        for path in ['ops/transparent/scripts/transparent-live-fleet.py',
                      'ops/infra/digitalocean/transparent/main.tf']:
             self.assertIn('check-ops-txid-display', fast.plan(self.packages, [path])['helpers'], path)
 
     def test_leaf_reverse_dependencies_and_embedded_fixture(self):
-        result = fast.plan(self.packages, ['enhance/services/pir-apm/src/dashboard.rs'])
+        result = fast.plan(self.packages, ['src/shared/pir-apm/src/dashboard.rs'])
         self.assertEqual(set(result['packages']), {'pir-apm', 'pir-monitor'})
         self.assertEqual(result['groups'], ['enhance'])
         self.assertEqual(result['helpers'], [])
-        result = fast.plan(self.packages, ['enhance/services/enhance-pir-server/tests/fixtures/README.md'])
+        result = fast.plan(self.packages, ['src/enhance/enhance-pir-server/tests/fixtures/README.md'])
         self.assertIn('enhance-pir-server', result['packages'])
         self.assertIn('check-docs', result['helpers'])
 
     def test_receiver_packages_have_their_own_full_group(self):
-        result = fast.plan(self.packages, ['receiver/crates/receiver-store/src/lib.rs'])
+        result = fast.plan(self.packages, ['src/receiver/receiver-store/src/lib.rs'])
         self.assertEqual(result['groups'], ['receiver'])
         self.assertIn('receiver-store', full.commands('receiver', full.inventory())[0])
 
@@ -93,15 +93,15 @@ class PlannerTests(unittest.TestCase):
         self.assertIn("check-ops-shared:\n\tpython3 -m unittest discover -s ops/tests -p 'test_*.py'", makefile)
         self.assertTrue((ROOT / 'ops/tests/test_receiver_ops_config.py').is_file())
         self.assertTrue((ROOT / 'ops/tests/test_receiver_caddy.py').is_file())
-        for path in ['receiver/ops/digitalocean/Caddyfile', 'receiver/ops/digitalocean/cloud-init.yaml',
-                     'receiver/ops/digitalocean/receiver-pir.service.in', 'receiver/ops/digitalocean/caddy.py',
-                     'receiver/ops/digitalocean/README.md']:
+        for path in ['ops/receiver/digitalocean/Caddyfile', 'ops/receiver/digitalocean/cloud-init.yaml',
+                     'ops/receiver/digitalocean/receiver-pir.service.in', 'ops/receiver/digitalocean/caddy.py',
+                     'ops/receiver/digitalocean/README.md']:
             result = fast.plan(self.packages, [path])
             self.assertTrue({'check-ops-shared', 'check-ops-deploy'} <= set(result['helpers']), path)
             self.assertEqual(result['packages'], [], path)
 
     def test_shared_rust_and_unknown_changes_broaden_full_coverage(self):
-        result = fast.plan(self.packages, ['shared/pir-control/src/lib.rs'])
+        result = fast.plan(self.packages, ['src/shared/pir-control/src/lib.rs'])
         self.assertTrue({'shared', 'enhance', 'transparent', 'receiver'} <= set(result['groups']))
         for path in ['unknown.file', 'Cargo.lock', '.cargo/config.toml', 'tools/ci/fast.py', '.github/workflows/ci-full.yml']:
             result = fast.plan(self.packages, [path])
@@ -182,7 +182,7 @@ class PlannerTests(unittest.TestCase):
 
 
     def test_scaler_fast_excludes_exhaustive_models_and_registry_rejects_renames(self):
-        result = fast.plan(self.packages, ['transparent/ops/scaler/decide.py'])
+        result = fast.plan(self.packages, ['ops/transparent/scaler/decide.py'])
         self.assertIn('check-ops-scaler-fast', result['helpers'])
         self.assertNotIn('check-ops-scaler', result['helpers'])
         registry = json.loads((ROOT/'tools/ci/scaler-tests.json').read_text())
@@ -221,7 +221,7 @@ class PlannerTests(unittest.TestCase):
             started.set()
 
         paths = ['ops/tests/deploy/test_ops_package.py',
-                 'transparent/services/transparent-filter-server/src/lib.rs']
+                 'src/transparent/transparent-filter-server/src/lib.rs']
         with patch.object(sys, 'argv', ['fast.py', '--base', 'HEAD', '--committed-only']), \
                 patch.object(fast, 'changed_paths', return_value=paths), \
                 patch('hygiene.check', return_value=0), \

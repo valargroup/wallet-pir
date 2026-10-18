@@ -19,7 +19,7 @@ import time
 import uuid
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / 'shared/dev'))
+sys.path.insert(0, str(ROOT / 'tools/dev'))
 from target_lease import inherited_fds  # noqa: E402
 
 PARENT = 'WALLET_PIR_STAGE_PARENT'

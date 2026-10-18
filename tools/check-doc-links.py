@@ -15,7 +15,7 @@ def slug(text):
 
 def main():
     tracked = subprocess.check_output(['git', 'ls-files', '--cached', '--others', '--exclude-standard', '-z',
-                                     '--', '*.md', ':!demos/**', ':!target/**'], cwd=ROOT)
+                                     '--', '*.md', ':!target/**'], cwd=ROOT)
     paths = sorted({p.decode() for p in tracked.split(b'\0') if p and '/node_modules/' not in p.decode()})
     texts, headings, broken, count = {}, {}, [], 0
     def read(path):

@@ -4,7 +4,7 @@ The shared registry (`ops/deploy/services.toml`) includes product descriptors: i
 roles in rollout order, each role's unit, how its unit is changed and how its
 readiness is checked. They never name hosts. The inventory is a local JSON file
 outside the repository that says where each role runs and how to reach it;
-`enhance/ops/deploy/deploy-inventory.example.json` shows its shape.
+`ops/enhance/deploy/deploy-inventory.example.json` shows its shape.
 """
 import dataclasses
 from dataclasses import dataclass, field

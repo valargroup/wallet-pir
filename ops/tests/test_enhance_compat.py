@@ -20,7 +20,7 @@ import unittest
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
-SCRIPTS = ROOT / 'enhance/ops/scripts'
+SCRIPTS = ROOT / 'ops/enhance/scripts'
 
 
 def load(name, filename):

@@ -17,8 +17,8 @@ therefore also resolves a fresh standalone receiver consumer with crypto disable
 
 Serving libraries (`SERVING`) serve prepared publications. No dependency of any
 kind, including target-specific ones, may reach a chain reader, an ingestion or
-application package (`INGESTION`, or any package under a product's `services/`
-or `tools/`), or another product's package. Their workspace graphs (including
+application package (`INGESTION` or `APPLICATIONS`), or another product's
+package. Packages live under `src/<product>/` or `src/shared/`. Their workspace graphs (including
 their own dev-dependencies) and standalone graphs are resolved and checked too.
 
 Common and node packages are named exactly: wallet-libraries adapters are
@@ -66,18 +66,35 @@ PURE = {
     'receiver-pir-server',
     'pir-observability', 'pir-control', 'pir-runtime', 'enhance-pir', 'transparent-blocks',
     'transparent-shard-server', 'transparent-server-backend',
-    'enhance-serving', 'status-serving',
+    'enhance-serving', 'status-serving', 'status-protocol', 'pir-serving', 'txid-serving',
 }
 # Serving libraries and the chain reading, ingestion and application packages
 # they must never reach. Each product's applications compose its serving library;
 # the shared raw PIR runtime they call is held to the same rule.
-SERVING = {'enhance-serving', 'status-serving', 'transparent-server-backend', 'pir-runtime'}
+SERVING = {'enhance-serving', 'status-serving', 'transparent-server-backend', 'pir-runtime',
+           'pir-serving', 'txid-serving'}
 INGESTION = {
     'pir-pipeline', 'zakura-server-chain', 'enhance-pir-server', 'receiver-indexer',
     'transparent-filter-server', 'transparent-block-server', 'transparent-measure',
+    'status-publication', 'status-pir-server', 'transparent-ingest', 'txid-pir-server',
 }
-PRODUCTS = ('enhance/', 'transparent/', 'receiver/')
-SHARED = 'shared/'
+PRODUCTS = ('src/enhance/', 'src/status/', 'src/transparent/', 'src/txid/', 'src/receiver/')
+SHARED = 'src/shared/'
+# Application packages: services, operational dashboards and development tools.
+# Serving libraries compose into them, never the reverse.
+APPLICATIONS = {
+    'enhance-pir-server', 'status-pir-server', 'pir-apm', 'enhance-pir-load-test', 'pir-monitor',
+    'enhance-noise-analysis', 'transparent-filter-server', 'transparent-block-server',
+    'transparent-shard-server', 'transparent-loadtest', 'transparent-regression',
+    'transparent-measure', 'txid-pir-server', 'receiver-indexer', 'receiver-pir-server',
+}
+# Shared packages consumed by a subset of products. A serving library of any other
+# product reaching one still crosses a product boundary.
+SHARED_SCOPES = {
+    'src/shared/transparent-server-backend/': ('src/transparent/', 'src/txid/'),
+    'src/shared/transparent-ingest/': ('src/transparent/', 'src/txid/'),
+    'src/shared/pir-serving/': ('src/enhance/', 'src/status/'),
+}
 
 # Lifecycle code has no product, chain, wallet or cryptographic dependency.
 # The direct surface is deliberately smaller than tokio's feature-unified utility
@@ -109,20 +126,22 @@ CANONICAL = {
     'zakura-transparent-txid-client', 'zakura-receiver-directory', 'zakura-receiver-pir',
     'zakura-pir-transparent',
 }
-# Preserved sources outside the active product: legacy demos and retained evidence.
-# They are still checked for direct Common and node edges, which includes the
-# manually buildable legacy demo workspace; only the pure-package rules skip them.
-EXCLUDED = ('demos/', 'enhance/crates/transparent-spend-pir/', 'evidence/',
-            'enhance/evidence/', 'transparent/evidence/', 'receiver/evidence/', 'target/')
+# Retained evidence outside the active product. It is still checked for direct
+# Common and node edges; only the pure-package rules skip it.
+EXCLUDED = ('evidence/', 'target/')
 
 
-def serving_target_problem(owner, target):
-    """Why a serving library at repository path `owner` may not reach the package at
-    repository path `target`, or None. Paths are directories relative to the root."""
+def serving_target_problem(owner, target, name=None):
+    """Why a serving library at repository path `owner` may not reach the package
+    `name` at repository path `target`, or None. Paths are directories relative to
+    the root."""
     product = next((p for p in PRODUCTS if owner.startswith(p)), None)
-    if any(target.startswith(p + kind) for p in PRODUCTS for kind in ('services/', 'tools/')):
+    if name in APPLICATIONS:
         return 'application package'
     if not target.startswith(SHARED) and (product is None or not target.startswith(product)):
+        return "another product's package"
+    scope = next((s for folder, s in SHARED_SCOPES.items() if target.startswith(folder)), None)
+    if scope is not None and not owner.startswith(scope):
         return "another product's package"
     return None
 
@@ -156,8 +175,8 @@ def manifests(root=ROOT):
     paths = []
     for directory, children, files in os.walk(root):
         directory = Path(directory)
-        # A nested checkout is another source snapshot. Preserved evidence and
-        # demos in this checkout still receive the direct dependency checks.
+        # A nested checkout is another source snapshot. Preserved evidence in
+        # this checkout still receives the direct dependency checks.
         if directory != root and '.git' in (*children, *files):
             children[:] = []
             continue
@@ -223,7 +242,7 @@ def violations(packages, allowed):
             if package['name'] in SERVING and not package.get('preserved'):
                 owner = package['manifest'].rsplit('/', 1)[0] + '/'
                 reason = ('chain reading or ingestion package' if name in INGESTION else
-                          dependency.get('path') and serving_target_problem(owner, dependency['path']))
+                          dependency.get('path') and serving_target_problem(owner, dependency['path'], name))
                 if reason:
                     problems.append(f"{package['manifest']}: serving library has a "
                                     f"{dependency['kind']} on {reason} {name}")
@@ -312,7 +331,7 @@ def serving_resolved_violations(root_id, packages, nodes):
             local = target['source'] is None and relative_directory(
                 Path(target['manifest_path']).parent, ROOT)
             if (target['name'] in INGESTION or target['name'] in NODE
-                    or (local and serving_target_problem(owner, local))):
+                    or (local and serving_target_problem(owner, local, target['name']))):
                 problems.add(f"{package['name']}: serving library resolves {target['name']}")
         queue.extend(dep['pkg'] for dep in nodes[current]['deps'])
     return problems

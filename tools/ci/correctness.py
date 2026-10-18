@@ -28,7 +28,8 @@ from fast import HELPERS, local_target
 FEATURES = ','.join([
     'enhance-pir/cli', 'enhance-pir/native-reinspiring',
     'enhance-serving/native-reinspiring', 'status-serving/native-reinspiring',
-    'enhance-pir-server/native-reinspiring', 'enhance-pir-load-test/native-reinspiring',
+    'enhance-pir-server/native-reinspiring', 'status-pir-server/native-reinspiring',
+          'enhance-pir-load-test/native-reinspiring',
     'pir-control/admission',
 ])
 
@@ -100,7 +101,7 @@ def rust_checks(env, temporary, offline):
     run(['python3', 'tools/ci/unit_tests.py', str(path), '--jobs=1', '--budget'], env=env, stage='tests:reference')
     # Doctests are not executable artifacts in Cargo's no-run output.
     run(['cargo', 'test', '--workspace', '--doc', *options, '--features', FEATURES], env=env, stage='doctests')
-    export_manifest = 'transparent/tools/txid-sizing/export/Cargo.toml'
+    export_manifest = 'tools/txid/txid-sizing/export/Cargo.toml'
     export_metadata = json.loads(subprocess.check_output(
         ['cargo', 'metadata', '--locked', '--no-deps', '--format-version=1',
          '--manifest-path', export_manifest, *offline], cwd=ROOT, env=env))

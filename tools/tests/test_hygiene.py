@@ -29,7 +29,7 @@ large_bytes = 1048576
 pattern = "product/tests/fixtures/*.json"
 reason = "Consumed by the regression tests."
 [[allow_data]]
-pattern = "transparent/evidence/correctness/*.json"
+pattern = "evidence/transparent/correctness/*.json"
 reason = "Essential correctness certificate."
 ''')
         self.write('README.md', '# Fixture\n')
@@ -67,7 +67,7 @@ reason = "Essential correctness certificate."
         self.assertTrue(any('ops/accidental.json: run data' in e for e in errors))
 
     def test_evidence_cannot_be_used_as_a_script_directory(self):
-        self.write('transparent/evidence/run/summarize.py', 'print(1)\n')
+        self.write('evidence/transparent/run/summarize.py', 'print(1)\n')
         self.assertIn('experiment script', self.inspect()[0][0])
 
     def test_local_check_sees_staged_unstaged_and_untracked_changes(self):
@@ -80,19 +80,19 @@ reason = "Essential correctness certificate."
         self.assertIn('README.md', areas)
 
     def test_committed_check_uses_committed_bytes_despite_local_edits(self):
-        proof = self.write('transparent/evidence/correctness/proof.json', '{"original": true}\n')
+        proof = self.write('evidence/transparent/correctness/proof.json', '{"original": true}\n')
         self.write('evidence/SHA256SUMS', hashlib.sha256(proof.read_bytes()).hexdigest() +
-                   '  transparent/evidence/correctness/proof.json\n')
+                   '  evidence/transparent/correctness/proof.json\n')
         self.commit()
         self.base = self.git('rev-parse', 'HEAD').strip()
         self.write('README.md', 'Next revision\n')
         self.commit()
-        self.write('transparent/evidence/correctness/proof.json', '{"rewritten": true}\n')
+        self.write('evidence/transparent/correctness/proof.json', '{"rewritten": true}\n')
         self.assertEqual(self.inspect(head='HEAD', local=False)[0], [])
         self.assertTrue(any('immutable' in error for error in self.inspect()[0]))
 
     def test_allowed_evidence_still_needs_a_matching_checksum(self):
-        self.write('transparent/evidence/correctness/proof.json', '{}')
+        self.write('evidence/transparent/correctness/proof.json', '{}')
         self.assertIn('exact digest', self.inspect()[0][0])
 
     def test_uncommitted_policy_cannot_hide_noise_in_a_pushed_commit(self):
