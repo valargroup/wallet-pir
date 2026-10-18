@@ -47,18 +47,10 @@ def bounded_programs(program, names):
     if program['integration'] or program['exclusive'] or len(names) <= 48:
         return [program]
     lanes = min(3, (len(names) + 47) // 48)
+    # Round-robin over sorted names spreads related slow cases across lanes;
+    # each process still builds its own immutable fixtures once.
     ordered = sorted(names)
-    distribution = [name for name in ordered
-                    if name.startswith('controller::distribution_tests::')]
-    if program.get('package') == 'transparent-publisher' and distribution:
-        # These cases share expensive immutable native producer bytes. Keep
-        # them in one process; each consumer still has its own files and HTTP.
-        remaining = sorted(names - set(distribution))
-        other_lanes = lanes - 1
-        partitions = [distribution, *[remaining[index::other_lanes]
-                                     for index in range(other_lanes)]]
-    else:
-        partitions = [ordered[index::lanes] for index in range(lanes)]
+    partitions = [ordered[index::lanes] for index in range(lanes)]
     partitions = [cases for cases in partitions if cases]
     assert sum(map(len, partitions)) == len(names)
     assert set().union(*map(set, partitions)) == set(names)

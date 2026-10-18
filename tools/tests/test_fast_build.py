@@ -88,23 +88,6 @@ class FastBuildTests(unittest.TestCase):
             guarded = dict(program, **{key: True})
             self.assertEqual(fast_build.bounded_programs(guarded, names), [guarded])
 
-    def test_publisher_distribution_consumers_share_one_producer_process(self):
-        distribution = {f'controller::distribution_tests::manager_tests::case_{index}'
-                        for index in range(40)}
-        names = distribution | {f'other::case_{index}' for index in range(102)}
-        program = dict(package='transparent-publisher', integration=False,
-                       exclusive=False, args=[], case_count=len(names))
-        shards = fast_build.bounded_programs(program, names)
-        self.assertEqual(len(shards), 3)
-        self.assertEqual(set(shards[0]['args'][1:]), distribution)
-        actual = [case for shard in shards for case in shard['args'][1:]]
-        self.assertCountEqual(actual, names)
-        self.assertTrue(all(shard['args'][0] == '--exact' for shard in shards))
-        only_distribution = {f'controller::distribution_tests::case_{index}'
-                             for index in range(60)}
-        [shard] = fast_build.bounded_programs(program, only_distribution)
-        self.assertCountEqual(shard['args'][1:], only_distribution)
-
     def test_one_build_preserves_units_binaries_fast_targets_and_package_specific_exclusions(self):
         self.execute()
         builds = [command for command, _ in self.calls if command[:2] == ['cargo', 'test']]
