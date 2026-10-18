@@ -110,7 +110,8 @@ class ProgramTests(unittest.TestCase):
                     raise RuntimeError('fixture failed')
                 return 1
             program = dict(executable='/deps/p', directory='/p', package='p', version='1', args=[])
-            with patch.object(unit_tests.subprocess, 'check_output', return_value='/rust/lib\n'), \
+            with patch.dict(os.environ, WALLET_PIR_ENFORCE_BUDGET='1'), \
+                    patch.object(unit_tests.subprocess, 'check_output', return_value='/rust/lib\n'), \
                     patch.object(test_budget, 'execute', side_effect=execute), \
                     patch.object(test_budget, 'stop'):
                 if fails:
@@ -150,7 +151,7 @@ class ProgramTests(unittest.TestCase):
         self.assertEqual(found, ['/test'])
 
     def test_bounded_programs_overlap_with_one_thread_per_program_and_package_cwd(self):
-        for jobs in (2, 3):
+        for jobs in (2, 3, 4):
             barrier = threading.Barrier(jobs, timeout=5)
             lock = threading.Lock()
             active, peak = 0, 0

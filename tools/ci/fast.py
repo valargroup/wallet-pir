@@ -330,7 +330,7 @@ def main():
     parser.add_argument('--test-target', default='')
     parser.add_argument('--offline', action='store_true')
     parser.add_argument('--select-only', action='store_true')
-    parser.add_argument('--unit-jobs', type=int, choices=(1, 2, 3), default=None,
+    parser.add_argument('--unit-jobs', type=int, choices=(1, 2, 3, 4), default=None,
                         help='bounded concurrent test programs, after sequential Cargo builds')
     parser.add_argument('--compile-only', action='store_true', help='prepare fast Rust units without running tests')
     parser.add_argument('--github-output', action='store_true')
