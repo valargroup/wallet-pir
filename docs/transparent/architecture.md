@@ -92,7 +92,7 @@ and local evidence only.
 | Filters | `wallet-libraries/zakura/transparent-filter` | Range filter profiles, keying, encoding and validation |
 | Shard protocol | `wallet-libraries/zakura/transparent-shard` | Geometry registry, script tags, placement, deterministic packing, choice tables, manifests and sealing |
 | Native PIR profile | `wallet-libraries/zakura/transparent-native` over `wallet-libraries/zakura/pir-native` | Transparent's seeds and scheme identity over the two-mask ReinspiRING helpers all three products share |
-| Ingest, census, publish | `src/transparent/transparent-publisher` | Resolve events, persist journal, seal and build shards, serve filters |
+| Ingest, census, publish | `src/shared/pir-publisher/transparent` | Resolve events, persist journal, seal and build shards, serve filters |
 | Shared publication and runtime | `src/transparent/transparent-shared` | Journal, verify publications, prepare native runtimes, bound memory and cache persisted or shipped runtimes |
 | Raw PIR runtime | `src/shared/pir-runtime` | Retained P16 adapter uses shared scan parameters and `PreparedDatabase`; current Directory, Pages and TxDirectory tables all select P8. Enhance and Status are the active u16 consumers |
 | Retrieval service | `src/transparent/transparent-query-server` | Verify publication, bound runtime cache, revision-addressed setup/query |

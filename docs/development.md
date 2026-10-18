@@ -178,7 +178,7 @@ worker control, use `make check-package PACKAGE=transparent-query-server`.
 These packages do not pull in the publisher's chain reader or RocksDB, including
 when compiling their tests. Publisher-to-worker shipping tests live in the
 tools package; select them with
-`make check-package PACKAGE=transparent-tools TEST_TARGET=txid_shipped_runtimes`.
+`make check-package PACKAGE=transparent-tools FEATURES=publisher-tools TEST_TARGET=txid_shipped_runtimes`.
 The existing `make transparent-txid-demo` command still exercises confirmed raw
 blocks through extraction, publication and encrypted retrieval. Add `OFFLINE=1`
 once dependencies are fetched. Finish a change with `make check-fast BASE=<sha>`
