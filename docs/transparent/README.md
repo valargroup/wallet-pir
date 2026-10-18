@@ -37,7 +37,7 @@ The contract governs intended behavior; code establishes implementation; deploym
 
 ## Product boundaries
 
-Active transparent recovery uses `wallet-libraries/zakura/transparent-events`, `wallet-libraries/zakura/transparent-filter`, `wallet-libraries/zakura/transparent-shard`, `wallet-libraries/zakura/transparent-txid-client`, `wallet-libraries/zakura/pir-transparent` (`engine` and `engine_store`), `src/transparent/transparent-publisher`, and `src/transparent/transparent-query-server`.
+Active transparent recovery uses `wallet-libraries/zakura/transparent-events`, `wallet-libraries/zakura/transparent-filter`, `wallet-libraries/zakura/transparent-shard`, `wallet-libraries/zakura/transparent-txid-client`, `wallet-libraries/zakura/pir-transparent` (`engine` and `engine_store`), `src/shared/pir-publisher/transparent`, and `src/transparent/transparent-query-server`.
 
 Both services consume the shared package
 `src/transparent/transparent-shared`; the compact-block server is a
