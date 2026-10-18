@@ -82,7 +82,7 @@ still owed.
 
 Bytes and time are accounted per stage in `SyncReport`; the integration
 measures its own transport, TLS and storage costs on top, which the
-reference figures exclude. The load harness `src/transparent/transparent-loadtest`
+reference figures exclude. The load harness `tools/transparent/loadtest`
 reports the same split for the reference adapters.
 
 ## Persistence compatibility

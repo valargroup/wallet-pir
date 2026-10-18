@@ -49,8 +49,8 @@ parent is created automatically. `transparent-sim-wave` is an explicit wave alia
 The equivalent direct CLI invocation is:
 
 ```sh
-cargo run --locked --release -p transparent-loadtest -- \
-  --scenario src/transparent/transparent-loadtest/scenarios/mixed-20-wave.json \
+cargo run --locked --release -p transparent-tools --features benchmarks --bin transparent-loadtest -- \
+  --scenario tools/transparent/loadtest/scenarios/mixed-20-wave.json \
   --out-dir /tmp/transparent-wave-001
 ```
 
@@ -62,8 +62,8 @@ wallet. These are explicit synthetic workload weights, not a population model.
 Override origins and add every measured worker's full private metrics URL:
 
 ```sh
-cargo run --locked --release -p transparent-loadtest -- \
-  --scenario src/transparent/transparent-loadtest/scenarios/mixed-20-wave.json \
+cargo run --locked --release -p transparent-tools --features benchmarks --bin transparent-loadtest -- \
+  --scenario tools/transparent/loadtest/scenarios/mixed-20-wave.json \
   --shard-url http://127.0.0.1:8093 \
   --filter-url http://127.0.0.1:8093 \
   --metrics-target worker-1=http://127.0.0.1:8093/metrics \
@@ -197,8 +197,8 @@ visible in the report.
 ## Validation
 
 ```sh
-cargo test --release -p transparent-loadtest
-node --test src/transparent/transparent-loadtest/tests/apm.test.cjs
+cargo test --release -p transparent-tools --features benchmarks
+node --test tools/transparent/loadtest/tests/apm.test.cjs
 make check
 ```
 
@@ -330,8 +330,9 @@ benchmark implementation, not a measurement of an existing wallet/lightwalletd
 release. The journal remains the independent event oracle; the scanner never
 receives expected events or performs address-specific requests.
 
-Build the tools with `cargo build --release -p transparent-publisher --bin
-compact-export --bin sample-oracle -p transparent-block-server -p transparent-loadtest`.
+Build the tools with `cargo build --release -p transparent-tools --features
+compact-export --bin compact-export --bin transparent-block-server --bin transparent-loadtest`
+and `cargo build --release -p transparent-publisher --bin sample-oracle`.
 `protoc` is required to compile the pinned protobuf schema. Export the full dataset
 on the archive host, outside measured time:
 

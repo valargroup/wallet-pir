@@ -150,7 +150,7 @@ class ValidationTests(unittest.TestCase):
         self.assertEqual(Q.P95_TARGETS['multi-script'], 60); self.assertEqual(Q.P95_TARGETS['unused'], 15)
         self.assertEqual({l:sum(c.values()) for l, c in Q.COMPOSITION.items()}, {8:8, 20:20, 40:40})
         self.assertTrue(all(Q.HEAVY in c for c in Q.COMPOSITION.values()))
-        scenario = json.loads((ROOT/'src/transparent/transparent-loadtest/scenarios/mixed-20-sustained.json').read_text())
+        scenario = json.loads((ROOT/'tools/transparent/loadtest/scenarios/mixed-20-sustained.json').read_text())
         self.assertEqual(Q.COMPOSITION[20], scenario['profiles'])
 
 

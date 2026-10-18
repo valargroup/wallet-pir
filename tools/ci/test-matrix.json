@@ -71,14 +71,14 @@
       "transparent:transparent-publisher:bin:txid-display-controller",
       "transparent:transparent-publisher:doc:transparent_publisher",
       "transparent:transparent-publisher:example:publication_bench",
-      "transparent:transparent-publisher:example:transparent-txid-demo",
       "transparent:transparent-publisher:lib:transparent_publisher",
       "transparent:transparent-publisher:test:event_codec_bounds",
       "transparent:transparent-publisher:test:service_round_trip",
       "transparent:transparent-publisher:test:shard_filters",
-      "transparent:transparent-publisher:test:txid_shipped_runtimes",
       "transparent:transparent-tools:bin:compact-export",
-      "transparent:transparent-tools:test:compact_export"
+      "transparent:transparent-tools:example:transparent-txid-demo",
+      "transparent:transparent-tools:test:compact_export",
+      "transparent:transparent-tools:test:txid_shipped_runtimes"
     ]
   },
   "transparent-backend": {
