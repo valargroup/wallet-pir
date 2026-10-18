@@ -270,7 +270,7 @@ class CompareTest(unittest.TestCase):
 
     def test_frozen_fixture_compares_with_itself_without_state_differences(self):
         frozen = compare.load(
-            ROOT / 'src/transparent/transparent-regression/fixtures/mainnet.json')
+            ROOT / 'tools/transparent/fixtures/regression/mainnet.json')
         blocking, _, _ = compare.compare(frozen, frozen, 0.25)
         # The degenerate self-comparison flags only the non-advancing anchor.
         self.assertEqual(

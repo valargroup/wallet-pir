@@ -6,7 +6,7 @@ from pathlib import Path
 import unittest
 
 ROOT = Path(__file__).resolve().parents[3]
-FROZEN = ROOT / 'src/transparent/transparent-regression/fixtures/mainnet-cases.json'
+FROZEN = ROOT / 'tools/transparent/fixtures/regression/mainnet-cases.json'
 _spec = importlib.util.spec_from_file_location(
     'recut', ROOT / 'tools/transparent/scripts/recut-regression-cases.py')
 recut = importlib.util.module_from_spec(_spec)
