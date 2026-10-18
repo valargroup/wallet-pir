@@ -14,12 +14,12 @@ serde = { version = "1", features = ["derive"] }
 tempfile = "3"
 sha2 = "0.10"
 thiserror = "2"
-transparent-events = { package = "zakura-transparent-events", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "68315eac8aa6dfc018c79a48b90ff51460caaee8" }
-transparent-filter = { package = "zakura-transparent-filter", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "68315eac8aa6dfc018c79a48b90ff51460caaee8" }
-transparent-shard = { package = "zakura-transparent-shard", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "68315eac8aa6dfc018c79a48b90ff51460caaee8" }
+transparent-events = { package = "zakura-transparent-events", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "b7fffbbc98d75af5ebc9c9d9da92ca19e9f0fdbd" }
+transparent-filter = { package = "zakura-transparent-filter", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "b7fffbbc98d75af5ebc9c9d9da92ca19e9f0fdbd" }
+transparent-shard = { package = "zakura-transparent-shard", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "b7fffbbc98d75af5ebc9c9d9da92ca19e9f0fdbd" }
 # Transaction and block reads through the server adapter, at the revision the
 # services pin.
-zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "68315eac8aa6dfc018c79a48b90ff51460caaee8", default-features = false, features = ["transparent"] }
+zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "b7fffbbc98d75af5ebc9c9d9da92ca19e9f0fdbd", default-features = false, features = ["transparent"] }
 
 [build-dependencies]
 sha2 = "0.10"
@@ -29,7 +29,7 @@ toml = "0.8.23"
 [dev-dependencies]
 toml = "0.8.23"
 # Raw synthetic blocks for the shared extractor's tests.
-zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "68315eac8aa6dfc018c79a48b90ff51460caaee8", default-features = false, features = ["transparent", "testing"] }
+zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "b7fffbbc98d75af5ebc9c9d9da92ca19e9f0fdbd", default-features = false, features = ["transparent", "testing"] }
 
 [profile.release-fast]
 inherits = "release"
