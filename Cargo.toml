@@ -17,8 +17,7 @@ members = [
     "src/status/status-publication",
     "src/transparent/transparent-blocks",
     "src/shared/transparent-server-backend",
-    "src/shared/transparent-ingest",
-    "src/txid/txid-serving",
+    "src/transparent/transparent-ingest",
     # Services and operational dashboard.
     "src/enhance/enhance-pir-server",
     "src/status/status-pir-server",
@@ -26,7 +25,6 @@ members = [
     "src/transparent/transparent-filter-server",
     "src/transparent/transparent-block-server",
     "src/transparent/transparent-shard-server",
-    "src/txid/txid-pir-server",
     # Development and validation tools; package/binary names stay stable.
     "src/enhance/loadtest",
     "src/enhance/monitor",

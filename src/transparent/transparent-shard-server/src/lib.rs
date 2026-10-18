@@ -7,9 +7,8 @@
 //! and private bytes to come from different origins still has that, and one
 //! that wants a single endpoint has that too.
 
-// Both workers compile the same transaction privately; product adapters stay local.
-#[path = "../../../shared/activation/mod.rs"]
 mod activation;
+pub mod display;
 use transparent_server_backend::{admission, control, prewarm, request};
 pub mod router;
 pub mod service;

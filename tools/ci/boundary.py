@@ -66,19 +66,19 @@ PURE = {
     'receiver-pir-server',
     'pir-observability', 'pir-control', 'pir-runtime', 'enhance-pir', 'transparent-blocks',
     'transparent-shard-server', 'transparent-server-backend',
-    'enhance-serving', 'status-serving', 'status-protocol', 'pir-serving', 'txid-serving',
+    'enhance-serving', 'status-serving', 'status-protocol', 'pir-serving',
 }
 # Serving libraries and the chain reading, ingestion and application packages
 # they must never reach. Each product's applications compose its serving library;
 # the shared raw PIR runtime they call is held to the same rule.
 SERVING = {'enhance-serving', 'status-serving', 'transparent-server-backend', 'pir-runtime',
-           'pir-serving', 'txid-serving'}
+           'pir-serving'}
 INGESTION = {
     'pir-pipeline', 'zakura-server-chain', 'enhance-pir-server', 'receiver-indexer',
     'transparent-filter-server', 'transparent-block-server', 'transparent-measure',
-    'status-publication', 'status-pir-server', 'transparent-ingest', 'txid-pir-server',
+    'status-publication', 'status-pir-server', 'transparent-ingest',
 }
-PRODUCTS = ('src/enhance/', 'src/status/', 'src/transparent/', 'src/txid/', 'src/receiver/')
+PRODUCTS = ('src/enhance/', 'src/status/', 'src/transparent/', 'src/receiver/')
 SHARED = 'src/shared/'
 # Application packages: services, operational dashboards and development tools.
 # Serving libraries compose into them, never the reverse.
@@ -86,13 +86,12 @@ APPLICATIONS = {
     'enhance-pir-server', 'status-pir-server', 'pir-apm', 'enhance-pir-load-test', 'pir-monitor',
     'enhance-noise-analysis', 'transparent-filter-server', 'transparent-block-server',
     'transparent-shard-server', 'transparent-loadtest', 'transparent-regression',
-    'transparent-measure', 'txid-pir-server', 'receiver-indexer', 'receiver-pir-server',
+    'transparent-measure', 'receiver-indexer', 'receiver-pir-server',
 }
 # Shared packages consumed by a subset of products. A serving library of any other
 # product reaching one still crosses a product boundary.
 SHARED_SCOPES = {
-    'src/shared/transparent-server-backend/': ('src/transparent/', 'src/txid/'),
-    'src/shared/transparent-ingest/': ('src/transparent/', 'src/txid/'),
+    'src/shared/transparent-server-backend/': ('src/transparent/',),
     'src/shared/pir-serving/': ('src/enhance/', 'src/status/'),
 }
 
