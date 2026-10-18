@@ -1321,10 +1321,9 @@ mod shipped_tests {
         }
     }
 
-    /// Every shipped file the worker cannot use is counted as a fallback and
-    /// the runtime is built here, publishing what a local build publishes: a
-    /// missing file, a truncated or corrupted one, and one made for another
-    /// revision or another table and placed under this one's name.
+    /// Missing, truncated, corrupted and wrongly named shipped files are all
+    /// refused. Missing and corrupted files also exercise counted cold fallback
+    /// builds; full qualification exercises that fallback for every refusal.
     #[tokio::test(flavor = "multi_thread")]
     async fn refused_shipped_files_fall_back_to_a_counted_local_build() {
         let dir = tempfile::tempdir().unwrap();
@@ -1391,6 +1390,16 @@ mod shipped_tests {
         for (name, prepare) in cases {
             let shipped = candidate(dir.path(), name);
             prepare(&shipped);
+            assert!(
+                shipped.load(&s.key, &s.shared, s.source.sha256()).is_err(),
+                "{name} must be rejected before use"
+            );
+            // Rejection and cold construction are separate contracts. Exercise
+            // every refusal here, then the complete fallback for a missing file
+            // and damaged content. Qualification repeats it for every identity.
+            if !cfg!(feature = "qualification-tests") && !matches!(name, "missing" | "corrupted") {
+                continue;
+            }
             let metrics = Arc::new(Metrics::default());
             let cache = RuntimeCache::new(s.shared.reserved_bytes() * 2, 1, metrics.clone());
             let (handle, produced) = cache
@@ -1502,7 +1511,8 @@ mod shipped_tests {
     /// History runtimes of both kinds, offered under the right name but made
     /// for another revision or page shard, another source digest, another
     /// geometry's parameters, the other table kind or another native
-    /// schema's parameters, are each refused and built here, once.
+    /// schema's parameters, are each refused. A changed identity also exercises
+    /// one counted cold fallback; full qualification repeats it for every reason.
     #[tokio::test(flavor = "multi_thread")]
     async fn directory_files_of_another_identity_are_refused_once_each() {
         history_identity_refusals(Table::Directory).await;
@@ -1587,6 +1597,16 @@ mod shipped_tests {
             let file = shipped.path(&s.key, &s.shared, s.source.sha256());
             bytes[..32].copy_from_slice(&DiskCache::identity(&key, shared, &sha));
             fs::write(&file, &bytes).unwrap();
+            assert!(
+                shipped.load(&s.key, &s.shared, s.source.sha256()).is_err(),
+                "{name} must be rejected before use"
+            );
+            // The loader rejects each distinct identity above. One cold cache
+            // proves that a refused identity takes the counted fallback path;
+            // full qualification retains that cross-product for every reason.
+            if !cfg!(feature = "qualification-tests") && name != "another identity" {
+                continue;
+            }
             let metrics = Arc::new(Metrics::default());
             let cache = RuntimeCache::new(s.shared.reserved_bytes() * 2, 1, metrics.clone());
             let (handle, produced) = cache
