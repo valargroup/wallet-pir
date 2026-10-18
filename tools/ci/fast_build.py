@@ -38,6 +38,24 @@ def test_names(binary, directory, *, ignored=False):
     return {line[:-6] for line in listing.splitlines() if line.endswith(': test')}
 
 
+def bounded_programs(program, names):
+    """Partition large unit executables without increasing the process limit.
+
+    Exact filters are a disjoint cover of discovery, including ignored cases.
+    Each process retains immutable fixture reuse across dozens of cases. Keep
+    the small-runner publisher protection and real HTTP integrations intact.
+    """
+    if program['integration'] or program['exclusive'] or len(names) <= 48:
+        return [program]
+    lanes = min(3, (len(names) + 47) // 48)
+    ordered = sorted(names)
+    partitions = [ordered[index::lanes] for index in range(lanes)]
+    assert sum(map(len, partitions)) == len(names)
+    assert set().union(*map(set, partitions)) == set(names)
+    return [dict(program, args=[*program['args'], '--exact', *cases],
+                 case_count=len(cases)) for cases in partitions]
+
+
 def execute(selected, *, offline=False, compile_only=False, jobs=3,
             additional_features=(), environment=None, case_log=None, enforce_budget=True):
     from integration_tests import inventory
@@ -135,12 +153,13 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3,
         # Full archive runtimes use every core on a 4-core runner and push the
         # encrypted HTTP smokes past their 30s deadline. Run that library alone
         # there; an 8-core runner still has cores left for the shared pool.
-        programs.append(dict(executable=binary, directory=directory, package=name,
+        program = dict(executable=binary, directory=directory, package=name,
                              version=package['version'],
                              integration=integration,
                              exclusive=publisher_runs_alone(name, target['kind']),
                              case_count=len(names),
-                             args=[arg for case in exclusions for arg in ('--skip', case)]))
+                             args=[arg for case in exclusions for arg in ('--skip', case)])
+        programs.extend(bounded_programs(program, names))
     if actual_integrations != expected_integrations or expected_units - actual_units:
         raise ValueError(f'fast test executables mismatch: missing_units={sorted(expected_units-actual_units)}, '
                          f'missing_integrations={sorted(expected_integrations-actual_integrations)}, '

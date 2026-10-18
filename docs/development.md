@@ -34,7 +34,10 @@ history HTTP checks retain real history rows. Publisher tests share immutable
 producer bytes and generated certificate material; writable state, listeners,
 trust checks and fault controls remain fresh. A query reused within one recovery
 scenario is first decoded against producer bytes, and every later check still
-sends it over HTTP and compares the complete answer.
+sends it over HTTP and compares the complete answer. Large unit executables
+use up to three disjoint groups of exact discovered case names inside the same
+three-process limit; each group keeps fixture reuse and serial case deadlines.
+HTTP integrations and the small-runner publisher protection remain intact.
 
 `make check-correctness` runs that complete bounded unit/integration population
 with native arithmetic, the independent reference checks, exporter contracts,

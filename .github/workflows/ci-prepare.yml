@@ -49,10 +49,11 @@ jobs:
         if: inputs.stress
         run: umask 022 && TMPDIR="$RUNNER_TEMP" python3 tools/ci/integration_tests.py --tier fast --smoke-only --repeat 50
       - name: Diagnose complete CPU correctness
-        if: inputs.correctness
+        id: correctness-preparation
+        if: inputs.correctness && !cancelled()
         run: umask 022 && TMPDIR="$RUNNER_TEMP" python3 tools/ci/correctness.py --record-only
       - name: Validate three warm complete correctness runs
-        if: inputs.correctness
+        if: inputs.correctness && !cancelled() && steps.correctness-preparation.outcome == 'success' 
         run: |
           set -euo pipefail
           umask 022

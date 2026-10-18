@@ -74,6 +74,20 @@ class FastBuildTests(unittest.TestCase):
             fast_build.execute([p['name'] for p in self.packages], offline=True,
                                compile_only=compile_only, jobs=jobs, **options)
 
+    def test_large_unit_partitions_cover_each_discovered_case_exactly_once(self):
+        names = {f'module::case_{index:03}' for index in range(137)}
+        program = dict(integration=False, exclusive=False, args=[], case_count=len(names))
+        shards = fast_build.bounded_programs(program, names)
+        self.assertEqual(len(shards), 3)
+        actual = [case for shard in shards for case in shard['args'][1:]]
+        self.assertEqual(set(actual), names)
+        self.assertEqual(len(actual), len(names))
+        self.assertTrue(all(shard['args'][0] == '--exact' for shard in shards))
+        self.assertLessEqual(max(shard['case_count'] for shard in shards), 46)
+        for key in ('integration', 'exclusive'):
+            guarded = dict(program, **{key: True})
+            self.assertEqual(fast_build.bounded_programs(guarded, names), [guarded])
+
     def test_one_build_preserves_units_binaries_fast_targets_and_package_specific_exclusions(self):
         self.execute()
         builds = [command for command, _ in self.calls if command[:2] == ['cargo', 'test']]

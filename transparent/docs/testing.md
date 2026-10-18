@@ -25,14 +25,13 @@ history/display reconstruction comparisons. The ordinary history HTTP smoke
 and stored-mask tampering check retain actual history data and independent
 answer/refusal evidence.
 
-Publisher tests build immutable producer fixtures once per process and give each
-case independent writable copies. Generated TLS certificate bytes may be shared;
-listeners, trust verification, authority, faults and service state are fresh.
-Cleanup controls exercise the same ownership helper with small ordinary files.
-Their successful, failed and child-exit paths do not repeat cryptographic builds.
-Construction and cleanup remain inside measured checks. Cold and corruption
-checks keep their own cache state. No client secrets or validation results are
-shared between tests.
+Publisher tests share immutable producer bytes and finalized inventories within
+each test process. Every consumer owns a fresh directory and independently
+verifies the real HTTP transfer. Cases that mutate publisher files retain owned
+copies. Exit cleanup controls exercise the same owner registry with tiny files;
+certificate material is immutable but listeners, trust checks and fault controls
+remain fresh. Reused encrypted requests stay inside one recovery scenario and
+are first decoded against the original producer rows.
 
 Publisher unit-test processes use up to four available build threads, respecting
 an explicit `TRANSPARENT_BUILD_THREADS`; integration programs and serving defaults
