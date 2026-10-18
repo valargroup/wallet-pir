@@ -63,6 +63,9 @@ class Lifecycle:
                 # from a staged copy, before any unit changes.
                 if plan.action not in CHANGING or not plan.check:
                     continue
+                if plan.target.role.guard is not None:
+                    d.out('%s: product check runs at deploy, in disposable state' % plan.target.key)
+                    continue
                 pending = [c['path'] for c in plan.changes
                            if c['op'] == 'write' and not c['path'].startswith('/etc/systemd/')]
                 release = d.service.release_binary(sha)

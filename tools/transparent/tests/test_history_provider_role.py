@@ -21,7 +21,7 @@ class ProviderRole(unittest.TestCase):
         role = history_provider(self.settings, release='/opt/provider/release')
         service = units.effective([role.unit])['Service']
         start = shlex.split(units.exec_start(units.effective([role.unit])))
-        self.assertEqual(start[0], '/opt/provider/release/transparent-shard-server')
+        self.assertEqual(start[0], '/opt/provider/release/transparent-query-server')
         self.assertEqual(shlex.split(service['ExecStartPre'][0]), start + ['--verify-only'])
         self.assertEqual(list(role.check), start[1:] + ['--verify-only'])
         self.assertEqual(role.directories, (self.settings['state_dir'],))
