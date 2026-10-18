@@ -33,7 +33,7 @@ class ImmutableWrapperSource(unittest.TestCase):
             root = Path(directory)
             shutil.copytree(ROOT / 'ops/lib', root / 'ops/lib',
                             ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
-            shutil.copytree(ROOT / 'transparent/ops/lib', root / 'transparent/ops/lib',
+            shutil.copytree(ROOT / 'ops/transparent/lib', root / 'ops/transparent/lib',
                             ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
             (root / 'ops/scripts').mkdir(parents=True)
             wrapper = root / 'ops/scripts/wallet-pir-deploy.py'
@@ -47,7 +47,7 @@ class ImmutableWrapperSource(unittest.TestCase):
             self.assertEqual(list(root.rglob('__pycache__')), [])
 
 
-DEPLOY = ROOT / 'enhance/ops/deploy'
+DEPLOY = ROOT / 'ops/enhance/deploy'
 SERVICES = descriptors.load_descriptors(ROOT / 'ops/deploy/services.toml')
 LOCK = ('coordinator', descriptors.LOCK_PATH)
 
@@ -63,7 +63,7 @@ NETWORK = 'ab' * 32
 STATUS_OLD = b'status-pir built from c5a6486'
 STATUS_NEW = b'status-pir built from a later revision'
 STATUS_LEGACY = '/opt/wallet-pir/releases/c5a6486/native'
-RECEIVER_TEMPLATE = ROOT / 'receiver/ops/digitalocean/receiver-pir.service.in'
+RECEIVER_TEMPLATE = ROOT / 'ops/receiver/digitalocean/receiver-pir.service.in'
 RECEIVER_OLD = b'receiver-directory built from c7f6d296'
 RECEIVER_NEW = b'receiver-directory built from a later revision'
 RECEIVER_CURRENT = '/opt/receiver-pir/current/receiver-directory'
@@ -1000,7 +1000,7 @@ class UnitTests(unittest.TestCase):
         self.assertFalse(any(role.owns_unit for name in ('enhance', 'status') for role in SERVICES[name].roles.values()
                              if role.mode != 'role'))
         text = (DEPLOY / 'deploy.toml').read_text().replace('template = "', 'template = "%s/' % DEPLOY)
-        text += (ROOT / 'receiver/ops/digitalocean/service.toml').read_text().replace(
+        text += (ROOT / 'ops/receiver/digitalocean/service.toml').read_text().replace(
             'template = "receiver-pir.service.in"', 'template = "'+str(RECEIVER_TEMPLATE)+'"')
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / 'deploy.toml'

@@ -23,7 +23,7 @@ registration. No private SSH key is copied onto workers.
 
 Before applying an expansion, freeze the operation's policy and existing Droplet
 IDs, persist one requested target count, save a Terraform plan, and validate its
-JSON using `enhance/ops/scripts/infra-plan.py` from the repository root. The
+JSON using `ops/enhance/scripts/infra-plan.py` from the repository root. The
 validator allows only the next pair and its project membership, plus initial
 shared resources for bootstrap. It rejects updates, replacements, removals,
 unexpected resources, changed identities, profile/ingress changes, and drift.
@@ -34,7 +34,7 @@ register. The durable demand journal, provisioning adapter, pair bootstrap,
 and isolated fixture registration driver have been exercised against a live
 Valargroup test fleet. Production registration still requires hardware
 qualification; automatic orphan recovery remains unfinished. See the isolated
-live expansion evidence under `enhance/evidence/`.
+live expansion evidence under `evidence/enhance/`.
 
 Local provider/schema checks use no cloud credentials:
 
@@ -51,7 +51,7 @@ passing receipt.
 
 ## Durable expansion journal
 
-`enhance/ops/scripts/expansion-journal.py` consumes live coordinator health
+`ops/enhance/scripts/expansion-journal.py` consumes live coordinator health
 (`--coordinator-url`) or a captured response (`--health`), the current worker
 inventory (`--inventory`), and immutable operation policy (`--policy`). Supply a
 dedicated `--state-dir` on persistent storage. Each invocation holds an exclusive
@@ -84,14 +84,14 @@ registration after live bootstrap. Production qualification receipt verification
 and registration remain separate. `provisioned` describes resource
 reconciliation only and never implies worker readiness or qualification.
 
-The disposable local runner accepts `--journal-script enhance/ops/scripts/expansion-journal.py` with `--expand-inventory` to check
+The disposable local runner accepts `--journal-script ops/enhance/scripts/expansion-journal.py` with `--expand-inventory` to check
 that two separate journal processes consume the same real coordinator request.
 Its direct fixture registration does not exercise the live adapter or bypass
 production qualification. Use the isolated live driver below for that path.
 
 ## Provisioning adapter
 
-`enhance/ops/scripts/provision.py` executes one pending expansion under the
+`ops/enhance/scripts/provision.py` executes one pending expansion under the
 journal lock. It requires an already initialized isolated S3 backend with verified locking,
 the default workspace, and an established first v4 pair. Native S3 locking uses
 `use_lockfile=true`. DigitalOcean Spaces requires the pinned-host mode below;
@@ -146,12 +146,12 @@ DigitalOcean's [account](https://docs.digitalocean.com/reference/api/reference/a
 [VPC](https://docs.digitalocean.com/reference/api/reference/vpcs/), and
 [Droplet](https://docs.digitalocean.com/reference/api/reference/droplets/) contracts.
 
-The [candidate bootstrap instructions](../../../../../enhance/docs/qualification.md)
+The [candidate bootstrap instructions](../../../../../docs/enhance/qualification.md)
 describe the packaged host-local installer and its unqualified receipt. It runs through the explicit pair-bootstrap step below after provisioning.
 
 ## Pair bootstrap driver
 
-`enhance/ops/scripts/bootstrap-pair.py` advances the same journal from
+`ops/enhance/scripts/bootstrap-pair.py` advances the same journal from
 `provisioned` through `bootstrapping` to `bootstrapped`. It rechecks the live
 provider/account/project/VPC/state binding and selects only the new pair by
 recorded Droplet IDs and private IPv4 origins. It never provisions additional
@@ -194,7 +194,7 @@ recorded separately from these unit tests.
 
 ## Disposable synthetic expansion test
 
-`enhance/ops/scripts/isolated-expansion.py` joins demand observation,
+`ops/enhance/scripts/isolated-expansion.py` joins demand observation,
 provisioning, pair bootstrap, and inventory registration for an isolated fixture
 coordinator. It requires the coordinator's local `source-mode` marker to read
 `synthetic-fixture`, a loopback health origin, runtime provider credentials, and
@@ -225,7 +225,7 @@ after inspecting the new hosts and preparing the pinned bootstrap policy.
 Compare the watcher trace with the placement trace to confirm no earlier request,
 the exact crossing, registration of both replicas before the new shard appears,
 and published shard movement. Keep private traces outside Git and retain their
-digests in a sanitized summary. The [live threshold campaign](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/enhance/evidence/architecture-v4-live-threshold-2026-09-23/README.md)
+digests in a sanitized summary. The [live threshold campaign](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/evidence/enhance/architecture-v4-live-threshold-2026-09-23/README.md)
 shows the expected sequence and the observed RAM and query results.
 
 ## Spaces state locking

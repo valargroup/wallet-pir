@@ -7,7 +7,7 @@ import sys
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
-TESTS = ROOT / 'transparent/ops/tests'
+TESTS = ROOT / 'ops/transparent/tests'
 
 
 def validate(registry):

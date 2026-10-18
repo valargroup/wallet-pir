@@ -6,7 +6,7 @@ ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from transparent.ops.tests import test_binary_upgrade  # noqa: E402
+from ops.transparent.tests import test_binary_upgrade  # noqa: E402
 
 
 def load_tests(loader, tests, pattern):

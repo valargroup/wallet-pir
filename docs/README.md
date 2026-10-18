@@ -2,12 +2,14 @@
 
 - [Fleet operator guide](operations.md): architecture, configuration ownership, packaged operations, lifecycle commands and recovery.
 
-- [Enhance PIR](../enhance/docs/README.md): Ironwood integration, architecture, deployment and measured performance.
-- [Transparent PIR](../transparent/docs/README.md): recovery contract, filters, wallet adapter, deployment and acceptance.
-- [Receiver directory](../receiver/README.md): zero-OVK receiver records, publications, filters and witnesses.
+- [Enhance PIR](enhance/README.md): Ironwood integration, architecture, deployment and measured performance.
+- [Transparent PIR](transparent/README.md): recovery contract, filters, wallet adapter, deployment and acceptance.
+- [Status PIR](status/README.md): serving architecture, distributed runbook, qualification and APM rollout.
+- [Transaction-detail (txid) display](txid/README.md): txid display protocol, shipped runtimes plan and sizing findings.
+- [Receiver directory](receiver/README.md): zero-OVK receiver records, publications, filters and witnesses.
 - [Transparent activity metadata plan](transparent-pir-activity-metadata-plan.md): proposed compact fee/shape metadata, accepted activity limitations, and separate future txid PIR.
-- [Transparent txid sizing and anonymity findings](transparent-txid-sizing-and-anonymity-findings.md): whole-range probability sizing estimates, independent routing and remaining full-population gates.
-- [Transparent txid display](../transparent/docs/txid-display.md): server protocol, native demo, tiered proof of concept and next wallet integration stage.
+- [Transparent txid sizing and anonymity findings](txid/transparent-txid-sizing-and-anonymity-findings.md): whole-range probability sizing estimates, independent routing and remaining full-population gates.
+- [Transparent txid display](txid/txid-display.md): server protocol, native demo, tiered proof of concept and next wallet integration stage.
 - [Evidence](../evidence/README.md): retained measurements and their provenance.
 - [Serving contract](serving-contract.md): process identity, serving authority and refusal codes across Enhance, Status and Transparent.
 - [Decentralized query serving](decentralized-query-serving.md): phased plan for independent providers, prepared publications, embedded router/worker deployments and service discovery.

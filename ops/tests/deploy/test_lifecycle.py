@@ -98,7 +98,7 @@ class ReadOnlyStatusTests(Fleet):
 
 class FleetViewTests(unittest.TestCase):
     def test_one_view_covers_each_product_without_ssh(self):
-        fleet = ConfiguredFleet.load(ROOT / 'enhance/ops/deploy/deploy-inventory.example.json')
+        fleet = ConfiguredFleet.load(ROOT / 'ops/enhance/deploy/deploy-inventory.example.json')
         view = fleet.describe()
         self.assertEqual(view['view'], 'configured')
         self.assertEqual({r['service'] for r in view['roles']}, set(SERVICES))
@@ -106,7 +106,7 @@ class FleetViewTests(unittest.TestCase):
                          {'binary', 'transparent-history', 'txid-display'})
 
     def test_two_products_cannot_own_the_same_host_unit(self):
-        fleet = ConfiguredFleet.load(ROOT / 'enhance/ops/deploy/deploy-inventory.example.json')
+        fleet = ConfiguredFleet.load(ROOT / 'ops/enhance/deploy/deploy-inventory.example.json')
         worker = fleet.inventory.services['transparent-history']['roles']['worker'][0]
         worker.update(host='worker-01', unit='enhance-pir-worker.service')
         with self.assertRaisesRegex(ValueError, 'both own enhance-pir-worker.service'):

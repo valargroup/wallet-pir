@@ -25,8 +25,8 @@ from wallet_pir_ops import control_sessions as cs, pinned_ssh  # noqa: E402
 
 FAKE_SSH = Path(__file__).resolve().parent / 'fake_ssh.py'
 EXAMPLE = ROOT / 'ops/deploy/control-sessions.status.example.json'
-UNITS = {'status-control': ROOT / 'enhance/ops/deploy/status-control-tunnel.service.in',
-         'status-query': ROOT / 'enhance/ops/deploy/status-query-tunnel.service.in'}
+UNITS = {'status-control': ROOT / 'ops/enhance/deploy/status-control-tunnel.service.in',
+         'status-query': ROOT / 'ops/enhance/deploy/status-query-tunnel.service.in'}
 CLOUD_INIT = ROOT / 'ops/infra/digitalocean/status/cloud-init.yaml.tftpl'
 PUBLIC_KEY = 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOVJfyTmLRUrVY7xJ3LvsjGEEBPy/b0TkM5A2HpVRZl9 status-control'
 
@@ -477,7 +477,7 @@ class TransparentTest(unittest.TestCase):
     def test_live_fleet_arguments_are_unchanged(self):
         import asyncio
         from unittest.mock import patch
-        live = self.load(ROOT / 'transparent/ops/scripts/transparent-live-fleet.py', 'live_fleet_cs')
+        live = self.load(ROOT / 'ops/transparent/scripts/transparent-live-fleet.py', 'live_fleet_cs')
         worker = dict(id='owner-1', role='archive-owner', ssh_host='10.0.0.5', upstream='10.0.0.5:8093')
         with tempfile.TemporaryDirectory() as directory:
             roster = Path(directory) / 'roster.json'

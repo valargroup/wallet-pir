@@ -19,7 +19,7 @@ import tomllib
 
 ROOT = Path(__file__).resolve().parents[2]
 POLICY = 'tools/ci/hygiene.toml'
-EVIDENCE = ('evidence/', 'enhance/evidence/', 'transparent/evidence/', 'receiver/evidence/')
+EVIDENCE = ('evidence/', 'evidence/enhance/', 'evidence/transparent/', 'evidence/receiver/')
 STRUCTURED = {'.json', '.jsonl', '.ndjson', '.csv', '.tsv'}
 CAPTURED = {'.log', '.stdout', '.stderr', '.err', '.time', '.nohup', '.gz', '.tgz', '.xz', '.zip'}
 SCRIPTS = {'.py', '.sh', '.rs', '.dart', '.go', '.c', '.proto'}

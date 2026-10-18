@@ -19,7 +19,7 @@ from full_packages import inventory, commands as full_commands, qualification_fe
 from stage import ROOT, run, install_cancellation, inherited_fds
 
 REGISTRY = ROOT / 'tools/ci/test-matrix.json'
-EXPORT = 'transparent/tools/txid-sizing/export/Cargo.toml'
+EXPORT = 'tools/txid/txid-sizing/export/Cargo.toml'
 NATIVE = ['enhance-pir/cli', 'enhance-pir/native-reinspiring',
           'enhance-serving/native-reinspiring', 'status-serving/native-reinspiring',
           'enhance-pir-server/native-reinspiring', 'enhance-pir-load-test/native-reinspiring']

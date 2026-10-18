@@ -1,12 +1,15 @@
 # Repository guidance
 
-The root workspace contains Enhance PIR, transparent shard recovery and the
-receiver directory as top-level components. Keep each product's crates, services,
-tools, operations, documentation and evidence under `enhance/`, `transparent/` or
-`receiver/`; keep only shared infrastructure and checks at the root.
-`enhance/crates/transparent-spend-pir` is preserved legacy source, excluded from
-the active workspace and CI. Active Enhance crates do not depend on it.
-`transparent/tools/transparent-measure` uses the current shard stack and remains part of the
+The root workspace contains Enhance PIR, Status PIR, transparent shard recovery,
+transaction-detail (txid) PIR and the receiver directory. Cargo packages live
+directly under `src/<product>/` (`enhance`, `status`, `transparent`, `txid`,
+`receiver`); packages used by more than one product live under `src/shared/`.
+Keep operations, documentation, evidence and standalone scripts under
+`ops/<product>/`, `docs/<product>/`, `evidence/<product>/` and `tools/<product>/`;
+keep only shared infrastructure and checks at the root. A product never depends
+on another product's application package, and serving packages never depend on
+chain reading or ingestion packages (`tools/ci/boundary.py`).
+`src/transparent/transparent-measure` uses the current shard stack and remains part of the
 backfill workflow; its extrapolated baseline is not a whole-wallet measurement.
 
 Follow [AGENTS.md](AGENTS.md) for shared iteration and validation rules. Use
@@ -14,9 +17,7 @@ Follow [AGENTS.md](AGENTS.md) for shared iteration and validation rules. Use
 final validation or CI. Optimized `release-fast` runs full-shard tests without
 deployment LTO. Preserve Cargo package/binary names when moving tools.
 
-`demos/legacy-spendability` is a preserved independent workspace, excluded from
-root CI. Do not introduce active dependencies on it. Use `make demo-check` when
-editing the demos. Preserve the production workflow's legacy service rollback path.
+Preserve the production workflow's legacy service rollback path.
 
 ## Documentation and evidence
 

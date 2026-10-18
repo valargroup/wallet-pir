@@ -59,7 +59,7 @@ def commands(group, groups, lint=False, compile_only=False):
         # and compiled-codec contracts run first, so another service test's
         # failure cannot hide whether those contracts passed on Linux.
         result.insert(0, [*runner, '--locked', '--profile', 'release-fast',
-                          '--manifest-path', 'transparent/tools/txid-sizing/export/Cargo.toml'])
+                          '--manifest-path', 'tools/txid/txid-sizing/export/Cargo.toml'])
     return result
 
 

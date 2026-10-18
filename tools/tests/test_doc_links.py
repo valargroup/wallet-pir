@@ -33,8 +33,8 @@ class DocumentationLinks(unittest.TestCase):
         self.write("docs/old.md", "[gone](missing.txt)\n")
         subprocess.run(["git", "add", "docs/old.md"], cwd=self.root, check=True)
         (self.root / "docs/old.md").unlink()
-        self.write("transparent/evidence/run/README.md", "# Results\n[data](raw.json)\n")
-        self.write("transparent/evidence/run/raw.json", "{}\n")
+        self.write("evidence/transparent/run/README.md", "# Results\n[data](raw.json)\n")
+        self.write("evidence/transparent/run/raw.json", "{}\n")
         self.write("docs/README.md", "[result](../transparent/evidence/run/README.md#results)\n")
         result = self.check()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -63,13 +63,13 @@ class DocumentationLinks(unittest.TestCase):
 
     def test_captured_oracle_bytes_remain_independent_of_a_cargo_package(self):
         root = CHECKER.parents[1]
-        capture = root / 'transparent/evidence/prewarm-hint-assurance-2026-10-04'
+        capture = root / 'evidence/transparent/prewarm-hint-assurance-2026-10-04'
         manifest = json.loads((capture / 'manifest.json').read_text())
         expected = {
             'batched_hint_kat.py': '99a2736eabc253d2c1cfe573eb0e1925cf745362fe5e4a178ea5af1db7315fe3',
             'batched_hint_kat.json': 'fde5f38a601777e86d17ba0766ad34a83986a360718984ae18de5d380342ebdb',
         }
-        directory = root / 'transparent/crates/transparent-native'
+        directory = root / 'evidence/transparent/transparent-native'
         for name, digest in expected.items():
             source = directory / 'testdata' / name
             relative = source.relative_to(root).as_posix()

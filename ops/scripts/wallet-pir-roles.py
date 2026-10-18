@@ -17,7 +17,7 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'lib'))
 from wallet_pir_ops.paths import ROOT  # noqa: E402
 from wallet_pir_ops.deploy import descriptors  # noqa: E402
-from transparent.ops.lib.roles import publisher  # noqa: E402
+from ops.transparent.lib.roles import publisher  # noqa: E402
 
 REGISTRY = ROOT / 'ops/deploy/services.toml'
 

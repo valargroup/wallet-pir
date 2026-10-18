@@ -13,7 +13,7 @@ from wallet_pir_ops.deploy import descriptors  # noqa: E402
 from wallet_pir_ops.deploy.remote import SSHExecutor  # noqa: E402
 from wallet_pir_ops.fleet import Fleet  # noqa: E402
 
-EXAMPLE = json.loads((ROOT / 'enhance/ops/deploy/deploy-inventory.example.json').read_text())
+EXAMPLE = json.loads((ROOT / 'ops/enhance/deploy/deploy-inventory.example.json').read_text())
 SERVICES = descriptors.load_descriptors(ROOT / 'ops/deploy/services.toml')
 
 

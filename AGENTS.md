@@ -1,8 +1,9 @@
 # Wallet PIR development
 
-Keep product code, operations, docs and evidence under `enhance/`,
-`transparent/` or `receiver/`; shared code lives under `shared/`. The legacy
-demo workspace is independent. Preserve existing Cargo package and binary names.
+Cargo packages live under `src/<product>/`; packages shared by products live
+under `src/shared/`. Operations, docs, evidence and standalone scripts live under
+`ops/<product>/`, `docs/<product>/`, `evidence/<product>/` and `tools/<product>/`.
+Preserve existing Cargo package and binary names.
 
 ## Toolchain, build and run
 

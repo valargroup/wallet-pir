@@ -17,7 +17,7 @@ monitor.sh
 **/*.tfplan
 
 # Go build output from the BIP 158 cross-check generator.
-/transparent/crates/transparent-filter/tests/crosscheck/crosscheck
+/src/transparent/transparent-filter/tests/crosscheck/crosscheck
 
 # Local OS metadata and Python test caches
 .DS_Store

@@ -8,7 +8,7 @@ import sys
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / 'shared/dev'))
+sys.path.insert(0, str(ROOT / 'tools/dev'))
 from target_lease import inherited_fds
 
 

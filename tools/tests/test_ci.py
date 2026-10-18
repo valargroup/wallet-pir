@@ -55,7 +55,7 @@ class SelectionTests(unittest.TestCase):
 
     def test_docs_and_ops_do_not_compile_rust(self):
         self.assertEqual(fast.select(self.packages, ['README.md', 'docs/ci.md', 'ops/scripts/example.py',
-                                                     'receiver/evidence/run.json', 'receiver/ops/digitalocean/Caddyfile']), set())
+                                                     'evidence/receiver/run.json', 'ops/receiver/digitalocean/Caddyfile']), set())
 
     def test_deleted_or_renamed_source_selects_both_sides(self):
         self.assertEqual(fast.select(self.packages, ['crates/other/src/old.rs', 'crates/client/src/new.rs']), {'other', 'client', 'server'})
@@ -151,11 +151,11 @@ class BoundaryTests(unittest.TestCase):
                 self.assertEqual(len(boundary.violations(packages, [])), 1, (kind, name))
                 self.assertEqual(boundary.violations(packages, [f'svc -> {name}']), [])
 
-    def test_preserved_demo_workspaces_are_checked_for_direct_edges(self):
+    def test_preserved_evidence_workspaces_are_checked_for_direct_edges(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / 'Cargo.toml').write_text('[workspace]\nmembers = []\n')
-            demo = root / 'demos/legacy'
+            demo = root / 'evidence/legacy'
             (demo / 'tree').mkdir(parents=True)
             (demo / 'Cargo.toml').write_text(
                 '[workspace]\nmembers = ["tree"]\n[workspace.dependencies]\n'
@@ -167,7 +167,7 @@ class BoundaryTests(unittest.TestCase):
             self.assertEqual([p['preserved'] for p in packages], [True])
             problems = boundary.violations(packages, [])
             self.assertEqual(len(problems), 1)
-            self.assertIn('demos/legacy/tree/Cargo.toml: dev-dependencies on Common package zakura-orchard',
+            self.assertIn('evidence/legacy/tree/Cargo.toml: dev-dependencies on Common package zakura-orchard',
                           problems[0])
 
     def test_library_adapters_and_pir_cryptography_are_not_common(self):
@@ -232,19 +232,19 @@ class BoundaryTests(unittest.TestCase):
 
     def test_serving_libraries_refuse_ingestion_applications_and_other_products(self):
         def package(*dependencies):
-            return [{'name': 'enhance-serving', 'manifest': 'enhance/crates/enhance-serving/Cargo.toml',
+            return [{'name': 'enhance-serving', 'manifest': 'src/enhance/enhance-serving/Cargo.toml',
                      'dependencies': list(dependencies)}]
         library = 'https://github.com/zakura-core/wallet-libraries.git'
-        allowed = [{**self.edge('pir-control'), 'path': 'shared/pir-control/'},
-                   {**self.edge('enhance-pir'), 'path': 'enhance/crates/enhance-pir/'},
+        allowed = [{**self.edge('pir-control'), 'path': 'src/shared/pir-control/'},
+                   {**self.edge('enhance-pir'), 'path': 'src/enhance/enhance-pir/'},
                    self.edge('zakura-pir-native', git=library), self.edge('axum')]
         self.assertEqual(boundary.violations(package(*allowed), []), [])
         forbidden = [self.edge('zakura-server-chain', git=library),
-                     {**self.edge('enhance-pir-server'), 'path': 'enhance/services/enhance-pir-server/'},
-                     {**self.edge('loadtest'), 'path': 'enhance/tools/loadtest/'},
-                     {**self.edge('receiver-store'), 'path': 'receiver/crates/receiver-store/'},
+                     {**self.edge('enhance-pir-server'), 'path': 'src/enhance/enhance-pir-server/'},
+                     {**self.edge('enhance-pir-load-test'), 'path': 'src/enhance/loadtest/'},
+                     {**self.edge('receiver-store'), 'path': 'src/receiver/receiver-store/'},
                      {**self.edge('transparent-server-backend'),
-                      'path': 'transparent/crates/transparent-server-backend/'}]
+                      'path': 'src/shared/transparent-server-backend/'}]
         for kind in ['dependencies', 'dev-dependencies', 'build-dependencies',
                      'target.cfg(unix).dependencies']:
             for edge in forbidden:
@@ -253,7 +253,7 @@ class BoundaryTests(unittest.TestCase):
                 self.assertEqual(len(problems), 1, (kind, edge['name']))
         # The application that composes the library may use the chain reader.
         application = [{'name': 'enhance-pir-server',
-                        'manifest': 'enhance/services/enhance-pir-server/Cargo.toml',
+                        'manifest': 'src/enhance/enhance-pir-server/Cargo.toml',
                         'dependencies': [self.edge('zakura-server-chain', git=library)]}]
         self.assertEqual(boundary.violations(application, []), [])
 
@@ -265,14 +265,14 @@ class BoundaryTests(unittest.TestCase):
                     'manifest_path': str(boundary.ROOT / folder / 'Cargo.toml')}
         metadata = {
             'packages': [
-                local('serving', 'status-serving', 'enhance/crates/status-serving'),
-                local('enhance', 'enhance-serving', 'enhance/crates/enhance-serving'),
-                local('control', 'pir-control', 'shared/pir-control'),
+                local('serving', 'status-serving', 'src/status/status-serving'),
+                local('enhance', 'enhance-serving', 'src/enhance/enhance-serving'),
+                local('control', 'pir-control', 'src/shared/pir-control'),
                 {'id': 'mid', 'name': 'helper', 'source': 'registry'},
                 {'id': 'chain', 'name': 'zakura-server-chain',
                  'source': 'git+https://github.com/zakura-core/wallet-libraries'},
-                local('app', 'enhance-pir-server', 'enhance/services/enhance-pir-server'),
-                local('other', 'receiver-store', 'receiver/crates/receiver-store'),
+                local('app', 'enhance-pir-server', 'src/enhance/enhance-pir-server'),
+                local('other', 'receiver-store', 'src/receiver/receiver-store'),
             ],
             'resolve': {'nodes': [
                 node('serving', [('enhance', None), ('control', None)]),
@@ -301,15 +301,15 @@ class BoundaryTests(unittest.TestCase):
                      'target.cfg(unix).build-dependencies']:
             for name in ['receiver-store', 'zakura-server-chain', 'zakura-pir-native',
                          'sha2', 'rand', 'enhance-serving', 'pir-runtime']:
-                package = {'name': 'pir-pipeline', 'manifest': 'shared/pir-pipeline/Cargo.toml',
+                package = {'name': 'pir-pipeline', 'manifest': 'src/shared/pir-pipeline/Cargo.toml',
                            'dependencies': [self.edge(name, kind)]}
                 self.assertTrue(boundary.violations([package], []), (kind, name))
         package['dependencies'] = [self.edge('tokio')]
         self.assertEqual(boundary.violations([package], []), [])
-        package['dependencies'][0]['path'] = 'receiver/crates/fake-tokio/'
+        package['dependencies'][0]['path'] = 'src/receiver/fake-tokio/'
         self.assertTrue(boundary.violations([package], []))
         for name in boundary.SERVING | boundary.PIPELINE_FOUNDATIONS:
-            package = {'name': name, 'manifest': 'shared/lib/Cargo.toml',
+            package = {'name': name, 'manifest': 'src/shared/lib/Cargo.toml',
                        'dependencies': [self.edge('pir-pipeline', 'dev-dependencies')]}
             self.assertTrue(boundary.violations([package], []))
 
@@ -846,7 +846,7 @@ class CacheIdentityTests(unittest.TestCase):
                     'target': {'name': target, 'kind': ['lib']}, 'profile': profile or {'opt_level': '3'},
                     'features': [], 'filenames': ['/home/runner/work/target/x.rlib']}
         serde = 'registry+https://github.com/rust-lang/crates.io-index#serde@1.0.219'
-        local = 'path+file:///home/runner/work/wallet-pir/enhance/crates/enhance-pir#0.1.0'
+        local = 'path+file:///home/runner/work/wallet-pir/src/enhance/enhance-pir#0.1.0'
         git = 'git+https://github.com/zakura-core/zakura.git?rev=af94#zakura-chain@4.0.0'
         unit = cargo_cache.artifact_unit(message(local, False))
         self.assertEqual((unit['package'], unit['version'], unit['source']), ('enhance-pir', '0.1.0', 'path'))
@@ -1136,7 +1136,7 @@ class CacheWorkflowTests(unittest.TestCase):
     def test_transparent_full_checks_include_the_standalone_exporter(self):
         full = load_full()
         groups = {'transparent': ['transparent-filter-server'], 'shared': ['pir-control']}
-        manifest = 'transparent/tools/txid-sizing/export/Cargo.toml'
+        manifest = 'tools/txid/txid-sizing/export/Cargo.toml'
         self.assertEqual(full.commands('transparent', groups)[0], [
             'bash', 'tools/ci/full-test.sh', '--locked', '--profile', 'release-fast',
             '--manifest-path', manifest,
