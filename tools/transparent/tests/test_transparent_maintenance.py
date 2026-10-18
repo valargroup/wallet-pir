@@ -103,7 +103,7 @@ class MaintenanceTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_failed_preflight_never_withdraws_or_restarts_service(self):
         artifacts = self.root/'artifacts'; artifacts.mkdir()
-        (artifacts/'transparent-shard-server').write_bytes(b'fixture')
+        (artifacts/'transparent-query-server').write_bytes(b'fixture')
         config = self.root/'fleet.json'; config.write_text(json.dumps(self.config))
         args = argparse.Namespace(fleet_config=config, artifacts=artifacts, worker='recent', canary_result=None,
                                   source_sha='source', out=self.root/'result')
@@ -142,7 +142,7 @@ class MaintenanceTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_supervisor_stops_after_a_failed_canary(self):
         artifacts = self.root/'artifacts'; artifacts.mkdir()
-        (artifacts/'transparent-shard-server').write_bytes(b'fixture')
+        (artifacts/'transparent-query-server').write_bytes(b'fixture')
         args = argparse.Namespace(artifacts=artifacts, fleet_config=self.root/'unused', source_sha='source', out=self.root/'run')
         with patch.object(R, 'command', AsyncMock(side_effect=[None, RuntimeError('freshness exceeded')])) as command:
             with self.assertRaisesRegex(RuntimeError, 'freshness exceeded'):
@@ -155,7 +155,7 @@ class MaintenanceTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_supervisor_finishes_only_after_every_fleet_monitor(self):
         artifacts = self.root/'artifacts'; artifacts.mkdir()
-        (artifacts/'transparent-shard-server').write_bytes(b'fixture')
+        (artifacts/'transparent-query-server').write_bytes(b'fixture')
         config = self.root/'fleet.json'; config.write_text(json.dumps(self.config))
         args = argparse.Namespace(artifacts=artifacts, fleet_config=config, source_sha='source', out=self.root/'run')
         with patch.object(R, 'command', AsyncMock()) as command:
@@ -167,7 +167,7 @@ class MaintenanceTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_existing_canary_reuse_still_requires_matching_readiness_and_a_fresh_gate(self):
         artifacts = self.root/'artifacts'; artifacts.mkdir()
-        (artifacts/'transparent-shard-server').write_bytes(b'fixture')
+        (artifacts/'transparent-query-server').write_bytes(b'fixture')
         canary = 'transparent-pir-recent-01'
         (self.root/'roster').write_text(json.dumps([{**self.worker, 'id':canary}]))
         config = self.root/'fleet.json'

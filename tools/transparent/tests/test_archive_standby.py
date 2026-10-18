@@ -115,11 +115,11 @@ class StandbyTests(unittest.TestCase):
         release = root/'releases'/'a704616c'
         release.mkdir(parents=True)
         sums = []
-        for name in ('transparent-shard-server', 'shard-control'):
+        for name in ('transparent-query-server', 'shard-control'):
             (release/name).write_bytes(name.encode())
             sums.append(f'{hashlib.sha256(name.encode()).hexdigest()}  ./{name}')
         (release/'SHA256SUMS').write_text('\n'.join(sums) + '\n')
-        self.binary = hashlib.sha256(b'transparent-shard-server').hexdigest()
+        self.binary = hashlib.sha256(b'transparent-query-server').hexdigest()
         self.fleet = dict(state_dir=str(self.state), roster=str(root/'roster.json'), known_hosts=str(root/'fleet_known'),
                           ssh_key=str(root/'id'), assign_binary='shard-assign', router_host=ROUTER)
         (root/'pinned').write_text(f'{HOST} ssh-ed25519 AAAAarchive3\n')
@@ -166,7 +166,7 @@ class StandbyTests(unittest.TestCase):
         if self.worker['polls'] < 3:
             return {'ready': False}
         record = json.loads(self.host.files['/opt/transparent-publisher/active.json'])
-        return {'ready': True, 'binary_sha256': self.host.binaries.get('transparent-shard-server'),
+        return {'ready': True, 'binary_sha256': self.host.binaries.get('transparent-query-server'),
                 'map_sha256': record['map_sha256']}
 
     def status(self, config, member):
