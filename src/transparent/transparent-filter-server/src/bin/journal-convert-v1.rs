@@ -23,7 +23,7 @@ use std::fs::{File, OpenOptions};
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 use transparent_events::{ReceiveEvent, SpendEvent, TransparentEvent, Txid, EVENT_BYTES};
-use transparent_ingest::events::EventStore;
+use transparent_shared::journal::events::EventStore;
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 

@@ -3,8 +3,8 @@
 //! display controller.
 
 pub mod blocks;
-pub use transparent_journal::display_journal;
-pub use transparent_journal::events;
+pub use transparent_shared::journal::display_journal;
+pub use transparent_shared::journal::events;
 pub mod extract;
 pub mod prevout;
 pub mod publication;

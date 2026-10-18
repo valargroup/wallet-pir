@@ -1,12 +1,12 @@
 //! A copied journal suffix that publication builds read while ingest keeps
 //! appending to the journal itself.
 
-use crate::events::{BlockEntry, EventStore, EventStoreError};
 use crate::publication::{BoxError, Journal};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use transparent_events::TransparentEvent;
 use transparent_filter::{ScriptBytes, ShardMap};
+use transparent_shared::journal::events::{BlockEntry, EventStore, EventStoreError};
 
 /// Snapshot only rebuilt event rows plus the endpoint hashes used to establish
 /// reuse. It stays valid even if ingest truncates and rewrites its journal.
@@ -93,8 +93,11 @@ impl Journal for Snapshot {
             .blocks
             .get(&height)
             .ok_or_else(|| EventStoreError::Invariant("snapshot display block missing".into()))?;
-        let sources = crate::display_journal::read_sources(&self.display_dir, block.block_hash)?;
-        crate::display_journal::validate_events(
+        let sources = transparent_shared::journal::display_journal::read_sources(
+            &self.display_dir,
+            block.block_hash,
+        )?;
+        transparent_shared::journal::display_journal::validate_events(
             &sources,
             &self.events_at(height)?.ok_or_else(|| {
                 EventStoreError::Invariant("snapshot display events missing".into())
@@ -145,12 +148,15 @@ impl Journal for Snapshot {
             .map_or(file.metadata()?.len(), |next| {
                 next.offset - self.events_offset
             });
-        let mut events = crate::events::read_event_record(&mut file, entry, end)?;
+        let mut events =
+            transparent_shared::journal::events::read_event_record(&mut file, entry, end)?;
         if let Some(events) = &mut events {
-            events.extend(crate::display_journal::oversized_events(
-                &self.display_dir,
-                entry.block_hash,
-            )?);
+            events.extend(
+                transparent_shared::journal::display_journal::oversized_events(
+                    &self.display_dir,
+                    entry.block_hash,
+                )?,
+            );
         }
         Ok(events)
     }

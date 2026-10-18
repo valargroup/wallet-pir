@@ -845,7 +845,7 @@ pub fn publish_parts(
 mod tests {
     use super::*;
     use crate::txid_display::fixture::{self, record};
-    use transparent_ingest::events::EventStore;
+    use transparent_shared::journal::events::EventStore;
 
     #[test]
     fn bootstrap_publishes_verifiable_chained_shards() {

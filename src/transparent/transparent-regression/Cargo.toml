@@ -19,4 +19,5 @@ axum = "0.7"
 tempfile = "3"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 transparent-shard = { package = "zakura-transparent-shard", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "68315eac8aa6dfc018c79a48b90ff51460caaee8" }
-transparent-shard-server = { path = "../transparent-shard-server" }
+transparent-query-server = { path = "../transparent-query-server" }
+transparent-shared = { path = "../transparent-shared" }

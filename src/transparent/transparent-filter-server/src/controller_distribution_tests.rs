@@ -3,9 +3,9 @@ use super::*;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use transparent_events::TransparentEvent;
 use transparent_filter::ScriptBytes;
-use transparent_server_backend::distribution::{Finalized, Kind};
-use transparent_server_backend::shardset::ShardSet;
-use transparent_shard_server::bootstrap;
+use transparent_query_server::routing::bootstrap;
+use transparent_shared::history::shardset::ShardSet;
+use transparent_shared::publication::{Finalized, Kind};
 
 fn authority(directory: &Path, distribution: Option<Finalized>, rpc: NodeClient) -> Authority {
     let mut public = read_public(directory.to_path_buf(), Vec::new()).unwrap();
@@ -131,12 +131,10 @@ fn publication_fixture(root: &Path, through: u64, bounded: bool) -> (PathBuf, Sh
     assert_eq!(set.map.shards[1].start_height, 2);
     (output, set)
 }
-fn recent_options(set: &ShardSet) -> transparent_shard_server::shardset::LoadOptions {
-    use transparent_shard_server::{
-        assignment::{GeneratedBy, WorkerRole},
-        router::{plan, RosterEntry},
-        shardset::{LoadOptions, LoadScope},
-    };
+fn recent_options(set: &ShardSet) -> transparent_shared::history::shardset::LoadOptions {
+    use transparent_query_server::routing::router::{plan, RosterEntry};
+    use transparent_shared::history::assignment::{GeneratedBy, WorkerRole};
+    use transparent_shared::history::shardset::{LoadOptions, LoadScope};
     let roster = [
         RosterEntry {
             id: "recent".into(),
@@ -180,11 +178,13 @@ fn recent_options(set: &ShardSet) -> transparent_shard_server::shardset::LoadOpt
 }
 fn prepare_recent(directory: &Path, set: &ShardSet) {
     let recent = ShardSet::open_with(directory, &recent_options(set)).unwrap();
-    let prepared =
-        transparent_server_backend::prebuild::prepare_publication(&recent, directory, &[], &|| {
-            false
-        })
-        .unwrap();
+    let prepared = transparent_shared::runtime::prebuild::prepare_publication(
+        &recent,
+        directory,
+        &[],
+        &|| false,
+    )
+    .unwrap();
     assert!(prepared.failures.is_empty());
 }
 
@@ -521,7 +521,7 @@ async fn https_bootstrap_consumes_canonicality_withdrawal_and_recovery_state() {
         .build()
         .unwrap();
     let older = BlockHash::from_internal_bytes([1; 32]).to_display_hex();
-    let checked: transparent_server_backend::distribution::AnchorCheck = client
+    let checked: transparent_shared::publication::AnchorCheck = client
         .get(format!("{}/provider/v1/anchors/1/{older}", tls.origin))
         .send()
         .await
@@ -534,7 +534,7 @@ async fn https_bootstrap_consumes_canonicality_withdrawal_and_recovery_state() {
     assert!(checked.canonical);
     assert_eq!(checked.height, 1);
     assert_eq!(checked.hash, older);
-    let wrong: transparent_server_backend::distribution::AnchorCheck = client
+    let wrong: transparent_shared::publication::AnchorCheck = client
         .get(format!(
             "{}/provider/v1/anchors/1/{}",
             tls.origin,
@@ -697,7 +697,7 @@ async fn https_bootstrap_charges_all_response_bytes_at_exact_budget_boundary() {
         .bytes()
         .await
         .unwrap();
-    let current: transparent_server_backend::distribution::Current =
+    let current: transparent_shared::publication::Current =
         serde_json::from_slice(&current_bytes).unwrap();
     let anchor_bytes = client
         .get(format!(

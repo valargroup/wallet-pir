@@ -22,9 +22,9 @@ use std::time::Instant;
 use tracing_subscriber::EnvFilter;
 use transparent_filter_server::state::StateReader;
 use transparent_ingest::blocks::{build_fetched_block_events, BoxError};
-use transparent_ingest::events::EventStore;
 use transparent_ingest::prevout::OutputCache;
 use transparent_ingest::zakura::NodeClient;
+use transparent_shared::journal::events::EventStore;
 
 #[derive(Parser, Clone)]
 #[command(

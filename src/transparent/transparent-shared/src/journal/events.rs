@@ -1,0 +1,1190 @@
+//! Append-only storage for the transparent event journal.
+//!
+//! The filter store answers "what does block *H* commit to"; this answers "what
+//! happened, in order, under which script". A shard builder streams this file
+//! start to finish, so the layout is optimized for sequential reading and for
+//! appending a block atomically — not for random access, which nothing needs.
+//!
+//! On disk:
+//!
+//! - `meta.json`: chain identity, start height, format version.
+//! - `events.bin`: append-only. Each entry is
+//!   `script_len u16 | script bytes | event[EVENT_BYTES]`.
+//! - `blocks.bin`: one fixed 48-byte record per covered height, ascending from
+//!   `start_height`: `block_hash[32] | offset u64 | event_count u64`.
+//! - `checkpoint.bin`: 16 bytes, the committed lengths of the other two.
+//!
+//! The same reasoning as the filter store: a JSON manifest per block would be
+//! rewritten tens of thousands of times during a backfill from activation.
+//!
+//! # Why coverage is per block and not per event
+//!
+//! A block's events are appended together and only then does the checkpoint
+//! move. A crash mid-block leaves bytes past the checkpoint, which are ignored
+//! and overwritten on the next append. Half a block's events must never become
+//! visible: a shard sealed over a partial block would be missing spends whose
+//! receives it contains, and it would be sealed immutably that way.
+
+use std::fs::{File, OpenOptions};
+use std::io::{Read, Seek, SeekFrom, Write};
+use std::path::{Path, PathBuf};
+use transparent_events::{EventError, TransparentEvent, EVENT_BYTES, MAX_EVENT_BYTES};
+use transparent_filter::{BlockHash, ScriptBytes};
+
+/// Bump when the on-disk layout changes.
+///
+/// Version 2 is the 87-byte event codec. A version-1 journal is refused and
+/// left in place: opening it must not move the production journal aside.
+/// Rebuild into a new directory. A same-version journal whose chain identity
+/// or start height differs is still set aside, because that journal was
+/// written by this codec and can be re-derived.
+const STORE_VERSION: u16 = 3;
+
+const BLOCK_RECORD_BYTES: usize = 32 + 8 + 8;
+
+/// Refuses a script longer than any real locking script, before allocating.
+///
+/// Standard transparent scripts are tens of bytes. The ceiling exists so a
+/// corrupt length field cannot make the reader allocate arbitrarily; it is not
+/// a consensus rule and must stay well above anything the chain can contain.
+const MAX_SCRIPT_BYTES: usize = 10_000;
+
+#[derive(Debug, thiserror::Error)]
+pub enum EventStoreError {
+    #[error("I/O error: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("metadata error: {0}")]
+    Metadata(#[from] serde_json::Error),
+    #[error("event decode error: {0}")]
+    Event(#[from] EventError),
+    #[error("event store invariant violated: {0}")]
+    Invariant(String),
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+struct Meta {
+    version: u16,
+    /// Chain identity, display hex, as a person would read it.
+    genesis_hash: String,
+    start_height: u64,
+}
+
+/// What [`EventStore::refresh`] found.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Refreshed {
+    Unchanged,
+    /// Blocks were committed past what was held.
+    Extended,
+    /// Blocks from `from` up were replaced or dropped.
+    RolledBack {
+        from: u64,
+    },
+}
+
+/// Where one covered block's events live.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BlockEntry {
+    pub block_hash: BlockHash,
+    /// Byte offset of this block's first event entry in `events.bin`.
+    pub offset: u64,
+    pub event_count: u64,
+}
+
+pub struct EventStore {
+    dir: PathBuf,
+    meta: Meta,
+    /// Covered blocks, ascending from `meta.start_height`.
+    blocks: Vec<BlockEntry>,
+    events_len: u64,
+    // Held for the lifetime of a writable journal, including backfills.
+    _writer_lock: Option<File>,
+}
+
+fn read_u64(bytes: &[u8]) -> u64 {
+    u64::from_le_bytes(bytes.try_into().expect("8 bytes"))
+}
+
+fn truncate(path: &Path, len: u64) -> Result<(), EventStoreError> {
+    let file = OpenOptions::new().write(true).open(path)?;
+    file.set_len(len)?;
+    file.sync_all()?;
+    Ok(())
+}
+
+impl EventStore {
+    pub fn directory(&self) -> &Path {
+        &self.dir
+    }
+    pub fn version(&self) -> u16 {
+        self.meta.version
+    }
+    /// Opens or creates the store, discarding anything past the checkpoint.
+    ///
+    /// An existing store whose chain identity or start height differs, at this
+    /// version, is moved aside and a fresh one begun. A different version is
+    /// refused and left untouched: the production journal is too large to
+    /// discard because a newer binary restarted in its directory.
+    pub fn open(
+        dir: impl AsRef<Path>,
+        genesis_hash: &str,
+        start_height: u64,
+    ) -> Result<Self, EventStoreError> {
+        let dir = dir.as_ref().to_path_buf();
+        std::fs::create_dir_all(&dir)?;
+        let lock = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(dir.join("writer.lock"))?;
+        lock.try_lock().map_err(|error| {
+            EventStoreError::Invariant(format!("journal already has a writer: {error}"))
+        })?;
+        let wanted = Meta {
+            version: STORE_VERSION,
+            genesis_hash: genesis_hash.to_string(),
+            start_height,
+        };
+        let meta_path = dir.join("meta.json");
+        if meta_path.exists() {
+            let found: Result<Meta, _> = serde_json::from_slice(&std::fs::read(&meta_path)?);
+            if let Ok(found) = &found {
+                if found.version != STORE_VERSION {
+                    return Err(EventStoreError::Invariant(format!(
+                        "journal is version {}, this build reads {STORE_VERSION} and will not move it aside; rebuild into a new directory",
+                        found.version
+                    )));
+                }
+            }
+            if !matches!(&found, Ok(found) if *found == wanted) {
+                let label = match &found {
+                    Ok(found) => format!("v{}", found.version),
+                    Err(_) => "unreadable".to_string(),
+                };
+                let superseded = dir.join(format!("superseded-{label}"));
+                std::fs::create_dir_all(&superseded)?;
+                for name in ["meta.json", "events.bin", "blocks.bin", "checkpoint.bin"] {
+                    let from = dir.join(name);
+                    if from.exists() {
+                        std::fs::rename(&from, superseded.join(name))?;
+                    }
+                }
+            }
+        }
+        if !meta_path.exists() {
+            std::fs::write(&meta_path, serde_json::to_vec_pretty(&wanted)?)?;
+        }
+        for name in ["events.bin", "blocks.bin"] {
+            OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(dir.join(name))?;
+        }
+
+        // Everything past the checkpoint is the tail of an append that did not
+        // commit. Cutting it here is what makes a crash lose a block rather
+        // than expose half of one.
+        let checkpoint = dir.join("checkpoint.bin");
+        let (events_len, blocks_len) = if checkpoint.exists() {
+            let bytes = std::fs::read(&checkpoint)?;
+            if bytes.len() != 16 {
+                return Err(EventStoreError::Invariant(
+                    "checkpoint is not 16 bytes".into(),
+                ));
+            }
+            (read_u64(&bytes[0..8]), read_u64(&bytes[8..16]))
+        } else {
+            (0, 0)
+        };
+        // set_len must never extend a damaged journal with plausible zeroes.
+        for (name, length) in [("events.bin", events_len), ("blocks.bin", blocks_len)] {
+            if std::fs::metadata(dir.join(name))?.len() < length {
+                return Err(EventStoreError::Invariant(format!(
+                    "{name} is shorter than its checkpoint"
+                )));
+            }
+        }
+        truncate(&dir.join("events.bin"), events_len)?;
+        truncate(&dir.join("blocks.bin"), blocks_len)?;
+
+        let raw = std::fs::read(dir.join("blocks.bin"))?;
+        if raw.len() % BLOCK_RECORD_BYTES != 0 {
+            return Err(EventStoreError::Invariant(
+                "blocks.bin is not a whole number of records".into(),
+            ));
+        }
+        let mut blocks = Vec::with_capacity(raw.len() / BLOCK_RECORD_BYTES);
+        for record in raw.chunks_exact(BLOCK_RECORD_BYTES) {
+            blocks.push(BlockEntry {
+                block_hash: BlockHash::from_internal_bytes(
+                    record[..32].try_into().expect("32 bytes"),
+                ),
+                offset: read_u64(&record[32..40]),
+                event_count: read_u64(&record[40..48]),
+            });
+        }
+
+        Ok(Self {
+            dir,
+            meta: wanted,
+            blocks,
+            events_len,
+            _writer_lock: Some(lock),
+        })
+    }
+
+    /// Opens an existing store without altering anything on disk.
+    ///
+    /// [`EventStore::open`] sets an incompatible directory aside and begins a
+    /// fresh one, which is right for an ingest that can re-derive everything
+    /// and must not need an operator on the host. It is badly wrong for a
+    /// reader: a tool that guessed the start height would *move the journal*
+    /// rather than report that it guessed wrong. This reads the recorded
+    /// metadata and fails instead.
+    ///
+    /// It also does not truncate to the checkpoint, so it must not be used
+    /// while an ingest is appending — anything past the checkpoint is
+    /// uncommitted and is ignored here exactly as it would be after a restart.
+    pub fn open_existing(dir: impl AsRef<Path>) -> Result<Self, EventStoreError> {
+        let dir = dir.as_ref().to_path_buf();
+        let meta_path = dir.join("meta.json");
+        if !meta_path.exists() {
+            return Err(EventStoreError::Invariant(format!(
+                "{} holds no event journal",
+                dir.display()
+            )));
+        }
+        let meta: Meta = serde_json::from_slice(&std::fs::read(&meta_path)?)?;
+        if !matches!(meta.version, 2 | STORE_VERSION) {
+            return Err(EventStoreError::Invariant(format!(
+                "journal is version {}, this build reads {STORE_VERSION}",
+                meta.version
+            )));
+        }
+
+        let checkpoint = dir.join("checkpoint.bin");
+        let (events_len, blocks_len) = if checkpoint.exists() {
+            let bytes = std::fs::read(&checkpoint)?;
+            if bytes.len() != 16 {
+                return Err(EventStoreError::Invariant(
+                    "checkpoint is not 16 bytes".into(),
+                ));
+            }
+            (read_u64(&bytes[0..8]), read_u64(&bytes[8..16]))
+        } else {
+            (0, 0)
+        };
+
+        let raw = std::fs::read(dir.join("blocks.bin"))?;
+        // Only the committed prefix is real; the rest is an append that never
+        // committed. Reading it would show blocks the journal does not claim.
+        let raw = raw.get(..blocks_len as usize).ok_or_else(|| {
+            EventStoreError::Invariant("blocks.bin is shorter than its checkpoint".into())
+        })?;
+        if raw.len() % BLOCK_RECORD_BYTES != 0 {
+            return Err(EventStoreError::Invariant(
+                "blocks.bin is not a whole number of records".into(),
+            ));
+        }
+        let mut blocks = Vec::with_capacity(raw.len() / BLOCK_RECORD_BYTES);
+        for record in raw.chunks_exact(BLOCK_RECORD_BYTES) {
+            blocks.push(BlockEntry {
+                block_hash: BlockHash::from_internal_bytes(
+                    record[..32].try_into().expect("32 bytes"),
+                ),
+                offset: read_u64(&record[32..40]),
+                event_count: read_u64(&record[40..48]),
+            });
+        }
+
+        Ok(Self {
+            dir,
+            meta,
+            blocks,
+            events_len,
+            _writer_lock: None,
+        })
+    }
+
+    pub fn genesis_hash(&self) -> &str {
+        &self.meta.genesis_hash
+    }
+
+    pub fn start_height(&self) -> u64 {
+        self.meta.start_height
+    }
+
+    /// Highest height with durable coverage, if any.
+    pub fn covered_through(&self) -> Option<u64> {
+        (!self.blocks.is_empty()).then(|| self.meta.start_height + self.blocks.len() as u64 - 1)
+    }
+
+    /// The next height this store will accept.
+    pub fn next_height(&self) -> u64 {
+        self.covered_through()
+            .map_or(self.meta.start_height, |height| height + 1)
+    }
+
+    pub fn blocks_covered(&self) -> u64 {
+        self.blocks.len() as u64
+    }
+
+    pub fn events_stored(&self) -> u64 {
+        self.blocks.iter().map(|block| block.event_count).sum()
+    }
+
+    pub fn block_at(&self, height: u64) -> Option<BlockEntry> {
+        let index = height.checked_sub(self.meta.start_height)?;
+        self.blocks.get(usize::try_from(index).ok()?).copied()
+    }
+
+    /// Appends one block's events at the next height, extending coverage.
+    ///
+    /// The whole block is written and made durable before the checkpoint moves,
+    /// so a crash loses the block rather than recording coverage for events
+    /// that are not fully there. Committing is the caller's decision, so a
+    /// backfill can amortize the checkpoint over many blocks; nothing appended
+    /// since the last commit is visible after a restart.
+    ///
+    /// An empty block is still an append. Zero events at a height is a fact
+    /// about the chain, and skipping it would leave a hole that later reads
+    /// could not distinguish from missing coverage.
+    pub fn append_block(
+        &mut self,
+        height: u64,
+        block_hash: BlockHash,
+        events: &[(ScriptBytes, TransparentEvent)],
+    ) -> Result<(), EventStoreError> {
+        if height != self.next_height() {
+            return Err(EventStoreError::Invariant(format!(
+                "block at height {height} does not follow coverage through {:?}",
+                self.covered_through()
+            )));
+        }
+        let offset = self.events_len;
+        let mut buffer = Vec::new();
+        transparent_events::check_transaction_consistency(events.iter().map(|(_, event)| event))?;
+        for (script, event) in events {
+            let length = u16::try_from(script.as_slice().len()).map_err(|_| {
+                EventStoreError::Invariant(format!(
+                    "script of {} bytes is too long to store",
+                    script.as_slice().len()
+                ))
+            })?;
+            buffer.extend_from_slice(&length.to_le_bytes());
+            buffer.extend_from_slice(script.as_slice());
+            event.validate_metadata()?;
+            let raw = event.to_bytes()?;
+            buffer.extend_from_slice(&(raw.len() as u16).to_le_bytes());
+            buffer.extend_from_slice(&raw);
+        }
+
+        let mut file = OpenOptions::new()
+            .append(true)
+            .open(self.dir.join("events.bin"))?;
+        file.write_all(&buffer)?;
+        file.sync_all()?;
+
+        let mut record = Vec::with_capacity(BLOCK_RECORD_BYTES);
+        record.extend_from_slice(block_hash.internal_bytes());
+        record.extend_from_slice(&offset.to_le_bytes());
+        record.extend_from_slice(&(events.len() as u64).to_le_bytes());
+        let mut blocks = OpenOptions::new()
+            .append(true)
+            .open(self.dir.join("blocks.bin"))?;
+        blocks.write_all(&record)?;
+        blocks.sync_all()?;
+
+        self.events_len += buffer.len() as u64;
+        self.blocks.push(BlockEntry {
+            block_hash,
+            offset,
+            event_count: events.len() as u64,
+        });
+        Ok(())
+    }
+
+    /// Commit the block's display source records before appending the
+    /// checkpoint-referenced block.
+    pub fn append_block_with_display(
+        &mut self,
+        height: u64,
+        block_hash: BlockHash,
+        events: &[(ScriptBytes, TransparentEvent)],
+        records: &[transparent_shard::txid_v2x::TransparentDisplayRecordV2x],
+    ) -> Result<(), EventStoreError> {
+        if height != self.next_height() {
+            return Err(EventStoreError::Invariant("display append height".into()));
+        }
+        transparent_events::check_transaction_consistency(events.iter().map(|(_, event)| event))?;
+        crate::journal::display_journal::validate_events(records, events)?;
+        let (oversized, ordinary): (Vec<_>, Vec<_>) =
+            events.iter().cloned().partition(|(script, _)| {
+                script.as_slice().len() > crate::journal::display_journal::JOURNAL_SCRIPT_LIMIT
+            });
+        crate::journal::display_journal::write_with_events(
+            &self.dir, block_hash, records, &oversized,
+        )?;
+        self.append_block(height, block_hash, &ordinary)
+    }
+
+    /// The block's published entries, derived from its source records after
+    /// those are checked against the block's events.
+    pub fn display_at(
+        &self,
+        height: u64,
+    ) -> Result<Vec<transparent_shard::txid::DisplayRecord>, EventStoreError> {
+        let block = self.block_at(height).ok_or_else(|| {
+            EventStoreError::Invariant("display height outside checkpoint".into())
+        })?;
+        let sources = crate::journal::display_journal::read_sources(&self.dir, block.block_hash)?;
+        crate::journal::display_journal::validate_events(
+            &sources,
+            &self
+                .events_at(height)?
+                .ok_or_else(|| EventStoreError::Invariant("missing display event block".into()))?,
+        )?;
+        sources
+            .iter()
+            .map(|source| {
+                source
+                    .display_record()
+                    .map_err(|e| EventStoreError::Invariant(e.to_string()))
+            })
+            .collect()
+    }
+
+    /// Reads back one covered block's events, in the order they were appended.
+    pub fn events_at(
+        &self,
+        height: u64,
+    ) -> Result<Option<Vec<(ScriptBytes, TransparentEvent)>>, EventStoreError> {
+        let Some(entry) = self.block_at(height) else {
+            return Ok(None);
+        };
+        let mut file = File::open(self.dir.join("events.bin"))?;
+        let end = self
+            .block_at(height + 1)
+            .map_or(self.events_len, |next| next.offset);
+        let mut events = read_event_record_version(&mut file, entry, end, self.meta.version)?;
+        if let Some(events) = &mut events {
+            events.extend(crate::journal::display_journal::oversized_events(
+                &self.dir,
+                entry.block_hash,
+            )?);
+        }
+        if events.as_ref().is_some_and(|events| {
+            events
+                .iter()
+                .any(|(_, event)| u64::from(event.height()) != height)
+        }) {
+            return Err(EventStoreError::Invariant(
+                "event height differs from block extent".into(),
+            ));
+        }
+        Ok(events)
+    }
+
+    /// Copies a committed suffix while the caller holds the journal lock.
+    /// An anonymous file bounds RAM even when a deep fork replaces archive
+    /// history; dropping the builder releases its temporary disk automatically.
+    ///
+    /// `temp_dir` holds the anonymous file: the journal's own directory for
+    /// its writer, a state directory for a reader following a journal another
+    /// process writes, which must never write beside it. A reader checks
+    /// [`Self::still_committed`] afterwards, because the writer may have
+    /// rewritten the suffix while it was copied.
+    pub fn snapshot_suffix(
+        &self,
+        first: u64,
+        temp_dir: &Path,
+    ) -> Result<(File, u64), EventStoreError> {
+        let offset = self.block_at(first).map_or(self.events_len, |b| b.offset);
+        let mut source = File::open(self.dir.join("events.bin"))?;
+        source.seek(SeekFrom::Start(offset))?;
+        let mut snapshot = tempfile::tempfile_in(temp_dir)?;
+        let length = self.events_len - offset;
+        let copied = std::io::copy(&mut source.take(length), &mut snapshot)?;
+        if copied != length {
+            return Err(EventStoreError::Invariant(
+                "journal shortened while taking snapshot".into(),
+            ));
+        }
+        Ok((snapshot, offset))
+    }
+
+    /// The committed lengths of `events.bin` and `blocks.bin`.
+    fn read_checkpoint(&self) -> Result<(u64, u64), EventStoreError> {
+        let checkpoint = self.dir.join("checkpoint.bin");
+        if !checkpoint.exists() {
+            return Ok((0, 0));
+        }
+        let bytes = std::fs::read(&checkpoint)?;
+        if bytes.len() != 16 {
+            return Err(EventStoreError::Invariant(
+                "checkpoint is not 16 bytes".into(),
+            ));
+        }
+        Ok((read_u64(&bytes[0..8]), read_u64(&bytes[8..16])))
+    }
+
+    /// The `blocks.bin` records at indices `range`.
+    fn read_records(
+        file: &File,
+        range: std::ops::Range<usize>,
+    ) -> Result<Vec<BlockEntry>, EventStoreError> {
+        use std::os::unix::fs::FileExt;
+        let mut raw = vec![0u8; range.len() * BLOCK_RECORD_BYTES];
+        file.read_exact_at(&mut raw, (range.start * BLOCK_RECORD_BYTES) as u64)?;
+        Ok(raw
+            .chunks_exact(BLOCK_RECORD_BYTES)
+            .map(|record| BlockEntry {
+                block_hash: BlockHash::from_internal_bytes(
+                    record[..32].try_into().expect("32 bytes"),
+                ),
+                offset: read_u64(&record[32..40]),
+                event_count: read_u64(&record[40..48]),
+            })
+            .collect())
+    }
+
+    /// Re-reads the committed extent of a journal another process writes.
+    ///
+    /// For a store opened with [`Self::open_existing`]: a reader follows the
+    /// writer's checkpoints without taking its lock or writing anything. Only
+    /// records whose block changed are re-read: the last held record still
+    /// on disk means every one below it is unchanged too, because each block
+    /// hash commits to its parent. A checkpoint that moves while the records
+    /// are read is read again.
+    pub fn refresh(&mut self) -> Result<Refreshed, EventStoreError> {
+        if self._writer_lock.is_some() {
+            return Err(EventStoreError::Invariant(
+                "the journal's writer does not refresh from disk".into(),
+            ));
+        }
+        loop {
+            let checkpoint = self.read_checkpoint()?;
+            let (events_len, blocks_len) = checkpoint;
+            if blocks_len % BLOCK_RECORD_BYTES as u64 != 0 {
+                return Err(EventStoreError::Invariant(
+                    "blocks.bin checkpoint is not a whole number of records".into(),
+                ));
+            }
+            let count = (blocks_len / BLOCK_RECORD_BYTES as u64) as usize;
+            let file = File::open(self.dir.join("blocks.bin"))?;
+            if file.metadata()?.len() < blocks_len {
+                return Err(EventStoreError::Invariant(
+                    "blocks.bin is shorter than its checkpoint".into(),
+                ));
+            }
+            let mut common = self.blocks.len().min(count);
+            while common > 0
+                && Self::read_records(&file, common - 1..common)?[0] != self.blocks[common - 1]
+            {
+                common -= 1;
+            }
+            let tail = Self::read_records(&file, common..count)?;
+            if self.read_checkpoint()? != checkpoint {
+                continue;
+            }
+            let held = self.blocks.len();
+            self.blocks.truncate(common);
+            self.blocks.extend(tail);
+            self.events_len = events_len;
+            return Ok(if common < held {
+                Refreshed::RolledBack {
+                    from: self.meta.start_height + common as u64,
+                }
+            } else if count > held {
+                Refreshed::Extended
+            } else {
+                Refreshed::Unchanged
+            });
+        }
+    }
+
+    /// Whether the journal on disk still commits `entry` at `height`, which a
+    /// reader checks after copying a suffix up to `height`: an unchanged
+    /// endpoint means every block below it is unchanged.
+    pub fn still_committed(&self, height: u64, entry: BlockEntry) -> Result<bool, EventStoreError> {
+        let Some(index) = height.checked_sub(self.meta.start_height) else {
+            return Ok(false);
+        };
+        let (_, blocks_len) = self.read_checkpoint()?;
+        if (index + 1) * BLOCK_RECORD_BYTES as u64 > blocks_len {
+            return Ok(false);
+        }
+        let file = File::open(self.dir.join("blocks.bin"))?;
+        Ok(Self::read_records(&file, index as usize..index as usize + 1)?[0] == entry)
+    }
+
+    /// Drops coverage above `height`, or all coverage when `None`.
+    ///
+    /// Unlike filter bytes, events are not content addressed, so the tail of
+    /// `events.bin` is genuinely discarded. That is correct: an event carries a
+    /// height, and a block that leaves the best chain takes its events with it.
+    pub fn rollback_to(&mut self, height: Option<u64>) -> Result<(), EventStoreError> {
+        let keep = match height {
+            None => 0usize,
+            Some(height) if height < self.meta.start_height => 0,
+            Some(height) => ((height - self.meta.start_height + 1) as usize).min(self.blocks.len()),
+        };
+        // The kept prefix ends where the first dropped block began; with none
+        // dropped, nothing moves.
+        self.events_len = match self.blocks.get(keep) {
+            Some(first_dropped) => first_dropped.offset,
+            None => self.events_len,
+        };
+        self.blocks.truncate(keep);
+        // Publish the shorter durable prefix first. A crash during truncation
+        // leaves extra bytes that open() safely discards, never missing bytes
+        // still named by the durable checkpoint.
+        self.commit()?;
+        truncate(&self.dir.join("events.bin"), self.events_len)?;
+        truncate(
+            &self.dir.join("blocks.bin"),
+            (keep * BLOCK_RECORD_BYTES) as u64,
+        )?;
+        Ok(())
+    }
+
+    /// Makes everything written so far durable.
+    pub fn commit(&mut self) -> Result<(), EventStoreError> {
+        let mut bytes = Vec::with_capacity(16);
+        bytes.extend_from_slice(&self.events_len.to_le_bytes());
+        bytes.extend_from_slice(&((self.blocks.len() * BLOCK_RECORD_BYTES) as u64).to_le_bytes());
+        let temporary = self.dir.join("checkpoint.bin.tmp");
+        let mut file = File::create(&temporary)?;
+        file.write_all(&bytes)?;
+        file.sync_all()?;
+        std::fs::rename(temporary, self.dir.join("checkpoint.bin"))?;
+        File::open(&self.dir)?.sync_all()?;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use transparent_events::{ReceiveEvent, SpendEvent, Txid};
+
+    const GENESIS: &str = transparent_filter::MAINNET_GENESIS_DISPLAY;
+    const START: u64 = 100;
+
+    fn hash(height: u64) -> BlockHash {
+        let mut bytes = [0u8; 32];
+        bytes[..8].copy_from_slice(&height.to_le_bytes());
+        BlockHash::from_internal_bytes(bytes)
+    }
+
+    fn script(tag: u8) -> ScriptBytes {
+        ScriptBytes::new(vec![0x76, 0xa9, 0x14, tag])
+    }
+
+    fn receive(height: u32, tag: u8) -> (ScriptBytes, TransparentEvent) {
+        (
+            script(tag),
+            TransparentEvent::Receive(ReceiveEvent {
+                metadata: None,
+                height,
+                txid: Txid([tag; 32]),
+                transaction_index: 0,
+                output_index: 0,
+                value: 1_000,
+                coinbase: false,
+            }),
+        )
+    }
+
+    fn spend(height: u32, tag: u8) -> (ScriptBytes, TransparentEvent) {
+        (
+            script(tag),
+            TransparentEvent::Spend(SpendEvent {
+                metadata: None,
+                height,
+                spending_txid: Txid([tag + 1; 32]),
+                transaction_index: 1,
+                input_index: 0,
+                spent_txid: Txid([tag; 32]),
+                spent_output_index: 0,
+            }),
+        )
+    }
+
+    fn store(dir: &Path) -> EventStore {
+        EventStore::open(dir, GENESIS, START).expect("open")
+    }
+
+    #[test]
+    fn events_round_trip_through_a_reopen() {
+        let dir = tempfile::tempdir().unwrap();
+        let block = vec![receive(100, 1), spend(100, 2)];
+        {
+            let mut store = store(dir.path());
+            store.append_block(START, hash(START), &block).unwrap();
+            store.commit().unwrap();
+        }
+        let store = store(dir.path());
+        assert_eq!(store.covered_through(), Some(START));
+        assert_eq!(store.events_stored(), 2);
+        assert_eq!(store.events_at(START).unwrap(), Some(block));
+    }
+
+    #[test]
+    fn invalid_event_metadata_leaves_journal_bytes_and_coverage_unchanged() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut journal = store(dir.path());
+        let valid = receive(START as u32, 1);
+        journal
+            .append_block(START, hash(START), std::slice::from_ref(&valid))
+            .unwrap();
+        journal.commit().unwrap();
+        let names = ["events.bin", "blocks.bin", "checkpoint.bin"];
+        let before: Vec<_> = names
+            .iter()
+            .map(|name| std::fs::read(dir.path().join(name)).unwrap())
+            .collect();
+        let invalid = receive(START as u32 + 1, 2);
+        let invalid = (
+            invalid.0,
+            invalid
+                .1
+                .with_metadata(Some(transparent_events::TransactionMetadata {
+                    fee: transparent_events::FeeState::NotApplicable,
+                    transparent_input_count: 1,
+                    has_shielded_components: false,
+                })),
+        );
+        assert!(invalid.1.to_bytes().is_err());
+        assert!(journal
+            .append_block(
+                START + 1,
+                hash(START + 1),
+                &[receive(START as u32 + 1, 3), invalid.clone()]
+            )
+            .is_err());
+        assert!(journal
+            .append_block_with_display(START + 1, hash(START + 1), &[invalid], &[])
+            .is_err());
+        assert_eq!(journal.covered_through(), Some(START));
+        assert_eq!(journal.events_at(START).unwrap(), Some(vec![valid]));
+        assert_eq!(journal.events_stored(), 1);
+        assert!(!dir
+            .path()
+            .join(crate::journal::display_journal::V2X_DIR)
+            .exists());
+        for (name, bytes) in names.iter().zip(before) {
+            assert_eq!(std::fs::read(dir.path().join(name)).unwrap(), bytes);
+        }
+        journal
+            .append_block(START + 1, hash(START + 1), &[receive(START as u32 + 1, 4)])
+            .unwrap();
+        journal.commit().unwrap();
+        assert_eq!(journal.covered_through(), Some(START + 1));
+    }
+
+    /// A height with no supported activity is a fact, not an absence of
+    /// coverage. Skipping it would leave a hole a shard builder could not tell
+    /// from missing data.
+    #[test]
+    fn an_empty_block_still_advances_coverage() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = store(dir.path());
+        store.append_block(START, hash(START), &[]).unwrap();
+        store.commit().unwrap();
+        assert_eq!(store.covered_through(), Some(START));
+        assert_eq!(store.events_at(START).unwrap(), Some(vec![]));
+    }
+
+    #[test]
+    fn appending_out_of_order_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = store(dir.path());
+        assert!(store.append_block(START + 1, hash(START + 1), &[]).is_err());
+        store.append_block(START, hash(START), &[]).unwrap();
+        assert!(store.append_block(START, hash(START), &[]).is_err());
+    }
+
+    /// The crash case the checkpoint exists for: bytes were appended and made
+    /// durable, but the commit never happened. Reopening must discard them
+    /// rather than expose a block whose coverage was never recorded.
+    #[test]
+    fn an_uncommitted_append_is_discarded_on_reopen() {
+        let dir = tempfile::tempdir().unwrap();
+        {
+            let mut store = store(dir.path());
+            store
+                .append_block(START, hash(START), &[receive(100, 1)])
+                .unwrap();
+            store.commit().unwrap();
+            // Appended and fsynced, but never committed.
+            store
+                .append_block(START + 1, hash(START + 1), &[receive(101, 2)])
+                .unwrap();
+        }
+        let store = store(dir.path());
+        assert_eq!(store.covered_through(), Some(START));
+        assert_eq!(store.events_stored(), 1);
+        assert_eq!(store.events_at(START + 1).unwrap(), None);
+    }
+
+    #[test]
+    fn rollback_drops_events_above_the_kept_height_and_allows_reappending() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = store(dir.path());
+        for offset in 0..4u64 {
+            let height = START + offset;
+            store
+                .append_block(
+                    height,
+                    hash(height),
+                    &[receive(height as u32, offset as u8)],
+                )
+                .unwrap();
+        }
+        store.commit().unwrap();
+        assert_eq!(store.events_stored(), 4);
+
+        store.rollback_to(Some(START + 1)).unwrap();
+        assert_eq!(store.covered_through(), Some(START + 1));
+        assert_eq!(store.events_stored(), 2);
+        assert_eq!(store.next_height(), START + 2);
+
+        // A replacement branch writes different events at the same heights.
+        store
+            .append_block(START + 2, hash(9_999), &[spend(102, 9)])
+            .unwrap();
+        store.commit().unwrap();
+        assert_eq!(
+            store.events_at(START + 2).unwrap(),
+            Some(vec![spend(102, 9)])
+        );
+
+        drop(store);
+        let reopened = EventStore::open(dir.path(), GENESIS, START).unwrap();
+        assert_eq!(reopened.covered_through(), Some(START + 2));
+        assert_eq!(reopened.events_stored(), 3);
+    }
+
+    /// A reader following another process's writer sees exactly what the
+    /// writer committed: appends as an extension, a rollback and a different
+    /// branch as a rollback from the fork, and nothing uncommitted. The
+    /// endpoint check tells a reader that copied a suffix whether it moved.
+    #[test]
+    fn a_reader_follows_a_live_writer_through_appends_and_rollbacks() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut writer = store(dir.path());
+        for height in START..START + 3 {
+            writer
+                .append_block(height, hash(height), &[receive(height as u32, 1)])
+                .unwrap();
+        }
+        writer.commit().unwrap();
+        let mut reader = EventStore::open_existing(dir.path()).unwrap();
+        assert_eq!(reader.covered_through(), Some(START + 2));
+        assert_eq!(reader.refresh().unwrap(), Refreshed::Unchanged);
+        let endpoint = reader.block_at(START + 2).unwrap();
+        assert!(reader.still_committed(START + 2, endpoint).unwrap());
+
+        // An append the writer has not committed is invisible.
+        writer
+            .append_block(START + 3, hash(START + 3), &[receive(103, 2)])
+            .unwrap();
+        assert_eq!(reader.refresh().unwrap(), Refreshed::Unchanged);
+        writer.commit().unwrap();
+        assert_eq!(reader.refresh().unwrap(), Refreshed::Extended);
+        assert_eq!(reader.covered_through(), Some(START + 3));
+        assert_eq!(
+            reader.events_at(START + 3).unwrap(),
+            Some(vec![receive(103, 2)])
+        );
+
+        // The writer rolls back two blocks and commits a longer branch.
+        writer.rollback_to(Some(START + 1)).unwrap();
+        for height in START + 2..START + 5 {
+            writer
+                .append_block(height, hash(height + 1_000), &[spend(height as u32, 7)])
+                .unwrap();
+        }
+        writer.commit().unwrap();
+        assert!(!reader.still_committed(START + 2, endpoint).unwrap());
+        assert_eq!(
+            reader.refresh().unwrap(),
+            Refreshed::RolledBack { from: START + 2 }
+        );
+        assert_eq!(reader.covered_through(), Some(START + 4));
+        assert_eq!(
+            reader.block_at(START + 2).unwrap().block_hash,
+            hash(START + 1_002)
+        );
+        assert_eq!(
+            reader.events_at(START + 4).unwrap(),
+            Some(vec![spend(104, 7)])
+        );
+        assert_eq!(reader.refresh().unwrap(), Refreshed::Unchanged);
+
+        // A writer's own store never refreshes from disk.
+        assert!(writer.refresh().is_err());
+    }
+
+    #[test]
+    fn rolling_back_everything_empties_the_store() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = store(dir.path());
+        store
+            .append_block(START, hash(START), &[receive(100, 1)])
+            .unwrap();
+        store.commit().unwrap();
+        store.rollback_to(None).unwrap();
+        assert_eq!(store.covered_through(), None);
+        assert_eq!(store.next_height(), START);
+        assert_eq!(store.events_stored(), 0);
+    }
+
+    /// A store built for a different chain must not be read as this one's.
+    #[test]
+    fn an_incompatible_store_is_set_aside_rather_than_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        {
+            let mut store = store(dir.path());
+            store
+                .append_block(START, hash(START), &[receive(100, 1)])
+                .unwrap();
+            store.commit().unwrap();
+        }
+        let fresh = EventStore::open(dir.path(), GENESIS, START + 5).unwrap();
+        assert_eq!(fresh.covered_through(), None);
+        assert!(dir
+            .path()
+            .join(format!("superseded-v{STORE_VERSION}"))
+            .join("events.bin")
+            .exists());
+    }
+
+    /// A version-1 production journal must survive a restart of this binary.
+    /// Setting it aside would stop continuous publication until a full re-ingest.
+    #[test]
+    fn a_version_1_journal_is_refused_and_left_in_place() {
+        let dir = tempfile::tempdir().unwrap();
+        let meta = Meta {
+            version: 1,
+            genesis_hash: GENESIS.to_string(),
+            start_height: START,
+        };
+        std::fs::write(
+            dir.path().join("meta.json"),
+            serde_json::to_vec(&meta).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("events.bin"), b"keep").unwrap();
+        std::fs::write(dir.path().join("blocks.bin"), b"keep").unwrap();
+        std::fs::write(dir.path().join("checkpoint.bin"), [0u8; 16]).unwrap();
+        let error = match EventStore::open(dir.path(), GENESIS, START) {
+            Err(error) => error,
+            Ok(_) => panic!("a version-1 journal was opened"),
+        };
+        assert!(
+            error.to_string().contains("will not move it aside"),
+            "{error}"
+        );
+        assert_eq!(
+            std::fs::read(dir.path().join("events.bin")).unwrap(),
+            b"keep"
+        );
+        assert_eq!(
+            std::fs::read(dir.path().join("blocks.bin")).unwrap(),
+            b"keep"
+        );
+        assert!(!dir.path().join("superseded-v1").exists());
+        let still: Meta =
+            serde_json::from_slice(&std::fs::read(dir.path().join("meta.json")).unwrap()).unwrap();
+        assert_eq!(still.version, 1);
+    }
+
+    /// A reader must never disturb the journal it is reading. `open` sets an
+    /// incompatible directory aside by design; `open_existing` must not, or a
+    /// census tool run with the wrong argument would destroy the data it was
+    /// asked to measure.
+    #[test]
+    fn opening_existing_never_moves_anything_aside() {
+        let dir = tempfile::tempdir().unwrap();
+        {
+            let mut store = store(dir.path());
+            store
+                .append_block(START, hash(START), &[receive(100, 1)])
+                .unwrap();
+            store.commit().unwrap();
+        }
+        let reader = EventStore::open_existing(dir.path()).unwrap();
+        assert_eq!(reader.start_height(), START);
+        assert_eq!(reader.covered_through(), Some(START));
+        assert_eq!(reader.events_stored(), 1);
+        assert!(!dir.path().join("superseded-v1").exists());
+    }
+
+    #[test]
+    fn opening_a_directory_with_no_journal_is_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(EventStore::open_existing(dir.path()).is_err());
+    }
+
+    /// A reader sees the committed prefix only, exactly as a restart would.
+    #[test]
+    fn opening_existing_ignores_an_uncommitted_tail() {
+        let dir = tempfile::tempdir().unwrap();
+        {
+            let mut store = store(dir.path());
+            store
+                .append_block(START, hash(START), &[receive(100, 1)])
+                .unwrap();
+            store.commit().unwrap();
+            store
+                .append_block(START + 1, hash(START + 1), &[receive(101, 2)])
+                .unwrap();
+        }
+        let reader = EventStore::open_existing(dir.path()).unwrap();
+        assert_eq!(reader.covered_through(), Some(START));
+        assert_eq!(reader.events_at(START + 1).unwrap(), None);
+    }
+}
+
+#[cfg(test)]
+mod durability_tests {
+    use super::*;
+    #[test]
+    fn a_second_writer_is_refused_without_touching_the_journal() {
+        let dir = tempfile::tempdir().unwrap();
+        let hash = "00".repeat(32);
+        let mut first = EventStore::open(dir.path(), &hash, 0).unwrap();
+        first
+            .append_block(0, BlockHash::from_internal_bytes([1; 32]), &[])
+            .unwrap();
+        first.commit().unwrap();
+        assert!(EventStore::open(dir.path(), &hash, 0).is_err());
+        assert_eq!(
+            EventStore::open_existing(dir.path())
+                .unwrap()
+                .covered_through(),
+            Some(0)
+        );
+        drop(first);
+        assert!(EventStore::open(dir.path(), &hash, 0).is_ok());
+    }
+    #[test]
+    fn crash_after_shorter_checkpoint_before_truncation_recovers() {
+        let dir = tempfile::tempdir().unwrap();
+        let hash = "00".repeat(32);
+        let mut store = EventStore::open(dir.path(), &hash, 0).unwrap();
+        for h in 0..3 {
+            store
+                .append_block(h, BlockHash::from_internal_bytes([h as u8; 32]), &[])
+                .unwrap();
+        }
+        store.commit().unwrap();
+        // The first durable step of rollback has completed, but neither file
+        // has been truncated when the process disappears.
+        store.blocks.truncate(1);
+        store.commit().unwrap();
+        drop(store);
+        let mut reopened = EventStore::open(dir.path(), &hash, 0).unwrap();
+        assert_eq!(reopened.covered_through(), Some(0));
+        assert_eq!(
+            std::fs::metadata(dir.path().join("blocks.bin"))
+                .unwrap()
+                .len(),
+            BLOCK_RECORD_BYTES as u64
+        );
+        reopened
+            .append_block(1, BlockHash::from_internal_bytes([9; 32]), &[])
+            .unwrap();
+        reopened.commit().unwrap();
+        assert_eq!(
+            reopened.block_at(1).unwrap().block_hash,
+            BlockHash::from_internal_bytes([9; 32])
+        );
+    }
+    #[test]
+    fn a_checkpoint_past_the_file_is_refused_not_zero_extended() {
+        let dir = tempfile::tempdir().unwrap();
+        let hash = "00".repeat(32);
+        let mut store = EventStore::open(dir.path(), &hash, 0).unwrap();
+        store
+            .append_block(0, BlockHash::from_internal_bytes([1; 32]), &[])
+            .unwrap();
+        store.commit().unwrap();
+        drop(store);
+        truncate(&dir.path().join("blocks.bin"), 0).unwrap();
+        assert!(EventStore::open(dir.path(), &hash, 0).is_err());
+        assert_eq!(
+            std::fs::metadata(dir.path().join("blocks.bin"))
+                .unwrap()
+                .len(),
+            0
+        );
+    }
+}
+
+/// Decode one indexed record from a locked journal or immutable suffix snapshot.
+pub fn read_event_record(
+    file: &mut File,
+    entry: BlockEntry,
+    end: u64,
+) -> Result<Option<Vec<(ScriptBytes, TransparentEvent)>>, EventStoreError> {
+    read_event_record_version(file, entry, end, STORE_VERSION)
+}
+
+fn read_event_record_version(
+    file: &mut File,
+    entry: BlockEntry,
+    end: u64,
+    version: u16,
+) -> Result<Option<Vec<(ScriptBytes, TransparentEvent)>>, EventStoreError> {
+    if end > file.metadata()?.len() || end < entry.offset {
+        return Err(EventStoreError::Invariant(
+            "invalid committed block extent".into(),
+        ));
+    }
+    let available = end - entry.offset;
+    if entry.event_count > available / (EVENT_BYTES as u64 + 2) {
+        return Err(EventStoreError::Invariant(
+            "event count exceeds journal extent".into(),
+        ));
+    }
+    file.seek(SeekFrom::Start(entry.offset))?;
+    let mut reader = std::io::BufReader::new(file).take(available);
+    let mut events = Vec::with_capacity(entry.event_count as usize);
+    for _ in 0..entry.event_count {
+        let mut length = [0u8; 2];
+        reader.read_exact(&mut length)?;
+        let length = u16::from_le_bytes(length) as usize;
+        if length > MAX_SCRIPT_BYTES {
+            return Err(EventStoreError::Invariant(format!(
+                "stored script claims {length} bytes"
+            )));
+        }
+        let mut script = vec![0u8; length];
+        reader.read_exact(&mut script)?;
+        let event_length = if version == STORE_VERSION {
+            let mut length = [0; 2];
+            reader.read_exact(&mut length)?;
+            usize::from(u16::from_le_bytes(length))
+        } else {
+            EVENT_BYTES
+        };
+        if !(EVENT_BYTES..=MAX_EVENT_BYTES).contains(&event_length) {
+            return Err(EventStoreError::Invariant("invalid event length".into()));
+        }
+        let mut event = vec![0u8; event_length];
+        reader.read_exact(&mut event)?;
+        events.push((
+            ScriptBytes::new(script),
+            TransparentEvent::from_bytes(&event)?,
+        ));
+    }
+    if reader.limit() != 0 {
+        return Err(EventStoreError::Invariant(
+            "block count differs from its extent".into(),
+        ));
+    }
+    Ok(Some(events))
+}

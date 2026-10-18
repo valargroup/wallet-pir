@@ -20,12 +20,12 @@ use std::collections::{BTreeMap, VecDeque};
 use std::time::{Duration, Instant};
 use transparent_filter::BlockHash;
 use transparent_ingest::blocks::build_fetched_block_events;
-use transparent_ingest::events::{EventStore, EventStoreError};
 use transparent_ingest::prevout::OutputCache;
 use transparent_ingest::publication::BoxError;
 use transparent_ingest::zakura::NodeClient;
 use transparent_shard::txid::DisplayRecord;
 use transparent_shard::txid_v2x::TransparentDisplayRecordV2x;
+use transparent_shared::journal::events::{EventStore, EventStoreError};
 
 /// Most blocks one poll returns, so a catch-up still publishes as it goes.
 const BATCH: u64 = 64;
@@ -443,7 +443,8 @@ fn append(
         .map_or(store.start_height(), |h| h + 1);
     for (offset, (hash, sources)) in blocks.into_iter().enumerate() {
         let height = next + offset as u64;
-        let events = transparent_ingest::display_journal::implied_events(height, &sources)?;
+        let events =
+            transparent_shared::journal::display_journal::implied_events(height, &sources)?;
         store.append_block_with_display(height, hash, &events, &sources)?;
     }
     store.commit()

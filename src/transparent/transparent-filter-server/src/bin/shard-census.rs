@@ -17,7 +17,6 @@ use clap::Parser;
 use std::collections::HashSet;
 use std::path::PathBuf;
 use transparent_filter_server::shard_matches::MatchCounter;
-use transparent_ingest::events::EventStore;
 use transparent_shard::layout::{
     by_name as geometry_by_name, Geometry, PAGE_ROW_BYTES, PAGE_ROW_HEADER_BYTES,
 };
@@ -25,6 +24,7 @@ use transparent_shard::seal::{
     ChoiceMeasure, DecoupledPolicy, DisplacementSealer, Limit, PageBasis, SealPolicy, SealReason,
     SealedDirectory, SealedShard, Sealer,
 };
+use transparent_shared::journal::events::EventStore;
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 

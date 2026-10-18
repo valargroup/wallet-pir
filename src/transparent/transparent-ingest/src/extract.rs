@@ -730,7 +730,7 @@ mod tests {
 
         let journal = tempfile::tempdir().unwrap();
         let hash = transparent_filter::BlockHash::from_internal_bytes([5; 32]);
-        let mut store = crate::events::EventStore::open(
+        let mut store = transparent_shared::journal::events::EventStore::open(
             journal.path(),
             transparent_filter::MAINNET_GENESIS_DISPLAY,
             7,
@@ -744,7 +744,8 @@ mod tests {
         assert!(journal.path().join("display-v2x").join(&name).exists());
         assert!(!journal.path().join("display-v1").exists());
         assert_eq!(
-            crate::display_journal::read_sources(journal.path(), hash).unwrap(),
+            transparent_shared::journal::display_journal::read_sources(journal.path(), hash)
+                .unwrap(),
             listed.display
         );
         let entries: Vec<_> = listed

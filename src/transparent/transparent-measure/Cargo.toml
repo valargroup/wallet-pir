@@ -16,7 +16,7 @@ serde_json = "1"
 tokio = { version = "1", features = ["full"] }
 transparent-events = { package = "zakura-transparent-events", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "68315eac8aa6dfc018c79a48b90ff51460caaee8" }
 transparent-filter = { package = "zakura-transparent-filter", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "68315eac8aa6dfc018c79a48b90ff51460caaee8" }
-transparent-journal = { path = "../transparent-journal" }
+transparent-shared = { path = "../transparent-shared" }
 transparent-shard = { package = "zakura-transparent-shard", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "68315eac8aa6dfc018c79a48b90ff51460caaee8" }
-transparent-shard-server = { path = "../transparent-shard-server" }
+transparent-query-server = { path = "../transparent-query-server" }
 zakura-pir-transparent = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "68315eac8aa6dfc018c79a48b90ff51460caaee8", default-features = false, features = ["engine"] }

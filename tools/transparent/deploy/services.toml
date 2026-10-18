@@ -6,7 +6,7 @@
 [services.transparent-history]
 driver = "transparent-history"
 root = "/opt/transparent-publisher"
-binary = "transparent-shard-server"
+binary = "transparent-query-server"
 order = ["worker", "external-worker", "provider", "controller"]
 ancillary = ["routing"]
 

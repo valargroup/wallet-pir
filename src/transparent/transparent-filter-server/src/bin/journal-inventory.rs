@@ -13,8 +13,8 @@
 use clap::Parser;
 use std::path::{Path, PathBuf};
 use transparent_filter_server::state::StateReader;
-use transparent_ingest::events::EventStore;
 use transparent_ingest::zakura::NodeClient;
+use transparent_shared::journal::events::EventStore;
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 

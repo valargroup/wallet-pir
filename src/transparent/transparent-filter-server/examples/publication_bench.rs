@@ -245,7 +245,7 @@ fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "transparent_shard_server::runtime=debug".into()),
+                .unwrap_or_else(|_| "transparent_shared::runtime=debug".into()),
         )
         .with_writer(std::io::stderr)
         .init();
@@ -340,8 +340,8 @@ fn main() {
 
     let mut runtime = Vec::new();
     if cli.runtime {
-        use transparent_shard_server::runtime::{SharedParams, TableRuntime};
-        use transparent_shard_server::shardset::ShardSet;
+        use transparent_shared::history::shardset::ShardSet;
+        use transparent_shared::runtime::{SharedParams, TableRuntime};
         let set = ShardSet::open(&previous, 3).unwrap();
         let tail = previous_map.shards.last().unwrap();
         let shard = set.revision(&tail.manifest_digest).unwrap();
@@ -351,14 +351,14 @@ fn main() {
                 let bytes = shard.segment(table, segment).unwrap().load().unwrap();
                 for repeat in 0..cli.runtime_repeats {
                     let started = Instant::now();
-                    let built = transparent_shard_server::runtime::build_pool()
+                    let built = transparent_shared::runtime::build_pool()
                         .install(|| TableRuntime::build(&shared, &bytes))
                         .unwrap();
                     let record = serde_json::json!({
                         "table": table.name(),
                         "segment": segment,
                         "repeat": repeat,
-                        "build_threads": transparent_shard_server::runtime::build_pool()
+                        "build_threads": transparent_shared::runtime::build_pool()
                             .current_num_threads(),
                         "seconds": started.elapsed().as_secs_f64(),
                         "public_params_sha256": built.public_params_sha256,

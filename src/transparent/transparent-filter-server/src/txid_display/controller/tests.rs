@@ -1027,7 +1027,8 @@ async fn a_restart_after_a_rollback_still_invalidates() {
         let mut store = open_writer(&journal).unwrap();
         store.rollback_to(Some(120)).unwrap();
         for (h, (hash, sources)) in (121..).zip(fork(2, 121, 122)) {
-            let events = transparent_ingest::display_journal::implied_events(h, &sources).unwrap();
+            let events =
+                transparent_shared::journal::display_journal::implied_events(h, &sources).unwrap();
             store
                 .append_block_with_display(h, hash, &events, &sources)
                 .unwrap();
@@ -1657,8 +1658,8 @@ fn shipped_files(candidate: &Path) -> BTreeSet<String> {
 /// manifests' files; and collection removes a candidate with its files.
 #[tokio::test(flavor = "multi_thread")]
 async fn shipped_runtimes_go_out_with_each_candidate_and_go_with_it() {
-    use transparent_shard_server::display::prebuild::build_shipped;
-    use transparent_shard_server::display::set::DisplayRevision;
+    use transparent_shared::tx_detail::prebuild::build_shipped;
+    use transparent_shared::tx_detail::set::DisplayRevision;
     let through = if cfg!(feature = "qualification-tests") {
         125
     } else {
@@ -1871,13 +1872,13 @@ async fn metrics_report_cycles_stages_and_freshness() {
 
 // Reuse the serving tests' independent wallet transport and per-process pure
 // profile cache. This controller still owns fresh journal/root/worker state.
-#[path = "../../../../transparent-shard-server/tests/support/display_world.rs"]
+#[path = "../../../../transparent-query-server/tests/support/display_world.rs"]
 mod display_world;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn shared_display_lifecycle_serves_before_and_after_ordered_seals_and_restart() {
-    use transparent_shard_server::display::live::{reply_line, DisplayCommand};
-    use transparent_shard_server::display::DisplayRole;
+    use transparent_query_server::tx_detail::live::{reply_line, DisplayCommand};
+    use transparent_shared::tx_detail::DisplayRole;
     let temp = tempfile::tempdir().unwrap();
     let journal = temp.path().join("journal");
     fixture::write_journal(&journal, 100, 112, 0);

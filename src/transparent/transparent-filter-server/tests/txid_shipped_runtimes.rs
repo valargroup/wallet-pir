@@ -9,19 +9,19 @@
 
 use std::path::{Path, PathBuf};
 use transparent_filter_server::txid_display::publisher::verify_dir;
-use transparent_server_backend::config::ServiceConfig;
-use transparent_server_backend::runtime::disk::ShippedRuntimes;
-use transparent_server_backend::runtime::{SharedParams, TableRuntime};
-use transparent_shard::display::{DisplaySealParams, TXID_2K8};
-use transparent_shard_server::display::live::{
+use transparent_query_server::config::ServiceConfig;
+use transparent_query_server::tx_detail::live::{
     DisplayCommand, DisplayLive, DisplayPublication, Reply,
 };
-use transparent_shard_server::display::prebuild::build_shipped;
-use transparent_shard_server::display::service::DisplayRuntime;
-use transparent_shard_server::display::set::{DisplaySet, MAP_FILE};
-use transparent_shard_server::display::synth::{self, Published, ShardSpec};
-use transparent_shard_server::display::DisplayRole;
-use transparent_shard_server::display::{kind, runtime_key};
+use transparent_query_server::tx_detail::service::DisplayRuntime;
+use transparent_shard::display::{DisplaySealParams, TXID_2K8};
+use transparent_shared::runtime::disk::ShippedRuntimes;
+use transparent_shared::runtime::{SharedParams, TableRuntime};
+use transparent_shared::tx_detail::prebuild::build_shipped;
+use transparent_shared::tx_detail::set::{DisplaySet, MAP_FILE};
+use transparent_shared::tx_detail::synth::{self, Published, ShardSpec};
+use transparent_shared::tx_detail::DisplayRole;
+use transparent_shared::tx_detail::{kind, runtime_key};
 
 fn spec(shard_id: u64, start: u64, end: u64, sealed: bool, n_buckets: u32) -> ShardSpec {
     ShardSpec {

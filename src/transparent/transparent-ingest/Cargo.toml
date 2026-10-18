@@ -10,7 +10,7 @@ publish = false
 qualification-tests = []
 
 [dependencies]
-transparent-journal = { path = "../transparent-journal" }
+transparent-shared = { path = "../transparent-shared" }
 chrono = { version = "0.4", default-features = false, features = ["std", "serde"] }
 clap = { version = "4", features = ["derive"] }
 hex = "0.4"
@@ -25,6 +25,4 @@ transparent-shard = { package = "zakura-transparent-shard", git = "https://githu
 zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "68315eac8aa6dfc018c79a48b90ff51460caaee8", default-features = false, features = ["transparent"] }
 
 [dev-dependencies]
-# The shared prepared-runtime loader that verifies what publication wrote.
-transparent-server-backend = { path = "../transparent-server-backend" }
 zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "68315eac8aa6dfc018c79a48b90ff51460caaee8", default-features = false, features = ["transparent", "testing"] }
