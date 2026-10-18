@@ -72,7 +72,9 @@ class WorkspaceCacheFixture(unittest.TestCase):
         artifacts = [json.loads(line) for line in result.stdout.splitlines() if line.startswith('{')]
         artifacts = [entry for entry in artifacts if entry.get('reason') == 'compiler-artifact']
         executable = next(entry['executable'] for entry in artifacts if entry.get('executable'))
-        behavior = subprocess.check_output([executable], text=True, timeout=2).strip()
+        # Allow startup while independent compilation is busy; the correctness
+        # runner still enforces the enclosing 30-second case deadline.
+        behavior = subprocess.check_output([executable], text=True, timeout=5).strip()
         return artifacts, behavior
 
     def checkout(self):

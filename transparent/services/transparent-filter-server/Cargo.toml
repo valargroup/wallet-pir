@@ -60,8 +60,8 @@ name = "txid-display-controller"
 path = "src/bin/txid-display-controller.rs"
 
 [features]
-# Compile campaign-only correctness tests in full qualification.
-full-tests = []
+# Keep large test campaigns explicit; production behavior is unchanged.
+qualification-tests = []
 
 [dependencies]
 pir-pipeline = { path = "../../../shared/pir-pipeline" }

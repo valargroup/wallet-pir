@@ -36,10 +36,13 @@ fn copy_fixture_tree(source: &Path, target: &Path) {
     }
 }
 
-fn retain_prepared_fixture(build: impl FnOnce(&Path)) -> PathBuf {
+// Share the owner and exit registration, not construction or verification results.
+// The cleanup controls below exercise this helper with tiny ordinary files.
+fn owned_fixture(build: impl FnOnce(&Path)) -> PathBuf {
     static CLEANUP: std::sync::Once = std::sync::Once::new();
     CLEANUP.call_once(|| {
-        // SAFETY: the callback only drops owned TempDirs after test threads exit.
+        // SAFETY: the callback has C ABI, cannot unwind, and only drops
+        // registered TempDirs after libtest joins its threads.
         assert_eq!(unsafe { libc::atexit(cleanup_prepared_fixtures) }, 0);
     });
     let root = tempfile::Builder::new()
@@ -54,8 +57,9 @@ fn retain_prepared_fixture(build: impl FnOnce(&Path)) -> PathBuf {
 
 fn prepared_fixture(through: u64) -> &'static Path {
     fn build(through: u64) -> PathBuf {
-        retain_prepared_fixture(|root| {
-            let (directory, set) = publication_through(root, through);
+        owned_fixture(|root| {
+            let (directory, set) =
+                publication_fixture(root, through, !cfg!(feature = "qualification-tests"));
             prepare_recent(&directory, &set);
         })
     }
@@ -68,12 +72,37 @@ fn prepared_fixture(through: u64) -> &'static Path {
     }
 }
 
-fn prepared_publication(root: &Path, through: u64) -> (PathBuf, ShardSet) {
-    let fixture = prepared_fixture(through);
-    let directory = root.join("publication");
-    copy_fixture_tree(&fixture.join("publication"), &directory);
-    let set = ShardSet::open(&directory, 0).unwrap();
-    (directory, set)
+// Reuse only the immutable publisher side. Every manager still owns a fresh
+// consumer directory and verifies all bytes over its own real HTTP boundary.
+// Corruption and changing-holdings cases use independently copied files below.
+struct ProducerFixture {
+    directory: PathBuf,
+    set: Arc<ShardSet>,
+    distribution: Finalized,
+}
+pub(super) fn immutable_publication(through: u64) -> (PathBuf, Arc<ShardSet>, Finalized) {
+    fn build(through: u64) -> ProducerFixture {
+        let directory = prepared_fixture(through).join("publication");
+        let set = ShardSet::open(&directory, 0).unwrap();
+        let distribution = Finalized::prepare(&directory, &set, 2).unwrap();
+        ProducerFixture {
+            directory,
+            set: Arc::new(set),
+            distribution,
+        }
+    }
+    static FIRST: std::sync::LazyLock<ProducerFixture> = std::sync::LazyLock::new(|| build(2));
+    static NEXT: std::sync::LazyLock<ProducerFixture> = std::sync::LazyLock::new(|| build(3));
+    let fixture = match through {
+        2 => &*FIRST,
+        3 => &*NEXT,
+        _ => panic!("unknown producer height"),
+    };
+    (
+        fixture.directory.clone(),
+        fixture.set.clone(),
+        fixture.distribution.clone(),
+    )
 }
 
 // Use the real helper in a fresh libtest process, with no runner-owned TMPDIR
@@ -132,7 +161,14 @@ fn prepared_fixtures_exit_child() {
         module_path!().split_once("::").unwrap().1
     );
     let args: Vec<_> = std::env::args().collect();
-    if !args.iter().any(|arg| arg == "--exact") || !args.iter().any(|arg| arg == &name) {
+    // The private caller uses --option=value switches. A runner partition can
+    // also use --exact, but its multiple case filters are not child entry mode.
+    let filters = args
+        .iter()
+        .skip(1)
+        .filter(|arg| !arg.starts_with('-'))
+        .collect::<Vec<_>>();
+    if !args.iter().any(|arg| arg == "--exact") || filters != [&name] {
         return;
     }
     let (both, fail) = match std::env::var("WALLET_PIR_FIXTURE_EXIT_CHILD").as_deref() {
@@ -141,25 +177,45 @@ fn prepared_fixtures_exit_child() {
         Ok("fail") => (true, true),
         other => panic!("missing child mode: {other:?}"),
     };
-    // Cleanup concerns ownership and process exit, independently of PIR size.
-    // Real publication and verification remain in the manager behavior tests.
-    let first = retain_prepared_fixture(|root| {
-        std::fs::write(root.join("bytes"), b"first immutable fixture").unwrap();
-    });
+    fn fixture(through: u64) -> &'static Path {
+        fn build(through: u64) -> PathBuf {
+            owned_fixture(|root| {
+                let publication = root.join("publication");
+                std::fs::create_dir(&publication).unwrap();
+                std::fs::write(publication.join("shards.json"), through.to_string()).unwrap();
+            })
+        }
+        static FIRST: std::sync::LazyLock<PathBuf> = std::sync::LazyLock::new(|| build(2));
+        static NEXT: std::sync::LazyLock<PathBuf> = std::sync::LazyLock::new(|| build(3));
+        if through == 2 {
+            &FIRST
+        } else {
+            &NEXT
+        }
+    }
+    let first = tempfile::tempdir().unwrap();
+    let directory = first.path().join("publication");
+    copy_fixture_tree(&fixture(2).join("publication"), &directory);
     let copy = tempfile::tempdir().unwrap();
-    let directory = copy.path().join("copy");
-    copy_fixture_tree(&first, &directory);
+    let copy_directory = copy.path().join("publication");
+    copy_fixture_tree(&fixture(2).join("publication"), &copy_directory);
+    let map = std::fs::read(copy_directory.join("shards.json")).unwrap();
+    std::fs::write(directory.join("shards.json"), b"corrupt").unwrap();
     assert_eq!(
-        std::fs::read(directory.join("bytes")).unwrap(),
-        b"first immutable fixture"
+        std::fs::read(copy_directory.join("shards.json")).unwrap(),
+        map
+    );
+    let fresh = tempfile::tempdir().unwrap();
+    let fresh_directory = fresh.path().join("publication");
+    copy_fixture_tree(&fixture(2).join("publication"), &fresh_directory);
+    assert_eq!(
+        std::fs::read(fresh_directory.join("shards.json")).unwrap(),
+        map
     );
     if both {
-        let next = retain_prepared_fixture(|root| {
-            std::fs::write(root.join("bytes"), b"next immutable fixture").unwrap();
-        });
         assert_ne!(
-            std::fs::read(first.join("bytes")).unwrap(),
-            std::fs::read(next.join("bytes")).unwrap()
+            std::fs::read(fixture(3).join("publication/shards.json")).unwrap(),
+            map
         );
     }
     assert_eq!(
@@ -168,6 +224,38 @@ fn prepared_fixtures_exit_child() {
     );
     println!("prepared fixtures: {}", if both { 2 } else { 1 });
     assert!(!fail, "intentional child failure after preparing fixtures");
+}
+
+#[test]
+fn prepared_fixture_child_mode_requires_a_single_explicit_entry() {
+    let prefix = module_path!().split_once("::").unwrap().1;
+    let child = format!("{prefix}::prepared_fixtures_exit_child");
+    let control = format!("{prefix}::prepared_fixtures_exit_first_only");
+    for exact_first in [true, false] {
+        let scratch = tempfile::tempdir().unwrap();
+        let filters = if exact_first {
+            vec!["--exact", child.as_str(), control.as_str()]
+        } else {
+            vec![child.as_str(), control.as_str(), "--exact"]
+        };
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(filters)
+            .args(["--test-threads=1", "--nocapture"])
+            .env("WALLET_PIR_FIXTURE_EXIT_CHILD", "fail")
+            .env("TMPDIR", scratch.path())
+            .env("TMP", scratch.path())
+            .env("TEMP", scratch.path())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{} {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("2 passed"));
+        assert_eq!(std::fs::read_dir(scratch.path()).unwrap().count(), 0);
+    }
 }
 
 #[test]
@@ -228,6 +316,32 @@ fn manager(tls: &Tls, root: &Path) -> Manager {
     )
     .unwrap()
 }
+// In-process retirement can outlive the last manager or listener handle while
+// spawned work unwinds. A real process exit closes those ownership descriptors.
+// Bound that harness-only wait; never retry another startup failure.
+async fn restart_manager(tls: &Tls, root: &Path) -> Manager {
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(1);
+    loop {
+        match Manager::new(
+            config(tls, root.to_path_buf()),
+            ServiceConfig {
+                cache_bytes: 4 << 30,
+                ..ServiceConfig::default()
+            },
+        ) {
+            Ok(manager) => return manager,
+            Err(error)
+                if error.to_string() == "another publication consumer owns this directory"
+                    && tokio::time::Instant::now() < deadline =>
+            {
+                tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+            }
+            Err(error) => {
+                panic!("retired publication owner did not release its directory: {error}")
+            }
+        }
+    }
+}
 struct Listening {
     task: tokio::task::JoinHandle<()>,
     stop: Option<tokio::sync::oneshot::Sender<()>>,
@@ -287,9 +401,9 @@ fn artifact_requests(tls: &Tls) -> usize {
         .filter(|s| s.contains("/artifacts/"))
         .count()
 }
-fn advance(owner: &Authority, directory: &Path, set: &ShardSet) {
+fn advance(owner: &Authority, directory: &Path, distribution: Finalized) {
     let mut public = read_public(directory.to_path_buf(), Vec::new()).unwrap();
-    public.distribution = Some(Finalized::prepare(directory, set, 2).unwrap());
+    public.distribution = Some(distribution);
     let _gate = owner.0.publication_gate.lock().unwrap();
     owner.0.distribution_revision.fetch_add(1, Ordering::AcqRel);
     *owner.0.active.write().unwrap() = Arc::new(public);
@@ -357,16 +471,48 @@ async fn query_with_reply(origin: &str, set: &ShardSet) -> (Vec<u8>, Vec<u8>) {
     (body, bytes.to_vec())
 }
 
+// A fresh query is decoded against producer bytes before it can be repeated.
+// Reuse stays within one test and one immutable revision; every check still
+// sends an actual HTTP request and compares the complete encrypted answer.
+struct CheckedAnswer {
+    path: String,
+    body: Vec<u8>,
+    reply: Vec<u8>,
+}
+impl CheckedAnswer {
+    async fn new(origin: &str, set: &ShardSet) -> Self {
+        let (body, reply) = query_with_reply(origin, set).await;
+        Self {
+            path: format!(
+                "/v2/shards/1/revisions/{}/query/directory",
+                set.get(1).unwrap().digest
+            ),
+            body,
+            reply,
+        }
+    }
+    async fn check(&self, origin: &str) {
+        let response = reqwest::Client::new()
+            .post(format!("{origin}{}", self.path))
+            .header(reqwest::header::CONNECTION, "close")
+            .body(self.body.clone())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.bytes().await.unwrap().as_ref(),
+            self.reply.as_slice()
+        );
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn manager_reuses_immutable_transfers_and_serves_through_failed_update() {
     let root = tempfile::tempdir().unwrap();
-    let (directory, set) = prepared_publication(root.path(), 2);
+    let (directory, set, distribution) = immutable_publication(2);
     let rpc = canonical_rpc(root.path(), &set).await;
-    let owner = authority(
-        &directory,
-        Some(Finalized::prepare(&directory, &set, 2).unwrap()),
-        rpc.client.clone(),
-    );
+    let owner = authority(&directory, Some(distribution), rpc.client.clone());
     let tls = tls(root.path(), owner.clone()).await;
     let state = root.path().join("provider");
     let mut follow = manager(&tls, &state);
@@ -386,7 +532,7 @@ async fn manager_reuses_immutable_transfers_and_serves_through_failed_update() {
     );
     assert_eq!(observed["runtime_readiness"]["required"], true);
     assert_eq!(observed["archive_reachability"], serde_json::Value::Null);
-    query(&origin, &set).await;
+    let original_answer = CheckedAnswer::new(&origin, &set).await;
     let count = artifact_requests(&tls);
     let unchanged = follow.poll_once().await.unwrap();
     assert!(unchanged.unchanged);
@@ -400,8 +546,8 @@ async fn manager_reuses_immutable_transfers_and_serves_through_failed_update() {
     assert_eq!(count, artifact_requests(&tls));
     let next_root = root.path().join("next");
     std::fs::create_dir(&next_root).unwrap();
-    let (next_dir, next_set) = prepared_publication(&next_root, 3);
-    advance(&owner, &next_dir, &next_set);
+    let (next_dir, next_set, next_distribution) = immutable_publication(3);
+    advance(&owner, &next_dir, next_distribution);
     for fault in ["truncated", "corrupt", "missing"] {
         std::fs::write(&tls.control, fault).unwrap();
         assert!(follow.poll_once().await.is_err(), "{fault}");
@@ -420,7 +566,7 @@ async fn manager_reuses_immutable_transfers_and_serves_through_failed_update() {
             live.command(Command::Status).await.unwrap()["active"]["map_sha256"],
             set.map_digest
         );
-        query(&origin, &set).await;
+        original_answer.check(&origin).await;
     }
     // A restart during a failed update recovers the complete predecessor only
     // after live source checks; failure of the new transfer still leaves it up.
@@ -428,13 +574,13 @@ async fn manager_reuses_immutable_transfers_and_serves_through_failed_update() {
     drop(live);
     drop(follow);
     std::fs::write(&tls.control, "missing").unwrap();
-    let mut follow = manager(&tls, &state);
+    let mut follow = restart_manager(&tls, &state).await;
     assert!(follow.poll_once().await.is_err());
     let live = follow
         .live()
         .expect("freshly checked predecessor survives restart/update failure");
     let (origin, task) = worker(live.clone()).await;
-    query(&origin, &set).await;
+    original_answer.check(&origin).await;
     std::fs::write(&tls.control, "").unwrap();
     let updated = follow.poll_once().await.unwrap();
     assert!(updated.downloaded_files > 0);
@@ -446,16 +592,16 @@ async fn manager_reuses_immutable_transfers_and_serves_through_failed_update() {
         live.command(Command::Status).await.unwrap()["active"]["map_sha256"],
         next_set.map_digest
     );
-    query(&origin, &next_set).await;
+    let next_answer = CheckedAnswer::new(&origin, &next_set).await;
     // Old exact sessions retain their source after normal handover.
-    query(&origin, &set).await;
+    original_answer.check(&origin).await;
     // The newest range is not cumulative: the old retained tail can be
     // orphaned while its newer replacement is positively canonical.
     owner.0.distribution_revision.fetch_add(5, Ordering::AcqRel);
     owner.0.invalidated_from.store(4, Ordering::Release);
     *rpc.hash.write().unwrap() = Some("77".repeat(32));
     follow.poll_once().await.unwrap();
-    query(&origin, &next_set).await;
+    next_answer.check(&origin).await;
     assert_eq!(
         get(
             &origin,
@@ -488,17 +634,17 @@ async fn manager_reuses_immutable_transfers_and_serves_through_failed_update() {
     assert_eq!(status["runtimes"]["shipped_fallbacks"], 0);
     rpc.available.store(false, Ordering::Release);
     assert!(follow.poll_once().await.is_err());
-    query(&origin, &next_set).await;
+    next_answer.check(&origin).await;
     std::fs::write(&tls.control, "refused-body").unwrap();
     assert!(follow.poll_once().await.is_err());
-    query(&origin, &next_set).await;
+    next_answer.check(&origin).await;
     task.stop().await;
     drop(live);
     drop(follow);
     std::fs::write(&tls.control, "").unwrap();
     rpc.available.store(true, Ordering::Release);
     std::fs::write(state.join("active.invalid.json"), b"[]").unwrap();
-    let mut restarted = manager(&tls, &state);
+    let mut restarted = restart_manager(&tls, &state).await;
     assert!(restarted.live().is_none());
     let restored = restarted.poll_once().await.unwrap();
     assert_eq!(restored.downloaded_files, 0);
@@ -516,20 +662,16 @@ async fn manager_reuses_immutable_transfers_and_serves_through_failed_update() {
     assert_eq!(status["runtimes"]["built"], 0);
     assert_eq!(status["runtimes"]["shipped_fallbacks"], 0);
     let (origin, task) = worker(restarted.live().unwrap()).await;
-    query(&origin, &next_set).await;
+    next_answer.check(&origin).await;
     task.stop().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn manager_persists_invalidation_and_refuses_equal_revision_reenable_after_restart() {
     let root = tempfile::tempdir().unwrap();
-    let (directory, set) = prepared_publication(root.path(), 2);
+    let (directory, set, distribution) = immutable_publication(2);
     let rpc = canonical_rpc(root.path(), &set).await;
-    let owner = authority(
-        &directory,
-        Some(Finalized::prepare(&directory, &set, 2).unwrap()),
-        rpc.client.clone(),
-    );
+    let owner = authority(&directory, Some(distribution), rpc.client.clone());
     let tls = tls(root.path(), owner.clone()).await;
     let state = root.path().join("provider");
     let mut follow = manager(&tls, &state);
@@ -558,7 +700,7 @@ async fn manager_persists_invalidation_and_refuses_equal_revision_reenable_after
     drop(follow);
     owner.0.withdrawn.store(false, Ordering::Release);
     owner.0.invalidated_from.store(u64::MAX, Ordering::Release);
-    let mut restarted = manager(&tls, &state);
+    let mut restarted = restart_manager(&tls, &state).await;
     assert!(restarted.poll_once().await.is_err());
     assert!(restarted.live().is_none());
     owner.0.distribution_revision.fetch_add(1, Ordering::AcqRel);
@@ -593,13 +735,9 @@ async fn entered(tls: &Tls) {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn manager_restarts_interrupted_staging_and_rejects_superseded_activation() {
     let root = tempfile::tempdir().unwrap();
-    let (directory, set) = prepared_publication(root.path(), 2);
+    let (directory, set, distribution) = immutable_publication(2);
     let rpc = canonical_rpc(root.path(), &set).await;
-    let owner = authority(
-        &directory,
-        Some(Finalized::prepare(&directory, &set, 2).unwrap()),
-        rpc.client.clone(),
-    );
+    let owner = authority(&directory, Some(distribution), rpc.client.clone());
     let tls = tls(root.path(), owner.clone()).await;
     let state = root.path().join("provider");
     std::fs::write(&tls.control, "pause-artifact").unwrap();
@@ -610,15 +748,15 @@ async fn manager_restarts_interrupted_staging_and_rejects_superseded_activation(
     work.abort();
     assert!(work.await.unwrap_err().is_cancelled());
     std::fs::write(&tls.control, "").unwrap();
-    let mut restarted = manager(&tls, &state);
+    let mut restarted = restart_manager(&tls, &state).await;
     restarted.poll_once().await.unwrap();
     let live = restarted.live().unwrap();
     let (origin, task) = worker(live.clone()).await;
     query(&origin, &set).await;
     let next_root = root.path().join("next");
     std::fs::create_dir(&next_root).unwrap();
-    let (next_dir, next_set) = prepared_publication(&next_root, 3);
-    advance(&owner, &next_dir, &next_set);
+    let (next_dir, next_set, next_distribution) = immutable_publication(3);
+    advance(&owner, &next_dir, next_distribution);
     let _ = std::fs::remove_file(tls.control.with_extension("entered"));
     std::fs::write(&tls.control, "pause-artifact").unwrap();
     let work = tokio::spawn(async move {
@@ -660,7 +798,7 @@ async fn manager_restarts_interrupted_staging_and_rejects_superseded_activation(
     std::fs::write(&tls.control, "").unwrap();
     // Saved staging/candidate state is not authority. Source outage on restart
     // cannot expose it, even though every immutable object is now cached.
-    let mut restarted = manager(&tls, &state);
+    let mut restarted = restart_manager(&tls, &state).await;
     rpc.available.store(false, Ordering::Release);
     assert!(restarted.poll_once().await.is_err());
     assert!(restarted.live().is_none());
@@ -675,8 +813,8 @@ async fn manager_restarts_interrupted_staging_and_rejects_superseded_activation(
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn manager_checks_inventory_and_required_files_on_unchanged_maps() {
     let root = tempfile::tempdir().unwrap();
-    let (directory, set) = prepared_publication(root.path(), 2);
-    let original = Finalized::prepare(&directory, &set, 2).unwrap();
+    let (directory, set, distribution) = immutable_publication(2);
+    let original = distribution;
     let runtime = original
         .inventory()
         .artifacts
@@ -717,7 +855,6 @@ async fn manager_checks_inventory_and_required_files_on_unchanged_maps() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[cfg(feature = "full-tests")]
 async fn manager_refuses_changed_holdings_on_an_unchanged_map() {
     let root = tempfile::tempdir().unwrap();
     let (directory, set) = publication(root.path());
@@ -773,13 +910,9 @@ async fn control_write_failure(pause_at: Option<u32>, failed_record: &str) {
         vec![failed_record]
     };
     let root = tempfile::tempdir().unwrap();
-    let (directory, set) = prepared_publication(root.path(), 2);
+    let (directory, set, distribution) = immutable_publication(2);
     let rpc = canonical_rpc(root.path(), &set).await;
-    let owner = authority(
-        &directory,
-        Some(Finalized::prepare(&directory, &set, 2).unwrap()),
-        rpc.client.clone(),
-    );
+    let owner = authority(&directory, Some(distribution), rpc.client.clone());
     let tls = tls(root.path(), owner.clone()).await;
     let state = root.path().join("provider");
     if high_water_fault.is_some() {
@@ -789,7 +922,7 @@ async fn control_write_failure(pause_at: Option<u32>, failed_record: &str) {
     follow.poll_once().await.unwrap();
     let live = follow.live().unwrap();
     let (origin, task) = worker(live.clone()).await;
-    let encrypted = query_and_upload(&origin, &set).await;
+    let answer = CheckedAnswer::new(&origin, &set).await;
     let saved_high_water = std::fs::read(state.join("publisher-high-water.json")).unwrap();
     if let Some((_, record)) = high_water_fault {
         if record.contains("fallback") {
@@ -911,7 +1044,7 @@ async fn control_write_failure(pause_at: Option<u32>, failed_record: &str) {
             std::fs::write(state.join(other), &saved_high_water).unwrap();
             // Reuse an independently validated encrypted answer while storage
             // is still broken, proving the controls did not silently fence it.
-            query(&origin, &set).await;
+            answer.check(&origin).await;
         }
         owner.0.withdrawn.store(true, Ordering::Release);
         owner.0.invalidated_from.store(2, Ordering::Release);
@@ -947,7 +1080,7 @@ async fn control_write_failure(pause_at: Option<u32>, failed_record: &str) {
             "{origin}/v2/shards/1/revisions/{}/query/directory",
             set.get(1).unwrap().digest
         ))
-        .body(encrypted)
+        .body(answer.body.clone())
         .send()
         .await
         .unwrap();
@@ -969,7 +1102,7 @@ async fn control_write_failure(pause_at: Option<u32>, failed_record: &str) {
     task.stop().await;
     drop(live);
     drop(follow);
-    let mut restarted = manager(&tls, &state);
+    let mut restarted = restart_manager(&tls, &state).await;
     assert!(
         restarted.poll_once().await.is_err(),
         "restart cannot erase revocation"
@@ -978,21 +1111,18 @@ async fn control_write_failure(pause_at: Option<u32>, failed_record: &str) {
     owner.0.distribution_revision.fetch_add(1, Ordering::AcqRel);
     restarted.poll_once().await.unwrap();
     let (origin, task) = worker(restarted.live().unwrap()).await;
-    query(&origin, &set).await;
+    answer.check(&origin).await;
     task.stop().await;
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[cfg(feature = "full-tests")]
 async fn manager_high_water_write_failure_still_fences_http() {
     control_write_failure(None, "publisher-high-water.tmp").await;
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[cfg(feature = "full-tests")]
 async fn manager_activation_poll_write_failure_still_fences_http() {
     control_write_failure(Some(2), "publisher-high-water.tmp").await;
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[cfg(feature = "full-tests")]
 async fn manager_final_poll_write_failure_still_fences_http() {
     control_write_failure(Some(3), "publisher-high-water.tmp").await;
 }
@@ -1002,19 +1132,14 @@ async fn manager_owner_fence_write_failure_still_fences_http() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[cfg(feature = "full-tests")]
 async fn manager_bounds_memory_while_retaining_admitted_upload() {
     use tokio::io::AsyncWriteExt;
     use tower::ServiceExt;
     use transparent_server_backend::shardset::{Table, TableRef};
     let root = tempfile::tempdir().unwrap();
-    let (directory, set) = prepared_publication(root.path(), 2);
+    let (directory, set, distribution) = immutable_publication(2);
     let rpc = canonical_rpc(root.path(), &set).await;
-    let owner = authority(
-        &directory,
-        Some(Finalized::prepare(&directory, &set, 2).unwrap()),
-        rpc.client.clone(),
-    );
+    let owner = authority(&directory, Some(distribution), rpc.client.clone());
     let tls = tls(root.path(), owner.clone()).await;
     let state = root.path().join("provider");
     let mut follow = manager(&tls, &state);
@@ -1111,27 +1236,21 @@ async fn manager_bounds_memory_while_retaining_admitted_upload() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[cfg(feature = "full-tests")]
 async fn manager_unreadable_revocation_floor_still_fences_http() {
     control_write_failure(None, "revocation-floor.json").await;
 }
 
-#[cfg(feature = "full-tests")]
 async fn recovery_poll_write_failure(pause_at: u32) {
     let root = tempfile::tempdir().unwrap();
-    let (directory, set) = prepared_publication(root.path(), 2);
+    let (directory, set, distribution) = immutable_publication(2);
     let rpc = canonical_rpc(root.path(), &set).await;
-    let owner = authority(
-        &directory,
-        Some(Finalized::prepare(&directory, &set, 2).unwrap()),
-        rpc.client.clone(),
-    );
+    let owner = authority(&directory, Some(distribution), rpc.client.clone());
     let tls = tls(root.path(), owner.clone()).await;
     let state = root.path().join("provider");
     let mut follow = manager(&tls, &state);
     follow.poll_once().await.unwrap();
     drop(follow);
-    let mut restarted = manager(&tls, &state);
+    let mut restarted = restart_manager(&tls, &state).await;
     std::fs::write(&tls.control, format!("pause-current-{pause_at}")).unwrap();
     let work = tokio::spawn(async move {
         let result = restarted.poll_once().await;
@@ -1161,7 +1280,7 @@ async fn recovery_poll_write_failure(pause_at: u32) {
     std::fs::remove_dir(state.join("publisher-high-water.tmp")).unwrap();
     owner.0.withdrawn.store(false, Ordering::Release);
     owner.0.invalidated_from.store(u64::MAX, Ordering::Release);
-    let mut restarted = manager(&tls, &state);
+    let mut restarted = restart_manager(&tls, &state).await;
     assert!(restarted.poll_once().await.is_err());
     assert!(restarted.live().is_none());
     owner.0.distribution_revision.fetch_add(1, Ordering::AcqRel);
@@ -1171,18 +1290,15 @@ async fn recovery_poll_write_failure(pause_at: u32) {
     task.stop().await;
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[cfg(feature = "full-tests")]
 async fn manager_recovery_poll_write_failure_keeps_saved_view_unexposed() {
     recovery_poll_write_failure(2).await;
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[cfg(feature = "full-tests")]
 async fn manager_recovery_final_poll_write_failure_keeps_saved_view_unexposed() {
     recovery_poll_write_failure(3).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[cfg(feature = "full-tests")]
 async fn manager_missing_durable_revision_cannot_reenable_revoked_view() {
     // Lose both exact-revision writes, retaining only the owner's digest fence.
     // A large missed-revision jump prevents an old high-water-plus-one shortcut.
@@ -1190,22 +1306,16 @@ async fn manager_missing_durable_revision_cannot_reenable_revoked_view() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[cfg(feature = "full-tests")]
 async fn manager_malformed_revocation_floor_still_fences_http() {
     control_write_failure(None, "malformed").await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[cfg(feature = "full-tests")]
 async fn manager_rejects_replayed_different_map_below_durable_revocation_floor() {
     let root = tempfile::tempdir().unwrap();
-    let (directory, set) = prepared_publication(root.path(), 2);
+    let (directory, set, distribution) = immutable_publication(2);
     let rpc = canonical_rpc(root.path(), &set).await;
-    let owner = authority(
-        &directory,
-        Some(Finalized::prepare(&directory, &set, 2).unwrap()),
-        rpc.client.clone(),
-    );
+    let owner = authority(&directory, Some(distribution), rpc.client.clone());
     let tls = tls(root.path(), owner.clone()).await;
     let state = root.path().join("provider");
     let mut follow = manager(&tls, &state);
@@ -1229,12 +1339,12 @@ async fn manager_rejects_replayed_different_map_below_durable_revocation_floor()
     std::fs::remove_dir(state.join("revocation-floor.tmp")).unwrap();
     let next_root = root.path().join("next");
     std::fs::create_dir(&next_root).unwrap();
-    let (next_dir, next_set) = prepared_publication(&next_root, 3);
-    advance(&owner, &next_dir, &next_set);
+    let (next_dir, next_set, next_distribution) = immutable_publication(3);
+    advance(&owner, &next_dir, next_distribution);
     owner.0.distribution_revision.store(40, Ordering::Release);
     owner.0.withdrawn.store(false, Ordering::Release);
     owner.0.invalidated_from.store(u64::MAX, Ordering::Release);
-    let mut restarted = manager(&tls, &state);
+    let mut restarted = restart_manager(&tls, &state).await;
     for revision in [40, 100] {
         owner
             .0
@@ -1254,64 +1364,51 @@ async fn manager_rejects_replayed_different_map_below_durable_revocation_floor()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[cfg(feature = "full-tests")]
 async fn manager_primary_read_failure_at_poll_still_fences_http() {
     control_write_failure(None, "read:publisher-high-water.json").await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[cfg(feature = "full-tests")]
 async fn manager_primary_read_failure_at_guard_still_fences_http() {
     control_write_failure(Some(2), "read:publisher-high-water.json").await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[cfg(feature = "full-tests")]
 async fn manager_primary_parse_failure_at_poll_still_fences_http() {
     control_write_failure(None, "parse:publisher-high-water.json").await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[cfg(feature = "full-tests")]
 async fn manager_primary_parse_failure_at_guard_still_fences_http() {
     control_write_failure(Some(3), "parse:publisher-high-water.json").await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[cfg(feature = "full-tests")]
 async fn manager_fallback_read_failure_at_poll_still_fences_http() {
     control_write_failure(None, "read:publisher-high-water-fallback.json").await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[cfg(feature = "full-tests")]
 async fn manager_fallback_read_failure_at_guard_still_fences_http() {
     control_write_failure(Some(2), "read:publisher-high-water-fallback.json").await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[cfg(feature = "full-tests")]
 async fn manager_fallback_parse_failure_at_poll_still_fences_http() {
     control_write_failure(None, "parse:publisher-high-water-fallback.json").await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[cfg(feature = "full-tests")]
 async fn manager_fallback_parse_failure_at_guard_still_fences_http() {
     control_write_failure(Some(3), "parse:publisher-high-water-fallback.json").await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[cfg(feature = "full-tests")]
 async fn manager_double_intent_write_failure_retains_exact_negative_revision() {
     let root = tempfile::tempdir().unwrap();
-    let (directory, set) = prepared_publication(root.path(), 2);
+    let (directory, set, distribution) = immutable_publication(2);
     let rpc = canonical_rpc(root.path(), &set).await;
-    let owner = authority(
-        &directory,
-        Some(Finalized::prepare(&directory, &set, 2).unwrap()),
-        rpc.client.clone(),
-    );
+    let owner = authority(&directory, Some(distribution), rpc.client.clone());
     let tls = tls(root.path(), owner.clone()).await;
     let state = root.path().join("provider");
     let mut follow = manager(&tls, &state);
@@ -1382,8 +1479,8 @@ async fn manager_double_intent_write_failure_retains_exact_negative_revision() {
     task.stop().await;
 }
 
-/// Standard controller/followed-journal adoption. Reuse the provider tests'
-/// immutable source fixture and native row oracle, with fresh writable owners.
+/// Standard controller/followed-journal adoption with the production sealing
+/// policy, original mixed geometries, and an independent native row oracle.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn standard_history_lifecycle_queries_advance_and_reconciles_lost_activation() {
     use std::os::unix::fs::PermissionsExt;
@@ -1393,7 +1490,7 @@ async fn standard_history_lifecycle_queries_advance_and_reconciles_lost_activati
         shardset::LoadScope,
     };
     let root = tempfile::tempdir().unwrap();
-    let (directory, set) = publication(root.path());
+    let (directory, set) = publication_through(root.path(), 2);
     let service_config = ServiceConfig {
         cache_bytes: 4 << 30,
         ..ServiceConfig::default()

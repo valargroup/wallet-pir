@@ -1917,7 +1917,6 @@ mod tests {
         Json(serde_json::json!({"id":request["id"],"result":result,"error":null}))
     }
     #[tokio::test(flavor = "multi_thread")]
-    #[cfg(feature = "full-tests")]
     async fn rpc_follow_publishes_empty_blocks_and_recovers_a_sealed_reorg() {
         use std::os::unix::fs::PermissionsExt;
         let root = tempfile::tempdir().unwrap();
@@ -2236,7 +2235,6 @@ print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('re
     /// fleet's prepare request; the next candidate links the unchanged ones
     /// from the active publication and builds only what changed.
     #[tokio::test(flavor = "multi_thread")]
-    #[cfg(feature = "full-tests")]
     async fn shipped_runtimes_are_prepared_linked_and_offered_with_the_candidate() {
         shipped_runtime_scenario(false).await;
     }
@@ -2290,8 +2288,16 @@ print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('re
             output: initial.clone(),
             previous: None,
             recent_geometry: "decoupled-2k-8k".into(),
-            archive_geometry: Some("decoupled-32k-32k".into()),
-            recent_from: Some(2),
+            archive_geometry: if !failures_only && !cfg!(feature = "qualification-tests") {
+                None
+            } else {
+                Some("decoupled-32k-32k".into())
+            },
+            recent_from: if !failures_only && !cfg!(feature = "qualification-tests") {
+                None
+            } else {
+                Some(2)
+            },
             zakura_rpc_url: String::new(),
             zakura_cookie: cookie.clone(),
             through: None,
@@ -2382,6 +2388,68 @@ print(json.dumps({'ok':True,'upstreams':[],'workers':{},'retained_publication':b
                 })
                 .collect()
         };
+
+        if !failures_only && !cfg!(feature = "qualification-tests") {
+            // Exercise the real cold preparation, fleet offer and activation
+            // phases on a minimal valid publication. The qualified branch
+            // below also acquires new blocks and builds both deployed tiers.
+            let old = authority.0.active.read().unwrap().clone();
+            let height = old.publication.height;
+            let hash = old.publication.hash.clone();
+            let snapshot = {
+                let journal = store.lock().await;
+                Snapshot::capture(&journal, old.filters.map(), config.snapshot_dir()).unwrap()
+            };
+            let epoch = authority.0.epoch.load(Ordering::Acquire);
+            let work = HistoryWork {
+                old,
+                epoch,
+                snapshot,
+                height,
+                hash,
+            };
+            let Input::Work(ready) = prepare_history(&config, &client, &authority, work)
+                .await
+                .unwrap()
+            else {
+                panic!("cold preparation must produce a candidate")
+            };
+            let first = ready.candidate.publication.clone();
+            let files = runtime_files(&first.directory);
+            let set =
+                transparent_server_backend::shardset::ShardSet::open(&first.directory, 3).unwrap();
+            assert!(!files.is_empty());
+            assert_eq!(files.len(), set.warm_targets().len());
+            assert_eq!(ready.runtimes.as_ref().unwrap()["built"], files.len());
+            let offered = requests();
+            let request = offered
+                .iter()
+                .find(|r| r["operation"] == "prepare")
+                .unwrap();
+            assert_eq!(request["runtimes"], serde_json::json!(first.directory));
+            activate_history(&config, &client, &authority, ready)
+                .await
+                .unwrap();
+            assert_eq!(
+                authority.0.active.read().unwrap().publication.map_sha256,
+                first.map_sha256
+            );
+
+            // A separately staged candidate must link the verified completed
+            // runtimes of the active publication, preserving their inodes.
+            let next = config.publication_root.join("candidate-bounded-linked");
+            candidate_inputs(&first.directory, &next);
+            let report = prepare_runtimes(&config, &authority, &next, epoch)
+                .await
+                .unwrap();
+            assert_eq!(report["built"], 0);
+            assert_eq!(report["linked"], files.len());
+            let linked = runtime_files(&next);
+            assert_eq!(files, linked);
+            assert_eq!(authority.0.runtime_preparations.load(Ordering::Relaxed), 2);
+            server.abort();
+            return;
+        }
 
         let source = if failures_only {
             authority.0.active.read().unwrap().publication.clone()

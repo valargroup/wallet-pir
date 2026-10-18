@@ -35,16 +35,19 @@ fn authority(directory: &Path, distribution: Option<Finalized>, rpc: NodeClient)
 }
 
 fn publication(root: &Path) -> (PathBuf, ShardSet) {
-    publication_through(root, 2)
+    publication_fixture(root, 2, !cfg!(feature = "qualification-tests"))
 }
 fn publication_through(root: &Path, through: u64) -> (PathBuf, ShardSet) {
+    publication_fixture(root, through, false)
+}
+fn publication_fixture(root: &Path, through: u64, bounded: bool) -> (PathBuf, ShardSet) {
     let journal_dir = root.join("journal");
     let mut journal =
         EventStore::open(&journal_dir, transparent_filter::MAINNET_GENESIS_DISPLAY, 0).unwrap();
     for h in 0..=through {
-        // One real recent receive; the archive has no private records. This
-        // keeps native correctness cases small without changing any geometry.
-        let events = if h == 2 {
+        // Keep the occupied recent row used by the independent answer oracle.
+        // Full qualification retains the original mixed deployed geometries.
+        let mut events = if h == 2 || (bounded && h == 1) {
             vec![(
                 ScriptBytes::new(vec![
                     0x76, 0xa9, 0x14, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -56,8 +59,8 @@ fn publication_through(root: &Path, through: u64) -> (PathBuf, ShardSet) {
                         transparent_input_count: 1,
                         has_shielded_components: false,
                     }),
-                    height: 2,
-                    txid: transparent_events::Txid([7; 32]),
+                    height: h as u32,
+                    txid: transparent_events::Txid([h as u8 + 5; 32]),
                     transaction_index: 0,
                     output_index: 0,
                     value: 50_000,
@@ -67,6 +70,17 @@ fn publication_through(root: &Path, through: u64) -> (PathBuf, ShardSet) {
         } else {
             Vec::new()
         };
+        if bounded && h == 1 {
+            // Two archive scripts close the first real shard at height one.
+            // The single recent script stays below this small sealing target.
+            let mut other = events[0].clone();
+            other.0 = ScriptBytes::new(vec![0x51]);
+            let TransparentEvent::Receive(event) = &mut other.1 else {
+                unreachable!()
+            };
+            event.output_index = 1;
+            events.push(other);
+        }
         journal
             .append_block(
                 h,
@@ -82,14 +96,14 @@ fn publication_through(root: &Path, through: u64) -> (PathBuf, ShardSet) {
     }
     journal.commit().unwrap();
     let output = root.join("publication");
-    publication::publish(
+    publication::publish_with(
         &PublishOptions {
             data_dir: journal_dir,
             output: output.clone(),
             previous: None,
             recent_geometry: "decoupled-2k-8k".into(),
-            archive_geometry: Some("decoupled-32k-32k".into()),
-            recent_from: Some(2),
+            archive_geometry: (!bounded).then(|| "decoupled-32k-32k".into()),
+            recent_from: (!bounded).then_some(2),
             zakura_rpc_url: String::new(),
             zakura_cookie: root.join("unused"),
             through: None,
@@ -100,9 +114,19 @@ fn publication_through(root: &Path, through: u64) -> (PathBuf, ShardSet) {
         },
         &journal,
         BlockHash::from_internal_bytes([0; 32]),
+        &|geometry| {
+            let mut policy = transparent_shard::seal::DecoupledPolicy::for_geometry(geometry);
+            if bounded {
+                policy.scripts.target = 2;
+            }
+            policy
+        },
     )
     .unwrap();
     let set = ShardSet::open(&output, 0).unwrap();
+    assert_eq!(set.map.shards.len(), 2);
+    assert_eq!(set.map.shards[0].end_height, 1);
+    assert_eq!(set.map.shards[1].start_height, 2);
     (output, set)
 }
 fn recent_options(set: &ShardSet) -> transparent_shard_server::shardset::LoadOptions {
@@ -249,31 +273,41 @@ impl Drop for Tls {
 async fn tls(root: &Path, authority: Authority) -> Tls {
     let cert = root.join("ca.pem");
     let key = root.join("key.pem");
-    assert!(std::process::Command::new("openssl")
-        .args([
-            "req",
-            "-x509",
-            "-newkey",
-            "rsa:2048",
-            "-nodes",
-            "-days",
-            "1",
-            "-subj",
-            "/CN=localhost",
-            "-addext",
-            "subjectAltName=DNS:localhost",
-            "-addext",
-            "basicConstraints=critical,CA:FALSE",
-            "-keyout"
-        ])
-        .arg(&key)
-        .arg("-out")
-        .arg(&cert)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .unwrap()
-        .success());
+    static MATERIAL: std::sync::LazyLock<(Vec<u8>, Vec<u8>)> = std::sync::LazyLock::new(|| {
+        let root = tempfile::tempdir().unwrap();
+        let cert = root.path().join("ca.pem");
+        let key = root.path().join("key.pem");
+        assert!(std::process::Command::new("openssl")
+            .args([
+                "req",
+                "-x509",
+                "-newkey",
+                "rsa:2048",
+                "-nodes",
+                "-days",
+                "1",
+                "-subj",
+                "/CN=localhost",
+                "-addext",
+                "subjectAltName=DNS:localhost",
+                "-addext",
+                "basicConstraints=critical,CA:FALSE",
+                "-keyout"
+            ])
+            .arg(&key)
+            .arg("-out")
+            .arg(&cert)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .unwrap()
+            .success());
+        (std::fs::read(cert).unwrap(), std::fs::read(key).unwrap())
+    });
+    // Only immutable generated bytes are shared. Trust checks, listeners and
+    // fault controls remain independently owned by each test.
+    std::fs::write(&cert, &MATERIAL.0).unwrap();
+    std::fs::write(&key, &MATERIAL.1).unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let server = tokio::spawn(async move {
@@ -385,17 +419,11 @@ async fn https_bootstrap_verifies_real_prepared_recent_without_archive_tables() 
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[cfg(feature = "full-tests")]
 async fn https_bootstrap_fails_closed_on_origin_network_and_transport_errors() {
     let root = tempfile::tempdir().unwrap();
-    let (directory, set) = publication(root.path());
-    prepare_recent(&directory, &set);
+    let (directory, set, finalized) = manager_tests::immutable_publication(2);
     let rpc = canonical_rpc(root.path(), &set).await;
-    let owner = authority(
-        &directory,
-        Some(Finalized::prepare(&directory, &set, 2).unwrap()),
-        rpc.client.clone(),
-    );
+    let owner = authority(&directory, Some(finalized), rpc.client.clone());
     let tls = tls(root.path(), owner.clone()).await;
     let mut wrong = config(&tls, root.path().join("wrong-network"));
     wrong.network = "test".into();
@@ -475,17 +503,11 @@ async fn https_bootstrap_fails_closed_on_origin_network_and_transport_errors() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[cfg(feature = "full-tests")]
 async fn https_bootstrap_consumes_canonicality_withdrawal_and_recovery_state() {
     let root = tempfile::tempdir().unwrap();
-    let (directory, set) = publication(root.path());
-    prepare_recent(&directory, &set);
+    let (directory, set, finalized) = manager_tests::immutable_publication(2);
     let rpc = canonical_rpc(root.path(), &set).await;
-    let owner = authority(
-        &directory,
-        Some(Finalized::prepare(&directory, &set, 2).unwrap()),
-        rpc.client.clone(),
-    );
+    let owner = authority(&directory, Some(finalized), rpc.client.clone());
     let tls = tls(root.path(), owner.clone()).await;
     let provider = root.path().join("provider");
     // The same endpoint can revalidate an older retained public anchor without
@@ -643,12 +665,9 @@ fn distribution_revision_refuses_directory_sync_failure_before_acknowledgement()
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[cfg(feature = "full-tests")]
 async fn https_bootstrap_charges_all_response_bytes_at_exact_budget_boundary() {
     let root = tempfile::tempdir().unwrap();
-    let (directory, set) = publication(root.path());
-    prepare_recent(&directory, &set);
-    let finalized = Finalized::prepare(&directory, &set, 2).unwrap();
+    let (directory, set, finalized) = manager_tests::immutable_publication(2);
     // Independent producer-byte oracle, including both live current responses
     // and the canonicality attestation. Never derive the cap from Report.
     let material_bytes = finalized.bytes().len() as u64
