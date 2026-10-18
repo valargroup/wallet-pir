@@ -115,7 +115,7 @@ class MatrixTests(unittest.TestCase):
         for variant in ('reference', 'native'):
             with self.subTest(variant=variant), patch.object(matrix.subprocess, 'check_output', side_effect=listing):
                 _, programs, cases = matrix.test_programs([artifact], variant, {package['name']: package}, {})
-            actual = set(cases[f'{variant}:enhance-query-server:ci_smoke']['tests'])
+            actual = set(cases[f'{variant}:enhance-publisher:ci_smoke']['tests'])
             self.assertEqual(actual, oracles if variant == 'reference' else lifecycle | oracles)
             if variant == 'native':
                 self.assertEqual(programs[0]['args'], [])
