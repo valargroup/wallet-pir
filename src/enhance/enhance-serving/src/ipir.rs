@@ -480,8 +480,8 @@ impl PreparedShard {
                 InspiringError::PreprocessMismatch("global setup does not cover shard".to_string())
             })?;
         #[cfg(feature = "native-reinspiring")]
-        let crs_blocks = crate::runtime::native_runtime::hint(&server, setup)
-            .map_err(InspiringError::PreprocessMismatch)?;
+        let crs_blocks =
+            pir_serving::hint(&server, setup).map_err(InspiringError::PreprocessMismatch)?;
         #[cfg(not(feature = "native-reinspiring"))]
         let crs_blocks = server.hint(rlwe, setup);
 

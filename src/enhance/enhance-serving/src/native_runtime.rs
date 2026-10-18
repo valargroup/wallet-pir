@@ -124,19 +124,3 @@ impl NativePacking {
         Ok(out)
     }
 }
-
-/// Build public unit hint contributions using exact lifted native-ring products.
-pub fn hint(
-    server: &pir_runtime::evaluation::PreparedDatabase,
-    setup: &[Vec<u64>],
-) -> Result<Vec<CrsBlock>, String> {
-    let rows = server.params().db_rows;
-    let cols = server.params().db_cols;
-    let db = server.db();
-    Ok(
-        pir_native::hint(setup, rows, cols, |col| &db[col * rows..(col + 1) * rows])?
-            .into_iter()
-            .map(|rows| CrsBlock { rows })
-            .collect(),
-    )
-}

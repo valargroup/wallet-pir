@@ -3,14 +3,18 @@
     "pir-control",
     "pir-observability",
     "pir-runtime",
-    "pir-pipeline"
+    "pir-pipeline",
+    "pir-serving"
   ],
   "enhance": [
     "enhance-pir",
     "enhance-serving",
+    "status-protocol",
     "status-serving",
+    "status-publication",
     "enhance-pir-load-test",
     "enhance-pir-server",
+    "status-pir-server",
     "pir-apm",
     "pir-monitor"
   ],

@@ -1,6 +1,6 @@
 //! Complete-block rolling index. Failed candidates cannot mutate active snapshots.
-use enhance_pir::status::*;
 use sha2::{Digest, Sha256};
+use status_protocol::*;
 use std::collections::BTreeMap;
 
 #[derive(Clone, PartialEq, Eq)]

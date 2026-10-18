@@ -1,7 +1,7 @@
 //! Deterministic synthetic source for isolated backend qualification. Not chain ingestion.
 use super::index::{Block, ForkRecord, Snapshot};
-use enhance_pir::status::*;
 use sha2::{Digest, Sha256};
+use status_protocol::*;
 pub const NETWORK: Hash = [0x31; 32];
 pub const SALT: Hash = [0x72; 32];
 pub const START: u32 = 1000;

@@ -114,7 +114,7 @@ pub fn preparation(
     index_ms: f64,
     stats: &super::Preparation,
     snapshot: &super::index::Snapshot,
-    manifest: &enhance_pir::status::Manifest,
+    manifest: &status_protocol::Manifest,
 ) {
     let mut t = shared().lock().unwrap();
     t.index_ms = Some(index_ms);
@@ -134,9 +134,9 @@ pub fn preparation(
     t.max_bucket_occupancy = Some(
         snapshot
             .rows
-            .chunks_exact(enhance_pir::status::ROW_BYTES)
+            .chunks_exact(status_protocol::ROW_BYTES)
             .map(|row| {
-                row.chunks_exact(enhance_pir::status::SLOT_BYTES)
+                row.chunks_exact(status_protocol::SLOT_BYTES)
                     .take_while(|slot| slot.iter().any(|b| *b != 0))
                     .count()
             })

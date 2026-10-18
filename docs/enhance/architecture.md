@@ -500,14 +500,18 @@ work by the number of queried domains. See [wallet integration](integration.md).
 Serving and ingestion are separate packages, following Receiver's indexer/server
 split. `src/enhance/enhance-serving` holds the coordinator, query ingress,
 packing router, workers, stores and runtimes; `src/status/status-serving` holds
-Status generations, the distributed controller and its roles. They consume
-`enhance-pir`, wallet-libraries PIR packages and `shared/` runtime helpers, and
-never chain readers (`zakura-server-chain`, node crates), ingestion, applications
-or another product's packages. `src/enhance/enhance-pir-server` composes them
-with chain reading (`zakura`), journal ingestion (`ingest`), rebuilds, Status
-observation (`status::source`) and publication (`status::publisher`), and the
-`enhance-pir-server` and `status-pir` command lines; ingestion-dependent tests live
-there. `tools/ci/boundary.py` enforces these rules for every dependency kind and
+Status generations, the distributed controller and its roles over the
+`status-protocol` wire contract. Both use `src/shared/pir-serving` for the profile
+modulus and native hints, wallet-libraries PIR packages and other `src/shared/`
+runtime helpers, and never chain readers (`zakura-server-chain`, node crates),
+ingestion, applications or another product's packages.
+`src/enhance/enhance-pir-server` composes Enhance serving with chain reading
+(`zakura`), journal ingestion (`ingest`), rebuilds and the `enhance-pir-server`
+command line, and can host the Status publisher. Status observation (`source`)
+and publication (`publisher`) live in `src/status/status-publication`; the
+`status-pir` command lines live in `src/status/status-pir-server`.
+Ingestion-dependent tests live with those packages. `tools/ci/boundary.py`
+enforces these rules for every dependency kind and
 for resolved workspace and standalone graphs.
 
 Raw PIR integration that Enhance shares with Status or Transparent lives in

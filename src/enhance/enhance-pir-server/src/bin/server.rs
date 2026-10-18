@@ -434,11 +434,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                         if isolated_fixture {
                             return Err("live Status cannot use isolated Enhance fixtures".into());
                         }
-                        let config: enhance_pir_server::status::publisher::Config =
+                        let config: status_publication::publisher::Config =
                             serde_json::from_slice(&std::fs::read(path)?)?;
                         let enabled = config.public_enabled;
-                        let publisher =
-                            enhance_pir_server::status::publisher::Publisher::new(config)?;
+                        let publisher = status_publication::publisher::Publisher::new(config)?;
                         let cookie = zakura_cookie
                             .as_ref()
                             .ok_or("Status requires canonical node authentication")?;

@@ -2,8 +2,8 @@
 //! check runs against a published Status origin.
 use super::{require, AnyError};
 use crate::{status, zakura::ZakuraClient};
-use enhance_pir::status::*;
 use serde_json::json;
+use status_protocol::*;
 use std::{
     fs::File,
     io::{BufWriter, Write},
@@ -111,7 +111,7 @@ async fn live_load(
                             let txid = {
                                 let mut cache = cache.lock().await;
                                 if let Some(txid) = cache.get(&hash) { *txid } else {
-                                    let block = crate::status::source::status_block(&rpc, u64::from(manifest.anchor_height)).await?;
+                                    let block = status_publication::source::status_block(&rpc, u64::from(manifest.anchor_height)).await?;
                                     require(block.hash == hash, "oracle canonical block changed")?;
                                     let txid = *block.txids.first().ok_or("oracle block empty")?;
                                     if cache.len() >= 4 { cache.clear(); }

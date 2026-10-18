@@ -48,7 +48,8 @@ def commands(group, groups, lint=False, compile_only=False):
     features = {
         'enhance': ['enhance-pir/cli', 'enhance-pir/native-reinspiring',
                     'enhance-serving/native-reinspiring', 'status-serving/native-reinspiring',
-                    'enhance-pir-server/native-reinspiring', 'enhance-pir-load-test/native-reinspiring'],
+                    'enhance-pir-server/native-reinspiring', 'status-pir-server/native-reinspiring',
+          'enhance-pir-load-test/native-reinspiring'],
         'shared': ['pir-control/admission'],
     }.get(group, []) + qualification_features(names)
     result = [[*runner, '--locked', '--profile', 'release-fast',

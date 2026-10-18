@@ -4,7 +4,7 @@ use super::{
     now_ms,
 };
 use crate::zakura::{ZakuraClient, ZakuraError};
-use enhance_pir::status::{Error as StatusError, Hash};
+use status_protocol::{Error as StatusError, Hash};
 use std::{
     collections::BTreeMap,
     fs::{self, File, OpenOptions},
@@ -26,7 +26,7 @@ async fn hash_at(
 
 /// The canonical block at `height` as a Status index block; see
 /// [`ZakuraClient::status_block`].
-pub(crate) async fn status_block(rpc: &ZakuraClient, height: u64) -> Result<Block, ZakuraError> {
+pub async fn status_block(rpc: &ZakuraClient, height: u64) -> Result<Block, ZakuraError> {
     let block = rpc.status_block(height).await?;
     Ok(Block {
         height: block.height,
@@ -225,7 +225,7 @@ impl RollingWindow {
             len(block.txids.len())?;
         }
         let len = |n: usize| (n as u32).to_le_bytes();
-        crate::artifact::write_atomic(dir, "source.bin", |file| {
+        pir_control::durable::write_atomic(dir, "source.bin", |file| {
             file.write_all(CHECKPOINT_MAGIC)?;
             file.write_all(&self.window_blocks.to_le_bytes())?;
             file.write_all(&self.salt)?;
@@ -511,8 +511,8 @@ pub(super) mod tests {
 
     #[tokio::test]
     async fn live_rpc_candidate_revalidates_before_durable_publication() {
-        use crate::status::{authority::Authority, Controller, Generation};
         use ipir_sp::server::MatvecBackend;
+        use status_serving::{authority::Authority, Controller, Generation};
 
         let dir = tempfile::tempdir().unwrap();
         let (client, job) = fixture(false, false).await;

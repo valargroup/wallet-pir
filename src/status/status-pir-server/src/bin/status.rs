@@ -1,7 +1,8 @@
 //! Isolated synthetic backend. Uses a declared synthetic source; never enables wallet traffic.
 use clap::{Parser, Subcommand};
-use enhance_pir::status::MAX_ENTRIES;
-use enhance_pir_server::status::{self, cli};
+use status_pir_server::cli;
+use status_protocol::MAX_ENTRIES;
+use status_serving as status;
 use std::{net::SocketAddr, path::PathBuf};
 
 #[derive(Parser)]

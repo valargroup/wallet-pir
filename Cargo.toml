@@ -8,14 +8,18 @@ members = [
     "src/shared/pir-control",
     "src/shared/pir-runtime",
     "src/shared/pir-pipeline",
+    "src/shared/pir-serving",
     # Protocol libraries, clients and stores.
     "src/enhance/enhance-pir",
     "src/enhance/enhance-serving",
+    "src/status/status-protocol",
     "src/status/status-serving",
+    "src/status/status-publication",
     "src/transparent/transparent-blocks",
     "src/shared/transparent-server-backend",
     # Services and operational dashboard.
     "src/enhance/enhance-pir-server",
+    "src/status/status-pir-server",
     "src/shared/pir-apm",
     "src/transparent/transparent-filter-server",
     "src/transparent/transparent-block-server",

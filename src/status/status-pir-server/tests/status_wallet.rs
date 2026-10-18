@@ -1,8 +1,8 @@
 //! The native Status profile, checked with the in-repo client over real server material.
 #![cfg(feature = "native-reinspiring")]
-use enhance_pir::status as server;
-use enhance_pir_server::status::{fixture, now_ms, Generation};
 use ipir_sp::server::MatvecBackend;
+use status_protocol as server;
+use status_serving::{fixture, now_ms, Generation};
 
 #[test]
 fn native_client_decodes_real_server_two_mask_material() {
@@ -17,10 +17,7 @@ fn native_client_decodes_real_server_two_mask_material() {
     };
     let snapshot = fixture::snapshot(entries, false).unwrap();
     let (g, _) = Generation::prepare(&snapshot, 1, 1, now_ms(), None, backend).unwrap();
-    assert_eq!(
-        g.public().len(),
-        enhance_pir::native::public_len(server::COLS)
-    );
+    assert_eq!(g.public().len(), pir_native::public_len(server::COLS));
     let anchor = server::AcceptedAnchor {
         network: snapshot.network,
         height: snapshot.height,
@@ -33,7 +30,7 @@ fn native_client_decodes_real_server_two_mask_material() {
             .unwrap();
         assert_eq!(
             query.body.len(),
-            server::HEADER_BYTES + enhance_pir::native::request_len(server::ROWS)
+            server::HEADER_BYTES + pir_native::request_len(server::ROWS)
         );
         let coefficients = g.coefficients(&query.body).unwrap();
         let values = g.evaluate(&coefficients).unwrap();
@@ -59,7 +56,7 @@ fn native_client_decodes_real_server_two_mask_material() {
 /// with the published rows. Every other length is refused.
 #[test]
 fn native_server_answers_dithered_queries_in_the_same_envelope() {
-    use enhance_pir::native as n;
+    use pir_native as n;
     let snapshot = fixture::snapshot(32, false).unwrap();
     let (g, _) = Generation::prepare(&snapshot, 1, 1, now_ms(), None, MatvecBackend::Cpu).unwrap();
     let setup = server::native_packing_setup(&g.manifest().network, &g.manifest().salt);

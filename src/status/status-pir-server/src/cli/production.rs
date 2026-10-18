@@ -3,8 +3,8 @@
 //! (`probe-live`).
 use super::{require, AnyError};
 use crate::{status, zakura::ZakuraClient};
-use enhance_pir::status::*;
 use serde_json::json;
+use status_protocol::*;
 use std::{
     net::SocketAddr,
     path::PathBuf,
@@ -56,7 +56,8 @@ pub async fn serve_distributed(
     cookie: PathBuf,
     public_listen: Option<SocketAddr>,
 ) -> Result<(), AnyError> {
-    let config: status::publisher::Config = serde_json::from_slice(&std::fs::read(config)?)?;
+    let config: status_publication::publisher::Config =
+        serde_json::from_slice(&std::fs::read(config)?)?;
     require(
         !config.public_enabled || public_listen.is_some(),
         "public_enabled requires --public-listen",
@@ -69,7 +70,7 @@ pub async fn serve_distributed(
         public_listen.is_none_or(|l| l.ip().is_loopback()),
         "--public-listen must be loopback; the HTTPS ingress proxies to it",
     )?;
-    let publisher = status::publisher::Publisher::new(config)?;
+    let publisher = status_publication::publisher::Publisher::new(config)?;
     // Bind before starting the controller so a port conflict fails fast.
     let public = match public_listen {
         Some(listen) => Some(TcpListener::bind(listen).await?),
@@ -116,7 +117,7 @@ pub async fn probe_live(
         "live manifest anchor is not canonical",
     )?;
     let block =
-        crate::status::source::status_block(&rpc, u64::from(manifest.anchor_height)).await?;
+        status_publication::source::status_block(&rpc, u64::from(manifest.anchor_height)).await?;
     require(
         block.hash == anchor,
         "raw block hash differs from canonical anchor",
@@ -125,7 +126,7 @@ pub async fn probe_live(
         .txids
         .first()
         .ok_or("anchor block has no transactions")?;
-    let mut wallet = enhance_pir::status::HttpClient::new(&origin, http);
+    let mut wallet = status_protocol::HttpClient::new(&origin, http);
     let began = Instant::now();
     for _ in 0..queries {
         let answer = wallet

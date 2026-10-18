@@ -18,9 +18,16 @@
       "matvec_config",
       "note_recovery",
       "row_repair_http",
-      "rpc",
-      "status_wallet",
-      "status_wallet_http"
+      "rpc"
+    ]
+  },
+  "enhance-serving": {
+    "fast": [
+      "ci_smoke"
+    ],
+    "full": [
+      "http",
+      "packing_http"
     ]
   },
   "receiver-indexer": {
@@ -43,6 +50,13 @@
     "fast": [],
     "full": [
       "store"
+    ]
+  },
+  "status-pir-server": {
+    "fast": [],
+    "full": [
+      "status_wallet",
+      "status_wallet_http"
     ]
   },
   "transparent-blocks": {
@@ -92,15 +106,6 @@
       "wallet_recut",
       "wallet_sync",
       "verification_reuse"
-    ]
-  },
-  "enhance-serving": {
-    "fast": [
-      "ci_smoke"
-    ],
-    "full": [
-      "http",
-      "packing_http"
     ]
   }
 }

@@ -57,7 +57,7 @@ fn hash32(value: &str) -> [u8; 32] {
 
 /// Status hint H = A * D for the complete database, one polynomial per column.
 fn status_hint(rows_bin: &[u8], network: &[u8; 32], salt: &[u8; 32]) -> Vec<CrsBlock> {
-    use enhance_pir::status::{native_query_masks, COLS, ROWS, ROW_BYTES};
+    use status_protocol::{native_query_masks, COLS, ROWS, ROW_BYTES};
     assert_eq!(rows_bin.len(), ROWS * ROW_BYTES, "status rows.bin size");
     let masks = native_query_masks(network, salt);
     let lift = reinspiring::lift_ntt::LiftContext::new(n::D, n::Q).unwrap();
@@ -175,7 +175,7 @@ fn main() {
             (n::packing_setup(), hint, rows, vec![worst; blocks], binding)
         }
         "status" => {
-            use enhance_pir::status::{native_packing_setup, COLS, ROWS, ROW_BYTES};
+            use status_protocol::{native_packing_setup, COLS, ROWS, ROW_BYTES};
             let rows_bin = match &synthetic {
                 None => std::fs::read(&flags["rows-bin"]).expect("rows.bin"),
                 // Row-major bytes of the column-major synthetic database.

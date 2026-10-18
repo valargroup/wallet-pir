@@ -10,10 +10,10 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use enhance_pir::status::*;
 use pir_pipeline::Input;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use status_protocol::*;
 use status_serving::admission;
 use std::{
     fs::{self, File},
