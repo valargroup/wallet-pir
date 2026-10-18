@@ -465,7 +465,7 @@ class SourceStageTests(unittest.TestCase):
         self.lock = Lock()
         self.request = {'mode': 'stage', 'source_sha': 'a'*40, 'sha256': '', 'machine_id': 'b'*32}
         self.files = {'ops/scripts/wallet-pir-deploy.py': b'wrapper',
-                      'ops/transparent/lib/activity_schema_operation.py': b'recipe runner'}
+                      'transparent/ops/lib/activity_schema_operation.py': b'recipe runner'}
 
     def archive(self, extra=(), commit=None):
         data = io.BytesIO()

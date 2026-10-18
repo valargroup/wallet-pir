@@ -386,10 +386,10 @@ class Product:
         installs = {i['target']:Path(i['source']) for i in self.coordinator['plan']['installs']}
         source = Path('/srv/transparent-activity/ops/sources')/self.spec['source_sha']
         expected = {
-            H.LOAD:['/usr/bin/python3','-B',str(source/'ops/transparent/scripts/transparent-quality-load.py'),
+            H.LOAD:['/usr/bin/python3','-B',str(source/'transparent/ops/scripts/transparent-quality-load.py'),
                     '--root',str(LOAD_ROOT),'--fleet',str(H.ROOT/'v11/fleet.json'),
                     '--expected-worker-sha256-file',str(LOAD_ROOT/'pins.json')],
-            H.SCALER:['/usr/bin/python3','-B',str(source/'ops/transparent/scripts/transparent-fleet-scaler.py'),
+            H.SCALER:['/usr/bin/python3','-B',str(source/'transparent/ops/scripts/transparent-fleet-scaler.py'),
                       '--state-dir',str(H.ROOT/'v11/state'),'--scaler-dir',str(H.ROOT/'v11/scaler')]}
         for unit, argv in expected.items():
             path = '/etc/systemd/system/'+unit
@@ -451,7 +451,7 @@ class Product:
         H.require(H.checksum('/proc/'+pid+'/exe') == expected, 'installed sandbox publisher executable differs')
         uid = next(line for line in Path('/proc/'+pid+'/status').read_text().splitlines() if line.startswith('Uid:'))
         H.require(all(value == '0' for value in uid.split()[1:]), 'sandbox probe requires the installed root publisher identity')
-        script = Path('/srv/transparent-activity/ops/sources')/self.spec['source_sha']/'ops/transparent/scripts/transparent-activity-link-probe.py'
+        script = Path('/srv/transparent-activity/ops/sources')/self.spec['source_sha']/'transparent/ops/scripts/transparent-activity-link-probe.py'
         self.local.commands.run(['/usr/bin/nsenter','--target',pid,'--mount','--','/usr/bin/python3','-B',str(script)], timeout=15)
 
     async def publisher_bootstrap(self):
@@ -732,10 +732,10 @@ def recipe(spec_path, expected):
     source = Path('/srv/transparent-activity/ops/sources')/spec['source_sha']
     wrapper = source/'ops/scripts/wallet-pir-deploy.py'
     dependencies = [wrapper, source/'ops/lib/wallet_pir_ops/deploy/cli.py',
-                    *(source/'ops/transparent/lib'/name for name in ('activity_schema_product.py','activity_candidate.py','activity_schema_dispatch.py',
+                    *(source/'transparent/ops/lib'/name for name in ('activity_schema_product.py','activity_candidate.py','activity_schema_dispatch.py',
                       'activity_schema_templates.py','activity_schema_operation.py','activity_schema_host.py','activity_schema_baseline.py',
                       'activity_schema_routing.py','activity_recovery_proof.py'))]
-    dependencies.append(source/'ops/transparent/scripts/transparent-activity-link-probe.py')
+    dependencies.append(source/'transparent/ops/scripts/transparent-activity-link-probe.py')
     dependencies.append(Path('/srv/transparent-activity/ops/staging')/(spec['source_sha']+'.json'))
     entries = [{'path':str(p),'sha256':H.checksum(p)} for p in [path,*dependencies]]
     base = ['/usr/bin/python3',str(wrapper),'--inventory',spec['inventory']['path'],'--state-dir',str(STATE)]

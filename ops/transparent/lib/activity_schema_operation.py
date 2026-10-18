@@ -319,7 +319,7 @@ class Runner:
 
     def verify_repair_program(self, repair):
         source = Path('/srv/transparent-activity/ops/sources')/repair['source_sha']
-        spec = importlib.util.spec_from_file_location('recovery_source_receipt', source/'ops/transparent/lib/activity_source_stage_host.py')
+        spec = importlib.util.spec_from_file_location('recovery_source_receipt', source/'transparent/ops/lib/activity_source_stage_host.py')
         module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
         receipt = json.loads((Path('/srv/transparent-activity/ops/staging')/(repair['source_sha']+'.json')).read_text())
         require(receipt['archive_sha256'] == repair['archive_sha256'], 'recovery source receipt changed')

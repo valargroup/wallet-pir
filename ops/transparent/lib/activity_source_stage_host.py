@@ -128,7 +128,7 @@ def unpack(archive, target, source, lock):
                 os.fsync(stream.fileno())
             files[name] = sha256(output)
     require('ops/scripts/wallet-pir-deploy.py' in files and
-            'ops/transparent/lib/activity_schema_operation.py' in files, 'source archive lacks schema deployment wrapper')
+            'transparent/ops/lib/activity_schema_operation.py' in files, 'source archive lacks schema deployment wrapper')
     return files
 
 

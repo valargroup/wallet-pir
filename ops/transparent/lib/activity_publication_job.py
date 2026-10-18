@@ -167,11 +167,11 @@ class PublicationJob:
         require(self.inventory.lock.get('type') == 'pinned_host' and os.geteuid() == 0
                 and ProductionLock.MACHINE_ID.read_text().strip() == self.inventory.lock['machine_id'],
                 'publication preparation must run on the pinned root coordinator')
-        require(Path(__file__).resolve() == self.source/'ops/transparent/lib/activity_publication_job.py',
+        require(Path(__file__).resolve() == self.source/'transparent/ops/lib/activity_publication_job.py',
                 'publication preparation requires the immutable staged operation source')
         receipt = json.loads((ROOT/'ops/staging'/(self.source_sha+'.json')).read_text())
         spec = importlib.util.spec_from_file_location('publication_source_check',
-            self.source/'ops/transparent/lib/activity_source_stage_host.py')
+            self.source/'transparent/ops/lib/activity_source_stage_host.py')
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         module.verify_receipt(receipt, self.source, self.source_sha, receipt['archive_sha256'])

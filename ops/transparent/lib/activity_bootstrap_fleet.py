@@ -54,7 +54,7 @@ RUNTIME_SHA = '4c85b6c20ced1e2077245491e77d3afc98bfd644'
 # rewrote the live v11 adapter inside this source in place, from git 4c85b6c2's
 # bytes to git d191f86b's. The receipt still records the original. The runtime
 # never imports this file; accept exactly that replacement and nothing else.
-RUNTIME_REPLACED = {'ops/transparent/scripts/transparent-live-fleet.py':
+RUNTIME_REPLACED = {'transparent/ops/scripts/transparent-live-fleet.py':
     ('f3df5c533dc6e6f346e42a7fd7ac77dda9f00e97899440c0df813b5d6e26a083',
      '35b6b436225c9c0871b8ea6b47c3e192d4080756fb6bbf781749f970f5704b4a')}
 INVENTORY = Path('/srv/transparent-activity/full-v11/inputs/0604bc95c50fa084919cfc5d0fcf3310398761f721404c78f604c98d78ffb060/inventory.json')

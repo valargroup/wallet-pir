@@ -39,7 +39,7 @@ I = PRODUCT.I
 C = I.C
 R = PRODUCT.R
 RELEASE = module('candidate_release_test', HERE.parents[2]/'tools/ci/release.py')
-EVIDENCE = HERE.parents[1]/'ops/fixtures/deployment-provenance'
+EVIDENCE = HERE.parent/'fixtures/deployment-provenance'
 OLD = '12ce12918446eaa56e2d766ec2f43d82c531abb9'
 PUBLICATION = '34e3ebe3510206617460cebc87528e56f01949b971797e6f17cc8ca958f23f5d'
 
@@ -416,7 +416,7 @@ class ServiceInputs(unittest.TestCase):
         self.source = 'e'*40
 
     def request(self, version, pins, controller_source):
-        source = I.SOURCE/self.source/'ops/transparent/scripts'
+        source = I.SOURCE/self.source/'transparent/ops/scripts'
         controller = {'data_dir':str(I.P.JOURNAL), 'publication_root':str(I.P.OUTPUT.parent), 'initial_publication':str(I.P.OUTPUT),
                       'fleet_config':'/opt/transparent-publisher/v11/fleet.json', 'fleet_command':str(source/'transparent-live-fleet.py'),
                       'source_sha':controller_source, 'shadow':False, 'recent_from':3000000, 'recent_geometry':'recent-4k-8k',
@@ -683,7 +683,7 @@ class ProductSelection(unittest.TestCase):
         with patch.object(PRODUCT, 'checked', return_value=Path('/spec.json')), patch.object(PRODUCT, 'validate', return_value=spec), \
                 patch.object(PRODUCT.H, 'load', return_value=spec), patch.object(PRODUCT.H, 'checksum', return_value='c'*64):
             recipe = PRODUCT.recipe('/spec.json', 'c'*64)
-        self.assertIn('/srv/transparent-activity/ops/sources/'+'a'*40+'/ops/transparent/lib/activity_candidate.py',
+        self.assertIn('/srv/transparent-activity/ops/sources/'+'a'*40+'/transparent/ops/lib/activity_candidate.py',
                       {entry['path'] for entry in recipe['inputs']})
 
 
