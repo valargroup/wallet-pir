@@ -422,14 +422,9 @@ async fn https_bootstrap_verifies_real_prepared_recent_without_archive_tables() 
 #[cfg(feature = "full-tests")]
 async fn https_bootstrap_fails_closed_on_origin_network_and_transport_errors() {
     let root = tempfile::tempdir().unwrap();
-    let (directory, set) = publication(root.path());
-    prepare_recent(&directory, &set);
+    let (directory, set, finalized) = manager_tests::immutable_publication(2);
     let rpc = canonical_rpc(root.path(), &set).await;
-    let owner = authority(
-        &directory,
-        Some(Finalized::prepare(&directory, &set, 2).unwrap()),
-        rpc.client.clone(),
-    );
+    let owner = authority(&directory, Some(finalized), rpc.client.clone());
     let tls = tls(root.path(), owner.clone()).await;
     let mut wrong = config(&tls, root.path().join("wrong-network"));
     wrong.network = "test".into();
@@ -512,14 +507,9 @@ async fn https_bootstrap_fails_closed_on_origin_network_and_transport_errors() {
 #[cfg(feature = "full-tests")]
 async fn https_bootstrap_consumes_canonicality_withdrawal_and_recovery_state() {
     let root = tempfile::tempdir().unwrap();
-    let (directory, set) = publication(root.path());
-    prepare_recent(&directory, &set);
+    let (directory, set, finalized) = manager_tests::immutable_publication(2);
     let rpc = canonical_rpc(root.path(), &set).await;
-    let owner = authority(
-        &directory,
-        Some(Finalized::prepare(&directory, &set, 2).unwrap()),
-        rpc.client.clone(),
-    );
+    let owner = authority(&directory, Some(finalized), rpc.client.clone());
     let tls = tls(root.path(), owner.clone()).await;
     let provider = root.path().join("provider");
     // The same endpoint can revalidate an older retained public anchor without
@@ -680,9 +670,7 @@ fn distribution_revision_refuses_directory_sync_failure_before_acknowledgement()
 #[cfg(feature = "full-tests")]
 async fn https_bootstrap_charges_all_response_bytes_at_exact_budget_boundary() {
     let root = tempfile::tempdir().unwrap();
-    let (directory, set) = publication(root.path());
-    prepare_recent(&directory, &set);
-    let finalized = Finalized::prepare(&directory, &set, 2).unwrap();
+    let (directory, set, finalized) = manager_tests::immutable_publication(2);
     // Independent producer-byte oracle, including both live current responses
     // and the canonicality attestation. Never derive the cap from Report.
     let material_bytes = finalized.bytes().len() as u64

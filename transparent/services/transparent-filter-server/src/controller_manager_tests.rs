@@ -80,7 +80,7 @@ struct ProducerFixture {
     set: Arc<ShardSet>,
     distribution: Finalized,
 }
-fn immutable_publication(through: u64) -> (PathBuf, Arc<ShardSet>, Finalized) {
+pub(super) fn immutable_publication(through: u64) -> (PathBuf, Arc<ShardSet>, Finalized) {
     fn build(through: u64) -> ProducerFixture {
         let directory = prepared_fixture(through).join("publication");
         let set = ShardSet::open(&directory, 0).unwrap();

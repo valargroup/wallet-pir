@@ -29,8 +29,10 @@ fixed explicitly, not by interactive repair in a test command.
 Fast Rust checks run every library and binary unit test in `release-fast`, plus
 classified bounded integration targets. There are no named slow-unit exclusions.
 Required CLI features are enabled for binary unit targets. Ordinary cache,
-identity and fault matrices use supported narrow tables, while independent
-history HTTP checks retain real history rows. Publisher tests share immutable
+identity and fault matrices exercise one native column instance with the real
+ring parameters. These component fixtures are not advertised publication
+geometries. Independent history oracles retain the 16-bit native profile, and
+HTTP checks retain registered publication geometries and real history rows. Publisher tests share immutable
 producer bytes and generated certificate material; writable state, listeners,
 trust checks and fault controls remain fresh. A query reused within one recovery
 scenario is first decoded against producer bytes, and every later check still
