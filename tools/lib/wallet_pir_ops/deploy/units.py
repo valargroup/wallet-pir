@@ -114,16 +114,19 @@ def split_exec(line):
 def normalized(config):
     """Comparable form: empty settings dropped, whitespace collapsed, the ExecStart binary abstracted.
 
-    The binary is compared separately, by the digest of what runs.
+    The binary is compared separately, by the digest of what runs. A start
+    check running that same binary (`ExecStartPre`) is abstracted with it.
     """
     result = {}
+    started = [split_exec(item)[1] for item in config.get('Service', {}).get('ExecStart', [])]
     for section, values in config.items():
         for key, value in values.items():
             if isinstance(value, dict):
                 value = dict(sorted(value.items())) or None
             elif isinstance(value, list):
                 value = [' '.join(item.split()) for item in value] or None
-                if value and key == 'ExecStart':
+                if value and (key == 'ExecStart' or key == 'ExecStartPre' and started
+                              and all(split_exec(item)[1] == started[-1] for item in value)):
                     value = [' '.join(filter(None, (split_exec(item)[0] + BINARY, split_exec(item)[2])))
                              for item in value]
             else:

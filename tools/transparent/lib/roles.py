@@ -119,7 +119,11 @@ def history_provider(settings, *, release, template=None):
     if s['publisher_network'] != 'main' or not isinstance(s['publisher_genesis'], str) or not re.fullmatch('[0-9a-f]{64}', s['publisher_genesis']):
         raise ValueError('publisher_network must be main and publisher_genesis a lowercase digest')
     arguments += ['--publisher-network', s['publisher_network'], '--publisher-genesis', s['publisher_genesis']]
-    reads = [directory(release)]
+    # ProtectSystem=strict already keeps the release read-only; naming its
+    # directory would make every upgrade look like unit drift.
+    reads = []
+    if Path(state).is_relative_to(directory(release)) or Path(directory(release)).is_relative_to(state):
+        raise ValueError('provider state must be separate from the release')
     for name in ('publisher_ca', 'archive_ca'):
         if name in s:
             path = directory(s[name])
