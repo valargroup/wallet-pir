@@ -29,7 +29,7 @@ impl PackingBudget {
             cgroup: None,
         }))
     }
-    pub(crate) fn router() -> Self {
+    pub fn router() -> Self {
         let cgroup = current_cgroup();
         let limit = cgroup
             .as_ref()
@@ -100,7 +100,7 @@ fn load_fits(current: u64, inactive_file: u64, limit_after_request_reserve: u64)
         .is_some_and(|n| n <= limit_after_request_reserve)
 }
 
-pub(crate) struct Charge {
+pub struct Charge {
     bytes: u64,
     budget: PackingBudget,
 }
@@ -108,7 +108,7 @@ impl Charge {
     pub(crate) fn prepare(budget: &PackingBudget) -> Result<Self, String> {
         Self::reserve(budget, RESIDENT + PREPARATION)
     }
-    pub(crate) fn mapping(budget: &PackingBudget) -> Result<Self, String> {
+    pub fn mapping(budget: &PackingBudget) -> Result<Self, String> {
         Self::reserve(budget, RESIDENT + MAPPED_LOAD)
     }
     fn reserve(budget: &PackingBudget, bytes: u64) -> Result<Self, String> {

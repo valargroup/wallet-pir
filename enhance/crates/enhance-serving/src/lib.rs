@@ -4,27 +4,27 @@
 //! readers, ingestion or the `enhance-pir-server` application; those compose it
 //! there. `tools/ci/boundary.py` enforces the boundary.
 
+pub use enhance_runtime::artifact;
 use pir_control::admission;
-pub mod artifact;
 pub mod capacity;
 pub mod control;
 pub mod coordinator;
 pub mod exercise;
 pub mod internal_auth;
-pub mod ipir;
-pub mod runtime;
-pub mod store;
+pub use enhance_runtime::ipir;
+pub use enhance_runtime::runtime;
+pub use enhance_runtime::store;
 mod telemetry;
-pub mod types;
-pub mod wire;
+pub use enhance_runtime::types;
+pub use enhance_runtime::wire;
 pub mod worker;
 
 pub use enhance_pir::{EnhanceRecord, EnhanceRecordParts};
 
-mod packing_budget;
+use enhance_runtime::packing_budget;
 pub use packing_budget::PackingBudget;
 
-pub mod matvec;
+pub use enhance_runtime::matvec;
 mod memory_observation;
 mod response_body;
 
@@ -40,4 +40,4 @@ mod http_metrics;
 mod query_serving;
 mod query_timing;
 
-pub mod prepared_packing;
+pub use enhance_runtime::prepared_packing;

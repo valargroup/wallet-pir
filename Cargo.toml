@@ -11,6 +11,7 @@ members = [
     # Protocol libraries, clients and stores.
     "enhance/crates/enhance-pir",
     "enhance/crates/enhance-serving",
+    "enhance/crates/enhance-runtime",
     "enhance/crates/status-serving",
     "transparent/crates/transparent-blocks",
     "transparent/crates/transparent-journal",

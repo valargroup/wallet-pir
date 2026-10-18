@@ -144,7 +144,9 @@
     "family": "enhance",
     "targets": [
       "native:enhance-serving:doc:enhance_serving",
-      "native:enhance-serving:lib:enhance_serving"
+      "native:enhance-serving:lib:enhance_serving",
+      "native:enhance-runtime:doc:enhance_runtime",
+      "native:enhance-runtime:lib:enhance_runtime"
     ]
   },
   "enhance-serving-contracts": {
@@ -190,9 +192,9 @@
       "reference:enhance-pir:lib:enhance_pir",
       "reference:enhance-pir:test:routing_contract",
       "reference:enhance-pir:test:v7_contract",
-      "reference:enhance-serving:lib:enhance_serving",
       "reference:enhance-serving:test:ci_smoke",
-      "reference:status-serving:lib:status_serving"
+      "reference:status-serving:lib:status_serving",
+      "reference:enhance-runtime:lib:enhance_runtime"
     ]
   },
   "enhance-cuda-check": {
@@ -201,14 +203,15 @@
       "cuda:enhance-pir-load-test:check:all",
       "cuda:enhance-pir-server:check:enhance_pir_server",
       "cuda:enhance-serving:check:enhance_serving",
-      "cuda:status-serving:check:status_serving"
+      "cuda:status-serving:check:status_serving",
+      "cuda:enhance-runtime:check:enhance_runtime"
     ]
   },
   "enhance-cuda-tests": {
     "family": "enhance",
     "targets": [
       "cuda:enhance-pir-server:test:matvec_config",
-      "cuda:enhance-serving:lib:enhance_serving"
+      "cuda:enhance-runtime:lib:enhance_runtime"
     ]
   },
   "receiver-indexer-store": {

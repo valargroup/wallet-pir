@@ -1162,7 +1162,7 @@ class CacheWorkflowTests(unittest.TestCase):
         workflow = self.workflows['ci-full.yml']
         self.assertNotIn('tests:native-server-lib', workflow)
         matrix = json.loads((ROOT / 'tools/ci/test-matrix.json').read_text())
-        self.assertIn('reference:enhance-serving:lib:enhance_serving', matrix['enhance-reference']['targets'])
+        self.assertIn('reference:enhance-runtime:lib:enhance_runtime', matrix['enhance-reference']['targets'])
         self.assertIn('reference:enhance-serving:test:ci_smoke', matrix['enhance-reference']['targets'])
         self.assertIn('cuda:enhance-pir-server:test:matvec_config', matrix['enhance-cuda-tests']['targets'])
         runner = (ROOT / 'tools/ci/test_matrix.py').read_text()

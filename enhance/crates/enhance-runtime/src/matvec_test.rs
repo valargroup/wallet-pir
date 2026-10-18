@@ -11,7 +11,7 @@ use std::{
 };
 
 #[derive(Default)]
-pub(crate) struct Faults {
+pub struct Faults {
     pub prepare_calls: AtomicUsize,
     pub fail_prepare_at: AtomicUsize,
     pub fail_evaluation: AtomicBool,
@@ -24,8 +24,7 @@ thread_local! {
 pub(super) fn current() -> Option<Arc<Faults>> {
     ACTIVE.with(|active| active.borrow().clone())
 }
-#[cfg(any(feature = "full-tests", feature = "cuda"))]
-pub(crate) fn scoped<T>(faults: &Arc<Faults>, f: impl FnOnce() -> T) -> T {
+pub fn scoped<T>(faults: &Arc<Faults>, f: impl FnOnce() -> T) -> T {
     struct Restore(Option<Arc<Faults>>);
     impl Drop for Restore {
         fn drop(&mut self) {

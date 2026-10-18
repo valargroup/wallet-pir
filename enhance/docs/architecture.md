@@ -499,7 +499,10 @@ work by the number of queried domains. See [wallet integration](integration.md).
 
 Serving and ingestion are separate packages, following Receiver's indexer/server
 split. `enhance/crates/enhance-serving` holds the coordinator, query ingress,
-packing router, workers, stores and runtimes; `enhance/crates/status-serving` holds
+packing router and workers. It consumes `enhance/crates/enhance-runtime`, which
+holds PIR execution, prepared artifacts, journal storage and their tests. HTTP
+and controller edits can therefore reuse the compiled execution library. Both
+retain the same compiler optimization settings. `enhance/crates/status-serving` holds
 Status generations, the distributed controller and its roles. They consume
 `enhance-pir`, wallet-libraries PIR packages and `shared/` runtime helpers, and
 never chain readers (`zakura-server-chain`, node crates), ingestion, applications

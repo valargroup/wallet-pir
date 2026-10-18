@@ -260,7 +260,7 @@ impl Evaluation {
     /// the identity operation. Construction by Engine binds the layout, setup
     /// slice and padded rows; this check also excludes partial/composed domains
     /// and incompatible output parameters. Unallocated domain rows are zero.
-    pub(crate) fn verified_hint_artifact(
+    pub fn verified_hint_artifact(
         &self,
     ) -> Result<Option<crate::artifact::PublicationArtifact>, String> {
         let ([unit], [identity], [spec]) = (
@@ -624,8 +624,8 @@ impl Engine {
             if self
                 .live_bytes()
                 .checked_add(bytes)
-                .and_then(|n| n.checked_add(super::control::OVERHEAD))
-                .is_none_or(|n| n > super::control::RESIDENT_LIMIT)
+                .and_then(|n| n.checked_add(super::limits::OVERHEAD))
+                .is_none_or(|n| n > super::limits::RESIDENT_LIMIT)
             {
                 return Err(PrepareError::Admission(
                     "worker resident admission refused".into(),

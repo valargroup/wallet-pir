@@ -130,22 +130,6 @@
     }
   },
   "enhance-serving": {
-    "runtime::tests::partial_preparation_failure_preserves_published_and_retries": {
-      "feature": "full-tests",
-      "reason": "Real multi-unit cryptographic preparation and independent evaluation; full CI retains the complete test."
-    },
-    "runtime::tests::tail_domain_reuses_b_units_and_decodes_b_at_unchanged_coordinates": {
-      "feature": "full-tests",
-      "reason": "Real multi-unit cryptographic preparation and independent evaluation; full CI retains the complete test."
-    },
-    "runtime::tests::unequal_units_match_monolithic_preprocessing_and_evaluation": {
-      "feature": "full-tests",
-      "reason": "Real multi-unit cryptographic preparation and independent evaluation; full CI retains the complete test."
-    },
-    "runtime::tests::encrypted_bootstrap_round_trip_and_cached_restart": {
-      "feature": "full-tests",
-      "reason": "Measured 5.45s locally: real encrypted bootstrap, independent CPU evaluation and durable runtime restart; full CI retains all assertions."
-    },
     "worker::tests::restart_rebuilds_lost_cache_only_from_verified_durable_rows": {
       "feature": "full-tests",
       "reason": "Measured 4.91s locally: real runtime preparation and corrupt/missing-cache recovery; full CI retains the complete HTTP/runtime evidence."
@@ -231,6 +215,24 @@
     "runtime::disk::tests::a_restored_entry_must_publish_the_masks_it_stored": {
       "feature": "full-tests",
       "reason": "Full-runtime persistence and mask reconstruction. Full qualification retains the stored-mask comparison; fast encrypted HTTP restart and corrupt-cache fallback remain."
+    }
+  },
+  "enhance-runtime": {
+    "runtime::tests::partial_preparation_failure_preserves_published_and_retries": {
+      "feature": "full-tests",
+      "reason": "Real multi-unit cryptographic preparation and independent evaluation; full CI retains the complete test."
+    },
+    "runtime::tests::tail_domain_reuses_b_units_and_decodes_b_at_unchanged_coordinates": {
+      "feature": "full-tests",
+      "reason": "Real multi-unit cryptographic preparation and independent evaluation; full CI retains the complete test."
+    },
+    "runtime::tests::unequal_units_match_monolithic_preprocessing_and_evaluation": {
+      "feature": "full-tests",
+      "reason": "Real multi-unit cryptographic preparation and independent evaluation; full CI retains the complete test."
+    },
+    "runtime::tests::encrypted_bootstrap_round_trip_and_cached_restart": {
+      "feature": "full-tests",
+      "reason": "Measured 5.45s locally: real encrypted bootstrap, independent CPU evaluation and durable runtime restart; full CI retains all assertions."
     }
   }
 }

@@ -937,27 +937,21 @@ dependencies = [
 ]
 
 [[package]]
-name = "enhance-serving"
+name = "enhance-runtime"
 version = "0.0.1"
 dependencies = [
  "axum",
  "base64",
  "clap",
  "enhance-pir",
- "hdrhistogram",
  "hex",
- "http-body",
  "inspiring",
  "ipir-sp",
  "libc",
  "memmap2",
  "pir-control",
- "pir-observability",
  "pir-runtime",
- "prometheus",
- "rand 0.8.5",
  "reinspiring",
- "reqwest",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -966,9 +960,38 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tokio-stream",
- "tower",
  "tracing",
  "zakura-pir-native",
+]
+
+[[package]]
+name = "enhance-serving"
+version = "0.0.1"
+dependencies = [
+ "axum",
+ "base64",
+ "clap",
+ "enhance-pir",
+ "enhance-runtime",
+ "hdrhistogram",
+ "hex",
+ "http-body",
+ "libc",
+ "pir-control",
+ "pir-observability",
+ "pir-runtime",
+ "prometheus",
+ "rand 0.8.5",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-stream",
+ "tower",
+ "tracing",
 ]
 
 [[package]]

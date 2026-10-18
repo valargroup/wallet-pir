@@ -1283,6 +1283,20 @@ fn evaluation_error(error: super::runtime::EvaluationError) -> (StatusCode, Stri
 
 #[cfg(test)]
 mod tests {
+    #[cfg(not(feature = "cuda"))]
+    #[test]
+    fn cuda_without_feature_fails_before_creating_worker_state() {
+        use crate::matvec::Backend;
+        let root = tempfile::tempdir().unwrap();
+        let config = MatvecConfig {
+            matvec_backend: Backend::Cuda,
+            cuda_device: None,
+        };
+        let result =
+            crate::worker::Worker::open_with_backend(root.path(), Default::default(), config);
+        assert!(matches!(result, Err(e) if e.contains("--features cuda")));
+        assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
+    }
     use super::*;
     use tower::ServiceExt;
 

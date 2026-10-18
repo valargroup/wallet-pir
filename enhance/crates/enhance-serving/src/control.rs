@@ -8,9 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File, OpenOptions};
 use std::path::{Path, PathBuf};
 
-pub const MIB: u64 = 1024 * 1024;
-pub const RESIDENT_LIMIT: u64 = 7 * 1024 * MIB - 512 * MIB;
-pub const OVERHEAD: u64 = 728 * MIB;
+pub use enhance_runtime::limits::{MIB, OVERHEAD, RESIDENT_LIMIT};
 
 /// Versioned deployment policy. Seven sealed shards require hardware qualification.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]

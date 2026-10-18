@@ -33,8 +33,8 @@ def variants(groups):
         'transparent': dict(family='transparent', packages=groups['transparent'], features=['transparent-filter-server/rocksdb-reader']),
         'export': dict(family='transparent', packages=['txid-sizing-export'], features=[], manifest=EXPORT),
         'native': dict(family='enhance', packages=groups['enhance'], features=NATIVE),
-        'reference': dict(family='enhance', packages=['enhance-serving', 'enhance-pir', 'status-serving'], features=[]),
-        'cuda': dict(family='enhance', packages=['enhance-serving', 'status-serving', 'enhance-pir-server',
+        'reference': dict(family='enhance', packages=['enhance-runtime', 'enhance-serving', 'enhance-pir', 'status-serving'], features=[]),
+        'cuda': dict(family='enhance', packages=['enhance-runtime', 'enhance-serving', 'status-serving', 'enhance-pir-server',
                                              'enhance-pir-load-test'], features=CUDA),
         'receiver': dict(family='receiver', packages=groups['receiver'], features=[]),
     }
@@ -75,7 +75,7 @@ def target_inventory(contexts, packages):
                     continue
                 kinds = []
                 if variant == 'reference':
-                    if name == 'enhance-serving' and not (kind == 'lib' or kind == 'test' and target['name'] == 'ci_smoke'):
+                    if name == 'enhance-serving' and not (kind == 'test' and target['name'] == 'ci_smoke'):
                         continue
                     if kind not in ('lib', 'bin', 'test') or not target.get('test', True):
                         continue
@@ -84,7 +84,7 @@ def target_inventory(contexts, packages):
                     # Preserve the existing all-targets check and the two runtime tests.
                     kinds = ['check'] if kind == 'lib' else []
                     if (name, kind, target['name']) in {
-                        ('enhance-serving', 'lib', 'enhance_serving'),
+                        ('enhance-runtime', 'lib', 'enhance_runtime'),
                         ('enhance-pir-server', 'test', 'matvec_config'),
                     }:
                         kinds.append('example-test' if kind == 'example' and target.get('test') else kind)
@@ -216,9 +216,9 @@ def test_programs(artifacts, variant, packages, env):
             raise ValueError(f'duplicate executable: {identity}')
         actual.add(identity)
         args = []
-        if variant == 'reference' and identity == ('enhance-serving', 'enhance_serving'):
+        if variant == 'reference' and identity == ('enhance-runtime', 'enhance_runtime'):
             args = ['ipir::tests']
-        if variant == 'cuda' and identity == ('enhance-serving', 'enhance_serving'):
+        if variant == 'cuda' and identity == ('enhance-runtime', 'enhance_runtime'):
             args = ['backend_load_failure_does_not_rebuild_or_replace_published_units']
         program = dict(executable=artifact['executable'], package=package['name'],
                        version=package['version'], directory=str(Path(package['manifest_path']).parent),
@@ -314,11 +314,11 @@ def baseline_commands(family):
     if family == 'enhance':
         options = ['--locked', '--profile', 'release-fast']
         result += [
-            ('reference', [*options, '-p', 'enhance-serving', '--features', 'full-tests', '--lib', 'ipir::tests']),
+            ('reference', [*options, '-p', 'enhance-runtime', '--features', 'full-tests', '--lib', 'ipir::tests']),
             ('reference', [*options, '-p', 'enhance-serving', '--features', 'full-tests', '--test', 'ci_smoke']),
             ('reference', [*options, '-p', 'enhance-pir', '-p', 'status-serving', '--features', 'status-serving/full-tests', '--lib', '--tests']),
             ('cuda', [*options, '-p', 'enhance-pir-server', '--features', 'native-reinspiring,cuda,full-tests,enhance-serving/full-tests,status-serving/full-tests', '--test', 'matvec_config']),
-            ('cuda', [*options, '-p', 'enhance-serving', '--features', 'native-reinspiring,cuda,full-tests', '--lib',
+            ('cuda', [*options, '-p', 'enhance-runtime', '--features', 'native-reinspiring,cuda,full-tests', '--lib',
                       'backend_load_failure_does_not_rebuild_or_replace_published_units']),
         ]
     return result
