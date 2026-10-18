@@ -3,7 +3,7 @@
 //! with `--query-rounding dithered` a `native-noise-two-mask-rounded-dithered-v1`
 //! report for the 44-bit dithered query.
 //!
-//! Modelled on `src/enhance/enhance-publisher/examples/native_certificate.rs`.
+//! Modelled on `src/shared/pir-publisher/enhance/examples/native_certificate.rs`.
 //! The packing weights depend only on the public hint (query masks times the
 //! segment's database) and the table's packing setup, so the tool rebuilds the
 //! hint and two-mask preprocessing from the segment bytes exactly as the server

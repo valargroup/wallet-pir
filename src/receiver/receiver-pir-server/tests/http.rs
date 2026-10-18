@@ -1,5 +1,5 @@
 //! Receiver PIR evaluation and the HTTP service that wallets reach through a [`Transport`].
-#[path = "../../receiver-store/tests/common/mod.rs"]
+#[path = "../../../shared/pir-publisher/receiver-store/tests/common/mod.rs"]
 mod common;
 #[path = "common/history.rs"]
 mod history;

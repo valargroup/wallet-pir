@@ -22,6 +22,13 @@ ARTIFACTS = (
 )
 
 
+# Retained evidence keeps its historical labels while Cargo uses current names.
+ARTIFACT_SOURCES = {
+    'transparent-shard-server': 'transparent-query-server',
+    'transparent-filter-server': 'transparent-publisher',
+}
+
+
 def build_commands(profile):
     """Build service-owned artifacts and qualify their canonical-library consumers.
 
@@ -31,13 +38,13 @@ def build_commands(profile):
     """
     commands = [
         ['cargo', 'build', '--locked', '--profile', profile,
-         '-p', 'transparent-filter-server', '-p', 'transparent-shard-server',
-         '-p', 'transparent-loadtest', '-p', 'transparent-measure',
-         '-p', 'transparent-regression', '--bins'],
+         '-p', 'transparent-publisher', '-p', 'transparent-query-server',
+         '-p', 'transparent-tools', '--features',
+         'transparent-publisher/rocksdb-reader,transparent-tools/benchmarks', '--bins'],
         ['cargo', 'build', '--locked', '--profile', profile,
-         '-p', 'transparent-shard-server', '--example', 'rate-query', '--example', 'native_certificate'],
+         '-p', 'transparent-query-server', '--example', 'rate-query', '--example', 'native_certificate'],
         ['cargo', 'build', '--locked', '--profile', profile,
-         '-p', 'transparent-regression', '--example', 'activity-reopen'],
+         '-p', 'transparent-tools', '--example', 'activity-reopen'],
     ]
     if profile == 'release':
         # Focused tests have their own release-fast owner; this lane retains
@@ -45,22 +52,22 @@ def build_commands(profile):
         return commands
     commands.extend([
         ['cargo', 'test', '--locked', '--profile', profile,
-         '-p', 'transparent-blocks', '--test', 'recovery'],
+         '-p', 'transparent-tools', '--features', 'benchmarks', '--test', 'compact_recovery'],
         ['cargo', 'test', '--locked', '--profile', profile,
-         '-p', 'transparent-shard-server', '--test', 'wallet_anchor',
+         '-p', 'transparent-query-server', '--test', 'wallet_anchor',
          '--test', 'wallet_continuation', '--test', 'wallet_recut', '--test', 'wallet_sync'],
         ['cargo', 'test', '--locked', '--profile', profile,
-         '-p', 'transparent-regression', '--tests'],
+         '-p', 'transparent-tools', '--features', 'benchmarks', '--tests'],
         ['cargo', 'test', '--locked', '--profile', profile,
-         '-p', 'transparent-filter-server', '--lib', 'extract::'],
+         '-p', 'transparent-publisher', '--lib', 'ingest::extract::'],
         ['cargo', 'test', '--locked', '--profile', profile,
-         '-p', 'transparent-filter-server', '--lib', 'events::'],
+         '-p', 'transparent-shared', '--lib', 'journal::events::'],
         ['cargo', 'test', '--locked', '--profile', profile,
-         '-p', 'transparent-filter-server', '--lib', 'publication::'],
+         '-p', 'transparent-publisher', '--lib', 'history::publication::'],
         ['cargo', 'test', '--locked', '--profile', profile,
-         '-p', 'transparent-filter-server', '--bin', 'event-spotcheck'],
+         '-p', 'transparent-publisher', '--bin', 'event-spotcheck'],
         ['cargo', 'test', '--locked', '--profile', profile,
-         '-p', 'transparent-filter-server', '--bin', 'journal-convert-v1'],
+         '-p', 'transparent-publisher', '--bin', 'journal-convert-v1'],
         ['cargo', 'test', '--locked', '--profile', profile, '-p', 'pir-apm', '--lib'],
     ])
     return commands
@@ -109,7 +116,7 @@ def main():
     binaries = {}
     if failure is None:
         for name in ARTIFACTS:
-            path = args.target / args.profile / name
+            path = args.target / args.profile / ARTIFACT_SOURCES.get(name, name)
             retained = args.evidence / 'artifacts' / name
             retained.parent.mkdir(parents=True, exist_ok=True)
             if retained.exists():

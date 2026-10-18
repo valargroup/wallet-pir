@@ -1,5 +1,5 @@
 //! Bounded wallet retrieval and refusal checks through a real HTTP listener.
-#[path = "../../receiver-store/tests/common/mod.rs"]
+#[path = "../../../shared/pir-publisher/receiver-store/tests/common/mod.rs"]
 mod common;
 #[path = "common/history.rs"]
 mod history;

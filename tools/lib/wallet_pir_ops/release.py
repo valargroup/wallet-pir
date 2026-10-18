@@ -13,6 +13,7 @@ import tarfile
 
 from .paths import ROOT
 BINARIES = {
+    'pir-publisher': ['pir-publisher'],
     'wallet-pir-ops': [],
     # pir-apm is the Enhance/Status/Transparent dashboard and alerting sidecar;
     # it has no native variant.
@@ -38,6 +39,9 @@ BINARIES = {
     'receiver-pir': ['receiver-directory', 'receiver-probe'],
 }
 FILES = {
+    'pir-publisher': ['tools/deploy/publisher/pir-publisher.service',
+                      'tools/deploy/publisher/publisher.example.json',
+                      'tools/deploy/publisher/services.toml'],
     'wallet-pir-ops': [],
     'enhance-pir': ['tools/enhance/scripts/test-local.py', 'tools/enhance/scripts/bootstrap-worker.py',
         'tools/enhance/scripts/sample-worker.py',
@@ -64,7 +68,7 @@ FILES['enhance-pir-native-cuda'] = FILES['enhance-pir-native'] + [
 ]
 # The operations package needs no compiled binary: full CI assembles and tests
 # it in its own job, so publishing it never waits on Rust compilation.
-ON_REQUEST = ('enhance-pir-native', 'enhance-pir-native-cuda', 'status-pir', 'wallet-pir-ops')
+ON_REQUEST = ('pir-publisher', 'enhance-pir-native', 'enhance-pir-native-cuda', 'status-pir', 'wallet-pir-ops')
 # Build-time protocol identity recorded in candidate.json and re-checked on extract.
 PROTOCOLS = {
     'enhance-pir': 'ironwood-enhance-pir-v7',
@@ -106,7 +110,7 @@ def service_family(kind):
         return 'receiver'
     if kind.startswith('transparent-'):
         return 'transparent'
-    if kind in ('enhance-pir', 'enhance-pir-native', 'enhance-pir-native-cuda', 'status-pir'):
+    if kind in ('enhance-pir', 'enhance-pir-native', 'enhance-pir-native-cuda', 'status-pir', 'pir-publisher'):
         return 'enhance'
     raise ValueError('unknown release artifact kind')
 

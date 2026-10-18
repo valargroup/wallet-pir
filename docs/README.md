@@ -1,5 +1,7 @@
 # Documentation
 
+- [Unified publisher](publisher.md): source layout, configuration, managed services and gated cutover.
+
 - [Fleet operator guide](operations.md): architecture, configuration ownership, packaged operations, lifecycle commands and recovery.
 
 - [Enhance PIR](enhance/README.md): Ironwood integration, architecture, deployment and measured performance.

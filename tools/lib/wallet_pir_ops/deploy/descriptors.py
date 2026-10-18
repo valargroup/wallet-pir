@@ -240,6 +240,34 @@ class Inventory:
     retired_hosts: dict = field(default_factory=dict)
 
 
+PUBLISHER_PRODUCTS = {
+    'enhance': ('enhance', 'coordinator'),
+    'status': ('status', 'controller'),
+    'transparent_history': ('transparent-history', 'controller'),
+    'transaction_details': ('transparent-display', 'controller'),
+    'receiver': ('receiver', 'server'),
+}
+
+
+def publisher_ownership(services):
+    """A unified process owns the configured products once, across all hosts."""
+    if 'publisher' not in services:
+        return
+    publisher = services['publisher']
+    products = publisher.get('managed_products')
+    require(isinstance(products, list) and products and all(isinstance(p, str) for p in products)
+            and len(products) == len(set(products)) and set(products) <= PUBLISHER_PRODUCTS.keys(),
+            'publisher: managed_products must name distinct supported products')
+    require(isinstance(publisher.get('exact_check'), dict),
+            'publisher: an independent exact_check covering every managed product is required')
+    for product in products:
+        name, role = PUBLISHER_PRODUCTS[product]
+        require(not services.get(name, {}).get('roles', {}).get(role),
+                'publisher and standalone %s both own publishing; remove the old owner before cutover' % name)
+    servers = publisher.get('roles', {}).get('server', [])
+    require(len(servers) == 1, 'publisher: exactly one server owns these publishing products')
+
+
 def load_inventory(path):
     document = json.loads(Path(path).read_text())
     hosts = document.get('hosts', {})
@@ -283,7 +311,9 @@ def load_inventory(path):
     require(isinstance(ancillary, dict) and all(PLAIN_NAME.fullmatch(n) and isinstance(v, dict)
                                                 for n, v in ancillary.items()),
             'inventory: ancillary maps names to unit records')
-    return Inventory(hosts, ssh, lock, document.get('services', {}), ancillary, retired)
+    services = document.get('services', {})
+    publisher_ownership(services)
+    return Inventory(hosts, ssh, lock, services, ancillary, retired)
 
 
 def select(targets, only):

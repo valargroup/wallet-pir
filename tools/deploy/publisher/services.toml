@@ -1,0 +1,17 @@
+# Opt-in registry for the unified process. Existing fleets keep their registry.
+[services.publisher]
+root = "/opt/pir-publisher"
+binary = "pir-publisher"
+artifact_kinds = ["pir-publisher"]
+self_check = ["--help"]
+order = ["server"]
+
+[services.publisher.roles.server]
+unit = "pir-publisher.service"
+mode = "template"
+template = "pir-publisher.service"
+health = "http://{management_listen}/health"
+ready_url = "http://{management_listen}/ready"
+ready = { field = "ready", equals = true }
+ready_timeout = 900
+owns_unit = true

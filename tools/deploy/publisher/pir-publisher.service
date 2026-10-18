@@ -1,0 +1,21 @@
+[Unit]
+Description=Unified Wallet PIR publisher
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=@BIN@ --config /etc/wallet-pir/publisher.json
+Restart=on-failure
+RestartSec=15
+# Wait for publication boundaries and background builders before releasing state.
+TimeoutStopSec=infinity
+KillMode=mixed
+UMask=0077
+Environment=RUST_LOG=info
+EnvironmentFile=-/etc/wallet-pir/publisher.env
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

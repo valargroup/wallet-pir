@@ -1,23 +1,24 @@
 [workspace]
 resolver = "2"
 members = [
-    "src/receiver/receiver-store",
-    "src/receiver/receiver-indexer",
+    "src/shared/pir-publisher/server",
+    "src/shared/pir-publisher/receiver-store",
+    "src/shared/pir-publisher/receiver",
     "src/receiver/receiver-pir-server",
     "src/shared/pir-observability",
     "src/shared/pir-control",
     "src/shared/pir-runtime",
-    "src/shared/pir-pipeline",
+    "src/shared/pir-publisher/pipeline",
     "src/shared/pir-serving",
     # Protocol libraries, clients and stores.
     "src/enhance/enhance-query-server",
     "src/status/status-query-server",
-    "src/status/status-publisher",
+    "src/shared/pir-publisher/status",
     "src/transparent/transparent-shared",
     # Services and operational dashboard.
-    "src/enhance/enhance-publisher",
+    "src/shared/pir-publisher/enhance",
     "src/shared/pir-apm",
-    "src/transparent/transparent-publisher",
+    "src/shared/pir-publisher/transparent",
     "src/transparent/transparent-query-server",
     # Development and validation tools; package/binary names stay stable.
     "tools/enhance/client",

@@ -104,7 +104,7 @@ path = "tests/compact_export.rs"
 required-features = ["benchmarks", "publisher-tools"]
 
 [dependencies]
-transparent-publisher = { path = "../../src/transparent/transparent-publisher", optional = true }
+transparent-publisher = { path = "../../src/shared/pir-publisher/transparent", optional = true }
 transparent-query-server = { path = "../../src/transparent/transparent-query-server" }
 transparent-shared = { path = "../../src/transparent/transparent-shared" }
 anyhow = "1"

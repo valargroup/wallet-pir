@@ -163,7 +163,11 @@
       "native:enhance-publisher:test:status_routes",
       "native:status-publisher:bin:status-pir",
       "native:status-query-server:test:status_wallet",
-      "native:status-query-server:test:status_wallet_http"
+      "native:status-query-server:test:status_wallet_http",
+      "native:pir-publisher:lib:pir_publisher",
+      "native:pir-publisher:doc:pir_publisher",
+      "native:pir-publisher:bin:pir-publisher",
+      "native:pir-publisher:test:lifecycle"
     ]
   },
   "enhance-http": {
