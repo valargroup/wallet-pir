@@ -48,12 +48,25 @@ jobs:
       - name: Repeat independent HTTP and recovery checks
         if: inputs.stress
         run: umask 022 && TMPDIR="$RUNNER_TEMP" python3 tools/ci/integration_tests.py --tier fast --smoke-only --repeat 50
+      - name: Validate three warm fast runs
+        if: inputs.correctness
+        run: |
+          set -euo pipefail
+          umask 022
+          for attempt in 1 2 3; do
+            receipt=".local-pir/fast-repeat/$attempt"
+            mkdir -p "$receipt"
+            git rev-parse HEAD > "$receipt/source.txt"
+            TMPDIR="$RUNNER_TEMP" WALLET_PIR_STAGE_LOG="$PWD/$receipt/stages.jsonl" \
+              timeout --signal=TERM --kill-after=5s 180s \
+              python3 tools/ci/fast.py --all --unit-jobs 3 2>&1 | tee "$receipt/run.log"
+          done
       - name: Diagnose complete CPU correctness
         id: correctness-preparation
         if: inputs.correctness && !cancelled()
         run: umask 022 && TMPDIR="$RUNNER_TEMP" python3 tools/ci/correctness.py --record-only
       - name: Validate three warm complete correctness runs
-        if: inputs.correctness && !cancelled() && steps.correctness-preparation.outcome == 'success' 
+        if: inputs.correctness && !cancelled() && steps.correctness-preparation.outcome == 'success'
         run: |
           set -euo pipefail
           umask 022
@@ -65,7 +78,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: complete-correctness-${{ github.run_id }}-${{ github.run_attempt }}
-          path: .local-pir/correctness/
+          path: |
+            .local-pir/correctness/
+            .local-pir/fast-repeat/
           include-hidden-files: true
           if-no-files-found: warn
       - name: Report Cargo cache reuse
