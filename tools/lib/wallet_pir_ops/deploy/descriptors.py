@@ -225,7 +225,7 @@ class Inventory:
 
 
 PUBLISHER_PRODUCTS = {
-    'enhance': ('enhance', 'controller'),
+    'enhance': ('enhance', 'coordinator'),
     'status': ('status', 'controller'),
     'transparent_history': ('transparent-history', 'controller'),
     'transaction_details': ('transparent-display', 'controller'),

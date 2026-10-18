@@ -74,12 +74,32 @@ class FleetInventoryTests(unittest.TestCase):
             self.fleet(add)
         document = copy.deepcopy(EXAMPLE)
         add(document)
-        document['services']['enhance']['roles'].pop('controller')
+        document['services']['enhance']['roles'].pop('coordinator')
         document['services']['status']['roles'].pop('controller')
         descriptors.publisher_ownership(document['services'])
         document['services']['publisher'].pop('exact_check')
         with self.assertRaisesRegex(descriptors.DescriptorError, 'independent exact_check'):
             descriptors.publisher_ownership(document['services'])
+
+    def test_each_managed_product_rejects_its_existing_standalone_owner(self):
+        for product, service, role in (
+            ('enhance', 'enhance', 'coordinator'),
+            ('status', 'status', 'controller'),
+            ('transparent_history', 'transparent-history', 'controller'),
+            ('transaction_details', 'transparent-display', 'controller'),
+            ('receiver', 'receiver', 'server'),
+        ):
+            with self.subTest(product=product):
+                document = copy.deepcopy(EXAMPLE)
+                document['services']['publisher'] = {
+                    'managed_products': [product],
+                    'roles': {'server': [{'host': 'coordinator'}]},
+                    'exact_check': {'host': 'coordinator', 'argv': ['/opt/probes/all-products']},
+                }
+                with self.assertRaisesRegex(descriptors.DescriptorError, 'both own publishing'):
+                    descriptors.publisher_ownership(document['services'])
+                document['services'][service]['roles'].pop(role)
+                descriptors.publisher_ownership(document['services'])
 
     def test_required_roles_services_responsibilities_and_ancillary(self):
         self.refused(lambda d: d['services']['enhance']['roles'].pop('packing-router'), 'required roles missing')

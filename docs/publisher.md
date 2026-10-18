@@ -54,7 +54,10 @@ writable paths. It neither reads credentials nor contacts nodes or workers,
 opens stores or binds sockets. It cannot establish input validity or readiness.
 Credential values must never appear in configuration: use installed credential
 files or the existing runtime environment. Receiver's optional partner feed
-still reads `NEAR_INTENTS_EXPLORER` at runtime.
+still reads `NEAR_INTENTS_EXPLORER` at runtime. The service optionally reads
+`/etc/wallet-pir/publisher.env` for those existing environment settings, including
+`ENHANCE_INTERNAL_TOKEN`. Install that file with restricted permissions from
+Infisical; never commit its contents.
 
 ## HTTP and supervision
 

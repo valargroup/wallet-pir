@@ -13,6 +13,7 @@ TimeoutStopSec=infinity
 KillMode=mixed
 UMask=0077
 Environment=RUST_LOG=info
+EnvironmentFile=-/etc/wallet-pir/publisher.env
 NoNewPrivileges=true
 PrivateTmp=true
 
