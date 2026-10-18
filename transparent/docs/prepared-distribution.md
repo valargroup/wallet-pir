@@ -430,6 +430,14 @@ it includes existing files, metadata, retry/error/partial bodies, receipts and
 reports across every consumer, with one shared counter checked before reads.
 Immutable-body hardlinks are counted once. Reservations are conservative;
 filesystem block rounding and directory metadata need additional host headroom.
+Receipt reservations use the worst JSON-escaped size of both bounded ETags and
+an error, before a request starts; the wave forecast uses that same allowance.
+State/results and the aggregate report reserve encoded publisher/current/error
+and reused-digest space separately. Structured files use the same compact JSON
+encoding as the size accounting. An oversized rejected ETag is identified by its
+character count and SHA256 of its HTTP Latin-1 value, rather than retaining an
+unbounded header inside a receipt; the rejection/status and any body bytes already
+read remain retained. This never becomes an accepted cache validator.
 Choose a larger
 explicit bound only within the execution host/task's authorized disk allocation.
 This affects load clients only. Publisher admission remains four artifact bodies,

@@ -131,6 +131,100 @@ class DistributionTests(unittest.TestCase):
                     (self.root / "output/consumer-000/update.requests.jsonl").read_text().splitlines()]
         self.assertEqual(sum(r["status"] == 304 for r in receipts), 1)
 
+    def assert_retained_receipts(self, consumer):
+        receipts = [json.loads(line) for line in consumer.log.read_text().splitlines()]
+        self.assertEqual(receipts, consumer.receipts)
+        for receipt in receipts:
+            body = consumer.root / receipt["body_path"]
+            self.assertEqual(body.stat().st_size, receipt["bytes"])
+            self.assertEqual(distribution.digest_file(body), receipt["sha256"])
+        return receipts
+
+    def test_escaping_heavy_etags_retain_bootstrap_update_and_conditional_receipts(self):
+        self.etag = '"' + chr(255) * 254 + '"'
+        consumer = self.consumer("bootstrap")
+        result = consumer.run()
+        self.assertTrue(result["complete"], result)
+        receipts = self.assert_retained_receipts(consumer)
+        self.assertEqual(len(receipts), 9)
+        self.assertEqual(receipts[-1]["status"], 304)
+        self.assertGreater(len(distribution.json_bytes(receipts[-1])), 2048)
+        self.assertEqual(receipts[-1]["if_none_match"], self.etag)
+        self.assertEqual(receipts[-1]["etag"], self.etag)
+        self.publish(b"recent-two", 2)
+        self.etag = '"' + chr(254) * 254 + '"'
+        update = self.consumer("update")
+        result = update.run()
+        self.assertTrue(result["complete"], result)
+        self.assertEqual(len(result["reused"]), 4)
+        self.assert_retained_receipts(update)
+        self.assertEqual(json.loads((update.root / "current.json").read_text())["etag"], self.etag)
+        self.assertEqual(json.loads((update.root / "update.result.json").read_text()), result)
+
+    def test_rejected_oversized_escaped_etag_still_retains_failure_receipt(self):
+        self.etag = '"' + chr(255) * 6000 + '"'
+        consumer = self.consumer("bootstrap")
+        result = consumer.run()
+        self.assertFalse(result["complete"], result)
+        self.assertEqual(result["failed_attempts"], 1)
+        self.assertIn("oversized ETag", result["error"])
+        receipt, = self.assert_retained_receipts(consumer)
+        self.assertEqual(receipt["status"], 200)
+        self.assertEqual(receipt["bytes"], 0)
+        self.assertEqual(receipt["rejected_etag"], {
+            "characters": len(self.etag),
+            "sha256": hashlib.sha256(self.etag.encode("latin-1")).hexdigest()})
+        self.assertNotIn("etag", receipt)
+        self.assertFalse((consumer.root / "current.json").exists())
+
+    def test_escaped_conditional_budget_failure_preserves_attempt_and_result(self):
+        self.etag = '"' + chr(255) * 254 + '"'
+        consumer = self.consumer("bootstrap")
+        consumer.args.attempts = 1
+        # Permit a real bootstrap, then leave only enough for the poll receipt.
+        # A body on the poll must fail before overrunning the hard ceiling.
+        original = consumer.request
+        def constrained(suffix, limit, etag=None, target=None):
+            if etag is not None:
+                consumer.budget.limit = consumer.budget.used + distribution.RECEIPT_BYTES + 3
+                self.refuse = True
+            return original(suffix, limit, etag, target)
+        consumer.request = constrained
+        result = consumer.run()
+        self.assertFalse(result["complete"], result)
+        self.assertIn("BudgetExceeded", result["error"])
+        self.assertEqual(result["failed_attempts"], 1)
+        receipts = self.assert_retained_receipts(consumer)
+        self.assertEqual(len(receipts), 9)
+        self.assertEqual(receipts[-1]["status"], 503)
+        self.assertEqual(receipts[-1]["bytes"], 3)
+        self.assertEqual(receipts[-1]["if_none_match"], self.etag)
+        self.assertIn("BudgetExceeded", receipts[-1]["error"])
+        self.assertLessEqual(self.retained_size(consumer.args.output), consumer.budget.limit)
+        self.assertEqual(json.loads((consumer.root / "bootstrap.result.json").read_text()), result)
+
+    def test_wave_escaping_etags_preserve_aggregate_report_with_constrained_budget(self):
+        self.etag = '"' + chr(255) * 254 + '"'
+        output, budget = self.root / "escaped-wave", 4 << 20
+        result = subprocess.run([
+            sys.executable, str(TOOL), "--publisher", f"https://localhost:{self.server.server_port}",
+            "--ca", str(self.root / "ca.pem"), "--output", str(output), "--consumers", "10",
+            "--phase", "bootstrap", "--cache-budget-bytes", str(budget), "--polls", "1",
+            "--poll-interval", "0", "--attempts", "1"],
+            capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        report = json.loads((output / "bootstrap.json").read_text())
+        self.assertEqual(report["complete"], 10)
+        for number in range(10):
+            root = output / f"consumer-{number:03}"
+            receipts = [json.loads(line) for line in (root / "bootstrap.requests.jsonl").read_text().splitlines()]
+            self.assertEqual(len(receipts), 9)
+            self.assertEqual(receipts[-1]["status"], 304)
+            self.assertEqual(json.loads((root / "bootstrap.result.json").read_text()), report["results"][number])
+        bound = json.loads((output / "bootstrap.disk-bound.json").read_text())
+        self.assertTrue(bound["permitted"])
+        self.assertLessEqual(self.retained_size(output), budget)
+
     def test_truncated_artifact_cannot_complete_or_publish_cache_pointer(self):
         self.truncate = True
         result = self.consumer("bootstrap").run()

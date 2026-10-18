@@ -25,6 +25,31 @@ from urllib.parse import urlsplit
 
 PREFIX = "/provider/v1/"
 METADATA_LIMIT = 16 << 20
+ETAG_LIMIT = 256
+ERROR_LIMIT = 512
+CURRENT_LIMIT = 2048
+# ensure_ascii can encode a character as a surrogate pair (12 bytes). Include
+# both tags, the bounded error and fixed receipt fields before any network IO.
+RECEIPT_BYTES = 2048 + 12 * (2 * ETAG_LIMIT + ERROR_LIMIT)
+
+
+def json_bytes(value):
+    return (json.dumps(value) + "\n").encode()
+
+
+def consumer_credit_bytes(publisher, artifacts=0):
+    # State and result are both retained. Current is bounded by its JSON encoded
+    # size, publisher by its actual encoding, and reused entries are SHA256s.
+    return (len(json_bytes(publisher)) + 2 * CURRENT_LIMIT + 12 * ETAG_LIMIT +
+            12 * ERROR_LIMIT + 4096 + 80 * artifacts)
+
+
+def wave_evidence_bytes(args, inventory, current):
+    artifacts = [a for a in inventory["artifacts"] if a["kind"] != "archive_table"]
+    return args.consumers * (
+        len(json_bytes(inventory)) + 2 * len(json_bytes(current)) +
+        RECEIPT_BYTES * args.attempts * (len(artifacts) + 3 + args.polls) +
+        2 * consumer_credit_bytes(args.publisher, len(inventory["artifacts"])))
 
 
 def digest_file(path):
@@ -53,7 +78,7 @@ class Credit:
             stream.write(data)
 
     def save(self, path, value):
-        raw = (json.dumps(value, indent=2) + "\n").encode()
+        raw = json_bytes(value)
         temporary = path.with_name(path.name + ".new")
         self.write(temporary, raw)
         temporary.replace(path)
@@ -113,7 +138,7 @@ def check_current(current):
         type(current.get("anchor_height")) is not int or current["anchor_height"] < 0 or
         type(current.get("recovery_epoch")) is not int or current["recovery_epoch"] < 0 or
         not isinstance(current.get("network"), str) or not 0 < len(current["network"]) <= 32 or
-        len(json.dumps(current)) > 2048 or
+        len(json_bytes(current)) - 1 > CURRENT_LIMIT or
         (current.get("invalidated_from") is not None and type(current["invalidated_from"]) is not int)):
         raise ValueError("invalid current identity/digest")
     if current["eligibility"] != "canonical" or (current["invalidated_from"] is not None and current["invalidated_from"] <= current["anchor_height"]):
@@ -300,15 +325,17 @@ class Consumer:
             raise ValueError(f"attempt log already exists: {self.log}")
         self.context = ssl.create_default_context(cafile=args.ca)
         self.budget = getattr(args, "budget", None) or DiskBudget(args.output, getattr(args, "cache_budget_bytes", 8 << 30))
-        self.result_credit = Credit(self.budget, 4096 if number >= 0 else 0)
+        self.result_credit = Credit(self.budget, consumer_credit_bytes(args.publisher) if number >= 0 else 0)
         self.receipts, self.reused, self.charged = [], [], 0
 
     def request(self, suffix, limit, etag=None, target=None):
         """Retain each unique attempt body, including framing/timeout failures."""
         if suffix != "current" and not any(suffix.startswith(prefix) and is_digest(suffix[len(prefix):]) for prefix in ("inventories/", "artifacts/")):
             raise ValueError("invalid request digest/path")
+        if etag is not None and (not isinstance(etag, str) or len(etag) > ETAG_LIMIT):
+            raise ValueError("invalid cached ETag")
         for attempt in range(1, self.args.attempts + 1):
-            receipt_credit = Credit(self.budget, 2048)
+            receipt_credit = Credit(self.budget, RECEIPT_BYTES)
             start = time.monotonic()
             record = {"path": PREFIX + suffix, "attempt": attempt,
                       "started_unix": time.time(), "status": None,
@@ -334,9 +361,18 @@ class Consumer:
                     connection.request("GET", record["path"], headers={"If-None-Match": etag} if etag else {})
                     response = connection.getresponse()
                     connection.remaining()
-                    record["status"], record["etag"] = response.status, response.getheader("ETag")
-                    if record["etag"] and len(record["etag"]) > 256:
+                    record["status"] = response.status
+                    received_etag = response.getheader("ETag")
+                    if received_etag and len(received_etag) > ETAG_LIMIT:
+                        # Rejected headers can approach http.client's aggregate
+                        # header bound. Never put them unbounded in the receipt.
+                        # Identify the rejected value without pretending it is an
+                        # accepted cache validator; no body has been read yet.
+                        record["rejected_etag"] = {
+                            "characters": len(received_etag),
+                            "sha256": hashlib.sha256(received_etag.encode("latin-1")).hexdigest()}
                         raise ValueError("oversized ETag")
+                    record["etag"] = received_etag
                     lengths = response.headers.get_all("Content-Length", [])
                     if lengths and (len(lengths) != 1 or not lengths[0].isdigit() or response.chunked):
                         raise ValueError("ambiguous HTTP framing")
@@ -381,7 +417,7 @@ class Consumer:
                         os.link(body_path, retained)
                 return bytes(payload), record
             except (OSError, http.client.HTTPException, ValueError, subprocess.SubprocessError) as error:
-                record["error"] = ("TimeoutError: whole request deadline" if expired.is_set() else f"{type(error).__name__}: {error}")[:512]
+                record["error"] = ("TimeoutError: whole request deadline" if expired.is_set() else f"{type(error).__name__}: {error}")[:ERROR_LIMIT]
                 retry = retry or (not isinstance(error, BudgetExceeded) and isinstance(error, (OSError, http.client.HTTPException)))
                 if not retry or attempt == self.args.attempts:
                     if expired.is_set():
@@ -397,7 +433,7 @@ class Consumer:
                     sock.close()
                 record["sha256"], record["seconds"] = hasher.hexdigest(), time.monotonic() - start
                 self.receipts.append(record)
-                receipt_credit.write(self.log, (json.dumps(record) + "\n").encode(), append=True)
+                receipt_credit.write(self.log, json_bytes(record), append=True)
             time.sleep(min(5, .2 * 2 ** (attempt - 1)) + random.uniform(0, .5))
         raise AssertionError("unreachable")
 
@@ -498,7 +534,7 @@ class Consumer:
                     raise ValueError("publication changed during unchanged polling")
             result["complete"] = True
         except Exception as error:
-            result["error"] = f"{type(error).__name__}: {error}"
+            result["error"] = f"{type(error).__name__}: {error}"[:ERROR_LIMIT]
         result.update(seconds=time.monotonic() - start, reused=self.reused,
                       requests=len(self.receipts),
                       bytes=sum(r["bytes"] for r in self.receipts),
@@ -533,10 +569,10 @@ def main():
         parser.error("phase output already exists")
     # Every retained body, retry, metadata file and receipt shares this ceiling.
     # Too-small budgets refuse before even creating network/evidence work.
-    if args.cache_budget_bytes < 4096:
+    if args.cache_budget_bytes < 8192 + len(json_bytes(args.publisher)):
         parser.error("disk budget too small for mandatory evidence")
     args.budget = DiskBudget(args.output, args.cache_budget_bytes)
-    report_credit = Credit(args.budget, 4096)
+    report_credit = Credit(args.budget, 8192 + len(json_bytes(args.publisher)))
     started = time.monotonic()
     try:
         control = Consumer(args, -1, None)
@@ -557,9 +593,7 @@ def main():
         # Nominal full candidate plus all metadata/control receipts and final
         # reports. Error/partial bodies additionally acquire capacity BEFORE read;
         # they can refuse a wave but can never overrun the shared hard ceiling.
-        evidence_bytes = args.consumers * (len(json.dumps(inventory)) + 2 * len(json.dumps(current)) +
-                          2048 * args.attempts * (len(artifacts) + 3 + args.polls) +
-                          2 * (4096 + 80 * len(inventory["artifacts"])))
+        evidence_bytes = wave_evidence_bytes(args, inventory, current)
         bound = {"candidate_bytes": candidate_bytes, "retained_bytes": args.budget.used,
                  "evidence_reservation_bytes": evidence_bytes,
                  "cache_budget_bytes": args.cache_budget_bytes,
@@ -571,7 +605,7 @@ def main():
             report_credit.save(args.output / f"{args.phase}.json", report)
             print(json.dumps(report))
             return 2
-        report_credit.add(args.consumers * (4096 + 80 * len(inventory["artifacts"])))
+        report_credit.add(args.consumers * consumer_credit_bytes(args.publisher, len(inventory["artifacts"])))
         barrier = threading.Barrier(args.consumers)
         consumers = [Consumer(args, number, barrier) for number in range(args.consumers)]
         with concurrent.futures.ThreadPoolExecutor(max_workers=args.consumers) as pool:
