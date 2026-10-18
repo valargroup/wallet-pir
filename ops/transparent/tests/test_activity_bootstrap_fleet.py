@@ -544,7 +544,7 @@ class RetainedSurvey(unittest.TestCase):
 
 
 class RuntimeSource(unittest.TestCase):
-    EVIDENCE=HERE.parents[2]/'ops/fixtures/deployment-provenance'
+    EVIDENCE=HERE.parents[1]/'fixtures/deployment-provenance'
 
     def test_replacement_is_the_committed_router_hook_and_the_reconciler_pins(self):
         hook=json.loads((self.EVIDENCE/'txid-display-tiered-2026-10-07/deploy/transactions/'
@@ -559,7 +559,7 @@ class RuntimeSource(unittest.TestCase):
         self.assertEqual(G.CA.CONTROL_EXE_SHA256,redeploy['binaries']['shard-control (workers)']['after'])
 
     def test_receipt_accepts_only_the_recorded_in_place_replacement(self):
-        name='ops/transparent/scripts/transparent-live-fleet.py'
+        name='transparent/ops/scripts/transparent-live-fleet.py'
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory)/'source';(root/'ops').mkdir(parents=True);(root/name).parent.mkdir(parents=True)
             (root/'ops/a.py').write_bytes(b'transport')

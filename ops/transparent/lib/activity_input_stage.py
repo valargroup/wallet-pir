@@ -955,7 +955,7 @@ class ServicePreparation(Preparation):
                 controller.get('publication_root') == str(P.OUTPUT.parent) and
                 controller.get('initial_publication') == str(P.OUTPUT) and
                 controller.get('fleet_config') == '/opt/transparent-publisher/v11/fleet.json' and
-                controller.get('fleet_command') == str(SOURCE/self.request['source_sha']/'ops/transparent/scripts/transparent-live-fleet.py') and
+                controller.get('fleet_command') == str(SOURCE/self.request['source_sha']/'transparent/ops/scripts/transparent-live-fleet.py') and
                 controller.get('source_sha') == (C.SOURCE_SHA if self.candidate else DEPLOYED_SHA) and
                 controller.get('shadow') is False, 'controller inputs are not the frozen v11 namespace')
         require(fleet.get('state_dir') == '/opt/transparent-publisher/v11/state' and
@@ -1021,7 +1021,7 @@ class ServicePreparation(Preparation):
                 require(args[0] == '/usr/local/bin/transparent-filter-server' and args.count('--shard-dir') == 1 and
                         args[args.index('--shard-dir')+1] == str(P.OUTPUT), 'filter unit uses predecessor publication')
             else:
-                require(args[:3] == ['/usr/bin/python3', '-B', str(SOURCE/self.request['source_sha']/'ops/transparent/scripts'/
+                require(args[:3] == ['/usr/bin/python3', '-B', str(SOURCE/self.request['source_sha']/'transparent/ops/scripts'/
                         ('transparent-quality-load.py' if unit == 'transparent-5qps-continuous' else
                          'transparent-fleet-scaler.py' if unit == 'transparent-fleet-scaler' else 'transparent-live-fleet.py'))],
                         'service unit is not the reviewed immutable operation source')

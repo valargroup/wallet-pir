@@ -1861,7 +1861,7 @@ class Qualification:
                 ProductionLock.MACHINE_ID.read_text().strip() == self.inventory.lock['machine_id'],
                 'qualification must run on the pinned root coordinator')
         source = SOURCES/self.request['source_sha']
-        require(Path(__file__).resolve() == source/'ops/transparent/lib/activity_deployed_qualification.py',
+        require(Path(__file__).resolve() == source/'transparent/ops/lib/activity_deployed_qualification.py',
                 'qualification requires the immutable staged operation source')
         receipt = json.loads((STAGING/(self.request['source_sha']+'.json')).read_bytes())
         S.verify_receipt(receipt, source, self.request['source_sha'], receipt['archive_sha256'])

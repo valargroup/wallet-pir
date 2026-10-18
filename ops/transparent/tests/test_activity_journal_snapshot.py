@@ -1688,7 +1688,7 @@ class Fleet(Fixture):
         self.refuses('unattributable live mutation or native process: PID 5000')
         shutil.rmtree(base)
         base = fake_process(self.proc, 5001, started=time.time()-30, exe='/usr/bin/python3',
-                            argv=['/usr/bin/python3', '-B', str(S.I.SOURCE/('a'*40)/'ops/transparent/lib/x.py')])
+                            argv=['/usr/bin/python3', '-B', str(S.I.SOURCE/('a'*40)/'transparent/ops/lib/x.py')])
         self.refuses('unattributable live mutation or native process: PID 5001')
         shutil.rmtree(base)
         base = fake_process(self.proc, 5002, started=time.time()-30, exe='/tmp/copied', argv=['event-spotcheck'])
@@ -1696,7 +1696,7 @@ class Fleet(Fixture):
         shutil.rmtree(base)
         # The same classes inside a reviewed long-running service are attributable.
         fake_process(self.proc, 5003, started=time.time()-30, exe='/usr/bin/python3',
-                     argv=['/usr/bin/python3', '-B', str(S.I.SOURCE/('a'*40)/'ops/transparent/scripts/transparent-live-fleet.py')],
+                     argv=['/usr/bin/python3', '-B', str(S.I.SOURCE/('a'*40)/'transparent/ops/scripts/transparent-live-fleet.py')],
                      cgroup='/system.slice/transparent-publish-controller.service')
         fake_process(self.proc, 5004, started=time.time()-30, exe='/usr/local/bin/transparent-shard-server',
                      cgroup='/system.slice/transparent-shard-server.service')

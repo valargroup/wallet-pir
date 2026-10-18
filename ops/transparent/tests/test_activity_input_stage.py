@@ -189,7 +189,7 @@ class Inputs(unittest.TestCase):
     def test_portable_pins_are_the_release_production_runs(self):
         # Independent record of the 2026-10-09 redeploy: its manifest's "after"
         # identities and the CI bundle's own checksums.
-        evidence=Path(__file__).parents[2]/'ops/fixtures/deployment-provenance/fleet-redeploy-2026-10-09'
+        evidence=Path(__file__).parents[1]/'fixtures/deployment-provenance/fleet-redeploy-2026-10-09'
         manifest=json.loads((evidence/'manifest.json').read_text())
         sums=dict(reversed(line.split()) for line in (evidence/'raw/release-SHA256SUMS').read_text().splitlines())
         binaries=manifest['binaries']
@@ -396,7 +396,7 @@ class ServiceInputs(unittest.TestCase):
                 'initial_publication':str(self.output),'fleet_config':'/opt/transparent-publisher/v11/fleet.json',
                 'source_sha':M.DEPLOYED_SHA,'shadow':False,'recent_from':1,'recent_geometry':'recent-4k-8k',
                 'archive_geometry':'archive-wide','directory_choice':'all','range_profile':'zcash-transparent-range-v2',
-                'fleet_command':str(M.SOURCE/source/'ops/transparent/scripts/transparent-live-fleet.py')}),
+                'fleet_command':str(M.SOURCE/source/'transparent/ops/scripts/transparent-live-fleet.py')}),
             'fleet.json':json.dumps({'state_dir':'/opt/transparent-publisher/v11/state','roster':'/opt/transparent-publisher/v11/roster.json',
                 'worker_schema':'transparent-shard-v11','worker_active_record':'/opt/transparent-publisher/v11/active.json',
                 'worker_runtime_cache_dir':'/srv/transparent-pir/v11/runtime-cache','worker_root':'/srv/transparent-pir/v11/publications'}),
@@ -412,7 +412,7 @@ class ServiceInputs(unittest.TestCase):
             elif unit=='transparent-filter-server':args=['/usr/local/bin/transparent-filter-server','--shard-dir',str(self.output)]
             else:
                 script='transparent-quality-load.py' if unit=='transparent-5qps-continuous' else 'transparent-fleet-scaler.py' if unit=='transparent-fleet-scaler' else 'transparent-live-fleet.py'
-                args=['/usr/bin/python3','-B',str(M.SOURCE/source/'ops/transparent/scripts'/script),'/opt/transparent-publisher/v11/fleet.json']
+                args=['/usr/bin/python3','-B',str(M.SOURCE/source/'transparent/ops/scripts'/script),'/opt/transparent-publisher/v11/fleet.json']
             files[unit+'.service']='[Service]\nExecStart='+M.shlex.join(args)+'\n'
         self.request={'version':1,'source_sha':source,'release_result_sha256':'b'*64,'attempt':1,'files':files}
 
@@ -477,7 +477,7 @@ class ServiceInputs(unittest.TestCase):
         self.preparation(r).render()
         roster[-1]['archive_range']=[0,1];r['files']['roster.json']=json.dumps(roster)
         with self.assertRaisesRegex(ValueError,'gap, overlap'):self.preparation(r).render()
-        native=(Path(__file__).parents[2]/'services/transparent-shard-server/src/router.rs').read_text()
+        native=(Path(__file__).parents[3]/'src/transparent/transparent-shard-server/src/router.rs').read_text()
         self.assertIn('next != recent_from_shard',native)
         self.assertIn('pinned archive ranges must be contiguous from shard 0',native)
 
