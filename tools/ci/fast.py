@@ -221,7 +221,6 @@ def changed_paths(base='', head='HEAD', *, local=True, root=ROOT):
 
 
 def rust_checks(selected, *, features='', test='', test_target='', offline=False, compile_only=False, unit_jobs=1):
-    from test_tiers import gated_cases
     if not selected:
         return
     if not (features or test or test_target):
@@ -254,8 +253,6 @@ def rust_checks(selected, *, features='', test='', test_target='', offline=False
         classified_features = {f for entry in slow.values() if isinstance(entry, dict)
                                for f in entry.get('features', [])}
         enabled = features or ','.join(sorted((required & {'cli'}) | classified_features))
-        if test and any(test in case for case in gated_cases(name)):
-            enabled = ','.join(sorted(set(filter(None, enabled.split(','))) | {'full-tests'}))
         feature_args = ['--features', enabled] if enabled else []
         command = ['cargo', 'test', *options, *feature_args, '-p', name, *kinds]
         executables = run([*command, '--no-run'], stage=f'compile:{name}',
@@ -273,9 +270,7 @@ def rust_checks(selected, *, features='', test='', test_target='', offline=False
         discovered = {line.removesuffix(': test') for line in listing.splitlines() if line.endswith(': test')}
         if test_target and not discovered:
             raise ValueError(f'{name}: {test_target} has no enabled tests; select its required FEATURES')
-        full = 'full-tests' in enabled.split(',') or name + '/full-tests' in enabled.split(',')
-        slow = {} if test_target or full else {case: entry for case, entry in registry.get(name, {}).items()
-                                              if case not in gated_cases(name)}
+        slow = {} if test_target else registry.get(name, {})
         stale = set(slow) - discovered if not features else set()
         if stale:
             raise ValueError(f'{name}: stale slow-test classification: {sorted(stale)}')

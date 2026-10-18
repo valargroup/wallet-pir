@@ -156,7 +156,6 @@ mod tests {
     use crate::shardset::Table;
     use sha2::{Digest, Sha256};
     use std::fs;
-    #[cfg(feature = "full-tests")]
     use std::os::unix::fs::MetadataExt;
     use transparent_shard::layout::DECOUPLED_2K_8K;
 
@@ -263,7 +262,6 @@ mod tests {
     /// missing, truncated, foreign or interrupted one is rebuilt, and a
     /// corrupt source fails as the publication's own fault.
     #[test]
-    #[cfg(feature = "full-tests")]
     fn completed_files_are_linked_and_anything_else_is_rebuilt() {
         let dir = tempfile::tempdir().unwrap();
         let (shared, source) = segment(dir.path(), 1);

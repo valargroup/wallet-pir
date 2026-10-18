@@ -1505,7 +1505,6 @@ mod admission_tests {
     }
 
     #[tokio::test]
-    #[cfg(feature = "full-tests")]
     async fn full_queue_and_expired_wait_return_retryable_429() {
         let coordinator = test_coordinator();
         let _active = occupy_query_slots(&coordinator).await;

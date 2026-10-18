@@ -227,16 +227,6 @@ class FastBuildTests(unittest.TestCase):
             self.execute()
         self.assertEqual(self.plans, [])
 
-    def test_full_only_cases_are_not_enabled_or_skipped_by_the_fast_build(self):
-        self.slow['a']['campaign_only'] = dict(feature='full-tests', reason='Full-size oracle.')
-        self.execute()
-        build = next(command for command, _ in self.calls if command[:2] == ['cargo', 'test'])
-        self.assertNotIn('full-tests', build[build.index('--features') + 1])
-        self.assertTrue(all('campaign_only' not in p['args'] for p in self.plans[0]))
-        self.listings['/fixture/a-a'].add('campaign_only')
-        with self.assertRaisesRegex(ValueError, 'full-only tests compiled in fast build'):
-            self.execute()
-
     def test_a_fast_name_cannot_silently_select_another_packages_campaign(self):
         self.registry['b'] = dict(fast=[], full=['smoke', 'campaign'])
         with self.assertRaisesRegex(ValueError, 'also select campaign'):

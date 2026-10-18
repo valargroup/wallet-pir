@@ -2,8 +2,7 @@
 
 Cargo unifies features for the complete selection. Unit tests and the named
 fast integration targets share that build; campaign targets are never selected.
-Test programs retain their package directory, Cargo environment and existing
-slow-case exclusions. On fewer than 8 cores the filter library runs alone;
+Test programs retain their package directory and Cargo environment. On fewer than 8 cores the filter library runs alone;
 otherwise at most three programs, including that library and HTTP integration
 programs, execute together.
 """
@@ -14,7 +13,6 @@ import subprocess
 import tempfile
 
 from stage import ROOT, run, inherited_fds
-from test_tiers import check_discovery, gated_cases
 
 
 def available_cpus():
@@ -150,7 +148,7 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3,
                 raise ValueError(f'unexpected fast test target kind: {target["kind"]}')
             actual_units.add(identity)
             discovered_units[name].update(names)
-        exclusions = [] if integration else sorted(set(slow.get(name, {})) - gated_cases(name))
+        exclusions = [] if integration else list(slow.get(name, {}))
         # Full archive runtimes use every core on a 4-core runner and push the
         # encrypted HTTP smokes past their 30s deadline. Run that library alone
         # there; an 8-core runner still has cores left for the shared pool.
@@ -168,8 +166,7 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3,
     if not programs:
         raise ValueError('Cargo reported no fast test executables')
     for name, discovered in discovered_units.items():
-        check_discovery(name, discovered, full=False)
-        stale = set(slow.get(name, {})) - gated_cases(name) - discovered
+        stale = set(slow.get(name, {})) - discovered
         if stale:
             raise ValueError(f'{name}: stale slow-test classification: {sorted(stale)}')
     # On a 4-core runner the publisher is exclusive and finishes before this

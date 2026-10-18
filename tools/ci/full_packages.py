@@ -12,7 +12,6 @@ import subprocess
 import tomllib
 from fast import ROOT, workspace_packages
 from stage import run
-from test_tiers import full_features
 
 
 def inventory(packages=None, groups=None):
@@ -46,7 +45,7 @@ def commands(group, groups, lint=False, compile_only=False):
         return [['cargo', 'clippy', '--locked', '--all-targets', '--all-features',
                  *[arg for name in names for arg in ('-p', name)], '--', '-D', 'warnings']]
     runner = ['cargo', 'test', '--no-run'] if compile_only else ['bash', 'tools/ci/full-test.sh']
-    features = full_features(names) + {
+    features = {
         'enhance': ['enhance-pir/cli', 'enhance-pir/native-reinspiring',
                     'enhance-serving/native-reinspiring', 'status-serving/native-reinspiring',
                     'enhance-pir-server/native-reinspiring', 'enhance-pir-load-test/native-reinspiring'],

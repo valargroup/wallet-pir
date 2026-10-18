@@ -1,23 +1,12 @@
 use super::*;
 use crate::txid_display::fixture::{self, block_hash, chain_records, chain_sources};
-#[cfg(feature = "full-tests")]
-use crate::txid_display::offline::verify;
-use crate::txid_display::offline::{bench_recent, plan_start, synthetic_records};
-use crate::txid_display::publisher::bootstrap;
-#[cfg(feature = "full-tests")]
-use crate::txid_display::publisher::CANDIDATE_PREFIX;
-#[cfg(feature = "full-tests")]
-use crate::txid_display::publisher::SEALED_DIR;
-#[cfg(feature = "full-tests")]
-use crate::txid_display::serving::WorkersFile;
-use crate::txid_display::serving::{Transport, WorkerRole};
+use crate::txid_display::offline::{bench_recent, plan_start, synthetic_records, verify};
+use crate::txid_display::publisher::{bootstrap, CANDIDATE_PREFIX, SEALED_DIR};
+use crate::txid_display::serving::{Transport, WorkerRole, WorkersFile};
 use crate::txid_display::source::{open_writer, Script, ScriptStep};
 use crate::txid_display::timeline::read_timeline;
 use std::collections::BTreeSet;
-#[cfg(feature = "full-tests")]
-use std::os::unix::fs::FileExt;
-#[cfg(feature = "full-tests")]
-use std::os::unix::fs::MetadataExt;
+use std::os::unix::fs::{FileExt, MetadataExt};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 use transparent_filter::BlockHash;
 use transparent_shard::txid::{DisplayEntry, DisplayRecord, ENTRY_BYTES};
@@ -33,7 +22,6 @@ fn settings() -> Settings {
 }
 
 /// Settings that re-verify every sealed revision when a controller opens.
-#[cfg(feature = "full-tests")]
 fn verifying() -> Settings {
     Settings {
         trust_sealed: false,
@@ -225,7 +213,6 @@ async fn the_recent_window_overlaps_archives_through_reorgs_and_restarts() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[cfg(feature = "full-tests")]
 async fn incremental_stepping_reproduces_bootstrap() {
     let through = if cfg!(feature = "qualification-tests") {
         125
@@ -417,10 +404,8 @@ async fn reorgs_rebuild_recent_and_a_sealed_fork_halts() {
     assert!(matches!(run.outcome, Outcome::Halted(_)));
 }
 
-#[cfg(feature = "full-tests")]
 type FileIdentity = BTreeMap<PathBuf, (u64, i64)>;
 
-#[cfg(feature = "full-tests")]
 fn sealed_files(root: &Path) -> FileIdentity {
     let mut out = BTreeMap::new();
     for dir in std::fs::read_dir(root.join(SEALED_DIR)).unwrap() {
@@ -437,7 +422,6 @@ fn sealed_files(root: &Path) -> FileIdentity {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[cfg(feature = "full-tests")]
 async fn restart_resumes_without_touching_sealed_files() {
     let middle = if cfg!(feature = "qualification-tests") {
         121
@@ -515,7 +499,6 @@ async fn restart_resumes_without_touching_sealed_files() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[cfg(feature = "full-tests")]
 async fn the_window_drops_oldest_archives_and_keeps_the_rest() {
     let through = if cfg!(feature = "qualification-tests") {
         130
@@ -1211,7 +1194,6 @@ async fn an_archive_owner_that_lost_staging_is_staged_again() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[cfg(feature = "full-tests")]
 async fn command_adapters_ship_then_relay_control() {
     use std::os::unix::fs::PermissionsExt;
     let temp = tempfile::tempdir().unwrap();
@@ -1379,7 +1361,6 @@ fn plan_start_leaves_room_for_bootstrap_and_replay_seals() {
 }
 
 #[test]
-#[cfg(feature = "full-tests")]
 fn verify_reproduces_a_running_root() {
     let through = if cfg!(feature = "qualification-tests") {
         125
@@ -1674,7 +1655,6 @@ fn shipped_files(candidate: &Path) -> BTreeSet<String> {
 /// records the prebuild; revision directories still hold exactly their
 /// manifests' files; and collection removes a candidate with its files.
 #[tokio::test(flavor = "multi_thread")]
-#[cfg(feature = "full-tests")]
 async fn shipped_runtimes_go_out_with_each_candidate_and_go_with_it() {
     use transparent_server_backend::display::prebuild::build_shipped;
     use transparent_server_backend::display::set::DisplayRevision;

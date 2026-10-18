@@ -715,9 +715,7 @@ pub fn retained_digests(set: &Path) -> io::Result<std::collections::HashSet<Stri
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[cfg(feature = "full-tests")]
     use crate::shardset::Table;
-    #[cfg(feature = "full-tests")]
     use transparent_shard::layout::{DECOUPLED_2K_8K, DECOUPLED_32K_32K};
 
     #[test]
@@ -818,7 +816,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "full-tests")]
     fn restored_runtimes_answer_identically_at_deployed_geometries() {
         let shapes = if cfg!(feature = "qualification-tests") {
             vec![&DECOUPLED_2K_8K, &DECOUPLED_32K_32K]
@@ -913,7 +910,6 @@ mod tests {
     /// length stays valid, and so is an entry whose stored masks do not match
     /// what its preprocessing publishes.
     #[test]
-    #[cfg(feature = "full-tests")]
     fn a_restored_entry_must_publish_the_masks_it_stored() {
         let dir = tempfile::tempdir().unwrap();
         let shared = SharedParams::build(&DECOUPLED_2K_8K, Table::Directory).unwrap();
@@ -936,7 +932,6 @@ mod tests {
     }
 }
 #[cfg(test)]
-#[cfg(feature = "full-tests")]
 mod cache_integration_tests {
     use super::*;
     use crate::metrics::Metrics;
@@ -956,7 +951,6 @@ mod cache_integration_tests {
     }
 
     #[tokio::test]
-    #[cfg(feature = "full-tests")]
     async fn blocked_snapshot_does_not_delay_serving_or_release_owned_memory() {
         let dir = tempfile::tempdir().unwrap();
         let (geometry, table) =
@@ -1035,7 +1029,6 @@ mod cache_integration_tests {
     }
 
     #[tokio::test]
-    #[cfg(feature = "full-tests")]
     async fn restart_coalesces_restore_and_corruption_falls_back_without_losing_budget() {
         let dir = tempfile::tempdir().unwrap();
         let (geometry, table) =
@@ -1333,7 +1326,6 @@ mod shipped_tests {
     /// missing file, a truncated or corrupted one, and one made for another
     /// revision or another table and placed under this one's name.
     #[tokio::test(flavor = "multi_thread")]
-    #[cfg(feature = "full-tests")]
     async fn refused_shipped_files_fall_back_to_a_counted_local_build() {
         let dir = tempfile::tempdir().unwrap();
         let s = segment(dir.path(), Table::TxDirectory, 700, 2);
@@ -1433,7 +1425,6 @@ mod shipped_tests {
     /// under A's identity, loads, but fails the self-check and is replaced by
     /// a local build; so does a consistent runtime of rows B under A's name.
     #[tokio::test(flavor = "multi_thread")]
-    #[cfg(feature = "full-tests")]
     async fn the_self_check_refuses_a_database_its_preprocessing_was_not_built_from() {
         let dir = tempfile::tempdir().unwrap();
         let a = segment(dir.path(), Table::TxDirectory, 2_048, 4);
@@ -1513,18 +1504,15 @@ mod shipped_tests {
     /// geometry's parameters, the other table kind or another native
     /// schema's parameters, are each refused and built here, once.
     #[tokio::test(flavor = "multi_thread")]
-    #[cfg(feature = "full-tests")]
     async fn directory_files_of_another_identity_are_refused_once_each() {
         history_identity_refusals(Table::Directory).await;
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    #[cfg(feature = "full-tests")]
     async fn page_files_of_another_identity_are_refused_once_each() {
         history_identity_refusals(Table::Pages).await;
     }
 
-    #[cfg(feature = "full-tests")]
     async fn history_identity_refusals(table: Table) {
         use transparent_shard::layout::DECOUPLED_32K_32K;
         let dir = tempfile::tempdir().unwrap();

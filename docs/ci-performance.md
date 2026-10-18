@@ -115,16 +115,8 @@ small-runner publisher are not partitioned. The working-set ceiling remains
 6 GiB. Explicit feature or test-filter checks use one program at a time.
 The fast runner enforces the 30-second limit for every Rust case, including
 setup and teardown inside the case. Each program keeps its package directory and Cargo environment; fast integration
-targets must contain an enabled, unignored case, and unit exclusions must still
-match discovered tests. Cold cache preparation compiles the same target selection.
-Locally owned campaign-only unit tests use the non-default `full-tests` feature,
-so routine test binaries do not compile their bodies or exclusive helpers. Full
-qualification, reference/native variants, cache preparation and complete correctness
-enable it explicitly. Discovery rejects a full-only test in a fast binary or a
-missing classified case in a full library binary. The two upstream-only exclusions
-still use execution filters because this repository does not own their source.
-Use `--features full-tests` for a focused local campaign check.
-
+targets must contain an enabled, unignored case. Ordinary unit discovery has no
+named exclusions. Cold cache preparation compiles the same target selection.
 Enhance smoke cases reuse immutable prepared input bytes for the same record count,
 then copy them into separate writable worker directories. Workers still verify
 their copies and both 67/68-record generic oracles build independently. The encrypted
@@ -133,16 +125,15 @@ Transparent fixture exit tests use tiny file trees with the actual ownership and
 copying helpers. Manager behavior tests still prepare and verify real publications.
 Fixture construction, copying, verification and cleanup stay inside measured work.
 
-The package-qualified full-geometry/cache, multi-unit preparation, shipped-runtime
-identity matrices, retained-publication rebuild matrices, repeated HTTPS bootstrap
-fault/canonicality/budget matrices, RPC publication and real HTTP retry cases run
-only in full CI. Verified prepared-publication bootstrap over real HTTPS and its
-withdrawal refusal remain fast;
-`tools/ci/slow-tests.json` records the exact names and reasons. Binary unit tests run as well as library targets. For affected packages, fast CI also
-runs the integration targets classified as `fast` in
-[`tools/ci/integration-tests.json`](../tools/ci/integration-tests.json). The remaining
-integration targets, doctests, binary unit tests and all-feature lint run in
-**CI full**, nightly or on request. The aggregate completion check fails if a
+Ordinary cache, identity, preparation-failure, publication, TLS fault and recovery
+assertions all run in fast feedback. The non-default `qualification-tests` feature
+restores their original larger geometry combinations and longer histories for
+full qualification. Binary unit tests run as well as library targets. Affected
+packages also run integrations classified as `fast` in
+[`tools/ci/integration-tests.json`](../tools/ci/integration-tests.json). Complete
+correctness includes independent reference oracles, doctests and CPU lint. Larger
+integration campaigns and hardware qualification remain separate release gates.
+The aggregate completion check fails if a
 selected job fails or is skipped. This avoids compiling every integration target just
 to exclude its tests at runtime. Affected helper
 checks overlap both Rust compilation and execution; completing helper checks
