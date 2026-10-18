@@ -1,4 +1,46 @@
 {
+  "enhance-pir-server": {
+    "status::source::tests::live_rpc_candidate_revalidates_before_durable_publication": {
+      "feature": "full-tests",
+      "reason": "Measured 1.40s locally: real RPC candidate revalidation and durable publication; full CI retains the complete test."
+    }
+  },
+  "enhance-serving": {
+    "runtime::tests::partial_preparation_failure_preserves_published_and_retries": {
+      "feature": "full-tests",
+      "reason": "Real multi-unit cryptographic preparation and independent evaluation; full CI retains the complete test."
+    },
+    "runtime::tests::tail_domain_reuses_b_units_and_decodes_b_at_unchanged_coordinates": {
+      "feature": "full-tests",
+      "reason": "Real multi-unit cryptographic preparation and independent evaluation; full CI retains the complete test."
+    },
+    "runtime::tests::unequal_units_match_monolithic_preprocessing_and_evaluation": {
+      "feature": "full-tests",
+      "reason": "Real multi-unit cryptographic preparation and independent evaluation; full CI retains the complete test."
+    },
+    "runtime::tests::encrypted_bootstrap_round_trip_and_cached_restart": {
+      "feature": "full-tests",
+      "reason": "Measured 5.45s locally: real encrypted bootstrap, independent CPU evaluation and durable runtime restart; full CI retains all assertions."
+    },
+    "worker::tests::restart_rebuilds_lost_cache_only_from_verified_durable_rows": {
+      "feature": "full-tests",
+      "reason": "Measured 4.91s locally: real runtime preparation and corrupt/missing-cache recovery; full CI retains the complete HTTP/runtime evidence."
+    },
+    "coordinator::admission_tests::full_queue_and_expired_wait_return_retryable_429": {
+      "feature": "full-tests",
+      "reason": "Measured 2.02s locally: real queue expiry and HTTP timeout coverage; full CI retains real elapsed-time assertions."
+    },
+    "worker::tests::backend_evaluation_failure_over_http_releases_permit_and_recovers": {
+      "feature": "full-tests",
+      "reason": "Measured 2.28s locally: real cryptographic evaluation, malformed-query rejection, injected backend failure and HTTP recovery; full CI retains all assertions."
+    }
+  },
+  "status-serving": {
+    "generation::incremental_tests::sparse_hint_matches_full_reconstruction_for_signed_negacyclic_boundaries": {
+      "feature": "full-tests",
+      "reason": "Measured 1.99s locally: independent full cryptographic reconstruction oracle; full CI retains the comparison."
+    }
+  },
   "transparent-filter-server": {
     "controller::tests::shipped_runtimes_are_prepared_linked_and_offered_with_the_candidate": {
       "feature": "full-tests",
@@ -8,33 +50,9 @@
       "feature": "full-tests",
       "reason": "Runs RPC follow, real publication/fleet subprocesses and reorg cancellation end to end."
     },
-    "txid_display::controller::tests::incremental_stepping_reproduces_bootstrap": {
-      "feature": "full-tests",
-      "reason": "Measured 7.7s locally: about 40 full 2,048-row display shard builds (16 MiB each) across three bootstraps and two stepped runs; full CI retains the equivalence check."
-    },
-    "txid_display::controller::tests::verify_reproduces_a_running_root": {
-      "feature": "full-tests",
-      "reason": "Measured 10.5s locally: five complete re-bootstraps of a display root (queued, running, after a reorg, and two tampered records); full CI retains the comparison."
-    },
-    "txid_display::controller::tests::restart_resumes_without_touching_sealed_files": {
-      "feature": "full-tests",
-      "reason": "Measured 5.5s locally: four controller recoveries that re-verify every sealed 16 MiB revision from disk; full CI retains the complete test."
-    },
-    "txid_display::controller::tests::command_adapters_ship_then_relay_control": {
-      "feature": "full-tests",
-      "reason": "Measured 3.8s locally: one adapter subprocess per ship and control call across several publications; full CI retains the transport test."
-    },
-    "txid_display::controller::tests::the_window_drops_oldest_archives_and_keeps_the_rest": {
-      "feature": "full-tests",
-      "reason": "Measured 4.6s locally: two bootstraps and a stepped run across several window drops; full CI retains the complete test."
-    },
     "publication::tests::block_by_block_publication_equals_a_fresh_build": {
       "feature": "full-tests",
       "reason": "Measured about 33s in warm CI: rebuilds 22 incremental publications and an independent fresh oracle. Full qualification retains the campaign; fast unit checks and the real HTTP smoke retain bounded publication/request coverage."
-    },
-    "txid_display::controller::tests::shipped_runtimes_go_out_with_each_candidate_and_go_with_it": {
-      "feature": "full-tests",
-      "reason": "Measured about 37s in warm CI: prepares and ships real cryptographic runtimes across candidate changes. Full qualification retains shipping and cleanup assertions; fast runtime and HTTP checks retain cold preparation and cache recovery."
     },
     "controller::distribution_tests::https_bootstrap_charges_all_response_bytes_at_exact_budget_boundary": {
       "feature": "full-tests",
@@ -129,52 +147,6 @@
       "reason": "Repeated real TLS/publication/owner recovery campaigns exceed the warm three-minute fast deadline. Full qualification runs this case unchanged; fast immutable-transfer, interrupted-staging, durable invalidation, inventory and owner-fence failure checks remain."
     }
   },
-  "enhance-serving": {
-    "runtime::tests::partial_preparation_failure_preserves_published_and_retries": {
-      "feature": "full-tests",
-      "reason": "Real multi-unit cryptographic preparation and independent evaluation; full CI retains the complete test."
-    },
-    "runtime::tests::tail_domain_reuses_b_units_and_decodes_b_at_unchanged_coordinates": {
-      "feature": "full-tests",
-      "reason": "Real multi-unit cryptographic preparation and independent evaluation; full CI retains the complete test."
-    },
-    "runtime::tests::unequal_units_match_monolithic_preprocessing_and_evaluation": {
-      "feature": "full-tests",
-      "reason": "Real multi-unit cryptographic preparation and independent evaluation; full CI retains the complete test."
-    },
-    "runtime::tests::encrypted_bootstrap_round_trip_and_cached_restart": {
-      "feature": "full-tests",
-      "reason": "Measured 5.45s locally: real encrypted bootstrap, independent CPU evaluation and durable runtime restart; full CI retains all assertions."
-    },
-    "worker::tests::restart_rebuilds_lost_cache_only_from_verified_durable_rows": {
-      "feature": "full-tests",
-      "reason": "Measured 4.91s locally: real runtime preparation and corrupt/missing-cache recovery; full CI retains the complete HTTP/runtime evidence."
-    },
-    "coordinator::admission_tests::full_queue_and_expired_wait_return_retryable_429": {
-      "feature": "full-tests",
-      "reason": "Measured 2.02s locally: real queue expiry and HTTP timeout coverage; full CI retains real elapsed-time assertions."
-    },
-    "worker::tests::backend_evaluation_failure_over_http_releases_permit_and_recovers": {
-      "feature": "full-tests",
-      "reason": "Measured 2.28s locally: real cryptographic evaluation, malformed-query rejection, injected backend failure and HTTP recovery; full CI retains all assertions."
-    }
-  },
-  "status-serving": {
-    "generation::incremental_tests::sparse_hint_matches_full_reconstruction_for_signed_negacyclic_boundaries": {
-      "feature": "full-tests",
-      "reason": "Measured 1.99s locally: independent full cryptographic reconstruction oracle; full CI retains the comparison."
-    }
-  },
-  "enhance-pir-server": {
-    "status::source::tests::live_rpc_candidate_revalidates_before_durable_publication": {
-      "feature": "full-tests",
-      "reason": "Measured 1.40s locally: real RPC candidate revalidation and durable publication; full CI retains the complete test."
-    }
-  },
-  "transparent-shard": {
-    "build::tests::a_reorg_reproduces_everything_sealed_below_it": "Measured about 24s in warm CI: rebuilds and compares the entire sealed chain after a fork. Full qualification retains the independent rebuild; bounded reorg/publication and wallet transition checks remain fast.",
-    "build::tests::sealed_shards_are_byte_stable_under_tail_growth": "Measured about 12s in warm CI: repeatedly rebuilds full sealed tables through tail growth. Full qualification retains every byte comparison; bounded publication and schema/layout checks remain fast."
-  },
   "transparent-server-backend": {
     "runtime::disk::tests::restored_runtimes_answer_identically_at_deployed_geometries": {
       "feature": "full-tests",
@@ -231,6 +203,36 @@
     "runtime::disk::tests::a_restored_entry_must_publish_the_masks_it_stored": {
       "feature": "full-tests",
       "reason": "Full-runtime persistence and mask reconstruction. Full qualification retains the stored-mask comparison; fast encrypted HTTP restart and corrupt-cache fallback remain."
+    }
+  },
+  "transparent-shard": {
+    "build::tests::a_reorg_reproduces_everything_sealed_below_it": "Measured about 24s in warm CI: rebuilds and compares the entire sealed chain after a fork. Full qualification retains the independent rebuild; bounded reorg/publication and wallet transition checks remain fast.",
+    "build::tests::sealed_shards_are_byte_stable_under_tail_growth": "Measured about 12s in warm CI: repeatedly rebuilds full sealed tables through tail growth. Full qualification retains every byte comparison; bounded publication and schema/layout checks remain fast."
+  },
+  "txid-pir-server": {
+    "publication::controller::tests::incremental_stepping_reproduces_bootstrap": {
+      "feature": "full-tests",
+      "reason": "Measured 7.7s locally: about 40 full 2,048-row display shard builds (16 MiB each) across three bootstraps and two stepped runs; full CI retains the equivalence check."
+    },
+    "publication::controller::tests::verify_reproduces_a_running_root": {
+      "feature": "full-tests",
+      "reason": "Measured 10.5s locally: five complete re-bootstraps of a display root (queued, running, after a reorg, and two tampered records); full CI retains the comparison."
+    },
+    "publication::controller::tests::restart_resumes_without_touching_sealed_files": {
+      "feature": "full-tests",
+      "reason": "Measured 5.5s locally: four controller recoveries that re-verify every sealed 16 MiB revision from disk; full CI retains the complete test."
+    },
+    "publication::controller::tests::command_adapters_ship_then_relay_control": {
+      "feature": "full-tests",
+      "reason": "Measured 3.8s locally: one adapter subprocess per ship and control call across several publications; full CI retains the transport test."
+    },
+    "publication::controller::tests::the_window_drops_oldest_archives_and_keeps_the_rest": {
+      "feature": "full-tests",
+      "reason": "Measured 4.6s locally: two bootstraps and a stepped run across several window drops; full CI retains the complete test."
+    },
+    "publication::controller::tests::shipped_runtimes_go_out_with_each_candidate_and_go_with_it": {
+      "feature": "full-tests",
+      "reason": "Measured about 37s in warm CI: prepares and ships real cryptographic runtimes across candidate changes. Full qualification retains shipping and cleanup assertions; fast runtime and HTTP checks retain cold preparation and cache recovery."
     }
   }
 }

@@ -1,10 +1,10 @@
 //! A direct `--journal-census` attributes its output to the image that ran,
 //! however that image's pathname changes while it runs.
 #[allow(dead_code)]
-#[path = "../../../../../src/transparent/transparent-filter-server/src/display_journal.rs"]
+#[path = "../../../../../src/shared/transparent-ingest/src/display_journal.rs"]
 mod display_journal;
 #[allow(dead_code)]
-#[path = "../../../../../src/transparent/transparent-filter-server/src/events.rs"]
+#[path = "../../../../../src/shared/transparent-ingest/src/events.rs"]
 mod events;
 
 use sha2::{Digest, Sha256};
