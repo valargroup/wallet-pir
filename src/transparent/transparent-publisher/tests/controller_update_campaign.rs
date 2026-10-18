@@ -220,7 +220,8 @@ async fn current(publisher: &str, client: &reqwest::Client) -> serde_json::Value
 fn controller_set(publications: &Path) -> ShardSet {
     let active: serde_json::Value =
         serde_json::from_slice(&std::fs::read(publications.join("active.json")).unwrap()).unwrap();
-    ShardSet::open(Path::new(active["directory"].as_str().unwrap()), 0).unwrap()
+    // Retained predecessor revisions are expected beside a republished tail.
+    ShardSet::open(Path::new(active["directory"].as_str().unwrap()), usize::MAX).unwrap()
 }
 
 /// One encrypted directory query, decoded against the oracle's exact row.
