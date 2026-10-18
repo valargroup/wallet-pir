@@ -22,7 +22,7 @@ cuda = ["ipir-sp/cuda"]
 [dependencies]
 # Profile modulus and native hint helpers are shared with Enhance serving.
 pir-serving = { path = "../../shared/pir-serving" }
-pir-native = { package = "zakura-pir-native", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "63d31b4486dffe60982c395fffb40e9a02497008", optional = true }
+pir-native = { package = "zakura-pir-native", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "f3a19e5b7b0a51f28bf81d2fc1c4b114c8c1a0d8", optional = true }
 pir-control = { path = "../../shared/pir-control", features = ["admission"] }
 pir-runtime = { path = "../../shared/pir-runtime" }
 rayon = "1"
@@ -46,4 +46,4 @@ tracing = "0.1"
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
 # Independent wallet client exercises the serving wire contract over HTTP.
-zakura-pir-status = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "63d31b4486dffe60982c395fffb40e9a02497008" }
+zakura-pir-status = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "f3a19e5b7b0a51f28bf81d2fc1c4b114c8c1a0d8" }

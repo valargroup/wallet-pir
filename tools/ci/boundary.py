@@ -45,8 +45,9 @@ COMMON = {
     'zakura-address', 'zakura-bellman', 'zakura-bls12-381', 'zakura-equihash',
     'zakura-halo2-gadgets', 'zakura-halo2-legacy-pdqsort', 'zakura-halo2-poseidon',
     'zakura-halo2-proofs', 'zakura-jubjub', 'zakura-keys', 'zakura-note-encryption',
-    'zakura-orchard', 'zakura-pairing', 'zakura-pasta-curves', 'zakura-primitives',
-    'zakura-proofs', 'zakura-protocol', 'zakura-reddsa', 'zakura-redjubjub',
+    'zakura-orchard', 'zakura-orchard-legacy', 'zakura-pairing', 'zakura-pasta-curves',
+    'zakura-primitives', 'zakura-proofs', 'zakura-protocol', 'zakura-reddsa',
+    'zakura-reddsa-frost', 'zakura-redjubjub',
     'zakura-sapling-crypto', 'zakura-sinsemilla', 'zakura-transparent', 'zakura-zip321',
     'bellman', 'bls12_381', 'equihash', 'halo2_gadgets', 'halo2_legacy_pdqsort',
     'halo2_poseidon', 'halo2_proofs', 'jubjub', 'orchard', 'pairing', 'pasta_curves',
@@ -399,6 +400,29 @@ def standalone_metadata(names):
             ['cargo', 'metadata', '--offline', '--format-version', '1'], cwd=root))
 
 
+def common_family_violations(packages, patches):
+    """Reject stale Common releases and mixed sources, including unused lock entries.
+
+    Common's protocol patch selects the family revision. Every Common patch and
+    resolved package must use it, so updating a direct dependency cannot leave an
+    older copy hidden behind a transitive or optional dependency.
+    """
+    names = {name for name in COMMON if name.startswith('zakura-')}
+    patches = {name: patch for name, patch in patches.items() if name in names}
+    selected = patches['zakura-protocol']
+    expected = f"git+{selected['git']}?rev={selected['rev']}#{selected['rev']}"
+    problems = []
+    for name, patch in patches.items():
+        if patch.get('git') != selected['git'] or patch.get('rev') != selected['rev']:
+            problems.append(f'{name}: Common patch must use the same revision as zakura-protocol')
+    for package in packages:
+        if package['name'] not in names:
+            continue
+        if package['version'].split('.')[0] != '4' or package.get('source') != expected:
+            problems.append(f"{package['name']} {package['version']}: Common must use the selected v4 main revision")
+    return problems
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument('--resolved', action='store_true',
@@ -408,10 +432,18 @@ def main(argv=None):
     args = parser.parse_args(argv)
     allowed = json.loads(ALLOWLIST.read_text())['edges']
     problems = violations(manifests(), allowed)
+    patches = tomllib.loads((ROOT / 'Cargo.toml').read_text())['patch']['crates-io']
+    # The historical frozen-client fixture is an independent published client;
+    # these are the two workspaces used by the current services and sizing tool.
+    for name in ('Cargo.lock', 'tools/txid/txid-sizing/export/Cargo.lock'):
+        packages = tomllib.loads((ROOT / name).read_text())['package']
+        problems += [f'{name}: {problem}'
+                     for problem in common_family_violations(packages, patches)]
     if args.resolved:
         metadata = json.loads(subprocess.check_output(
             ['cargo', 'metadata', '--locked', '--format-version', '1',
              *(['--offline'] if args.offline else [])], cwd=ROOT))
+        problems += common_family_violations(metadata['packages'], patches)
         problems += resolved_violations(metadata, workspace_unified=True)
         problems += resolved_violations(standalone_metadata(RECEIVER))
         problems += database_reader_violations(standalone_metadata({'transparent-filter-server'}))
