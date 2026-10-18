@@ -3413,63 +3413,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "transparent-filter-server"
-version = "0.1.0-rc.4"
-dependencies = [
- "axum",
- "base64",
- "chrono",
- "clap",
- "hex",
- "libc",
- "pir-control",
- "pir-observability",
- "pir-pipeline",
- "prometheus",
- "reqwest",
- "serde",
- "serde_json",
- "sha2",
- "sysinfo",
- "tempfile",
- "thiserror 2.0.18",
- "tokio",
- "tokio-util",
- "tower",
- "tracing",
- "tracing-subscriber",
- "transparent-blocks",
- "transparent-ingest",
- "transparent-query-server",
- "transparent-shared",
- "zakura-server-chain",
- "zakura-transparent-events",
- "zakura-transparent-filter",
- "zakura-transparent-native",
- "zakura-transparent-shard",
- "zakura-transparent-txid-client",
-]
-
-[[package]]
-name = "transparent-ingest"
-version = "0.0.1"
-dependencies = [
- "chrono",
- "clap",
- "hex",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
- "thiserror 2.0.18",
- "transparent-shared",
- "zakura-server-chain",
- "zakura-transparent-events",
- "zakura-transparent-filter",
- "zakura-transparent-shard",
-]
-
-[[package]]
 name = "transparent-loadtest"
 version = "0.1.0-rc.4"
 dependencies = [
@@ -3512,6 +3455,43 @@ dependencies = [
  "zakura-transparent-events",
  "zakura-transparent-filter",
  "zakura-transparent-shard",
+]
+
+[[package]]
+name = "transparent-publisher"
+version = "0.1.0-rc.4"
+dependencies = [
+ "axum",
+ "base64",
+ "chrono",
+ "clap",
+ "hex",
+ "libc",
+ "pir-control",
+ "pir-observability",
+ "pir-pipeline",
+ "prometheus",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sysinfo",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
+ "tower",
+ "tracing",
+ "tracing-subscriber",
+ "transparent-blocks",
+ "transparent-query-server",
+ "transparent-shared",
+ "zakura-server-chain",
+ "zakura-transparent-events",
+ "zakura-transparent-filter",
+ "zakura-transparent-native",
+ "zakura-transparent-shard",
+ "zakura-transparent-txid-client",
 ]
 
 [[package]]

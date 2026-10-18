@@ -330,7 +330,7 @@ benchmark implementation, not a measurement of an existing wallet/lightwalletd
 release. The journal remains the independent event oracle; the scanner never
 receives expected events or performs address-specific requests.
 
-Build the tools with `cargo build --release -p transparent-filter-server --bin
+Build the tools with `cargo build --release -p transparent-publisher --bin
 compact-export --bin sample-oracle -p transparent-block-server -p transparent-loadtest`.
 `protoc` is required to compile the pinned protobuf schema. Export the full dataset
 on the archive host, outside measured time:
