@@ -8,9 +8,9 @@ success is intentionally not labeled certified.
 ## Build and test
 
 ```sh
-cargo build --locked --release --manifest-path src/enhance/noise-analysis/Cargo.toml
-cargo test --locked --release --manifest-path src/enhance/noise-analysis/Cargo.toml
-python3 -m unittest discover -s src/enhance/noise-analysis -v
+cargo build --locked --release --manifest-path tools/enhance/noise-analysis/Cargo.toml
+cargo test --locked --release --manifest-path tools/enhance/noise-analysis/Cargo.toml
+python3 -m unittest discover -s tools/enhance/noise-analysis -v
 ```
 
 The standalone lockfile pins research dependencies. The current candidate uses
@@ -25,8 +25,8 @@ reference. On ARM the portable worker path is selected.
 ## Campaign
 
 ```sh
-RAYON_NUM_THREADS=2 python3 src/enhance/noise-analysis/run.py \
-  --binary src/enhance/noise-analysis/target/release/enhance-noise-analysis \
+RAYON_NUM_THREADS=2 python3 tools/enhance/noise-analysis/run.py \
+  --binary tools/enhance/noise-analysis/target/release/enhance-noise-analysis \
   --output /new/campaign-directory --jobs 4
 ```
 
@@ -41,9 +41,9 @@ zero padding. Fixtures are public, deterministic data, never private RNG seeds.
 Run `--matrix` on the binary to enumerate production-derived shapes. One case:
 
 ```sh
-RAYON_NUM_THREADS=2 src/enhance/noise-analysis/target/release/enhance-noise-analysis \
+RAYON_NUM_THREADS=2 tools/enhance/noise-analysis/target/release/enhance-noise-analysis \
   --used-rows 32768 --pattern max --shard 0 --queries 128 --output /new/case.json
-python3 src/enhance/noise-analysis/verify.py /new/case.json
+python3 tools/enhance/noise-analysis/verify.py /new/case.json
 ```
 
 Each result includes grouped weight moments for all 12,288 coefficients, CDF,
@@ -64,7 +64,7 @@ to compute the same grouped weights faster. The original method remains as a
 reference. Run the full-degree equivalence regression explicitly:
 
 ```sh
-cargo test --locked --release --manifest-path src/enhance/noise-analysis/Cargo.toml \
+cargo test --locked --release --manifest-path tools/enhance/noise-analysis/Cargo.toml \
   --bin accelerated -- --include-ignored
 ```
 
@@ -115,6 +115,6 @@ For persistence and reload, use the repository's existing production integration
 benchmark in addition to this arithmetic campaign:
 
 ```sh
-cargo run --locked --profile release-fast -p enhance-pir-server \
-  --example v4-preprocess -- --output /new/persistence-directory --repetitions 1
+cargo run --locked --profile release-fast -p enhance-publisher \
+  --example preprocess -- --output /new/persistence-directory --repetitions 1
 ```

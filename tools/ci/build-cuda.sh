@@ -11,9 +11,9 @@ export CARGO_TARGET_DIR=target/native-cuda
 export RUSTFLAGS='-C target-cpu=x86-64-v3 -C target-feature=+pclmulqdq'
 export CFLAGS=-mpclmul CXXFLAGS=-mpclmul
 python3 tools/ci/stage.py compile:cuda -- cargo build --locked --release \
-  -p enhance-pir-server -p enhance-pir -p enhance-pir-load-test \
+  -p enhance-publisher -p enhance-pir-client -p enhance-pir-load-test \
   --bin enhance-pir-server --bin enhance-pir-cli --bin enhance-pir-load-test \
-  --features enhance-pir/cli,enhance-pir/native-reinspiring,enhance-pir-server/native-reinspiring,enhance-pir-server/cuda,enhance-pir-load-test/native-reinspiring
+  --features enhance-pir-client/native-reinspiring,enhance-publisher/native-reinspiring,enhance-publisher/cuda,enhance-pir-load-test/native-reinspiring
 # Loading driver libraries remains a live qualification gate; --help must work
 # on a hosted build runner without a CUDA driver.
 for binary in enhance-pir-server enhance-pir-cli enhance-pir-load-test; do

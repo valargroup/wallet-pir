@@ -1,33 +1,27 @@
 {
-  "enhance-pir": {
-    "fast": [],
-    "full": [
-      "routing_contract",
-      "v7_contract"
-    ]
-  },
-  "enhance-pir-server": {
+  "enhance-publisher": {
     "fast": [
       "boundary_recovery_model",
+      "ci_smoke",
       "record_layout",
       "schema11_cutover"
     ],
     "full": [
       "canonical_record",
       "enhance_wallet_native",
+      "http",
       "matvec_config",
       "note_recovery",
+      "packing_http",
       "row_repair_http",
       "rpc"
     ]
   },
-  "enhance-serving": {
-    "fast": [
-      "ci_smoke"
-    ],
+  "enhance-query-server": {
+    "fast": [],
     "full": [
-      "http",
-      "packing_http"
+      "routing_contract",
+      "v7_contract"
     ]
   },
   "receiver-indexer": {

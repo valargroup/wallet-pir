@@ -127,13 +127,12 @@
   "enhance-supporting": {
     "family": "enhance",
     "targets": [
+      "native:enhance-pir-client:bin:enhance-pir-cli",
+      "native:enhance-pir-exercise:bin:enhance-pir-exercise",
       "native:enhance-pir-load-test:bin:enhance-pir-load-test",
-      "native:enhance-pir:bin:enhance-pir-cli",
-      "native:enhance-pir:doc:enhance_pir",
-      "native:enhance-pir:example:v7_vector",
-      "native:enhance-pir:lib:enhance_pir",
-      "native:enhance-pir:test:routing_contract",
-      "native:enhance-pir:test:v7_contract",
+      "native:enhance-query-server:example:v7_vector",
+      "native:enhance-query-server:test:routing_contract",
+      "native:enhance-query-server:test:v7_contract",
       "native:pir-apm:bin:pir-apm",
       "native:pir-apm:doc:pir_apm",
       "native:pir-apm:lib:pir_apm",
@@ -144,58 +143,57 @@
       "native:status-query-server:lib:status_query_server"
     ]
   },
-  "enhance-serving-units": {
+  "enhance-query-server-units": {
     "family": "enhance",
     "targets": [
-      "native:enhance-serving:doc:enhance_serving",
-      "native:enhance-serving:lib:enhance_serving"
+      "native:enhance-query-server:doc:enhance_query_server",
+      "native:enhance-query-server:lib:enhance_query_server"
     ]
   },
-  "enhance-serving-contracts": {
+  "enhance-publisher-contracts": {
     "family": "enhance",
     "targets": [
-      "native:enhance-pir-server:bin:enhance-pir-server",
+      "native:enhance-publisher:bin:enhance-pir-server",
+      "native:enhance-publisher:doc:enhance_publisher",
+      "native:enhance-publisher:example:native_certificate",
+      "native:enhance-publisher:example:packing_budget",
+      "native:enhance-publisher:example:preprocess",
+      "native:enhance-publisher:example:suffix_width",
+      "native:enhance-publisher:lib:enhance_publisher",
+      "native:enhance-publisher:test:boundary_recovery_model",
+      "native:enhance-publisher:test:ci_smoke",
+      "native:enhance-publisher:test:matvec_config",
+      "native:enhance-publisher:test:packing_http",
+      "native:enhance-publisher:test:record_layout",
+      "native:enhance-publisher:test:schema11_cutover",
       "native:status-publisher:bin:status-pir",
-      "native:enhance-pir-server:doc:enhance_pir_server",
-      "native:enhance-pir-server:example:native_certificate",
-      "native:enhance-pir-server:example:packing_budget",
-      "native:enhance-pir-server:example:preprocess",
-      "native:enhance-pir-server:example:suffix_width",
-      "native:enhance-pir-server:lib:enhance_pir_server",
-      "native:enhance-pir-server:test:boundary_recovery_model",
-      "native:enhance-pir-server:test:matvec_config",
-      "native:enhance-pir-server:test:record_layout",
-      "native:enhance-pir-server:test:schema11_cutover",
       "native:status-query-server:test:status_wallet",
-      "native:status-query-server:test:status_wallet_http",
-      "native:enhance-serving:test:ci_smoke",
-      "native:enhance-serving:test:packing_http"
+      "native:status-query-server:test:status_wallet_http"
     ]
   },
   "enhance-http": {
     "family": "enhance",
     "targets": [
-      "native:enhance-serving:test:http"
+      "native:enhance-publisher:test:http"
     ]
   },
   "enhance-recovery": {
     "family": "enhance",
     "targets": [
-      "native:enhance-pir-server:test:canonical_record",
-      "native:enhance-pir-server:test:enhance_wallet_native",
-      "native:enhance-pir-server:test:note_recovery",
-      "native:enhance-pir-server:test:row_repair_http",
-      "native:enhance-pir-server:test:rpc"
+      "native:enhance-publisher:test:canonical_record",
+      "native:enhance-publisher:test:enhance_wallet_native",
+      "native:enhance-publisher:test:note_recovery",
+      "native:enhance-publisher:test:row_repair_http",
+      "native:enhance-publisher:test:rpc"
     ]
   },
   "enhance-reference": {
     "family": "enhance",
     "targets": [
-      "reference:enhance-pir:lib:enhance_pir",
-      "reference:enhance-pir:test:routing_contract",
-      "reference:enhance-pir:test:v7_contract",
-      "reference:enhance-serving:lib:enhance_serving",
-      "reference:enhance-serving:test:ci_smoke",
+      "reference:enhance-publisher:test:ci_smoke",
+      "reference:enhance-query-server:lib:enhance_query_server",
+      "reference:enhance-query-server:test:routing_contract",
+      "reference:enhance-query-server:test:v7_contract",
       "reference:status-query-server:lib:status_query_server"
     ]
   },
@@ -203,8 +201,8 @@
     "family": "enhance",
     "targets": [
       "cuda:enhance-pir-load-test:check:all",
-      "cuda:enhance-pir-server:check:enhance_pir_server",
-      "cuda:enhance-serving:check:enhance_serving",
+      "cuda:enhance-publisher:check:enhance_publisher",
+      "cuda:enhance-query-server:check:enhance_query_server",
       "cuda:status-publisher:check:status_publisher",
       "cuda:status-query-server:check:status_query_server"
     ]
@@ -212,8 +210,8 @@
   "enhance-cuda-tests": {
     "family": "enhance",
     "targets": [
-      "cuda:enhance-pir-server:test:matvec_config",
-      "cuda:enhance-serving:lib:enhance_serving"
+      "cuda:enhance-publisher:test:matvec_config",
+      "cuda:enhance-query-server:lib:enhance_query_server"
     ]
   },
   "receiver-indexer-store": {

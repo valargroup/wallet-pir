@@ -277,28 +277,37 @@ class BoundaryTests(unittest.TestCase):
 
     def test_serving_libraries_refuse_ingestion_applications_and_other_products(self):
         def package(*dependencies):
-            return [{'name': 'enhance-serving', 'manifest': 'src/enhance/enhance-serving/Cargo.toml',
+            return [{'name': 'enhance-query-server', 'manifest': 'src/enhance/enhance-query-server/Cargo.toml',
                      'dependencies': list(dependencies)}]
         library = 'https://github.com/zakura-core/wallet-libraries.git'
         allowed = [{**self.edge('pir-control'), 'path': 'src/shared/pir-control/'},
-                   {**self.edge('enhance-pir'), 'path': 'src/enhance/enhance-pir/'},
+                   {**self.edge('pir-serving'), 'path': 'src/shared/pir-serving/'},
                    self.edge('zakura-pir-native', git=library), self.edge('axum')]
         self.assertEqual(boundary.violations(package(*allowed), []), [])
+        # The publisher, chain readers, ingestion and every tool are refused.
         forbidden = [self.edge('zakura-server-chain', git=library),
-                     {**self.edge('enhance-pir-server'), 'path': 'src/enhance/enhance-pir-server/'},
-                     {**self.edge('enhance-pir-load-test'), 'path': 'src/enhance/loadtest/'},
+                     {**self.edge('enhance-publisher'), 'path': 'src/enhance/enhance-publisher/'},
+                     {**self.edge('pir-pipeline'), 'path': 'src/shared/pir-pipeline/'},
+                     {**self.edge('enhance-pir-load-test'), 'path': 'tools/enhance/loadtest/'},
+                     {**self.edge('enhance-pir-client'), 'path': 'tools/enhance/client/'},
+                     {**self.edge('enhance-pir-exercise'), 'path': 'tools/enhance/exercise/'},
+                     {**self.edge('pir-monitor'), 'path': 'tools/shared/pir-monitor/'},
+                     {**self.edge('unlisted-tool'), 'path': 'tools/enhance/unlisted/'},
                      {**self.edge('receiver-store'), 'path': 'src/receiver/receiver-store/'},
                      {**self.edge('transparent-server-backend'),
                       'path': 'src/transparent/transparent-server-backend/'}]
         for kind in ['dependencies', 'dev-dependencies', 'build-dependencies',
-                     'target.cfg(unix).dependencies']:
+                     'target.cfg(unix).dependencies', 'target.cfg(unix).dev-dependencies',
+                     'target.cfg(unix).build-dependencies']:
             for edge in forbidden:
-                problems = [p for p in boundary.violations(package({**edge, 'kind': kind}), [])
-                            if 'serving library' in p]
-                self.assertEqual(len(problems), 1, (kind, edge['name']))
-        # The application that composes the library may use the chain reader.
-        application = [{'name': 'enhance-pir-server',
-                        'manifest': 'src/enhance/enhance-pir-server/Cargo.toml',
+                for optional in (False, True):
+                    problems = [p for p in boundary.violations(
+                        package({**edge, 'kind': kind, 'optional': optional}), [])
+                                if 'serving library' in p]
+                    self.assertEqual(len(problems), 1, (kind, edge['name']))
+        # The publisher that composes the library may use the chain reader.
+        application = [{'name': 'enhance-publisher',
+                        'manifest': 'src/enhance/enhance-publisher/Cargo.toml',
                         'dependencies': [self.edge('zakura-server-chain', git=library)]}]
         self.assertEqual(boundary.violations(application, []), [])
 
@@ -330,7 +339,7 @@ class BoundaryTests(unittest.TestCase):
                 {'id': 'mid', 'name': 'helper', 'source': 'registry'},
                 {'id': 'chain', 'name': 'zakura-server-chain',
                  'source': 'git+https://github.com/zakura-core/wallet-libraries'},
-                local('app', 'enhance-pir-server', 'src/enhance/enhance-pir-server'),
+                local('app', 'enhance-publisher', 'src/enhance/enhance-publisher'),
                 local('other', 'receiver-store', 'src/receiver/receiver-store'),
             ],
             'resolve': {'nodes': [
@@ -343,11 +352,11 @@ class BoundaryTests(unittest.TestCase):
         self.assertEqual(boundary.resolved_violations(metadata), [])
         # Status serving may not reach Enhance serving, another product's package.
         enhance = {**metadata, 'packages': [*metadata['packages'],
-                   local('product', 'enhance-serving', 'src/enhance/enhance-serving')],
+                   local('product', 'enhance-query-server', 'src/enhance/enhance-query-server')],
                    'resolve': {'nodes': [node('serving', [('product', None)]),
                                          *metadata['resolve']['nodes'][1:], node('product', [])]}}
         self.assertEqual(boundary.resolved_violations(enhance),
-                         ['status-query-server: serving library resolves enhance-serving'])
+                         ['status-query-server: serving library resolves enhance-query-server'])
         metadata['resolve']['nodes'][3] = node('mid', [('chain', None)])
         metadata['resolve']['nodes'][0] = node('serving', [('enhance', None), ('app', 'dev'),
                                                            ('other', None)])
@@ -356,17 +365,42 @@ class BoundaryTests(unittest.TestCase):
             'pir-serving: resolves zakura-server-chain',
             'pir-serving: serving library resolves zakura-server-chain',
             'status-query-server: resolves zakura-server-chain',
-            'status-query-server: serving library resolves enhance-pir-server',
+            'status-query-server: serving library resolves enhance-publisher',
             'status-query-server: serving library resolves receiver-store',
             'status-query-server: serving library resolves zakura-server-chain',
         ])
+
+    def test_enhance_query_server_graph_resolves_no_publisher_or_tools(self):
+        def node(id, deps):
+            return {'id': id, 'deps': [{'pkg': d, 'dep_kinds': [{'kind': k}]} for d, k in deps]}
+        def local(id, name, folder):
+            return {'id': id, 'name': name, 'source': None,
+                    'manifest_path': str(boundary.ROOT / folder / 'Cargo.toml')}
+        packages = [local('query', 'enhance-query-server', 'src/enhance/enhance-query-server'),
+                    {'id': 'mid', 'name': 'helper', 'source': 'registry'},
+                    local('publisher', 'enhance-publisher', 'src/enhance/enhance-publisher'),
+                    local('tool', 'enhance-pir-client', 'tools/enhance/client')]
+        clean = {'packages': packages, 'resolve': {'nodes': [
+            node('query', [('mid', None)]), node('mid', []), node('publisher', [('query', None)]),
+            node('tool', [('query', None)])]}}
+        self.assertEqual(boundary.resolved_violations(clean), [])
+        for target in ['publisher', 'tool']:
+            for kind in [None, 'dev', 'build']:
+                # Directly, and transitively through an ordinary registry package.
+                for nodes in ([node('query', [(target, kind)]), node('mid', [])],
+                              [node('query', [('mid', kind)]), node('mid', [(target, None)])]):
+                    metadata = {'packages': packages, 'resolve': {'nodes': [
+                        *nodes, node('publisher', []), node('tool', [])]}}
+                    name = next(p['name'] for p in packages if p['id'] == target)
+                    self.assertIn(f'enhance-query-server: serving library resolves {name}',
+                                  boundary.resolved_violations(metadata), (target, kind))
 
     def test_pipeline_refuses_every_nonutility_dependency_kind(self):
         for kind in ['dependencies', 'dev-dependencies', 'build-dependencies',
                      'target.cfg(unix).dependencies', 'target.cfg(unix).dev-dependencies',
                      'target.cfg(unix).build-dependencies']:
             for name in ['receiver-store', 'zakura-server-chain', 'zakura-pir-native',
-                         'sha2', 'rand', 'enhance-serving', 'pir-runtime']:
+                         'sha2', 'rand', 'enhance-query-server', 'pir-runtime']:
                 package = {'name': 'pir-pipeline', 'manifest': 'src/shared/pir-pipeline/Cargo.toml',
                            'dependencies': [self.edge(name, kind)]}
                 self.assertTrue(boundary.violations([package], []), (kind, name))
@@ -1209,15 +1243,16 @@ class CacheWorkflowTests(unittest.TestCase):
         for package in full.inventory()['enhance']:
             self.assertIn(package, command)
         features = command[command.index('--features') + 1].split(',')
-        self.assertIn('enhance-pir-server/native-reinspiring', features)
+        self.assertIn('enhance-publisher/native-reinspiring', features)
         workflow = self.workflows['ci-full.yml']
         self.assertNotIn('tests:native-server-lib', workflow)
         matrix = json.loads((ROOT / 'tools/ci/test-matrix.json').read_text())
-        self.assertIn('reference:enhance-serving:lib:enhance_serving', matrix['enhance-reference']['targets'])
-        self.assertIn('reference:enhance-serving:test:ci_smoke', matrix['enhance-reference']['targets'])
-        self.assertIn('cuda:enhance-pir-server:test:matvec_config', matrix['enhance-cuda-tests']['targets'])
+        self.assertIn('reference:enhance-query-server:lib:enhance_query_server', matrix['enhance-reference']['targets'])
+        self.assertIn('reference:enhance-publisher:test:ci_smoke', matrix['enhance-reference']['targets'])
+        self.assertIn('cuda:enhance-publisher:test:matvec_config', matrix['enhance-cuda-tests']['targets'])
         runner = (ROOT / 'tools/ci/test_matrix.py').read_text()
-        self.assertIn("args = ['ipir::tests']", runner)
+        self.assertIn('args = list(REFERENCE_LIB_FILTERS)', runner)
+        self.assertIn("REFERENCE_LIB_FILTERS = ['ipir::tests',", runner)
         self.assertIn('backend_load_failure_does_not_rebuild_or_replace_published_units', runner)
 
     def test_transparent_full_checks_include_the_standalone_exporter(self):

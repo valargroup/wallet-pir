@@ -38,15 +38,15 @@ Cargo feature unification selecting the native path in shared server code.
 ```sh
 # Coordinator, packing router and CPU workers: existing Skylake AVX-512 hosts.
 RUSTFLAGS='-C target-cpu=skylake-avx512' cargo build --locked --profile release-fast \
-  -p enhance-pir-server --features native-reinspiring,cuda
+  -p enhance-publisher --bin enhance-pir-server --features native-reinspiring,cuda
 
 # GPU worker's host CPU supports AVX2, not AVX-512.
 RUSTFLAGS='-C target-cpu=haswell' cargo build --locked --profile release-fast \
-  -p enhance-pir-server --features native-reinspiring,cuda
+  -p enhance-publisher --bin enhance-pir-server --features native-reinspiring,cuda
 
 # Matching client / load tool.
 cargo build --locked --profile release-fast \
-  -p enhance-pir --features cli,native-reinspiring
+  -p enhance-pir-client --features native-reinspiring
 cargo build --locked --profile release-fast \
   -p enhance-pir-load-test --features native-reinspiring
 ```
@@ -66,13 +66,14 @@ an automatic rollback.
 ## Focused validation
 
 ```sh
-cargo check --locked -p enhance-pir-server -p enhance-pir-load-test \
+cargo check --locked -p enhance-publisher -p enhance-pir-load-test \
   --features native-reinspiring,cuda
 QUALIFY_PUBLICATIONS=1 QUALIFY_QUERY_LANES=2 QUALIFY_QUERIES_PER_LANE=3 \
-  cargo test --locked -p enhance-pir-server --features native-reinspiring \
-  --test packing_http --test status_wallet
-cargo test --locked -p enhance-pir --features native-reinspiring --lib native
-cargo test --locked -p enhance-serving --test packing_http
+  cargo test --locked -p enhance-publisher --features native-reinspiring \
+  --test packing_http
+cargo test --locked -p status-query-server --features native-reinspiring --test status_wallet
+cargo test --locked -p enhance-query-server --features native-reinspiring --lib native
+cargo test --locked -p enhance-publisher --test packing_http
 ```
 
 CI runs the native distributed HTTP fixture separately from the legacy suite,

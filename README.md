@@ -64,8 +64,8 @@ See the [tooling index](tools/README.md) for development commands and the
 make doctor
 make check-fast BASE=origin/main
 # Explicit comprehensive local validation: make check-full
-cargo run --release -p enhance-pir-server --bin enhance-pir-server -- --help
-cargo run --release -p enhance-pir --features cli --bin enhance-pir-cli -- --help
+cargo run --release -p enhance-publisher --bin enhance-pir-server -- --help
+cargo run --release -p enhance-pir-client --bin enhance-pir-cli -- --help
 make transparent-sim-help
 ```
 

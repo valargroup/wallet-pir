@@ -52,8 +52,8 @@ u64 coefficients on the private loopback API.
 ## Build and validate
 
 ```sh
-cargo test --locked -p enhance-pir --lib status::tests
-cargo test --locked -p enhance-pir-server --lib status::index::tests
+cargo test --locked -p status-query-server --lib protocol::tests
+cargo test --locked -p status-query-server --lib index::tests
 cargo build --locked --profile release-fast -p status-publisher --bin status-pir --features cuda
 RAYON_NUM_THREADS=4 LD_LIBRARY_PATH=/usr/local/cuda-12.2/lib64 \
   target/release-fast/status-pir validate --cuda \

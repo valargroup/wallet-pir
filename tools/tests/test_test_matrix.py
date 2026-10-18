@@ -56,21 +56,21 @@ class MatrixTests(unittest.TestCase):
     def test_reference_filters_and_cuda_modes_do_not_expand_or_disappear(self):
         registry, contexts, targets, packages, _ = self.plan
         reference = registry['enhance-reference']['targets']
-        self.assertIn('reference:enhance-serving:lib:enhance_serving', reference)
-        self.assertNotIn('reference:enhance-serving:test:http', reference)
-        native = matrix.package_features('enhance-serving', contexts['native'], packages)
-        cuda = matrix.package_features('enhance-serving', contexts['cuda'], packages)
-        self.assertIn('enhance-serving/native-reinspiring', native)
-        self.assertNotIn('enhance-serving/cuda', native)
-        self.assertIn('enhance-serving/native-reinspiring', cuda)
-        self.assertIn('enhance-serving/cuda', cuda)
-        self.assertFalse(matrix.package_features('enhance-serving', contexts['reference'], packages))
-        self.assertNotIn('enhance-pir-server/native-reinspiring', native)
+        self.assertIn('reference:enhance-query-server:lib:enhance_query_server', reference)
+        self.assertNotIn('reference:enhance-publisher:test:http', reference)
+        native = matrix.package_features('enhance-query-server', contexts['native'], packages)
+        cuda = matrix.package_features('enhance-query-server', contexts['cuda'], packages)
+        self.assertIn('enhance-query-server/native-reinspiring', native)
+        self.assertNotIn('enhance-query-server/cuda', native)
+        self.assertIn('enhance-query-server/native-reinspiring', cuda)
+        self.assertIn('enhance-query-server/cuda', cuda)
+        self.assertFalse(matrix.package_features('enhance-query-server', contexts['reference'], packages))
+        self.assertNotIn('enhance-publisher/native-reinspiring', native)
         commands = matrix.cargo_commands(registry['enhance-cuda-check']['targets'], contexts, targets, packages)
         self.assertEqual(len(commands), 1)
         command = commands[0][3]
         self.assertEqual({command[i + 1] for i, arg in enumerate(command) if arg == '-p'},
-                         {'enhance-serving', 'status-query-server', 'enhance-pir-server', 'status-publisher',
+                         {'enhance-query-server', 'status-query-server', 'enhance-publisher', 'status-publisher',
                           'enhance-pir-load-test'})
         self.assertEqual(command[command.index('--features') + 1], ','.join(matrix.CUDA))
         self.assertTrue(all('--all-targets' in cmd[3] for cmd in commands))
@@ -98,7 +98,7 @@ class MatrixTests(unittest.TestCase):
                 for name, shard in registry.items() if shard['family'] == family]
 
     def test_reference_qualification_keeps_oracles_and_native_keeps_http_lifecycles(self):
-        package = self.plan[3]['enhance-serving']
+        package = self.plan[3]['enhance-publisher']
         artifact = dict(package_id=package['id'], target=dict(name='ci_smoke', kind=['test']),
                         executable='/not-executed', features=['qualification-tests'])
         lifecycle = {'encrypted_http_answers_survive_coordinator_restart',
@@ -115,7 +115,7 @@ class MatrixTests(unittest.TestCase):
         for variant in ('reference', 'native'):
             with self.subTest(variant=variant), patch.object(matrix.subprocess, 'check_output', side_effect=listing):
                 _, programs, cases = matrix.test_programs([artifact], variant, {package['name']: package}, {})
-            actual = set(cases[f'{variant}:enhance-serving:ci_smoke']['tests'])
+            actual = set(cases[f'{variant}:enhance-query-server:ci_smoke']['tests'])
             self.assertEqual(actual, oracles if variant == 'reference' else lifecycle | oracles)
             if variant == 'native':
                 self.assertEqual(programs[0]['args'], [])

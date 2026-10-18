@@ -63,7 +63,7 @@ jobs:
         # The persistent incremental cache has produced stale hidden symbols
         # when these test crates switch between reference and native features.
         # Repair it once in cold preparation, never between timed warm runs.
-        run: cargo clean --profile release-fast -p enhance-serving -p transparent-filter-server -p transparent-server-backend
+        run: cargo clean --profile release-fast -p enhance-query-server -p enhance-publisher -p transparent-filter-server -p transparent-server-backend
       - name: Compile fast units
         run: umask 022 && TMPDIR="$RUNNER_TEMP" python3 tools/ci/fast.py --all --compile-only
       - name: Validate prepared units

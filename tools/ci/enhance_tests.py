@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Run the Enhance server's tiers from the workspace integration registry."""
+"""Run the Enhance publisher's tiers from the workspace integration registry."""
 from integration_tests import cargo_args as workspace_args, execute, inventory, validate as workspace_validate
 import argparse
 
-PACKAGE = 'enhance-pir-server'
+PACKAGE = 'enhance-publisher'
 
 
 def validate(metadata, registry):

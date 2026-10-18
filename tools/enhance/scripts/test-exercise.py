@@ -30,8 +30,10 @@ def main():
         parser.error('positive duration and at least six publications required')
     args.out.mkdir(parents=True, exist_ok=False)
     binary = args.bin_dir.resolve() / 'enhance-pir-server'
+    exercise = args.bin_dir.resolve() / 'enhance-pir-exercise'
     manifest = {'kind': 'workload-driver-smoke', 'qualification': 'unqualified',
-                **local.provenance(args.bin_dir.resolve()), 'binary_sha256': hashlib.sha256(binary.read_bytes()).hexdigest()}
+                **local.provenance(args.bin_dir.resolve()), 'binary_sha256': hashlib.sha256(binary.read_bytes()).hexdigest(),
+                'exercise_sha256': hashlib.sha256(exercise.read_bytes()).hexdigest()}
     processes, logs = [], []
     with tempfile.TemporaryDirectory(prefix='v4-exercise-') as directory:
         root = Path(directory)
@@ -59,7 +61,7 @@ def main():
                         time.sleep(0.1)
             inventory = root / 'workers.json'
             inventory.write_text(json.dumps({'groups': [{'name': 'g0', 'replicas': replicas}]}))
-            command = [str(binary), 'exercise', '--sealed-shards', str(args.sealed_shards), '--isolated-workers', '--profile', 'smoke',
+            command = [str(exercise), '--sealed-shards', str(args.sealed_shards), '--isolated-workers', '--profile', 'smoke',
                        '--data-dir', str(root / 'exercise'), '--worker-config', str(inventory), '--listen', '127.0.0.1:0',
                        '--seconds', str(args.seconds), '--min-publications', str(args.min_publications),
                        '--publication-interval', '1', '--concurrency', '2']
