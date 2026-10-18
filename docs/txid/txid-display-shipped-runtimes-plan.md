@@ -55,7 +55,7 @@ Background and measurements:
   - Therefore shipped runtimes must be **plain files at the candidate root**, never a
     subdirectory and never inside a revision directory.
 - **Shipping.**
-  - `ops/transparent/scripts/txid-display-fleet.py` `ship` (line ~139) runs
+  - `ops/txid/scripts/txid-display-fleet.py` `ship` (line ~139) runs
     `rsync -a --delete --link-dest=<previous candidate>` over SSH.
   - Files at the candidate root are carried without changes to the script. New
     runtime files transfer in full every block.
@@ -141,7 +141,7 @@ Background and measurements:
 - The controller with `--ship-runtimes` writes the files and records `prebuild_ms`. A
   helper failure still publishes.
 - Run the ops tests that touch the fleet script and txid deploy:
-  `python3 -B -m pytest ops/transparent/tests/test_txid_display_fleet.py ops/transparent/tests/test_txid_display_poc.py`,
+  `python3 -B -m pytest ops/txid/tests/test_txid_display_fleet.py ops/txid/tests/test_txid_display_poc.py`,
   or as `make check-fast` selects.
 
 ## Benchmarks before deploying (roman-dev-2)

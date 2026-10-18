@@ -156,7 +156,7 @@ class RouterHookTests(unittest.TestCase):
         if not caddy:
             self.skipTest('caddy is not installed')
         with tempfile.TemporaryDirectory() as tmp:
-            snippet = (ROOT / 'ops/transparent/deploy/txid-display-routes.caddy.in').read_text()
+            snippet = (ROOT / 'ops/txid/deploy/txid-display-routes.caddy.in').read_text()
             snippet = snippet.replace('@TXID@', '/v1/txid').replace('@ARCHIVE_UPSTREAM@', '10.0.0.5:8095').replace('@RECENT_UPSTREAM@', '10.0.0.6:8095')
             (Path(tmp) / 'routes.caddy').write_text(snippet)
             live, _ = render(True, False, route_imports=[tmp + '/*.caddy'])

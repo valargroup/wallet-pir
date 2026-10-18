@@ -37,8 +37,8 @@ def load(name, path):
     return module
 
 
-F = load('txid_display_fleet', ROOT / 'ops/transparent/scripts/txid-display-fleet.py')
-O = load('txid_display_observe', ROOT / 'ops/transparent/scripts/txid-display-observe.py')
+F = load('txid_display_fleet', ROOT / 'ops/txid/scripts/txid-display-fleet.py')
+O = load('txid_display_observe', ROOT / 'ops/txid/scripts/txid-display-observe.py')
 REAL_RSYNC = shutil.which('rsync')
 DIGEST = 'a' * 64
 PREVIOUS = 'b' * 64
@@ -408,7 +408,7 @@ class AdapterTests(Harness, unittest.TestCase):
 
     def test_stdin_and_stdout_by_default(self):
         request = json.dumps({'operation': 'control', 'worker': 'recent', 'command': {'operation': 'status'}})
-        result = subprocess.run([sys.executable, str(ROOT / 'ops/transparent/scripts/txid-display-fleet.py'),
+        result = subprocess.run([sys.executable, str(ROOT / 'ops/txid/scripts/txid-display-fleet.py'),
                                  str(self.root / 'fleet.json')], input=request, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue(json.loads(result.stdout)['ok'])

@@ -1,0 +1,31 @@
+# Transaction-detail (txid) display role descriptor; templates sit beside it.
+# Publication, activation and rollback stay in the `txid-display` driver.
+[services.transparent-display]
+driver = "txid-display"
+root = "/opt/transparent-txid-display"
+binary = "transparent-txid-server"
+order = ["worker", "external-worker", "controller"]
+ancillary = ["routing"]
+
+[services.transparent-display.roles.worker]
+unit = "transparent-txid-display-worker.service"
+mode = "exec-drop-in"
+health = "http://{listen}/v1/health"
+ready = { field = "ready", equals = true }
+ready_url = "http://{listen}/v1/ready"
+
+# Starts with no publication; the display controller stages and activates.
+[services.transparent-display.roles.external-worker]
+unit = "transparent-display-worker.service"
+mode = "role"
+template = "transparent-display-worker.role.service"
+renderer = "ops.txid.lib.roles:display_worker"
+optional = true
+health = "http://{listen}/v1/health"
+ready_timeout = 300
+
+[services.transparent-display.roles.controller]
+unit = "transparent-txid-display-controller.service"
+mode = "exec-drop-in"
+health = "http://{listen}/v1/status"
+responsibilities = ["journal-writer"]

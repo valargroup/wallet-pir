@@ -76,7 +76,7 @@ class OperationsBundleTests(unittest.TestCase):
         self.assertEqual(set(registry), {'enhance', 'status', 'receiver', 'transparent-history', 'transparent-display'})
         self.assertTrue(all(r.template is None or r.template.is_relative_to(destination.resolve())
                             for s in registry.values() for r in s.roles.values()))
-        probe = "from wallet_pir_ops import release; from ops.transparent.lib import txid_display_poc; assert release.ROOT == txid_display_poc.ROOT"
+        probe = "from wallet_pir_ops import release; from ops.txid.lib import txid_display_poc; assert release.ROOT == txid_display_poc.ROOT"
         result = subprocess.run([sys.executable, '-B', '-c', probe], cwd=self.root,
                                 env={**environment, 'PYTHONPATH': str(destination / 'ops/lib')},
                                 capture_output=True, text=True, timeout=15)
@@ -91,7 +91,9 @@ class OperationsBundleTests(unittest.TestCase):
                     'ops/transparent/deploy/history-provider.example.json',
                     'ops/transparent/deploy/history-provider.caddy',
                     'ops/transparent/deploy/transparent-history-provider.role.service'}
-        files = {name: data for name, data in bundle.contents(ROOT).items() if name not in provider}
+        # It also predates the separate Status and txid operations directories.
+        files = {name: data for name, data in bundle.contents(ROOT).items()
+                 if name not in provider and not name.startswith(('ops/status/', 'ops/txid/'))}
         archive = self.root / 'retained-v1.tar.gz'
         bundle.write_archive(archive, 'b' * 40, files, False)
         manifest, payload = bundle.verify(archive, 'b' * 40)

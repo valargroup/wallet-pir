@@ -24,9 +24,9 @@ sys.path.insert(0, str(ROOT / 'ops/lib'))
 from wallet_pir_ops import control_sessions as cs, pinned_ssh  # noqa: E402
 
 FAKE_SSH = Path(__file__).resolve().parent / 'fake_ssh.py'
-EXAMPLE = ROOT / 'ops/deploy/control-sessions.status.example.json'
-UNITS = {'status-control': ROOT / 'ops/enhance/deploy/status-control-tunnel.service.in',
-         'status-query': ROOT / 'ops/enhance/deploy/status-query-tunnel.service.in'}
+EXAMPLE = ROOT / 'ops/status/deploy/control-sessions.example.json'
+UNITS = {'status-control': ROOT / 'ops/status/deploy/status-control-tunnel.service.in',
+         'status-query': ROOT / 'ops/status/deploy/status-query-tunnel.service.in'}
 CLOUD_INIT = ROOT / 'ops/infra/digitalocean/status/cloud-init.yaml.tftpl'
 PUBLIC_KEY = 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOVJfyTmLRUrVY7xJ3LvsjGEEBPy/b0TkM5A2HpVRZl9 status-control'
 

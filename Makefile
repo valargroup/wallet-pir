@@ -85,7 +85,7 @@ check-ops-parents:
 
 check-ops-fleet:
 	python3 ops/transparent/tests/test_transparent_fleet.py
-	python3 ops/transparent/tests/test_txid_display_router.py
+	python3 ops/txid/tests/test_txid_display_router.py
 	python3 ops/transparent/tests/test_public_router.py
 
 check-ops-publication:
@@ -126,7 +126,7 @@ check-ops-membership:
 # its command-transport adapter and observers against shimmed ssh and rsync, and
 # the history router's opt-in import hook.
 check-ops-txid-display:
-	python3 -m unittest discover -s ops/transparent/tests -p 'test_txid_display_*.py'
+	python3 -m unittest discover -s ops/txid/tests -p 'test_*.py'
 
 # Elastic recent replicas: the saved-plan validator and the Terraform root runner.
 check-ops-elastic:

@@ -13,8 +13,8 @@ pattern = "ops/enhance/deploy/*.example.json"
 reason = "Public examples for the maintained deployment commands."
 
 [[allow_data]]
-pattern = "ops/deploy/*.example.json"
-reason = "Public shared control-session configuration example."
+pattern = "ops/status/deploy/*.example.json"
+reason = "Public Status control-session configuration example."
 
 [[allow_data]]
 pattern = "ops/transparent/deploy/*.example.json"

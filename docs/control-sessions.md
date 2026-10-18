@@ -23,7 +23,7 @@ supervisor.
 - Entry point: `ops/scripts/wallet-pir-control-sessions.py`
 - Unit: `ops/deploy/wallet-pir-control-sessions.service`
 - Configuration: `/etc/wallet-pir/control-sessions.json`
-- Status example: `ops/deploy/control-sessions.status.example.json`
+- Status example: `ops/status/deploy/control-sessions.example.json`
 
 Each configured session is one foreground `ssh -N` master (`ControlMaster=yes`).
 It carries the session's TCP local forwards (`-L`), TCP reverse forwards (`-R`)
@@ -192,7 +192,7 @@ Status query path, so it needs a window.
    - restart the Status host.
 
    Rollback is starting the two tunnel units again after stopping the
-   supervisor. Their templates stay in `ops/enhance/deploy/`.
+   supervisor. Their templates stay in `ops/status/deploy/`.
 2. **Transparent.**
    - Decide on and build the loopback TCP control endpoint.
    - Add a `pir-control` account through Terraform cloud-init, with its key in

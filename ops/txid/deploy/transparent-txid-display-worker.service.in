@@ -7,7 +7,7 @@ Wants=network-online.target
 Type=simple
 User=root
 # Rendered by `wallet-pir-deploy.py txid-display-deploy --phase workers` from the
-# reviewed request; ops/transparent/lib/txid_display_poc.py owns the values.
+# reviewed request; ops/txid/lib/txid_display_poc.py owns the values.
 # The worker starts with no publication. The deploy and then the controller
 # stage, prepare and activate publications through the control socket only.
 # Every path is outside /srv/transparent-pir and /opt/transparent-publisher, so

@@ -3756,7 +3756,7 @@ follows the swap without downtime, as
    disk preflight checks charge entries the same way. See
    [the architecture](architecture.md#serving-and-publication).
 2. **Split display map**, as described in [The map](#the-map).
-3. **Ops** (`ops/transparent/lib/txid_display_poc.py`):
+3. **Ops** (`ops/txid/lib/txid_display_poc.py`):
    - raise the `max_archive_shards` and `archives` caps from 64 to 1,024;
    - raise the per-unit `cache_bytes` cap from 64 GiB. The archive cache needs
      about 63.2 GiB with a year of growth; use 96 GiB with `MemoryMax` 71G or more;
