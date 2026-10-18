@@ -21,11 +21,11 @@ pattern = "tools/transparent/deploy/*.example.json"
 reason = "Public fleet-scaler configuration example."
 
 [[allow_data]]
-pattern = "src/enhance/enhance-pir/tests/fixtures/*.json"
+pattern = "src/enhance/enhance-query-server/tests/fixtures/*.json"
 reason = "Protocol regression inputs consumed by Rust tests."
 
 [[allow_data]]
-pattern = "src/enhance/enhance-pir-server/tests/fixtures/*.json"
+pattern = "src/enhance/enhance-publisher/tests/fixtures/*.json"
 reason = "Independent Ironwood record oracle consumed by tests."
 
 [[allow_data]]
@@ -73,7 +73,7 @@ pattern = "src/transparent/transparent-regression/fixtures/*.json"
 reason = "Independent accepted-anchor regression and workflow inputs."
 
 [[allow_data]]
-pattern = "src/enhance/noise-analysis/sampler-cdf.json"
+pattern = "tools/enhance/noise-analysis/sampler-cdf.json"
 reason = "Sampling distribution input consumed by noise-analysis."
 
 [[allow_data]]
