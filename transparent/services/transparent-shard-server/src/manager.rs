@@ -9,6 +9,7 @@ use crate::{
     service::{ReadinessMode, ServiceConfig, ServiceState},
     shardset::{LoadOptions, LoadScope, ShardSet},
 };
+use pir_pipeline::Input;
 use std::{collections::BTreeSet, path::Path, time::Duration};
 use transparent_server_backend::distribution::{Current, Error};
 
@@ -125,6 +126,24 @@ impl Manager {
         result
     }
     async fn reconcile(&mut self) -> Result<Progress, Error> {
+        let input = pir_pipeline::acquire(self.acquire(), &mut ()).await?;
+        match pir_pipeline::advance(input, Acquired::prepare, Prepared::publish, &mut ()).await? {
+            Input::Work(progress) => Ok(progress),
+            Input::Unchanged => Ok(Progress {
+                unchanged: true,
+                revision: self
+                    .current
+                    .as_ref()
+                    .expect("conditional poll has an active snapshot")
+                    .revision,
+                downloaded_bytes: self.source.downloaded,
+                downloaded_files: 0,
+            }),
+            // HTTPS acquisition has no deferred queue or admission outcome.
+            Input::Deferred => unreachable!("HTTPS acquisition never defers work"),
+        }
+    }
+    async fn acquire(&mut self) -> Result<Input<Acquired<'_>>, Error> {
         self.source.reset_budget();
         if let Some(live) = &self.live {
             live.collect_memory().await?;
@@ -138,12 +157,7 @@ impl Manager {
         )
         .await?;
         let Some(current) = current else {
-            return Ok(Progress {
-                unchanged: true,
-                revision: self.current.as_ref().unwrap().revision,
-                downloaded_bytes: self.source.downloaded,
-                downloaded_files: 0,
-            });
+            return Ok(Input::Unchanged);
         };
         if self.live.is_none() && self.config.directory.join("active.json").exists() {
             // A failed update does not discard the complete predecessor across
@@ -168,140 +182,10 @@ impl Manager {
         if !current.eligible() {
             return Err("publisher current publication is withdrawn or noncanonical".into());
         }
-        let staged = bootstrap::stage(&self.config, &mut self.source, &current, true).await?;
-        let publication = Publication {
-            directory: staged.directory.clone(),
-            assignment: Some(staged.directory.join("assignment.json")),
-            map_sha256: staged.inventory.map_sha256.clone(),
-            runtimes: Some(staged.directory.clone()),
-        };
-        let initial = self.live.is_none();
-        let live = if let Some(live) = &self.live {
-            live.clone()
-        } else {
-            let root = staged.directory.clone();
-            let options = staged.options.clone();
-            let set =
-                tokio::task::spawn_blocking(move || ShardSet::open_with(&root, &options)).await??;
-            let state = ServiceState::build_with_runtimes(
-                set,
-                self.service,
-                None,
-                Some(ShippedRuntimes::required(staged.directory.clone())),
-            )?;
-            let state = match &self.archive {
-                Some(archive) => state.with_archive(archive.clone()),
-                None => state,
-            };
-            state.spawn_prewarm().await?;
-            if !state.is_warm() {
-                return Err("required publication failed prewarm".into());
-            }
-            LiveService::new_required(
-                state,
-                publication.clone(),
-                self.service,
-                staged.options.clone(),
-                self.config.directory.join("active.json"),
-                self._lock.clone(),
-            )?
-        };
-        if initial {
-            live.fence_recovered(
-                &combined_floor(&self.config.directory, &mut self.revocations)?.digests,
-            )?;
-        }
-        let status = live.command(Command::Status).await?;
-        let expected = status["active"]["map_sha256"]
-            .as_str()
-            .ok_or("owner has no predecessor")?
-            .to_string();
-        if !initial {
-            live.command(Command::Prepare {
-                expected: expected.clone(),
-                publication: publication.clone(),
-            })
-            .await?;
-        }
-        let config = &self.config;
-        let root = &config.directory;
-        let revocations = &mut self.revocations;
-        let source = &mut self.source;
-        let checked_live = live.clone();
-        let map_path = staged.directory.join("shards.json");
-        // The owner obtains this check while it holds activation serialization.
-        live.activate_checked(
-            expected,
-            publication.map_sha256.clone(),
-            initial,
-            || async {
-                let result: Result<(), Error> = async {
-                    let latest =
-                        poll_snapshot(source, config, Some(&checked_live), None, revocations)
-                            .await?
-                            .ok_or("missing fresh current")?;
-                    if latest != current || !latest.eligible() {
-                        return Err("publication superseded before activation".into());
-                    }
-                    // A missed invalidation is not encoded in the latest range.
-                    // Revalidate exact candidate anchors, including formerly revoked
-                    // revisions, before permitting a newer recovery to clear them.
-                    let map: transparent_filter::ShardMap =
-                        serde_json::from_slice(&std::fs::read(&map_path)?)?;
-                    let mut keep = BTreeSet::new();
-                    for shard in &map.shards {
-                        if !source
-                            .anchor(&latest, shard.end_height, &shard.terminal_block_hash)
-                            .await?
-                        {
-                            revoke_digests(
-                                root,
-                                &checked_live,
-                                &latest,
-                                BTreeSet::from([shard.manifest_digest.clone()]),
-                                revocations,
-                            )
-                            .await?;
-                            return Err("candidate anchor is noncanonical".into());
-                        }
-                        keep.insert(shard.manifest_digest.clone());
-                    }
-                    if latest.revision > combined_floor(root, revocations)?.revision {
-                        checked_live.restore_verified(&keep)?;
-                        let mut intent = combined_floor(root, revocations)?;
-                        intent.digests.retain(|digest| !keep.contains(digest));
-                        persist_floor(root, &intent)?;
-                        *revocations = intent;
-                    }
-                    // Anchor checks cannot authorize a candidate across a source
-                    // pointer/recovery change. Never use 304 for this final read.
-                    let final_current =
-                        poll_snapshot(source, config, Some(&checked_live), None, revocations)
-                            .await?
-                            .ok_or("missing final current")?;
-                    if final_current != latest {
-                        return Err("publication superseded during anchor checks".into());
-                    }
-                    Ok(())
-                }
-                .await;
-                result.map_err(|e| e.to_string())
-            },
-        )
-        .await?;
-        persist(
-            &staged.directory.join("verified-inventory.json"),
-            &staged.inventory,
-        )?;
-        live.collect_memory().await?;
-        self.live = Some(live);
-        self.current = Some(current.clone());
-        Ok(Progress {
-            unchanged: false,
-            revision: current.revision,
-            downloaded_bytes: self.source.downloaded,
-            downloaded_files: staged.downloaded_files,
-        })
+        Ok(Input::Work(Acquired {
+            owner: self,
+            current,
+        }))
     }
     async fn recover(&mut self, current: &Current) -> Result<LiveService, Error> {
         let record = self.config.directory.join("active.json");
@@ -409,8 +293,193 @@ impl Manager {
             let jitter = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_or(0, |d| u64::from(d.subsec_nanos()) % 1000);
-            tokio::time::sleep(Duration::from_millis(base * 1000 + jitter)).await;
+            pir_pipeline::wait(
+                tokio::time::Instant::now() + Duration::from_millis(base * 1000 + jitter),
+                std::future::pending(),
+                std::future::pending(),
+            )
+            .await;
         }
+    }
+}
+/// Authenticated, replay-ordered source work. Safety evidence is applied before
+/// returning it, including predecessor recovery. Neither this token nor staged
+/// files grant authority. The borrow keeps one source budget and one owner/pass.
+struct Acquired<'a> {
+    owner: &'a mut Manager,
+    current: Current,
+}
+
+/// Strictly loaded candidate; only the existing owner may publish it after its
+/// final source/anchor checks under activation serialization. No dataset copies
+/// or persisted phase token are needed.
+struct Prepared<'a> {
+    work: Acquired<'a>,
+    staged: bootstrap::Staged,
+    publication: Publication,
+    live: LiveService,
+    expected: String,
+    initial: bool,
+}
+
+impl<'a> Acquired<'a> {
+    async fn prepare(self) -> Result<Input<Prepared<'a>>, Error> {
+        let Acquired { owner, current } = self;
+        let staged = bootstrap::stage(&owner.config, &mut owner.source, &current, true).await?;
+        let publication = Publication {
+            directory: staged.directory.clone(),
+            assignment: Some(staged.directory.join("assignment.json")),
+            map_sha256: staged.inventory.map_sha256.clone(),
+            runtimes: Some(staged.directory.clone()),
+        };
+        let initial = owner.live.is_none();
+        let live = if let Some(live) = &owner.live {
+            live.clone()
+        } else {
+            let root = staged.directory.clone();
+            let options = staged.options.clone();
+            let set =
+                tokio::task::spawn_blocking(move || ShardSet::open_with(&root, &options)).await??;
+            let state = ServiceState::build_with_runtimes(
+                set,
+                owner.service,
+                None,
+                Some(ShippedRuntimes::required(staged.directory.clone())),
+            )?;
+            let state = match &owner.archive {
+                Some(archive) => state.with_archive(archive.clone()),
+                None => state,
+            };
+            state.spawn_prewarm().await?;
+            if !state.is_warm() {
+                return Err("required publication failed prewarm".into());
+            }
+            LiveService::new_required(
+                state,
+                publication.clone(),
+                owner.service,
+                staged.options.clone(),
+                owner.config.directory.join("active.json"),
+                owner._lock.clone(),
+            )?
+        };
+        if initial {
+            live.fence_recovered(
+                &combined_floor(&owner.config.directory, &mut owner.revocations)?.digests,
+            )?;
+        }
+        let status = live.command(Command::Status).await?;
+        let expected = status["active"]["map_sha256"]
+            .as_str()
+            .ok_or("owner has no predecessor")?
+            .to_string();
+        if !initial {
+            live.command(Command::Prepare {
+                expected: expected.clone(),
+                publication: publication.clone(),
+            })
+            .await?;
+        }
+        Ok(Input::Work(Prepared {
+            work: Acquired { owner, current },
+            staged,
+            publication,
+            live,
+            expected,
+            initial,
+        }))
+    }
+}
+
+impl Prepared<'_> {
+    async fn publish(self) -> Result<Progress, Error> {
+        let Prepared {
+            work: Acquired { owner, current },
+            staged,
+            publication,
+            live,
+            expected,
+            initial,
+        } = self;
+        let config = &owner.config;
+        let root = &config.directory;
+        let revocations = &mut owner.revocations;
+        let source = &mut owner.source;
+        let checked_live = live.clone();
+        let map_path = staged.directory.join("shards.json");
+        // The owner obtains this check while it holds activation serialization.
+        live.activate_checked(
+            expected,
+            publication.map_sha256.clone(),
+            initial,
+            || async {
+                let result: Result<(), Error> = async {
+                    let latest =
+                        poll_snapshot(source, config, Some(&checked_live), None, revocations)
+                            .await?
+                            .ok_or("missing fresh current")?;
+                    if latest != current || !latest.eligible() {
+                        return Err("publication superseded before activation".into());
+                    }
+                    // A missed invalidation is not encoded in the latest range.
+                    // Revalidate exact candidate anchors, including formerly revoked
+                    // revisions, before permitting a newer recovery to clear them.
+                    let map: transparent_filter::ShardMap =
+                        serde_json::from_slice(&std::fs::read(&map_path)?)?;
+                    let mut keep = BTreeSet::new();
+                    for shard in &map.shards {
+                        if !source
+                            .anchor(&latest, shard.end_height, &shard.terminal_block_hash)
+                            .await?
+                        {
+                            revoke_digests(
+                                root,
+                                &checked_live,
+                                &latest,
+                                BTreeSet::from([shard.manifest_digest.clone()]),
+                                revocations,
+                            )
+                            .await?;
+                            return Err("candidate anchor is noncanonical".into());
+                        }
+                        keep.insert(shard.manifest_digest.clone());
+                    }
+                    if latest.revision > combined_floor(root, revocations)?.revision {
+                        checked_live.restore_verified(&keep)?;
+                        let mut intent = combined_floor(root, revocations)?;
+                        intent.digests.retain(|digest| !keep.contains(digest));
+                        persist_floor(root, &intent)?;
+                        *revocations = intent;
+                    }
+                    // Anchor checks cannot authorize a candidate across a source
+                    // pointer/recovery change. Never use 304 for this final read.
+                    let final_current =
+                        poll_snapshot(source, config, Some(&checked_live), None, revocations)
+                            .await?
+                            .ok_or("missing final current")?;
+                    if final_current != latest {
+                        return Err("publication superseded during anchor checks".into());
+                    }
+                    Ok(())
+                }
+                .await;
+                result.map_err(|e| e.to_string())
+            },
+        )
+        .await?;
+        persist(
+            &staged.directory.join("verified-inventory.json"),
+            &staged.inventory,
+        )?;
+        live.collect_memory().await?;
+        owner.live = Some(live);
+        owner.current = Some(current.clone());
+        Ok(Progress {
+            unchanged: false,
+            revision: current.revision,
+            downloaded_bytes: owner.source.downloaded,
+            downloaded_files: staged.downloaded_files,
+        })
     }
 }
 #[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
