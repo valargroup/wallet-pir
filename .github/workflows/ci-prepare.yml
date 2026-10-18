@@ -5,6 +5,10 @@ name: Prepare fast validation
 on:
   workflow_dispatch:
     inputs:
+      comparison-base:
+        description: Full SHA to warm the affected Cargo graph (defaults to successful main history)
+        type: string
+        default: ''
       stress:
         description: Repeat each encrypted HTTP and recovery smoke 50 times
         type: boolean
@@ -36,7 +40,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          persist-credentials: false
+          fetch-depth: 1
+      - name: Fetch comparison revision
+        env:
+          BASE: ${{ inputs.comparison-base }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          umask 022
+          BASE=$(python3 tools/ci/feedback_base.py --prepare)
+          if [[ -n "$BASE" ]]; then
+            [[ "$BASE" =~ ^[0-9a-f]{40}$ ]]
+            git fetch --no-tags --depth=1 origin "$BASE"
+          fi
+          git config --local --unset-all "http.${GITHUB_SERVER_URL}/.extraheader" || true
       - uses: ./.github/actions/rust-setup
         with:
           lane: fast
@@ -52,6 +69,13 @@ jobs:
       - name: Validate prepared units
         if: ${{ !inputs.correctness }}
         run: umask 022 && TMPDIR="$RUNNER_TEMP" python3 tools/ci/fast.py --all --unit-jobs 2
+      # The complete workspace and the affected roots can unify dependency
+      # features differently. Finish with the graph the routine check selects.
+      - name: Validate affected fast units
+        if: ${{ !inputs.correctness }}
+        env:
+          BASE: ${{ env.FAST_BASE }}
+        run: umask 022 && TMPDIR="$RUNNER_TEMP" python3 tools/ci/fast.py --committed-only --base "$BASE" --unit-jobs 3
       - name: Repeat independent HTTP and recovery checks
         if: inputs.stress
         run: umask 022 && TMPDIR="$RUNNER_TEMP" python3 tools/ci/integration_tests.py --tier fast --smoke-only --repeat 50
@@ -78,6 +102,7 @@ jobs:
           set -euo pipefail
           umask 022
           for attempt in 1 2 3; do
+            echo "Complete correctness run $attempt"
             TMPDIR="$RUNNER_TEMP" python3 tools/ci/correctness.py --offline
           done
       - name: Retain complete correctness case and stage receipts

@@ -1088,6 +1088,27 @@ class CacheWorkflowTests(unittest.TestCase):
         for forbidden in ('continue-on-error', '--all', '--compile-only', '--package', 'if:'):
             self.assertNotIn(forbidden, step)
 
+    def test_manual_preparation_warms_the_affected_graph_after_full_validation(self):
+        text = self.workflows['ci-prepare.yml']
+        fetch = text.index('- name: Fetch comparison revision')
+        setup = text.index('- uses: ./.github/actions/rust-setup')
+        all_validation = text.index('- name: Validate prepared units')
+        affected = text.index('- name: Validate affected fast units')
+        report = text.index('- name: Repeat independent HTTP and recovery checks')
+        self.assertLess(fetch, setup)
+        self.assertIn('feedback_base.py --prepare', text[fetch:setup])
+        self.assertIn('git fetch --no-tags --depth=1 origin "$BASE"', text[fetch:setup])
+        self.assertIn('git config --local --unset-all', text[fetch:setup])
+        self.assertLess(all_validation, affected)
+        step = text[affected:report]
+        self.assertIn('if: ${{ !inputs.correctness }}', step)
+        self.assertIn('BASE: ${{ env.FAST_BASE }}', step)
+        command = 'python3 tools/ci/fast.py --committed-only --base "$BASE" --unit-jobs 3'
+        self.assertIn(command, step)
+        self.assertIn(command, self.workflows['ci.yml'])
+        for forbidden in ('continue-on-error', '--all', '--compile-only', '--package'):
+            self.assertNotIn(forbidden, step)
+
     def test_unrelated_labels_cannot_enter_preparation_concurrency(self):
         text = self.workflows['ci-pr-prepare.yml']
         workflow, jobs = text.split('\njobs:\n', 1)

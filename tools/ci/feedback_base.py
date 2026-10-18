@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Include changes from canceled or failed main runs in the next fast check."""
+import argparse
 import os
 from pathlib import Path
 import re
@@ -42,7 +43,7 @@ def prepared_base(repo, head, previous):
     if len(jobs) != 1 or jobs[0].get('status') != 'completed' or jobs[0].get('conclusion') != 'success':
         return previous
     steps = {step['name']: step for step in jobs[0].get('steps', [])}
-    for name in ('Compile fast units', 'Validate prepared units'):
+    for name in ('Compile fast units', 'Validate prepared units', 'Validate affected fast units'):
         step = steps.get(name, {})
         if step.get('status') != 'completed' or step.get('conclusion') != 'success':
             return previous
@@ -64,9 +65,27 @@ def comparison(event, base, repo, head=''):
     return prepared_base(repo, head, sha) if re.fullmatch('[0-9a-f]{40}', head) else sha
 
 
-if __name__ == '__main__':
-    base = comparison(os.environ['GITHUB_EVENT_NAME'], os.environ.get('BASE', ''),
-                      os.environ['GITHUB_REPOSITORY'], os.environ.get('GITHUB_SHA', ''))
+def preparation_comparison(base, repo, head):
+    """Warm an explicit comparison or the same main history routine CI uses."""
+    if base:
+        if not re.fullmatch('[0-9a-f]{40}', base):
+            raise ValueError('preparation comparison must be a full commit SHA')
+        return base
+    return comparison('push', '', repo, head)
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--prepare', action='store_true',
+                        help='use an explicit comparison or successful main history for cache preparation')
+    args = parser.parse_args(argv)
+    inputs = (os.environ.get('BASE', ''), os.environ['GITHUB_REPOSITORY'], os.environ.get('GITHUB_SHA', ''))
+    base = (preparation_comparison(*inputs) if args.prepare
+            else comparison(os.environ['GITHUB_EVENT_NAME'], *inputs))
     with open(os.environ['GITHUB_ENV'], 'a') as out:
         out.write('FAST_BASE=' + base + '\n')
     print(base)
+
+
+if __name__ == '__main__':
+    main()

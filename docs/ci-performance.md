@@ -95,8 +95,9 @@ qualification without starting unrelated operations fixtures in fast feedback.
 Documentation-only changes run documentation checks without installing Rust.
 Operations-only changes run helper checks without compiling Rust. Main compares against
 the last successful main fast run or a newer completed full fast preparation on
-main's ancestry. Preparation reuse requires successful compile and validation
-steps from the same successful attempt and the canonical repository/workflow.
+main's ancestry. Preparation reuse requires successful complete-workspace compile
+and validation plus affected-graph validation from the same successful attempt
+and the canonical repository/workflow.
 Partial diagnostic dispatches, canceled or skipped validation, unrelated branches
 and stale ancestry cannot leave unchecked changes behind.
 
@@ -429,6 +430,10 @@ on `main` to prepare its trusted persistent cache. Main pushes preempt that
 preparation; preparation cannot cancel a running main check.
 Main rejects an entirely empty cache with an explicit
 preparation error instead of spending its three-minute budget on native builds.
+Preparation validates the complete fast selection, then validates the affected
+selection using the same command as routine CI: Cargo can unify dependency
+features differently for those roots. The optional `comparison-base` input pins
+a full comparison SHA; otherwise preparation uses successful main history.
 Cargo still validates dependencies and rebuilds changed units on every run.
 The optional `stress` input repeats each family's encrypted HTTP/recovery smoke
 50 times with fresh service state and no test retries. It remains preemptible
