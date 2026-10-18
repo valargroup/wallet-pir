@@ -51,10 +51,9 @@ remains available for historical context. The
 |---|---|
 | `src/<product>/` | Cargo packages for `enhance`, `status`, `transparent`, `txid` and `receiver`, including Rust development tools |
 | `src/shared/` | Focused packages shared by more than one product |
-| `ops/` | Shared production infrastructure and deployment contracts; product operations under `ops/<product>/` |
 | `docs/` | Repository-wide indexes and notes; product documentation under `docs/<product>/` |
 | `evidence/` | Evidence policy and checksums; product evidence under `evidence/<product>/` |
-| `tools/` | Repository-wide checks; standalone product scripts under `tools/<product>/` |
+| `tools/` | CI, development, infrastructure and deployment automation; product scripts and operations under `tools/<product>/` |
 
 See the [tooling index](tools/README.md) for development commands and the
 [evidence index](evidence/README.md) for measurement provenance and retention.

@@ -410,7 +410,7 @@ Vizor, sending and distribution remain excluded. [Starting observations](https:/
   tests, ops contracts and a coordinator hard-link probe passed. Repeat the
   probe under the installed unit. Release bundles now retain all 18 artifacts,
   including the two deployment helpers missing from earlier retention lists.
-  Read-only worker plan/preflight through `ops/scripts/wallet-pir-deploy.py`
+  Read-only worker plan/preflight through `tools/scripts/wallet-pir-deploy.py`
   passed against the current three-worker fleet; releases remain unstaged.
   Complete schema coordination and coherent rollback through that wrapper,
   with plan/preflight and its production lock, before any production change.

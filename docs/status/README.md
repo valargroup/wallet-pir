@@ -1,7 +1,7 @@
 # Status PIR
 
 Status PIR serves note-status records. Its Cargo packages live under
-`src/status/`; operations under `ops/status/`, scripts under `tools/status/` and
+`src/status/`; operations under `tools/status/`, scripts under `tools/status/` and
 retained evidence alongside Enhance under [Enhance evidence](../../evidence/enhance/README.md).
 
 The two packages have separate responsibilities:

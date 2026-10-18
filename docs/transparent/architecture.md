@@ -99,7 +99,7 @@ and local evidence only.
 | Wallet | `wallet-libraries/zakura/pir-transparent/src/engine` | Local matching, private retrieval, validation, ledger replay |
 | Wallet store | `wallet-libraries/zakura/pir-transparent/src/engine_store.rs` | Reference durable store on SQLite |
 | Comparison baseline | `src/transparent/transparent-blocks`, `src/transparent/transparent-block-server` | Pinned compact-block datasets for benchmark comparison; not a lightwalletd implementation |
-| Deployment | `ops/` and `.github/workflows/` | Build, distribute, preflight and activate artifacts |
+| Deployment | `tools/` and `.github/workflows/` | Build, distribute, preflight and activate artifacts |
 
 The publisher and query worker share the server backend, which has no node or
 RocksDB dependency. The publisher owns chain ingestion and publication lifecycle;
@@ -490,8 +490,8 @@ setup and query, and `/v2/filters/shards`; the display service answers `/v2/txid
 their paths. The fleet adapter renders a fleet's routes for the prefix its configuration
 names (`api_version`, required for a fleet that renders a router). The public router owns
 no version: it is a shell around one route file per prefix
-(`ops/transparent/deploy/api/v<N>.caddy`, rendered by
-`ops/transparent/scripts/transparent-public-router.py`) that sends each prefix to its
+(`tools/transparent/deploy/api/v<N>.caddy`, rendered by
+`tools/transparent/scripts/transparent-public-router.py`) that sends each prefix to its
 version's fleet. A new wire format takes the next prefix and one more route file; a
 retired prefix keeps a file that answers 410.
 

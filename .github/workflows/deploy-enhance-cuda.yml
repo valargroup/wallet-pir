@@ -108,7 +108,7 @@ jobs:
           if [[ -n "$ORACLE_REPLACEMENT" || -n "$ORACLE_SHA256" ]]; then
             operation_args+=(--oracle-replacement "$ORACLE_REPLACEMENT" --oracle-sha256 "$ORACLE_SHA256")
           fi
-          python3 ops/enhance/scripts/deploy-cuda.py "$MODE" "${operation_args[@]}" \
+          python3 tools/enhance/scripts/deploy-cuda.py "$MODE" "${operation_args[@]}" \
             --inventory /etc/enhance-pir/cuda-deploy-inventory.json \
             --archive cuda-artifact/enhance-pir-native-cuda.tar.gz --sha "$SHA" \
             --state-dir /var/lib/wallet-pir-deploy/cuda \

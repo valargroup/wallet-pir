@@ -56,7 +56,7 @@ to derive the time spent between scopes.
 
 Important environment variables include `PIR_APM_SCRAPE_URL`,
 `PIR_APM_LISTEN`, `PIR_APM_ENVIRONMENT`, and optional
-`PIR_APM_SLACK_WEBHOOK_URL`. The service example lives at `ops/enhance/deploy/pir-apm.service`;
+`PIR_APM_SLACK_WEBHOOK_URL`. The service example lives at `tools/enhance/deploy/pir-apm.service`;
 production configuration is in `/etc/default/pir-apm`.
 
 ## Fleet overview and node pages

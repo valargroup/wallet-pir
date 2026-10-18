@@ -24,10 +24,10 @@ for name, expected in zip(("EVENT_BYTES", "MAX_EVENT_BYTES"), map(int, sys.argv[
 "#;
     let output = Command::new("python3")
         .args(["-B", "-c", check])
-        .arg(repository.join("ops/transparent/lib/activity_journal_snapshot.py"))
+        .arg(repository.join("tools/transparent/lib/activity_journal_snapshot.py"))
         .arg(transparent_events::EVENT_BYTES.to_string())
         .arg(transparent_events::MAX_EVENT_BYTES.to_string())
-        .env("PYTHONPATH", repository.join("ops/lib"))
+        .env("PYTHONPATH", repository.join("tools/lib"))
         .output()
         .expect("python3 is required for the snapshot codec contract");
     assert!(

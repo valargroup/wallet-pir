@@ -14,7 +14,7 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tools/ci'))
-sys.path.insert(0, str(ROOT / 'ops/lib'))
+sys.path.insert(0, str(ROOT / 'tools/lib'))
 import qualification as q
 import runner_storage as storage
 import launch
@@ -201,7 +201,7 @@ class QualificationTests(unittest.TestCase):
 
     def test_ci_only_feedback_does_not_compile_unchanged_rust_but_full_coverage_remains(self):
         packages = q.workspace_packages()
-        for paths in [['tools/ci/fast.py', 'ops/lib/wallet_pir_ops/release.py'],
+        for paths in [['tools/ci/fast.py', 'tools/lib/wallet_pir_ops/release.py'],
                       ['.github/workflows/ci-qualify.yml'], ['.github/actions/qualify-artifacts/action.yml'], ['.gitignore']]:
             result = q.plan(packages, paths)
             self.assertEqual(result['packages'], [])
@@ -291,7 +291,7 @@ class QualificationTests(unittest.TestCase):
 
     def test_operations_only_changes_do_not_select_native_suites(self):
         with patch.object(q, 'history', return_value=[]), patch.object(q, 'baseline', return_value=BASE), \
-                patch.object(release, 'api', return_value={'files': [{'filename': 'ops/lib/wallet_pir_ops/bundle.py'}]}):
+                patch.object(release, 'api', return_value={'files': [{'filename': 'tools/lib/wallet_pir_ops/bundle.py'}]}):
             result = q.selection(REPO, SHA)
         self.assertTrue(result['ops']['selected'])
         self.assertFalse(any(result[name]['selected'] for name in ['enhance', 'receiver', 'transparent']))

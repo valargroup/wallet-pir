@@ -10,7 +10,7 @@ on the worker application. The existing server and controller binaries still
 run as separate processes.
 Operations (the `txid-display` deploy driver, its fleet and observation scripts,
 unit templates, route snippet and the `transparent-display` service descriptor)
-live under `ops/txid/`; scripts live under `tools/txid/` and retained evidence under
+live under `tools/txid/`; scripts live under `tools/txid/` and retained evidence under
 [txid evidence](../../evidence/txid/README.md).
 
 - [Txid display](txid-display.md): server protocol, native demo, tiered proof of concept and wallet integration stage.

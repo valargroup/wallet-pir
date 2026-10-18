@@ -209,7 +209,7 @@ canonical tip in memory and serves on `--bind`, a loopback or private address
 behind a TLS proxy. A paused tip is republished when its provider sets or report
 change. A guard revokes every session once a node shows a served anchor is off its
 chain. A replaced revision stays available for 60 seconds, and the next one waits
-for that. Logs go to standard error, filtered by `RUST_LOG`. See [the DigitalOcean deployment](../../ops/receiver/digitalocean/README.md).
+for that. Logs go to standard error, filtered by `RUST_LOG`. See [the DigitalOcean deployment](../../tools/receiver/digitalocean/README.md).
 
 With a partner key in `NEAR_INTENTS_EXPLORER`, the server reads the NEAR Intents
 explorer into `providers.sqlite` and publishes the `near-intents` recent and seen

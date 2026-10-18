@@ -594,7 +594,7 @@ rebuilt. Old binaries, service overrides and data are preserved for rollback. V7
 intentionally incompatible with v6 clients; the packing-router rollout itself
 requires no wallet protocol change.
 
-The [SSH runbook](../../ops/enhance/deploy/architecture2-ssh.md) records topology, private
+The [SSH runbook](../../tools/enhance/deploy/architecture2-ssh.md) records topology, private
 ports, firewall restrictions, CPU-compatible build flags and cutover checks. Rollback
 stops public admission and the new serving processes, preserves current publication
 and recovery history, and converts pooled placement offline only when it can be

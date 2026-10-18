@@ -1,9 +1,22 @@
-# Development tools
+# Repository automation
 
 Cargo packages, including Rust development tools, live under `src/<product>/`.
-The root tools directory contains repository-wide checks; standalone product
-scripts live under `tools/<product>/`. Product tools keep their existing Cargo
-package names and CLI flags.
+The root tools directory contains CI, development and fleet automation. Product
+scripts, deployment resources and tests live under `tools/<product>/`. Product
+tools keep their existing Cargo package names and CLI flags.
+
+| Location | Purpose |
+|---|---|
+| `ci/`, `dev/` | Repository checks and local development helpers |
+| `scripts/` | Shared operator commands, including `wallet-pir-deploy.py` |
+| `lib/wallet_pir_ops/` | Shared deployment, locking, release and recovery implementation |
+| `deploy/`, `infra/` | Shared deployment resources and Terraform roots |
+| `tests/operations/` | Shared operations and deployment tests |
+
+The [fleet operator guide](../docs/operations.md) describes deployment and
+recovery. Operations bundles include only explicitly allowed runtime resources;
+the rest of this directory is not installed on the fleet. Existing installed
+release directories and their recorded paths are immutable.
 
 | Location | Purpose | Entry point |
 |---|---|---|
