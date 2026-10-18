@@ -443,9 +443,13 @@ This is not production-chain or representative full-host data.
 | Unchanged objects reused | 0 | 20 |
 | Archive evaluation requests | 0 | 0 |
 | Concurrent exact frozen-client recoveries | 36/36 | 54/54 |
+| Fresh-client recovery p50 / p99 | 0.362 / 0.557 s | 0.479 / 0.690 s |
 
 These request windows sampled publisher CPU at 0.38 / 0.80 cores and publisher
 RSS at most 334 / 471 MB; TLS termination used another 0.23 / 0.50 cores.
+Client body throughput was 42.97 / 69.52 MB/s, excluding HTTP/TLS framing and
+other provider traffic. Recovery latency includes the whole fresh client process;
+the update adds a page query, so these are not matched query-p99 measurements.
 The producer update construction is additional work outside the transfer window:
 its recorded cycle was 10.67 seconds. Raw host/process/cgroup samples include
 construction and candidate overlap. On the shared 67.42 GB host, physical
@@ -461,8 +465,40 @@ samples), and `10-consumer-audit.json`. The audit independently rehashes all
 140 retained consumer objects (2,519,311,230 bytes) and compares complete frozen
 client ledgers with the explicit source-event oracle. The first two distribution
 phases used preserved driver `fd268532…`; the subsequent disk guard is a later
-tool revision. Initial fixture metadata/certificate/path setup failures remain
-retained separately and do not count as passing campaigns.
+tool revision. Their 60 metadata replies were initially retained as parsed JSON;
+compact reconstruction later matched every original receipt SHA (four unique
+bodies), recorded in `metadata-reconstruction.json`, rather than being labelled
+original raw captures. The final tool retains those exact response bytes directly.
+The original journal checkpoint before its first append was not separately
+captured; original immutable publication bytes and event/block prefixes remain.
+Later lifecycle runs retain journal before-images. Setup/control failures remain
+retained separately and do not count as passing campaigns. The final driver
+also completed one real-controller integration control at revision 12, retaining
+exact metadata bodies; that control is not another 10-consumer wave.
+
+The related continuity diagnostic initially assigned the sealed 32k shard 0
+locally, then moved only its ownership to the archive while the 2k tail advanced.
+Its entry, source tables and manifests remained byte-identical. Both strict
+managers refused retirement while the archive was unavailable, then qualified
+the actual terminal owner before activation. A withheld upload observed the
+128,520-byte aggregate reservation on the old map and returned its exact original
+row after activation and renewed archive loss. That aggregate observation under
+other traffic does not establish exclusive per-request attribution. Fresh
+same-revision requests may also use retained local data; restart into the new
+recent-only view establishes actual archive dependence.
+
+After those fresh restarts, both providers returned archive setup 503 while
+independent recent encrypted rows stayed exact. Deterministic reorg observations
+caused recent setup 409; a higher controller revision recovered both strict
+workers with zero local builds/fallbacks. Online restart, valid recent serving
+during publisher loss and offline-start refusal were exercised. Retained raw
+receipts are in `lifecycle-03/resume-04/`, `lifecycle-03/recovery-06/` and
+`lifecycle-audit.json`. The handover interval had 124 successful restores; the
+later fault campaign had 94 successes and 191 failures, including three still
+unclassified failures. All successful ledgers matched a complete explicit fixture
+branch, but five raw transition oracle flags remain visible. The frozen CLI
+uses a map-derived StaticChain and a fresh ledger each time: these results do
+not qualify independent wallet-chain acceptance or retained wallet-state sync.
 
 The 100-consumer bootstrap was **not run**: its 18,473,074,600-byte candidate
 alone, plus existing builds/evidence and later update overlap, exceeds this
