@@ -1277,7 +1277,13 @@ mod tests {
 
         const B_START: u64 = 32768;
         const B_ROWS: u64 = 2049;
-        const SUFFIX_ROWS: u64 = 4096;
+        // The added unit must be nonempty and begin after B's unchanged slot.
+        // Its size does not affect the boundary rows checked below.
+        const SUFFIX_ROWS: u64 = if cfg!(feature = "qualification-tests") {
+            4096
+        } else {
+            2048
+        };
         let directory = tempfile::tempdir().unwrap();
         let shard = QueryShard {
             id: 7,
