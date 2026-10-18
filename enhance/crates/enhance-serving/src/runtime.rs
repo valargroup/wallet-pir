@@ -1186,16 +1186,24 @@ mod tests {
         })
         .unwrap()
         .0;
-        let oracle_root = tempfile::tempdir().unwrap();
-        let oracle = Engine::new(oracle_root.path())
-            .prepare(candidate, records)
-            .unwrap()
-            .0;
+        // The all-one query is the column sum of the committed raw rows.
+        // Use plain integer addition as an independent oracle rather than
+        // preparing a second copy through the same native implementation.
+        let columns = ENHANCE_LAYOUT.row_bytes() / 2;
+        let mut expected = vec![0u64; columns];
+        for spec in &candidate.shard.units {
+            let rows = unit_rows(&candidate.shard, spec, &mut records).unwrap();
+            for row in rows.chunks_exact(ENHANCE_LAYOUT.row_bytes()) {
+                for (sum, bytes) in expected.iter_mut().zip(row.chunks_exact(2)) {
+                    *sum += u64::from(u16::from_le_bytes(bytes.try_into().unwrap()));
+                }
+            }
+        }
+        for value in &mut expected {
+            *value %= modulus();
+        }
         let candidate_query = vec![1; retry.plan.shard.logical_rows as usize];
-        assert_eq!(
-            retry.evaluate(&candidate_query).unwrap(),
-            oracle.evaluate(&candidate_query).unwrap()
-        );
+        assert_eq!(retry.evaluate(&candidate_query).unwrap(), expected);
         assert_eq!(published.evaluate(&query).unwrap(), before);
         drop(retry);
         engine.collect_unused().unwrap();
