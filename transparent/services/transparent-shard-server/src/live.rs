@@ -208,6 +208,82 @@ struct Inner {
 }
 #[derive(Clone)]
 pub struct LiveService(Arc<Inner>);
+
+struct HistoryActivation(Arc<Inner>);
+
+impl crate::activation::Adapter for HistoryActivation {
+    type Candidate = Candidate;
+    type Validated = ();
+
+    fn active(&self, requested: &str) -> (String, bool) {
+        let inner = &self.0;
+        let active = inner.active.read().unwrap();
+        (
+            active.publication.map_sha256.clone(),
+            !inner.required_runtimes
+                && active.publication.map_sha256 == requested
+                && active.state.is_warm(),
+        )
+    }
+
+    fn candidate(&self) -> &tokio::sync::Mutex<Option<Candidate>> {
+        &self.0.candidate
+    }
+
+    fn publication_gate(&self) -> &std::sync::Mutex<()> {
+        &self.0.publication_gate
+    }
+
+    fn epoch(&self) -> u64 {
+        self.0.epoch.load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    fn candidate_epoch(candidate: &Candidate) -> u64 {
+        candidate.epoch
+    }
+
+    fn digest(candidate: &Candidate) -> &str {
+        &candidate.publication.map_sha256
+    }
+
+    fn ready(candidate: &Candidate) -> bool {
+        candidate.state.is_warm()
+    }
+
+    fn validate(&self, candidate: &Candidate) -> Result<(), String> {
+        if candidate
+            .state
+            .set()
+            .map
+            .shards
+            .iter()
+            .any(|s| self.0.invalid.read().unwrap().contains(&s.manifest_digest))
+        {
+            return Err("candidate contains invalidated history".into());
+        }
+        Ok(())
+    }
+
+    fn persist(&self, candidate: &Candidate) -> Result<(), String> {
+        persist(&self.0.record, &candidate.publication)
+    }
+
+    fn install(&self, candidate: Candidate, (): ()) {
+        let inner = &self.0;
+        let old = std::mem::replace(
+            &mut *inner.active.write().unwrap(),
+            Active {
+                state: candidate.state,
+                publication: candidate.publication,
+            },
+        );
+        // Normal predecessors remain available to in-flight wallets, but
+        // only current and preparing assignments are residency obligations.
+        old.state.release_pins();
+        inner.retired.write().unwrap().push(old);
+    }
+}
+
 impl LiveService {
     pub fn new(
         state: ServiceState,
@@ -804,63 +880,14 @@ impl LiveService {
         map_sha256: String,
         _operation: tokio::sync::OwnedMutexGuard<()>,
     ) -> Result<serde_json::Value, String> {
-        let service = self.clone();
-        tokio::task::spawn_blocking(move || {
-            // Durable publication writes can block on disk. Keep them
-            // off the async executor and retain serialization even if
-            // the control caller disconnects while the job is running.
-            let _operation = _operation;
-            {
-                let active = service.0.active.read().unwrap();
-                if !service.0.required_runtimes
-                    && active.publication.map_sha256 == map_sha256
-                    && active.state.is_warm()
-                {
-                    return Ok(serde_json::json!({"active":map_sha256}));
-                }
-                if active.publication.map_sha256 != expected {
-                    return Err("active predecessor changed".into());
-                }
-            }
-            let mut candidate = service.0.candidate.blocking_lock();
-            // Invalidation must not land between the epoch check and the
-            // durable active pointer swap, including after a restart.
-            let _gate = service.0.publication_gate.lock().unwrap();
-            let next = candidate.as_ref().ok_or("no prepared candidate")?;
-            if next.epoch != service.0.epoch.load(std::sync::atomic::Ordering::Acquire) {
-                return Err("reorg invalidated prepared candidate".into());
-            }
-            if next.publication.map_sha256 != map_sha256 || !next.state.is_warm() {
-                return Err("candidate identity/readiness mismatch".into());
-            }
-            if next.state.set().map.shards.iter().any(|s| {
-                service
-                    .0
-                    .invalid
-                    .read()
-                    .unwrap()
-                    .contains(&s.manifest_digest)
-            }) {
-                return Err("candidate contains invalidated history".into());
-            }
-            persist(&service.0.record, &next.publication)?;
-            let next = candidate.take().unwrap();
-            let old = std::mem::replace(
-                &mut *service.0.active.write().unwrap(),
-                Active {
-                    state: next.state,
-                    publication: next.publication,
-                },
-            );
-            // Normal predecessors remain available to in-flight wallets.
-            // Release their residency pins: only current and preparing
-            // assignments are residency obligations.
-            old.state.release_pins();
-            service.0.retired.write().unwrap().push(old);
-            Ok(serde_json::json!({"active":map_sha256}))
-        })
-        .await
-        .map_err(|e| e.to_string())?
+        crate::activation::activate(
+            expected,
+            map_sha256.clone(),
+            HistoryActivation(self.0.clone()),
+            _operation,
+        )
+        .await?;
+        Ok(serde_json::json!({"active":map_sha256}))
     }
 
     pub async fn listen(

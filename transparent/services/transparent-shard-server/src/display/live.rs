@@ -154,6 +154,92 @@ struct Inner {
 #[derive(Clone)]
 pub struct DisplayLive(Arc<Inner>);
 
+struct DisplayActivation(Arc<Inner>);
+
+impl crate::activation::Adapter for DisplayActivation {
+    type Candidate = Candidate;
+    type Validated = BTreeSet<String>;
+
+    fn active(&self, requested: &str) -> (String, bool) {
+        let active = self.0.active.read().unwrap();
+        active
+            .as_ref()
+            .map(|active| {
+                (
+                    active.publication.map_sha256.clone(),
+                    active.publication.map_sha256 == requested && active.state.is_warm(),
+                )
+            })
+            .unwrap_or_default()
+    }
+
+    fn candidate(&self) -> &tokio::sync::Mutex<Option<Candidate>> {
+        &self.0.candidate
+    }
+
+    fn publication_gate(&self) -> &Mutex<()> {
+        &self.0.publication_gate
+    }
+
+    fn epoch(&self) -> u64 {
+        self.0.epoch.load(Ordering::Acquire)
+    }
+
+    fn candidate_epoch(candidate: &Candidate) -> u64 {
+        candidate.epoch
+    }
+
+    fn digest(candidate: &Candidate) -> &str {
+        &candidate.publication.map_sha256
+    }
+
+    fn ready(candidate: &Candidate) -> bool {
+        candidate.state.is_warm()
+    }
+
+    fn validate(&self, candidate: &Candidate) -> Result<BTreeSet<String>, String> {
+        let named: BTreeSet<String> = candidate
+            .state
+            .set()
+            .map
+            .shards
+            .iter()
+            .map(|s| s.manifest_digest.clone())
+            .collect();
+        if named
+            .iter()
+            .any(|digest| self.0.invalid.read().unwrap().contains(digest))
+        {
+            return Err("candidate contains invalidated history".into());
+        }
+        Ok(named)
+    }
+
+    fn persist(&self, candidate: &Candidate) -> Result<(), String> {
+        persist(&self.0.record, &candidate.publication)
+    }
+
+    fn install(&self, candidate: Candidate, named: BTreeSet<String>) {
+        let inner = &self.0;
+        let old = inner.active.write().unwrap().replace(Active {
+            state: candidate.state,
+            publication: candidate.publication,
+        });
+        // Predecessors stay answerable from resident state without remaining
+        // residency obligations.
+        if let Some(old) = old {
+            old.state.retire();
+            inner.retired.write().unwrap().push(old);
+        }
+        // Only a successful activation releases covered staging pins.
+        inner
+            .staged
+            .lock()
+            .unwrap()
+            .retain(|digest, _| !named.contains(digest));
+    }
+}
+
 /// Never set: staging is not cancelled by reorgs, which cannot reach a
 /// sealed revision without halting the controller.
 static NOT_CANCELLED: AtomicBool = AtomicBool::new(false);
@@ -518,74 +604,14 @@ impl DisplayLive {
 
     async fn activate(&self, expected: String, map_sha256: String) -> Result<Reply, String> {
         let operation = self.0.operations.clone().lock_owned().await;
-        let service = self.clone();
-        tokio::task::spawn_blocking(move || {
-            // The durable record write can block on disk; serialization is
-            // kept even if the control caller disconnects meanwhile.
-            let _operation = operation;
-            let inner = &service.0;
-            {
-                let active = inner.active.read().unwrap();
-                if let Some(active) = active.as_ref() {
-                    if active.publication.map_sha256 == map_sha256 && active.state.is_warm() {
-                        return Ok(Reply::new());
-                    }
-                }
-                let current = active
-                    .as_ref()
-                    .map(|a| a.publication.map_sha256.as_str())
-                    .unwrap_or_default();
-                if current != expected {
-                    return Err("active predecessor changed".into());
-                }
-            }
-            let mut candidate = inner.candidate.blocking_lock();
-            // Invalidation must not land between the epoch check and the
-            // durable pointer swap.
-            let _gate = inner.publication_gate.lock().unwrap();
-            let next = candidate.as_ref().ok_or("no prepared candidate")?;
-            if next.epoch != inner.epoch.load(Ordering::Acquire) {
-                return Err("reorg invalidated prepared candidate".into());
-            }
-            if next.publication.map_sha256 != map_sha256 || !next.state.is_warm() {
-                return Err("candidate identity/readiness mismatch".into());
-            }
-            let named: BTreeSet<String> = next
-                .state
-                .set()
-                .map
-                .shards
-                .iter()
-                .map(|s| s.manifest_digest.clone())
-                .collect();
-            if named
-                .iter()
-                .any(|digest| inner.invalid.read().unwrap().contains(digest))
-            {
-                return Err("candidate contains invalidated history".into());
-            }
-            persist(&inner.record, &next.publication)?;
-            let next = candidate.take().expect("checked above");
-            let old = inner.active.write().unwrap().replace(Active {
-                state: next.state,
-                publication: next.publication,
-            });
-            // Predecessors stay answerable for stale-map clients from what is
-            // resident, but are no longer residency obligations.
-            if let Some(old) = old {
-                old.state.retire();
-                inner.retired.write().unwrap().push(old);
-            }
-            // The active snapshot pins what it names; staging has done its job.
-            inner
-                .staged
-                .lock()
-                .unwrap()
-                .retain(|digest, _| !named.contains(digest));
-            Ok(Reply::new())
-        })
-        .await
-        .map_err(|e| e.to_string())?
+        crate::activation::activate(
+            expected,
+            map_sha256,
+            DisplayActivation(self.0.clone()),
+            operation,
+        )
+        .await?;
+        Ok(Reply::new())
     }
 
     fn invalidate(&self, expected: &str, from_height: u64) -> Result<Reply, String> {
