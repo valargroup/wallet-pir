@@ -244,7 +244,7 @@ class BoundaryTests(unittest.TestCase):
                      {**self.edge('enhance-pir-load-test'), 'path': 'src/enhance/loadtest/'},
                      {**self.edge('receiver-store'), 'path': 'src/receiver/receiver-store/'},
                      {**self.edge('transparent-server-backend'),
-                      'path': 'src/shared/transparent-server-backend/'}]
+                      'path': 'src/transparent/transparent-server-backend/'}]
         for kind in ['dependencies', 'dev-dependencies', 'build-dependencies',
                      'target.cfg(unix).dependencies']:
             for edge in forbidden:

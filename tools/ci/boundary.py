@@ -91,7 +91,6 @@ APPLICATIONS = {
 # Shared packages consumed by a subset of products. A serving library of any other
 # product reaching one still crosses a product boundary.
 SHARED_SCOPES = {
-    'src/shared/transparent-server-backend/': ('src/transparent/',),
     'src/shared/pir-serving/': ('src/enhance/', 'src/status/'),
 }
 

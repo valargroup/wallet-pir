@@ -25,5 +25,5 @@ zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.g
 
 [dev-dependencies]
 # The shared prepared-runtime loader that verifies what publication wrote.
-transparent-server-backend = { path = "../../shared/transparent-server-backend" }
+transparent-server-backend = { path = "../transparent-server-backend" }
 zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "886db40137caef486d32d5bc594b2c20b1dde75e", features = ["testing"] }

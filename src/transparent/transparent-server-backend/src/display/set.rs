@@ -19,20 +19,18 @@
 //! A revision already verified by the previous snapshot, or staged ahead of
 //! its seal, is taken over without re-reading only when every segment of the
 //! new directory resolves to the very file this process hashed, unmodified
-//! since ([`transparent_server_backend::shardset::FileStamp`]). Claiming the same digest never
+//! since ([`crate::shardset::FileStamp`]). Claiming the same digest never
 //! skips verification. Display runtimes are keyed by revision digest, so the
 //! revision, not the segment, is the unit a later publication can inherit.
 
 use crate::display::{kind, runtime_key, serves, DisplayRole};
+use crate::runtime::disk::ShippedRuntimes;
+use crate::shardset::{LoadError, SegmentSource, VerificationClock, VerificationReport};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashSet};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use transparent_server_backend::runtime::disk::ShippedRuntimes;
-use transparent_server_backend::shardset::{
-    LoadError, SegmentSource, VerificationClock, VerificationReport,
-};
 use transparent_shard::display::{self, DisplayManifest, DisplayMap, DisplayTable, SplitMap};
 use transparent_shard::layout::Geometry;
 use transparent_shard::txid;

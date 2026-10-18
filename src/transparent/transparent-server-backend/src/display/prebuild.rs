@@ -15,12 +15,12 @@
 use crate::display::kind;
 use crate::display::runtime_key;
 use crate::display::set::DisplayRevision;
+use crate::runtime::disk::ShippedRuntimes;
+use crate::runtime::prepare::{prepare_segment, Prepared};
+use crate::runtime::SharedParams;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::path::Path;
-use transparent_server_backend::runtime::disk::ShippedRuntimes;
-use transparent_server_backend::runtime::prepare::{prepare_segment, Prepared};
-use transparent_server_backend::runtime::SharedParams;
 
 /// One runtime file written by [`build_shipped`].
 #[derive(Clone, Debug, Serialize)]

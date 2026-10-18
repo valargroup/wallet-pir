@@ -41,7 +41,7 @@ portable-kernel = ["transparent-server-backend/portable-kernel"]
 [dependencies]
 pir-pipeline = { path = "../../shared/pir-pipeline" }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
-transparent-server-backend = { path = "../../shared/transparent-server-backend" }
+transparent-server-backend = { path = "../transparent-server-backend" }
 pir-control = { version = "=0.1.0", path = "../../shared/pir-control", features = ["admission"] }
 pir-observability = { version = "=0.1.0", path = "../../shared/pir-observability" }
 axum = "0.7"

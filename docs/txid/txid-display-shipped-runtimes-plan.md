@@ -27,7 +27,7 @@ Background and measurements:
 ## Facts the design relies on (verified in source at 7ed5c87d)
 
 - **Build.** `TableRuntime::build(shared, rows)` is in
-  `src/shared/transparent-server-backend/src/runtime.rs`. It runs on
+  `src/transparent/transparent-server-backend/src/runtime.rs`. It runs on
   `build_pool()` (`runtime.rs:276`), sized by `TRANSPARENT_BUILD_THREADS`, nice 10.
 - **Disk format.**
   - `runtime/disk.rs` `DiskCache::{save,load,path}`. The identity hashes the runtime

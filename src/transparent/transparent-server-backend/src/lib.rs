@@ -22,4 +22,5 @@ pub mod shardset;
 
 pub mod http;
 
+pub mod display;
 pub mod distribution;

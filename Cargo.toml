@@ -16,7 +16,7 @@ members = [
     "src/status/status-serving",
     "src/status/status-publication",
     "src/transparent/transparent-blocks",
-    "src/shared/transparent-server-backend",
+    "src/transparent/transparent-server-backend",
     "src/transparent/transparent-ingest",
     # Services and operational dashboard.
     "src/enhance/enhance-pir-server",
