@@ -379,6 +379,21 @@ class Consumer:
                     # HTTP parser cannot interpret as a length and treats as EOF.
                     if lengths and (len(lengths) != 1 or not re.fullmatch(r"[0-9]+", lengths[0]) or response.chunked):
                         raise ValueError("ambiguous HTTP framing")
+                    if lengths:
+                        # http.client falls back to close-delimited reading when
+                        # int() rejects a decimal field (including its digit
+                        # limit). Validate independently before reading any body.
+                        try:
+                            declared_length = int(lengths[0])
+                        except ValueError as error:
+                            raise ValueError("invalid numeric Content-Length") from error
+                        # A 304 has no body; its length can describe the selected
+                        # representation rather than this response's payload.
+                        if response.status != 304:
+                            if declared_length > limit:
+                                raise ValueError("Content-Length exceeds body bound")
+                            if response.length != declared_length:
+                                raise ValueError("inconsistent parsed Content-Length")
                     encoding = response.getheader("Transfer-Encoding")
                     if encoding and encoding.lower() != "chunked":
                         raise ValueError("unsupported transfer encoding")

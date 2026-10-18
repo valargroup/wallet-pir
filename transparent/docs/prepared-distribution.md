@@ -411,7 +411,10 @@ one object at a time, verifies lengths/digests, checks retained objects before
 reuse, and performs two conditional polls five seconds apart. Each request has
 a 30-second absolute deadline covering DNS, connect, TLS, headers and body, and
 at most eight attempts with bounded jitter/backoff. HTTP framing completion is
-required in addition to the immutable length/digest check.
+required in addition to the immutable length/digest check. A single Content-Length
+must be ASCII decimal, parse successfully and fit the request's body bound before
+reading; valid close-delimited responses remain supported. A bodyless 304 may
+declare its selected representation's length without consuming that body allowance.
 The per-consumer body allowance is 64 GiB. Every HTTP status, partial/error body
 byte count, digest, retry and timeout remains in per-consumer JSONL receipts.
 Each attempt has its own immutable body file referenced by its receipt, including

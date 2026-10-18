@@ -253,7 +253,9 @@ class DistributionTests(unittest.TestCase):
         self.server.RequestHandlerClass.do_GET = premature
         target = consumer.objects / "candidate"
         with self.assertRaises(distribution.http.client.IncompleteRead):
-            consumer.request("artifacts/" + hashlib.sha256(body).hexdigest(), len(body), target=target)
+            # Admit the declared size so this remains an EOF/framing control,
+            # independently of the earlier declared-size bound check.
+            consumer.request("artifacts/" + hashlib.sha256(body).hexdigest(), len(body) + 1, target=target)
         self.assertFalse(target.exists())
         receipt = consumer.receipts[0]
         self.assertEqual(receipt["bytes"], len(body))
@@ -301,6 +303,66 @@ class DistributionTests(unittest.TestCase):
         self.assertEqual(receipts[-1]["status"], 200)
         self.assertEqual(receipts[-1]["bytes"], 0)
         self.assertEqual(json.loads((consumer.root / "bootstrap.result.json").read_text()), result)
+
+    def test_long_numeric_content_length_cannot_complete_full_bootstrap(self):
+        original = self.server.RequestHandlerClass.send_header
+        def oversized(handler, name, value):
+            if name == "Content-Length" and "/artifacts/" in handler.path:
+                value = "9" * 5000
+            original(handler, name, value)
+        self.server.RequestHandlerClass.send_header = oversized
+        consumer = self.consumer("bootstrap")
+        result = consumer.run()
+        self.assertFalse(result["complete"], result)
+        self.assertIn("Content-Length", result["error"])
+        self.assertEqual(result["requests"], 3)
+        self.assertEqual(result["failed_attempts"], 1)
+        self.assertFalse((consumer.root / "current.json").exists())
+        self.assertFalse(list(consumer.objects.iterdir()))
+        receipts = self.assert_retained_receipts(consumer)
+        self.assertEqual(receipts[-1]["status"], 200)
+        self.assertEqual(receipts[-1]["bytes"], 0)
+        self.assertIn("Content-Length", receipts[-1]["error"])
+        self.assertEqual(json.loads((consumer.root / "bootstrap.result.json").read_text()), result)
+
+    def test_declared_length_above_body_bound_rejects_exact_artifact(self):
+        consumer = self.consumer("bootstrap")
+        body = b"exact artifact"
+        def oversized(handler):
+            handler.send_response(200)
+            handler.send_header("Content-Length", str(len(body) + 1))
+            handler.end_headers()
+            handler.wfile.write(body)
+        self.server.RequestHandlerClass.do_GET = oversized
+        target = consumer.objects / "oversized"
+        with self.assertRaisesRegex(ValueError, "Content-Length exceeds body bound"):
+            consumer.request("artifacts/" + hashlib.sha256(body).hexdigest(), len(body), target=target)
+        self.assertFalse(target.exists())
+        receipts = self.assert_retained_receipts(consumer)
+        self.assertEqual(len(receipts), 1)
+        self.assertEqual(receipts[0]["bytes"], 0)
+        self.assertIn("Content-Length exceeds body bound", receipts[0]["error"])
+
+    def test_leading_zero_lengths_and_bodyless_304_complete_bootstrap_and_update(self):
+        original = self.server.RequestHandlerClass.send_header
+        def leading_zero(handler, name, value):
+            if name == "Content-Length":
+                # 304 may declare the selected representation's length even
+                # though this conditional response carries no body.
+                value = "000" + (str(distribution.METADATA_LIMIT + 1) if
+                                 handler.headers.get("If-None-Match") == self.etag else value)
+            original(handler, name, value)
+        self.server.RequestHandlerClass.send_header = leading_zero
+        for phase in ("bootstrap", "update"):
+            with self.subTest(phase=phase):
+                consumer = self.consumer(phase)
+                result = consumer.run()
+                self.assertTrue(result["complete"], result)
+                self.assertEqual(result["failed_attempts"], 0)
+                receipts = self.assert_retained_receipts(consumer)
+                self.assertEqual(receipts[-1]["status"], 304)
+                self.assertEqual(receipts[-1]["bytes"], 0)
+                self.publish(b"recent-two", 2)
 
     def test_close_delimited_without_content_length_completes_full_bootstrap(self):
         original = self.server.RequestHandlerClass.send_header
