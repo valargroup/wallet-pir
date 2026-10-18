@@ -1342,7 +1342,7 @@ mod tests {
             id: 7,
             global_row_start: B_START,
             records: B_ROWS * RECORDS_PER_ROW as u64,
-            logical_rows: B_SLOT,
+            logical_rows: 4096,
             state: ShardState::Growing,
             units: Geometry::default()
                 .units(B_ROWS * RECORDS_PER_ROW as u64)
@@ -1433,7 +1433,7 @@ mod tests {
         )
         .unwrap();
         let mut tail_plan = b_plan.clone();
-        tail_plan.shard.logical_rows = B_SLOT + SUFFIX_ROWS;
+        tail_plan.shard.logical_rows = 8192;
         tail_plan.units.push(UnitIdentity {
             recovery_epoch: 0,
             table: "enhance".into(),
@@ -1458,10 +1458,9 @@ mod tests {
             plain_hint, tail_hint,
             "the whole-domain hint includes A's suffix"
         );
-        for (evaluation, hint, logical_rows) in [
-            (&*plain, &plain_hint, B_SLOT),
-            (&tail, &tail_hint, B_SLOT + SUFFIX_ROWS),
-        ] {
+        for (evaluation, hint, logical_rows) in
+            [(&*plain, &plain_hint, 4096), (&tail, &tail_hint, 8192)]
+        {
             let packing =
                 Packing::new(logical_rows, hint, &crate::PackingBudget::coordinator()).unwrap();
             let params = parameters(logical_rows).unwrap();
@@ -1492,7 +1491,7 @@ mod tests {
                 epoch: Sha256::digest(&packing.public)[..8].try_into().unwrap(),
             };
             let mut targets = vec![0, B_ROWS as usize - 2, B_ROWS as usize - 1];
-            if logical_rows > B_SLOT {
+            if logical_rows == 8192 {
                 targets.push(B_SLOT as usize);
             }
             for row in targets {
