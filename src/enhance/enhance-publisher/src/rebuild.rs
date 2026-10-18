@@ -600,7 +600,7 @@ mod tests {
 
     /// Startup cost of adoption at production scale (about 700,000 records in
     /// 50,000 blocks). Ignored by default: it writes about 1 GB. Run with
-    /// `cargo test --profile release-fast -p enhance-pir-server --lib
+    /// `cargo test --profile release-fast -p enhance-publisher --lib
     /// adoption_streams -- --ignored --nocapture`.
     #[test]
     #[ignore]
