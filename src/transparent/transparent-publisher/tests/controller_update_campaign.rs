@@ -184,7 +184,11 @@ impl Provider {
                     std::fs::read_to_string(self.cwd.join("provider.log")).unwrap()
                 );
             }
-            assert!(Instant::now() < deadline, "{} never became ready", self.name);
+            assert!(
+                Instant::now() < deadline,
+                "{} never became ready",
+                self.name
+            );
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
         ledger.record(
@@ -210,7 +214,11 @@ async fn status(origin: &str) -> serde_json::Value {
 }
 async fn current(publisher: &str, client: &reqwest::Client) -> serde_json::Value {
     // A starting or withdrawn controller refuses; that is not yet an offer.
-    match client.get(format!("{publisher}/provider/v1/current")).send().await {
+    match client
+        .get(format!("{publisher}/provider/v1/current"))
+        .send()
+        .await
+    {
         Ok(r) if r.status().is_success() => r.json().await.unwrap_or_default(),
         _ => serde_json::Value::Null,
     }
@@ -447,11 +455,7 @@ async fn controller_updates_reach_independent_https_providers_under_queries() {
          print(json.dumps({'ok':True,'upstreams':[]}))\n",
     )
     .unwrap();
-    std::fs::set_permissions(
-        &hook,
-        std::os::unix::fs::PermissionsExt::from_mode(0o700),
-    )
-    .unwrap();
+    std::fs::set_permissions(&hook, std::os::unix::fs::PermissionsExt::from_mode(0o700)).unwrap();
     let publications = root.join("publications");
     let listen = free_port();
     let config = serde_json::json!({
@@ -464,20 +468,26 @@ async fn controller_updates_reach_independent_https_providers_under_queries() {
     });
     std::fs::write(out.join("controller-config.json"), config.to_string()).unwrap();
     let controller_log = std::fs::File::create(out.join("controller.log")).unwrap();
-    let mut controller = tokio::process::Command::new(env!(
-        "CARGO_BIN_EXE_transparent-publish-controller"
-    ))
-    .arg("--config")
-    .arg(out.join("controller-config.json"))
-    .kill_on_drop(true)
-    .stdout(Stdio::null())
-    .stderr(controller_log)
-    .spawn()
-    .unwrap();
+    let mut controller =
+        tokio::process::Command::new(env!("CARGO_BIN_EXE_transparent-publish-controller"))
+            .arg("--config")
+            .arg(out.join("controller-config.json"))
+            .kill_on_drop(true)
+            .stdout(Stdio::null())
+            .stderr(controller_log)
+            .spawn()
+            .unwrap();
 
     let openssl = std::process::Command::new("openssl")
-        .args(["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1"])
-        .args(["-subj", "/CN=localhost", "-addext", "subjectAltName=DNS:localhost"])
+        .args([
+            "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
+        ])
+        .args([
+            "-subj",
+            "/CN=localhost",
+            "-addext",
+            "subjectAltName=DNS:localhost",
+        ])
         .args(["-addext", "basicConstraints=critical,CA:FALSE", "-keyout"])
         .arg(root.join("key.pem"))
         .arg("-out")
@@ -494,46 +504,92 @@ async fn controller_updates_reach_independent_https_providers_under_queries() {
         .unwrap();
 
     // Bootstrap: the controller's own first revision, then two cold providers.
-    let first = converge(&ledger, "controller-bootstrap", &publisher, &https, &[], &publications,
-        Duration::from_secs(120)).await;
+    let first = converge(
+        &ledger,
+        "controller-bootstrap",
+        &publisher,
+        &https,
+        &[],
+        &publications,
+        Duration::from_secs(120),
+    )
+    .await;
     let mut providers = Vec::new();
     for name in ["provider-a", "provider-b"] {
         let cwd = root.join(name);
         std::fs::create_dir(&cwd).unwrap();
         let addr = free_port();
         let args = [
-            "--publisher", &publisher, "--publisher-network", "main", "--publisher-genesis", GENESIS,
-            "--publisher-ca", root.join("ca.pem").to_str().unwrap(),
-            "--listen", &addr.to_string(), "--shard-dir", cwd.join("state").to_str().unwrap(),
-            "--cache-bytes", &(1u64 << 30).to_string(),
+            "--publisher",
+            &publisher,
+            "--publisher-network",
+            "main",
+            "--publisher-genesis",
+            GENESIS,
+            "--publisher-ca",
+            root.join("ca.pem").to_str().unwrap(),
+            "--listen",
+            &addr.to_string(),
+            "--shard-dir",
+            cwd.join("state").to_str().unwrap(),
+            "--cache-bytes",
+            &(1u64 << 30).to_string(),
         ]
         .map(String::from)
         .to_vec();
-        providers.push(Provider { name, origin: format!("http://{addr}"), args, cwd, child: None });
+        providers.push(Provider {
+            name,
+            origin: format!("http://{addr}"),
+            args,
+            cwd,
+            child: None,
+        });
     }
     let started = Instant::now();
     let (a, b) = providers.split_at_mut(1);
     tokio::join!(a[0].start(&binary, &ledger), b[0].start(&binary, &ledger));
-    ledger.record("phase", serde_json::json!({"phase":"bootstrap","revision":first["revision"],
-        "ms":started.elapsed().as_secs_f64()*1e3}));
+    ledger.record(
+        "phase",
+        serde_json::json!({"phase":"bootstrap","revision":first["revision"],
+        "ms":started.elapsed().as_secs_f64()*1e3}),
+    );
     let mut revision = first["revision"].as_u64().unwrap();
 
-    let origins: Vec<_> = providers.iter().map(|p| (p.name, p.origin.clone())).collect();
+    let origins: Vec<_> = providers
+        .iter()
+        .map(|p| (p.name, p.origin.clone()))
+        .collect();
     let mut failed_queries = 0;
     // Updates under continuous encrypted queries against both providers.
     for update in 0..updates {
         let phase = format!("update-{update}");
         let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let load = tokio::spawn(query_load(ledger.clone(), phase.clone(), origins.clone(),
-            publications.clone(), stop.clone()));
+        let load = tokio::spawn(query_load(
+            ledger.clone(),
+            phase.clone(),
+            origins.clone(),
+            publications.clone(),
+            stop.clone(),
+        ));
         tip_height += 1;
         block(&mut journal, tip_height);
         journal.commit().unwrap();
         tip.store(tip_height, Ordering::Release);
-        ledger.record("journal_extended", serde_json::json!({"phase":phase,"height":tip_height}));
+        ledger.record(
+            "journal_extended",
+            serde_json::json!({"phase":phase,"height":tip_height}),
+        );
         let record = loop {
-            let record = converge(&ledger, &phase, &publisher, &https,
-                &providers.iter().collect::<Vec<_>>(), &publications, Duration::from_secs(120)).await;
+            let record = converge(
+                &ledger,
+                &phase,
+                &publisher,
+                &https,
+                &providers.iter().collect::<Vec<_>>(),
+                &publications,
+                Duration::from_secs(120),
+            )
+            .await;
             if record["revision"].as_u64().unwrap() > revision
                 && record["anchor_height"].as_u64() == Some(tip_height)
             {
@@ -544,8 +600,11 @@ async fn controller_updates_reach_independent_https_providers_under_queries() {
         revision = record["revision"].as_u64().unwrap();
         stop.store(true, Ordering::Release);
         let (ok, failed) = load.await.unwrap();
-        ledger.record("phase", serde_json::json!({"phase":phase,"revision":revision,
-            "queries_ok":ok,"queries_failed":failed}));
+        ledger.record(
+            "phase",
+            serde_json::json!({"phase":phase,"revision":revision,
+            "queries_ok":ok,"queries_failed":failed}),
+        );
         assert!(ok > 0, "{phase}: no successful query during update");
         failed_queries += failed;
     }
@@ -553,8 +612,15 @@ async fn controller_updates_reach_independent_https_providers_under_queries() {
     // Unchanged source: no new revision, conditional polls keep both serving.
     tokio::time::sleep(Duration::from_secs(8)).await;
     let unchanged = current(&publisher, &https).await;
-    ledger.record("phase", serde_json::json!({"phase":"unchanged","revision":unchanged["revision"]}));
-    assert_eq!(unchanged["revision"].as_u64(), Some(revision), "unchanged source advanced revision");
+    ledger.record(
+        "phase",
+        serde_json::json!({"phase":"unchanged","revision":unchanged["revision"]}),
+    );
+    assert_eq!(
+        unchanged["revision"].as_u64(),
+        Some(revision),
+        "unchanged source advanced revision"
+    );
     let set = controller_set(&publications);
     for p in &providers {
         row_query(&p.origin, &set, 1).await.unwrap();
@@ -568,8 +634,16 @@ async fn controller_updates_reach_independent_https_providers_under_queries() {
         journal.commit().unwrap();
         tip.store(tip_height, Ordering::Release);
         loop {
-            let record = converge(&ledger, "missed", &publisher, &https, &[&providers[0]],
-                &publications, Duration::from_secs(120)).await;
+            let record = converge(
+                &ledger,
+                "missed",
+                &publisher,
+                &https,
+                &[&providers[0]],
+                &publications,
+                Duration::from_secs(120),
+            )
+            .await;
             if record["anchor_height"].as_u64() == Some(tip_height) {
                 revision = record["revision"].as_u64().unwrap();
                 break;
@@ -578,9 +652,20 @@ async fn controller_updates_reach_independent_https_providers_under_queries() {
         }
     }
     providers[1].start(&binary, &ledger).await;
-    converge(&ledger, "missed-recovery", &publisher, &https, &providers.iter().collect::<Vec<_>>(),
-        &publications, Duration::from_secs(60)).await;
-    ledger.record("phase", serde_json::json!({"phase":"missed-recovery","revision":revision}));
+    converge(
+        &ledger,
+        "missed-recovery",
+        &publisher,
+        &https,
+        &providers.iter().collect::<Vec<_>>(),
+        &publications,
+        Duration::from_secs(60),
+    )
+    .await;
+    ledger.record(
+        "phase",
+        serde_json::json!({"phase":"missed-recovery","revision":revision}),
+    );
 
     // Source outage: both keep serving the active view, then recover.
     publisher_tls.kill().await.unwrap();
@@ -588,17 +673,29 @@ async fn controller_updates_reach_independent_https_providers_under_queries() {
     for p in &providers {
         let deadline = Instant::now() + Duration::from_secs(30);
         while status(&p.origin).await["synchronization"]["state"] != "refused" {
-            assert!(Instant::now() < deadline, "{} never observed the outage", p.name);
+            assert!(
+                Instant::now() < deadline,
+                "{} never observed the outage",
+                p.name
+            );
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
-        row_query(&p.origin, &controller_set(&publications), 1).await.unwrap();
+        row_query(&p.origin, &controller_set(&publications), 1)
+            .await
+            .unwrap();
     }
-    ledger.record("phase", serde_json::json!({"phase":"source-outage","serving":true}));
+    ledger.record(
+        "phase",
+        serde_json::json!({"phase":"source-outage","serving":true}),
+    );
 
     stop_all(&mut providers).await;
     controller.kill().await.unwrap();
     controller.wait().await.unwrap();
-    ledger.record("campaign_end", serde_json::json!({"revision":revision,"failed_queries":failed_queries}));
+    ledger.record(
+        "campaign_end",
+        serde_json::json!({"revision":revision,"failed_queries":failed_queries}),
+    );
     // Retryable refusals during activation are recorded, never hidden; any
     // wrong decoded answer would have been recorded as a failed query too.
     let wrong = std::fs::read_to_string(out.join("observations.jsonl"))
