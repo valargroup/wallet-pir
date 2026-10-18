@@ -15,3 +15,6 @@ pub mod controller;
 pub mod compact;
 
 pub mod txid_display;
+
+#[cfg(test)]
+mod test_chain;

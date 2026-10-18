@@ -1464,25 +1464,11 @@ fn bench_records_follow_the_requested_case_mix() {
 mod live {
     //! Live follow against a mock node, as `controller.rs`'s RPC fixture.
     use super::*;
+    use crate::test_chain::block_without_activity;
     use crate::txid_display::source::{LiveSource, ReplaySource};
     use axum::{extract::State, routing::post, Json, Router};
 
     type Chain = Arc<RwLock<Vec<Vec<u8>>>>;
-
-    fn raw_block(parent: [u8; 32], nonce: u8) -> Vec<u8> {
-        // A syntactically valid header and no transactions; consensus is the
-        // node's job, not the controller's.
-        let mut raw = 4u32.to_le_bytes().to_vec();
-        raw.extend(parent);
-        raw.extend([0; 64]);
-        raw.extend(1_700_000_000u32.to_le_bytes());
-        raw.extend(0x1f07ffffu32.to_le_bytes());
-        raw.extend([nonce; 32]);
-        raw.extend([0xfd, 0x40, 0x05]);
-        raw.extend([0; 1344]);
-        raw.push(0);
-        raw
-    }
 
     fn hash(raw: &[u8]) -> BlockHash {
         let block = zakura_server_chain::transparent::FetchedBlock::from_bytes(raw).unwrap();
@@ -1495,7 +1481,7 @@ mod live {
                 .last()
                 .map(|b| *hash(b).internal_bytes())
                 .unwrap_or([0; 32]);
-            chain.push(raw_block(parent, tag + i as u8));
+            chain.push(block_without_activity(parent, tag + i as u8));
         }
     }
 

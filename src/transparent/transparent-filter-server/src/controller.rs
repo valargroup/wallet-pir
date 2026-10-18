@@ -1711,6 +1711,7 @@ mod tests {
     }
 
     use super::*;
+    use crate::test_chain::block_without_activity;
     use axum::{routing::post, Json};
     type Chain = Arc<RwLock<Vec<Vec<u8>>>>;
     struct MockNode {
@@ -1718,21 +1719,6 @@ mod tests {
         pause_ancestor: AtomicBool,
         ancestor_started: tokio::sync::Notify,
         resume: tokio::sync::Notify,
-    }
-    fn raw_block(parent: [u8; 32], nonce: u8) -> Vec<u8> {
-        // Syntactically valid headers and empty blocks are sufficient here:
-        // the mock node represents consensus acceptance, which is not this
-        // controller's job. No proof-of-work is asserted by this fixture.
-        let mut raw = 4u32.to_le_bytes().to_vec();
-        raw.extend(parent);
-        raw.extend([0; 64]);
-        raw.extend(1_700_000_000u32.to_le_bytes());
-        raw.extend(0x1f07ffffu32.to_le_bytes());
-        raw.extend([nonce; 32]);
-        raw.extend([0xfd, 0x40, 0x05]);
-        raw.extend([0; 1344]);
-        raw.push(0);
-        raw
     }
     fn hash(raw: &[u8]) -> BlockHash {
         let block = zakura_server_chain::transparent::FetchedBlock::from_bytes(raw).unwrap();
@@ -1744,7 +1730,7 @@ mod tests {
                 .last()
                 .map(|b| *hash(b).internal_bytes())
                 .unwrap_or([0; 32]);
-            chain.push(raw_block(parent, tag + i as u8));
+            chain.push(block_without_activity(parent, tag + i as u8));
         }
     }
     async fn rpc(
