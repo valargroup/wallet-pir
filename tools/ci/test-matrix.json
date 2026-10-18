@@ -166,6 +166,7 @@
       "native:enhance-publisher:test:packing_http",
       "native:enhance-publisher:test:record_layout",
       "native:enhance-publisher:test:schema11_cutover",
+      "native:enhance-publisher:test:status_routes",
       "native:status-publisher:bin:status-pir",
       "native:status-query-server:test:status_wallet",
       "native:status-query-server:test:status_wallet_http"

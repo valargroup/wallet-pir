@@ -4,7 +4,8 @@
       "boundary_recovery_model",
       "ci_smoke",
       "record_layout",
-      "schema11_cutover"
+      "schema11_cutover",
+      "status_routes"
     ],
     "full": [
       "canonical_record",
