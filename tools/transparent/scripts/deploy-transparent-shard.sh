@@ -329,7 +329,7 @@ stage() {
 
   worker_ssh "mkdir -p $(printf %q "$staged")"
   scp "${opts[@]}" \
-    "$TRANSPARENT_ARTIFACT_DIR/transparent-shard-server" \
+    "$TRANSPARENT_ARTIFACT_DIR/transparent-query-server" \
     "$TRANSPARENT_ARTIFACT_DIR/SHA256SUMS" \
     "$WALLET_PIR_DEPLOY_USER@$TRANSPARENT_WORKER_HOST:$staged/"
   scp "${opts[@]}" "$rendered" \
@@ -345,7 +345,7 @@ stage() {
 set -euo pipefail
 cd "$1"
 sha256sum -c SHA256SUMS --ignore-missing
-chmod 0755 transparent-shard-server
+chmod 0755 transparent-query-server
 sudo caddy validate --config Caddyfile --adapter caddyfile
 REMOTE
 }
@@ -394,13 +394,17 @@ set -euo pipefail
 staged="$1"; sha="$2"
 release="/opt/transparent-pir/releases/$sha"
 sudo mkdir -p "$release" /opt/transparent-pir/rollback
-sudo install -m 0755 "$staged/transparent-shard-server" "$release/"
+sudo install -m 0755 "$staged/transparent-query-server" "$release/"
 sudo install -m 0644 "$staged/unit.rendered" "$release/transparent-shard-server.service"
 
 # Keep whatever is running now, so a failed start has something to go back to.
-if [[ -x /usr/local/bin/transparent-shard-server ]]; then
-  sudo cp -f /usr/local/bin/transparent-shard-server /opt/transparent-pir/rollback/
-fi
+# Hosts installed before the executable rename keep the legacy name, which the
+# saved unit still runs; keep it too so rollback restores a working pair.
+for name in transparent-query-server transparent-shard-server; do
+  if [[ -x /usr/local/bin/$name ]]; then
+    sudo cp -f /usr/local/bin/$name /opt/transparent-pir/rollback/
+  fi
+done
 if [[ -f /etc/systemd/system/transparent-shard-server.service ]]; then
   sudo cp -f /etc/systemd/system/transparent-shard-server.service /opt/transparent-pir/rollback/
 fi
@@ -408,8 +412,8 @@ fi
 sudo systemctl stop transparent-shard-server.service 2>/dev/null || true
 # Installed beside the target and moved into place, so an interrupted copy
 # never leaves a half-written binary at the path systemd will execute.
-sudo install -m 0755 "$release/transparent-shard-server" /usr/local/bin/transparent-shard-server.next
-sudo mv -f /usr/local/bin/transparent-shard-server.next /usr/local/bin/transparent-shard-server
+sudo install -m 0755 "$release/transparent-query-server" /usr/local/bin/transparent-query-server.next
+sudo mv -f /usr/local/bin/transparent-query-server.next /usr/local/bin/transparent-query-server
 sudo install -m 0644 "$release/transparent-shard-server.service" \
   /etc/systemd/system/transparent-shard-server.service
 sudo systemctl daemon-reload
@@ -431,9 +435,12 @@ rollback() {
   echo "== rollback" >&2
   worker_ssh bash -s <<'REMOTE' || true
 set -euo pipefail
-if [[ -x /opt/transparent-pir/rollback/transparent-shard-server ]]; then
-  sudo install -m 0755 /opt/transparent-pir/rollback/transparent-shard-server \
-    /usr/local/bin/transparent-shard-server
+if [[ -x /opt/transparent-pir/rollback/transparent-query-server || -x /opt/transparent-pir/rollback/transparent-shard-server ]]; then
+  for name in transparent-query-server transparent-shard-server; do
+    if [[ -x /opt/transparent-pir/rollback/$name ]]; then
+      sudo install -m 0755 /opt/transparent-pir/rollback/$name /usr/local/bin/$name
+    fi
+  done
   if [[ -f /opt/transparent-pir/rollback/transparent-shard-server.service ]]; then
     sudo install -m 0644 /opt/transparent-pir/rollback/transparent-shard-server.service \
       /etc/systemd/system/transparent-shard-server.service
@@ -735,7 +742,7 @@ fleet_prepare() {
   echo "== stage $id ($host): binary, tools, unit, assignment"
   host_ssh "$host" "mkdir -p $(printf %q "$staged")"
   scp "${opts[@]}" \
-    "$TRANSPARENT_ARTIFACT_DIR/transparent-shard-server" \
+    "$TRANSPARENT_ARTIFACT_DIR/transparent-query-server" \
     "$TRANSPARENT_ARTIFACT_DIR/shard-prune" \
     "$TRANSPARENT_ARTIFACT_DIR/SHA256SUMS" \
     "$TRANSPARENT_ASSIGNMENT" \
@@ -747,7 +754,7 @@ fleet_prepare() {
 set -euo pipefail
 cd "$1"
 sha256sum -c SHA256SUMS --ignore-missing
-chmod 0755 transparent-shard-server shard-prune
+chmod 0755 transparent-query-server shard-prune
 cp -f assignment.json "$2.json"
 REMOTE
   dest="$(shard_set_path)"
@@ -842,7 +849,7 @@ exec_line="$(sed -n 's/^ExecStart=//p' "$staged/unit.rendered")"
 args="${exec_line#* }"
 args="${args//\/opt\/transparent-pir\/assignments\//$staged/}"
 # shellcheck disable=SC2086
-report="$("$staged/transparent-shard-server" $args --verify-only)"
+report="$("$staged/transparent-query-server" $args --verify-only)"
 echo "$report"
 if jq -e '.runtime_cache != null' <<<"$report" >/dev/null; then
   need="$(jq -r '.runtime_cache | .missing_bytes + .temporary_bytes' <<<"$report")"
@@ -924,7 +931,7 @@ backup="/opt/transparent-pir/transactions/$transaction"
 sudo mkdir -p "$release" "$backup" /opt/transparent-pir/assignments
 # Complete the snapshot before the first mutation; a failed snapshot is never
 # interpreted as an empty previous installation during rollback.
-for path in /usr/local/bin/transparent-shard-server /usr/local/bin/shard-prune \
+for path in /usr/local/bin/transparent-query-server /usr/local/bin/transparent-shard-server /usr/local/bin/shard-prune \
   /etc/systemd/system/transparent-shard-server.service /opt/transparent-pir/current-release /opt/transparent-pir/current-unit-digest; do
   if sudo test -f "$path"; then sudo cp -p "$path" "$backup/$(basename "$path")"; fi
 done
@@ -936,12 +943,12 @@ sudo touch "$backup/touched"
 sudo install -m 0755 "$staged/shard-prune" "$release/"
 sudo install -m 0755 "$release/shard-prune" /usr/local/bin/shard-prune
 if [[ "$action" == tools ]]; then exit 0; fi
-sudo install -m 0755 "$staged/transparent-shard-server" "$release/"
+sudo install -m 0755 "$staged/transparent-query-server" "$release/"
 sudo install -m 0644 "$staged/unit.rendered" "$release/transparent-shard-server.service"
 sudo install -m 0644 "$staged/$assignment_sha.json" "/opt/transparent-pir/assignments/$assignment_sha.json"
 sudo systemctl stop transparent-shard-server.service 2>/dev/null || true
-sudo install -m 0755 "$release/transparent-shard-server" /usr/local/bin/transparent-shard-server.next
-sudo mv -f /usr/local/bin/transparent-shard-server.next /usr/local/bin/transparent-shard-server
+sudo install -m 0755 "$release/transparent-query-server" /usr/local/bin/transparent-query-server.next
+sudo mv -f /usr/local/bin/transparent-query-server.next /usr/local/bin/transparent-query-server
 sudo install -m 0644 "$release/transparent-shard-server.service" /etc/systemd/system/transparent-shard-server.service
 sudo systemctl daemon-reload
 sudo systemctl enable --now transparent-shard-server.service
@@ -990,7 +997,7 @@ REMOTE
       [[ "$(worker_action "$id")" != restart ]] || pending+=("$id")
       # First activation is established by the absence of an installed binary,
       # never by an unhealthy fleet being mistaken for a fresh one.
-      if host_ssh "$(worker_field "$id" ssh_host)" test -x /usr/local/bin/transparent-shard-server; then fresh=false; fi
+      if host_ssh "$(worker_field "$id" ssh_host)" test -x /usr/local/bin/transparent-query-server -o -x /usr/local/bin/transparent-shard-server; then fresh=false; fi
     done
     while [[ "${#pending[@]}" -gt 0 ]]; do
       healthy=0
@@ -1173,7 +1180,9 @@ if [[ "${old_set:-}" != "$set_path" ]]; then
 sudo /usr/local/bin/shard-prune --shard-dir "$set_path" --assignment "$assignment" --worker-id "$id" --apply \
   | jq -r '"\(.deleted | length) removed, \(.bytes_freed) bytes freed"'
 fi
-sudo /usr/local/bin/transparent-shard-server --runtime-cache-dir "$cache_dir" "${keep[@]}"
+server=/usr/local/bin/transparent-query-server
+[[ -x "$server" ]] || server=/usr/local/bin/transparent-shard-server
+sudo "$server" --runtime-cache-dir "$cache_dir" "${keep[@]}"
 REMOTE
   done
 }
@@ -1201,7 +1210,7 @@ backup="/opt/transparent-pir/transactions/$1"
 sudo test -f "$backup/touched" || exit 0
 action="$(sudo cat "$backup/action")"
 if [[ "$action" != tools ]]; then sudo systemctl stop transparent-shard-server.service || true; fi
-for path in /usr/local/bin/transparent-shard-server /usr/local/bin/shard-prune \
+for path in /usr/local/bin/transparent-query-server /usr/local/bin/transparent-shard-server /usr/local/bin/shard-prune \
   /etc/systemd/system/transparent-shard-server.service /opt/transparent-pir/current-release /opt/transparent-pir/current-unit-digest; do
   [[ "$action" != tools || "$path" == /usr/local/bin/shard-prune ]] || continue
   name="$(basename "$path")"
