@@ -79,7 +79,7 @@ def main():
                    'test_binary_sha256': hashlib.sha256(args.test_binary.read_bytes()).hexdigest() if args.test_binary else None,
                    'source_files_sha256': {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest() for p in paths if not p.name.startswith('._')}}, stream, indent=2)
     print(f'Reports: {output}', flush=True)
-    command = ['cargo', 'test', '--release', '-p', 'transparent-shard-server',
+    command = ['cargo', 'test', '--release', '-p', 'transparent-query-server',
                '--test', 'revisions_and_cache', 'burst::publication_burst_under_exact_load',
                '--', '--ignored', '--exact', '--nocapture']
     if args.test_binary:

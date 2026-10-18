@@ -63,7 +63,7 @@ class CommandPlanTests(unittest.TestCase):
                     for package in selected:
                         built.update(targets(*packages[package], 'bin'))
                 built.update('examples/' + name for name in options(command, '--example'))
-            self.assertFalse(set(build.ARTIFACTS) - built, (profile, built))
+            self.assertFalse({build.ARTIFACT_SOURCES.get(name, name) for name in build.ARTIFACTS} - built, (profile, built))
             self.assertIn('examples/activity-reopen', built)
             self.assertNotIn('examples/engine-store-reopen', built)
 
@@ -71,9 +71,9 @@ class CommandPlanTests(unittest.TestCase):
         commands = build.build_commands('release-fast')
         tests = [command for command in commands if command[1] == 'test']
         selected = {name for command in tests for name in options(command, '--test')}
-        self.assertTrue({'recovery', 'wallet_anchor', 'wallet_continuation',
+        self.assertTrue({'compact_recovery', 'wallet_anchor', 'wallet_continuation',
                          'wallet_recut', 'wallet_sync'} <= selected)
-        self.assertTrue(any('transparent-regression' in command and '--tests' in command
+        self.assertTrue(any('transparent-tools' in command and '--tests' in command
                             for command in tests))
         self.assertTrue(all(command[1] == 'build' for command in build.build_commands('release')))
 
