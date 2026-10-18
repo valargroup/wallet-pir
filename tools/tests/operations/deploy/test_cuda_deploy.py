@@ -346,7 +346,7 @@ class CudaFleet(Fleet):
     def test_nested_health_and_strict_scalar_types(self):
         runner = self.enhance_fleet()
         target = runner.targets[0]
-        record = {'host': target.host, 'unit': target.unit, 'verify': {
+        record = {'host': target.host, 'unit': target.unit, 'role': target.role.name, 'verify': {
             'health': target.url(target.role.health), 'health_equals': deploy.EXPECTED}}
         health = {'protocol': deploy.PROTOCOL, 'matvec': {'matvec_backend': 'cuda', 'cuda_device': 0}}
         with patch.object(self.fake, 'http_get', return_value=(200, json.dumps(health))):
