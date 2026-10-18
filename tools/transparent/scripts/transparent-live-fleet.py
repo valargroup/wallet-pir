@@ -228,6 +228,16 @@ class Fleet:
         self.roster, self.roster_mark = roster, mark
         return True
 
+    def data_members(self):
+        """Roster members whose data this adapter stages, prepares and activates.
+
+        An `https-recent` member updates only through its own HTTPS
+        synchronization: it is never planned, staged, prepared, activated or
+        counted toward quorum here, and the router renders no member the
+        publication's assignment does not name.
+        """
+        return [w for w in self.roster if w['role'] != 'https-recent']
+
     @asynccontextmanager
     async def lock(self, name, wait=True, timeout=None):
         if self.read_only:
@@ -687,7 +697,7 @@ class Fleet:
         # after an inventory change plans and stages the same members.
         roster = self.root / (digest + '.roster.json')
         if not roster.exists():
-            atomic_json(roster, self.roster)
+            atomic_json(roster, self.data_members())
         # Same map retries preserve assignment provenance and its digest. The
         # plan is written once and completely: the controller can kill this
         # adapter mid-plan, and a truncated file must never be reused.
@@ -724,7 +734,7 @@ class Fleet:
         # The grace lets replicas that finish their tail build moments after
         # the first one activate together, instead of leaving routing at every
         # activation and rejoining seconds later. It costs freshness directly.
-        prepared = await self.collect(bounded_stage, self.roster, early=True,
+        prepared = await self.collect(bounded_stage, self.data_members(), early=True,
                                       grace=self.c.get('prepare_grace_seconds', 0.5))
         if not self.quorum(prepared):
             raise RuntimeError('warm prepare quorum unavailable')
@@ -1011,7 +1021,7 @@ class Fleet:
         # With manage_all_workers every roster member, archive owners included,
         # is prepared by the reconciler and never staged by the foreground.
         if self.c.get('manage_all_workers', False):
-            return {w['id'] for w in self.roster}
+            return {w['id'] for w in self.data_members()}
         return set(self.c.get('managed_recent_workers', []))
 
     @staticmethod

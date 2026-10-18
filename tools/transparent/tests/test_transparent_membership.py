@@ -58,6 +58,19 @@ class MembershipTests(unittest.IsolatedAsyncioTestCase):
             status.update(active={'map_sha256': cmd['map_sha256']}, candidate=None, warm=True)
         return json.loads(json.dumps(status))
 
+    async def test_https_recent_members_are_never_prepared_managed_or_rendered(self):
+        https = dict(id='h1', role='https-recent', ssh_host='h1', upstream='h1:8092')
+        self.f.roster = self.roster + [https]
+        self.assertEqual(self.f.managed_ids(), {'owner', 'r1', 'r2'})
+        self.assertNotIn(https, self.f.data_members())
+        self.assertFalse(self.f.quorum({'owner', 'h1'}), 'an HTTPS member never completes quorum')
+        assignment = {'workers': [{'id': 'owner'}, {'id': 'r1'}]}
+        self.assertEqual([w['id'] for w in self.f.render_set([self.owner, self.r1, https], assignment)],
+                         ['owner', 'r1'])
+        self.f.control.reset_mock()
+        await self.f.reconcile()
+        self.assertNotIn('h1', [call.args[0]['id'] for call in self.f.control.await_args_list])
+
     def test_manage_all_includes_archive_owners(self):
         self.assertEqual(self.f.managed_ids(), {'owner', 'r1', 'r2'})
         self.f.c['manage_all_workers'] = False
@@ -394,3 +407,20 @@ class DynamicRosterTests(unittest.IsolatedAsyncioTestCase):
         snapshot = json.loads((self.root/('c'*64+'.roster.json')).read_text())
         self.assertEqual([w['id'] for w in snapshot], ['owner', 'r1', 'r2'])
         self.assertEqual(plans, [snapshot])
+        # An HTTPS member is neither planned nor prepared.
+        self.f.roster = self.f.roster + [dict(id='h1', role='https-recent', ssh_host='h1', upstream='h1:8092')]
+        staged = []
+        async def collect(operation, workers, **kwargs):
+            staged.extend(w['id'] for w in workers)
+            return {w['id']: {'expected': 'a'*64} for w in workers}
+        self.f.collect = collect
+        req = dict(req, map_sha256='d'*64)
+        async def planner_d(args, *rest, **kwargs):
+            plans.append(json.loads(Path(args[args.index('--roster')+1]).read_text()))
+            Path(args[args.index('--out-assignment')+1]).write_text(json.dumps(
+                dict(schema=M.ASSIGNMENT_SCHEMA, set={'map_sha256': 'd'*64}, workers=[{'id': 'owner'}])))
+            return b''
+        with patch.object(M, 'run', new=AsyncMock(side_effect=planner_d)):
+            await self.f.prepare(dict(req))
+        self.assertNotIn('h1', [w['id'] for w in plans[-1]])
+        self.assertNotIn('h1', staged)
