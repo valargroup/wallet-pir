@@ -427,8 +427,10 @@ mod tests {
 
     #[test]
     fn an_empty_block_has_no_elements() {
+        // A valid block always carries a coinbase; one without outputs is empty.
         let mut previous = MapPreviousOutputs::default();
-        assert!(elements_of(&[], &mut previous).is_empty());
+        assert!(elements_of(&[coinbase(Vec::new())], &mut previous).is_empty());
+        assert_eq!(previous.lookups, 0);
     }
 
     #[test]
