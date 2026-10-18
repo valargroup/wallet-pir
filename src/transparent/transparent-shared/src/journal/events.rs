@@ -417,14 +417,12 @@ impl EventStore {
             return Err(EventStoreError::Invariant("display append height".into()));
         }
         transparent_events::check_transaction_consistency(events.iter().map(|(_, event)| event))?;
-        crate::journal::display_journal::validate_events(records, events)?;
+        super::display_journal::validate_events(records, events)?;
         let (oversized, ordinary): (Vec<_>, Vec<_>) =
             events.iter().cloned().partition(|(script, _)| {
-                script.as_slice().len() > crate::journal::display_journal::JOURNAL_SCRIPT_LIMIT
+                script.as_slice().len() > super::display_journal::JOURNAL_SCRIPT_LIMIT
             });
-        crate::journal::display_journal::write_with_events(
-            &self.dir, block_hash, records, &oversized,
-        )?;
+        super::display_journal::write_with_events(&self.dir, block_hash, records, &oversized)?;
         self.append_block(height, block_hash, &ordinary)
     }
 
@@ -437,8 +435,8 @@ impl EventStore {
         let block = self.block_at(height).ok_or_else(|| {
             EventStoreError::Invariant("display height outside checkpoint".into())
         })?;
-        let sources = crate::journal::display_journal::read_sources(&self.dir, block.block_hash)?;
-        crate::journal::display_journal::validate_events(
+        let sources = super::display_journal::read_sources(&self.dir, block.block_hash)?;
+        super::display_journal::validate_events(
             &sources,
             &self
                 .events_at(height)?
@@ -468,7 +466,7 @@ impl EventStore {
             .map_or(self.events_len, |next| next.offset);
         let mut events = read_event_record_version(&mut file, entry, end, self.meta.version)?;
         if let Some(events) = &mut events {
-            events.extend(crate::journal::display_journal::oversized_events(
+            events.extend(super::display_journal::oversized_events(
                 &self.dir,
                 entry.block_hash,
             )?);
@@ -771,7 +769,7 @@ mod tests {
         assert_eq!(journal.events_stored(), 1);
         assert!(!dir
             .path()
-            .join(crate::journal::display_journal::V2X_DIR)
+            .join(super::super::display_journal::V2X_DIR)
             .exists());
         for (name, bytes) in names.iter().zip(before) {
             assert_eq!(std::fs::read(dir.path().join(name)).unwrap(), bytes);

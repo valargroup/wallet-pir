@@ -14,6 +14,12 @@ pub mod state;
 pub mod store;
 pub mod zakura;
 
+// The extractor's tests reach the journal through their grandparent module, so
+// the standalone txid sizing exporter can compile the same file beside its
+// own copies of these modules.
+#[cfg(test)]
+use transparent_shared::journal::{display_journal, events};
+
 use crate::history::service::{Phase, ServiceState};
 use crate::ingest::blocks::build_block_events;
 use crate::ingest::prevout::OutputCache;

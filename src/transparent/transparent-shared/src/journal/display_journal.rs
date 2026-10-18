@@ -7,7 +7,7 @@
 //! Published v2 entries are derived from it when read, so changing what an
 //! entry holds is a republish rather than a new ingest. Earlier v1 sidecars
 //! are read only for the oversized history events they carry.
-use crate::journal::events::EventStoreError;
+use super::events::EventStoreError;
 use sha2::{Digest, Sha256};
 use std::{
     io::{Read, Write},
@@ -378,8 +378,8 @@ fn bounded_read(path: &Path, max_bytes: usize) -> Result<Vec<u8>, EventStoreErro
 
 #[cfg(test)]
 mod tests {
+    use super::super::events::EventStore;
     use super::*;
-    use crate::journal::events::EventStore;
     use transparent_events::{
         FeeState, ReceiveEvent, SpendEvent, TransactionMetadata, TransparentEvent,
     };
@@ -442,7 +442,7 @@ mod tests {
     #[test]
     fn contradictory_transactions_leave_no_sidecar_or_journal_changes() {
         let temp = tempfile::tempdir().unwrap();
-        let mut store = crate::journal::events::EventStore::open(
+        let mut store = super::super::events::EventStore::open(
             temp.path(),
             transparent_filter::MAINNET_GENESIS_DISPLAY,
             1,
