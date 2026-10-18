@@ -184,8 +184,10 @@ rechecks archive contents, ABI metadata and clean source provenance.
 
 Only **CI / Fast checks** validates automatically on main pushes and PRs.
 Dependency cache priming runs independently on relevant main changes.
-Both PR and main feedback have a three-minute execution ceiling; queueing also counts toward the latency
-target. A timeout is a failure, never evidence of successful fast validation.
+Both PR and main feedback target three minutes; queueing also counts toward the
+latency target. During the current repair, validation finishes before main's
+final timing check enforces 180 seconds. PRs and manual runs report timings.
+A completed over-budget run provides diagnostic coverage, not a timing pass.
 The pre-push health guard follows this workflow, rather than long qualification.
 
 Whole-repository **CI full** runs nightly at 04:17 UTC and on explicit dispatch.
@@ -409,7 +411,7 @@ Main uses persistent targets; the separate
 one successful main fast snapshot for hosted PRs. It compiles fast units only
 when the exact key is missing, runs no tests and is not a gate. Full qualification
 retains persistent build lanes. A missing cache never relaxes validation or the
-180-second routine ceiling.
+180-second warm feedback target.
 
 ## Cold preparation and representative latency
 
