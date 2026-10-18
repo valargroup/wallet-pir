@@ -1,5 +1,9 @@
 # Transparent recovery simulation
 
+For explicit prepared-publication artifact transfers with 10/100 logical HTTP
+consumers, use [the distribution driver and its measured limits](../../docs/prepared-distribution.md#distribution-load-diagnostics).
+It is separate from wallet simulation and ordinary CPU correctness acceptance.
+
 `transparent-loadtest` supports reproducible mixed-wallet recovery scenarios as
 well as the existing stepped-concurrency load test. Both use the reference
 wallet HTTP adapters and verify recovered events against a pinned journal

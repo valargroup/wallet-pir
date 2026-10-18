@@ -388,6 +388,91 @@ is not unchanged-application execution. The fixed Vizor build's existing-origin
 TLS and same-origin display smoke remains mandatory; no application rebuild,
 upgrade, TLS bypass, production DNS or routing change is authorized here.
 
+## Distribution load diagnostics
+
+`transparent/tools/transparent-loadtest/distribution.py` runs explicit artifact
+waves against the **real controller's configured HTTPS terminator**. It does not
+verify native serving authority or replace the two actual provider processes.
+Invoke it through the repository's development wrapper:
+
+```sh
+python3 transparent/tools/transparent-loadtest/distribution.py \
+  --publisher https://approved-publisher.example --output .local-pir/distribution-10 \
+  --consumers 10 --phase bootstrap
+# Advance the actual producer, then reuse these same private consumer caches:
+python3 transparent/tools/transparent-loadtest/distribution.py \
+  --publisher https://approved-publisher.example --output .local-pir/distribution-10 \
+  --consumers 10 --phase update
+```
+
+Use `--ca` for the explicitly trusted fixture/operator PEM. Repeat with 100 and
+a fresh output root only after the 10-consumer campaign. Each consumer streams
+one object at a time, verifies lengths/digests, checks retained objects before
+reuse, and performs two conditional polls five seconds apart. Each request has
+a 30-second deadline and at most eight attempts with bounded jitter/backoff.
+The per-consumer body allowance is 64 GiB. Every HTTP status, partial/error body
+byte count, digest, retry and timeout remains in per-consumer JSONL receipts.
+Archive evaluation tables are excluded after checking their map classification.
+An update must observe a producer change; an unchanged response cannot count as
+an update. Reusing an output phase refuses overwriting its receipts.
+
+Before a wave, separate control requests retain the observed current/inventory
+and conservatively budget a complete candidate beside retained cache objects.
+The default total cache bound is 8 GiB (`--cache-budget-bytes`); choose a larger
+explicit bound only within the execution host/task's authorized disk allocation.
+This affects load clients only. Publisher admission remains four artifact bodies,
+shared with canonicality checks, and is never tuned by this tool. Failed client
+attempts remain failures in the report even when bounded retries complete a wave.
+
+The October 18 fixture diagnostic used server source `c50db84c`, release-fast,
+the original frozen391/c085 executable `24da21b0…`, a real controller, an actual
+archive owner, HTTPS forwarding and two independent strict-manager processes.
+The deterministic followed journal has one archive receive and, initially, two
+recent events for one script; adding one receive creates a recent page table.
+The archive directory has 32,768 rows; the recent directory has 2,048 and its
+page table 8,192, all at the unchanged 4,096-byte row/profile geometry.
+This is not production-chain or representative full-host data.
+
+| 10 logical consumers | Synchronized bootstrap | Ordinary update transfers/polls |
+|---|---:|---:|
+| Completed | 10/10 | 10/10 |
+| Wave elapsed | 15.64 s | 26.57 s |
+| HTTP attempts: 200 / 304 / 503 | 100 / 20 / 18 | 100 / 20 / 52 |
+| Body bytes read, including errors/partials | 672,047,290 | 1,847,326,430 |
+| Retries / timeouts | 18 / 0 | 52 / 0 |
+| Unchanged objects reused | 0 | 20 |
+| Archive evaluation requests | 0 | 0 |
+| Concurrent exact frozen-client recoveries | 36/36 | 54/54 |
+
+These request windows sampled publisher CPU at 0.38 / 0.80 cores and publisher
+RSS at most 334 / 471 MB; TLS termination used another 0.23 / 0.50 cores.
+The producer update construction is additional work outside the transfer window:
+its recorded cycle was 10.67 seconds. Raw host/process/cgroup samples include
+construction and candidate overlap. On the shared 67.42 GB host, physical
+nonfree memory peaked at 55.55 GB, including up to 49.41 GB of buffers/cache;
+`MemTotal - MemAvailable` peaked at 4.15 GB. These overlapping observations
+include unrelated host activity. Neither sampled memory nor these short shared-host
+latencies establishes the 64 GB holdings contract or the 10% p99 bound.
+
+Raw provenance is retained outside Git in task `t-ddab1d18147e47c4` under
+`.local-pir/provider-qualification/`: `binaries.json`, `helper-versions/`,
+`probe-04/` (exact inputs, requests, controller cycles and 0.5-second resource
+samples), and `10-consumer-audit.json`. The audit independently rehashes all
+140 retained consumer objects (2,519,311,230 bytes) and compares complete frozen
+client ledgers with the explicit source-event oracle. The first two distribution
+phases used preserved driver `fd268532…`; the subsequent disk guard is a later
+tool revision. Initial fixture metadata/certificate/path setup failures remain
+retained separately and do not count as passing campaigns.
+
+The 100-consumer bootstrap was **not run**: its 18,473,074,600-byte candidate
+alone, plus existing builds/evidence and later update overlap, exceeds this
+task's 24 GiB disk reservation. The local guard refused before artifact requests.
+Continue on existing authorized storage without changing data or geometry.
+100-consumer updates, actual unchanged Mac execution, authenticated fat-LTO
+release artifacts, representative 64 GB holdings, isolated matched p99 and
+complete CPU30/ALL-warm180 acceptance remain separate gates in
+[remaining work](remaining-work.md#independent-history-provider-qualification).
+
 ## Standalone installation from release artifacts
 
 This prepares an operator-owned **Transparent history only** installation. It
