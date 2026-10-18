@@ -2,9 +2,9 @@
 
 Cargo unifies features for the complete selection. Unit tests and the named
 fast integration targets share that build; campaign targets are never selected.
-Test programs retain their package directory and Cargo environment. On fewer than 8 cores the filter library runs alone;
-otherwise at most three programs, including that library and HTTP integration
-programs, execute together.
+Test programs retain their package directory and Cargo environment. The Enhance
+HTTP smokes run alone, as does the filter library on fewer than eight cores.
+The remaining programs share a pool of at most three processes.
 """
 import json
 import os
@@ -160,13 +160,14 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3,
             actual_units.add(identity)
             discovered_units[name].update(names)
         exclusions = [] if integration else list(slow.get(name, {}))
-        # Full archive runtimes use every core on a 4-core runner and push the
-        # encrypted HTTP smokes past their 30s deadline. Run that library alone
-        # there; an 8-core runner still has cores left for the shared pool.
+        # Real Enhance HTTP preparation exceeds its case deadline beside
+        # archive and native runtime builds, including on the 8-core runner.
+        # Isolate this executable without relaxing its assertions or deadline.
+        isolated_http = integration and name == 'enhance-serving' and target['name'] == 'ci_smoke'
         program = dict(executable=binary, directory=directory, package=name,
                              version=package['version'],
                              integration=integration,
-                             exclusive=publisher_runs_alone(name, target['kind']),
+                             exclusive=isolated_http or publisher_runs_alone(name, target['kind']),
                              case_count=len(names),
                              args=[arg for case in exclusions for arg in ('--skip', case)])
         programs.extend(bounded_programs(program, names))
