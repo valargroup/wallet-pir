@@ -38,4 +38,4 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread"], optional = tr
 
 reinspiring = { version = "=0.1.3-rc.1", optional = true }
 rand_chacha = {version="0.3", optional=true}
-pir-native = { package = "zakura-pir-native", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "40241159b6959d86ca9e05df17f04f928945eed7", optional = true }
+pir-native = { package = "zakura-pir-native", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "68315eac8aa6dfc018c79a48b90ff51460caaee8", optional = true }

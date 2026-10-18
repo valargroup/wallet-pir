@@ -25,7 +25,7 @@ status-query-server = { path = "../status-query-server" }
 # The synthetic distributed validation drives the shared control ledger and coordinator.
 enhance-serving = { path = "../../enhance/enhance-serving" }
 pir-control = { path = "../../shared/pir-control", features = ["admission"] }
-pir-native = { package = "zakura-pir-native", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "40241159b6959d86ca9e05df17f04f928945eed7", optional = true }
+pir-native = { package = "zakura-pir-native", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "68315eac8aa6dfc018c79a48b90ff51460caaee8", optional = true }
 axum = "0.7"
 clap = { version = "4", features = ["derive", "env"] }
 hex = "0.4"
@@ -37,11 +37,11 @@ sha2 = "0.10"
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "40241159b6959d86ca9e05df17f04f928945eed7", default-features = false, features = ["status"] }
+zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "68315eac8aa6dfc018c79a48b90ff51460caaee8", default-features = false, features = ["status"] }
 
 [dev-dependencies]
 # Independent Status client for the real HTTP runtime regression.
-zakura-pir-status = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "40241159b6959d86ca9e05df17f04f928945eed7" }
+zakura-pir-status = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "68315eac8aa6dfc018c79a48b90ff51460caaee8" }
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
-zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "40241159b6959d86ca9e05df17f04f928945eed7", default-features = false, features = ["status", "testing"] }
+zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "68315eac8aa6dfc018c79a48b90ff51460caaee8", default-features = false, features = ["status", "testing"] }

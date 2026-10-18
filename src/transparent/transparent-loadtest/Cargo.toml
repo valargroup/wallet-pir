@@ -19,10 +19,10 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time", "signal"] }
-transparent-events = { package = "zakura-transparent-events", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "40241159b6959d86ca9e05df17f04f928945eed7" }
-transparent-filter = { package = "zakura-transparent-filter", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "40241159b6959d86ca9e05df17f04f928945eed7", features = ["client"] }
-transparent-txid-client = { package = "zakura-transparent-txid-client", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "40241159b6959d86ca9e05df17f04f928945eed7" }
-zakura-pir-transparent = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "40241159b6959d86ca9e05df17f04f928945eed7", default-features = false, features = ["engine-store", "reqwest"] }
+transparent-events = { package = "zakura-transparent-events", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "68315eac8aa6dfc018c79a48b90ff51460caaee8" }
+transparent-filter = { package = "zakura-transparent-filter", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "68315eac8aa6dfc018c79a48b90ff51460caaee8", features = ["client"] }
+transparent-txid-client = { package = "zakura-transparent-txid-client", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "68315eac8aa6dfc018c79a48b90ff51460caaee8" }
+zakura-pir-transparent = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "68315eac8aa6dfc018c79a48b90ff51460caaee8", default-features = false, features = ["engine-store", "reqwest"] }
 
 sysinfo = "0.36"
 
@@ -30,7 +30,7 @@ sysinfo = "0.36"
 tokio = { version = "1", features = ["net", "io-util"] }
 tempfile = "3"
 axum = "0.7"
-transparent-shard = { package = "zakura-transparent-shard", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "40241159b6959d86ca9e05df17f04f928945eed7" }
+transparent-shard = { package = "zakura-transparent-shard", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "68315eac8aa6dfc018c79a48b90ff51460caaee8" }
 transparent-shard-server = { path = "../transparent-shard-server" }
 
 [build-dependencies]
