@@ -1,0 +1,1541 @@
+//! Unequal-unit PIR execution. Immutable, content-addressed units survive generation changes.
+#[cfg(not(feature = "native-reinspiring"))]
+use crate::ipir::deserialize_first_dim_query;
+use crate::ipir::{
+    add_crs_blocks_assign_mod, add_intermediate_assign_mod, CachedShard, PreparedShard,
+    ShardRuntime,
+};
+use crate::protocol::*;
+use crate::types::{DatabaseId, DatabaseLayout, ENHANCE_LAYOUT};
+use crate::wire::read_crs_blocks;
+use crate::{ipir::LoadError, matvec::MatvecConfig};
+use crate::{ITEM_SIZE_BITS, RECORDS_PER_ROW, RECORD_BYTES};
+use base64::{engine::general_purpose::STANDARD, Engine as _};
+use inspiring::RlweParams;
+use ipir_sp::server::CrsBlock;
+#[cfg(not(feature = "native-reinspiring"))]
+use ipir_sp::YpirSchemeParams;
+#[cfg(not(feature = "native-reinspiring"))]
+use pir_runtime::packing::{PackingKeys, PackingSetup, PreparedPacking};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, OnceLock, Weak};
+
+#[cfg(feature = "native-reinspiring")]
+#[path = "native_runtime.rs"]
+pub mod native_runtime;
+#[cfg(feature = "native-reinspiring")]
+pub use native_runtime::NativePacking as Packing;
+pub fn modulus() -> u64 {
+    #[cfg(feature = "native-reinspiring")]
+    {
+        pir_serving::modulus(32768, ITEM_SIZE_BITS)
+    }
+    #[cfg(not(feature = "native-reinspiring"))]
+    {
+        rlwe().q
+    }
+}
+
+pub fn rlwe() -> &'static RlweParams {
+    static RLWE: OnceLock<RlweParams> = OnceLock::new();
+    RLWE.get_or_init(|| {
+        pir_runtime::params::p16q48(32768, ITEM_SIZE_BITS)
+            .expect("pinned profile")
+            .rlwe()
+            .clone()
+    })
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DomainPlan {
+    pub shard: QueryShard,
+    pub units: Vec<UnitIdentity>,
+}
+
+impl DomainPlan {
+    pub fn validate(&self) -> Result<(), String> {
+        let geometry = Geometry::default();
+        // The engine supports independently prepared plain units as well as
+        // composed domains. Public manifests enforce canonical composition.
+        let plain = self.shard.logical_rows == geometry.logical_rows(self.shard.records)?
+            && self.shard.units == geometry.units(self.shard.records)?;
+        let composed = self.shard.logical_rows == self.shard.expected_logical_rows(geometry)?
+            && self.shard.units == self.shard.expected_units(geometry)?;
+        if (!plain && !composed) || self.units.len() != self.shard.units.len() {
+            return Err("invalid domain plan".into());
+        }
+        for (spec, unit) in self.shard.units.iter().zip(&self.units) {
+            if unit.table != "enhance"
+                || unit.shard_id != self.shard.id
+                || unit.local_row_start != spec.local_row_start
+                || unit.allocated_rows != spec.allocated_rows
+                || unit.setup_sha256 != hex::encode(Sha256::digest(setup_seed(self.shard.id)))
+                || unit.parameter_id != unit_parameter_id(unit.allocated_rows)?
+                || unit.content_sha256.len() != 64
+                || hex::decode(&unit.content_sha256).is_err()
+            {
+                return Err("incompatible mutable-unit identity".into());
+            }
+        }
+        Ok(())
+    }
+}
+
+pub fn plan(
+    shard: QueryShard,
+    mut read: impl FnMut(u64, usize) -> Result<Vec<u8>, String>,
+) -> Result<DomainPlan, String> {
+    let mut identities = Vec::new();
+    for spec in &shard.units {
+        let rows = unit_rows(&shard, spec, &mut read)?;
+        identities.push(UnitIdentity {
+            recovery_epoch: 0,
+            table: "enhance".into(),
+            shard_id: shard.id,
+            local_row_start: spec.local_row_start,
+            allocated_rows: spec.allocated_rows,
+            setup_sha256: hex::encode(Sha256::digest(setup_seed(shard.id))),
+            parameter_id: unit_parameter_id(spec.allocated_rows)?,
+            content_sha256: hex::encode(Sha256::digest(&rows)),
+        });
+    }
+    let plan = DomainPlan {
+        shard,
+        units: identities,
+    };
+    plan.validate()?;
+    Ok(plan)
+}
+
+pub fn unit_rows(
+    shard: &QueryShard,
+    spec: &MutableUnit,
+    read: &mut impl FnMut(u64, usize) -> Result<Vec<u8>, String>,
+) -> Result<Vec<u8>, String> {
+    let tail = shard.composed() && spec.local_row_start == 4096;
+    let local = spec
+        .local_row_start
+        .checked_mul(RECORDS_PER_ROW as u64)
+        .ok_or("unit range overflow")?;
+    let (start, count) = if tail {
+        (
+            (shard.global_row_start - 4096) * RECORDS_PER_ROW as u64,
+            4096 * RECORDS_PER_ROW as u64,
+        )
+    } else {
+        (
+            shard
+                .global_row_start
+                .checked_mul(RECORDS_PER_ROW as u64)
+                .and_then(|s| s.checked_add(local))
+                .ok_or("unit range overflow")?,
+            shard
+                .records
+                .checked_sub(local)
+                .ok_or("unit outside shard")?
+                .min(spec.used_rows * RECORDS_PER_ROW as u64),
+        )
+    };
+    let mut rows = read(start, count as usize)?;
+    if rows.len() != count as usize * RECORD_BYTES {
+        return Err("source returned wrong record count".into());
+    }
+    // Native queries omit selection coefficients past the domain's used rows,
+    // which is exact only while every byte from there on is zero padding.
+    if rows.len() > spec.used_rows as usize * ENHANCE_LAYOUT.row_bytes() {
+        return Err("unit data past its used rows".into());
+    }
+    let allocated = spec.allocated_rows as usize * ENHANCE_LAYOUT.row_bytes();
+    rows.reserve_exact(allocated.saturating_sub(rows.len()));
+    rows.resize(allocated, 0);
+    Ok(rows)
+}
+
+/// A plan's verified, prepared runtimes: the input a worker evaluates.
+///
+/// Only [`Engine::prepare`] constructs one, after the plan validates and every
+/// unit's rows are bound to its committed digest, so a plan and a digest alone
+/// are never enough to obtain one.
+pub struct Evaluation {
+    plan: DomainPlan,
+    units: Vec<Arc<CachedShard>>,
+}
+
+/// Why [`Engine::prepare`] produced no evaluation, by what the caller must do.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PrepareError {
+    /// The plan or its staged rows do not verify; the same input cannot succeed.
+    InvalidSource(String),
+    /// Restoring or building a runtime failed; the input verified.
+    Runtime(String),
+    /// The worker's resident budget cannot hold another unit.
+    Admission(String),
+}
+
+impl std::fmt::Display for PrepareError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let (Self::InvalidSource(message) | Self::Runtime(message) | Self::Admission(message)) =
+            self;
+        f.write_str(message)
+    }
+}
+
+impl From<PrepareError> for String {
+    fn from(error: PrepareError) -> Self {
+        error.to_string()
+    }
+}
+
+/// How [`Engine::prepare`] produced each unit's runtime.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize)]
+pub struct PrepareOutcome {
+    /// Held live by another evaluation, so shared without any work.
+    pub reused: usize,
+    /// Restored from the verified on-disk artifact.
+    pub restored: usize,
+    /// Rebuilt from staged rows bound to the committed digest.
+    pub built: usize,
+}
+
+impl PrepareOutcome {
+    pub fn add(&mut self, other: Self) {
+        self.reused += other.reused;
+        self.restored += other.restored;
+        self.built += other.built;
+    }
+}
+
+impl Evaluation {
+    pub fn plan(&self) -> &DomainPlan {
+        &self.plan
+    }
+
+    pub fn units(&self) -> &[Arc<CachedShard>] {
+        &self.units
+    }
+
+    pub fn evaluate(&self, coefficients: &[u64]) -> Result<Vec<u64>, EvaluationError> {
+        let params =
+            parameters(self.plan.shard.logical_rows).map_err(EvaluationError::Unavailable)?;
+        if coefficients.len() != params.db_rows || coefficients.iter().any(|v| *v >= modulus()) {
+            return Err(EvaluationError::InvalidQuery);
+        }
+        let mut answer = vec![0; params.db_cols];
+        for (unit, spec) in self.units.iter().zip(&self.plan.units) {
+            let start = spec.local_row_start as usize;
+            let end = start + spec.allocated_rows as usize;
+            let partial = unit
+                .runtime()
+                .evaluate(rlwe(), &coefficients[start..end])
+                .map_err(|e| EvaluationError::Unavailable(e.to_string()))?;
+            add_intermediate_assign_mod(&mut answer, &partial, modulus())
+                .map_err(|e| EvaluationError::Unavailable(e.to_string()))?;
+        }
+        Ok(answer)
+    }
+
+    pub fn hint(&self) -> Result<Vec<CrsBlock>, String> {
+        let params = parameters(self.plan.shard.logical_rows)?;
+        let mut combined: Option<Vec<CrsBlock>> = None;
+        for unit in &self.units {
+            let blocks = read_crs_blocks(
+                unit.publication().reader(),
+                params.db_cols / rlwe().d,
+                rlwe().d,
+            )
+            .map_err(|e| e.to_string())?;
+            if let Some(sum) = &mut combined {
+                add_crs_blocks_assign_mod(sum, &blocks, rlwe()).map_err(|e| e.to_string())?;
+            } else {
+                combined = Some(blocks);
+            }
+        }
+        combined.ok_or_else(|| "empty query domain".into())
+    }
+
+    /// Borrow the existing MPH1 publication only when the generic combiner is
+    /// the identity operation. Construction by Engine binds the layout, setup
+    /// slice and padded rows; this check also excludes partial/composed domains
+    /// and incompatible output parameters. Unallocated domain rows are zero.
+    pub(crate) fn verified_hint_artifact(
+        &self,
+    ) -> Result<Option<crate::artifact::PublicationArtifact>, String> {
+        let ([unit], [identity], [spec]) = (
+            self.units.as_slice(),
+            self.plan.units.as_slice(),
+            self.plan.shard.units.as_slice(),
+        ) else {
+            return Ok(None);
+        };
+        let params = parameters(self.plan.shard.logical_rows)?;
+        let runtime = unit.runtime();
+        let local = runtime.server.params();
+        let layout = DatabaseLayout {
+            shard_rows: identity.allocated_rows as usize,
+            ..ENHANCE_LAYOUT
+        };
+        let (ring, expected) = crate::ipir::shard_parameters(&layout).map_err(|e| e.to_string())?;
+        if self.plan.validate().is_err()
+            || self.plan.shard.composed()
+            || spec.local_row_start != 0
+            || identity.allocated_rows > self.plan.shard.logical_rows
+            || !layout.shard_rows.is_multiple_of(rlwe().d)
+            || runtime.query_row_start != 0
+            || runtime.shard_id != self.plan.shard.id
+            || runtime.rows_sha256 != identity.content_sha256
+            || ring.d != rlwe().d
+            || ring.q != rlwe().q
+            || local.db_rows != expected.db_rows
+            || local.db_cols != expected.db_cols
+            || local.p != expected.p
+            || local.item_size_bits != expected.item_size_bits
+            || local.query_bits != expected.query_bits
+            || local.q_prime_1 != expected.q_prime_1
+            || local.db_cols != params.db_cols
+            || local.p != params.p
+        {
+            return Ok(None);
+        }
+        // The same scanner as hint(), without allocating decoded matrices.
+        // Includes the pinned reader's digest, exact length and clean EOF.
+        unit.publication()
+            .validate(params.db_cols / rlwe().d, rlwe().d)
+            .map_err(|e| e.to_string())?;
+        Ok(Some(unit.publication().clone()))
+    }
+}
+
+#[cfg(not(feature = "native-reinspiring"))]
+pub struct Packing {
+    _charge: super::packing_budget::Charge,
+    pub params: YpirSchemeParams,
+    pub public: Vec<u8>,
+    material: Option<PreparedPacking<'static>>,
+    mapped: Option<inspiring::prepared::MappedPrepared<'static>>,
+}
+
+#[cfg(not(feature = "native-reinspiring"))]
+impl Packing {
+    pub(crate) fn write_prepared(&self, out: &mut impl std::io::Write) -> Result<(), String> {
+        out.write_all(&(self.params.db_rows as u64).to_le_bytes())
+            .map_err(|e| e.to_string())?;
+        out.write_all(&self.public).map_err(|e| e.to_string())?;
+        self.material
+            .as_ref()
+            .ok_or("cannot rewrite mapped artifact")?
+            .write(out, rlwe())
+            .map_err(|e| e.to_string())
+    }
+    /// Read-only mappings own their file pages through all in-flight query pins.
+    /// Router artifacts are immutable: downloads replace inodes atomically and
+    /// cache GC only unlinks. No path truncates a published artifact in place.
+    pub(crate) fn map_prepared(
+        file: &std::fs::File,
+        rows: u64,
+        budget: &crate::PackingBudget,
+    ) -> Result<Self, String> {
+        let mut charge = super::packing_budget::Charge::mapping(budget)?;
+        let params = parameters(rows)?;
+        let public_len =
+            (params.db_cols * ipir_sp::modulus_switch::modulus_bits(rlwe().q)).div_ceil(8);
+        // SAFETY: private router cache files are immutable once renamed into
+        // place; the read-only mmap owns the inode across replacement/unlink.
+        // Filesystem administrators must preserve that immutable-inode contract.
+        let map = unsafe { memmap2::MmapOptions::new().map(file) }.map_err(|e| e.to_string())?;
+        let mapped = inspiring::prepared::MappedPrepared::new(
+            map,
+            rlwe(),
+            params.db_cols / rlwe().d,
+            8 + public_len,
+        )
+        .map_err(|e| e.to_string())?;
+        let prefix = mapped.prefix();
+        if u64::from_le_bytes(prefix[..8].try_into().unwrap()) != params.db_rows as u64 {
+            return Err("prepared row count mismatch".into());
+        }
+        let public = prefix[8..].to_vec();
+        charge.resident();
+        Ok(Self {
+            _charge: charge,
+            params,
+            public,
+            material: None,
+            mapped: Some(mapped),
+        })
+    }
+
+    pub fn new(
+        logical_rows: u64,
+        hint: &[CrsBlock],
+        budget: &crate::PackingBudget,
+    ) -> Result<Self, String> {
+        let began = std::time::Instant::now();
+        let mut charge = super::packing_budget::Charge::prepare(budget)?;
+        let params = parameters(logical_rows)?;
+        // These fixed public masks depend only on the pinned parameter set,
+        // so generations share them while retaining their own hint material.
+        static SETUP: OnceLock<PackingSetup<'static>> = OnceLock::new();
+        let setup = SETUP.get_or_init(|| PackingSetup::new(rlwe())).clone();
+        let material = PreparedPacking::prepare(rlwe(), hint, setup, None, |_| false)
+            .map_err(|e| e.to_string())?;
+        let public = material.public_rows(rlwe().q);
+        charge.resident();
+        crate::prepared_packing::observe_preparation(began.elapsed());
+        Ok(Self {
+            _charge: charge,
+            params,
+            public,
+            material: Some(material),
+            mapped: None,
+        })
+    }
+    pub fn reference(&self, shard_id: u64) -> Result<SessionRef, String> {
+        Ok(SessionRef {
+            shard_id,
+            public_params_sha256: hex::encode(Sha256::digest(&self.public)),
+            parameter_id: parameter_id(self.params.db_rows as u64)?,
+        })
+    }
+    pub fn session(&self, manifest: &Manifest, shard_id: u64) -> ShardSession {
+        ShardSession {
+            session_id: hex::encode(
+                manifest
+                    .session_id(shard_id)
+                    .expect("validated published domain"),
+            ),
+            generation: manifest.generation,
+            shard_id,
+            params: self.params.clone(),
+            public_params_base64: STANDARD.encode(&self.public),
+        }
+    }
+    /// q48 queries always select over every logical row; `_query_rows` is
+    /// only for the native profile.
+    pub fn query_coefficients(
+        &self,
+        body: &[u8],
+        binding: QueryBinding,
+        _query_rows: usize,
+    ) -> Result<Vec<u64>, String> {
+        if QueryBinding::decode(body)? != binding
+            || binding.epoch != Sha256::digest(&self.public)[..8]
+        {
+            return Err("query session mismatch".into());
+        }
+        let packing_len = PackingKeys::encoded_len(rlwe());
+        let switched_len = (self.params.db_rows * self.params.query_bits).div_ceil(8);
+        if body.len() != HEADER_BYTES + packing_len + switched_len {
+            return Err("query framing length mismatch".into());
+        }
+        // Validate packing keys before sending any evaluation work.
+        PackingKeys::decode(rlwe(), &body[HEADER_BYTES..HEADER_BYTES + packing_len])
+            .map_err(|e| e.to_string())?;
+        deserialize_first_dim_query(rlwe(), &self.params, &body[HEADER_BYTES + packing_len..])
+            .map_err(|e| e.to_string())
+    }
+    pub fn pack(
+        &self,
+        body: &[u8],
+        intermediate: &[u64],
+        query_rows: usize,
+    ) -> Result<Vec<u8>, String> {
+        let binding = QueryBinding::decode(body)?;
+        self.query_coefficients(body, binding, query_rows)?;
+        if intermediate.len() != self.params.db_cols || intermediate.iter().any(|v| *v >= modulus())
+        {
+            return Err("invalid worker intermediate".into());
+        }
+        let len = PackingKeys::encoded_len(rlwe());
+        let keys = PackingKeys::decode(rlwe(), &body[HEADER_BYTES..HEADER_BYTES + len])
+            .map_err(|e| e.to_string())?;
+        let q_prime_1 = self.params.q_prime_1;
+        let packed = if let Some(mapped) = &self.mapped {
+            mapped
+                .pack(intermediate, keys.upstream())
+                .map(|packed| pir_runtime::packing::response_bodies(&packed, q_prime_1))
+        } else {
+            self.material
+                .as_ref()
+                .expect("owned packing material")
+                .pack(intermediate, &keys, q_prime_1)
+        }
+        .map_err(|e| e.to_string())?;
+        let mut response = binding.encode();
+        response.extend(packed);
+        Ok(response)
+    }
+}
+
+/// Public session material survives independently of the serving representation.
+pub struct PublishedPacking {
+    pub logical_rows: u64,
+    pub public: Vec<u8>,
+    serving: Option<Packing>,
+}
+impl PublishedPacking {
+    pub fn is_serving(&self) -> bool {
+        self.serving.is_some()
+    }
+    pub fn new(logical_rows: u64, pack: Packing, retain_serving: bool) -> Self {
+        Self {
+            logical_rows,
+            public: pack.public.clone(),
+            serving: retain_serving.then_some(pack),
+        }
+    }
+    pub fn metadata(logical_rows: u64, public: Vec<u8>) -> Self {
+        Self {
+            logical_rows,
+            public,
+            serving: None,
+        }
+    }
+    pub fn reference(&self, shard_id: u64) -> Result<SessionRef, String> {
+        Ok(SessionRef {
+            shard_id,
+            public_params_sha256: hex::encode(Sha256::digest(&self.public)),
+            parameter_id: parameter_id(parameters(self.logical_rows)?.db_rows as u64)?,
+        })
+    }
+    pub fn session(&self, manifest: &Manifest, shard_id: u64) -> ShardSession {
+        ShardSession {
+            session_id: hex::encode(manifest.session_id(shard_id).expect("validated session")),
+            generation: manifest.generation,
+            shard_id,
+            params: parameters(self.logical_rows).expect("validated geometry"),
+            public_params_base64: STANDARD.encode(&self.public),
+        }
+    }
+    pub fn query_coefficients(
+        &self,
+        body: &[u8],
+        binding: QueryBinding,
+        query_rows: usize,
+    ) -> Result<Vec<u64>, String> {
+        self.serving
+            .as_ref()
+            .ok_or("packing moved to router")?
+            .query_coefficients(body, binding, query_rows)
+    }
+    pub fn pack(
+        &self,
+        body: &[u8],
+        intermediate: &[u64],
+        query_rows: usize,
+    ) -> Result<Vec<u8>, String> {
+        self.serving
+            .as_ref()
+            .ok_or("packing moved to router")?
+            .pack(body, intermediate, query_rows)
+    }
+}
+
+pub struct Engine {
+    backend: MatvecConfig,
+    root: PathBuf,
+    units: BTreeMap<String, Weak<CachedShard>>,
+}
+
+impl Engine {
+    pub fn new(root: &Path) -> Self {
+        Self::with_backend(root, MatvecConfig::default())
+    }
+
+    pub fn with_backend(root: &Path, backend: MatvecConfig) -> Self {
+        Self {
+            backend,
+            root: root.join("artifacts-9"),
+            units: BTreeMap::new(),
+        }
+    }
+
+    pub fn live_bytes(&self) -> u64 {
+        self.live_sizes().values().sum()
+    }
+
+    pub fn live_sizes(&self) -> BTreeMap<String, u64> {
+        self.units
+            .iter()
+            .filter_map(|(id, unit)| {
+                unit.upgrade()
+                    .map(|u| (id.clone(), u.runtime().server.db().len() as u64 * 2))
+            })
+            .collect()
+    }
+
+    /// Remove only content-addressed directories after strong runtime references drain.
+    pub fn collect_unused(&mut self) -> Result<(), String> {
+        self.units.retain(|_, unit| unit.strong_count() > 0);
+        if !self.root.exists() {
+            return Ok(());
+        }
+        for entry in std::fs::read_dir(&self.root).map_err(|e| e.to_string())? {
+            let entry = entry.map_err(|e| e.to_string())?;
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.len() == 64
+                && hex::decode(&name).is_ok()
+                && !self.units.contains_key(&name)
+                && entry.file_type().map_err(|e| e.to_string())?.is_dir()
+            {
+                std::fs::remove_dir_all(entry.path()).map_err(|e| e.to_string())?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Restores, reuses or builds every unit of `plan` from verified input and
+    /// reports which it did. `read` supplies staged source rows, which are bound
+    /// to the unit's committed digest before anything is built from them.
+    pub fn prepare(
+        &mut self,
+        plan: DomainPlan,
+        mut read: impl FnMut(u64, usize) -> Result<Vec<u8>, String>,
+    ) -> Result<(Arc<Evaluation>, PrepareOutcome), PrepareError> {
+        plan.validate().map_err(PrepareError::InvalidSource)?;
+        let mut outcome = PrepareOutcome::default();
+        let mut units = Vec::new();
+        // A full-size setup keeps unchanged unit setup slices stable through logical growth.
+        #[cfg(feature = "native-reinspiring")]
+        let masks = crate::native::query_masks(plan.shard.id);
+        #[cfg(not(feature = "native-reinspiring"))]
+        let masks = {
+            let params = parameters(32768).map_err(PrepareError::Runtime)?;
+            let client = ipir_sp::IPIRClient::from_profile(
+                params.num_items,
+                params.item_size_bits,
+                ipir_sp::SimplePirProfile::P16Q48,
+            )
+            .map_err(|e| PrepareError::Runtime(e.to_string()))?;
+            let setup =
+                client.generate_public_query_setup_simplepir_from_seed(setup_seed(plan.shard.id));
+            setup.polys().to_vec()
+        };
+        for (spec, identity) in plan.shard.units.iter().zip(&plan.units) {
+            let id = identity.digest();
+            if let Some(unit) = self.units.get(&id).and_then(Weak::upgrade) {
+                units.push(unit);
+                outcome.reused += 1;
+                continue;
+            }
+            let bytes = identity.allocated_rows * 12288 * 2;
+            if self
+                .live_bytes()
+                .checked_add(bytes)
+                .and_then(|n| n.checked_add(crate::placement::OVERHEAD))
+                .is_none_or(|n| n > crate::placement::RESIDENT_LIMIT)
+            {
+                return Err(PrepareError::Admission(
+                    "worker resident admission refused".into(),
+                ));
+            }
+            let layout = DatabaseLayout {
+                shard_rows: identity.allocated_rows as usize,
+                ..ENHANCE_LAYOUT
+            };
+            let root = self.root.join(&id);
+            let unit = match ShardRuntime::load_cached_with_backend(
+                &root,
+                DatabaseId::Enhance,
+                &layout,
+                plan.shard.id,
+                identity.local_row_start as usize,
+                &identity.content_sha256,
+                rlwe(),
+                self.backend,
+            ) {
+                Ok(unit) => {
+                    outcome.restored += 1;
+                    unit
+                }
+                Err(LoadError::Backend(error)) => {
+                    return Err(PrepareError::Runtime(error.to_string()))
+                }
+                Err(LoadError::Artifact(_)) => {
+                    let rows = unit_rows(&plan.shard, spec, &mut read)
+                        .map_err(PrepareError::InvalidSource)?;
+                    if hex::encode(Sha256::digest(&rows)) != identity.content_sha256 {
+                        return Err(PrepareError::InvalidSource(
+                            "canonical rows changed during preparation".into(),
+                        ));
+                    }
+                    outcome.built += 1;
+                    let unit = PreparedShard::build_with_backend(
+                        &layout,
+                        plan.shard.id,
+                        identity.local_row_start as usize,
+                        identity.content_sha256.clone(),
+                        &rows,
+                        rlwe(),
+                        &masks,
+                        self.backend,
+                    )
+                    .map_err(|e| PrepareError::Runtime(e.to_string()))?;
+                    drop(rows);
+                    unit.persist(
+                        &crate::ipir::shard_artifact_dir(&root, DatabaseId::Enhance, plan.shard.id),
+                        DatabaseId::Enhance,
+                        &layout,
+                        rlwe(),
+                    )
+                    .map_err(|e| PrepareError::Runtime(e.to_string()))?
+                }
+            };
+            let unit = Arc::new(unit);
+            self.units.insert(id, Arc::downgrade(&unit));
+            units.push(unit);
+        }
+        self.units.retain(|_, w| w.strong_count() > 0);
+        Ok((Arc::new(Evaluation { plan, units }), outcome))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ROW_BYTES;
+    fn records(start: u64, count: usize) -> Result<Vec<u8>, String> {
+        let mut bytes = vec![0; count * RECORD_BYTES];
+        for (i, row) in bytes.chunks_exact_mut(RECORD_BYTES).enumerate() {
+            row[..8].copy_from_slice(&(start + i as u64).to_le_bytes());
+        }
+        Ok(bytes)
+    }
+
+    /// Deterministic bytes for fixed-input regression vectors.
+    #[cfg(not(feature = "native-reinspiring"))]
+    fn stream(label: &[u8], len: usize) -> Vec<u8> {
+        (0u64..)
+            .flat_map(|i| {
+                Sha256::new()
+                    .chain_update(label)
+                    .chain_update(i.to_le_bytes())
+                    .finalize()
+            })
+            .take(len)
+            .collect()
+    }
+
+    /// Pins public material and the packed answer for fixed records, setup
+    /// seed and query bytes. The digests were captured on the base commit
+    /// before the shared runtime extraction; they must never change.
+    #[cfg(not(feature = "native-reinspiring"))]
+    #[test]
+    fn fixed_inputs_pin_public_material_and_answer() {
+        let dir = tempfile::tempdir().unwrap();
+        let coverage = Lifecycle::default()
+            .coverage(67, Geometry::default())
+            .unwrap();
+        let plan = plan(coverage.shards[0].clone(), records).unwrap();
+        let mut engine = Engine::new(dir.path());
+        let (eval, _) = engine.prepare(plan.clone(), records).unwrap();
+        let hint = eval.hint().unwrap();
+        let pack = Packing::new(4096, &hint, &crate::PackingBudget::coordinator()).unwrap();
+        let mut hint_digest = Sha256::new();
+        for value in hint.iter().flat_map(|b| b.rows.iter().flatten()) {
+            hint_digest.update(value.to_le_bytes());
+        }
+        let binding = QueryBinding {
+            generation: 1,
+            shard_id: 0,
+            epoch: Sha256::digest(&pack.public)[..8].try_into().unwrap(),
+            recovery_epoch: 0,
+            session_id: [3; 32],
+            request_id: [4; 16],
+            anchor_hash: [5; 32],
+        };
+        let q = rlwe().q;
+        let keys: Vec<u64> = stream(b"keys", PackingKeys::encoded_len(rlwe()) * 2)
+            .chunks_exact(8)
+            .map(|c| u64::from_le_bytes(c.try_into().unwrap()) % q)
+            .collect();
+        let mut body = binding.encode();
+        let keys = ipir_sp::bits::u64s_to_contiguous_bytes(
+            &keys,
+            ipir_sp::modulus_switch::modulus_bits(q),
+        );
+        body.extend(&keys[..PackingKeys::encoded_len(rlwe())]);
+        body.extend(stream(
+            b"query",
+            (pack.params.db_rows * pack.params.query_bits).div_ceil(8),
+        ));
+        let rows = pack.params.db_rows;
+        let coefficients = pack.query_coefficients(&body, binding, rows).unwrap();
+        let answer = pack
+            .pack(&body, &eval.evaluate(&coefficients).unwrap(), rows)
+            .unwrap();
+        assert_eq!(
+            [
+                hex::encode(hint_digest.finalize()),
+                hex::encode(Sha256::digest(&pack.public)),
+                hex::encode(Sha256::digest(&answer)),
+            ],
+            [
+                "03c4b6b973673c506b1f12f18605daddbab033ec3c40a4a055fac538a833e361",
+                "89b1ad472659862a987130688c0e967189695e66d1eba518c2b950938f9f84df",
+                "045515ff10f14273c2a4118093407e9563add14410c8ad2392d5e277ae60db20",
+            ]
+        );
+    }
+
+    #[test]
+    fn encrypted_bootstrap_round_trip_and_cached_restart() {
+        round_trip_and_restart(MatvecConfig::default());
+    }
+
+    #[cfg(feature = "cuda")]
+    #[test]
+    #[ignore = "requires NVIDIA GPU and NVRTC"]
+    fn cuda_encrypted_bootstrap_round_trip_and_cached_restart() {
+        let backend = MatvecConfig {
+            matvec_backend: crate::matvec::Backend::Cuda,
+            cuda_device: None,
+        };
+        backend.validate().unwrap();
+        round_trip_and_restart(backend);
+    }
+
+    /// A unit spec whose data would run past its used rows is refused, since
+    /// native queries omit the selection over every later row.
+    #[test]
+    fn unit_data_must_end_at_its_used_rows() {
+        let g = Geometry::default();
+        let coverage = Lifecycle::default()
+            .coverage(32768 * RECORDS_PER_ROW as u64 + 100, g)
+            .unwrap();
+        let shard = &coverage.shards[1];
+        assert!(shard.composed());
+        let tail = MutableUnit {
+            local_row_start: 4096,
+            used_rows: 4096,
+            allocated_rows: 4096,
+        };
+        assert!(unit_rows(shard, &tail, &mut records).is_ok());
+        let short = MutableUnit {
+            used_rows: 100,
+            ..tail
+        };
+        assert!(unit_rows(shard, &short, &mut records).is_err());
+    }
+
+    #[test]
+    fn hint_artifact_excludes_partial_misaligned_and_status_layouts() {
+        let dir = tempfile::tempdir().unwrap();
+        let coverage = Lifecycle::default()
+            .coverage(67, Geometry::default())
+            .unwrap();
+        let domain = plan(coverage.shards[0].clone(), records).unwrap();
+        let eval = Engine::new(dir.path())
+            .prepare(domain.clone(), records)
+            .unwrap()
+            .0;
+        assert!(eval.verified_hint_artifact().unwrap().is_some());
+        let oracle_root = tempfile::tempdir().unwrap();
+        let expected = Engine::new(oracle_root.path())
+            .prepare(domain.clone(), records)
+            .unwrap()
+            .0
+            .hint()
+            .unwrap();
+        let mut partial = domain.clone();
+        partial.shard = Lifecycle::default()
+            .coverage(8192 * RECORDS_PER_ROW as u64 + 17, Geometry::default())
+            .unwrap()
+            .shards[0]
+            .clone();
+        for plan in [partial, {
+            let mut misaligned = domain.clone();
+            misaligned.units[0].local_row_start = 1;
+            misaligned.shard.units[0].local_row_start = 1;
+            misaligned
+        }] {
+            let fallback = Evaluation {
+                plan,
+                units: eval.units.clone(),
+            };
+            assert!(fallback.verified_hint_artifact().unwrap().is_none());
+            // Preserve the generic partial contribution, with no new rewrite.
+            assert_eq!(fallback.hint().unwrap(), expected);
+        }
+
+        // A real persisted unit with the Status row layout (12288-byte rows,
+        // `status_query_server::protocol::ROW_BYTES`) has a different output width, even though
+        // its degree and plaintext profile agree.
+        let layout = DatabaseLayout {
+            record_bytes: 12288,
+            records_per_row: 1,
+            shard_rows: domain.units[0].allocated_rows as usize,
+            pir_profile: ipir_sp::SimplePirProfile::P16Q48,
+        };
+        let (_, params) = crate::ipir::shard_parameters(&layout).unwrap();
+        #[cfg(not(feature = "native-reinspiring"))]
+        let setup = ipir_sp::IPIRClient::from_profile(
+            params.num_items,
+            params.item_size_bits,
+            layout.pir_profile,
+        )
+        .unwrap()
+        .generate_public_query_setup_simplepir_from_seed(setup_seed(domain.shard.id))
+        .polys()
+        .to_vec();
+        #[cfg(feature = "native-reinspiring")]
+        let setup = crate::native::public_query_masks(
+            setup_seed(domain.shard.id),
+            params.db_rows,
+            params.db_cols,
+        );
+        let status_rows = vec![0; layout.shard_bytes()];
+        let mut status_domain = domain;
+        status_domain.units[0].content_sha256 = hex::encode(Sha256::digest(&status_rows));
+        let status = PreparedShard::build(
+            &layout,
+            status_domain.shard.id,
+            0,
+            status_domain.units[0].content_sha256.clone(),
+            &status_rows,
+            rlwe(),
+            &setup,
+        )
+        .unwrap()
+        .persist(
+            &dir.path().join("status-layout"),
+            DatabaseId::Enhance,
+            &layout,
+            rlwe(),
+        )
+        .unwrap();
+        let unsupported = Evaluation {
+            plan: status_domain,
+            units: vec![Arc::new(status)],
+        };
+        assert!(unsupported.verified_hint_artifact().unwrap().is_none());
+        assert!(
+            unsupported.hint().is_err(),
+            "generic shape refusal is unchanged"
+        );
+    }
+
+    fn round_trip_and_restart(backend: MatvecConfig) {
+        let dir = tempfile::tempdir().unwrap();
+        let coverage = Lifecycle::default()
+            .coverage(67, Geometry::default())
+            .unwrap();
+        let plan = plan(coverage.shards[0].clone(), records).unwrap();
+        let mut engine = Engine::with_backend(dir.path(), backend);
+        let (eval, outcome) = engine.prepare(plan.clone(), records).unwrap();
+        assert_eq!(outcome.built, eval.units.len());
+        assert_eq!((outcome.reused, outcome.restored), (0, 0));
+        let pack = Packing::new(
+            4096,
+            &eval.hint().unwrap(),
+            &crate::PackingBudget::coordinator(),
+        )
+        .unwrap();
+        let manifest = Manifest {
+            recovery_epoch: 0,
+            placement_revision: 0,
+            domain_recovery_epochs: [(0, "0".into())].into(),
+            schema_version: SCHEMA_VERSION,
+            protocol_revision: PROTOCOL_REVISION.into(),
+            network: "main".into(),
+            pool: "ironwood".into(),
+            generation: 1,
+            anchor_height: 3428143,
+            anchor_block_hash: "01".repeat(32),
+            geometry: Geometry::default(),
+            coverage,
+            sessions: vec![pack.reference(0).unwrap()],
+            unit_identities: [(0, plan.units.clone())].into(),
+        };
+        let mut old_manifest = manifest.clone();
+        old_manifest.protocol_revision = "ironwood-enhance-pir-v5".into();
+        assert!(
+            crate::client::QuerySession::new(&old_manifest, pack.session(&manifest, 0)).is_err()
+        );
+        let mut old_session = pack.session(&manifest, 0);
+        old_session.params.query_bits = 46;
+        assert!(crate::client::QuerySession::new(&manifest, old_session).is_err());
+        let mut old_plan = plan.clone();
+        old_plan.units[0].parameter_id = old_plan.units[0]
+            .parameter_id
+            .replace(PROTOCOL_REVISION, "ironwood-enhance-pir-v6");
+        assert_ne!(old_plan, plan);
+        assert!(old_plan.validate().is_err());
+        let client =
+            crate::client::QuerySession::new(&manifest, pack.session(&manifest, 0)).unwrap();
+        for position in [0, 32, 33, 66] {
+            let (query, slot) = client.prepare_position(position).unwrap();
+            let binding = QueryBinding::decode(query.body()).unwrap();
+            let rows = client.query_rows();
+            let old_len = query.body().len() - 4096 * 2 / 8;
+            assert!(pack
+                .query_coefficients(&query.body()[..old_len], binding, rows)
+                .is_err());
+            let coefficients = pack
+                .query_coefficients(query.body(), binding, rows)
+                .unwrap();
+            let response = pack
+                .pack(query.body(), &eval.evaluate(&coefficients).unwrap(), rows)
+                .unwrap();
+            // The three-row domain selects over one block. Its shorter upload
+            // is the full one's prefix and is answered byte for byte the same;
+            // the server takes only the prefix its manifest prescribes.
+            #[cfg(feature = "native-reinspiring")]
+            {
+                assert_eq!(rows, 2048);
+                let short = &query.body()[..HEADER_BYTES + crate::native::request_len(rows)];
+                // The omitted rows are zero-filled, not the full upload's
+                // ciphertexts; they select only zero padding, so the scan is equal.
+                let selection = pack.query_coefficients(short, binding, rows).unwrap();
+                assert_eq!(selection[..rows], coefficients[..rows]);
+                assert!(selection[rows..].iter().all(|&c| c == 0));
+                let scan = eval.evaluate(&selection).unwrap();
+                assert_eq!(scan, eval.evaluate(&coefficients).unwrap());
+                assert_eq!(pack.pack(short, &scan, rows).unwrap(), response);
+                assert!(pack.query_coefficients(short, binding, 4096).is_err());
+            }
+            let row = client.decode(query, &response).unwrap();
+            assert_eq!(
+                &row[slot * RECORD_BYTES..(slot + 1) * RECORD_BYTES],
+                records(position, 1).unwrap()
+            );
+        }
+        let (again, outcome) = engine
+            .prepare(plan.clone(), |_, _| {
+                panic!("cached data must not be reread")
+            })
+            .unwrap();
+        assert!(Arc::ptr_eq(&eval.units[0], &again.units[0]));
+        assert_eq!(outcome.reused, again.units.len());
+        drop(again);
+        drop(eval);
+        let mut restarted = Engine::with_backend(dir.path(), backend);
+        let (restored, outcome) = restarted
+            .prepare(plan.clone(), |_, _| {
+                Err("canonical history unavailable".into())
+            })
+            .unwrap();
+        assert_eq!(outcome.restored, restored.units.len());
+        drop(restored);
+        // CPU can reopen a GPU-created artifact, and CUDA can open the same CPU-readable bytes.
+        let mut cpu = Engine::new(dir.path());
+        let (cpu_eval, _) = cpu
+            .prepare(plan.clone(), |_, _| panic!("artifact must be reusable"))
+            .unwrap();
+        let mut selected = Engine::with_backend(dir.path(), backend);
+        let (selected_eval, _) = selected
+            .prepare(plan, |_, _| panic!("artifact must be reusable"))
+            .unwrap();
+        let query = vec![modulus() - 1; 4096];
+        assert_eq!(
+            cpu_eval.evaluate(&query).unwrap(),
+            selected_eval.evaluate(&query).unwrap()
+        );
+        std::thread::scope(|scope| {
+            for _ in 0..4 {
+                let eval = &selected_eval;
+                let query = &query;
+                let expected = cpu_eval.evaluate(query).unwrap();
+                scope.spawn(move || assert_eq!(eval.evaluate(query).unwrap(), expected));
+            }
+        });
+        drop(cpu_eval);
+        drop(selected_eval);
+        selected.collect_unused().unwrap();
+        assert_eq!(selected.live_bytes(), 0);
+    }
+
+    #[cfg(feature = "cuda")]
+    #[test]
+    fn backend_load_failure_does_not_rebuild_or_replace_published_units() {
+        let root = tempfile::tempdir().unwrap();
+        let coverage = Lifecycle::default()
+            .coverage(67, Geometry::default())
+            .unwrap();
+        let plan = plan(coverage.shards[0].clone(), records).unwrap();
+        let mut cpu = Engine::new(root.path());
+        let (published, _) = cpu.prepare(plan.clone(), records).unwrap();
+        let query = vec![1; 4096];
+        let before = published.evaluate(&query).unwrap();
+        let mut failed = Engine::with_backend(
+            root.path(),
+            MatvecConfig {
+                matvec_backend: crate::matvec::Backend::Cuda,
+                cuda_device: Some(usize::MAX),
+            },
+        );
+        assert!(matches!(
+            failed.prepare(plan, |_, _| panic!("device failure must not rebuild")),
+            Err(PrepareError::Runtime(_))
+        ));
+        assert_eq!(failed.live_bytes(), 0);
+        assert_eq!(published.evaluate(&query).unwrap(), before);
+    }
+
+    #[test]
+    fn partial_preparation_failure_preserves_published_and_retries() {
+        partial_preparation_failure(MatvecConfig::default(), false);
+    }
+
+    #[test]
+    fn cached_partial_preparation_failure_preserves_published_and_retries() {
+        partial_preparation_failure(MatvecConfig::default(), true);
+    }
+
+    #[cfg(feature = "cuda")]
+    #[test]
+    #[ignore = "requires NVIDIA GPU and NVRTC"]
+    fn cuda_partial_preparation_failure_preserves_published_and_retries() {
+        for cached in [false, true] {
+            partial_preparation_failure(
+                MatvecConfig {
+                    matvec_backend: crate::matvec::Backend::Cuda,
+                    cuda_device: None,
+                },
+                cached,
+            );
+        }
+    }
+
+    fn partial_preparation_failure(backend: MatvecConfig, cached: bool) {
+        use crate::matvec::testing::{scoped, Faults};
+        use std::sync::atomic::Ordering::SeqCst;
+        let root = tempfile::tempdir().unwrap();
+        let old_plan = plan(
+            Lifecycle::default()
+                .coverage(67, Geometry::default())
+                .unwrap()
+                .shards[0]
+                .clone(),
+            records,
+        )
+        .unwrap();
+        // Both fixtures prepare two new units and fail on the second.
+        // The valid composed tail uses smaller 4K/2K units; qualification
+        // also exercises the original ordinary 8K/2K domain.
+        let geometry = Geometry::default();
+        let shard = if cfg!(feature = "qualification-tests") || cfg!(feature = "cuda") {
+            Lifecycle::default()
+                .coverage(8192 * 33 + 17, geometry)
+                .unwrap()
+                .shards[0]
+                .clone()
+        } else {
+            Lifecycle::default()
+                .coverage(
+                    geometry.max_shard_rows * RECORDS_PER_ROW as u64 + 17,
+                    geometry,
+                )
+                .unwrap()
+                .shards[1]
+                .clone()
+        };
+        let candidate = plan(shard, records).unwrap();
+        assert_eq!(candidate.units.len(), 2);
+        assert!(candidate.units.iter().all(|u| !old_plan.units.contains(u)));
+        let mut engine = Engine::with_backend(root.path(), backend);
+        let faults = Arc::new(Faults::default());
+        let published = scoped(&faults, || engine.prepare(old_plan, records))
+            .unwrap()
+            .0;
+        let query = vec![1; published.plan.shard.logical_rows as usize];
+        let before = published.evaluate(&query).unwrap();
+        let published_sizes = engine.live_sizes();
+        let published_bytes = faults.live_bytes.load(SeqCst);
+        if cached {
+            // Populate candidate artifacts through an independent CPU engine.
+            let mut cache = Engine::new(root.path());
+            drop(cache.prepare(candidate.clone(), records).unwrap());
+        }
+        faults
+            .fail_prepare_at
+            .store(faults.prepare_calls.load(SeqCst) + 2, SeqCst);
+        let mut reads = 0;
+        let failed = scoped(&faults, || {
+            engine.prepare(candidate.clone(), |start, count| {
+                assert!(
+                    !cached,
+                    "backend failure must not rebuild a cached artifact"
+                );
+                reads += 1;
+                records(start, count)
+            })
+        });
+        assert!(failed.is_err());
+        assert_eq!(
+            faults.prepare_calls.load(SeqCst),
+            3,
+            "must fail after preparing two candidate units"
+        );
+        assert_eq!(reads, if cached { 0 } else { 2 });
+        assert_eq!(
+            faults.live_bytes.load(SeqCst),
+            published_bytes,
+            "partial candidate kernels must be dropped"
+        );
+        assert_eq!(engine.live_sizes(), published_sizes);
+        assert_eq!(published.evaluate(&query).unwrap(), before);
+        faults.fail_prepare_at.store(0, SeqCst);
+        let retry = scoped(&faults, || {
+            engine.prepare(candidate.clone(), |start, count| {
+                assert!(!cached, "cached retry must not require canonical history");
+                records(start, count)
+            })
+        })
+        .unwrap()
+        .0;
+        // The all-one query is the column sum of the committed raw rows.
+        // Use plain integer addition as an independent oracle rather than
+        // preparing a second copy through the same native implementation.
+        let columns = parameters(candidate.shard.logical_rows).unwrap().db_cols;
+        let mut expected = vec![0u64; columns];
+        for spec in &candidate.shard.units {
+            let rows = unit_rows(&candidate.shard, spec, &mut records).unwrap();
+            for row in rows.chunks_exact(ENHANCE_LAYOUT.row_bytes()) {
+                for (sum, bytes) in expected.iter_mut().zip(row.chunks_exact(2)) {
+                    *sum += u64::from(u16::from_le_bytes(bytes.try_into().unwrap()));
+                }
+            }
+        }
+        for value in &mut expected {
+            *value %= modulus();
+        }
+        let candidate_query = vec![1; retry.plan.shard.logical_rows as usize];
+        assert_eq!(retry.evaluate(&candidate_query).unwrap(), expected);
+        assert_eq!(published.evaluate(&query).unwrap(), before);
+        drop(retry);
+        engine.collect_unused().unwrap();
+        assert_eq!(engine.live_sizes(), published_sizes);
+        assert_eq!(faults.live_bytes.load(SeqCst), published_bytes);
+        drop(published);
+        engine.collect_unused().unwrap();
+        assert_eq!(faults.live_bytes.load(SeqCst), 0);
+    }
+
+    #[test]
+    fn unequal_units_match_monolithic_preprocessing_and_evaluation() {
+        let directory = tempfile::tempdir().unwrap();
+        let geometry = Geometry::default();
+        let (shard, monolithic_rows, expected_units, targets) =
+            if cfg!(feature = "qualification-tests") {
+                let coverage = Lifecycle::default()
+                    .coverage(8192 * RECORDS_PER_ROW as u64 + 17, geometry)
+                    .unwrap();
+                (
+                    coverage.shards[0].clone(),
+                    16384,
+                    [8192, 2048],
+                    vec![0, 8191, 8192, 10239, 16383],
+                )
+            } else {
+                let coverage = Lifecycle::default()
+                    .coverage(
+                        geometry.max_shard_rows * RECORDS_PER_ROW as u64 + 17,
+                        geometry,
+                    )
+                    .unwrap();
+                // A real composed tail has unequal units and a zero-filled gap.
+                (
+                    coverage.shards[1].clone(),
+                    8192,
+                    [2048, 4096],
+                    vec![0, 2047, 2048, 4095, 4096, 8191],
+                )
+            };
+        let domain = plan(shard.clone(), records).unwrap();
+        assert_eq!(
+            domain
+                .units
+                .iter()
+                .map(|u| u.allocated_rows)
+                .collect::<Vec<_>>(),
+            expected_units
+        );
+        let mut engine = Engine::new(directory.path());
+        let evaluation = engine.prepare(domain, records).unwrap().0;
+        assert!(evaluation.verified_hint_artifact().unwrap().is_none());
+        // Assemble the whole table independently of unit_rows: B's own records
+        // start at local zero, and a composed tail appends A's final 4K rows.
+        let row_bytes = ENHANCE_LAYOUT.row_bytes();
+        let mut rows = vec![0; monolithic_rows * row_bytes];
+        let own = records(
+            shard.global_row_start * RECORDS_PER_ROW as u64,
+            shard.records as usize,
+        )
+        .unwrap();
+        rows[..own.len()].copy_from_slice(&own);
+        if shard.composed() {
+            let suffix = records(
+                (shard.global_row_start - geometry.min_shard_rows) * RECORDS_PER_ROW as u64,
+                (geometry.min_shard_rows * RECORDS_PER_ROW as u64) as usize,
+            )
+            .unwrap();
+            let at = geometry.min_shard_rows as usize * row_bytes;
+            rows[at..at + suffix.len()].copy_from_slice(&suffix);
+        }
+        // Native masks are expanded once at full size for every logical size.
+        #[cfg(feature = "native-reinspiring")]
+        let setup = crate::native::query_masks(shard.id);
+        #[cfg(not(feature = "native-reinspiring"))]
+        let setup = {
+            let params = parameters(monolithic_rows as u64).unwrap();
+            let client = ipir_sp::IPIRClient::from_profile(
+                params.num_items,
+                params.item_size_bits,
+                ipir_sp::SimplePirProfile::P16Q48,
+            )
+            .unwrap();
+            client
+                .generate_public_query_setup_simplepir_from_seed(setup_seed(shard.id))
+                .polys()
+                .to_vec()
+        };
+        let monolithic = PreparedShard::build(
+            &DatabaseLayout {
+                shard_rows: monolithic_rows,
+                ..ENHANCE_LAYOUT
+            },
+            shard.id,
+            0,
+            "test".into(),
+            &rows,
+            rlwe(),
+            &setup,
+        )
+        .unwrap();
+        assert_eq!(evaluation.hint().unwrap(), monolithic.crs_blocks().to_vec());
+        for target in targets {
+            let mut query = vec![0; monolithic_rows];
+            query[target] = modulus() - 1;
+            assert_eq!(
+                evaluation.evaluate(&query).unwrap(),
+                monolithic.runtime().evaluate(rlwe(), &query).unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn tail_domain_reuses_b_units_and_decodes_b_at_unchanged_coordinates() {
+        #[cfg(not(feature = "native-reinspiring"))]
+        use ipir_sp::modulus_switch::recover_published_c1;
+        #[cfg(not(feature = "native-reinspiring"))]
+        use ipir_sp::serialize::serialize_packing_keys;
+
+        const B_START: u64 = 32768;
+        const B_ROWS: u64 = 2049;
+        const SUFFIX_ROWS: u64 = 4096;
+        let directory = tempfile::tempdir().unwrap();
+        let shard = QueryShard {
+            id: 7,
+            global_row_start: B_START,
+            records: B_ROWS * RECORDS_PER_ROW as u64,
+            logical_rows: 4096,
+            state: ShardState::Growing,
+            units: Geometry::default()
+                .units(B_ROWS * RECORDS_PER_ROW as u64)
+                .unwrap(),
+        };
+        let b_plan = plan(shard, records).unwrap();
+        assert_eq!(
+            b_plan
+                .units
+                .iter()
+                .map(|unit| (unit.local_row_start, unit.allocated_rows))
+                .collect::<Vec<_>>(),
+            [(0, 4096)]
+        );
+
+        // Prepare B independently in both contexts; sharing an Arc here would
+        // make the artifact comparison circular.
+        let plain_root = directory.path().join("plain");
+        let tail_root = directory.path().join("tail");
+        let plain = Engine::new(&plain_root)
+            .prepare(b_plan.clone(), records)
+            .unwrap()
+            .0;
+        let b_in_tail = Engine::new(&tail_root)
+            .prepare(b_plan.clone(), records)
+            .unwrap()
+            .0;
+        assert_eq!(plain.plan.units, b_in_tail.plan.units);
+        for identity in &b_plan.units {
+            let relative = PathBuf::from("artifacts-9")
+                .join(identity.digest())
+                .join("enhance")
+                .join("shard-00000007");
+            for artifact in ["metadata.json", "database.u16le", "partial-crs.bin"] {
+                assert_eq!(
+                    std::fs::read(plain_root.join(&relative).join(artifact)).unwrap(),
+                    std::fs::read(tail_root.join(&relative).join(artifact)).unwrap(),
+                    "B artifact {artifact} differs"
+                );
+            }
+        }
+        for (left, right) in plain.units.iter().zip(&b_in_tail.units) {
+            let mut left_hint = Vec::new();
+            let mut right_hint = Vec::new();
+            std::io::Read::read_to_end(&mut left.publication().reader(), &mut left_hint).unwrap();
+            std::io::Read::read_to_end(&mut right.publication().reader(), &mut right_hint).unwrap();
+            assert_eq!(left_hint, right_hint, "B partial hints differ");
+        }
+
+        // A's suffix occupies a new B-seeded unit after B's entire 4K slot.
+        let layout = DatabaseLayout {
+            shard_rows: SUFFIX_ROWS as usize,
+            ..ENHANCE_LAYOUT
+        };
+        let suffix = records(9_000_000, (SUFFIX_ROWS * RECORDS_PER_ROW as u64) as usize).unwrap();
+        #[cfg(feature = "native-reinspiring")]
+        let setup = crate::native::query_masks(7);
+        #[cfg(not(feature = "native-reinspiring"))]
+        let setup = {
+            let params = parameters(32768).unwrap();
+            let setup_client = ipir_sp::IPIRClient::from_profile(
+                params.num_items,
+                params.item_size_bits,
+                ipir_sp::SimplePirProfile::P16Q48,
+            )
+            .unwrap();
+            setup_client
+                .generate_public_query_setup_simplepir_from_seed(setup_seed(7))
+                .polys()
+                .to_vec()
+        };
+        let suffix_hash = hex::encode(Sha256::digest(&suffix));
+        let extra = PreparedShard::build(
+            &layout,
+            7,
+            4096,
+            suffix_hash.clone(),
+            &suffix,
+            rlwe(),
+            &setup,
+        )
+        .unwrap()
+        .persist(
+            &directory.path().join("suffix"),
+            DatabaseId::Enhance,
+            &layout,
+            rlwe(),
+        )
+        .unwrap();
+        let mut tail_plan = b_plan.clone();
+        tail_plan.shard.logical_rows = 8192;
+        tail_plan.units.push(UnitIdentity {
+            recovery_epoch: 0,
+            table: "enhance".into(),
+            shard_id: 7,
+            local_row_start: 4096,
+            allocated_rows: SUFFIX_ROWS,
+            setup_sha256: hex::encode(Sha256::digest(setup_seed(7))),
+            parameter_id: unit_parameter_id(SUFFIX_ROWS).unwrap(),
+            content_sha256: suffix_hash,
+        });
+        let mut tail_units = b_in_tail.units.clone();
+        tail_units.push(Arc::new(extra));
+        let tail = Evaluation {
+            plan: tail_plan,
+            units: tail_units,
+        };
+        assert_eq!(&tail.plan.units[..b_plan.units.len()], b_plan.units);
+
+        let plain_hint = plain.hint().unwrap();
+        let tail_hint = tail.hint().unwrap();
+        assert_ne!(
+            plain_hint, tail_hint,
+            "the whole-domain hint includes A's suffix"
+        );
+        for (evaluation, hint, logical_rows) in
+            [(&*plain, &plain_hint, 4096), (&tail, &tail_hint, 8192)]
+        {
+            let packing =
+                Packing::new(logical_rows, hint, &crate::PackingBudget::coordinator()).unwrap();
+            let params = parameters(logical_rows).unwrap();
+            #[cfg(not(feature = "native-reinspiring"))]
+            let (wallet, setup, public) = {
+                let wallet = ipir_sp::IPIRClient::from_profile(
+                    params.num_items,
+                    params.item_size_bits,
+                    ipir_sp::SimplePirProfile::P16Q48,
+                )
+                .unwrap();
+                let setup = wallet.generate_public_query_setup_simplepir_from_seed(setup_seed(7));
+                let public = recover_published_c1(
+                    &packing.public,
+                    rlwe().d,
+                    params.db_cols / rlwe().d,
+                    rlwe().q,
+                );
+                (wallet, setup, public)
+            };
+            let binding = QueryBinding {
+                recovery_epoch: 0,
+                session_id: [7; 32],
+                request_id: [8; 16],
+                anchor_hash: [9; 32],
+                generation: 1,
+                shard_id: 7,
+                epoch: Sha256::digest(&packing.public)[..8].try_into().unwrap(),
+            };
+            let targets: &[usize] = if logical_rows == 8192 {
+                &[0, 2047, 2048, 4096]
+            } else {
+                &[0, 2047, 2048]
+            };
+            for &row in targets {
+                let mut body = binding.encode();
+                #[cfg(feature = "native-reinspiring")]
+                let secret = {
+                    let (secret, upload) = crate::native::prepare(7, params.db_rows, row).unwrap();
+                    body.extend(upload);
+                    secret
+                };
+                #[cfg(not(feature = "native-reinspiring"))]
+                let seed = {
+                    let (query, keys, seed) = wallet.generate_fresh_query_simplepir(&setup, row);
+                    body.extend(serialize_packing_keys(wallet.rlwe_params(), &keys).unwrap());
+                    body.extend(query.to_switched_bytes(rlwe().q, params.query_bits));
+                    seed
+                };
+                let coefficients = packing
+                    .query_coefficients(&body, binding, params.db_rows)
+                    .unwrap();
+                let response = packing
+                    .pack(
+                        &body,
+                        &evaluation.evaluate(&coefficients).unwrap(),
+                        params.db_rows,
+                    )
+                    .unwrap();
+                assert_eq!(QueryBinding::decode(&response).unwrap(), binding);
+                #[cfg(feature = "native-reinspiring")]
+                let decoded =
+                    crate::native::decode(&secret, &packing.public, &response[HEADER_BYTES..])
+                        .unwrap();
+                #[cfg(not(feature = "native-reinspiring"))]
+                let decoded =
+                    wallet.decode_response_simplepir(&seed, &public, &response[HEADER_BYTES..]);
+                let start = if row == 4096 {
+                    9_000_000
+                } else {
+                    (B_START + row as u64) * RECORDS_PER_ROW as u64
+                };
+                assert_eq!(
+                    &decoded[..ROW_BYTES],
+                    records(start, RECORDS_PER_ROW).unwrap(),
+                    "row {row} decoded at the wrong local coordinate in {logical_rows} rows"
+                );
+            }
+        }
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum EvaluationError {
+    #[error("invalid query coefficients")]
+    InvalidQuery,
+    #[error("{0}")]
+    Unavailable(String),
+}

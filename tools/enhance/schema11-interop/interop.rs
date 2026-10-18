@@ -1,9 +1,11 @@
 //! Build as a separate test crate against the pinned wallet-pir checkout.
 //! Queries traverse the real coordinator and two worker HTTP listeners.
-use enhance_pir_server::{
+use enhance_publisher::{
     control::{Group, Ledger, PlacementPolicy, Replica},
     coordinator::Coordinator,
     store::RecordJournal,
+};
+use enhance_query_server::{
     types::{DatabaseId, ENHANCE_LAYOUT},
     worker::Worker,
 };
@@ -212,7 +214,7 @@ async fn scanned_wallet_applies_one_real_pir_row_atomically() {
     };
     use zcash_client_backend::data_api::{
         chain::BlockSource,
-        enhance_pir::{
+        enhance_query_server::{
             EnhancePirBatchResult, EnhancePirRead, EnhancePirStoreResult, EnhancePirWork,
             EnhancePirWrite, EnhancementMode, TransactionEnhancementWork,
         },
@@ -291,13 +293,13 @@ async fn scanned_wallet_applies_one_real_pir_row_atomically() {
             let (note, _) = try_compact_note_decryption(&domain, &ivk, &action).unwrap();
             let ciphertext =
                 IronwoodNoteEncryption::new(None, note, [7; 512]).encrypt_note_plaintext();
-            enhance_pir::EnhanceRecord::from_parts(enhance_pir::EnhanceRecordParts {
+            enhance_query_server::EnhanceRecord::from_parts(enhance_query_server::EnhanceRecordParts {
                 enc_ciphertext_suffix: ciphertext[52..].try_into().unwrap(),
                 cv_net: [0; 32],
                 out_ciphertext: [0; 80],
                 has_transparent_inputs: false,
                 has_transparent_outputs: false,
-                metadata: enhance_pir::EnhanceTransactionMetadata::new(0, Some(0)).unwrap(),
+                metadata: enhance_query_server::EnhanceTransactionMetadata::new(0, Some(0)).unwrap(),
             })
         })
         .collect();
@@ -365,7 +367,7 @@ async fn scanned_wallet_applies_one_real_pir_row_atomically() {
             .db()
             .enhance_pir_snapshot_status(anchor)
             .unwrap(),
-        zcash_client_backend::data_api::enhance_pir::EnhancePirSnapshotStatus::Accepted
+        zcash_client_backend::data_api::enhance_query_server::EnhancePirSnapshotStatus::Accepted
     );
     let accepted = GenerationAcceptance::new(
         "main",
@@ -428,16 +430,16 @@ async fn scanned_wallet_applies_one_real_pir_row_atomically() {
 #[test]
 fn frozen_wallet_and_server_share_the_24_shard_ceiling() {
     let span = 32768 * 33;
-    let server = enhance_pir::protocol::Lifecycle::default()
-        .coverage(24 * span - 1, enhance_pir::protocol::Geometry::default())
+    let server = enhance_query_server::protocol::Lifecycle::default()
+        .coverage(24 * span - 1, enhance_query_server::protocol::Geometry::default())
         .unwrap();
     let wallet: zakura_pir_enhance::types::Coverage =
         serde_json::from_value(serde_json::to_value(server).unwrap()).unwrap();
     wallet
         .validate(zakura_pir_enhance::types::Geometry::default())
         .unwrap();
-    assert!(enhance_pir::protocol::Lifecycle::default()
-        .coverage(24 * span + 1, enhance_pir::protocol::Geometry::default())
+    assert!(enhance_query_server::protocol::Lifecycle::default()
+        .coverage(24 * span + 1, enhance_query_server::protocol::Geometry::default())
         .is_err());
     assert!(zakura_pir_enhance::types::Lifecycle::default()
         .coverage(

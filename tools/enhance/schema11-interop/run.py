@@ -36,8 +36,8 @@ def main():
     with tempfile.TemporaryDirectory(prefix='schema11-interop-') as directory:
         project = Path(directory)
         dependencies = {
-            'enhance-pir-server': ROOT / 'src/enhance/enhance-pir-server',
-            'enhance-pir': ROOT / 'src/enhance/enhance-pir',
+            'enhance-publisher': ROOT / 'src/enhance/enhance-publisher',
+            'enhance-query-server': ROOT / 'src/enhance/enhance-query-server',
         }
         manifest = '[package]\nname="schema11-interop"\nversion="0.0.0"\nedition="2021"\n'
         manifest += '[[test]]\nname="interop"\npath=' + json.dumps(str(Path(__file__).with_name('public.rs' if args.public_origin else 'interop.rs'))) + '\n[dependencies]\n'

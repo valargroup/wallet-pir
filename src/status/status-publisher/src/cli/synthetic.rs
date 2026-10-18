@@ -1,11 +1,8 @@
 //! Synthetic-fixture commands: `serve`, `validate`, `validate-distributed` and
 //! `probe`. They serve or check the immutable fixture source, never wallet traffic.
 use super::{backend, require, AnyError};
-use crate::{
-    control::{Group, Ledger, Replica},
-    coordinator::Coordinator,
-    status::{self, fixture, Controller, Generation},
-};
+use crate::status::{self, fixture, Controller, Generation};
+use enhance_query_server::gateway::QueryGateway;
 use serde_json::json;
 use status_query_server::protocol::*;
 use std::{
@@ -80,7 +77,7 @@ impl FixtureServer {
 
 pub(super) async fn listeners(
     controller: &Controller,
-    state_dir: PathBuf,
+    _state_dir: PathBuf,
     listen: SocketAddr,
     worker: SocketAddr,
     router: SocketAddr,
@@ -101,27 +98,13 @@ pub(super) async fn listeners(
     let c = TcpListener::bind(listen).await?;
     let caddr = c.local_addr()?;
     let m = TcpListener::bind(monitoring).await?;
-    // Exercise route coexistence with a real, deliberately unready Enhance
-    // coordinator. No Enhance ingestion/placement loop runs in this service.
-    let inventory = vec![Group {
-        placement_policy: Default::default(),
-        id: "isolated-unready-enhance".into(),
-        sequence: 0,
-        replicas: (0..2)
-            .map(|i| Replica {
-                name: format!("unready-{i}"),
-                url: format!("http://127.0.0.1:{}", 9 + i),
-                incarnation: String::new(),
-                ledger: Ledger::default(),
-            })
-            .collect(),
-    }];
+    // Exercise route coexistence with the real, deliberately unready Enhance
+    // query gateway. No Enhance publication, ingestion or placement runs here.
     let status_routes = controller.coordinator_routes(format!("http://{raddr}"));
     let routes = if live {
         status_routes
     } else {
-        let coordinator = Coordinator::open(&state_dir, inventory)?;
-        coordinator.router().merge(status_routes)
+        QueryGateway::unpublished().router().merge(status_routes)
     };
     let worker_routes = controller.worker_routes();
     let router_routes = controller.router_routes(format!("http://{waddr}"));
