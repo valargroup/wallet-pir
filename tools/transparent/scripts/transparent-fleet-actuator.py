@@ -538,7 +538,7 @@ class Actuator:
         for sums in sorted(Path(self.c['release_store']).glob('*/SHA256SUMS')):
             for line in sums.read_text().splitlines():
                 digest, _, name = line.partition('  ')
-                if name.strip() == 'transparent-shard-server' and digest == sha:
+                if name.strip() == 'transparent-query-server' and digest == sha:
                     return {'sha': sums.parent.name, 'binary_sha256': sha, 'dir': str(sums.parent)}
         raise ActuatorError('no release in the store holds the fleet binary ' + sha[:12])
 
@@ -587,9 +587,9 @@ def bootstrap(actuator, op, name):
     staging = '/opt/transparent-pir/staged'
     remote.run(host, f'mkdir -p {staging} /opt/transparent-pir/assignments /opt/transparent-publisher '
                      f"{actuator.c['publication_root']}")
-    remote.copy(host, [Path(release['dir'])/'transparent-shard-server', Path(release['dir'])/'shard-control'], staging + '/')
-    remote.run(host, f"echo '{release['binary_sha256']}  {staging}/transparent-shard-server' | sha256sum -c --quiet && "
-                     f'install -m755 {staging}/transparent-shard-server /usr/local/bin/transparent-shard-server && '
+    remote.copy(host, [Path(release['dir'])/'transparent-query-server', Path(release['dir'])/'shard-control'], staging + '/')
+    remote.run(host, f"echo '{release['binary_sha256']}  {staging}/transparent-query-server' | sha256sum -c --quiet && "
+                     f'install -m755 {staging}/transparent-query-server /usr/local/bin/transparent-query-server && '
                      f'install -m755 {staging}/shard-control /usr/local/bin/shard-control')
     plan = newest_plan_naming(actuator.state, name)
     if plan is None:
@@ -669,7 +669,10 @@ def render_unit(actuator, name, publication):
                                                        '--assignment': publication + '/assignment.json'})
     if '--worker-id' not in found:
         raise ActuatorError('the peer unit has no --worker-id to replace')
-    return unit
+    # A peer installed before the executable rename names the legacy path;
+    # this member receives the executable under its current name.
+    return unit.replace('ExecStart=/usr/local/bin/transparent-shard-server ',
+                        'ExecStart=/usr/local/bin/transparent-query-server ')
 
 
 def main(argv=None):

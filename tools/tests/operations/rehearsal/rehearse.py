@@ -308,7 +308,7 @@ def enhance():
 
 def history():
     r = Rehearsal('transparent-history-external-worker')
-    binary = r.binary('transparent-shard-server')
+    binary = r.binary('transparent-query-server')
     sha = sha256(binary)
     p1 = r.work / 'publications/p1'
     p1.mkdir(parents=True)
@@ -326,7 +326,7 @@ def history():
     deployer.capture_baseline()
     journal = deployer.deploy(sha, binary)
     r.step('fresh-install', transaction=journal.id, status=journal.status, binary_sha256=sha,
-           product_check='transparent-shard-server --verify-only on the staged set',
+           product_check='transparent-query-server --verify-only on the staged set',
            exact_answer='deploy exact_check passed (soak-query against the published files)')
     r.executor.systemctl('local', 'restart', 'transparent-history-worker.service')
     r.wait('ready after restart', lambda: r.executor.http_get('local', url + '/v1/ready')[0] == 200)

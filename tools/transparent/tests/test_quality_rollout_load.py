@@ -18,7 +18,7 @@ class LoadRolloutTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             artifacts = root/'artifacts'; artifacts.mkdir()
-            (artifacts/'transparent-shard-server').write_bytes(b'candidate')
+            (artifacts/'transparent-query-server').write_bytes(b'candidate')
             sha = hashlib.sha256(b'candidate').hexdigest()
             roster = [dict(id='transparent-pir-recent-01', upstream='worker1:8093'), dict(id='transparent-pir-recent-02', upstream='worker2:8093')]
             (root/'roster.json').write_text(json.dumps(roster))
