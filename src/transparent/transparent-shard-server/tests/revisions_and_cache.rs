@@ -1361,7 +1361,7 @@ async fn a_disconnected_activation_keeps_serialization_over_the_control_socket()
     let activate =
         serde_json::json!({"operation": "activate", "expected": old_map, "map_sha256": new_map});
 
-    let blocked = control_socket::BlockedWrite::at(record.with_extension("tmp"));
+    let blocked = control_socket::BlockedWrite::at(record.clone());
     tokio::task::spawn_blocking({
         let socket = socket.clone();
         let activate = activate.clone();
@@ -1400,10 +1400,11 @@ async fn a_disconnected_activation_keeps_serialization_over_the_control_socket()
         .await
         .unwrap();
     assert!(held.is_none(), "serialization was released: {held:?}");
-    tokio::task::spawn_blocking(move || blocked.release())
+    let restore = tokio::task::spawn_blocking(move || blocked.release())
         .await
         .unwrap();
     assert_eq!(waiting.await.unwrap().unwrap()["ok"], true);
+    restore.restore();
 
     // The controller retries; the same candidate becomes active.
     let activated = control(activate, 60_000).await.unwrap().unwrap();

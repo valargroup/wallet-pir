@@ -673,7 +673,7 @@ async fn a_disconnected_display_activation_keeps_serialization_over_the_control_
     let activate =
         serde_json::json!({"operation": "activate", "expected": world.p0.1, "map_sha256": p1.1});
 
-    let blocked = control_socket::BlockedWrite::at(record.with_extension("tmp"));
+    let blocked = control_socket::BlockedWrite::at(record.clone());
     tokio::task::spawn_blocking({
         let socket = socket.clone();
         let activate = activate.clone();
@@ -714,10 +714,11 @@ async fn a_disconnected_display_activation_keeps_serialization_over_the_control_
     .await
     .unwrap();
     assert!(held.is_none(), "serialization was released: {held:?}");
-    tokio::task::spawn_blocking(move || blocked.release())
+    let restore = tokio::task::spawn_blocking(move || blocked.release())
         .await
         .unwrap();
     assert_eq!(waiting.await.unwrap().unwrap()["ok"], true);
+    restore.restore();
 
     // The controller retries; the same candidate becomes active and only
     // then is the seal it names released from staging.
