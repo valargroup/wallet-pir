@@ -40,9 +40,8 @@ jobs:
     # Reserve this queue for main. PRs and branch dispatches use hosted runners
     # so their cold builds cannot delay a main push.
     runs-on: ${{ fromJSON(github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && !inputs.hosted && vars.WALLET_PIR_MAIN_RUNNER || '"ubuntu-24.04"') }}
-    # Routine PR/main feedback has the same ceiling. Manual measurement may
-    # diagnose a cold build; a timeout never counts as successful validation.
-    timeout-minutes: ${{ github.event_name == 'workflow_dispatch' && 30 || 3 }}
+    # Let validation finish; enforce the feedback target afterwards on main only.
+    # GitHub's default job timeout remains the runaway safety limit.
     steps:
       - uses: actions/checkout@v4
         with:
@@ -92,3 +91,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: umask 022 && python3 tools/ci/timings.py --run "$GITHUB_RUN_ID"
+
+      - name: Check main feedback timing after validation
+        if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: umask 022 && python3 tools/ci/timings.py --run "$GITHUB_RUN_ID" --check-fast-seconds 180

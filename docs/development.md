@@ -153,3 +153,8 @@ failures visible. Compare the same workload, host, flags and population before
 and after; local execution excludes Actions queue/setup. The warm CI target is
 three minutes; deployment's prepared-artifact target remains two minutes. These
 are targets until measured on the updated workflow.
+
+Temporarily, CI lets PR and main validation run to completion without a
+three-minute cancellation. Pushes to main enforce that target in a final timing
+check; PRs and manual runs only report timings. The check measures job start
+through validation and reporting, excluding queue time and final cleanup.

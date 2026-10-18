@@ -179,9 +179,13 @@ class QualificationTests(unittest.TestCase):
         self.assertIn('--all --compile-only', prime)
         self.assertNotIn('needs:', prime.split('\n  plan-qualification:', 1)[0])
 
-    def test_pr_and_main_feedback_share_the_three_minute_ceiling(self):
+    def test_feedback_finishes_before_main_only_timing_check(self):
         workflow = (ROOT / '.github/workflows/ci.yml').read_text()
-        self.assertIn("timeout-minutes: ${{ github.event_name == 'workflow_dispatch' && 30 || 3 }}", workflow)
+        self.assertNotIn('timeout-minutes:', workflow)
+        timing = workflow.split('- name: Check main feedback timing after validation', 1)[1]
+        self.assertIn("if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'", timing)
+        self.assertIn('--check-fast-seconds 180', timing)
+        self.assertLess(workflow.index('- name: Run affected fast checks'), workflow.index('- name: Check main feedback timing'))
         self.assertIn("inputs.hosted && 'hosted-'", workflow)
         self.assertIn('!inputs.hosted', workflow)
 
