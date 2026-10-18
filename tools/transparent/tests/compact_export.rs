@@ -26,7 +26,7 @@ fn protoc(mode: &str, input: &[u8]) -> Vec<u8> {
     let mut child = Command::new("protoc")
         .args([
             format!("--{mode}=cash.z.wallet.sdk.rpc.CompactBlock"),
-            "-I../transparent-blocks".into(),
+            "-Isrc/compact_blocks".into(),
             "compact_formats.proto".into(),
         ])
         .stdin(Stdio::piped())
