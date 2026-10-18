@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 
 TOOL = Path(__file__).resolve().parents[1] / "distribution.py"
@@ -71,28 +72,38 @@ class DistributionTests(unittest.TestCase):
         self.temporary.cleanup()
 
     def publish(self, recent, revision):
+        archive_revision, recent_revision = "a" * 64, "b" * 64
         mapping = {"network": "main", "genesis_hash": "00" * 32,
-                   "shards": [{"shard_id": 0, "manifest_digest": "archive"},
-                              {"shard_id": 1, "manifest_digest": "recent"}]}
+                   "shards": [{"shard_id": 0, "manifest_digest": archive_revision, "end_height": 0, "terminal_block_hash": "00" * 32},
+                              {"shard_id": 1, "manifest_digest": recent_revision, "end_height": revision, "terminal_block_hash": f"{revision:064x}"}]}
         artifacts = []
-        self.replies = {}
+        self.replies = getattr(self, "replies", {})
         for path, body, kind in (
             ("shards.json", json.dumps(mapping).encode(), "metadata"),
-            ("archive/directory.0.bin", b"never download", "archive_table"),
-            ("recent/directory.0.bin", recent, "recent_table"),
+            (archive_revision + "/directory.0.bin", b"never download", "archive_table"),
+            (recent_revision + "/directory.0.bin", recent, "recent_table"),
+            (archive_revision + "/manifest.json", b"{}", "metadata"),
+            (archive_revision + "/filter.bin", b"a", "metadata"),
+            (recent_revision + "/manifest.json", b"{}", "metadata"),
+            (recent_revision + "/filter.bin", b"b", "metadata"),
         ):
             digest = hashlib.sha256(body).hexdigest()
             artifacts.append({"path": path, "sha256": digest,
                               "bytes": len(body), "kind": kind})
             self.replies[distribution.PREFIX + "artifacts/" + digest] = body
         inventory = {"schema": "transparent-prepared-distribution-v1",
-                     "profile": "reinspiring-two-mask-p8-g27x1-m22-dq28-r10-v1",
+                     "profile": distribution.PROFILE, "runtime": distribution.RUNTIME,
+                     "shard_schema": "transparent-shard-v12", "network": "main",
+                     "genesis_hash": "00" * 32,
+                     "map_sha256": hashlib.sha256(json.dumps(mapping, separators=(",", ":")).encode()).hexdigest(),
                      "recent_from_shard": 1, "artifacts": artifacts}
         raw = json.dumps(inventory).encode()
         digest = hashlib.sha256(raw).hexdigest()
         self.replies[distribution.PREFIX + "inventories/" + digest] = raw
-        self.current = {"revision": revision, "eligibility": "canonical",
+        self.current = {"schema": "transparent-prepared-distribution-v1", "recovery_epoch": 0,
+                        "revision": revision, "eligibility": "canonical",
                         "invalidated_from": None, "anchor_height": revision,
+                        "anchor_hash": f"{revision:064x}",
                         "inventory_sha256": digest, "network": "main",
                         "genesis_hash": "00" * 32}
         self.etag = f'"revision-{revision}"'
@@ -114,7 +125,7 @@ class DistributionTests(unittest.TestCase):
         self.publish(b"recent-two", 2)
         second = self.consumer("update").run()
         self.assertTrue(second["complete"], second)
-        self.assertEqual(len(second["reused"]), 1)
+        self.assertEqual(len(second["reused"]), 4)
         self.assertNotIn(distribution.PREFIX + "artifacts/" + self.archive_digest, self.paths)
         receipts = [json.loads(line) for line in
                     (self.root / "output/consumer-000/update.requests.jsonl").read_text().splitlines()]
@@ -124,9 +135,9 @@ class DistributionTests(unittest.TestCase):
         self.truncate = True
         result = self.consumer("bootstrap").run()
         self.assertFalse(result["complete"])
-        self.assertIn("length/digest mismatch", result["error"])
+        self.assertIn("IncompleteRead", result["error"])
         self.assertFalse((self.root / "output/consumer-000/current.json").exists())
-        self.assertTrue(list((self.root / "output/consumer-000/objects").glob("*.partial")))
+        self.assertTrue(list((self.root / "output/consumer-000/attempts").glob("*.body")))
 
     def test_exhausted_refusals_retain_every_error_body_and_attempt(self):
         self.refuse = True
@@ -135,6 +146,188 @@ class DistributionTests(unittest.TestCase):
         self.assertEqual(result["failed_attempts"], 2)
         self.assertEqual(result["requests"], 2)
         self.assertEqual(result["bytes"], 2 * len(b"bounded refusal"))
+
+    def test_premature_http_eof_with_correct_digest_is_rejected(self):
+        consumer = self.consumer("bootstrap")
+        consumer.args.attempts = 1
+        body = b"complete artifact, incomplete HTTP"
+        def premature(handler):
+            handler.send_response(200)
+            handler.send_header("Content-Length", str(len(body) + 1))
+            handler.end_headers()
+            handler.wfile.write(body)
+        self.server.RequestHandlerClass.do_GET = premature
+        target = consumer.objects / "candidate"
+        with self.assertRaises(distribution.http.client.IncompleteRead):
+            consumer.request("artifacts/" + hashlib.sha256(body).hexdigest(), len(body), target=target)
+        self.assertFalse(target.exists())
+        receipt = consumer.receipts[0]
+        self.assertEqual(receipt["bytes"], len(body))
+        self.assertEqual((consumer.root / receipt["body_path"]).read_bytes(), body)
+
+    def test_chunked_completion_requires_terminal_chunk_and_trailer(self):
+        consumer = self.consumer("bootstrap")
+        consumer.args.attempts = 1
+        body = b"chunked-artifact"
+        wire = [b""]
+        def chunked(handler):
+            handler.wfile.write(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n" + wire[0])
+        self.server.RequestHandlerClass.do_GET = chunked
+        prefix = f"{len(body):x}\r\n".encode() + body
+        for index, ending in enumerate((b"\r\n0\r\n", b"xx0\r\n\r\n", b"\r\n0\r\n\r\n")):
+            wire[0] = prefix + ending
+            target = consumer.objects / f"chunk-{index}"
+            if index < 2:
+                with self.assertRaises(distribution.http.client.HTTPException):
+                    consumer.request("artifacts/" + hashlib.sha256(body).hexdigest(), len(body), target=target)
+                self.assertFalse(target.exists())
+            else:
+                consumer.request("artifacts/" + hashlib.sha256(body).hexdigest(), len(body), target=target)
+                self.assertEqual(target.read_bytes(), body)
+        self.assertEqual([r["bytes"] for r in consumer.receipts], [len(body)] * 3)
+
+    def test_absolute_deadline_includes_dribbling_headers(self):
+        consumer = self.consumer("bootstrap")
+        consumer.args.attempts, consumer.args.timeout = 1, .15
+        def slow(handler):
+            try:
+                for byte in b"HTTP/1.0 200 OK\r\nContent-Length: 1\r\n\r\nx":
+                    handler.wfile.write(bytes([byte]))
+                    time.sleep(.025)
+            except OSError:
+                pass
+        self.server.RequestHandlerClass.do_GET = slow
+        start = time.monotonic()
+        with self.assertRaises((OSError, distribution.http.client.HTTPException)):
+            consumer.request("current", 100)
+        self.assertLess(time.monotonic() - start, .6)
+        self.assertIn("deadline", consumer.receipts[0]["error"])
+
+    def test_retry_retains_partial_body_separately_from_success(self):
+        consumer = self.consumer("bootstrap")
+        consumer.args.timeout = .2
+        body, attempts = b"partial-then-complete", []
+        def retry(handler):
+            attempts.append(1)
+            handler.send_response(200)
+            handler.send_header("Content-Length", str(len(body)))
+            handler.end_headers()
+            handler.wfile.write(body[:3] if len(attempts) == 1 else body)
+            if len(attempts) == 1:
+                time.sleep(.3)
+        self.server.RequestHandlerClass.do_GET = retry
+        target = consumer.objects / "candidate"
+        consumer.request("artifacts/" + hashlib.sha256(body).hexdigest(), len(body), target=target)
+        self.assertEqual([r["bytes"] for r in consumer.receipts], [3, len(body)])
+        self.assertEqual([(consumer.root / r["body_path"]).read_bytes() for r in consumer.receipts], [body[:3], body])
+        self.assertEqual(target.read_bytes(), body)
+        self.assertTrue(consumer.receipts[0]["error"])
+
+    def test_mislabeled_archive_is_refused_before_transfer(self):
+        inventory = json.loads(self.replies[distribution.PREFIX + "inventories/" + self.current["inventory_sha256"]])
+        inventory["artifacts"][1]["kind"] = "metadata"
+        self.replace_inventory(inventory)
+        result = self.consumer("bootstrap").run()
+        self.assertFalse(result["complete"], result)
+        self.assertIn("metadata classification", result["error"])
+        self.assertFalse(any("/artifacts/" in path for path in self.paths))
+
+    def replace_inventory(self, inventory):
+        raw = json.dumps(inventory).encode()
+        digest = hashlib.sha256(raw).hexdigest()
+        self.current["inventory_sha256"] = digest
+        self.replies[distribution.PREFIX + "inventories/" + digest] = raw
+
+    def test_invalid_inventory_digest_never_becomes_request_path(self):
+        self.current["inventory_sha256"] = "../unsafe"
+        result = self.consumer("bootstrap").run()
+        self.assertFalse(result["complete"])
+        self.assertEqual(self.paths, [distribution.PREFIX + "current"])
+
+    def test_inventory_profile_runtime_and_map_identity_are_mandatory(self):
+        inventory = json.loads(self.replies[distribution.PREFIX + "inventories/" + self.current["inventory_sha256"]])
+        for field in ("profile", "runtime", "shard_schema"):
+            with self.subTest(field=field):
+                bad = dict(inventory, **{field: "wrong"})
+                with self.assertRaises(ValueError):
+                    distribution.validate_inventory(bad, self.current)
+        inventory["map_sha256"] = "f" * 64
+        self.replace_inventory(inventory)
+        result = self.consumer("bootstrap").run()
+        self.assertFalse(result["complete"], result)
+        self.assertIn("map digest", result["error"])
+        self.assertNotIn(distribution.PREFIX + "artifacts/" + self.archive_digest, self.paths)
+
+    def test_unchanged_current_200_is_not_an_update(self):
+        self.assertTrue(self.consumer("bootstrap").run()["complete"])
+        original = self.server.RequestHandlerClass.do_GET
+        def ignore_conditional(handler):
+            if "If-None-Match" in handler.headers:
+                del handler.headers["If-None-Match"]
+            original(handler)
+        self.server.RequestHandlerClass.do_GET = ignore_conditional
+        result = self.consumer("update").run()
+        self.assertFalse(result["complete"], result)
+        self.assertIn("did not observe a producer update", result["error"])
+        self.assertEqual(result["requests"], 1)
+
+    def test_wave_rejects_current_changed_after_disk_preflight(self):
+        original = self.server.RequestHandlerClass.do_GET
+        changed = []
+        def advance(handler):
+            original(handler)
+            if "/inventories/" in handler.path and not changed:
+                changed.append(1)
+                self.publish(b"x" * (8 << 20), 2)
+        self.server.RequestHandlerClass.do_GET = advance
+        output, budget = self.root / "race", 4 << 20
+        result = subprocess.run([
+            sys.executable, str(TOOL), "--publisher", f"https://localhost:{self.server.server_port}",
+            "--ca", str(self.root / "ca.pem"), "--output", str(output), "--consumers", "10",
+            "--phase", "bootstrap", "--cache-budget-bytes", str(budget), "--polls", "0",
+            "--attempts", "1"], capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 1, result.stderr)
+        report = json.loads((output / "bootstrap.json").read_text())
+        self.assertEqual(report["complete"], 0)
+        self.assertTrue(all("changed since wave" in r["error"] for r in report["results"]))
+        self.assertLessEqual(self.retained_size(output), budget)
+        self.assertFalse(any(p.stat().st_size >= 8 << 20 for p in output.rglob("*.body")))
+
+    @staticmethod
+    def retained_size(root):
+        sizes = {}
+        for path in root.rglob("*"):
+            if path.is_file():
+                st = path.stat()
+                sizes[(st.st_dev, st.st_ino)] = st.st_size
+        return sum(sizes.values())
+
+    def test_disk_ceiling_counts_error_partial_and_existing_evidence(self):
+        consumer = self.consumer("bootstrap")
+        budget = 24000
+        consumer.budget = distribution.DiskBudget(consumer.args.output, budget)
+        consumer.result_credit = distribution.Credit(consumer.budget, 4096)
+        body = b"e" * 18000
+        def refuse(handler):
+            handler.send_response(503)
+            handler.send_header("Content-Length", str(len(body)))
+            handler.end_headers()
+            try:
+                handler.wfile.write(body)
+            except OSError:
+                pass
+        self.server.RequestHandlerClass.do_GET = refuse
+        result = consumer.run()
+        self.assertFalse(result["complete"])
+        self.assertIn("BudgetExceeded", result["error"])
+        self.assertLessEqual(self.retained_size(consumer.args.output), budget)
+        self.assertTrue(consumer.receipts)
+        for receipt in consumer.receipts:
+            retained = consumer.root / receipt["body_path"]
+            self.assertEqual(retained.stat().st_size, receipt["bytes"])
+            self.assertEqual(distribution.digest_file(retained), receipt["sha256"])
+        with self.assertRaises(distribution.BudgetExceeded):
+            distribution.DiskBudget(consumer.args.output, self.retained_size(consumer.args.output) - 1)
 
     def test_disk_guard_stops_wave_before_any_artifact_transfer(self):
         output = self.root / "bounded"
@@ -145,9 +338,9 @@ class DistributionTests(unittest.TestCase):
             "--consumers", "10", "--phase", "bootstrap", "--cache-budget-bytes", "1",
         ], capture_output=True, text=True, timeout=5)
         self.assertEqual(result.returncode, 2, result.stderr)
-        self.assertFalse(json.loads((output / "bootstrap.disk-bound.json").read_text())["permitted"])
+        self.assertIn("too small", result.stderr)
         self.assertFalse(any("/artifacts/" in path for path in self.paths))
-        self.assertEqual(len(list((output / "control/responses").iterdir())), 2)
+        self.assertFalse(list(output.rglob("*.body")))
 
 
 if __name__ == "__main__":

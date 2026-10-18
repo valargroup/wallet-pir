@@ -409,16 +409,28 @@ Use `--ca` for the explicitly trusted fixture/operator PEM. Repeat with 100 and
 a fresh output root only after the 10-consumer campaign. Each consumer streams
 one object at a time, verifies lengths/digests, checks retained objects before
 reuse, and performs two conditional polls five seconds apart. Each request has
-a 30-second deadline and at most eight attempts with bounded jitter/backoff.
+a 30-second absolute deadline covering DNS, connect, TLS, headers and body, and
+at most eight attempts with bounded jitter/backoff. HTTP framing completion is
+required in addition to the immutable length/digest check.
 The per-consumer body allowance is 64 GiB. Every HTTP status, partial/error body
 byte count, digest, retry and timeout remains in per-consumer JSONL receipts.
+Each attempt has its own immutable body file referenced by its receipt, including
+a partial body followed by a successful retry.
 Archive evaluation tables are excluded after checking their map classification.
 An update must observe a producer change; an unchanged response cannot count as
 an update. Reusing an output phase refuses overwriting its receipts.
 
 Before a wave, separate control requests retain the observed current/inventory
-and conservatively budget a complete candidate beside retained cache objects.
-The default total cache bound is 8 GiB (`--cache-budget-bytes`); choose a larger
+and verify the map, profile/runtime/schema, safe artifact paths and archive roles
+before payload transfers. Consumers must observe that same reserved snapshot;
+a producer advance refuses the wave rather than downloading a larger candidate.
+An identical current returned with HTTP 200 cannot satisfy an update.
+The default total retained-file-content bound is 8 GiB (`--cache-budget-bytes`);
+it includes existing files, metadata, retry/error/partial bodies, receipts and
+reports across every consumer, with one shared counter checked before reads.
+Immutable-body hardlinks are counted once. Reservations are conservative;
+filesystem block rounding and directory metadata need additional host headroom.
+Choose a larger
 explicit bound only within the execution host/task's authorized disk allocation.
 This affects load clients only. Publisher admission remains four artifact bodies,
 shared with canonicality checks, and is never tuned by this tool. Failed client
@@ -464,7 +476,12 @@ Raw provenance is retained outside Git in task `t-ddab1d18147e47c4` under
 samples), and `10-consumer-audit.json`. The audit independently rehashes all
 140 retained consumer objects (2,519,311,230 bytes) and compares complete frozen
 client ledgers with the explicit source-event oracle. The first two distribution
-phases used preserved driver `fd268532…`; the subsequent disk guard is a later
+phases used preserved driver `fd268532…`; later driver controls are separate
+from these measurements. Independent review found incomplete framing, header
+deadline, retry-body retention, inventory classification, unchanged-update and
+snapshot/disk-bound defects in the subsequent tool. Targeted real-TLS controls
+cover their corrections; the original 10-consumer waves have not been rerun
+with those corrections. The subsequent disk guard is a later
 tool revision. Their 60 metadata replies were initially retained as parsed JSON;
 compact reconstruction later matched every original receipt SHA (four unique
 bodies), recorded in `metadata-reconstruction.json`, rather than being labelled

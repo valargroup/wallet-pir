@@ -11,7 +11,12 @@ import concurrent.futures
 import hashlib
 import http.client
 import json
+import os
 import random
+import re
+import socket
+import subprocess
+import sys
 import ssl
 import threading
 import time
@@ -27,10 +32,256 @@ def digest_file(path):
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
-def save(path, value):
-    temporary = path.with_suffix(".partial")
-    temporary.write_text(json.dumps(value, indent=2) + "\n")
-    temporary.replace(path)
+class BudgetExceeded(ValueError):
+    pass
+
+
+class Credit:
+    def __init__(self, budget, amount):
+        self.budget, self.left = budget, amount
+        budget.reserve(amount)
+
+    def add(self, amount):
+        self.budget.reserve(amount)
+        self.left += amount
+
+    def write(self, path, data, append=False):
+        if len(data) > self.left:
+            raise BudgetExceeded("reserved receipt/report space exhausted")
+        self.left -= len(data)
+        with path.open("ab" if append else "xb") as stream:
+            stream.write(data)
+
+    def save(self, path, value):
+        raw = (json.dumps(value, indent=2) + "\n").encode()
+        temporary = path.with_name(path.name + ".new")
+        self.write(temporary, raw)
+        temporary.replace(path)
+
+
+class DiskBudget:
+    """One hard retained-file-content ceiling across the whole wave.
+
+    Hardlinks to immutable attempt bodies consume no additional body storage.
+    Reservations conservatively include receipts and reports before reading.
+    Filesystem metadata/block rounding is outside this file-content counter.
+    """
+    def __init__(self, root, limit):
+        self.limit, self.used, self.lock = limit, 0, threading.Lock()
+        seen = set()
+        for path in root.rglob("*"):
+            if path.is_symlink():
+                raise ValueError("cache root contains a symlink")
+            if path.is_file():
+                st = path.stat()
+                key = (st.st_dev, st.st_ino)
+                if key not in seen:
+                    seen.add(key)
+                    self.used += st.st_size
+        if self.used > limit:
+            raise BudgetExceeded("retained files already exceed disk budget")
+
+    def reserve(self, amount):
+        with self.lock:
+            if amount < 0 or self.used + amount > self.limit:
+                raise BudgetExceeded("retained body/evidence disk budget exhausted")
+            self.used += amount
+
+    def refund(self, amount):
+        with self.lock:
+            self.used -= amount
+
+    def capacity(self, maximum):
+        with self.lock:
+            amount = min(maximum, self.limit - self.used)
+            if amount <= 0:
+                raise BudgetExceeded("retained body/evidence disk budget exhausted")
+            self.used += amount
+            return amount
+
+
+def is_digest(value):
+    return isinstance(value, str) and len(value) == 64 and all(c in "0123456789abcdef" for c in value)
+
+
+def check_current(current):
+    if (not isinstance(current, dict) or
+        current.get("schema") != "transparent-prepared-distribution-v1" or
+        not is_digest(current.get("inventory_sha256")) or
+        not is_digest(current.get("genesis_hash")) or not is_digest(current.get("anchor_hash")) or
+        type(current.get("revision")) is not int or current["revision"] < 0 or
+        type(current.get("anchor_height")) is not int or current["anchor_height"] < 0 or
+        type(current.get("recovery_epoch")) is not int or current["recovery_epoch"] < 0 or
+        not isinstance(current.get("network"), str) or not 0 < len(current["network"]) <= 32 or
+        len(json.dumps(current)) > 2048 or
+        (current.get("invalidated_from") is not None and type(current["invalidated_from"]) is not int)):
+        raise ValueError("invalid current identity/digest")
+    if current["eligibility"] != "canonical" or (current["invalidated_from"] is not None and current["invalidated_from"] <= current["anchor_height"]):
+        raise ValueError("current is ineligible")
+
+
+PROFILE = "reinspiring-two-mask-p8-g27x1-m22-dq28-r10-v1"
+RUNTIME = "transparent-runtime-v3/native-two-mask-p8-g27x1/interleaved-u8/ipir-35069f1/reinspiring-0.1.3-rc.1"
+
+
+def validate_inventory(inventory, current):
+    if (inventory.get("schema") != "transparent-prepared-distribution-v1" or
+        inventory.get("profile") != PROFILE or inventory.get("runtime") != RUNTIME or
+        inventory.get("shard_schema") != "transparent-shard-v12" or
+        inventory.get("network") != current["network"] or
+        inventory.get("genesis_hash") != current["genesis_hash"] or
+        not is_digest(inventory.get("map_sha256"))):
+        raise ValueError("incompatible inventory identity/profile/runtime")
+    artifacts = inventory.get("artifacts")
+    if not isinstance(artifacts, list) or len(artifacts) > 100000:
+        raise ValueError("invalid artifact inventory size")
+    seen = set()
+    for artifact in artifacts:
+        path, kind, size = artifact["path"], artifact["kind"], artifact["bytes"]
+        if (not isinstance(path, str) or len(path) > 256 or path in seen or
+            any(c in ("", ".", "..") or not re.fullmatch(r"[a-zA-Z0-9_.-]+", c) for c in path.split("/")) or
+            not is_digest(artifact["sha256"]) or type(size) is not int or size <= 0):
+            raise ValueError("unsafe/duplicate artifact path, digest or length")
+        seen.add(path)
+        if kind == "metadata":
+            if size > METADATA_LIMIT or (path != "shards.json" and not re.fullmatch(r"[0-9a-f]{64}/(?:manifest.json|filter.bin)", path)):
+                raise ValueError("invalid metadata classification/path/size")
+        elif kind == "recent_runtime":
+            if not re.fullmatch(r"[0-9a-f]{64}-[0-9a-f]{64}\.runtime", path):
+                raise ValueError("invalid runtime identity/path")
+        elif kind in ("recent_table", "archive_table"):
+            if not re.fullmatch(r"[0-9a-f]{64}/(?:directory|pages-[0-9]+)\.[0-9]+\.bin", path):
+                raise ValueError("invalid table path")
+        else:
+            raise ValueError("unknown artifact classification")
+    if not any(a["path"] == "shards.json" and a["kind"] == "metadata" for a in artifacts):
+        raise ValueError("inventory omits shard map")
+
+
+def validate_map(inventory, current, mapping):
+    canonical = json.dumps(mapping, separators=(",", ":"), ensure_ascii=False).encode()
+    shards = mapping.get("shards")
+    boundary = inventory.get("recent_from_shard")
+    if (hashlib.sha256(canonical).hexdigest() != inventory["map_sha256"] or
+        mapping.get("network") != current["network"] or mapping.get("genesis_hash") != current["genesis_hash"] or
+        not isinstance(shards, list) or not shards or len(shards) > 100000 or
+        type(boundary) is not int or not 0 <= boundary < len(shards)):
+        raise ValueError("inventory/map digest, chain or holdings mismatch")
+    expected = {"shards.json"}
+    roles = {}
+    for index, shard in enumerate(shards):
+        digest = shard["manifest_digest"]
+        if shard["shard_id"] != index or not is_digest(digest) or digest in roles:
+            raise ValueError("invalid map shard identity")
+        roles[digest] = "recent_table" if index >= boundary else "archive_table"
+        expected.update((digest + "/manifest.json", digest + "/filter.bin"))
+    if shards[-1].get("end_height") != current["anchor_height"] or shards[-1].get("terminal_block_hash") != current["anchor_hash"]:
+        raise ValueError("map/current anchor mismatch")
+    for artifact in inventory["artifacts"]:
+        if artifact["kind"] == "metadata":
+            if artifact["path"] not in expected:
+                raise ValueError("metadata path disagrees with map")
+            expected.remove(artifact["path"])
+        elif artifact["kind"] in ("recent_table", "archive_table"):
+            if roles.get(artifact["path"].split("/")[0]) != artifact["kind"]:
+                raise ValueError("table classification disagrees with map")
+    if expected:
+        raise ValueError("inventory omits required metadata")
+
+
+def resolve(host, port, timeout):
+    # A killable, joined resolver keeps blocking system DNS inside this attempt's
+    # deadline too; no unowned resolver thread survives a timed-out request.
+    code = "import socket,json,sys;print(json.dumps(socket.getaddrinfo(sys.argv[1],int(sys.argv[2]),type=socket.SOCK_STREAM)))"
+    try:
+        result = subprocess.run([sys.executable, "-c", code, host, str(port)],
+                                capture_output=True, text=True, timeout=timeout, check=True)
+    except subprocess.TimeoutExpired as error:
+        raise TimeoutError("whole request deadline during DNS") from error
+    return json.loads(result.stdout)
+
+
+class CompleteResponse(http.client.HTTPResponse):
+    def begin(self):
+        original = self.fp
+        class Headers:
+            def readline(self, *args):
+                line = original.readline(*args)
+                if not line:
+                    raise http.client.RemoteDisconnected("incomplete HTTP headers")
+                return line
+            def __getattr__(self, name):
+                return getattr(original, name)
+        self.fp = Headers()
+        try:
+            super().begin()
+        finally:
+            if self.fp is not None:
+                self.fp = original
+
+    def _get_chunk_left(self):
+        if self.chunk_left == 0 and self._safe_read(2) != b"\r\n":
+            raise http.client.HTTPException("invalid chunk delimiter")
+        if self.chunk_left in (None, 0):
+            line = self.fp.readline(65537)
+            size = line.split(b";", 1)[0].strip()
+            if len(line) > 65536 or not line.endswith(b"\r\n") or not re.fullmatch(b"[0-9a-fA-F]+", size):
+                raise http.client.IncompleteRead(b"")
+            self.chunk_left = int(size, 16)
+            if self.chunk_left == 0:
+                self._read_and_discard_trailer()
+                self._close_conn()
+                self.chunk_left = None
+        return self.chunk_left
+
+    def _read_and_discard_trailer(self):
+        for _ in range(101):
+            line = self.fp.readline(65537)
+            if not line:
+                raise http.client.IncompleteRead(b"")
+            if len(line) > 65536:
+                raise http.client.LineTooLong("trailer")
+            if line in (b"\r\n", b"\n"):
+                return
+        raise http.client.HTTPException("too many trailer fields")
+
+
+class DeadlineHTTPS(http.client.HTTPSConnection):
+    response_class = CompleteResponse
+    def __init__(self, origin, context, deadline, sockets):
+        super().__init__(origin.hostname, origin.port, context=context,
+                         timeout=max(.001, deadline - time.monotonic()))
+        self.deadline, self.sockets = deadline, sockets
+
+    def remaining(self):
+        remaining = self.deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("whole request deadline")
+        return remaining
+
+    def connect(self):
+        addresses = resolve(self.host, self.port, self.remaining())
+        last = None
+        for family, kind, protocol, _, address in addresses:
+            sock = socket.socket(family, kind, protocol)
+            self.sockets.append(sock)
+            try:
+                sock.settimeout(self.remaining())
+                sock.connect(tuple(address))
+                self.sock = self._context.wrap_socket(sock, server_hostname=self.host,
+                                                      do_handshake_on_connect=False)
+                self.sockets.append(self.sock)
+                self.sock.settimeout(self.remaining())
+                self.sock.do_handshake()
+                self.remaining()
+                return
+            except OSError as error:
+                last = error
+                sock.close()
+                if self.sock:
+                    self.sock.close()
+                self.remaining()
+        raise last or OSError("DNS returned no stream addresses")
 
 
 class Consumer:
@@ -42,81 +293,111 @@ class Consumer:
         self.objects.mkdir(exist_ok=True)
         self.responses = self.root / "responses"
         self.responses.mkdir(exist_ok=True)
+        self.bodies = self.root / "attempts"
+        self.bodies.mkdir(exist_ok=True)
         self.log = self.root / f"{args.phase}.requests.jsonl"
         if self.log.exists():
             raise ValueError(f"attempt log already exists: {self.log}")
         self.context = ssl.create_default_context(cafile=args.ca)
-        self.receipts = []
-        self.reused = []
-        self.charged = 0
+        self.budget = getattr(args, "budget", None) or DiskBudget(args.output, getattr(args, "cache_budget_bytes", 8 << 30))
+        self.result_credit = Credit(self.budget, 4096 if number >= 0 else 0)
+        self.receipts, self.reused, self.charged = [], [], 0
 
     def request(self, suffix, limit, etag=None, target=None):
-        """Every response byte read, even on errors, is charged and retained."""
+        """Retain each unique attempt body, including framing/timeout failures."""
+        if suffix != "current" and not any(suffix.startswith(prefix) and is_digest(suffix[len(prefix):]) for prefix in ("inventories/", "artifacts/")):
+            raise ValueError("invalid request digest/path")
         for attempt in range(1, self.args.attempts + 1):
+            receipt_credit = Credit(self.budget, 2048)
             start = time.monotonic()
             record = {"path": PREFIX + suffix, "attempt": attempt,
                       "started_unix": time.time(), "status": None,
                       "bytes": 0, "if_none_match": etag, "error": None}
-            connection = http.client.HTTPSConnection(
-                self.args.origin.hostname, self.args.origin.port,
-                context=self.context, timeout=self.args.timeout)
-            hasher = hashlib.sha256()
-            payload = bytearray()
-            stream = None
-            retry = False
+            body_path = self.bodies / f"{self.args.phase}-{len(self.receipts):06}.body"
+            record["body_path"] = str(body_path.relative_to(self.root))
+            sockets, expired = [], threading.Event()
+            def expire():
+                expired.set()
+                for sock in list(sockets):
+                    try:
+                        sock.shutdown(socket.SHUT_RDWR)
+                    except OSError:
+                        pass
+                    sock.close()
+            timer = threading.Timer(self.args.timeout, expire)
+            connection = DeadlineHTTPS(self.args.origin, self.context, start + self.args.timeout, sockets)
+            hasher, payload, retry = hashlib.sha256(), bytearray(), False
+            response = None
+            timer.start()
             try:
-                connection.request("GET", record["path"],
-                                   headers={"If-None-Match": etag} if etag else {})
-                transport = connection.sock
-                response = connection.getresponse()
-                record["status"] = response.status
-                record["etag"] = response.getheader("ETag")
-                if target is not None and response.status == 200:
-                    stream = target.open("wb")
-                while True:
-                    if response.isclosed():
-                        break
-                    remaining = self.args.timeout - (time.monotonic() - start)
-                    if remaining <= 0:
-                        raise TimeoutError("whole request deadline")
-                    # HTTPResponse can own the socket after connection.sock is cleared.
-                    transport.settimeout(remaining)
-                    chunk = response.read1(min(1 << 20, limit - record["bytes"] + 1))
-                    if not chunk:
-                        break
-                    record["bytes"] += len(chunk)
-                    self.charged += len(chunk)
-                    hasher.update(chunk)
-                    if record["bytes"] > limit or self.charged > 64 << 30:
-                        raise ValueError("response body exceeds bound")
-                    if stream:
+                with body_path.open("xb") as stream:
+                    connection.request("GET", record["path"], headers={"If-None-Match": etag} if etag else {})
+                    response = connection.getresponse()
+                    connection.remaining()
+                    record["status"], record["etag"] = response.status, response.getheader("ETag")
+                    if record["etag"] and len(record["etag"]) > 256:
+                        raise ValueError("oversized ETag")
+                    lengths = response.headers.get_all("Content-Length", [])
+                    if lengths and (len(lengths) != 1 or not lengths[0].isdigit() or response.chunked):
+                        raise ValueError("ambiguous HTTP framing")
+                    encoding = response.getheader("Transfer-Encoding")
+                    if encoding and encoding.lower() != "chunked":
+                        raise ValueError("unsupported transfer encoding")
+                    while not response.isclosed() and response.length != 0:
+                        connection.remaining()
+                        capacity = self.budget.capacity(min(1 << 20, limit - record["bytes"] + 1, (64 << 30) - self.charged + 1,
+                                                            response.length if response.length else 1 << 20))
+                        try:
+                            chunk = response.read1(capacity)
+                        except BaseException:
+                            self.budget.refund(capacity)
+                            raise
+                        self.budget.refund(capacity - len(chunk))
+                        if not chunk:
+                            break
                         stream.write(chunk)
-                    else:
-                        payload.extend(chunk)
-                if response.status not in (200, 304):
-                    retry = response.status in (408, 429, 500, 502, 503, 504)
-                    raise ValueError(f"HTTP {response.status}")
-                if response.status == 304 and (not etag or record["bytes"]):
-                    raise ValueError("invalid conditional response")
+                        record["bytes"] += len(chunk)
+                        self.charged += len(chunk)
+                        hasher.update(chunk)
+                        if target is None:
+                            payload.extend(chunk)
+                        if record["bytes"] > limit or self.charged > 64 << 30:
+                            raise ValueError("response body exceeds bound")
+                    connection.remaining()
+                    if response.length not in (None, 0) or (response.chunked and response.chunk_left is not None):
+                        raise http.client.IncompleteRead(b"", response.length)
+                    if response.status not in (200, 304):
+                        retry = response.status in (408, 429, 500, 502, 503, 504)
+                        raise ValueError(f"HTTP {response.status}")
+                    if response.status == 304 and (not etag or record["bytes"]):
+                        raise ValueError("invalid conditional response")
+                    if suffix.startswith("artifacts/") and (record["bytes"] != limit or hasher.hexdigest() != suffix.split("/")[1]):
+                        raise ValueError("artifact length/digest mismatch")
+                if target is not None:
+                    os.link(body_path, target)
+                elif payload:
+                    retained = self.responses / hasher.hexdigest()
+                    if not retained.exists():
+                        os.link(body_path, retained)
                 return bytes(payload), record
-            except (OSError, http.client.HTTPException, ValueError) as error:
-                record["error"] = f"{type(error).__name__}: {error}"
-                retry = retry or isinstance(error, (OSError, http.client.HTTPException))
+            except (OSError, http.client.HTTPException, ValueError, subprocess.SubprocessError) as error:
+                record["error"] = ("TimeoutError: whole request deadline" if expired.is_set() else f"{type(error).__name__}: {error}")[:512]
+                retry = retry or (not isinstance(error, BudgetExceeded) and isinstance(error, (OSError, http.client.HTTPException)))
                 if not retry or attempt == self.args.attempts:
+                    if expired.is_set():
+                        raise TimeoutError("whole request deadline") from error
                     raise
             finally:
-                if stream:
-                    stream.close()
+                timer.cancel()
+                timer.join()
+                if response is not None:
+                    response.close()
                 connection.close()
-                record["sha256"] = hasher.hexdigest()
-                record["seconds"] = time.monotonic() - start
-                if payload:
-                    retained = self.responses / record["sha256"]
-                    if not retained.exists():
-                        retained.write_bytes(payload)
+                for sock in sockets:
+                    sock.close()
+                record["sha256"], record["seconds"] = hasher.hexdigest(), time.monotonic() - start
                 self.receipts.append(record)
-                with self.log.open("a") as log:
-                    log.write(json.dumps(record) + "\n")
+                receipt_credit.write(self.log, (json.dumps(record) + "\n").encode(), append=True)
             time.sleep(min(5, .2 * 2 ** (attempt - 1)) + random.uniform(0, .5))
         raise AssertionError("unreachable")
 
@@ -137,6 +418,11 @@ class Consumer:
                 raise ValueError("update phase did not observe a producer update")
             else:
                 current = json.loads(raw)
+                check_current(current)
+                if getattr(self.args, "snapshot", None) is not None and current != self.args.snapshot:
+                    raise ValueError("publisher changed since wave disk reservation")
+                if old and current == old["current"]:
+                    raise ValueError("update phase did not observe a producer update")
                 if current["eligibility"] != "canonical" or (
                     current["invalidated_from"] is not None and
                     current["invalidated_from"] <= current["anchor_height"]
@@ -147,17 +433,21 @@ class Consumer:
                 if old and current["revision"] == old["current"]["revision"] and current != old["current"]:
                     raise ValueError("publisher contradicted an equal revision")
                 inventory_sha = current["inventory_sha256"]
+                if not is_digest(inventory_sha):
+                    raise ValueError("invalid inventory digest")
                 raw, _ = self.request("inventories/" + inventory_sha, METADATA_LIMIT)
                 if hashlib.sha256(raw).hexdigest() != inventory_sha:
                     raise ValueError("inventory digest mismatch")
                 inventory = json.loads(raw)
                 if inventory["schema"] != "transparent-prepared-distribution-v1":
                     raise ValueError("unexpected inventory schema")
-                # This load client never activates data. The actual providers
-                # independently validate classifications through the native loader.
+                # This load client never activates data. Native providers still
+                # independently validate prepared material through their loader.
                 if inventory["profile"] != "reinspiring-two-mask-p8-g27x1-m22-dq28-r10-v1":
                     raise ValueError("unexpected profile")
-                save(self.root / f"{self.args.phase}.inventory.json", inventory)
+                validate_inventory(inventory, current)
+                self.result_credit.add(80 * len(inventory["artifacts"]))
+                os.link(self.root / self.receipts[-1]["body_path"], self.root / f"{self.args.phase}.inventory.json")
                 artifacts = inventory["artifacts"]
                 maps = [a for a in artifacts if a["path"] == "shards.json" and a["kind"] == "metadata"]
                 if len(maps) != 1:
@@ -180,13 +470,16 @@ class Consumer:
                     if target.exists() and target.stat().st_size == artifact["bytes"] and digest_file(target) == sha:
                         self.reused.append(sha)
                     else:
-                        partial = target.with_suffix(".partial")
+                        partial = target.with_name(sha + f".{self.args.phase}.{len(self.receipts)}.partial")
                         _, receipt = self.request("artifacts/" + sha, artifact["bytes"], target=partial)
                         if receipt["bytes"] != artifact["bytes"] or receipt["sha256"] != sha:
                             raise ValueError("artifact length/digest mismatch")
+                        if target.exists():
+                            os.link(target, self.bodies / f"{self.args.phase}-replaced-{len(self.receipts)}.body")
                         partial.replace(target)
                     if artifact is maps[0]:
                         mapping = json.loads(target.read_text())
+                        validate_map(inventory, current, mapping)
                         if mapping["network"] != current["network"] or mapping["genesis_hash"] != current["genesis_hash"]:
                             raise ValueError("map chain differs from current")
                         shard_roles = {s["manifest_digest"]: "recent_table" if s["shard_id"] >= inventory["recent_from_shard"] else "archive_table" for s in mapping["shards"]}
@@ -194,7 +487,7 @@ class Consumer:
                 raw, final = self.request("current", METADATA_LIMIT)
                 if json.loads(raw) != current:
                     raise ValueError("publisher changed during transfer")
-                save(state_path, {"publisher": self.args.publisher, "current": current, "etag": final["etag"]})
+                self.result_credit.save(state_path, {"publisher": self.args.publisher, "current": current, "etag": final["etag"]})
                 result["current"] = current
                 result["unchanged"] = False
             for _ in range(self.args.polls):
@@ -210,7 +503,7 @@ class Consumer:
                       requests=len(self.receipts),
                       bytes=sum(r["bytes"] for r in self.receipts),
                       failed_attempts=sum(r["error"] is not None for r in self.receipts))
-        save(self.root / f"{self.args.phase}.result.json", result)
+        self.result_credit.save(self.root / f"{self.args.phase}.result.json", result)
         return result
 
 
@@ -226,7 +519,7 @@ def main():
     parser.add_argument("--polls", type=int, default=2)
     parser.add_argument("--poll-interval", type=float, default=5)
     parser.add_argument("--cache-budget-bytes", type=int, default=8 << 30,
-                        help="conservative total cache-plus-candidate bound (default 8 GiB)")
+                        help="hard retained-file-content budget, including evidence (default 8 GiB)")
     args = parser.parse_args()
     args.origin = urlsplit(args.publisher)
     if (args.origin.scheme != "https" or not args.origin.hostname or
@@ -238,37 +531,65 @@ def main():
     args.output.mkdir(parents=True, exist_ok=True)
     if (args.output / f"{args.phase}.json").exists():
         parser.error("phase output already exists")
-    # Reserve an entire candidate beside retained objects before starting a wave.
-    # Reuse is still measured by each consumer; this conservative disk guard is
-    # deliberately not a supported holdings or publisher capacity claim.
-    control = Consumer(args, -1, None)
-    raw, _ = control.request("current", METADATA_LIMIT)
-    current = json.loads(raw)
-    raw, _ = control.request("inventories/" + current["inventory_sha256"], METADATA_LIMIT)
-    if hashlib.sha256(raw).hexdigest() != current["inventory_sha256"]:
-        parser.error("budget inventory digest mismatch")
-    inventory = json.loads(raw)
-    candidate_bytes = sum(a["bytes"] for a in inventory["artifacts"] if a["kind"] != "archive_table") * args.consumers
-    retained_bytes = sum(p.stat().st_size for p in args.output.glob("consumer-*/objects/*") if p.is_file())
-    bound = {"candidate_bytes": candidate_bytes, "retained_bytes": retained_bytes,
-             "cache_budget_bytes": args.cache_budget_bytes,
-             "permitted": candidate_bytes + retained_bytes <= args.cache_budget_bytes}
-    save(args.output / f"{args.phase}.disk-bound.json", bound)
-    if not bound["permitted"]:
-        print(json.dumps({"complete": 0, "phase": args.phase, "disk_bound": bound}))
-        return 2
-    barrier = threading.Barrier(args.consumers)
-    consumers = [Consumer(args, number, barrier) for number in range(args.consumers)]
+    # Every retained body, retry, metadata file and receipt shares this ceiling.
+    # Too-small budgets refuse before even creating network/evidence work.
+    if args.cache_budget_bytes < 4096:
+        parser.error("disk budget too small for mandatory evidence")
+    args.budget = DiskBudget(args.output, args.cache_budget_bytes)
+    report_credit = Credit(args.budget, 4096)
     started = time.monotonic()
-    with concurrent.futures.ThreadPoolExecutor(max_workers=args.consumers) as pool:
-        results = list(pool.map(lambda consumer: consumer.run(), consumers))
-    report = {"publisher": args.publisher, "consumers": args.consumers,
-              "phase": args.phase, "seconds": time.monotonic() - started,
-              "complete": sum(r["complete"] for r in results), "results": results,
-              "scope": "artifact transfer diagnostics; no native activation or capacity qualification"}
-    save(args.output / f"{args.phase}.json", report)
-    print(json.dumps({k: v for k, v in report.items() if k != "results"}))
-    return 0 if report["complete"] == args.consumers else 1
+    try:
+        control = Consumer(args, -1, None)
+        raw, _ = control.request("current", METADATA_LIMIT)
+        current = json.loads(raw)
+        check_current(current)
+        raw, _ = control.request("inventories/" + current["inventory_sha256"], METADATA_LIMIT)
+        if hashlib.sha256(raw).hexdigest() != current["inventory_sha256"]:
+            raise ValueError("budget inventory digest mismatch")
+        inventory = json.loads(raw)
+        validate_inventory(inventory, current)
+        map_artifact = next(a for a in inventory["artifacts"] if a["path"] == "shards.json")
+        raw, _ = control.request("artifacts/" + map_artifact["sha256"], map_artifact["bytes"])
+        validate_map(inventory, current, json.loads(raw))
+        args.snapshot = current
+        artifacts = [a for a in inventory["artifacts"] if a["kind"] != "archive_table"]
+        candidate_bytes = sum(a["bytes"] for a in artifacts) * args.consumers
+        # Nominal full candidate plus all metadata/control receipts and final
+        # reports. Error/partial bodies additionally acquire capacity BEFORE read;
+        # they can refuse a wave but can never overrun the shared hard ceiling.
+        evidence_bytes = args.consumers * (len(json.dumps(inventory)) + 2 * len(json.dumps(current)) +
+                          2048 * args.attempts * (len(artifacts) + 3 + args.polls) +
+                          2 * (4096 + 80 * len(inventory["artifacts"])))
+        bound = {"candidate_bytes": candidate_bytes, "retained_bytes": args.budget.used,
+                 "evidence_reservation_bytes": evidence_bytes,
+                 "cache_budget_bytes": args.cache_budget_bytes,
+                 "inventory_sha256": current["inventory_sha256"],
+                 "permitted": args.budget.used + candidate_bytes + evidence_bytes <= args.cache_budget_bytes}
+        report_credit.save(args.output / f"{args.phase}.disk-bound.json", bound)
+        if not bound["permitted"]:
+            report = {"complete": 0, "phase": args.phase, "disk_bound": bound}
+            report_credit.save(args.output / f"{args.phase}.json", report)
+            print(json.dumps(report))
+            return 2
+        report_credit.add(args.consumers * (4096 + 80 * len(inventory["artifacts"])))
+        barrier = threading.Barrier(args.consumers)
+        consumers = [Consumer(args, number, barrier) for number in range(args.consumers)]
+        with concurrent.futures.ThreadPoolExecutor(max_workers=args.consumers) as pool:
+            results = list(pool.map(lambda consumer: consumer.run(), consumers))
+        report = {"publisher": args.publisher, "consumers": args.consumers,
+                  "phase": args.phase, "seconds": time.monotonic() - started,
+                  "complete": sum(r["complete"] for r in results), "results": results,
+                  "reserved_retained_bytes": args.budget.used,
+                  "scope": "artifact transfer diagnostics; no native activation or capacity qualification"}
+        report_credit.save(args.output / f"{args.phase}.json", report)
+        print(json.dumps({k: v for k, v in report.items() if k != "results"}))
+        return 0 if report["complete"] == args.consumers else 1
+    except Exception as error:
+        report = {"complete": 0, "phase": args.phase, "error": str(error)[:512],
+                  "reserved_retained_bytes": args.budget.used}
+        report_credit.save(args.output / f"{args.phase}.json", report)
+        print(json.dumps(report))
+        return 2 if isinstance(error, BudgetExceeded) else 1
 
 
 if __name__ == "__main__":
