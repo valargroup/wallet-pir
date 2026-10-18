@@ -158,10 +158,8 @@ class PlannerTests(unittest.TestCase):
 
     def test_explicit_slow_unit_filter_runs_without_skipping(self):
         package = 'transparent-filter-server'
-        slow = json.loads((ROOT / 'tools/ci/slow-tests.json').read_text())[package]
         selected = 'publication::tests::block_by_block_publication_equals_a_fresh_build'
-        self.assertIn(selected, slow)
-        listing = ''.join(name + ': test\n' for name in slow)
+        listing = selected + ': test\n'
         metadata = {'packages': [{'name': package, 'targets': [{'kind': ['lib']}]}]}
         calls = []
         with patch.object(fast.subprocess, 'check_output', side_effect=[json.dumps(metadata).encode(), listing]), \

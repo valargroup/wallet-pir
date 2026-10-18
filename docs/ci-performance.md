@@ -35,7 +35,7 @@ five-second overruns in its receipt. Diagnostic success establishes correctness;
 only an enforced passing run establishes compliance with the selected budget.
 
 Native tests compile once with a consistent feature set, then run Cargo-reported
-executables with at most two programs active and one case per program. Mutable
+executables with at most three programs active and one case per program. Mutable
 service state is fresh; only immutable public runtime material is shared within
 the run. Serving HTTP and packing tests live beside the serving library and
 avoid the application's chain ingestion dependencies. Reference arithmetic,
@@ -107,9 +107,12 @@ there before the pool; beside it, the encrypted HTTP smokes miss the 30-second
 case deadline. The 8-core fast runner keeps it in the pool, where four build
 threads leave cores for those smokes. HTTP integration programs use the pool
 ahead of ordinary units. Within each group, binaries with more discovered cases start first,
-independently of Cargo's artifact order. Cases within each program stay
-serial, preserving process-local immutable public fixtures within the fast runner’s
-6-GiB ceiling. Explicit feature or test-filter checks use one program at a time.
+independently of Cargo's artifact order. Large unit executables are divided into
+at most three disjoint groups of exact discovered case names, within that same
+process limit. Each group retains dozens of serial cases and immutable fixture
+reuse; no case is omitted or repeated. HTTP integrations and the exclusive
+small-runner publisher are not partitioned. The working-set ceiling remains
+6 GiB. Explicit feature or test-filter checks use one program at a time.
 The fast runner enforces the 30-second limit for every Rust case, including
 setup and teardown inside the case. Each program keeps its package directory and Cargo environment; fast integration
 targets must contain an enabled, unignored case, and unit exclusions must still
@@ -429,8 +432,13 @@ The optional `stress` input repeats each family's encrypted HTTP/recovery smoke
 50 times with fresh service state and no test retries. It remains preemptible
 and does not publish release artifacts.
 
-Fast coverage includes an encrypted HTTP smoke for Receiver, Transparent and
-Enhance. Transparent checks a nonzero row against public source bytes, refuses
+Fast coverage includes every bounded unit test and an encrypted HTTP smoke for
+Receiver, Transparent and Enhance. The former named slow-unit exclusions have
+been removed. Default fixtures keep complete failure/recovery assertions with
+supported narrow inputs; explicit full runners enable `qualification-tests` to
+restore deployed geometry combinations and larger history/publication runs.
+Complete CPU correctness uses the same bounded native selection and retains its
+reference, exporter, documentation and lint checks under the 180-second limit. Transparent checks a nonzero row against public source bytes, refuses
 malformed input before preparation, and repeats after a cache restore and
 corruption. Enhance verifies encrypted records after draining the old listener
 and reopening durable coordinator state. Listener readiness/shutdown use bound

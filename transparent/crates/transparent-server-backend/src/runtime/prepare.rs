@@ -161,7 +161,9 @@ mod tests {
     use transparent_shard::layout::DECOUPLED_2K_8K;
 
     fn segment(dir: &std::path::Path, seed: u8) -> (SharedParams, SegmentSource) {
-        let shared = SharedParams::build(&DECOUPLED_2K_8K, Table::Pages).unwrap();
+        let (geometry, table) =
+            crate::runtime::tests::fixture_shape(&DECOUPLED_2K_8K, Table::Pages);
+        let shared = SharedParams::build(geometry, table).unwrap();
         let profile = &shared.profile;
         let mut rows = vec![0u8; profile.rows * profile.row_bytes];
         for (i, byte) in rows[..300 * profile.row_bytes].iter_mut().enumerate() {
@@ -195,7 +197,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let (shared, source) = segment(dir.path(), 3);
         let shared = Arc::new(shared);
-        let key = ("12".repeat(32), Table::Pages, 0);
+        let key = ("12".repeat(32), shared.table, 0);
         let out = publication(dir.path(), "strict");
         let strict = ShippedRuntimes::required(out.directory().to_path_buf());
         let metrics = Arc::new(Metrics::default());
@@ -265,7 +267,7 @@ mod tests {
     fn completed_files_are_linked_and_anything_else_is_rebuilt() {
         let dir = tempfile::tempdir().unwrap();
         let (shared, source) = segment(dir.path(), 1);
-        let key = ("ab".repeat(32), Table::Pages, 0);
+        let key = ("ab".repeat(32), shared.table, 0);
         let first = publication(dir.path(), "first");
         let built = prepare_segment(&first, &[], &key, &shared, &source, "pages".into()).unwrap();
         assert!(!built.linked);
@@ -320,7 +322,7 @@ mod tests {
         // A file of another identity placed under this one's name is not
         // linked either.
         let foreign = publication(dir.path(), "foreign");
-        let other = ("cd".repeat(32), Table::Pages, 0);
+        let other = ("cd".repeat(32), shared.table, 0);
         prepare_segment(&foreign, &[], &other, &shared, &source, "pages".into()).unwrap();
         fs::rename(
             foreign.path(&other, &shared, source.sha256()),

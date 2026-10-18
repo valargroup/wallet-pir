@@ -39,14 +39,37 @@ def test_names(binary, directory, *, ignored=False):
     return {line[:-6] for line in listing.splitlines() if line.endswith(': test')}
 
 
-def execute(selected, *, offline=False, compile_only=False, jobs=3):
+def bounded_programs(program, names):
+    """Partition large unit executables without increasing the process limit.
+
+    Exact filters are a disjoint cover of discovery, including ignored cases.
+    Each process retains immutable fixture reuse across dozens of cases. Keep
+    the small-runner publisher protection and real HTTP integrations intact.
+    """
+    if program['integration'] or program['exclusive'] or len(names) <= 48:
+        return [program]
+    lanes = min(3, (len(names) + 47) // 48)
+    ordered = sorted(names)
+    partitions = [ordered[index::lanes] for index in range(lanes)]
+    assert sum(map(len, partitions)) == len(names)
+    assert set().union(*map(set, partitions)) == set(names)
+    return [dict(program, args=[*program['args'], '--exact', *cases],
+                 case_count=len(cases)) for cases in partitions]
+
+
+def execute(selected, *, offline=False, compile_only=False, jobs=3,
+            additional_features=(), environment=None, case_log=None, enforce_budget=True):
     from integration_tests import inventory
+    if any(feature.rsplit('/', 1)[-1] == 'cuda' for feature in additional_features):
+        raise ValueError('ordinary CPU correctness cannot enable CUDA')
+    if any(feature.rsplit('/', 1)[-1] == 'qualification-tests' for feature in additional_features):
+        raise ValueError('ordinary correctness cannot enable qualification test campaigns')
     registry = inventory()
     slow = json.loads((ROOT / 'tools/ci/slow-tests.json').read_text())
     options = ['--offline'] if offline else []
     metadata = json.loads(subprocess.check_output(
         ['cargo', 'metadata', '--locked', '--no-deps', '--format-version=1', *options],
-        cwd=ROOT, **inherited_fds()))
+        cwd=ROOT, env=environment, **inherited_fds()))
     selected = set(selected)
     if 'enhance-pir-server' in selected:
         selected.add('enhance-serving')
@@ -83,6 +106,7 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3):
                 expected_units.add((name, target['name']))
     if not kinds and not integration_names:
         return
+    features.update(additional_features)
     command = ['cargo', 'test', '--locked', '--profile', 'release-fast', '--no-run', *options]
     for name in sorted(selected):
         command += ['-p', name]
@@ -91,7 +115,7 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3):
     if features:
         command += ['--features', ','.join(sorted(features))]
     # Qualification controls cannot expand a routine correctness fixture.
-    env = {key: value for key, value in os.environ.items() if not key.startswith('QUALIFY_')}
+    env = {key: value for key, value in (os.environ if environment is None else environment).items() if not key.startswith('QUALIFY_')}
     run(['cargo', 'fmt', '--all', '--check'], env=env, stage='format')
     artifacts = run(command, env=env, stage='compile:fast', collect_tests=not compile_only,
                     test_details=True)
@@ -110,6 +134,8 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3):
         if package is None:
             raise ValueError('Cargo returned a test from an unselected package')
         name = package['name']
+        if 'qualification-tests' in artifact.get('features', []):
+            raise ValueError(f'{name}: qualification test campaigns leaked into ordinary correctness')
         target = artifact['target']
         integration = 'test' in target['kind']
         identity = (name, target['name'])
@@ -128,12 +154,13 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3):
         # Full archive runtimes use every core on a 4-core runner and push the
         # encrypted HTTP smokes past their 30s deadline. Run that library alone
         # there; an 8-core runner still has cores left for the shared pool.
-        programs.append(dict(executable=binary, directory=directory, package=name,
+        program = dict(executable=binary, directory=directory, package=name,
                              version=package['version'],
                              integration=integration,
                              exclusive=publisher_runs_alone(name, target['kind']),
                              case_count=len(names),
-                             args=[arg for case in exclusions for arg in ('--skip', case)]))
+                             args=[arg for case in exclusions for arg in ('--skip', case)])
+        programs.extend(bounded_programs(program, names))
     if actual_integrations != expected_integrations or expected_units - actual_units:
         raise ValueError(f'fast test executables mismatch: missing_units={sorted(expected_units-actual_units)}, '
                          f'missing_integrations={sorted(expected_integrations-actual_integrations)}, '
@@ -162,14 +189,15 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3):
         cache = root / 'public-fixtures'
         cache.mkdir()
         env['WALLET_PIR_TEST_RUNTIME_CACHE'] = str(cache)
-        env['WALLET_PIR_ENFORCE_BUDGET'] = '1'
-        cases = root / 'cases.jsonl'
+        env['WALLET_PIR_ENFORCE_BUDGET'] = '1' if enforce_budget else '0'
+        cases = Path(case_log) if case_log is not None else root / 'cases.jsonl'
         env['WALLET_PIR_CASE_LOG'] = str(cases)
         try:
             run(['python3', 'tools/ci/unit_tests.py', str(plan), '--budget', '--jobs', str(jobs)],
                 env=env, stage='tests:fast-programs')
         finally:
             timings = [json.loads(line) for line in cases.read_text().splitlines()] if cases.exists() else []
+            timings = [case for case in timings if case.get("executable")]
             print('CI_FAST_CASES ' + json.dumps(dict(
                 completed=len(timings),
                 slowest=sorted(timings, key=lambda case: case['seconds'], reverse=True)[:15])), flush=True)
