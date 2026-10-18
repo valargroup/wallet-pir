@@ -514,12 +514,7 @@ async fn manager_reuses_immutable_transfers_and_serves_through_failed_update() {
     let first = follow.poll_once().await.unwrap();
     assert!(first.downloaded_files > 0);
     let live = follow.live().unwrap();
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let origin = format!("http://{}", listener.local_addr().unwrap());
-    let app = follow.router().unwrap();
-    let task = tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
+    let (origin, task) = serve_worker(follow.router().unwrap()).await;
     let observed: serde_json::Value = get(&origin, "/v1/provider-status")
         .await
         .json()
