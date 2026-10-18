@@ -33,6 +33,11 @@ Common releases and copies resolved from another source, including stale lockfil
 entries. The released frozen-client fixture retains its independent historical
 dependencies for interoperability checks.
 
+Each `zakura-server-chain` consumer selects its product (`transparent`, `enhance`,
+`status` or `receiver`) with default features disabled. Test dependencies add
+`testing` alongside that same product; fixture support alone does not enable an
+adapter. Database readers additionally enable the existing `rocksdb-reader` feature.
+
 Fast Rust checks run every library and binary unit test in `release-fast`, plus
 classified bounded integration targets. There are no named slow-unit exclusions.
 Required CLI features are enabled for binary unit targets. Ordinary cache,
