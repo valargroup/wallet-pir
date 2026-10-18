@@ -242,9 +242,9 @@ class Fleet:
         """Roster members whose data this adapter stages, prepares and activates.
 
         An `https-recent` member updates only through its own HTTPS
-        synchronization: it is never planned, staged, prepared, activated or
-        counted toward quorum here, and the router renders no member the
-        publication's assignment does not name.
+        synchronization: it is never planned, staged, prepared, activated,
+        invalidated or counted toward quorum here, and takes no control
+        session. The reconciler routes it on its own status (`reconcile_https`).
         """
         return [w for w in self.roster if w['role'] != 'https-recent']
 
