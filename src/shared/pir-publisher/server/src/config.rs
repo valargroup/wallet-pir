@@ -101,25 +101,21 @@ impl Layout {
     }
 }
 fn normalize(path: &Path) -> Result<PathBuf> {
-    let mut clean = PathBuf::new();
-    for c in path.components() {
-        match c {
+    let mut result = PathBuf::new();
+    for component in path.components() {
+        match component {
             std::path::Component::ParentDir => {
-                clean.pop();
+                result.pop();
             }
             std::path::Component::CurDir => {}
-            _ => clean.push(c),
+            _ => {
+                result.push(component);
+                if result.exists() {
+                    // Resolve each existing prefix before interpreting a later `..`.
+                    result = result.canonicalize()?;
+                }
+            }
         }
-    }
-    let mut base = clean.clone();
-    let mut missing = Vec::new();
-    while !base.exists() {
-        missing.push(base.file_name().ok_or("invalid state path")?.to_owned());
-        base.pop();
-    }
-    let mut result = base.canonicalize()?;
-    for part in missing.into_iter().rev() {
-        result.push(part);
     }
     Ok(result)
 }
@@ -227,6 +223,13 @@ mod tests {
             let link = temp.path().join("alias");
             std::os::unix::fs::symlink(temp.path(), &link).unwrap();
             assert!(layout.root("two", &link).is_err());
+            let child = temp.path().join("real/child");
+            std::fs::create_dir_all(&child).unwrap();
+            let alias = temp.path().join("child-alias");
+            std::os::unix::fs::symlink(&child, &alias).unwrap();
+            let mut layout = Layout::default();
+            layout.root("one", &temp.path().join("real/state")).unwrap();
+            assert!(layout.root("two", &alias.join("../state")).is_err());
         }
     }
     #[test]

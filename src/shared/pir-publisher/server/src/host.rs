@@ -182,6 +182,7 @@ pub async fn run(config: Config, shutdown: Shutdown) -> Result<()> {
     let mut fatal = None;
     loop {
         tokio::select! {
+            biased;
             _ = shutdown.cancelled() => break,
             _ = &mut management => { fatal = Some("management HTTP service stopped"); break; },
             result = group.join_next_with_id(), if !group.is_empty() => {
