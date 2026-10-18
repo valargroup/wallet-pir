@@ -1189,7 +1189,7 @@ mod tests {
         // The all-one query is the column sum of the committed raw rows.
         // Use plain integer addition as an independent oracle rather than
         // preparing a second copy through the same native implementation.
-        let columns = ENHANCE_LAYOUT.row_bytes() / 2;
+        let columns = parameters(candidate.shard.logical_rows).unwrap().db_cols;
         let mut expected = vec![0u64; columns];
         for spec in &candidate.shard.units {
             let rows = unit_rows(&candidate.shard, spec, &mut records).unwrap();
