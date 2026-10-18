@@ -11,7 +11,7 @@ import urllib.error
 from fast import ROOT, FULL_GROUPS, HELPERS, plan, workspace_packages
 from stage import run
 
-sys.path.insert(0, str(ROOT / 'ops/lib'))
+sys.path.insert(0, str(ROOT / 'tools/lib'))
 from wallet_pir_ops import release  # noqa: E402
 
 FAMILIES = {'ops': 'Operations', 'receiver': 'Receiver',

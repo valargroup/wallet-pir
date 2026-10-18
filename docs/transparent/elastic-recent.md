@@ -199,7 +199,7 @@ Terraform state and the DigitalOcean API agree (`resolve-apply`).
 - **replace**: a scale_out, then the failed member is quarantined; an elastic
   one is destroyed once its replacement serves.
 
-Terraform for elastic members lives in `ops/infra/digitalocean/transparent/worker-pool/`,
+Terraform for elastic members lives in `tools/infra/digitalocean/transparent/worker-pool/`,
 its own state and lock, one droplet and one project-resources entry per member,
 the image pinned per member. The saved-plan validator allows only creates and
 destroys of named elastic recent droplets and their project entries.

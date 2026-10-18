@@ -348,13 +348,13 @@ async fn installation_case(case: Case) {
     }
     let sha = String::from_utf8(command(&["git", "rev-parse", "HEAD"], &repo).await).unwrap();
     let sha = sha.trim();
-    let package = format!("import sys; from pathlib import Path; sys.path.insert(0,{:?}); from wallet_pir_ops import release,bundle; r=Path({:?}); release.assemble({:?},r/'build',r/'artifacts','transparent-shard'); release.extract(r/'artifacts/transparent-shard.tar.gz',r/'binary',{:?},'transparent-shard'); bundle.assemble(r/'ops.tar.gz',{:?}); bundle.extract(r/'ops.tar.gz',r/'ops',{:?})",repo.join("ops/lib").to_str().unwrap(),root.to_str().unwrap(),sha,sha,sha,sha);
+    let package = format!("import sys; from pathlib import Path; sys.path.insert(0,{:?}); from wallet_pir_ops import release,bundle; r=Path({:?}); release.assemble({:?},r/'build',r/'artifacts','transparent-shard'); release.extract(r/'artifacts/transparent-shard.tar.gz',r/'binary',{:?},'transparent-shard'); bundle.assemble(r/'ops.tar.gz',{:?}); bundle.extract(r/'ops.tar.gz',r/'ops',{:?})",repo.join("tools/lib").to_str().unwrap(),root.to_str().unwrap(),sha,sha,sha,sha);
     command(&["python3", "-B", "-c", &package], root).await;
     if matches!(case, Case::Independent) {
         retain_fixture("independent-service-release", &root.join("artifacts"));
         retain_file("independent-operations.tar.gz", &root.join("ops.tar.gz"));
     }
-    let renderer = root.join("ops/ops/scripts/wallet-pir-roles.py");
+    let renderer = root.join("ops/tools/scripts/wallet-pir-roles.py");
     command(&["python3", renderer.to_str().unwrap(), "--help"], root).await;
     assert!(!root.join("ops/.git").exists());
     let socket = std::net::TcpListener::bind("127.0.0.1:0").unwrap();

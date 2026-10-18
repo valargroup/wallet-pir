@@ -37,7 +37,7 @@ and artifact receipt.
 
 ```sh
 cargo build --locked --release -p enhance-pir-server -p enhance-pir -p enhance-pir-load-test --bins --features enhance-pir/cli
-python3 ops/enhance/scripts/test-local.py --help
+python3 tools/enhance/scripts/test-local.py --help
 python3 tools/enhance/schema11-interop/run.py /absolute/path/to/pinned/wallet-libraries
 ```
 
@@ -53,7 +53,7 @@ Install the same checked binary revision on the coordinator and worker hosts.
 Use new `/srv/enhance-pir-v7/canonical` and `/srv/enhance-pir-v7/worker` directories,
 with an inventory at `/etc/enhance-pir/workers.json`. The inventory contains
 ordered groups, each with a name and two replicas carrying `name` and private
-`url`; [workers.example.json](../../ops/enhance/deploy/workers.example.json) shows the shape.
+`url`; [workers.example.json](../../tools/enhance/deploy/workers.example.json) shows the shape.
 Keep worker port 8091 on the private network and expose only the coordinator's
 client routes through the public origin. Network isolation is the primary
 control; the optional shared token below is an additional layer, not a
@@ -102,8 +102,8 @@ replica is retried on its peer. The public Caddy query route disables upstream
 keepalive so overload responses are not lost on stale local connections. Check
 the `enhance_query_*` metrics and public 429/502 counts after rollout.
 
-The service examples are [coordinator](../../ops/enhance/deploy/enhance-pir-server.service)
-and [worker](../../ops/enhance/deploy/enhance-pir-worker.service). Point
+The service examples are [coordinator](../../tools/enhance/deploy/enhance-pir-server.service)
+and [worker](../../tools/enhance/deploy/enhance-pir-worker.service). Point
 `/opt/enhance-pir/current` to the verified release on each host, create the
 non-root worker account and its private data directory, and provide the worker
 listen address and sealed-shard policy in `/etc/enhance-pir/worker.env`.
@@ -132,7 +132,7 @@ cutover did not run Terraform.
 
 ## Deploy CLI
 
-`ops/scripts/wallet-pir-deploy.py` is the repository's transactional deploy tool
+`tools/scripts/wallet-pir-deploy.py` is the repository's transactional deploy tool
 for Enhance and Status. It has deployed production releases since 2026-10-06
 (coordinator only) and 2026-10-09 (every Enhance and Status role); the manual
 runbook below remains the fallback.
@@ -141,10 +141,10 @@ The tool runs on the coordinator, or on a workstation with the production SSH
 access, and takes a local inventory (`--inventory` or
 `WALLET_PIR_DEPLOY_INVENTORY`) of hosts, SSH settings and the production lock.
 The repository does not describe the live fleet; see
-[deploy-inventory.example.json](../../ops/enhance/deploy/deploy-inventory.example.json)
+[deploy-inventory.example.json](../../tools/enhance/deploy/deploy-inventory.example.json)
 for the shape. Roles, units, readiness checks and rollout order (workers,
 packing router, query ingress, coordinator) are in
-[deploy.toml](../../ops/enhance/deploy/deploy.toml).
+[deploy.toml](../../tools/enhance/deploy/deploy.toml).
 
 ```sh
 wallet-pir-deploy.py capture-baseline enhance

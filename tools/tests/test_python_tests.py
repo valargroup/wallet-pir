@@ -18,7 +18,7 @@ from python_tests import discover, selected_modules
 
 class PythonTestDriverTests(unittest.TestCase):
     def test_deployment_fast_cases_are_discovered_and_full_tier_is_larger(self):
-        discovered = discover(ROOT / 'ops/tests/deploy', ['test_ops_package'])
+        discovered = discover(ROOT / 'tools/tests/operations/deploy', ['test_ops_package'])
         selection = json.loads((ROOT / 'tools/ci/deploy-fast-tests.json').read_text())
         fast = selected_modules(discovered, selection)
         self.assertEqual({name for names in fast.values() for name in names}, set(selection))

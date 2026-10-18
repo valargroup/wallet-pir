@@ -33,6 +33,30 @@ class PlannerTests(unittest.TestCase):
     def setUp(self):
         self.packages = fast.workspace_packages()
 
+    def test_operations_routes_survive_the_directory_move(self):
+        paths = ['lib/wallet_pir_ops/durable.py', 'scripts/wallet-pir-deploy.py',
+                 'infra/digitalocean/transparent/main.tf', 'enhance/lib/roles.py',
+                 'transparent/lib/roles.py', 'receiver/lib/roles.py',
+                 'tests/deploy/test_ops_package.py', 'tests/test_operations_bundle.py']
+        for suffix in paths:
+            old = 'ops/' + suffix
+            new = ('tools/tests/operations/' + suffix[len('tests/'):]
+                   if suffix.startswith('tests/') else 'tools/' + suffix)
+            with self.subTest(path=new):
+                before = fast.plan(self.packages, [old])
+                after = fast.plan(self.packages, [new])
+                self.assertEqual(before['helpers'], after['helpers'])
+                self.assertEqual(before['groups'], after['groups'])
+                self.assertEqual(after['packages'], [])
+                self.assertIn('check-ops-deploy', after['helpers'])
+
+    def test_product_analysis_keeps_tooling_checks(self):
+        for path in ('tools/transparent/filters/transparent_filter_build.py',
+                     'tools/transparent/parent-filters/transparent_parent_evaluate.py',
+                     'tools/enhance/v7-qualification/assess.py',
+                     'tools/enhance/schema11-interop/run.py'):
+            self.assertEqual(fast.route(path), ({'check-tools'}, {'ops'}), path)
+
     def test_docs_do_not_need_rust_or_other_helpers(self):
         result = fast.plan(self.packages, ['README.md'])
         self.assertEqual(result['packages'], [])
@@ -41,45 +65,45 @@ class PlannerTests(unittest.TestCase):
             self.assertEqual(fast.workspace_packages(), self.packages)
 
     def test_ops_and_deploy_workflow_do_not_select_workspace_rust(self):
-        for path in ['ops/tests/control_sessions/fake_ssh.py', '.github/workflows/deploy-enhance-cuda.yml']:
+        for path in ['tools/tests/operations/control_sessions/fake_ssh.py', '.github/workflows/deploy-enhance-cuda.yml']:
             result = fast.plan(self.packages, [path])
             self.assertEqual(result['packages'], [])
             self.assertEqual(result['groups'], ['ops'])
-        self.assertEqual(fast.plan(self.packages, ['ops/tests/control_sessions/fake_ssh.py'])['helpers'], ['check-ops-control-sessions'])
+        self.assertEqual(fast.plan(self.packages, ['tools/tests/operations/control_sessions/fake_ssh.py'])['helpers'], ['check-ops-control-sessions'])
 
     def test_shared_ops_helpers_select_all_consumers(self):
-        result = fast.plan(self.packages, ['ops/lib/wallet_pir_ops/control_sessions.py'])
+        result = fast.plan(self.packages, ['tools/lib/wallet_pir_ops/control_sessions.py'])
         self.assertTrue(fast.OPS <= set(result['helpers']))
 
     def test_transparent_schema_helpers_are_not_misclassified_as_parent_filters(self):
-        for path in ['ops/transparent/lib/activity_source_stage.py',
-                     'ops/transparent/tests/test_activity_schema_operation.py',
-                     'ops/transparent/scripts/deploy-transparent-publisher.py']:
+        for path in ['tools/transparent/lib/activity_source_stage.py',
+                     'tools/transparent/tests/test_activity_schema_operation.py',
+                     'tools/transparent/scripts/deploy-transparent-publisher.py']:
             result = fast.plan(self.packages, [path])
             self.assertIn('check-ops-deploy', result['helpers'], path)
             self.assertIn('check-ops-publication', result['helpers'], path)
             self.assertEqual(result['packages'], [])
-        result = fast.plan(self.packages, ['ops/transparent/scripts/stage-transparent-parents.py'])
+        result = fast.plan(self.packages, ['tools/transparent/scripts/stage-transparent-parents.py'])
         self.assertEqual(set(result['helpers']), {'check-ops-contracts', 'check-ops-parents'})
 
     def test_txid_display_ops_route_to_their_own_check(self):
-        for path in ['ops/txid/lib/txid_display_poc.py', 'ops/txid/scripts/txid-display-fleet.py',
-                     'ops/txid/deploy/txid-display-routes.caddy.in',
-                     'ops/txid/tests/test_txid_display_router.py']:
+        for path in ['tools/txid/lib/txid_display_poc.py', 'tools/txid/scripts/txid-display-fleet.py',
+                     'tools/txid/deploy/txid-display-routes.caddy.in',
+                     'tools/txid/tests/test_txid_display_router.py']:
             result = fast.plan(self.packages, [path])
             self.assertEqual(set(result['helpers']), {'check-ops-txid-display', 'check-ops-contracts'}, path)
             self.assertEqual(result['packages'], [])
-        for path in ['ops/txid/lib/roles.py', 'ops/txid/deploy/services.toml']:
+        for path in ['tools/txid/lib/roles.py', 'tools/txid/deploy/services.toml']:
             self.assertEqual(set(fast.plan(self.packages, [path])['helpers']),
                              {'check-ops-txid-display', 'check-ops-shared', 'check-ops-deploy', 'check-ops-contracts'}, path)
         # The history adapter's hook and the pinned firewall sources reach it too.
-        for path in ['ops/transparent/scripts/transparent-live-fleet.py',
-                     'ops/infra/digitalocean/transparent/main.tf']:
+        for path in ['tools/transparent/scripts/transparent-live-fleet.py',
+                     'tools/infra/digitalocean/transparent/main.tf']:
             self.assertIn('check-ops-txid-display', fast.plan(self.packages, [path])['helpers'], path)
 
     def test_status_ops_route_to_deploy_roles_and_control_sessions(self):
-        for path in ['ops/status/lib/roles.py', 'ops/status/deploy/services.toml',
-                     'ops/status/deploy/control-sessions.example.json']:
+        for path in ['tools/status/lib/roles.py', 'tools/status/deploy/services.toml',
+                     'tools/status/deploy/control-sessions.example.json']:
             result = fast.plan(self.packages, [path])
             self.assertEqual(set(result['helpers']), {'check-ops-shared', 'check-ops-control-sessions',
                                                       'check-ops-deploy', 'check-ops-contracts'}, path)
@@ -101,12 +125,12 @@ class PlannerTests(unittest.TestCase):
 
     def test_receiver_ops_config_changes_run_their_contract_suite(self):
         makefile = (ROOT / 'Makefile').read_text()
-        self.assertIn("check-ops-shared:\n\tpython3 -m unittest discover -s ops/tests -p 'test_*.py'", makefile)
-        self.assertTrue((ROOT / 'ops/tests/test_receiver_ops_config.py').is_file())
-        self.assertTrue((ROOT / 'ops/tests/test_receiver_caddy.py').is_file())
-        for path in ['ops/receiver/digitalocean/Caddyfile', 'ops/receiver/digitalocean/cloud-init.yaml',
-                     'ops/receiver/digitalocean/receiver-pir.service.in', 'ops/receiver/digitalocean/caddy.py',
-                     'ops/receiver/digitalocean/README.md']:
+        self.assertIn("check-ops-shared:\n\tpython3 -m unittest discover -s tools/tests/operations -p 'test_*.py'", makefile)
+        self.assertTrue((ROOT / 'tools/tests/operations/test_receiver_ops_config.py').is_file())
+        self.assertTrue((ROOT / 'tools/tests/operations/test_receiver_caddy.py').is_file())
+        for path in ['tools/receiver/digitalocean/Caddyfile', 'tools/receiver/digitalocean/cloud-init.yaml',
+                     'tools/receiver/digitalocean/receiver-pir.service.in', 'tools/receiver/digitalocean/caddy.py',
+                     'tools/receiver/digitalocean/README.md']:
             result = fast.plan(self.packages, [path])
             self.assertTrue({'check-ops-shared', 'check-ops-deploy'} <= set(result['helpers']), path)
             self.assertEqual(result['packages'], [], path)
@@ -120,7 +144,7 @@ class PlannerTests(unittest.TestCase):
             self.assertEqual(len(result['packages']), 0 if path.startswith(('tools/ci/', '.github/workflows/ci')) else len(self.packages))
 
     def test_infra_maps_to_its_own_validation(self):
-        result = fast.plan(self.packages, ['ops/infra/digitalocean/transparent/worker-pool/main.tf'])
+        result = fast.plan(self.packages, ['tools/infra/digitalocean/transparent/worker-pool/main.tf'])
         self.assertIn('transparent_infra', result['groups'])
         self.assertNotIn('enhance_infra', result['groups'])
 
@@ -193,7 +217,7 @@ class PlannerTests(unittest.TestCase):
 
 
     def test_scaler_fast_excludes_exhaustive_models_and_registry_rejects_renames(self):
-        result = fast.plan(self.packages, ['ops/transparent/scaler/decide.py'])
+        result = fast.plan(self.packages, ['tools/transparent/scaler/decide.py'])
         self.assertIn('check-ops-scaler-fast', result['helpers'])
         self.assertNotIn('check-ops-scaler', result['helpers'])
         registry = json.loads((ROOT/'tools/ci/scaler-tests.json').read_text())
@@ -231,7 +255,7 @@ class PlannerTests(unittest.TestCase):
                 kwargs['before_tests']()
             started.set()
 
-        paths = ['ops/tests/deploy/test_ops_package.py',
+        paths = ['tools/tests/operations/deploy/test_ops_package.py',
                  'src/transparent/transparent-filter-server/src/lib.rs']
         with patch.object(sys, 'argv', ['fast.py', '--base', 'HEAD', '--committed-only']), \
                 patch.object(fast, 'changed_paths', return_value=paths), \

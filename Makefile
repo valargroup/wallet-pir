@@ -53,85 +53,85 @@ check-full: check-hygiene check-ops check-docs check-reports check-tools
 check-ops: check-ops-enhance check-ops-shared check-ops-control-sessions check-ops-deploy check-ops-contracts check-ops-parents check-ops-fleet check-ops-publication check-ops-burst check-ops-regression-recut check-ops-regression-fixtures check-ops-observation check-ops-stage-timing check-ops-membership check-ops-elastic check-ops-scaler check-ops-txid-display
 
 check-ops-enhance:
-	python3 -m unittest discover -s ops/enhance/tests -p 'test_*.py'
+	python3 -m unittest discover -s tools/enhance/tests -p 'test_*.py'
 
 check-ops-shared:
-	python3 -m unittest discover -s ops/tests -p 'test_*.py'
+	python3 -m unittest discover -s tools/tests/operations -p 'test_*.py'
 
 # The control-session supervisor, its restricted account model and Status
 # config, against a stub ssh. WALLET_PIR_SSHD_PROBE=1 adds a private sshd on
 # 127.0.0.1 that checks the generated account with real OpenSSH.
 check-ops-control-sessions:
-	python3 -m unittest discover -s ops/tests/control_sessions -p 'test_*.py'
+	python3 -m unittest discover -s tools/tests/operations/control_sessions -p 'test_*.py'
 
-# The Enhance and Status deploy CLI (ops/scripts/wallet-pir-deploy.py) against
+# The Enhance and Status deploy CLI (tools/scripts/wallet-pir-deploy.py) against
 # an in-memory fleet, plus its host helper run locally.
 check-ops-deploy:
-	python3 tools/ci/python_tests.py ops/tests/deploy --jobs 2 --split-module test_ops_package
-	python3 ops/transparent/tests/test_activity_schema_operation.py
-	python3 ops/transparent/tests/test_activity_schema_baseline.py
+	python3 tools/ci/python_tests.py tools/tests/operations/deploy --jobs 2 --split-module test_ops_package
+	python3 tools/transparent/tests/test_activity_schema_operation.py
+	python3 tools/transparent/tests/test_activity_schema_baseline.py
 
 .PHONY: check-ops-deploy-fast
 check-ops-deploy-fast:
-	python3 tools/ci/python_tests.py ops/tests/deploy --jobs 2 --split-module test_ops_package --selection tools/ci/deploy-fast-tests.json
-	python3 ops/transparent/tests/test_activity_schema_operation.py
-	python3 ops/transparent/tests/test_activity_schema_baseline.py
+	python3 tools/ci/python_tests.py tools/tests/operations/deploy --jobs 2 --split-module test_ops_package --selection tools/ci/deploy-fast-tests.json
+	python3 tools/transparent/tests/test_activity_schema_operation.py
+	python3 tools/transparent/tests/test_activity_schema_baseline.py
 
 check-ops-contracts:
-	ops/scripts/check-jq-contracts.sh
+	tools/scripts/check-jq-contracts.sh
 
 check-ops-parents:
-	python3 ops/transparent/tests/test_transparent_parents.py
+	python3 tools/transparent/tests/test_transparent_parents.py
 
 check-ops-fleet:
-	python3 ops/transparent/tests/test_transparent_fleet.py
-	python3 ops/txid/tests/test_txid_display_router.py
-	python3 ops/transparent/tests/test_public_router.py
+	python3 tools/transparent/tests/test_transparent_fleet.py
+	python3 tools/txid/tests/test_txid_display_router.py
+	python3 tools/transparent/tests/test_public_router.py
 
 check-ops-publication:
-	python3 ops/transparent/tests/test_transparent_publication.py
+	python3 tools/transparent/tests/test_transparent_publication.py
 
 check-ops-burst:
-	python3 ops/transparent/tests/test_transparent_burst.py
+	python3 tools/transparent/tests/test_transparent_burst.py
 
 check-ops-regression-recut:
-	python3 ops/transparent/tests/test_regression_recut.py
+	python3 tools/transparent/tests/test_regression_recut.py
 
 check-ops-regression-fixtures:
-	python3 ops/transparent/tests/test_regression_fixture_compare.py
+	python3 tools/transparent/tests/test_regression_fixture_compare.py
 
 check-ops-observation:
-	python3 ops/transparent/tests/test_observation_audit.py
-	python3 ops/transparent/tests/test_activity_prototype_build.py
+	python3 tools/transparent/tests/test_observation_audit.py
+	python3 tools/transparent/tests/test_activity_prototype_build.py
 
 check-ops-stage-timing:
-	python3 -m unittest discover -s ops/transparent/tests -p 'test_transparent_stage_timing.py'
+	python3 -m unittest discover -s tools/transparent/tests -p 'test_transparent_stage_timing.py'
 
 # Fleet membership, managed preparation, the archive standby and the rollouts
 # that rewrite fleet config.
 check-ops-membership:
-	python3 -m unittest discover -s ops/transparent/tests -p 'test_transparent_membership.py'
-	python3 -m unittest discover -s ops/transparent/tests -p 'test_transparent_managed_preparation.py'
-	python3 -m unittest discover -s ops/transparent/tests -p 'test_transparent_reconciler.py'
-	python3 -m unittest discover -s ops/transparent/tests -p 'test_transparent_maintenance.py'
-	python3 -m unittest discover -s ops/transparent/tests -p 'test_transparent_worker_upgrade.py'
-	python3 -m unittest discover -s ops/transparent/tests -p 'test_transparent_rolling.py'
-	python3 -m unittest discover -s ops/transparent/tests -p 'test_transparent_inventory.py'
-	python3 -m unittest discover -s ops/transparent/tests -p 'test_transparent_actuator.py'
-	python3 -m unittest discover -s ops/transparent/tests -p 'test_archive_standby.py'
-	python3 -m unittest discover -s ops/transparent/tests -p 'test_quality_rollout_load.py'
-	python3 -m unittest discover -s ops/transparent/scripts -p 'test_transparent_quality_load.py'
+	python3 -m unittest discover -s tools/transparent/tests -p 'test_transparent_membership.py'
+	python3 -m unittest discover -s tools/transparent/tests -p 'test_transparent_managed_preparation.py'
+	python3 -m unittest discover -s tools/transparent/tests -p 'test_transparent_reconciler.py'
+	python3 -m unittest discover -s tools/transparent/tests -p 'test_transparent_maintenance.py'
+	python3 -m unittest discover -s tools/transparent/tests -p 'test_transparent_worker_upgrade.py'
+	python3 -m unittest discover -s tools/transparent/tests -p 'test_transparent_rolling.py'
+	python3 -m unittest discover -s tools/transparent/tests -p 'test_transparent_inventory.py'
+	python3 -m unittest discover -s tools/transparent/tests -p 'test_transparent_actuator.py'
+	python3 -m unittest discover -s tools/transparent/tests -p 'test_archive_standby.py'
+	python3 -m unittest discover -s tools/transparent/tests -p 'test_quality_rollout_load.py'
+	python3 -m unittest discover -s tools/transparent/scripts -p 'test_transparent_quality_load.py'
 
 # The txid display proof of concept's deploy family against an in-memory fleet,
 # its command-transport adapter and observers against shimmed ssh and rsync, and
 # the history router's opt-in import hook.
 check-ops-txid-display:
-	python3 -m unittest discover -s ops/txid/tests -p 'test_*.py'
+	python3 -m unittest discover -s tools/txid/tests -p 'test_*.py'
 
 # Elastic recent replicas: the saved-plan validator and the Terraform root runner.
 check-ops-elastic:
-	python3 -m unittest discover -s ops/transparent/tests -p 'test_transparent_plan.py'
-	python3 -m unittest discover -s ops/transparent/tests -p 'test_elastic_root.py'
+	python3 -m unittest discover -s tools/transparent/tests -p 'test_transparent_plan.py'
+	python3 -m unittest discover -s tools/transparent/tests -p 'test_elastic_root.py'
 
 # Recent-tier scaler: unit tests of every decision rule, the seeded fleet
 # simulator (test_scaler_sim.py) and the exhaustive membership and actuation
@@ -286,7 +286,7 @@ transparent-sim-help:
 # comes from sample-oracle's separate journal pass.
 BLOCK_DATASET ?= /srv/transparent-sync-bench/data
 BLOCK_URL ?= https://transparent-sync-bench.valargroup.dev
-BLOCK_FRESH_SAMPLE ?= ops/transparent/benchmarks/transparent-comparison-fresh-sample.json
+BLOCK_FRESH_SAMPLE ?= tools/transparent/benchmarks/transparent-comparison-fresh-sample.json
 BLOCK_METRICS_URL ?=
 BLOCK_ENCODING ?= gzip
 SIM_COMPARISON_METADATA ?=
@@ -329,7 +329,7 @@ TRANSPARENT_BURST_SYSTEMD ?= 0
 TRANSPARENT_BURST_EXTERNAL_CLIENTS ?= 0
 .PHONY: transparent-burst
 transparent-burst:
-	python3 ops/transparent/scripts/run-transparent-burst.py \
+	python3 tools/transparent/scripts/run-transparent-burst.py \
 		--repetitions "$(TRANSPARENT_BURST_REPETITIONS)" \
 		--build-slots $(TRANSPARENT_BURST_BUILD_SLOTS) \
 		$(if $(strip $(TRANSPARENT_BURST_WORKER_BUDGET_SECONDS)),--worker-budget-seconds "$(TRANSPARENT_BURST_WORKER_BUDGET_SECONDS)") \

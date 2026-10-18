@@ -418,11 +418,11 @@ the full approved revision, and use absolute paths for `PWD` and all settings:
 mkdir ops-release
 # Run only after authenticating the downloaded artifact and its recorded digest.
 tar -xzf wallet-pir-ops.tar.gz -C ops-release
-python3 ops-release/ops/scripts/wallet-pir-bundle.py self-check --sha "$SHA"
+python3 ops-release/tools/scripts/wallet-pir-bundle.py self-check --sha "$SHA"
 python3 ops-release/tools/ci/release.py extract --sha "$SHA" --kind transparent-shard \
   --archive transparent-shard.tar.gz --output "$PWD/history-release"
-python3 ops-release/ops/scripts/wallet-pir-roles.py --help
-cp ops-release/ops/transparent/deploy/history-provider.example.json provider.json
+python3 ops-release/tools/scripts/wallet-pir-roles.py --help
+cp ops-release/tools/transparent/deploy/history-provider.example.json provider.json
 ```
 
 Edit `provider.json`: replace the reserved `.example.invalid` publisher and
@@ -460,7 +460,7 @@ qualification remains required. Too little cache/transfer budget refuses loading
 Render without contacting a host or reading private inventory:
 
 ```sh
-python3 ops-release/ops/scripts/wallet-pir-roles.py --service transparent-history \
+python3 ops-release/tools/scripts/wallet-pir-roles.py --service transparent-history \
   --role provider --settings provider.json --release "$PWD/history-release" > role.json
 ```
 

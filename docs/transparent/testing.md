@@ -187,12 +187,12 @@ A re-cut is therefore not a substitution of the terminal height. Each checkpoint
 keeps, or follows, whichever boundary it was chosen against: heights taken from a
 script's actual history stay put; tier-boundary probes at C-1, C and C+1 follow
 the new cutoff; the terminal sync and `recent-birthday`'s A-1 follow the new
-anchor. `ops/transparent/scripts/recut-regression-cases.py` records that classification and
+anchor. `tools/transparent/scripts/recut-regression-cases.py` records that classification and
 proves it with `--self-check`, which regenerates the previous specification from
 the previous anchor and cutoff and refuses unless it matches the frozen file.
 
 ```sh
-python3 ops/transparent/scripts/recut-regression-cases.py \
+python3 tools/transparent/scripts/recut-regression-cases.py \
   --previous-cases src/transparent/transparent-regression/fixtures/mainnet-cases.json \
   --self-check --cutoff-json /path/to/publication/cutoff.json \
   --out cases-next.json
@@ -207,7 +207,7 @@ Then export against the accepted publication and compare the result with the
 fixture it replaces before freezing:
 
 ```sh
-python3 ops/transparent/scripts/compare-regression-fixtures.py \
+python3 tools/transparent/scripts/compare-regression-fixtures.py \
   --previous src/transparent/transparent-regression/fixtures/mainnet.json \
   --next fixture-next.json --out compare.json
 ```
@@ -340,7 +340,7 @@ interval, not an exact kernel high-water mark. Host available memory is reported
 but an isolated test cannot pass the production host-headroom gate.
 
 For the existing Amsterdam generator, a portable Linux release test executable
-can be passed to `ops/transparent/scripts/run-transparent-burst.py --test-binary <path>
+can be passed to `tools/transparent/scripts/run-transparent-burst.py --test-binary <path>
 --source-sha <revision> --out <new-directory>`. Keep the source checkout with the
 runner so its manifest can hash the Rust source. The manifest also hashes the
 prebuilt executable; preserve build flags and host/cgroup configuration with the

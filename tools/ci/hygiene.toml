@@ -9,15 +9,15 @@ pattern = "tools/ci/*.json"
 reason = "CI registries consumed by the affected/full check planners."
 
 [[allow_data]]
-pattern = "ops/enhance/deploy/*.example.json"
+pattern = "tools/enhance/deploy/*.example.json"
 reason = "Public examples for the maintained deployment commands."
 
 [[allow_data]]
-pattern = "ops/status/deploy/*.example.json"
+pattern = "tools/status/deploy/*.example.json"
 reason = "Public Status control-session configuration example."
 
 [[allow_data]]
-pattern = "ops/transparent/deploy/*.example.json"
+pattern = "tools/transparent/deploy/*.example.json"
 reason = "Public fleet-scaler configuration example."
 
 [[allow_data]]
@@ -29,11 +29,11 @@ pattern = "src/enhance/enhance-pir-server/tests/fixtures/*.json"
 reason = "Independent Ironwood record oracle consumed by tests."
 
 [[allow_data]]
-pattern = "ops/enhance/fixtures/*.json"
+pattern = "tools/enhance/fixtures/*.json"
 reason = "Frozen operator API payloads used by operations tests."
 
 [[allow_data]]
-pattern = "ops/tests/fixtures/*.json"
+pattern = "tools/tests/operations/fixtures/*.json"
 reason = "DigitalOcean layout contract used by operations tests."
 
 [[allow_data]]
@@ -53,11 +53,11 @@ pattern = "evidence/transparent/transparent-native/testdata/*.py"
 reason = "Independent generator of the frozen prewarm-hint oracle, retained unchanged."
 
 [[allow_data]]
-pattern = "ops/transparent/fixtures/*.json"
+pattern = "tools/transparent/fixtures/*.json"
 reason = "Frozen deployment and API payloads used by operations tests."
 
 [[allow_data]]
-pattern = "ops/transparent/benchmarks/*.json"
+pattern = "tools/transparent/benchmarks/*.json"
 reason = "Maintained block-comparison scenario and fresh input sample."
 
 [[allow_data]]
@@ -165,5 +165,5 @@ pattern = "tools/txid/txid-sizing/fixtures/*.json"
 reason = "Independent canonical codec and packing input consumed by sizing tests."
 
 [[allow_data]]
-pattern = "ops/transparent/fixtures/observation/failed-observation-20260912T003121Z.tar.gz"
+pattern = "tools/transparent/fixtures/observation/failed-observation-20260912T003121Z.tar.gz"
 reason = "Real failed observation consumed by the mandatory audit negative control."

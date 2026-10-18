@@ -4,9 +4,9 @@ The root workspace contains Enhance PIR, Status PIR, transparent shard recovery,
 transaction-detail (txid) PIR and the receiver directory. Cargo packages live
 directly under `src/<product>/` (`enhance`, `status`, `transparent`, `txid`,
 `receiver`); packages used by more than one product live under `src/shared/`.
-Keep operations, documentation, evidence and standalone scripts under
-`ops/<product>/`, `docs/<product>/`, `evidence/<product>/` and `tools/<product>/`;
-keep only shared infrastructure and checks at the root. A product never depends
+Keep operations and standalone scripts under `tools/<product>/`, documentation
+under `docs/<product>/` and evidence under `evidence/<product>/`; shared automation
+lives under `tools/{ci,dev,scripts,lib,deploy,infra}/`. A product never depends
 on another product's application package, and serving packages never depend on
 chain reading or ingestion packages (`tools/ci/boundary.py`).
 `src/transparent/transparent-measure` uses the current shard stack and remains part of the

@@ -1,8 +1,9 @@
 # Wallet PIR development
 
 Cargo packages live under `src/<product>/`; packages shared by products live
-under `src/shared/`. Operations, docs, evidence and standalone scripts live under
-`ops/<product>/`, `docs/<product>/`, `evidence/<product>/` and `tools/<product>/`.
+under `src/shared/`. Operations and standalone scripts live under `tools/<product>/`;
+shared automation lives under `tools/{ci,dev,scripts,lib,deploy,infra}/`. Docs and
+evidence live under `docs/<product>/` and `evidence/<product>/`.
 Preserve existing Cargo package and binary names.
 
 ## Toolchain, build and run
@@ -89,7 +90,7 @@ Preserve existing Cargo package and binary names.
 - `make prepare-dev` installs a pre-push guard that refuses a push to `main`
   while main's last finished fast CI run failed. Fix or revert that
   failure first; push the fix itself with `WALLET_PIR_PUSH_ON_RED=1`.
-- Production changes go through `ops/scripts/wallet-pir-deploy.py`
+- Production changes go through `tools/scripts/wallet-pir-deploy.py`
   (`plan`/`preflight` first), which holds the production lock. Do not mutate
   production hosts by hand (`systemctl`, signals, `scp` of binaries) or while
   another session holds the lock, and never during a monitoring-only task.

@@ -16,7 +16,7 @@ import unittest
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / 'ops/lib'))
+sys.path.insert(0, str(ROOT / 'tools/lib'))
 
 
 def load(name):
@@ -54,8 +54,16 @@ class SelectionTests(unittest.TestCase):
                 self.assertEqual(fast.select(self.packages, [path]), {'core', 'client', 'server', 'other'})
 
     def test_docs_and_ops_do_not_compile_rust(self):
-        self.assertEqual(fast.select(self.packages, ['README.md', 'docs/ci.md', 'ops/scripts/example.py',
-                                                     'evidence/receiver/run.json', 'ops/receiver/digitalocean/Caddyfile']), set())
+        self.assertEqual(fast.select(self.packages, ['README.md', 'docs/ci.md', 'tools/scripts/example.py',
+                                                     'evidence/receiver/run.json', 'tools/receiver/digitalocean/Caddyfile']), set())
+
+    def test_product_analysis_scripts_keep_tool_checks_after_operations_move(self):
+        for path in ['tools/status/status_qualification.py', 'tools/status/test_status_qualification.py',
+                     'tools/txid/txid-sizing/survey.py', 'tools/txid/txid-display/demo.py']:
+            with self.subTest(path=path):
+                self.assertEqual(fast.route(path), ({'check-tools'}, {'ops'}))
+        self.assertIn('check-ops-deploy', fast.route('tools/status/deploy/services.toml')[0])
+        self.assertIn('check-ops-txid-display', fast.route('tools/txid/lib/roles.py')[0])
 
     def test_deleted_or_renamed_source_selects_both_sides(self):
         self.assertEqual(fast.select(self.packages, ['crates/other/src/old.rs', 'crates/client/src/new.rs']), {'other', 'client', 'server'})
@@ -80,7 +88,7 @@ class SelectionTests(unittest.TestCase):
                 self.assertEqual(set(selected['groups']), fast.FULL_GROUPS)
 
     def test_build_changes_do_not_drop_direct_operations_or_deleted_package_coverage(self):
-        selected = fast.plan(self.packages, ['Cargo.lock', 'ops/tests/deploy/test_ops_package.py',
+        selected = fast.plan(self.packages, ['Cargo.lock', 'tools/tests/operations/deploy/test_ops_package.py',
                                              'crates/client/src/deleted.rs'])
         self.assertIn('check-ops-deploy', selected['helpers'])
         self.assertIn('check-ops-contracts', selected['helpers'])

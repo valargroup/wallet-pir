@@ -14,7 +14,7 @@ import unittest
 import urllib.error
 import urllib.request
 
-SCRIPT = Path(__file__).resolve().parents[2] / 'ops/transparent/scripts/activity-capture.py'
+SCRIPT = Path(__file__).resolve().parents[2] / 'tools/transparent/scripts/activity-capture.py'
 
 @contextlib.contextmanager
 def capture(mode):

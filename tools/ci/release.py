@@ -4,7 +4,7 @@ from pathlib import Path
 import sys
 
 sys.dont_write_bytecode = True
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'ops/lib'))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/lib'))
 from wallet_pir_ops.release import *  # noqa: F401,F403,E402
 
 if __name__ == '__main__':

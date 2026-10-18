@@ -1,0 +1,27 @@
+# External Enhance worker, rendered by tools/enhance/lib/roles.py. The worker is
+# passive: its controller (the coordinator) reserves, uploads rows, prepares,
+# activates and commits over the internal routes, authenticated by the
+# ENHANCE_INTERNAL_TOKEN in the inventory's credential file. A packing router
+# must list it before it serves. ExecStart and paths are rendered.
+[Unit]
+Description=Ironwood Enhance PIR worker (external)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/bin/false
+Restart=on-failure
+RestartSec=3
+LimitNOFILE=1048576
+MemoryHigh=7G
+MemoryMax=7680M
+MemorySwapMax=2G
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+Environment=RUST_LOG=info
+
+[Install]
+WantedBy=multi-user.target

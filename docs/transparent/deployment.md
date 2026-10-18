@@ -137,7 +137,7 @@ The accepted recent tier is two full copies; four hosts was a load target, not a
 requirement. Two replicas passed the 20 QPS gate at 20.9 QPS, p99 53 ms, with
 runtime construction in its own low-priority pool
 ([evidence](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/evidence/transparent/recent-floor-2026-09-29/README.md)). Elastic copies are
-added and removed by the actuator from `ops/infra/digitalocean/transparent/worker-pool/`
+added and removed by the actuator from `tools/infra/digitalocean/transparent/worker-pool/`
 (one droplet and project entry per member, its own state and host lock), never
 by the production root; the scaler decides within `scaler/policy.json`
 (`min_recent` 2, `max_recent`, budgets, cost cap). Serving recent replicas never
@@ -231,7 +231,7 @@ publication until the new ones activate.
    key was installed by hand.
 2. **Standby.** Pin the new host's key (verified out of band) in a known_hosts
    file and run, from `/opt/transparent-publisher/releases/current/repo`:
-   `ops/transparent/scripts/transparent-archive-standby.py --id transparent-pir-archive-NN --host <vpc ip> --droplet-id <id> --known-hosts <file> --release <sha>`.
+   `tools/transparent/scripts/transparent-archive-standby.py --id transparent-pir-archive-NN --host <vpc ip> --droplet-id <id> --known-hosts <file> --release <sha>`.
    It checks the droplet id and x86-64-v3, installs the release against its
    SHA256SUMS, plans the active publication with the new host pinned to the
    whole archive, copies at `--bwlimit-kbps` (pausing while freshness is over
@@ -575,8 +575,8 @@ only in the controller's root-readable runtime credential directory.
   key and verify from the coordinator before removing the old one.
 - **Coordinator routing.** Public transparent metadata depends on the
   continuous-publication route in the coordinator Caddyfile. Enhance deploys
-  render that file from `ops/deploy/coordinator/Caddyfile`, which carries the
-  route; `ops/tests/test_coordinator_caddyfile.py` fails if it is removed. After
+  render that file from `tools/deploy/coordinator/Caddyfile`, which carries the
+  route; `tools/tests/operations/test_coordinator_caddyfile.py` fails if it is removed. After
   any coordinator deploy, confirm that
   `https://transparent-pir.valargroup.dev/v1/shards/init` returns 200.
 
@@ -616,7 +616,7 @@ restores the saved discard setting without reverting unrelated mount options.
 This policy is qualified initially on a single worker; see the
 [bounded disk-stall experiment](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/evidence/transparent/productionize-m1-shoup-reduction-2026-09-11/README.md).
 
-Run `ops/transparent/scripts/observe-transparent-hardening.py` on the coordinator with the
+Run `tools/transparent/scripts/observe-transparent-hardening.py` on the coordinator with the
 expected worker binary digest and release `soak-query` executable. Its defaults
 require **both six hours and 300 new blocks**, two sustained query clients with
 exact source-byte comparisons, public visibility within 30 seconds and recent
@@ -666,7 +666,7 @@ and roster digest; elapsed time alone is insufficient. The foreground adapter an
 reconciler must use the same `fleet.json`. Enable `managed_recent_workers` for
 recent-01 at the canary stage; once every worker's binary reports the control
 status fields, set `manage_all_workers: true` instead.
-`ops/transparent/scripts/roll-recent-replicas.py` upgrades recent replicas one at
+`tools/transparent/scripts/roll-recent-replicas.py` upgrades recent replicas one at
 a time without a maintenance window, only while two others are routed, and
 waits for each to be routed again before the next. Archive owners still use the
 maintenance upgrade. Stop observers that latch on worker restarts, such as the
@@ -685,7 +685,7 @@ or wait indefinitely for its output descriptors. Bootstrap configurations withou
 the flag retain direct SSH. Preparation always uses direct SSH. Read-only status
 retries one transport failure (1 s then 1.5 s command budgets within the 3 s
 membership timeout).
-The shared supervisor library, `ops/lib/wallet_pir_ops/control_sessions.py`
+The shared supervisor library, `tools/lib/wallet_pir_ops/control_sessions.py`
 ([control sessions](../control-sessions.md)), builds the same socket
 names and SSH arguments; a test holds the two equal. This script stays
 standalone on the coordinator and does not import the library.
@@ -711,7 +711,7 @@ replica coverage. Future candidates and withdrawn/orphaned publications cannot
 use this path.
 
 
-Audit a closed observation with `ops/transparent/scripts/audit-transparent-observation.py`
+Audit a closed observation with `tools/transparent/scripts/audit-transparent-observation.py`
 against the extracted bundle. The supervisor cannot certify a gate shorter than
 the one it was launched with, and a monitor that fails writes a thin result with
 no provenance, so acceptance is a separate audit rather than an exit code. Every
@@ -723,7 +723,7 @@ relaxed gate is visible in the evidence. It reads a directory, contacts no host
 and changes nothing.
 
 ```sh
-python3 ops/transparent/scripts/audit-transparent-observation.py \
+python3 tools/transparent/scripts/audit-transparent-observation.py \
   --observation <extracted>/observation --seconds 21600 \
   --canary-result <canary>/result.json --upgrade-result <upgrade>/result.json \
   --out <evidence>/audit.json
@@ -754,7 +754,7 @@ and [status](status.md) for deployment state.
 
 The user approved publishing the evaluated archive configuration after accepting the large-script overhead. Use **8 consecutive sealed archive shards per parent, M=100, P=6**. Keep recent and provisional filters direct. Parent-enabled clients accept the coarse-activity leakage described in the contract. The production manifest URL is `https://enhance-pir.valargroup.dev/v1/filters/parents/archive-wide.json`.
 
-The public bundle contains only `archive-wide.json` and `artifacts/<sha256>.bin`. Stage a previously evaluated bundle with `ops/transparent/scripts/stage-transparent-parents.py --candidate /path/to/archive-wide-k8-m100.json --map-url https://enhance-pir.valargroup.dev/v1/filters/shards --out /srv/transparent-parent-filters/releases/NEW_RELEASE`. The script checks exact live sealed archive descriptors, complete archive coverage, precision/group sizes and evaluated body digests before creating the serving tree. It does not regenerate filters or independently prove their journal completeness; that comes from the full-journal evaluator.
+The public bundle contains only `archive-wide.json` and `artifacts/<sha256>.bin`. Stage a previously evaluated bundle with `tools/transparent/scripts/stage-transparent-parents.py --candidate /path/to/archive-wide-k8-m100.json --map-url https://enhance-pir.valargroup.dev/v1/filters/shards --out /srv/transparent-parent-filters/releases/NEW_RELEASE`. The script checks exact live sealed archive descriptors, complete archive coverage, precision/group sizes and evaluated body digests before creating the serving tree. It does not regenerate filters or independently prove their journal completeness; that comes from the full-journal evaluator.
 
 The coordinator Caddy template routes `/v1/filters/parents/*` to `/srv/transparent-parent-filters/public` with a five-minute HTTP cache lifetime. Point that symlink to the staged immutable release atomically. When first adding the route, preserve existing routing, validate the candidate Caddyfile before installation, save the predecessor, reload Caddy, and verify the manifest and every parent digest through public HTTPS. Restore the predecessor on activation failure. Do not restart the PIR fleet to publish static parent artifacts.
 
@@ -874,7 +874,7 @@ completed-sync demand is at most 50% of measured sustainable throughput.
 ### Guarded schema operation API
 
 All production changes, including source staging, binary transfers and unit
-changes, run through `ops/scripts/wallet-pir-deploy.py`. The wrapper's
+changes, run through `tools/scripts/wallet-pir-deploy.py`. The wrapper's
 `schema-plan`, `schema-preflight`, `schema-deploy`, `schema-status` and
 `schema-rollback` commands coordinate a checksum-bound recipe on the inventory's
 pinned root coordinator under `/run/lock/wallet-pir-production.lock`.
@@ -1104,8 +1104,9 @@ The wrapper's `schema-source-plan`, `schema-source-preflight`,
 operation sources on the coordinator. They require a remote-lock inventory with
 the coordinator's machine ID pinned in its host entry, exact `--source-sha` and
 `--sha256` identities, `--attempt N` (1–100), and `--archive FILE` except for status or reconciliation. Create the archive
-with `git archive --format=tar.gz` from that exact commit, exporting `ops`,
-`ops/transparent`, `ops/enhance`, `tools/ci` and `tools/dev`. Candidate archive
+with `git archive --format=tar.gz` from that exact commit, exporting
+`tools/scripts`, `tools/lib`, `tools/deploy`, `tools/infra`, `tools/receiver`,
+`tools/transparent`, `tools/enhance`, `tools/ci` and `tools/dev`. Candidate archive
 transfer and preparation refuse a source whose receipt lacks `tools/ci/release.py`. This contains the
 operation dependencies without historical evidence bundles. The reviewed
 operations export at `56b67ba0` was 536659 bytes; its whole-tree archive was
@@ -1121,7 +1122,7 @@ inventory by its physical file hash and the existing `4c85b6c2` runtime receipt
 before importing its pinned SSH transport in an isolated package namespace.
 That receipt check accepts exactly one recorded deviation: the txid display
 router hook (committed 2026-10-06) replaced
-`ops/transparent/scripts/transparent-live-fleet.py` in that tree in place, from
+`tools/transparent/scripts/transparent-live-fleet.py` in that tree in place, from
 `f3df5c53…` (git `4c85b6c2`) to `35b6b436…` (git `d191f86b`), and the receipt
 still records the original. Any other file, or either adapter's bytes
 restored or changed again, still refuses. The runtime never imports the adapter.
@@ -1134,7 +1135,7 @@ service name alone does not authorize an exception.
 The installed replica reconciler (`transparent-live-fleet.py` from `4c85b6c2`)
 runs `shard-control` on workers over SSH; there it lives in an SSH session scope,
 not a baseline unit, and its operation (stdin) is not observable, so it is never
-treated as read-only. `ops/lib/wallet_pir_ops/control_attribution.py`, embedded
+treated as read-only. `tools/lib/wallet_pir_ops/control_attribution.py`, embedded
 with the survey, attributes ownership only. A worker reports a control as pending
 only for an exact chain: the fixed argv (SHA-256 `c5827d6f…`) and pinned
 executable bytes (`9208555a…`, the portable worker pin production runs since
@@ -1264,7 +1265,7 @@ verified file set. Schema phase subprocesses also receive
 ### Schema baseline dependencies
 
 The trusted phase programs can invoke the checksum-bound
-`ops/transparent/scripts/transparent-activity-baseline.py` dependency through the
+`tools/transparent/scripts/transparent-activity-baseline.py` dependency through the
 schema runner. Its `capture` and `restore` actions require the inherited local
 production-lock descriptor to name `/run/lock/wallet-pir-production.lock` and
 require root. `verify` reads the retained private receipt. Do not invoke mutation
@@ -1387,7 +1388,7 @@ before explicit recovery after timeout or interruption.
 
 ### Product host transitions for the v11 recipe
 
-The checksum-bound `ops/transparent/scripts/transparent-activity-host.py` now
+The checksum-bound `tools/transparent/scripts/transparent-activity-host.py` now
 implements host `preflight`, `capture`, `stage`, `activate`, `restore` and warm
 worker identity checks. Run it only as a dependency of the schema wrapper recipe,
 from its pinned immutable operations source on the reviewed machine. Mutations
@@ -1441,7 +1442,7 @@ transition has been applied by these fixture checks.
 
 ### Guarded routing and reference recovery phases
 
-`ops/transparent/scripts/transparent-activity-routing.py` implements the schema
+`tools/transparent/scripts/transparent-activity-routing.py` implements the schema
 recipe's withdrawal, private routing, verification, reopening and public
 verification dependencies. Invoke only under the coordinator wrapper's inherited
 production lock, with a closed plan binding both fleet configurations, original
@@ -1557,7 +1558,7 @@ worker pair and controller described above.
 and an older controller than the live ones. Re-pin the candidate first. Its
 13 supplemental tools have no `a317455e` build.
 
-`ops/transparent/lib/activity_candidate.py` pins the candidate's 18 artifacts.
+`tools/transparent/lib/activity_candidate.py` pins the candidate's 18 artifacts.
 Five serving roles come from the exact-head CI release bundles of comprehensive
 run 37173250956: `transparent-publisher-<sha>` and `transparent-filter-<sha>`.
 The other 13 tools come from the supplemental archive `d3a8f60a...`, recorded in
@@ -1584,7 +1585,7 @@ The only inputs are three archives, under the fixed logical names
 `transparent-filter`, `transparent-publisher` and `supplemental`. Each must be an
 absolute, bounded, regular file. Symlinks anywhere in its path and hard links
 refuse. Their SHA-256 pins are fixed in
-`ops/transparent/lib/activity_candidate_upload.py`:
+`tools/transparent/lib/activity_candidate_upload.py`:
 
 | Archive | SHA-256 |
 | --- | --- |
@@ -1604,7 +1605,7 @@ CandidatePreparation request and its digest, and the next coordinator argv.
 Stage streams the closed request header and then the three archives, in that
 order, over one SSH session without persistent masters. The remote command is
 fixed: `/usr/bin/python3 -B
-/srv/transparent-activity/ops/sources/<REV>/ops/scripts/wallet-pir-deploy.py
+/srv/transparent-activity/ops/sources/<REV>/tools/scripts/wallet-pir-deploy.py
 schema-candidate-receive --action ACTION --request-sha256 HASH`. Neither scp, a
 generic upload, a caller-chosen target nor inline remote code is used.
 
@@ -1740,7 +1741,7 @@ Recovery samples keep their historical `tool_sha` 12ce.
 
 #### Reports from retained native output
 
-`ops/transparent/scripts/activity-candidate-report.py` produces a new local
+`tools/transparent/scripts/activity-candidate-report.py` produces a new local
 `artifact-verification` or `native-certificates` report. Supply a private input
 JSON file with `--input`, its reviewed `--input-sha256`, and a new `--out` path.
 It never overwrites a prior attempt or executes a production program.
@@ -1888,7 +1889,7 @@ window, is not seen. A refusal can also be a false positive, for example a
 daemon that double-forked during a recorded operation. Root reviews the
 retained raw survey in either case.
 
-The survey is the stdlib-only `ops/lib/wallet_pir_ops/owner_survey.py`. It has
+The survey is the stdlib-only `tools/lib/wallet_pir_ops/owner_survey.py`. It has
 no package imports, so a source bootstrap can embed its exact text, as it does
 `hostlock` and `schema_fence`. The caller passes every input: namespaces,
 bounds, classes, baseline units, lock path, allowed holder and a binding of
@@ -2117,7 +2118,7 @@ review. Installed and canonical setup agreement remains a separate cutover gate.
 
 #### Independent raw RPC validation
 
-`ops/transparent/lib/activity_oracle_rpc.py` validates retained RPC attempts
+`tools/transparent/lib/activity_oracle_rpc.py` validates retained RPC attempts
 without reading any journal or running a native program. Each attempt binds an
 HTTP status and independent local `request`/`response` byte references. A gzip
 body additionally binds `decoded_sha256`; both the retained compressed bytes
@@ -2147,7 +2148,7 @@ claim to rederive every monetary or metadata field.
 
 #### Offline candidate cutover assembly
 
-`ops/transparent/scripts/activity-candidate-inputs.py --input <absolute-file>
+`tools/transparent/scripts/activity-candidate-inputs.py --input <absolute-file>
 --input-sha256 <digest> --out <new-absolute-directory>` assembles inert local
 version-2 service, proof and product staging requests. It does not query hosts,
 install configuration, start workers or qualify deployment.
@@ -2209,7 +2210,7 @@ None of this has been executed. Fixture tests are source evidence only.
 
 After the version-2 product transaction commits, `schema-qualify-*` measures
 the deployed candidate. Its module is
-`ops/transparent/lib/activity_deployed_qualification.py`. Run it on the pinned
+`tools/transparent/lib/activity_deployed_qualification.py`. Run it on the pinned
 root coordinator from a staged operations source that contains the module.
 That source can be newer than the product transaction's source.
 
@@ -2639,7 +2640,7 @@ While it runs it appends, and a reorganization can truncate the journal.
 --request-sha256 HASH` copies a committed prefix into an immutable private
 snapshot. Stage also requires `--expect-plan-sha256`. All five actions run on the
 pinned root coordinator from staged immutable operations source, in
-`ops/transparent/lib/activity_journal_snapshot.py`.
+`tools/transparent/lib/activity_journal_snapshot.py`.
 
 **What a faithful copy contains.** Native `EventStore::open_existing` reads four
 files: `meta.json`, `checkpoint.bin`, `blocks.bin` and `events.bin`. `events_at`
@@ -3180,7 +3181,7 @@ still uses its separate strict warm proof and unchanged deadlines.
 
 ### Exact retained ancillary process attribution
 
-`ops/lib/wallet_pir_ops/ancillary_baseline.py` is a read-only, standard-library
+`tools/lib/wallet_pir_ops/ancillary_baseline.py` is a read-only, standard-library
 reader shared by source/upload bootstrap, native qualification, journal snapshot
 and deployed qualification. On the pinned coordinator it verifies the historical
 `transparent-activity-prototype-server-e47bdf79.service` and existing
@@ -3281,15 +3282,15 @@ The lifecycle gate remains open until those executions and reinspection pass.
 own prefix ([architecture](architecture.md#api-versions)). Its router,
 `transparent-pir-router-01`, holds no version of its own. It is a shell (both
 sites, the 1 MB body bound, a catch-all 404, proxy errors with `Retry-After`)
-around one route file per version in [ops/deploy/api](../../ops/transparent/deploy/api):
+around one route file per version in [tools/deploy/api](../../tools/transparent/deploy/api):
 
-- [v2.caddy](../../ops/transparent/deploy/api/v2.caddy): `/v2/txid/*` goes to the one-query
+- [v2.caddy](../../tools/transparent/deploy/api/v2.caddy): `/v2/txid/*` goes to the one-query
   display site at `10.142.0.18:8095`, and every other `/v2/*` path goes to the
   v12 fleet's internal listener at `10.142.0.9:8080` with the upstream's own host
   header. The v12 fleet's `fleet.json` sets `"api_version": "v2"`, so its own
   adapter renders `/v2/` on `transparent-pir-v12.valargroup.dev` and on that
   listener.
-- [v1.caddy](../../ops/transparent/deploy/api/v1.caddy): `/v1/*` answers 410 with a JSON body
+- [v1.caddy](../../tools/transparent/deploy/api/v1.caddy): `/v1/*` answers 410 with a JSON body
   naming `/v2`, once v1 is retired.
 
 `transparent-public-router.py` inlines the files in version order and installs
@@ -3756,7 +3757,7 @@ follows the swap without downtime, as
    disk preflight checks charge entries the same way. See
    [the architecture](architecture.md#serving-and-publication).
 2. **Split display map**, as described in [The map](#the-map).
-3. **Ops** (`ops/txid/lib/txid_display_poc.py`):
+3. **Ops** (`tools/txid/lib/txid_display_poc.py`):
    - raise the `max_archive_shards` and `archives` caps from 64 to 1,024;
    - raise the per-unit `cache_bytes` cap from 64 GiB. The archive cache needs
      about 63.2 GiB with a year of growth; use 96 GiB with `MemoryMax` 71G or more;
@@ -3768,7 +3769,7 @@ follows the swap without downtime, as
      the new candidate, and rolls back by restoring the record;
    - point the request's archive host and the route's archive upstream at the
      new host.
-4. **Infrastructure** (`ops/infra/digitalocean/fleet`): an
+4. **Infrastructure** (`tools/infra/digitalocean/fleet`): an
    `m-16vcpu-128gb` display-archive droplet resource and its firewall rule for
    port 8095 from the router.
 5. **`shard-residency`** reads display geometries. Done with code item 1: the
@@ -3843,8 +3844,8 @@ change.
 
 ## Binary upgrades of the current v12 history and 4k8 display fleets
 
-`ops/scripts/wallet-pir-deploy.py transparent-binary-{plan,preflight,baseline,deploy,status,rollback}
---request F --request-sha256 H` (`ops/transparent/lib/binary_upgrade.py`) changes one component's
+`tools/scripts/wallet-pir-deploy.py transparent-binary-{plan,preflight,baseline,deploy,status,rollback}
+--request F --request-sha256 H` (`tools/transparent/lib/binary_upgrade.py`) changes one component's
 executable per transaction through the shared engine: immutable `releases/<binary sha256>` staging,
 the managed ExecStart drop-in, the production lock, the service's journal sequence and touched-target
 rollback. The request's `component` is `workers` (staged under the service root, for example
@@ -3908,8 +3909,8 @@ component. `baseline` records both components.
   an unhealthy process to be restored; existing incident latches are preserved and keep the load stopped.
   Publications, assignments, journals and routing are never written; unit drift
   beyond the binary refuses. Shipping stays disabled for history.
-- Tests: `ops/transparent/tests/test_binary_upgrade.py`, run by `make check-ops-deploy` through
-  `ops/tests/deploy/test_transparent_binary_upgrade.py`.
+- Tests: `tools/transparent/tests/test_binary_upgrade.py`, run by `make check-ops-deploy` through
+  `tools/tests/operations/deploy/test_transparent_binary_upgrade.py`.
 
 Configure the inventory's `exact_check` with the product's encrypted independent-answer probe.
 Deployment runs it after restart and rolls back on failure. After the continuous load resumes,

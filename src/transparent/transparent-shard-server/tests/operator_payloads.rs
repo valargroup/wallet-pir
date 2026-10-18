@@ -16,12 +16,12 @@
 //! A test asserting a hand-written list of field paths drifts exactly the way
 //! `verify()` drifted: two independent lists, and nothing to keep them
 //! together. So this writes the payloads the server actually serializes, and
-//! `ops/scripts/check-jq-contracts.sh` runs the *script's own* jq programs
+//! `tools/scripts/check-jq-contracts.sh` runs the *script's own* jq programs
 //! against them. Neither side transcribes the other, so neither can go stale
 //! alone.
 //!
 //! A change to an operator payload therefore shows up as a diff in
-//! `ops/transparent/fixtures/`. That is the point: the operator contract should be
+//! `tools/transparent/fixtures/`. That is the point: the operator contract should be
 //! something a reviewer sees change. It also catches a rename arriving through
 //! a dependency bump — the native `NativeScheme` is serialized wholesale into
 //! `geometries[]`, and nothing else in the tree would notice.
@@ -65,12 +65,9 @@ const GEOMETRIES: [&Geometry; 2] = [&DECOUPLED_2K_8K, &DECOUPLED_2K_8K];
 
 fn fixture_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../ops/transparent/fixtures/transparent-shard")
+        .join("../../../tools/transparent/fixtures/transparent-shard")
         .canonicalize()
-        .unwrap_or_else(|_| {
-            Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../../../ops/transparent/fixtures/transparent-shard")
-        })
+        .expect("operator payload fixtures must exist in the repository")
 }
 
 fn genesis() -> BlockHash {
@@ -255,7 +252,7 @@ fn golden(name: &str, actual: &serde_json::Value) {
     );
 }
 
-/// Serves the operator payloads and pins them against `ops/transparent/fixtures/`.
+/// Serves the operator payloads and pins them against `tools/transparent/fixtures/`.
 #[tokio::test(flavor = "multi_thread")]
 async fn the_operator_payloads_match_what_ops_parses() {
     let dir = tempfile::tempdir().unwrap();

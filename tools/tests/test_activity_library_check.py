@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from decimal import Decimal
 
-SCRIPT=Path(__file__).resolve().parents[2]/'ops/transparent/scripts/activity-library-check.py'
+SCRIPT=Path(__file__).resolve().parents[2]/'tools/transparent/scripts/activity-library-check.py'
 spec=importlib.util.spec_from_file_location('activity_library_check',SCRIPT)
 oracle=importlib.util.module_from_spec(spec);spec.loader.exec_module(oracle)
 

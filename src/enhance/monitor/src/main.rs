@@ -40,7 +40,7 @@ struct View {
     incidents: Vec<Incident>,
 }
 /// Where service incidents link unless `PIR_MONITOR_PUBLIC_STATUS_URL` overrides it; the
-/// public route of `ops/enhance/deploy/pir-monitor.Caddyfile`.
+/// public route of `tools/enhance/deploy/pir-monitor.Caddyfile`.
 const PUBLIC_STATUS_URL: &str = "https://monitor-pir.valargroup.dev/monitor-status";
 fn env(key: &str) -> Result<String> {
     std::env::var(key).with_context(|| format!("{key} is required"))
@@ -417,7 +417,7 @@ mod tests {
 
     #[test]
     fn service_incidents_link_to_the_public_monitor_status() {
-        let caddy = include_str!("../../../../ops/enhance/deploy/pir-monitor.Caddyfile");
+        let caddy = include_str!("../../../../tools/enhance/deploy/pir-monitor.Caddyfile");
         let (host, path) = PUBLIC_STATUS_URL
             .strip_prefix("https://")
             .unwrap()

@@ -12,7 +12,7 @@ not establish what is running; inspect the fleet and retained deployment evidenc
 | Status | Separate observation controller, packing router and evaluation worker; implementation shares the Enhance package | [Architecture](status/architecture_status.md), [distributed topology](status/status_distributed.md) |
 | Transparent history | Event journal writer, publication controller, recent/archive workers and public routing | [Architecture](transparent/architecture.md), [deployment](transparent/deployment.md) |
 | Transparent display | Its own transaction journal, publication controller and display workers | [Display contract](txid/txid-display.md) |
-| Receiver | One process indexes, publishes and serves receiver payments | [Overview](receiver/README.md), [deployment](../ops/receiver/digitalocean/README.md) |
+| Receiver | One process indexes, publishes and serves receiver payments | [Overview](receiver/README.md), [deployment](../tools/receiver/digitalocean/README.md) |
 
 The [serving contract](serving-contract.md) records their shared process identity
 and deliberate differences. A running process is not necessarily authorized,
@@ -21,13 +21,13 @@ reports. [Control sessions](control-sessions.md) records what dated captures sho
 of the shared supervisor (observed carrying Status; its restricted account and the
 other products not adopted); packaging it does not deploy or adopt it.
 
-Shared operations live in `ops/lib/wallet_pir_ops`. Product adapters live with the
-product under `ops/<product>/`: `ops/enhance`, `ops/status`, `ops/transparent`,
-`ops/txid` (transaction-detail display) and `ops/receiver`, including
-`ops/transparent/lib/deploy_cli.py` and the txid display driver it dispatches to. The shared
-[role registry](../ops/deploy/services.toml) includes product-owned descriptors.
+Shared operations live in `tools/lib/wallet_pir_ops`. Product adapters live with the
+product under `tools/<product>/`: `tools/enhance`, `tools/status`, `tools/transparent`,
+`tools/txid` (transaction-detail display) and `tools/receiver`, including
+`tools/transparent/lib/deploy_cli.py` and the txid display driver it dispatches to. The shared
+[role registry](../tools/deploy/services.toml) includes product-owned descriptors.
 Each inventory role names its actual host, unit, private addresses and artifact
-variant. The [example inventory](../ops/enhance/deploy/deploy-inventory.example.json)
+variant. The [example inventory](../tools/enhance/deploy/deploy-inventory.example.json)
 uses documentation addresses and is not the live fleet.
 
 ## Operations releases
@@ -47,8 +47,8 @@ the exact source revision. Verify and unpack it into a new release directory:
 
 ```sh
 python3 tools/ci/release.py resolve --sha <full-revision> --kind wallet-pir-ops
-python3 ops/scripts/wallet-pir-bundle.py verify --sha <full-revision> --archive wallet-pir-ops.tar.gz
-python3 ops/scripts/wallet-pir-bundle.py extract --sha <full-revision> --archive wallet-pir-ops.tar.gz --output /path/to/new-release
+python3 tools/scripts/wallet-pir-bundle.py verify --sha <full-revision> --archive wallet-pir-ops.tar.gz
+python3 tools/scripts/wallet-pir-bundle.py extract --sha <full-revision> --archive wallet-pir-ops.tar.gz --output /path/to/new-release
 ```
 
 Verification refuses unsafe paths, links, duplicates, incomplete inventories,
@@ -62,13 +62,18 @@ archive names a source revision, it must match the operations release's revision
 For local development, assemble an inspection bundle without compiling Rust:
 
 ```sh
-python3 ops/scripts/wallet-pir-bundle.py assemble --sha <checkout-revision> --archive /tmp/wallet-pir-ops.tar.gz
+python3 tools/scripts/wallet-pir-bundle.py assemble --sha <checkout-revision> --archive /tmp/wallet-pir-ops.tar.gz
 ```
 
 Use wrappers from the unpacked release's directory tree. Do not copy individual
 Python files out of it. `wallet-pir-bundle.py self-check --sha <revision>` checks
 the unpacked release it belongs to, wherever it was moved. Retained installed
 standalone scripts have their recorded source identities.
+
+New releases place their commands under `tools/scripts/`. Retained releases keep
+their original `ops/scripts/` paths. Package verification and rollback check the
+recorded tree first, then run that release's own entrypoints; installed files and
+past transaction records are never rewritten for a source directory move.
 
 ## Installing the package on the coordinator
 
@@ -94,12 +99,12 @@ restarts nothing. Each product's locked deployment adopts services separately, a
 status documents must keep the two apart.
 
 ```sh
-python3 <release>/ops/scripts/wallet-pir-deploy.py --inventory <inventory> ops-package-plan \
+python3 <release>/tools/scripts/wallet-pir-deploy.py --inventory <inventory> ops-package-plan \
     --sha <full-revision> --ci-run-id <full-CI run on main> --fleet fleet.json [--known-hosts known_hosts]
-python3 <release>/ops/scripts/wallet-pir-deploy.py --inventory <inventory> ops-package-preflight ...same...
-python3 <release>/ops/scripts/wallet-pir-deploy.py --inventory <inventory> ops-package-install ...same... \
+python3 <release>/tools/scripts/wallet-pir-deploy.py --inventory <inventory> ops-package-preflight ...same...
+python3 <release>/tools/scripts/wallet-pir-deploy.py --inventory <inventory> ops-package-install ...same... \
     --expect-plan-sha256 <reviewed plan digest>
-python3 <release>/ops/scripts/wallet-pir-deploy.py --inventory <inventory> ops-package-status
+python3 <release>/tools/scripts/wallet-pir-deploy.py --inventory <inventory> ops-package-status
 ```
 
 Plan and preflight change nothing on the coordinator. The archive is the one inside
@@ -176,9 +181,9 @@ read-only and report an unreachable host as a result instead of leaving it out. 
 documentation values; it is not the live fleet.
 
 ```sh
-python3 <release>/ops/scripts/wallet-pir-deploy.py --inventory /path/to/inventory.json fleet --complete
-python3 <release>/ops/scripts/wallet-pir-deploy.py --inventory /path/to/inventory.json --json status enhance
-python3 <release>/ops/scripts/wallet-pir-deploy.py --inventory /path/to/inventory.json --json status transparent-history
+python3 <release>/tools/scripts/wallet-pir-deploy.py --inventory /path/to/inventory.json fleet --complete
+python3 <release>/tools/scripts/wallet-pir-deploy.py --inventory /path/to/inventory.json --json status enhance
+python3 <release>/tools/scripts/wallet-pir-deploy.py --inventory /path/to/inventory.json --json status transparent-history
 ```
 
 `fleet` reads configured roles without contacting hosts. `status` reports observed
@@ -197,9 +202,9 @@ lock; no units restart. Activation and rollback keep their descriptor order.
 Enhance, Status and Receiver use the ordinary binary lifecycle:
 
 ```sh
-python3 <release>/ops/scripts/wallet-pir-deploy.py --inventory /path/to/inventory.json capture-baseline enhance
-python3 <release>/ops/scripts/wallet-pir-deploy.py --inventory /path/to/inventory.json --json plan enhance --archive enhance-pir-native.tar.gz --kind enhance-pir-native --sha <full-revision>
-python3 <release>/ops/scripts/wallet-pir-deploy.py --inventory /path/to/inventory.json preflight enhance --archive enhance-pir-native.tar.gz --kind enhance-pir-native --sha <full-revision>
+python3 <release>/tools/scripts/wallet-pir-deploy.py --inventory /path/to/inventory.json capture-baseline enhance
+python3 <release>/tools/scripts/wallet-pir-deploy.py --inventory /path/to/inventory.json --json plan enhance --archive enhance-pir-native.tar.gz --kind enhance-pir-native --sha <full-revision>
+python3 <release>/tools/scripts/wallet-pir-deploy.py --inventory /path/to/inventory.json preflight enhance --archive enhance-pir-native.tar.gz --kind enhance-pir-native --sha <full-revision>
 ```
 
 Review the complete captured unit and its drop-ins, the planned differences and
@@ -233,7 +238,7 @@ template's other service settings and credential-file restrictions.
 Render both for review without writing files or contacting a host:
 
 ```sh
-python3 <release>/ops/scripts/wallet-pir-roles.py --service transparent-history --role publisher --config /path/to/controller.json --config-path /etc/transparent-pir/controller.json --state-dir /srv/transparent-publisher-state
+python3 <release>/tools/scripts/wallet-pir-roles.py --service transparent-history --role publisher --config /path/to/controller.json --config-path /etc/transparent-pir/controller.json --state-dir /srv/transparent-publisher-state
 ```
 
 Configuration must live outside the role's writable directories. Invalid paths,
@@ -252,8 +257,8 @@ Every product registers one optional external worker role that an operator can
 add on a host of their own: `enhance.external-worker`, `status.external-worker`,
 `transparent-history.external-worker`, `transparent-display.external-worker`
 and `receiver.serve-publication`. Its whole unit and configuration are rendered
-by the product's adapter (`ops/enhance/lib/roles.py`, `ops/status/lib/roles.py`,
-`ops/transparent/lib/roles.py`, `ops/txid/lib/roles.py`, `ops/receiver/lib/roles.py`) from the
+by the product's adapter (`tools/enhance/lib/roles.py`, `tools/status/lib/roles.py`,
+`tools/transparent/lib/roles.py`, `tools/txid/lib/roles.py`, `tools/receiver/lib/roles.py`) from the
 inventory entry's `settings`; the template beside it owns the sandbox. The
 inventory owns hosts, paths, listeners, budgets (`limits`: `MemoryMax`,
 `MemoryHigh`, `MemorySwapMax`, `CPUQuota`, `CPUWeight`, `IOWeight`, `Nice`,
@@ -276,7 +281,7 @@ state and cache directories, which an install creates.
 Review a rendering before any host is touched:
 
 ```sh
-python3 <release>/ops/scripts/wallet-pir-roles.py --service receiver --role serve-publication \
+python3 <release>/tools/scripts/wallet-pir-roles.py --service receiver --role serve-publication \
   --settings settings.json --release /opt/receiver-pir/releases/<sha256>
 ```
 
@@ -347,9 +352,9 @@ this pass adds no new provisioning service, paid infrastructure or serving lease
 
 ## Infrastructure source layout
 
-The [DigitalOcean service layout](../ops/infra/digitalocean/README.md) keeps the
+The [DigitalOcean service layout](../tools/infra/digitalocean/README.md) keeps the
 existing production and worker-pool state boundaries. Source paths are
 `fleet/`, the four service modules, and the two service-owned `worker-pool/`
 roots. Installed runtime paths, backend keys and writer locks retain their
-existing names. Follow the [activation gate](../ops/infra/digitalocean/fleet/activation.md)
+existing names. Follow the [activation gate](../tools/infra/digitalocean/fleet/activation.md)
 before installing this source or updating production state.

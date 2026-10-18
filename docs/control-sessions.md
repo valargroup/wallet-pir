@@ -19,11 +19,11 @@ supervisor.
 
 ## Supervisor
 
-- Library: `ops/lib/wallet_pir_ops/control_sessions.py` (standard library only)
-- Entry point: `ops/scripts/wallet-pir-control-sessions.py`
-- Unit: `ops/deploy/wallet-pir-control-sessions.service`
+- Library: `tools/lib/wallet_pir_ops/control_sessions.py` (standard library only)
+- Entry point: `tools/scripts/wallet-pir-control-sessions.py`
+- Unit: `tools/deploy/wallet-pir-control-sessions.service`
 - Configuration: `/etc/wallet-pir/control-sessions.json`
-- Status example: `ops/status/deploy/control-sessions.example.json`
+- Status example: `tools/status/deploy/control-sessions.example.json`
 
 Each configured session is one foreground `ssh -N` master (`ControlMaster=yes`).
 It carries the session's TCP local forwards (`-L`), TCP reverse forwards (`-R`)
@@ -90,7 +90,7 @@ The key line is
   listeners to the configured literal `IPv4:port` endpoints.
 
 For the Status example the generator reproduces the key line in
-`ops/infra/digitalocean/status/cloud-init.yaml.tftpl` byte for byte.
+`tools/infra/digitalocean/status/cloud-init.yaml.tftpl` byte for byte.
 An empty `permitopen` list would allow every destination, so a key needs at
 least one local forward.
 
@@ -135,7 +135,7 @@ AUTHORIZED_KEYS FILE FORMAT, `sshd_config(5)`) and a private `sshd` on
   After the reload both tunnels stayed active, a fresh TCP forward answered and a
   Unix-socket `-R` was refused.
 
-`RealSshdTest` in `ops/tests/control_sessions/test_control_sessions.py` repeats
+`RealSshdTest` in `tools/tests/operations/control_sessions/test_control_sessions.py` repeats
 this with the generated key line and Match block. Run it with
 `WALLET_PIR_SSHD_PROBE=1 make check-ops-control-sessions`. It checks that:
 
@@ -192,7 +192,7 @@ Status query path, so it needs a window.
    - restart the Status host.
 
    Rollback is starting the two tunnel units again after stopping the
-   supervisor. Their templates stay in `ops/status/deploy/`.
+   supervisor. Their templates stay in `tools/status/deploy/`.
 2. **Transparent.**
    - Decide on and build the loopback TCP control endpoint.
    - Add a `pir-control` account through Terraform cloud-init, with its key in

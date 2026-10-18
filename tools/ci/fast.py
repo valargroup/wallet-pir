@@ -29,6 +29,8 @@ HELPERS = OPS | {'check-docs', 'check-tools', 'check-reports'}
 
 
 def feedback_tooling(path):
+    if path.startswith('tools/tests/operations/'):
+        return False
     return path == '.gitignore' or path.startswith(('tools/ci/', 'tools/tests/',
         '.github/workflows/ci', '.github/actions/rust-setup/', '.github/actions/qualify-artifacts/'))
 
@@ -63,46 +65,55 @@ def owner(packages, path):
 
 def route(path):
     """Return helper targets/full groups, or None for an unknown path."""
+    # A comparison crossing the move can contain deletions at the previous paths.
+    if path.startswith('ops/'):
+        path = ('tools/tests/operations/' + path[len('ops/tests/'):]
+                if path.startswith('ops/tests/') else 'tools/' + path[len('ops/'):])
     if path in {'tools/check-doc-links.sh', 'tools/check-doc-links.py'}:
         return {'check-docs', 'check-tools'}, {'ops'}
-    if path == 'ops/enhance/deploy/deploy-inventory.example.json':
-        # ops/tests pins the receiver's exact check.
+    if path == 'tools/enhance/deploy/deploy-inventory.example.json':
+        # Shared operations tests pin the receiver's exact check.
         return {'check-ops-enhance', 'check-ops-deploy', 'check-ops-contracts', 'check-ops-shared'}, {'ops'}
-    if path.startswith('ops/receiver/'):
-        # ops/tests pins the receiver's edge, unit, cloud-init and runbook monitor
+    if path.startswith('tools/receiver/'):
+        # Shared operations tests pin the receiver's edge, unit, cloud-init and runbook monitor
         # config and tests its helpers, and the deploy tests install its unit.
         return {'check-docs', 'check-ops-shared', 'check-ops-deploy'}, {'ops'}
     if path.endswith('.md') or path.startswith(('docs/', 'evidence/', 'evidence/enhance/', 'evidence/transparent/', 'evidence/receiver/')):
         return {'check-docs'}, {'ops'}
     if path.startswith('.github/workflows/deploy-') or path.startswith('.github/workflows/configure-'):
         return {'check-tools', 'check-ops-contracts', 'check-ops-deploy'}, {'ops'}
-    if path.startswith(('ops/infra/digitalocean/enhance/worker-pool/', 'ops/infra/digitalocean/enhance-v4/')):
+    if path.startswith(('tools/infra/digitalocean/enhance/worker-pool/', 'tools/infra/digitalocean/enhance-v4/')):
         return {'check-ops-deploy'}, {'enhance_infra', 'ops'}
-    if path.startswith(('ops/infra/digitalocean/transparent/worker-pool/', 'ops/infra/digitalocean/transparent-elastic/')):
+    if path.startswith(('tools/infra/digitalocean/transparent/worker-pool/', 'tools/infra/digitalocean/transparent-elastic/')):
         return {'check-ops-elastic'}, {'transparent_infra', 'ops'}
-    if path.startswith('ops/lib/'):
+    if path.startswith('tools/lib/'):
         return OPS, {'ops'}
-    if path.startswith(('ops/infra/digitalocean/fleet/', 'ops/infra/digitalocean/production/',
-                        'ops/infra/digitalocean/enhance/', 'ops/infra/digitalocean/status/',
-                        'ops/infra/digitalocean/transparent/', 'ops/infra/digitalocean/transparent-tx-detail/')):
+    if path.startswith(('tools/infra/digitalocean/fleet/', 'tools/infra/digitalocean/production/',
+                        'tools/infra/digitalocean/enhance/', 'tools/infra/digitalocean/status/',
+                        'tools/infra/digitalocean/transparent/', 'tools/infra/digitalocean/transparent-tx-detail/')):
         # The txid display deploy pins this root's firewall sources.
         return {'check-ops-shared', 'check-ops-control-sessions', 'check-ops-contracts', 'check-ops-deploy', 'check-ops-txid-display'}, {'enhance_infra', 'ops'}
-    if path.startswith('ops/status/'):
+    if path in {'tools/status/status_qualification.py', 'tools/status/test_status_qualification.py'} or path.startswith(('tools/txid/txid-sizing/', 'tools/txid/txid-display/')):
+        return {'check-tools'}, {'ops'}
+    if path.startswith('tools/status/'):
         # Status units and descriptor feed the deploy and role tests; its
         # control-session example is pinned by the supervisor tests.
         return {'check-ops-shared', 'check-ops-control-sessions', 'check-ops-deploy', 'check-ops-contracts'}, {'ops'}
-    if path.startswith('ops/txid/'):
+    if path.startswith('tools/txid/'):
         if 'txid_display' in path or 'txid-display' in path:
             return {'check-ops-txid-display', 'check-ops-contracts'}, {'ops'}
         # Its service descriptor and worker role feed the shared deploy and role tests.
         return {'check-ops-txid-display', 'check-ops-shared', 'check-ops-deploy', 'check-ops-contracts'}, {'ops'}
-    if path.startswith('ops/tests/control_sessions/') or 'control-session' in path:
+    if path.startswith('tools/tests/operations/control_sessions/') or 'control-session' in path:
         return {'check-ops-control-sessions'}, {'ops'}
-    if path.startswith(('ops/tests/deploy/', 'ops/scripts/wallet-pir-deploy', 'ops/scripts/deploy-')):
+    if path.startswith(('tools/tests/operations/deploy/', 'tools/scripts/wallet-pir-deploy', 'tools/scripts/deploy-')):
         return {'check-ops-deploy', 'check-ops-contracts'}, {'ops'}
-    if path.startswith('ops/enhance/'):
+    if path.startswith(('tools/transparent/filters/', 'tools/transparent/parent-filters/',
+                        'tools/enhance/v7-', 'tools/enhance/schema11-')):
+        return {'check-tools'}, {'ops'}
+    if path.startswith('tools/enhance/'):
         return {'check-ops-enhance', 'check-ops-deploy', 'check-ops-contracts'}, {'ops'}
-    if path.startswith('ops/transparent/'):
+    if path.startswith('tools/transparent/'):
         if 'scaler' in path or 'membership_model' in path:
             targets = {'check-ops-scaler-fast'}
         elif 'elastic' in path or 'test_transparent_plan' in path:
@@ -120,7 +131,7 @@ def route(path):
         else:
             targets = {t for t in OPS if t not in {'check-ops-enhance', 'check-ops-control-sessions', 'check-ops-shared'}}
         return targets | {'check-ops-contracts'}, {'ops'}
-    if path.startswith('ops/'):
+    if path.startswith(('tools/tests/operations/', 'tools/scripts/', 'tools/deploy/', 'tools/infra/')):
         return {'check-ops-shared', 'check-ops-contracts', 'check-ops-deploy'}, {'ops'}
     if path.startswith('src/transparent/transparent-loadtest/'):
         return {'check-reports'}, {'transparent', 'ops'}

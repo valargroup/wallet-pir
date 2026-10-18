@@ -8,7 +8,7 @@ use std::process::Command;
 const BOUNDS: [&str; 2] = ["EVENT_BYTES", "MAX_EVENT_BYTES"];
 
 fn snapshot_module() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../ops/lib/activity_journal_snapshot.py")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../transparent/lib/activity_journal_snapshot.py")
 }
 
 /// The bounds the Python module at `module` holds after `then` runs.
@@ -22,7 +22,7 @@ fn python_bounds(module: &Path, then: &str) -> Value {
          print(json.dumps({{'event_bytes': S.EVENT_BYTES, 'max_event_bytes': S.MAX_EVENT_BYTES}}))"
     );
     // The module imports the repository's shared operations package.
-    let shared = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../../../ops/transparent/lib");
+    let shared = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../lib");
     let output = Command::new("python3")
         .env("PYTHONPATH", shared)
         .args(["-B", "-c", &script])

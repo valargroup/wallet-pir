@@ -102,7 +102,7 @@ jobs:
           set -euo pipefail
           mkdir -p publisher-evidence
           sudo --preserve-env=WALLET_PIR_DEPLOY_SSH_KEY,TRANSPARENT_SSH_KNOWN_HOSTS,TRANSPARENT_FLEET_JSON,TRANSPARENT_ROUTER_HOST \
-            python3 ops/transparent/scripts/deploy-transparent-publisher.py "$MODE" \
+            python3 tools/transparent/scripts/deploy-transparent-publisher.py "$MODE" \
             --artifacts "$PWD/artifact" --initial-publication "$INITIAL" --source-sha "$SHA" \
             --directory-choice "$DIRECTORY_CHOICE" --range-profile "$RANGE_PROFILE" \
             --recent-geometry "$RECENT_GEOMETRY" \

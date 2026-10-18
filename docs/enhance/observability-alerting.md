@@ -79,7 +79,7 @@ mistaken for coverage. Unconfigured Status installations have no Status rules.
 
 ## Configuration
 
-Install `ops/enhance/deploy/pir-apm-observability.conf` as a systemd drop-in,
+Install `tools/enhance/deploy/pir-apm-observability.conf` as a systemd drop-in,
 retaining the deployed Slack credential wrapper and replacing only its binary
 path. Set `PIR_APM_ORACLE_ANCHOR_HEIGHT` and `PIR_APM_ORACLE_ANCHOR_HASH` from the
 pinned production oracle. The direct RPC loop validates that block hash each
@@ -193,7 +193,7 @@ Investigate by check family:
 ## Deployment and rollback
 
 1. Run APM, checker, telemetry/control/router tests and clippy. Build release
-   binaries on the CI host with `ops/enhance/scripts/build-observability.sh`.
+   binaries on the CI host with `tools/enhance/scripts/build-observability.sh`.
    It explicitly overrides the repository's developer `target-cpu=native` with
    the fleet's Haswell baseline. A CLI `--help` check is insufficient: run the
    isolated native workload on the deployment host before changing ExecStart,
@@ -380,7 +380,7 @@ snapshot entry then adds `unit` (the main unit), `host_id`, `size`,
 cgroup's `memory.stat`), `memory_peak_bytes`, `memory_max_bytes` (null when
 unlimited) and `oom_kills`. A value the host does not report, or a unit systemd
 has not loaded, is left out. The existing fields are unchanged.
-[`pir-quality-hosts.example.json`](../../ops/enhance/deploy/pir-quality-hosts.example.json)
+[`pir-quality-hosts.example.json`](../../tools/enhance/deploy/pir-quality-hosts.example.json)
 samples the coordinator, the router, the v12 roster and the one-query txid site.
 Caddy 2.6 metrics must be enabled in the generated router configuration. Only
 the deployed top-level `subroute` handler boundary is counted; nested handler
@@ -398,7 +398,7 @@ binaries in `canonical-load/v11/pins.json`. `/etc/pir-quality/qualified-workers.
 belongs to the stopped v10 load and is kept as v10 rollback state; neither APM
 nor the v11 load reads it.
 
-`ops/enhance/scripts/retarget-transparent-quality.py` makes both moves. Its
+`tools/enhance/scripts/retarget-transparent-quality.py` makes both moves. Its
 `apm` mode, on the coordinator, rewrites only the named history service's
 (`--service`, default `transparent`) `roster`, and its `synthetic_status` when
 `--load-status` is given, and restarts only `pir-apm`; its `monitor` mode rewrites only the Transparent probe's canary,
@@ -426,7 +426,7 @@ not an independently operated consensus oracle.
 `PIR_APM_SERVICE_MONITOR_URL` optionally reads the dedicated monitor's aggregate
 Status and Transparent results. `PIR_MONITOR_SERVICE_PROBES_CONFIG` contains an
 array of `{service, command, timeout_seconds}` records; the host drop-in
-[`pir-monitor-service-quality.conf`](../../ops/enhance/deploy/pir-monitor-service-quality.conf)
+[`pir-monitor-service-quality.conf`](../../tools/enhance/deploy/pir-monitor-service-quality.conf)
 sets it and loads the probes' node cookie. Commands are absolute
 argument arrays, timeouts are 1–45 seconds, and output is bounded and sanitized.
 Build the Transparent native `quality-canary` separately from native Enhance
@@ -442,7 +442,7 @@ schema differs from its fixture's, so a schema cutover fails it on every sample
 until both change. Give it the continuous load's fixture (for v11,
 `/srv/transparent-activity/canonical-load/v11/fixture.json`, exported from the
 gate-verified initial publication) and derive its pins with
-`ops/enhance/scripts/transparent-canary-pins.py --fixture FILE --shard-map
+`tools/enhance/scripts/transparent-canary-pins.py --fixture FILE --shard-map
 <live publication>/shards.json --rpc-url URL --cookie FILE`. It refuses a fixture
 naming any revision the live map no longer serves sealed, and prints the fixture
 SHA-256 and the anchor: the terminal block of the highest fixture shard, checked

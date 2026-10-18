@@ -59,12 +59,12 @@ reason = "Essential correctness certificate."
         self.assertEqual(self.inspect()[0:2], ([], []))
 
     def test_dump_in_an_unrelated_directory_is_rejected(self):
-        self.write('ops/accidental.json', '{}\n')
+        self.write('tools/accidental.json', '{}\n')
         self.write('product/run.log', 'captured output\n')
         self.write('self-review.md', '# Approved\n')
         errors, _, _ = self.inspect()
         self.assertEqual(len(errors), 3)
-        self.assertTrue(any('ops/accidental.json: run data' in e for e in errors))
+        self.assertTrue(any('tools/accidental.json: run data' in e for e in errors))
 
     def test_evidence_cannot_be_used_as_a_script_directory(self):
         self.write('evidence/transparent/run/summarize.py', 'print(1)\n')
