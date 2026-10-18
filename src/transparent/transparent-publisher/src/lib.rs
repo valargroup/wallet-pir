@@ -8,5 +8,3 @@
 pub mod history;
 pub mod ingest;
 pub mod tx_detail;
-
-pub mod compact;
