@@ -158,6 +158,16 @@ class QualificationTests(unittest.TestCase):
         preparation = (ROOT / '.github/workflows/ci-prepare.yml').read_text()
         self.assertIn('vars.WALLET_PIR_MAIN_RUNNER', preparation)
 
+    def test_branch_preparation_cannot_hold_the_main_runner_or_concurrency_slot(self):
+        workflow = (ROOT / '.github/workflows/ci-prepare.yml').read_text()
+        routing = next(line for line in workflow.splitlines() if 'runs-on:' in line)
+        self.assertIn("github.ref == 'refs/heads/main' && vars.WALLET_PIR_MAIN_RUNNER", routing)
+        self.assertIn("|| '\"ubuntu-24.04\"'", routing)
+        group = next(line for line in workflow.splitlines() if line.strip().startswith('group:'))
+        self.assertIn("github.ref == 'refs/heads/main' && 'fast-refs/heads/main'", group)
+        self.assertIn("|| format('prepare-fast-{0}', github.ref)", group)
+        self.assertIn('cancel-in-progress: false', workflow)
+
     def test_only_fast_validation_and_dependency_cache_priming_run_on_main_pushes(self):
         # Parse trigger structure so adding a comment mentioning "push" cannot
         # accidentally change which workflows this assertion covers.

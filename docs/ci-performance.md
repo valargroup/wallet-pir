@@ -423,9 +423,11 @@ retains persistent build lanes. A missing cache never relaxes validation or the
 ## Cold preparation and representative latency
 
 Dispatch **Prepare fast validation** on a dependency/toolchain upgrade branch
-before landing it. It compiles and validates the same fast units using the fast
-runner's cache. Main pushes preempt preparation; preparation cannot cancel a
-running main check. Main rejects an entirely empty cache with an explicit
+before landing it. Branch preparation uses hosted runners and a branch-specific
+concurrency group, so it cannot occupy main's runner or scheduling slot. Dispatch
+on `main` to prepare its trusted persistent cache. Main pushes preempt that
+preparation; preparation cannot cancel a running main check.
+Main rejects an entirely empty cache with an explicit
 preparation error instead of spending its three-minute budget on native builds.
 Cargo still validates dependencies and rebuilds changed units on every run.
 The optional `stress` input repeats each family's encrypted HTTP/recovery smoke

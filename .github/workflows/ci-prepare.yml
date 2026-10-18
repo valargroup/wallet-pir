@@ -1,7 +1,7 @@
 name: Prepare fast validation
 
-# Explicit cold/dependency validation before landing an upgrade. A main push
-# preempts this work on the fast runner rather than queueing behind it.
+# Explicit cold/dependency validation before landing an upgrade. Only a main
+# preparation uses the trusted fast runner; branch preparation stays hosted.
 on:
   workflow_dispatch:
     inputs:
@@ -19,7 +19,7 @@ permissions:
   actions: read
 
 concurrency:
-  group: fast-refs/heads/main
+  group: ${{ github.ref == 'refs/heads/main' && 'fast-refs/heads/main' || format('prepare-fast-{0}', github.ref) }}
   cancel-in-progress: false
 
 env:
@@ -31,7 +31,7 @@ env:
 jobs:
   prepare:
     name: Prepare and validate cold fast units
-    runs-on: ${{ fromJSON(vars.WALLET_PIR_MAIN_RUNNER || '"ubuntu-24.04"') }}
+    runs-on: ${{ fromJSON(github.ref == 'refs/heads/main' && vars.WALLET_PIR_MAIN_RUNNER || '"ubuntu-24.04"') }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
