@@ -266,7 +266,7 @@ class BoundaryTests(unittest.TestCase):
         metadata = {
             'packages': [
                 local('serving', 'status-serving', 'src/status/status-serving'),
-                local('enhance', 'enhance-serving', 'src/enhance/enhance-serving'),
+                local('enhance', 'pir-serving', 'src/shared/pir-serving'),
                 local('control', 'pir-control', 'src/shared/pir-control'),
                 {'id': 'mid', 'name': 'helper', 'source': 'registry'},
                 {'id': 'chain', 'name': 'zakura-server-chain',
@@ -282,13 +282,20 @@ class BoundaryTests(unittest.TestCase):
             ]},
         }
         self.assertEqual(boundary.resolved_violations(metadata), [])
+        # Status serving may not reach Enhance serving, another product's package.
+        enhance = {**metadata, 'packages': [*metadata['packages'],
+                   local('product', 'enhance-serving', 'src/enhance/enhance-serving')],
+                   'resolve': {'nodes': [node('serving', [('product', None)]),
+                                         *metadata['resolve']['nodes'][1:], node('product', [])]}}
+        self.assertEqual(boundary.resolved_violations(enhance),
+                         ['status-serving: serving library resolves enhance-serving'])
         metadata['resolve']['nodes'][3] = node('mid', [('chain', None)])
         metadata['resolve']['nodes'][0] = node('serving', [('enhance', None), ('app', 'dev'),
                                                            ('other', None)])
         # Both are also pure packages, whose own rule refuses the chain reader.
         self.assertEqual(boundary.resolved_violations(metadata), [
-            'enhance-serving: resolves zakura-server-chain',
-            'enhance-serving: serving library resolves zakura-server-chain',
+            'pir-serving: resolves zakura-server-chain',
+            'pir-serving: serving library resolves zakura-server-chain',
             'status-serving: resolves zakura-server-chain',
             'status-serving: serving library resolves enhance-pir-server',
             'status-serving: serving library resolves receiver-store',
