@@ -58,7 +58,8 @@ fn owned_fixture(build: impl FnOnce(&Path)) -> PathBuf {
 fn prepared_fixture(through: u64) -> &'static Path {
     fn build(through: u64) -> PathBuf {
         owned_fixture(|root| {
-            let (directory, set) = publication_through(root, through);
+            let (directory, set) =
+                publication_fixture(root, through, !cfg!(feature = "qualification-tests"));
             prepare_recent(&directory, &set);
         })
     }
@@ -414,6 +415,7 @@ impl CheckedAnswer {
     async fn check(&self, origin: &str) {
         let response = reqwest::Client::new()
             .post(format!("{origin}{}", self.path))
+            .header(reqwest::header::CONNECTION, "close")
             .body(self.body.clone())
             .send()
             .await
@@ -845,11 +847,7 @@ async fn control_write_failure(pause_at: Option<u32>, failed_record: &str) {
     let root = tempfile::tempdir().unwrap();
     let (directory, set, distribution) = immutable_publication(2);
     let rpc = canonical_rpc(root.path(), &set).await;
-    let owner = authority(
-        &directory,
-        Some(Finalized::prepare(&directory, &set, 2).unwrap()),
-        rpc.client.clone(),
-    );
+    let owner = authority(&directory, Some(distribution), rpc.client.clone());
     let tls = tls(root.path(), owner.clone()).await;
     let state = root.path().join("provider");
     if high_water_fault.is_some() {
