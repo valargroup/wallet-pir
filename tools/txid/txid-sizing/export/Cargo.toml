@@ -14,12 +14,12 @@ serde = { version = "1", features = ["derive"] }
 tempfile = "3"
 sha2 = "0.10"
 thiserror = "2"
-transparent-events = { package = "zakura-transparent-events", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "0c110882ad6d36c9d3ad811903abdf37b13d35d5" }
-transparent-filter = { package = "zakura-transparent-filter", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "0c110882ad6d36c9d3ad811903abdf37b13d35d5" }
-transparent-shard = { package = "zakura-transparent-shard", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "0c110882ad6d36c9d3ad811903abdf37b13d35d5" }
+transparent-events = { package = "zakura-transparent-events", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "63d31b4486dffe60982c395fffb40e9a02497008" }
+transparent-filter = { package = "zakura-transparent-filter", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "63d31b4486dffe60982c395fffb40e9a02497008" }
+transparent-shard = { package = "zakura-transparent-shard", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "63d31b4486dffe60982c395fffb40e9a02497008" }
 # Transaction and block reads through the server adapter, at the revision the
 # services pin.
-zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "0c110882ad6d36c9d3ad811903abdf37b13d35d5" }
+zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "63d31b4486dffe60982c395fffb40e9a02497008" }
 
 [build-dependencies]
 sha2 = "0.10"
@@ -29,7 +29,7 @@ toml = "0.8.23"
 [dev-dependencies]
 toml = "0.8.23"
 # Raw synthetic blocks for the shared extractor's tests.
-zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "0c110882ad6d36c9d3ad811903abdf37b13d35d5", features = ["testing"] }
+zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "63d31b4486dffe60982c395fffb40e9a02497008", features = ["testing"] }
 
 [profile.release-fast]
 inherits = "release"

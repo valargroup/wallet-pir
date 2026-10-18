@@ -25,7 +25,7 @@ status-query-server = { path = "../status-query-server" }
 # The synthetic distributed validation drives the shared control ledger and coordinator.
 enhance-serving = { path = "../../enhance/enhance-serving" }
 pir-control = { path = "../../shared/pir-control", features = ["admission"] }
-pir-native = { package = "zakura-pir-native", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "886db40137caef486d32d5bc594b2c20b1dde75e", optional = true }
+pir-native = { package = "zakura-pir-native", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "63d31b4486dffe60982c395fffb40e9a02497008", optional = true }
 axum = "0.7"
 clap = { version = "4", features = ["derive", "env"] }
 hex = "0.4"
@@ -37,11 +37,11 @@ sha2 = "0.10"
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "886db40137caef486d32d5bc594b2c20b1dde75e" }
+zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "63d31b4486dffe60982c395fffb40e9a02497008" }
 
 [dev-dependencies]
 # Independent Status client for the real HTTP runtime regression.
-zakura-pir-status = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "886db40137caef486d32d5bc594b2c20b1dde75e" }
+zakura-pir-status = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "63d31b4486dffe60982c395fffb40e9a02497008" }
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
-zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "886db40137caef486d32d5bc594b2c20b1dde75e", features = ["testing"] }
+zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "63d31b4486dffe60982c395fffb40e9a02497008", features = ["testing"] }
