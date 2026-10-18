@@ -28,8 +28,8 @@ release directories and their recorded paths are immutable.
 | `enhance/exercise/` | Local Enhance coordinator/worker exercise | `cargo run -p enhance-pir-exercise -- --help` |
 | [noise-analysis](enhance/noise-analysis/README.md) | Standalone Enhance noise analysis | `cargo build --locked --release --manifest-path tools/enhance/noise-analysis/Cargo.toml` |
 | `shared/pir-monitor/` | Independent public PIR correctness monitor | [observability](../docs/enhance/observability-alerting.md) |
-| [transparent-loadtest](../src/transparent/transparent-loadtest/README.md) | Wallet simulations, block comparison and interactive reports | `make transparent-sim-help` |
-| [transparent-regression](../src/transparent/transparent-regression/fixtures/README.md) | Frozen accepted-anchor correctness fixtures and parent-filter conformance | `make transparent-regression` |
+| [transparent-loadtest](transparent/loadtest/README.md) | Wallet simulations, block comparison and interactive reports | `make transparent-sim-help` |
+| [transparent-regression](transparent/fixtures/regression/README.md) | Frozen accepted-anchor correctness fixtures and parent-filter conformance | `make transparent-regression` |
 | `src/transparent/transparent-measure/` | Current-shard recovery measurement used by the backfill workflow | `cargo run --release -p transparent-measure -- --help` |
 | [filters](transparent/filters/README.md) | Sample collection, filter encoding and format-specific validation | Python CLI help |
 | [parent-filters](transparent/parent-filters/README.md) | Active opt-in parent-filter selection and paired HTTP evaluation | Python CLI help |
