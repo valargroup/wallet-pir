@@ -1495,7 +1495,7 @@ pub(crate) mod tests {
         if cfg!(feature = "qualification-tests") {
             (geometry, table)
         } else {
-            (&TXID_4K8, Table::TxDirectory)
+            (&TXID_2K8, Table::TxDirectory)
         }
     }
 
@@ -1885,34 +1885,51 @@ pub(crate) mod tests {
     /// Leaving trailing zero blocks out of the hint publishes exactly the
     /// masks the whole-table product does: an empty table, content ending
     /// on either side of a block boundary, and content in the last row.
-    #[test]
-    fn trailing_zero_blocks_leave_the_published_masks_unchanged() {
-        let (geometry, table) = fixture_shape(&DECOUPLED_2K_8K, Table::Pages);
+    fn check_zero_tail(input: impl FnOnce(&native::TableProfile) -> (usize, usize)) {
+        // A two-block supported profile is necessary here even though the
+        // ordinary identity/cache fixtures need only the one-block profile.
+        let (geometry, table) = if cfg!(feature = "qualification-tests") {
+            (&DECOUPLED_2K_8K, Table::Pages)
+        } else {
+            (&TXID_4K8, Table::TxDirectory)
+        };
         let shared = SharedParams::build(geometry, table).unwrap();
         let profile = &shared.profile;
-        let full = |rows: &[u8]| reference_masks(profile, rows);
-        let bytes = profile.rows * profile.row_bytes;
-        for (filled, expected_blocks) in [
-            (0, 1),
-            (1, 1),
-            (native::D * profile.row_bytes, 1),
-            (native::D * profile.row_bytes + 1, 2),
-            (bytes, profile.rows / native::D),
-        ] {
-            let mut rows = vec![0u8; bytes];
-            for (i, byte) in rows[..filled].iter_mut().enumerate() {
-                *byte = (i.wrapping_mul(2_654_435_761) >> 7) as u8 | 1;
-            }
-            assert_eq!(
-                used_blocks(&rows, profile.row_bytes, profile.rows),
-                expected_blocks
-            );
-            assert_eq!(
-                TableRuntime::build(&shared, &rows).unwrap().public_params,
-                full(&rows),
-                "{filled} leading bytes"
-            );
+        let (filled, expected_blocks) = input(profile);
+        let mut rows = vec![0u8; profile.rows * profile.row_bytes];
+        for (i, byte) in rows[..filled].iter_mut().enumerate() {
+            *byte = (i.wrapping_mul(2_654_435_761) >> 7) as u8 | 1;
         }
+        assert_eq!(
+            used_blocks(&rows, profile.row_bytes, profile.rows),
+            expected_blocks
+        );
+        assert_eq!(
+            TableRuntime::build(&shared, &rows).unwrap().public_params,
+            reference_masks(profile, &rows),
+            "{filled} leading bytes"
+        );
+    }
+
+    #[test]
+    fn trailing_zero_blocks_leave_the_published_masks_unchanged() {
+        check_zero_tail(|_| (0, 1));
+    }
+    #[test]
+    fn trailing_zero_masks_match_with_one_nonzero_byte() {
+        check_zero_tail(|_| (1, 1));
+    }
+    #[test]
+    fn trailing_zero_masks_match_at_the_block_boundary() {
+        check_zero_tail(|profile| (native::D * profile.row_bytes, 1));
+    }
+    #[test]
+    fn trailing_zero_masks_match_past_the_block_boundary() {
+        check_zero_tail(|profile| (native::D * profile.row_bytes + 1, 2));
+    }
+    #[test]
+    fn trailing_zero_masks_match_with_content_in_the_last_row() {
+        check_zero_tail(|profile| (profile.rows * profile.row_bytes, profile.rows / native::D));
     }
 
     /// The batched hint changes nothing a client or the disk cache sees. At
