@@ -426,9 +426,18 @@ mod tests {
     }
 
     #[test]
-    fn an_empty_block_has_no_elements() {
+    fn a_block_without_indexable_scripts_has_no_elements() {
         let mut previous = MapPreviousOutputs::default();
-        assert!(elements_of(&[], &mut previous).is_empty());
+        // Raw blocks require a transaction. A coinbase with an unspendable
+        // output is valid input to the decoder and contributes no filter item.
+        let transactions = [coinbase(vec![output(vec![0x6a, 0x01, 0x00])])];
+        assert!(elements_of(&transactions, &mut previous).is_empty());
+    }
+
+    #[test]
+    fn a_raw_block_without_transactions_is_rejected() {
+        let (raw, _) = chain::block(&[], 0);
+        assert!(FetchedBlock::from_bytes(&hex::decode(raw).unwrap()).is_err());
     }
 
     #[test]

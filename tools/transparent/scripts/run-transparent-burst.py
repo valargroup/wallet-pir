@@ -70,7 +70,7 @@ def main():
         paths += [ROOT / 'Cargo.toml', ROOT / 'Cargo.lock']
         paths += sorted((ROOT / 'pir').glob('*/Cargo.toml'))
         paths += sorted((ROOT / 'server').glob('*/Cargo.toml'))
-        paths += sorted((ROOT / 'src/transparent/transparent-shard-server').rglob('*.rs'))
+        paths += sorted((ROOT / 'src/transparent/transparent-query-server').rglob('*.rs'))
         json.dump({'source_sha': source, 'machine': platform.platform(), 'cpu_info': Path('/proc/cpuinfo').read_text() if Path('/proc/cpuinfo').exists() else None,
                    'external_clients': args.external_clients, 'client_cpus': '4-7' if args.systemd and args.external_clients else None,
                    'worker_budget_seconds': args.worker_budget_seconds, 'build_slots': args.build_slots, 'repetitions': args.repetitions, 'isolated_cgroup': args.systemd,
