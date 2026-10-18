@@ -2715,7 +2715,7 @@ async fn a_failed_batch_falls_back_to_the_sequential_walk() {
         )
         .await;
         compare(&fallen_back.ledger, &traverse(&per_shard, &wallet, 0));
-        let mut expected_charges = sequential.charges.clone();
+        let mut expected_charges = sequential.charges;
         if matches!(batches, Batches::RefuseFirst) {
             // The synthetic refusal carries no downloaded bytes, but counts
             // as an attempted manifest before the successful sequential retry.
