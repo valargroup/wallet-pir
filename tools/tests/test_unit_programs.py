@@ -8,7 +8,7 @@ import sys
 import tempfile
 import threading
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 from contextlib import redirect_stdout
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -53,6 +53,26 @@ class ProgramTests(unittest.TestCase):
                     os.environ['WALLET_PIR_ENFORCE_BUDGET'] = value
                 unit_tests.execute([program], 1, budget=True)
                 self.assertEqual(execute.call_args.kwargs['enforce'], enforced)
+
+    def test_diagnostics_collect_all_program_failures_without_cancelling_queued_work(self):
+        programs = [dict(executable=f'/deps/{index}', directory='/p', package='p',
+                         version='1', args=[]) for index in range(3)]
+        futures = [MagicMock() for _ in programs]
+        futures[0].result.side_effect = RuntimeError('first program failed')
+        pool = MagicMock()
+        pool.__enter__.return_value = pool
+        pool.submit.side_effect = futures
+        with patch.dict(os.environ, WALLET_PIR_ENFORCE_BUDGET='0'), \
+                patch.object(unit_tests.subprocess, 'check_output', return_value='/rust/lib\n'), \
+                patch.object(unit_tests, 'ThreadPoolExecutor', return_value=pool), \
+                patch.object(unit_tests, 'as_completed', return_value=iter(futures)), \
+                patch.object(test_budget, 'stop') as stop:
+            with self.assertRaisesRegex(RuntimeError, '1 diagnostic test programs failed'):
+                unit_tests.execute(programs, 1, budget=True)
+        stop.assert_not_called()
+        for future in futures:
+            future.result.assert_called_once_with()
+            future.cancel.assert_not_called()
 
     def test_publisher_unit_build_pool_is_scoped_bounded_and_respects_explicit_settings(self):
         programs = [dict(executable='/deps/' + name, directory='/p', package=package,

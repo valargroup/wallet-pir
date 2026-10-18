@@ -68,9 +68,16 @@ def execute(programs, jobs, *, budget=False, test_threads=1):
     with ThreadPoolExecutor(max_workers=jobs) as pool:
         futures = [pool.submit(invoke, program) for program in programs
                    if not program.get('exclusive')]
+        failures = []
         try:
             for future in as_completed(futures):
-                future.result()
+                try:
+                    future.result()
+                except Exception as error:
+                    if budget and os.environ.get('WALLET_PIR_ENFORCE_BUDGET') == '0':
+                        failures.append(error)
+                    else:
+                        raise
         except BaseException:
             if budget:
                 from test_budget import stop
@@ -78,6 +85,9 @@ def execute(programs, jobs, *, budget=False, test_threads=1):
             for future in futures:
                 future.cancel()
             raise
+        if failures:
+            raise RuntimeError(f'{len(failures)} diagnostic test programs failed') from failures[0]
+
 
 
 def main():
