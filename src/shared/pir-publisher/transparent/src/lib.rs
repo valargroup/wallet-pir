@@ -8,3 +8,6 @@
 pub mod history;
 pub mod ingest;
 pub mod tx_detail;
+
+#[cfg(test)]
+mod test_chain;
