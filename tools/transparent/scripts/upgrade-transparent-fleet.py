@@ -144,7 +144,9 @@ async def reopen(fleet, saved):
         fleet.canonical.clear()
         if await fleet.canonical_hash(tail['end_height']) != tail['terminal_block_hash']:
             raise RuntimeError('publication changed chain before reopening')
-        routed = [w for w in fleet.roster if w['id'] in active['workers']]
+        # An `https-recent` member takes no control command; it rejoins only
+        # through the reconciler's own observation of it.
+        routed = [w for w in fleet.data_members() if w['id'] in active['workers']]
         statuses = await asyncio.gather(*(fleet.control(w, {'operation':'status'}) for w in routed))
         if not all(fleet.attests(status, active['map_sha256']) for status in statuses):
             raise RuntimeError('an advertised worker lost its current warm publication')
@@ -154,7 +156,8 @@ async def reopen(fleet, saved):
         apply_coordinator((saved/'Caddyfile.coordinator').read_bytes())
         L.atomic_json(fleet.root/'maintenance.json', {'enabled': False})
         try:
-            await fleet.route([w for w in fleet.roster if w['id'] in active['workers']], json.loads(Path(active['assignment']).read_text()))
+            L.atomic_json(fleet.root/'active.json', {**active, 'workers': sorted(w['id'] for w in routed)})
+            await fleet.route(routed, json.loads(Path(active['assignment']).read_text()))
         except BaseException:
             L.atomic_json(fleet.root/'maintenance.json', {'enabled': True})
             apply_coordinator((saved/'Caddyfile.guarded').read_bytes())
@@ -208,7 +211,7 @@ async def ready_to_freeze(fleet, workers):
 async def upgrade(args):
     fleet = L.Fleet(json.loads(args.fleet_config.read_text()))
     binary = sha(args.artifacts/'transparent-shard-server')
-    workers = [w for w in fleet.roster if not args.worker or w['id'] == args.worker]
+    workers = [w for w in fleet.data_members() if not args.worker or w['id'] == args.worker]
     if not workers or (args.worker and (len(workers) != 1 or workers[0]['role'] != 'recent-replica')):
         raise ValueError('canary must name one existing recent replica')
     if not args.worker:

@@ -47,10 +47,13 @@ def publisher(config, *, config_path, state_dir, executable='/usr/local/bin/tran
 
 HISTORY_TEMPLATE = ROOT / 'tools/transparent/deploy/transparent-history-worker.role.service'
 HISTORY_SOCKET = '/run/transparent-history-worker/control.sock'
+# The release payload's server binary (`[[bin]]` in transparent-query-server's
+# Cargo.toml and the descriptor's `binary`); unit names keep their own history.
+SERVER = 'transparent-query-server'
 
 
 def history_worker(settings, *, release, template=None):
-    """`transparent-shard-server` under publication control.
+    """The shard server under publication control.
 
     The staged shard set and assignment are read-only inputs; the active
     record and any runtime cache are state. The preflight check is the
@@ -82,7 +85,7 @@ def history_worker(settings, *, release, template=None):
         writes.append(cache)
     arguments += ['--control-socket', HISTORY_SOCKET, '--active-record', state + '/active.json']
     template = HISTORY_TEMPLATE.read_text() if template is None else template
-    return render_worker(template, directory(release) + '/transparent-shard-server', arguments,
+    return render_worker(template, directory(release) + '/' + SERVER, arguments,
                          writable=writes, readonly=reads, settings=s, check=(*arguments, '--verify-only'))
 
 
@@ -116,7 +119,11 @@ def history_provider(settings, *, release, template=None):
     if s['publisher_network'] != 'main' or not isinstance(s['publisher_genesis'], str) or not re.fullmatch('[0-9a-f]{64}', s['publisher_genesis']):
         raise ValueError('publisher_network must be main and publisher_genesis a lowercase digest')
     arguments += ['--publisher-network', s['publisher_network'], '--publisher-genesis', s['publisher_genesis']]
-    reads = [directory(release)]
+    # ProtectSystem=strict already keeps the release read-only; naming its
+    # directory would make every upgrade look like unit drift.
+    reads = []
+    if Path(state).is_relative_to(directory(release)) or Path(directory(release)).is_relative_to(state):
+        raise ValueError('provider state must be separate from the release')
     for name in ('publisher_ca', 'archive_ca'):
         if name in s:
             path = directory(s[name])
@@ -126,7 +133,7 @@ def history_provider(settings, *, release, template=None):
                            'body_bytes', 'query_deadline_secs', 'upload_deadline_secs'))
     if 'query_waiters' in s:
         arguments += ['--query-waiters', number(s['query_waiters'], 'query_waiters')]
-    executable = directory(release) + '/transparent-shard-server'
+    executable = directory(release) + '/' + SERVER
     source = ROOT / 'tools/transparent/deploy/transparent-history-provider.role.service'
     rendered = render_worker(source.read_text() if template is None else template,
                              executable, arguments, writable=[state], readonly=reads,
@@ -137,12 +144,37 @@ def history_provider(settings, *, release, template=None):
         'ExecStartPre': shlex.join([executable, *rendered.check])}))
 
 
+HTTPS_RECENT_FLEET = ('member_id', 'fleet_host', 'fleet_state')
+
+
+def https_recent(settings, *, release, template=None):
+    """The provider process as a managed recent replica.
+
+    Rendered exactly as the standalone provider; the extra settings name this
+    member in the fleet roster and where the fleet's active publication and
+    membership records are read. Its own HTTPS synchronization is its only
+    data update path; the fleet never stages, prepares or activates it.
+    """
+    if not isinstance(settings, dict):
+        raise ValueError('settings must be an object')
+    missing = [name for name in HTTPS_RECENT_FLEET if name not in settings]
+    if missing:
+        raise ValueError('https-recent settings missing %s' % missing)
+    if not isinstance(settings['member_id'], str) or not settings['member_id'].replace('-', '').isalnum():
+        raise ValueError('member_id must be a plain roster id')
+    if not isinstance(settings['fleet_host'], str) or not settings['fleet_host']:
+        raise ValueError('fleet_host must name an inventory host')
+    directory(settings['fleet_state'])
+    return history_provider({k: v for k, v in settings.items() if k not in HTTPS_RECENT_FLEET},
+                            release=release, template=template)
+
+
 def report(service, role, health, ready_status):
     """Transparent shard-server health, separated into the report's axes.
 
     History and txid display workers run the same server and report the same health.
     """
-    if role == 'provider':
+    if role in ('provider', 'https-recent'):
         axes = ('synchronization', 'verified_publication', 'runtime_readiness',
                 'active_coverage', 'archive_reachability')
         result = {axis: (health or {}).get(axis, 'unobserved') for axis in axes}

@@ -7,7 +7,7 @@
 driver = "transparent-history"
 root = "/opt/transparent-publisher"
 binary = "transparent-query-server"
-order = ["worker", "external-worker", "provider", "controller"]
+order = ["worker", "external-worker", "https-recent", "provider", "controller"]
 ancillary = ["routing"]
 
 [services.transparent-history.roles.worker]
@@ -31,6 +31,22 @@ optional = true
 # is warm; /v1/health carries no readiness.
 health = "http://{listen}/v1/ready"
 ready = { field = "ready", equals = true }
+ready_timeout = 900
+
+# The provider process as a managed recent replica. Its own HTTPS
+# synchronization is its only data update; the fleet adapter never stages,
+# prepares, activates or counts it toward publication quorum. The guard keeps
+# the engine's preflight in disposable state, restarts and restores within the
+# replica policy, and readiness on the fleet's exact active publication.
+[services.transparent-history.roles.https-recent]
+unit = "transparent-history-https-recent.service"
+mode = "role"
+template = "transparent-history-provider.role.service"
+renderer = "tools.transparent.lib.roles:https_recent"
+guard = "tools.transparent.lib.https_recent:Guard"
+optional = true
+health = "http://{listen}/v1/provider-status"
+ready_url = "http://{listen}/v1/ready"
 ready_timeout = 900
 
 # Standalone history only; no fleet inventory is needed by the role renderer.

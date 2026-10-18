@@ -215,6 +215,18 @@ class Deployer:
         plan.action = 'skip' if unchanged else 'restart'
         if unchanged:
             plan.changes = []
+        return self.guard_plan(plan)
+
+    def guard_plan(self, plan):
+        """A guarded role's own read-only refusals for a changing plan.
+
+        Its writable state is the product's: the engine creates no directory
+        for it, so missing or foreign-owned state is a refusal instead.
+        """
+        guard = plan.target.role.product_guard()
+        if guard is not None and plan.action in CHANGING:
+            plan.directories = ()
+            plan.refusals += guard.plan(self, plan)
         return plan
 
     def file_changes(self, plan, files, fresh):
@@ -252,7 +264,7 @@ class Deployer:
                         *self.file_changes(plan, rendered.files, fresh=True)]
         plan.directories, plan.check = rendered.directories, rendered.check
         plan.action = 'install'
-        return plan
+        return self.guard_plan(plan)
 
     def assess(self, sha, binary=None, allow_drift=False, retire_historical=False, require_baseline=True):
         """Plans for every target and the reasons, if any, a deploy must not start. Read-only."""
@@ -394,6 +406,9 @@ class Deployer:
             status, _ = self.ex.http_get(record['host'], verify['ready_url'])
             if not 200 <= status < 300:
                 return False, 'ready answered %s' % status
+        guard = self.service.roles[record['role']].product_guard()
+        if guard is not None:
+            return guard.ready(self, record, expected, document)
         return True, 'ready'
 
     def wait_verified(self, record, expected):
@@ -470,6 +485,12 @@ class Deployer:
         host, unit = record['host'], record['unit']
         directory = '%s/%s' % (self.service.transaction_dir(journal.id), unit)
         self.lock.verify()
+        guard = self.service.roles[record['role']].product_guard()
+        if guard is not None:
+            # Observed again under the lock, immediately before any effect.
+            refusals = guard.before_restart(self, record)
+            if refusals:
+                raise DeployError('%s: refused before restart: %s' % (record['key'], '; '.join(refusals)))
         journal.set_phase(index, 'backing-up')
         self.ex.mkdir(host, directory + '/files', 0o700)
         for number, change in enumerate(record['changes']):
@@ -510,6 +531,12 @@ class Deployer:
             if not self.service.roles[record['role']].shared_lifecycle:
                 raise DeployError('operator-managed role: generic deployment cannot run its stateful preflight')
             if record['action'] not in CHANGING or not record.get('check'):
+                continue
+            guard = self.service.roles[record['role']].product_guard()
+            if guard is not None:
+                # Never against live state: the guard checks in disposable state.
+                guard.preflight(self, journal, record, sha)
+                self.out('%s: product check passed in disposable state' % record['key'])
                 continue
             host = record['host']
             self.lock.verify()
@@ -700,6 +727,17 @@ class Deployer:
         if conflicts and not force:
             journal.event('rollback refused', conflicts=conflicts)
             raise DeployError('rollback refused; unit files changed after the transaction:\n  ' + '\n  '.join(conflicts))
+        # A guarded role's restore must be safe with its current durable state;
+        # --force overrides unit-file conflicts only, never these gates.
+        gates = []
+        for index in pending:
+            record = journal.hosts[index]
+            guard = self.service.roles[record['role']].product_guard()
+            if guard is not None:
+                gates += ['%s: %s' % (record['key'], g) for g in guard.before_restore(self, journal, record)]
+        if gates:
+            journal.event('rollback refused', gates=gates)
+            raise DeployError('rollback refused before any change:\n  ' + '\n  '.join(gates))
         journal.set_status('rolling-back')
         failures = []
         for index in pending:

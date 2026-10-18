@@ -16,6 +16,7 @@ import tomllib
 
 MODES = ('exec-drop-in', 'template', 'role')
 RENDERER = re.compile(r'^[a-z_][a-z0-9_.]*:[a-z_][a-z0-9_]*$')
+GUARD = re.compile(r'^[a-z_][a-z0-9_.]*:[A-Z][A-Za-z0-9_]*$')
 UNIT = re.compile(r'^[A-Za-z0-9@._-]+\.service$')
 PLAIN_PATH = re.compile(r'^/[A-Za-z0-9._/-]+$')
 PLAIN_NAME = re.compile(r'^[A-Za-z0-9._-]+$')
@@ -75,6 +76,10 @@ class Role:
     # only as their unit user after stopping. The generic staged loader cannot
     # execute that lifecycle; rendering and private observations still work.
     shared_lifecycle: bool = True
+    # A rendered role whose state and data updates the product owns, as
+    # `module:Class`: the engine asks it before changing, checking, restarting
+    # or restoring an instance (see `wallet_pir_ops.deploy.engine.Deployer`).
+    guard: str = None
 
     def render(self, settings, release):
         """The product adapter's `RenderedRole` for one instance."""
@@ -82,6 +87,14 @@ class Role:
         module, function = self.renderer.split(':')
         return getattr(importlib.import_module(module), function)(
             settings, release=release, template=self.template.read_text())
+
+    def product_guard(self):
+        """The product's lifecycle guard for this role, or None."""
+        if self.guard is None:
+            return None
+        import importlib
+        module, name = self.guard.split(':')
+        return getattr(importlib.import_module(module), name)()
 
 
 @dataclass(frozen=True)
@@ -191,10 +204,13 @@ def load_descriptors(path, _parents=()):
             shared_lifecycle = spec.get('shared_lifecycle', True)
             require(type(shared_lifecycle) is bool and (shared_lifecycle or mode == 'role'),
                     '%s.%s: shared_lifecycle is boolean, false only for a rendered role' % (name, role_name))
+            guard = spec.get('guard')
+            require(guard is None or (mode == 'role' and shared_lifecycle and GUARD.match(guard)),
+                    '%s.%s: guard names a rendered shared-lifecycle role\'s module:Class' % (name, role_name))
             roles[role_name] = Role(role_name, spec['unit'], mode, spec['health'], template, ready,
                                     spec.get('ready_url'), int(spec.get('ready_timeout', 180)),
                                     tuple(spec.get('adoptable_drop_ins', ())), owns_unit or mode == 'role',
-                                    tuple(duties), renderer, optional, shared_lifecycle)
+                                    tuple(duties), renderer, optional, shared_lifecycle, guard)
         order = tuple(raw.get('order', ()))
         require(order and sorted(order) == sorted(roles), '%s: order must list every role once' % name)
         require(PLAIN_PATH.match(raw.get('root', '')), '%s: root must be a plain absolute path' % name)
