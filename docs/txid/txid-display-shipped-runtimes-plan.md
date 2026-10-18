@@ -27,7 +27,7 @@ Background and measurements:
 ## Facts the design relies on (verified in source at 7ed5c87d)
 
 - **Build.** `TableRuntime::build(shared, rows)` is in
-  `src/shared/transparent-server-backend/src/runtime.rs`. It runs on
+  `src/transparent/transparent-server-backend/src/runtime.rs`. It runs on
   `build_pool()` (`runtime.rs:276`), sized by `TRANSPARENT_BUILD_THREADS`, nice 10.
 - **Disk format.**
   - `runtime/disk.rs` `DiskCache::{save,load,path}`. The identity hashes the runtime
@@ -45,7 +45,7 @@ Background and measurements:
   `DisplayRuntime::runtime` (`display/service.rs:91`), called by prewarm
   (`service.rs:256`) from `DisplayLive::prepare` (`display/live.rs:363`).
 - **Candidate layout.**
-  - `write_candidate` (`txid-pir-server/src/publication/publisher.rs`)
+  - `write_candidate` (`transparent-filter-server/src/txid_display/publisher.rs`)
     makes `candidate-<height>-<hash>-<nanos>/`, containing one hard-linked subdirectory
     per revision digest plus the map file.
   - `DisplaySet::open_reusing` (`display/set.rs:~306`) calls `DisplayRevision::read` on
@@ -196,7 +196,7 @@ before starting.
   `~/.config/wallet-pir-deploy/txid-display/measure-20qps-20261007/`: `events.jsonl`,
   `TRIPPED`. Do not restart anything inside one of its load windows.
 - **Build** release binaries with the CI flags:
-  - `RUSTFLAGS="-C target-cpu=x86-64-v3 -C target-feature=+pclmulqdq" cargo build --locked --release -p txid-pir-server --bin transparent-txid-server --bin txid-display-controller`
+  - `RUSTFLAGS="-C target-cpu=x86-64-v3 -C target-feature=+pclmulqdq" cargo build --locked --release -p transparent-shard-server -p transparent-filter-server --bin transparent-txid-server --bin txid-display-controller`
   - Check the minimum glibc version against the hosts (2.39).
 - **Order:**
   1. **Worker first.** Its behavior is unchanged when no shipped files are present.

@@ -71,7 +71,8 @@
       "compact",
       "event_codec_bounds",
       "service_round_trip",
-      "shard_filters"
+      "shard_filters",
+      "txid_shipped_runtimes"
     ]
   },
   "transparent-loadtest": {
@@ -102,15 +103,9 @@
       "wallet_continuation",
       "wallet_recut",
       "wallet_sync",
-      "verification_reuse"
-    ]
-  },
-  "txid-pir-server": {
-    "fast": [],
-    "full": [
+      "verification_reuse",
       "txid_client",
-      "txid_sharded",
-      "txid_shipped_runtimes"
+      "txid_sharded"
     ]
   }
 }

@@ -1024,7 +1024,7 @@ until all of it passes and every client in use reads declarations:
 - [ ] The continuous publisher carries every earlier declaration forward on each
   republication, in rising epochs, and keeps seal parameters for every geometry any
   declaration names. Today it writes an empty `recuts`
-  (`src/shared/transparent-ingest/src/publication.rs`); a republication
+  (`src/transparent/transparent-ingest/src/publication.rs`); a republication
   that dropped a declaration would strand wallets holding the revisions it named.
 - [ ] `shard-verify` checks a declaration against the previous map: identical prefix,
   unchanged boundary terminal blocks, exact tiling, declared entries equal to what was

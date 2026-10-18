@@ -12,3 +12,5 @@ pub mod store;
 pub mod controller;
 
 pub mod compact;
+
+pub mod txid_display;

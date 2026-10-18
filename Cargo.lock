@@ -3918,7 +3918,6 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "transparent-server-backend",
- "txid-serving",
  "zakura-pir-transparent",
  "zakura-transparent-events",
  "zakura-transparent-filter",
@@ -3932,58 +3931,6 @@ name = "try-lock"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
-
-[[package]]
-name = "txid-pir-server"
-version = "0.0.1"
-dependencies = [
- "axum",
- "base64",
- "clap",
- "hex",
- "http-body",
- "pir-control",
- "pir-observability",
- "pir-pipeline",
- "rayon",
- "reqwest",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "sysinfo",
- "tempfile",
- "thiserror 2.0.18",
- "tokio",
- "tower",
- "tower-http 0.5.2",
- "tracing",
- "tracing-subscriber",
- "transparent-ingest",
- "transparent-server-backend",
- "txid-serving",
- "zakura-pir-transparent",
- "zakura-server-chain",
- "zakura-transparent-events",
- "zakura-transparent-filter",
- "zakura-transparent-native",
- "zakura-transparent-shard",
- "zakura-transparent-txid-client",
-]
-
-[[package]]
-name = "txid-serving"
-version = "0.0.1"
-dependencies = [
- "hex",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "tempfile",
- "tracing",
- "transparent-server-backend",
- "zakura-transparent-events",
- "zakura-transparent-shard",
-]
 
 [[package]]
 name = "typenum"

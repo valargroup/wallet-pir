@@ -279,8 +279,8 @@ geometry.
 
 Source:
 - `transparent-shard/src/display/` (format, placement and seal rule);
-- `txid-pir-server/src/publication/` (`txid-display-controller`);
-- `txid-pir-server/src/display/` (`transparent-txid-server`,
+- `transparent-filter-server/src/txid_display/` (`txid-display-controller`);
+- `transparent-shard-server/src/display/` (`transparent-txid-server`,
   `txid-control`, `txid-inventory`);
 - the `txid-display-*` deploy commands.
 

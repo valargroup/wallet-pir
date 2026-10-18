@@ -22,6 +22,18 @@ path = "src/bin/shard-scaling.rs"
 name = "shard-residency"
 path = "src/bin/shard-residency.rs"
 
+[[bin]]
+name = "transparent-txid-server"
+path = "src/bin/txid-server.rs"
+
+[[bin]]
+name = "txid-control"
+path = "src/bin/txid-control.rs"
+
+[[bin]]
+name = "txid-inventory"
+path = "src/bin/txid-inventory.rs"
+
 [features]
 # Reproduce the existing non-AVX-512 backend on newer benchmark CPUs.
 portable-kernel = ["transparent-server-backend/portable-kernel"]
@@ -29,7 +41,7 @@ portable-kernel = ["transparent-server-backend/portable-kernel"]
 [dependencies]
 pir-pipeline = { path = "../../shared/pir-pipeline" }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
-transparent-server-backend = { path = "../../shared/transparent-server-backend" }
+transparent-server-backend = { path = "../transparent-server-backend" }
 pir-control = { version = "=0.1.0", path = "../../shared/pir-control", features = ["admission"] }
 pir-observability = { version = "=0.1.0", path = "../../shared/pir-observability" }
 axum = "0.7"
@@ -73,5 +85,3 @@ tower = { version = "0.5", features = ["util"] }
 zakura-pir-transparent = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "886db40137caef486d32d5bc594b2c20b1dde75e", default-features = false, features = ["engine-store", "reqwest"] }
 transparent-txid-client = { package = "zakura-transparent-txid-client", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "886db40137caef486d32d5bc594b2c20b1dde75e", features = ["testing"] }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "json"] }
-# Synthetic display records for the hint benchmark.
-txid-serving = { path = "../../txid/txid-serving" }

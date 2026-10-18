@@ -84,6 +84,31 @@ in the owner, immediately before activation. Shared code provides only the
 durability mechanisms in `src/shared/pir-control`; each owner keeps its own
 authority and retention rules above.
 
+Transparent history and txid display share a private activation transaction
+in `transparent-shard-server`. The adapters stay private to that crate.
+The transaction holds command serialization in a blocking job,
+so a disconnected caller cannot release it while persistence is in progress.
+After checking already-active success and the expected predecessor, it locks
+the candidate and then the publication gate. Under that gate it checks the
+candidate's existence, reorg epoch, digest, readiness and product eligibility,
+then writes the unchanged publication record through the existing persistence
+function. Only a successful write consumes the candidate and installs it in
+memory. Serving-state locks are released before disk I/O.
+
+A persistence error leaves the in-memory active view and candidate unchanged,
+including an error syncing the parent directory after rename. The durable file
+may already name the new publication in that case; restart follows the existing
+record recovery and revocation checks. Activation reports the error and does
+not automatically retry.
+
+Each product keeps its own adapter and installation rules. History still
+qualifies archive retirement before activation, obtains the manager's fresh
+authority decision under command serialization, and retains its separate
+initial activation and required-runtime checks. It releases predecessor pins
+after installation. Display still starts empty, stages independently, retires
+predecessors, and removes covered staging entries only after successful
+activation. Request handles and collection retain their existing lifetimes.
+
 ## Publication identity
 
 Status and Receiver name a publication by a domain-separated SHA-256 of their

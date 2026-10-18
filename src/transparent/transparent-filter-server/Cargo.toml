@@ -55,6 +55,10 @@ path = "src/bin/script-sample.rs"
 name = "filter-sweep"
 path = "src/bin/filter-sweep.rs"
 
+[[bin]]
+name = "txid-display-controller"
+path = "src/bin/txid-display-controller.rs"
+
 [features]
 # Keep large test campaigns explicit; production behavior is unchanged.
 qualification-tests = []
@@ -85,8 +89,8 @@ transparent-events = { package = "zakura-transparent-events", git = "https://git
 transparent-filter = { package = "zakura-transparent-filter", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "886db40137caef486d32d5bc594b2c20b1dde75e" }
 transparent-native = { package = "zakura-transparent-native", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "886db40137caef486d32d5bc594b2c20b1dde75e" }
 transparent-shard = { package = "zakura-transparent-shard", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "886db40137caef486d32d5bc594b2c20b1dde75e" }
-transparent-ingest = { path = "../../shared/transparent-ingest" }
-transparent-server-backend = { path = "../../shared/transparent-server-backend" }
+transparent-ingest = { path = "../transparent-ingest" }
+transparent-server-backend = { path = "../transparent-server-backend" }
 # Node reads, transparent extraction, compact blocks and the RocksDB state
 # reader, pinned to an exact wallet-libraries revision. The reader opens the
 # node's RocksDB directly: before deploying it, verify that the zakura-state
@@ -94,9 +98,9 @@ transparent-server-backend = { path = "../../shared/transparent-server-backend" 
 zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "886db40137caef486d32d5bc594b2c20b1dde75e", features = ["rocksdb"] }
 
 [dev-dependencies]
+transparent-shard-server = { path = "../transparent-shard-server" }
 base64 = "0.22"
 sysinfo = "0.36"
-transparent-shard-server = { path = "../transparent-shard-server" }
 transparent-txid-client = { package = "zakura-transparent-txid-client", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "886db40137caef486d32d5bc594b2c20b1dde75e", features = ["testing"] }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "json"] }
 tempfile = "3"
