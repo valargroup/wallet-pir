@@ -10,7 +10,7 @@ use axum::{
     routing::{get, post},
     Router,
 };
-use enhance_pir::status::*;
+use status_protocol::*;
 use std::sync::Arc;
 
 impl Controller {

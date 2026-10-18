@@ -9,18 +9,19 @@ publish = false
 # Compile campaign-only correctness tests in full qualification.
 full-tests = []
 default = []
-native-reinspiring = ["enhance-serving/native-reinspiring", "dep:reinspiring"]
-cuda = ["enhance-serving/cuda"]
+native-reinspiring = ["status-protocol/native-reinspiring", "pir-serving/native-reinspiring", "dep:pir-native", "dep:reinspiring", "ipir-sp/native-reinspiring"]
+cuda = ["ipir-sp/cuda"]
 
 [dependencies]
-# Durable artifact writes and the native hint runtime are shared with Enhance serving.
-enhance-serving = { path = "../../enhance/enhance-serving" }
+# Profile modulus and native hint helpers are shared with Enhance serving.
+pir-serving = { path = "../../shared/pir-serving" }
+status-protocol = { path = "../status-protocol" }
+pir-native = { package = "zakura-pir-native", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "886db40137caef486d32d5bc594b2c20b1dde75e", optional = true }
 pir-control = { path = "../../shared/pir-control", features = ["admission"] }
 pir-runtime = { path = "../../shared/pir-runtime" }
 rayon = "1"
 reinspiring = { version = "=0.1.3-rc.1", optional = true }
 axum = "0.7"
-enhance-pir = { path = "../../enhance/enhance-pir", version = "=0.0.1" }
 clap = { version = "4", features = ["derive", "env"] }
 hex = "0.4"
 libc = "0.2"

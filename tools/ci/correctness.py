@@ -29,7 +29,8 @@ from test_tiers import check_discovery, classifications, full_features
 FEATURES = ','.join([
     'enhance-pir/cli', 'enhance-pir/native-reinspiring',
     'enhance-serving/native-reinspiring', 'status-serving/native-reinspiring',
-    'enhance-pir-server/native-reinspiring', 'enhance-pir-load-test/native-reinspiring',
+    'enhance-pir-server/native-reinspiring', 'status-pir-server/native-reinspiring',
+          'enhance-pir-load-test/native-reinspiring',
     'pir-control/admission',
 ] + full_features(classifications()))
 

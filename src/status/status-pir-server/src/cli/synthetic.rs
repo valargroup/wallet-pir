@@ -6,8 +6,8 @@ use crate::{
     coordinator::Coordinator,
     status::{self, fixture, Controller, Generation},
 };
-use enhance_pir::status::*;
 use serde_json::json;
+use status_protocol::*;
 use std::{
     fs::File,
     io::{BufWriter, Write},
@@ -540,7 +540,7 @@ pub async fn validate(entries: usize, cuda: bool, state_dir: PathBuf) -> Result<
     controller.activate(next)?;
     drop(previous);
     check_cases(&http, &origin, &controller, entries, true).await?;
-    let mut wallet = enhance_pir::status::HttpClient::new(&origin, http.clone());
+    let mut wallet = status_protocol::HttpClient::new(&origin, http.clone());
     let (retry_txid, retry_expected) = fixture::case_at(
         entries,
         true,

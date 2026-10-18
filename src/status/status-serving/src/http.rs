@@ -7,7 +7,7 @@ use axum::{
     http::StatusCode,
     Json,
 };
-use enhance_pir::status::*;
+use status_protocol::*;
 use std::{
     sync::Arc,
     time::{Duration, Instant},

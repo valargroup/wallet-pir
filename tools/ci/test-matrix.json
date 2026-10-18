@@ -134,6 +134,12 @@
       "native:pir-apm:doc:pir_apm",
       "native:pir-apm:lib:pir_apm",
       "native:pir-monitor:bin:pir-monitor",
+      "native:status-pir-server:doc:status_pir_server",
+      "native:status-pir-server:lib:status_pir_server",
+      "native:status-protocol:doc:status_protocol",
+      "native:status-protocol:lib:status_protocol",
+      "native:status-publication:doc:status_publication",
+      "native:status-publication:lib:status_publication",
       "native:status-serving:doc:status_serving",
       "native:status-serving:lib:status_serving"
     ]
@@ -149,7 +155,7 @@
     "family": "enhance",
     "targets": [
       "native:enhance-pir-server:bin:enhance-pir-server",
-      "native:enhance-pir-server:bin:status-pir",
+      "native:status-pir-server:bin:status-pir",
       "native:enhance-pir-server:doc:enhance_pir_server",
       "native:enhance-pir-server:example:native_certificate",
       "native:enhance-pir-server:example:packing_budget",
@@ -160,8 +166,8 @@
       "native:enhance-pir-server:test:matvec_config",
       "native:enhance-pir-server:test:record_layout",
       "native:enhance-pir-server:test:schema11_cutover",
-      "native:enhance-pir-server:test:status_wallet",
-      "native:enhance-pir-server:test:status_wallet_http",
+      "native:status-pir-server:test:status_wallet",
+      "native:status-pir-server:test:status_wallet_http",
       "native:enhance-serving:test:ci_smoke",
       "native:enhance-serving:test:packing_http"
     ]
@@ -199,6 +205,7 @@
       "cuda:enhance-pir-load-test:check:all",
       "cuda:enhance-pir-server:check:enhance_pir_server",
       "cuda:enhance-serving:check:enhance_serving",
+      "cuda:status-pir-server:check:status_pir_server",
       "cuda:status-serving:check:status_serving"
     ]
   },

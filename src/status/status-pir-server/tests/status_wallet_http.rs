@@ -1,11 +1,11 @@
 //! Independent wallet client over real Status coordinator/router/worker listeners.
 #![cfg(feature = "native-reinspiring")]
-use enhance_pir_server::status::{fixture, now_ms, Controller, Generation};
 use ipir_sp::server::MatvecBackend;
+use status_serving::{fixture, now_ms, Controller, Generation};
 use std::sync::atomic::{AtomicBool, Ordering};
 use zakura_pir_status as wallet;
 
-#[path = "support/status_http.rs"]
+#[path = "../../status-publication/tests/support/status_http.rs"]
 mod status_http;
 use status_http::{serve, Loopback};
 
@@ -51,10 +51,10 @@ async fn independent_status_wallet_decrypts_http_and_rejects_invalid_envelopes()
     for (txid, expected) in fixture::cases(32, false) {
         let observation = client.observe(&transport, &txid, coverage).await.unwrap();
         let expected = match expected {
-            enhance_pir::status::Observation::Mined(height) => wallet::Observation::Mined(height),
-            enhance_pir::status::Observation::Mempool => wallet::Observation::Mempool,
-            enhance_pir::status::Observation::Forked => wallet::Observation::Forked,
-            enhance_pir::status::Observation::NotFound => wallet::Observation::NotFound,
+            status_protocol::Observation::Mined(height) => wallet::Observation::Mined(height),
+            status_protocol::Observation::Mempool => wallet::Observation::Mempool,
+            status_protocol::Observation::Forked => wallet::Observation::Forked,
+            status_protocol::Observation::NotFound => wallet::Observation::NotFound,
         };
         assert_eq!(observation, expected);
     }
@@ -72,8 +72,8 @@ async fn independent_status_wallet_decrypts_http_and_rejects_invalid_envelopes()
         .await
         .unwrap();
     assert_eq!(malformed.status(), reqwest::StatusCode::BAD_REQUEST);
-    let mut stale = enhance_pir::status::QUERY_MAGIC.to_vec();
-    stale.resize(enhance_pir::status::HEADER_BYTES, 0);
+    let mut stale = status_protocol::QUERY_MAGIC.to_vec();
+    stale.resize(status_protocol::HEADER_BYTES, 0);
     let stale = http
         .post(format!("{}/v1/status/query", coordinator.origin))
         .body(stale)

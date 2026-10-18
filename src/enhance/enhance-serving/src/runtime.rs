@@ -31,7 +31,7 @@ pub use native_runtime::NativePacking as Packing;
 pub fn modulus() -> u64 {
     #[cfg(feature = "native-reinspiring")]
     {
-        enhance_pir::native::Q
+        pir_serving::modulus(32768, ITEM_SIZE_BITS)
     }
     #[cfg(not(feature = "native-reinspiring"))]
     {
@@ -862,10 +862,11 @@ mod tests {
             assert_eq!(fallback.hint().unwrap(), expected);
         }
 
-        // A real persisted unit with the Status row layout has a different
-        // output width, even though its degree and plaintext profile agree.
+        // A real persisted unit with the Status row layout (12288-byte rows,
+        // `status_protocol::ROW_BYTES`) has a different output width, even though
+        // its degree and plaintext profile agree.
         let layout = DatabaseLayout {
-            record_bytes: enhance_pir::status::ROW_BYTES,
+            record_bytes: 12288,
             records_per_row: 1,
             shard_rows: domain.units[0].allocated_rows as usize,
             pir_profile: ipir_sp::SimplePirProfile::P16Q48,

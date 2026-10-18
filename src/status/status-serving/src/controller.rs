@@ -2,7 +2,7 @@
 //! must be refused.
 use super::{now_ms, Generation};
 use axum::http::StatusCode;
-use enhance_pir::status::*;
+use status_protocol::*;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc, RwLock,

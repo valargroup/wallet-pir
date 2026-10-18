@@ -1,7 +1,7 @@
 //! Durable Status publication counter. Opening always starts a new recovery
 //! epoch; restored metadata alone never makes a serving generation ready.
-use enhance_pir::status::{Error as StatusError, Hash, Manifest};
 use serde::{Deserialize, Serialize};
+use status_protocol::{Error as StatusError, Hash, Manifest};
 use std::{
     fs::{self, File, OpenOptions},
     path::{Path, PathBuf},
@@ -133,7 +133,7 @@ impl Authority {
 
 fn persist(dir: &Path, state: &State) -> Result<(), AuthorityError> {
     let bytes = serde_json::to_vec(state)?;
-    enhance_serving::artifact::write_atomic(dir, "authority.json", |file| file.write_all(&bytes))?;
+    pir_control::durable::write_atomic(dir, "authority.json", |file| file.write_all(&bytes))?;
     pir_control::durable::sync_dir(dir)?;
     Ok(())
 }
@@ -141,7 +141,7 @@ fn persist(dir: &Path, state: &State) -> Result<(), AuthorityError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use enhance_pir::status::PROTOCOL;
+    use status_protocol::PROTOCOL;
 
     fn manifest(generation: u64, recovery_epoch: u64) -> Manifest {
         Manifest {

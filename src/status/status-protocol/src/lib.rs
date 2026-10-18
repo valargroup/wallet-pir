@@ -156,15 +156,14 @@ pub fn native_packing_seed(network: &Hash, salt: &Hash) -> Hash {
 
 #[cfg(feature = "native-reinspiring")]
 pub fn native_query_masks(network: &Hash, salt: &Hash) -> Vec<Vec<u64>> {
-    crate::native::public_query_masks(native_setup_seed(network, salt), ROWS, COLS)
+    pir_native::P16
+        .public_query_masks(native_setup_seed(network, salt), ROWS, COLS)
+        .unwrap()
 }
 
 #[cfg(feature = "native-reinspiring")]
 pub fn native_packing_setup(network: &Hash, salt: &Hash) -> reinspiring::native::NativeSetup {
-    reinspiring::native::NativeSetup::new(
-        crate::native::params(),
-        native_packing_seed(network, salt),
-    )
+    reinspiring::native::NativeSetup::new(pir_native::params(), native_packing_seed(network, salt))
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -487,12 +486,12 @@ fn successful(response: reqwest::Response) -> Result<reqwest::Response, HttpErro
 
 #[cfg(feature = "native-reinspiring")]
 fn expected_public_len() -> Result<usize, Error> {
-    Ok(crate::native::public_len(COLS))
+    Ok(pir_native::public_len(COLS))
 }
 
 #[cfg(feature = "native-reinspiring")]
 fn expected_response_len() -> Result<usize, Error> {
-    Ok(HEADER_BYTES + crate::native::response_len(COLS))
+    Ok(HEADER_BYTES + pir_native::response_len(COLS))
 }
 
 #[cfg(not(feature = "native-reinspiring"))]
@@ -562,7 +561,7 @@ impl Client {
         self.manifest.fresh(now_ms)?;
         let issued_at = Instant::now();
         let row = bucket(&self.manifest.network, &self.manifest.salt, &txid);
-        let (secret, payload) = crate::native::prepare_with(&self.packing, &self.masks, ROWS, row)
+        let (secret, payload) = pir_native::prepare_with(&self.packing, &self.masks, ROWS, row)
             .map_err(|_| Error::Pir)?;
         let mut body = QUERY_MAGIC.to_vec();
         body.extend(self.manifest.id());
@@ -587,13 +586,9 @@ impl Client {
         {
             return Err(Error::Malformed);
         }
-        let row = crate::native::decode_cols(
-            &query.secret,
-            &self.public,
-            &response[HEADER_BYTES..],
-            COLS,
-        )
-        .map_err(|_| Error::Pir)?;
+        let row =
+            pir_native::decode_cols(&query.secret, &self.public, &response[HEADER_BYTES..], COLS)
+                .map_err(|_| Error::Pir)?;
         decode_row(&self.manifest, &query.txid, query.earliest, &row)
     }
 }

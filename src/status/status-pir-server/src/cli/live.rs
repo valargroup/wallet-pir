@@ -5,8 +5,8 @@ use crate::{
     status::{self, Controller, Generation},
     zakura::ZakuraClient,
 };
-use enhance_pir::status::*;
 use serde_json::json;
+use status_protocol::*;
 use std::{net::SocketAddr, path::PathBuf, time::Duration};
 
 fn matches_manifest(snapshot: &status::index::Snapshot, manifest: &Manifest) -> bool {
@@ -23,7 +23,7 @@ const UNCHANGED_REAFFIRM_MS: u64 = 5_000;
 
 async fn revalidate_candidate(
     rpc: &ZakuraClient,
-    verified: &status::source::Observation,
+    verified: &status_publication::source::Observation,
     candidate: &mut Generation,
 ) -> Result<bool, AnyError> {
     // A newer mempool observation does not invalidate a complete earlier
@@ -43,7 +43,7 @@ async fn revalidate_candidate(
 
 fn accept_candidate_observation(
     manifest: &mut Manifest,
-    verified: &status::source::Observation,
+    verified: &status_publication::source::Observation,
     canonical: Hash,
     now_ms: u64,
 ) -> Result<bool, Error> {
@@ -88,8 +88,11 @@ pub async fn serve_live(config: LiveConfig) -> Result<(), AnyError> {
         .try_into()
         .map_err(|_| "salt must be exactly 32 bytes")?;
     let rpc = ZakuraClient::from_cookie_file(rpc_url, cookie)?;
-    let mut source =
-        status::source::RollingWindow::open(state_dir.join("source"), salt, window_blocks)?;
+    let mut source = status_publication::source::RollingWindow::open(
+        state_dir.join("source"),
+        salt,
+        window_blocks,
+    )?;
     let first = source.observe(&rpc).await?;
     let mut authority = status::authority::Authority::open(
         state_dir.join("authority"),
@@ -251,8 +254,8 @@ pub async fn observe_live(
         .map_err(|_| "salt must be exactly 32 bytes")?;
     let rpc = ZakuraClient::from_cookie_file(rpc_url, cookie)?;
     let mut window = match state_dir {
-        Some(path) => status::source::RollingWindow::open(path, salt, window_blocks)?,
-        None => status::source::RollingWindow::new(salt, window_blocks)?,
+        Some(path) => status_publication::source::RollingWindow::open(path, salt, window_blocks)?,
+        None => status_publication::source::RollingWindow::new(salt, window_blocks)?,
     };
     let mut previous = None;
     for sample in 0..samples {
@@ -284,7 +287,7 @@ pub async fn observe_live(
 mod live_candidate_tests {
     use super::*;
 
-    fn observation(now_ms: u64) -> (Manifest, status::source::Observation) {
+    fn observation(now_ms: u64) -> (Manifest, status_publication::source::Observation) {
         let snapshot = status::index::Snapshot {
             network: [1; 32],
             salt: [2; 32],
@@ -312,7 +315,7 @@ mod live_candidate_tests {
         };
         (
             manifest,
-            status::source::Observation {
+            status_publication::source::Observation {
                 snapshot,
                 observed_ms: now_ms,
                 collect_ms: 0.,

@@ -1,0 +1,17 @@
+[package]
+name = "pir-serving"
+version = "0.1.0"
+edition = "2021"
+description = "Profile modulus and native hint helpers shared by the Enhance and Status serving libraries"
+license = "MIT"
+repository = "https://github.com/valargroup/wallet-pir"
+publish = false
+
+[features]
+default = []
+native-reinspiring = ["dep:pir-native", "ipir-sp/native-reinspiring"]
+
+[dependencies]
+ipir-sp = "=0.1.0-rc.7"
+pir-runtime = { path = "../pir-runtime" }
+pir-native = { package = "zakura-pir-native", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "886db40137caef486d32d5bc594b2c20b1dde75e", optional = true }

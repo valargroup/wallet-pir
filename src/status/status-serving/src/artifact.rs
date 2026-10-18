@@ -1,6 +1,6 @@
 //! Private transport encoding; public query geometry and row digests are unchanged.
-use enhance_pir::status::{Error, Hash, ROWS, ROW_BYTES};
 use sha2::{Digest, Sha256};
+use status_protocol::{Error, Hash, ROWS, ROW_BYTES};
 const MAGIC: &[u8; 4] = b"SRD1";
 const HEADER: usize = 40;
 

@@ -1,7 +1,6 @@
 //! Status PIR material for one generation: database units, their hints and the
 //! router packing material, prepared from an index snapshot.
 use super::{index, profile};
-use enhance_pir::status::*;
 #[cfg(not(feature = "native-reinspiring"))]
 use ipir_sp::IPIRClient;
 use ipir_sp::{
@@ -13,12 +12,16 @@ use pir_runtime::evaluation::{build_from_le_u16, PreparedDatabase};
 use pir_runtime::packing::{PackingKeys, PackingSetup, PreparedPacking};
 use rayon::prelude::*;
 use sha2::{Digest, Sha256};
+use status_protocol::*;
 #[cfg(not(feature = "native-reinspiring"))]
 use std::sync::OnceLock;
 use std::{sync::Arc, time::Instant};
 
-/// Ciphertext modulus of the selected Status profile, which is Enhance's.
-use enhance_serving::runtime::modulus;
+/// Ciphertext modulus of the selected Status profile.
+fn modulus() -> u64 {
+    static Q: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *Q.get_or_init(|| pir_serving::modulus(ROWS as u64, ITEM_BITS))
+}
 
 /// Router-side packing material for one d-column hint block.
 #[cfg(feature = "native-reinspiring")]
@@ -319,7 +322,7 @@ impl Generation {
                 preparation_threads = rayon::current_num_threads(),
                 "Status native packing material geometry"
             );
-            let public = enhance_pir::native::publish(&packing).map_err(|_| Error::Pir)?;
+            let public = pir_native::publish(&packing).map_err(|_| Error::Pir)?;
             manifest.public_digest = Sha256::digest(&public).into();
             Ok(Self {
                 manifest,
@@ -512,13 +515,13 @@ impl Generation {
         // The selection is 49 bits, as the wallet-pir client sends it, or 44
         // dithered bits; the exact length says which. The envelope is the same.
         if bytes.len() < HEADER_BYTES
-            || enhance_pir::native::accepted_query_bits(ROWS, bytes.len() - HEADER_BYTES).is_none()
+            || pir_native::accepted_query_bits(ROWS, bytes.len() - HEADER_BYTES).is_none()
             || &bytes[..4] != QUERY_MAGIC
             || bytes[4..36] != self.manifest.id()
         {
             return Err(Error::Malformed);
         }
-        enhance_pir::native::parse_accepted(
+        pir_native::parse_accepted(
             &native_packing_setup(&self.manifest.network, &self.manifest.salt),
             &bytes[HEADER_BYTES..],
             ROWS,
@@ -539,9 +542,7 @@ impl Generation {
             return Err(Error::Malformed);
         }
         let mut response = body[..HEADER_BYTES].to_vec();
-        response.extend(
-            enhance_pir::native::pack(&self.packing, &keys, values).map_err(|_| Error::Pir)?,
-        );
+        response.extend(pir_native::pack(&self.packing, &keys, values).map_err(|_| Error::Pir)?);
         Ok(response)
     }
     #[cfg(not(feature = "native-reinspiring"))]
@@ -616,7 +617,7 @@ fn query_masks(network: &Hash, salt: &Hash) -> Result<Vec<Vec<u64>>, Error> {
 fn unit_hint(db: &PreparedDatabase, masks: &[Vec<u64>]) -> Result<Vec<CrsBlock>, Error> {
     #[cfg(feature = "native-reinspiring")]
     {
-        enhance_serving::runtime::native_runtime::hint(db, masks).map_err(|_| Error::Pir)
+        pir_serving::hint(db, masks).map_err(|_| Error::Pir)
     }
     #[cfg(not(feature = "native-reinspiring"))]
     {

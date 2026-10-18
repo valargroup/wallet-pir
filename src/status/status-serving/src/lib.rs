@@ -28,10 +28,10 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use enhance_pir::status::*;
 use http::{bounded, evaluate, query, serving_http_client, HttpState};
 use ipir_sp::{server::MatvecBackend, ProductionSimplePirParams};
 use sha2::{Digest, Sha256};
+use status_protocol::*;
 use std::{
     sync::atomic::Ordering,
     sync::{Arc, OnceLock},

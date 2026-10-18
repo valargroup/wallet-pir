@@ -23,8 +23,9 @@ REGISTRY = ROOT / 'tools/ci/test-matrix.json'
 EXPORT = 'tools/txid/txid-sizing/export/Cargo.toml'
 NATIVE = ['enhance-pir/cli', 'enhance-pir/native-reinspiring',
           'enhance-serving/native-reinspiring', 'status-serving/native-reinspiring',
-          'enhance-pir-server/native-reinspiring', 'enhance-pir-load-test/native-reinspiring']
-CUDA = ['enhance-serving/cuda', 'status-serving/cuda', 'enhance-pir-server/cuda',
+          'enhance-pir-server/native-reinspiring', 'status-pir-server/native-reinspiring',
+          'enhance-pir-load-test/native-reinspiring']
+CUDA = ['enhance-serving/cuda', 'status-serving/cuda', 'enhance-pir-server/cuda', 'status-pir-server/cuda',
         'enhance-pir-server/native-reinspiring', 'enhance-pir-load-test/native-reinspiring']
 
 
@@ -35,7 +36,7 @@ def variants(groups):
         'native': dict(family='enhance', packages=groups['enhance'], features=NATIVE),
         'reference': dict(family='enhance', packages=['enhance-serving', 'enhance-pir', 'status-serving'], features=[]),
         'cuda': dict(family='enhance', packages=['enhance-serving', 'status-serving', 'enhance-pir-server',
-                                             'enhance-pir-load-test'], features=CUDA),
+                                             'status-pir-server', 'enhance-pir-load-test'], features=CUDA),
         'receiver': dict(family='receiver', packages=groups['receiver'], features=[]),
     }
     for context in result.values():
