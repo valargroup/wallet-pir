@@ -35,7 +35,7 @@ five-second overruns in its receipt. Diagnostic success establishes correctness;
 only an enforced passing run establishes compliance with the selected budget.
 
 Native tests compile once with a consistent feature set, then run Cargo-reported
-executables with at most two programs active and one case per program. Mutable
+executables with at most three programs active and one case per program. Mutable
 service state is fresh; only immutable public runtime material is shared within
 the run. Serving HTTP and packing tests live beside the serving library and
 avoid the application's chain ingestion dependencies. Reference arithmetic,
@@ -107,21 +107,16 @@ there before the pool; beside it, the encrypted HTTP smokes miss the 30-second
 case deadline. The 8-core fast runner keeps it in the pool, where four build
 threads leave cores for those smokes. HTTP integration programs use the pool
 ahead of ordinary units. Within each group, binaries with more discovered cases start first,
-independently of Cargo's artifact order. Cases within each program stay
-serial, preserving process-local immutable public fixtures within the fast runner’s
-6-GiB ceiling. Explicit feature or test-filter checks use one program at a time.
+independently of Cargo's artifact order. Large unit executables are divided into
+at most three disjoint groups of exact discovered case names, within that same
+process limit. Each group retains dozens of serial cases and immutable fixture
+reuse; no case is omitted or repeated. HTTP integrations and the exclusive
+small-runner publisher are not partitioned. The working-set ceiling remains
+6 GiB. Explicit feature or test-filter checks use one program at a time.
 The fast runner enforces the 30-second limit for every Rust case, including
 setup and teardown inside the case. Each program keeps its package directory and Cargo environment; fast integration
-targets must contain an enabled, unignored case, and unit exclusions must still
-match discovered tests. Cold cache preparation compiles the same target selection.
-Locally owned campaign-only unit tests use the non-default `full-tests` feature,
-so routine test binaries do not compile their bodies or exclusive helpers. Full
-qualification, reference/native variants, cache preparation and complete correctness
-enable it explicitly. Discovery rejects a full-only test in a fast binary or a
-missing classified case in a full library binary. The two upstream-only exclusions
-still use execution filters because this repository does not own their source.
-Use `--features full-tests` for a focused local campaign check.
-
+targets must contain an enabled, unignored case. Ordinary unit discovery has no
+named exclusions. Cold cache preparation compiles the same target selection.
 Enhance smoke cases reuse immutable prepared input bytes for the same record count,
 then copy them into separate writable worker directories. Workers still verify
 their copies and both 67/68-record generic oracles build independently. The encrypted
@@ -130,16 +125,15 @@ Transparent fixture exit tests use tiny file trees with the actual ownership and
 copying helpers. Manager behavior tests still prepare and verify real publications.
 Fixture construction, copying, verification and cleanup stay inside measured work.
 
-The package-qualified full-geometry/cache, multi-unit preparation, shipped-runtime
-identity matrices, retained-publication rebuild matrices, repeated HTTPS bootstrap
-fault/canonicality/budget matrices, RPC publication and real HTTP retry cases run
-only in full CI. Verified prepared-publication bootstrap over real HTTPS and its
-withdrawal refusal remain fast;
-`tools/ci/slow-tests.json` records the exact names and reasons. Binary unit tests run as well as library targets. For affected packages, fast CI also
-runs the integration targets classified as `fast` in
-[`tools/ci/integration-tests.json`](../tools/ci/integration-tests.json). The remaining
-integration targets, doctests, binary unit tests and all-feature lint run in
-**CI full**, nightly or on request. The aggregate completion check fails if a
+Ordinary cache, identity, preparation-failure, publication, TLS fault and recovery
+assertions all run in fast feedback. The non-default `qualification-tests` feature
+restores their original larger geometry combinations and longer histories for
+full qualification. Binary unit tests run as well as library targets. Affected
+packages also run integrations classified as `fast` in
+[`tools/ci/integration-tests.json`](../tools/ci/integration-tests.json). Complete
+correctness includes independent reference oracles, doctests and CPU lint. Larger
+integration campaigns and hardware qualification remain separate release gates.
+The aggregate completion check fails if a
 selected job fails or is skipped. This avoids compiling every integration target just
 to exclude its tests at runtime. Affected helper
 checks overlap both Rust compilation and execution; completing helper checks
@@ -190,8 +184,10 @@ rechecks archive contents, ABI metadata and clean source provenance.
 
 Only **CI / Fast checks** validates automatically on main pushes and PRs.
 Dependency cache priming runs independently on relevant main changes.
-Both PR and main feedback have a three-minute execution ceiling; queueing also counts toward the latency
-target. A timeout is a failure, never evidence of successful fast validation.
+Both PR and main feedback target three minutes; queueing also counts toward the
+latency target. During the current repair, validation finishes before main's
+final timing check enforces 180 seconds. PRs and manual runs report timings.
+A completed over-budget run provides diagnostic coverage, not a timing pass.
 The pre-push health guard follows this workflow, rather than long qualification.
 
 Whole-repository **CI full** runs nightly at 04:17 UTC and on explicit dispatch.
@@ -415,7 +411,7 @@ Main uses persistent targets; the separate
 one successful main fast snapshot for hosted PRs. It compiles fast units only
 when the exact key is missing, runs no tests and is not a gate. Full qualification
 retains persistent build lanes. A missing cache never relaxes validation or the
-180-second routine ceiling.
+180-second warm feedback target.
 
 ## Cold preparation and representative latency
 
@@ -429,8 +425,13 @@ The optional `stress` input repeats each family's encrypted HTTP/recovery smoke
 50 times with fresh service state and no test retries. It remains preemptible
 and does not publish release artifacts.
 
-Fast coverage includes an encrypted HTTP smoke for Receiver, Transparent and
-Enhance. Transparent checks a nonzero row against public source bytes, refuses
+Fast coverage includes every bounded unit test and an encrypted HTTP smoke for
+Receiver, Transparent and Enhance. The former named slow-unit exclusions have
+been removed. Default fixtures keep complete failure/recovery assertions with
+supported narrow inputs; explicit full runners enable `qualification-tests` to
+restore deployed geometry combinations and larger history/publication runs.
+Complete CPU correctness uses the same bounded native selection and retains its
+reference, exporter, documentation and lint checks under the 180-second limit. Transparent checks a nonzero row against public source bytes, refuses
 malformed input before preparation, and repeats after a cache restore and
 corruption. Enhance verifies encrypted records after draining the old listener
 and reopening durable coordinator state. Listener readiness/shutdown use bound

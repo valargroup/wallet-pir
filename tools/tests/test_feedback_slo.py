@@ -2,6 +2,9 @@
 from pathlib import Path
 import sys
 import unittest
+from unittest.mock import patch
+import contextlib
+import io
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/ci'))
 import timings
 
@@ -17,6 +20,18 @@ def row(number, category='shared', seconds=120, **changes):
 
 
 class FeedbackTests(unittest.TestCase):
+    def test_final_timing_check_reports_before_failing_at_the_limit(self):
+        for seconds, fails in [(179, False), (180, True), (240, True)]:
+            result = {'jobs': [{'name': 'Fast checks', 'job_seconds': seconds,
+                                'reused_from_previous_attempt': False}]}
+            with patch.object(sys, 'argv', ['timings.py', '--run', '1', '--check-fast-seconds', '180']), patch.object(timings, 'report', return_value=result), patch.dict(timings.os.environ, {'GITHUB_STEP_SUMMARY': ''}), contextlib.redirect_stdout(io.StringIO()) as output:
+                if fails:
+                    with self.assertRaises(SystemExit):
+                        timings.main()
+                else:
+                    timings.main()
+                self.assertIn('job_seconds', output.getvalue())
+
     def samples(self):
         return [row(i, ['shared', 'docs', 'ops'][i % 3]) for i in range(20)]
 

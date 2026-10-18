@@ -510,7 +510,6 @@ pub(super) mod tests {
     }
 
     #[tokio::test]
-    #[cfg(feature = "full-tests")]
     async fn live_rpc_candidate_revalidates_before_durable_publication() {
         use ipir_sp::server::MatvecBackend;
         use status_serving::{authority::Authority, Controller, Generation};

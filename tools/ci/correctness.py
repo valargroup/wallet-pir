@@ -2,7 +2,8 @@
 """Run all CPU correctness checks, including warm compilation, in 180 seconds.
 
 --record-only collects a complete diagnostic run without relaxing the enforced
-command. Both modes retain all ordinary correctness targets. CUDA/hardware and
+command. Both modes retain all bounded unit tests and classified correctness integrations.
+Explicit large campaigns, CUDA/hardware and
 explicit soak campaigns retain their existing separate qualification paths.
 """
 import argparse
@@ -21,10 +22,8 @@ import uuid
 
 from test_budget import case_seconds
 from full_packages import inventory
-from integration_tests import inventory as integration_inventory
 from stage import ROOT, run, install_cancellation, stop
-from fast import local_target
-from test_tiers import check_discovery, classifications, full_features
+from fast import HELPERS, local_target
 
 FEATURES = ','.join([
     'enhance-pir/cli', 'enhance-pir/native-reinspiring',
@@ -32,7 +31,7 @@ FEATURES = ','.join([
     'enhance-pir-server/native-reinspiring', 'status-pir-server/native-reinspiring',
           'enhance-pir-load-test/native-reinspiring',
     'pir-control/admission',
-] + full_features(classifications()))
+])
 
 
 def source_identity():
@@ -52,7 +51,7 @@ def artifact_summary(path):
     from cargo_cache import artifacts
     if not path.exists():
         return None
-    stages = {'compile:all-native', 'compile:reference', 'compile:export', 'doctests', 'lint'}
+    stages = {'compile:fast', 'compile:all-native', 'compile:reference', 'compile:export', 'doctests', 'lint'}
     records = [json.loads(line) for line in path.read_text().splitlines()]
     return artifacts([entry for entry in records if entry.get('stage') in stages])
 
@@ -67,10 +66,6 @@ def programs(artifacts, metadata):
             continue
         seen.add(binary)
         package = packages[artifact['package_id']]
-        if 'lib' in artifact['target']['kind']:
-            listing = subprocess.check_output([binary, '--list'], cwd=ROOT, text=True)
-            check_discovery(package['name'],
-                            {line[:-6] for line in listing.splitlines() if line.endswith(': test')}, full=True)
         result.append(dict(executable=binary, directory=str(Path(package['manifest_path']).parent),
                            package=package['name'], version=package['version'], args=[],
                            integration='test' in artifact['target']['kind'],
@@ -82,29 +77,20 @@ def rust_checks(env, temporary, offline):
     metadata = json.loads(subprocess.check_output(
         ['cargo', 'metadata', '--locked', '--no-deps', '--format-version=1', *offline], cwd=ROOT, env=env))
     options = ['--locked', '--profile', 'release-fast', *offline]
-    native = run(['cargo', 'test', '--no-run', '--workspace', *options, '--features', FEATURES],
-                 env=env, stage='compile:all-native', collect_tests=True, test_details=True)
-    plan = programs(native, metadata)
-    registered = integration_inventory()
-    actual = {(p['package'], p['target']) for p in plan if p['integration']}
-    expected = {(package, target) for package, tiers in registered.items()
-                for target in tiers['fast'] + tiers['full']}
-    if actual != expected:
-        raise ValueError(f'integration executable mismatch: missing={sorted(expected-actual)}, extra={sorted(actual-expected)}')
-    if not plan:
-        raise ValueError('Cargo reported no correctness executables')
-    path = temporary / 'native.json'
-    path.write_text(json.dumps(plan))
-    run(['python3', 'tools/ci/reclaim-build-cache.py'], env=env, stage='reclaim')
-    run(['python3', 'tools/ci/unit_tests.py', str(path), '--jobs=2', '--budget'],
-        env=env, stage='tests:all-native')
+    # Use the same executable inventory and discovery validation as affected
+    # feedback, with all workspace packages and the required native features.
+    # No unit cases are excluded; only explicit qualification integrations and
+    # their larger fixture settings belong to the separate full runner.
+    from fast_build import execute
+    execute([package['name'] for package in metadata['packages']],
+            offline=bool(offline), jobs=3, additional_features=FEATURES.split(','),
+            environment=env, case_log=env['WALLET_PIR_CASE_LOG'],
+            enforce_budget=env['WALLET_PIR_ENFORCE_BUDGET'] == '1')
     # Reference checks have the same package/feature graph and are compiled
     # together. The full native workspace graph is never rebuilt without native.
-    reference = run(['cargo', 'test', '--no-run', *options, '-p', 'enhance-serving', '--lib', '--test', 'ci_smoke',
-                     '--features', ','.join(full_features(['enhance-serving']))],
+    reference = run(['cargo', 'test', '--no-run', *options, '-p', 'enhance-serving', '--lib', '--test', 'ci_smoke'],
                     env=env, stage='compile:reference', collect_tests=True, test_details=True)
-    reference += run(['cargo', 'test', '--no-run', *options, '-p', 'enhance-pir', '-p', 'status-serving', '--lib', '--tests',
-                      '--features', ','.join(full_features(['status-serving']))],
+    reference += run(['cargo', 'test', '--no-run', *options, '-p', 'enhance-pir', '-p', 'status-serving', '--lib', '--tests'],
                      env=env, stage='compile:reference', collect_tests=True, test_details=True)
     reference_plan = programs(reference, metadata)
     for program in reference_plan:
@@ -169,7 +155,7 @@ def main():
                        WALLET_PIR_STAGE_LOG=str(output / 'stages.jsonl'),
                        WALLET_PIR_TEST_RUNTIME_CACHE=str(cache),
                        PYTHONPATH=os.pathsep.join([str(bootstrap), str(ROOT / 'tools/ci'), env.get('PYTHONPATH', '')]))
-            helpers = ['make', '-j4', 'check-hygiene', 'check-ops', 'check-docs', 'check-reports', 'check-tools']
+            helpers = ['make', '-j4', 'check-hygiene', *sorted(HELPERS)]
             if args.offline:
                 env['OFFLINE'] = '1'
             with local_target(ROOT, enabled=not bool(env.get('CARGO_TARGET_DIR'))), ThreadPoolExecutor(max_workers=2) as pool:

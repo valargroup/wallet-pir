@@ -56,8 +56,8 @@ name = "filter-sweep"
 path = "src/bin/filter-sweep.rs"
 
 [features]
-# Compile campaign-only correctness tests in full qualification.
-full-tests = []
+# Keep large test campaigns explicit; production behavior is unchanged.
+qualification-tests = []
 
 [dependencies]
 pir-pipeline = { path = "../../shared/pir-pipeline" }

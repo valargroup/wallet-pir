@@ -207,7 +207,10 @@ def main():
     parser.add_argument('--cache-records', action='store_true', help='read job logs for sanitized cache/stage records')
     parser.add_argument('--slo', action='store_true', help='qualify warm main feedback with selection/cache evidence; needs 20 representative runs')
     parser.add_argument('--since-run', help='start the SLO window at this Actions run; excludes older pipeline versions')
+    parser.add_argument('--check-fast-seconds', type=float, help='fail after validation when Fast checks reaches this duration')
     args = parser.parse_args()
+    if args.check_fast_seconds is not None and (not args.run or not math.isfinite(args.check_fast_seconds) or args.check_fast_seconds <= 0):
+        parser.error('--check-fast-seconds requires --run and a finite positive duration')
     if args.slo and (not args.workflow or not args.since_run):
         parser.error('--slo requires --workflow and --since-run')
     if args.run:
@@ -228,6 +231,14 @@ def main():
     if os.environ.get('GITHUB_STEP_SUMMARY'):
         with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as out:
             out.write('\n## Actions timing evidence\n\nMeasured through the reporting step; final cleanup is excluded.\n\n```json\n' + json.dumps(result, indent=2) + '\n```\n')
+
+    if args.check_fast_seconds is not None:
+        jobs = [job for job in result['jobs'] if job['name'] == 'Fast checks' and not job['reused_from_previous_attempt']]
+        if len(jobs) != 1:
+            raise SystemExit('Expected one current Fast checks job for timing enforcement')
+        seconds = jobs[0]['job_seconds']
+        if seconds >= args.check_fast_seconds:
+            raise SystemExit(f'Fast checks took {seconds:g}s; target is below {args.check_fast_seconds:g}s (validation finished before this check)')
 
     if args.slo and not result['slo']['accepted']:
         raise SystemExit(1)

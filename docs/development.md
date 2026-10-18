@@ -26,15 +26,44 @@ Line Tools. `make doctor NETWORK=1` checks authenticated GitHub/dependency acces
 it suppresses subprocess output and never prints tokens. Missing dependencies are
 fixed explicitly, not by interactive repair in a test command.
 
-Fast Rust checks run library and binary unit tests in `release-fast`, plus the
-classified Enhance fast integration targets. Required CLI features are enabled
-for binary unit targets; protocol and hardware modes remain explicit choices. Package-qualified slow names are
-validated against executable test discovery before skips apply; removed/renamed
-entries fail. Full tests retain these cases. An explicit TEST filter can run a slow case; custom
-FEATURES select unit targets with those features and do not add default-feature
+Fast Rust checks run every library and binary unit test in `release-fast`, plus
+classified bounded integration targets. There are no named slow-unit exclusions.
+Required CLI features are enabled for binary unit targets. Ordinary cache,
+identity and fault matrices exercise one native column instance with the real
+ring parameters. These component fixtures are not advertised publication
+geometries. Independent history oracles retain the 16-bit native profile, and
+HTTP checks retain registered publication geometries and real history rows. Publisher tests share immutable
+producer bytes and generated certificate material; writable state, listeners,
+trust checks and fault controls remain fresh. A query reused within one recovery
+scenario is first decoded against producer bytes, and every later check still
+sends it over HTTP and compares the complete answer. Large unit executables
+use up to three disjoint groups of exact discovered case names inside the same
+three-process limit; each group keeps fixture reuse and serial case deadlines.
+HTTP integrations and the small-runner publisher protection remain intact.
+
+`make check-correctness` runs that complete bounded unit/integration population
+with native arithmetic, the independent reference checks, exporter contracts,
+doctests, formatting, lint and Python helpers. Its 180-second deadline includes
+warm compilation, fixture construction, execution and cleanup. Every CPU case
+retains its 30-second deadline. `--record-only` records overruns without omitting
+cases and never establishes an enforced timing pass.
+
+Explicit full commands (`make test`, `make check-full`, full package families and
+the qualification matrix) enable the declared `qualification-tests` features.
+These restore the original deployed geometry combinations, mixed-size archive
+preparation, full publication sequence, longer display histories and the larger
+Enhance multi-unit failure fixture and 16K monolithic comparison. Ordinary
+unequal-unit checks use a supported 8K composed tail and independently assemble
+the whole table, including its zero-filled gap. Cold and cached preparation
+failures are separate cases; their retry answers are checked against direct
+raw-row column sums. The same contracts run in both configurations; full integration campaigns and
+released-client checks remain classified separately. Fast builds reject this
+feature if it leaks into their actual executable artifacts. Use
+`make check-package PACKAGE=<name> FEATURES=qualification-tests TEST=<filter>`
+to diagnose one expanded unit case. Custom FEATURES do not select default
 integration targets. Full package families are validated against every workspace
-member in `tools/ci/full-packages.json`; new or stale assignments fail. Real HTTP, crypto, fault injection,
-restart and deployment qualification remain distinct from short model tests.
+member in `tools/ci/full-packages.json`; new or stale assignments fail. Real HTTP,
+crypto, fault injection, restart and deployment qualification remain required.
 
 Fast scaler feedback runs decision, forecast, signal, daemon and metrics unit
 tests. Seeded fleet simulations and exhaustive membership/mutant checks remain
@@ -50,7 +79,14 @@ and hardware qualification remain separate from fast feedback.
 
 Before landing a dependency/toolchain upgrade, dispatch **Prepare fast
 validation** on its branch. Cold preparation and hosted cache priming run
-separately from main CI. A main push preempts fast preparation.
+separately from main CI. The optional `correctness` input first diagnoses the
+complete CPU run (including cold native/reference and lint preparation) and
+requires three enforced warm runs on that same source. It also repeats complete
+fast feedback three times with its 180-second command deadline. This explicit
+preparation rebuilds the changed test crates once, retaining dependency caches;
+that cold rebuild is separate from the enforced warm measurements. Their per-case, stage
+and source receipts are retained as an attempt-specific Actions artifact; cold
+diagnostics never count as a three-minute pass. A main push preempts fast preparation.
 
 ## Keep changes focused
 
@@ -153,3 +189,8 @@ failures visible. Compare the same workload, host, flags and population before
 and after; local execution excludes Actions queue/setup. The warm CI target is
 three minutes; deployment's prepared-artifact target remains two minutes. These
 are targets until measured on the updated workflow.
+
+Temporarily, CI lets PR and main validation run to completion without a
+three-minute cancellation. Pushes to main enforce that target in a final timing
+check; PRs and manual runs only report timings. The check measures job start
+through validation and reporting, excluding queue time and final cleanup.

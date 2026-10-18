@@ -6,8 +6,8 @@ description = "Transparent event journal, display sidecars, block extraction and
 publish = false
 
 [features]
-# Compile campaign-only correctness tests in full qualification.
-full-tests = []
+# Restore the larger test campaigns during full qualification.
+qualification-tests = []
 
 [dependencies]
 chrono = { version = "0.4", default-features = false, features = ["std", "serde"] }

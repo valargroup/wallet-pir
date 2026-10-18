@@ -1,23 +1,12 @@
 use super::*;
 use crate::publication::fixture::{self, block_hash, chain_records, chain_sources};
-#[cfg(feature = "full-tests")]
-use crate::publication::offline::verify;
-use crate::publication::offline::{bench_recent, plan_start, synthetic_records};
-use crate::publication::publisher::bootstrap;
-#[cfg(feature = "full-tests")]
-use crate::publication::publisher::CANDIDATE_PREFIX;
-#[cfg(feature = "full-tests")]
-use crate::publication::publisher::SEALED_DIR;
-#[cfg(feature = "full-tests")]
-use crate::publication::serving::WorkersFile;
-use crate::publication::serving::{Transport, WorkerRole};
+use crate::publication::offline::{bench_recent, plan_start, synthetic_records, verify};
+use crate::publication::publisher::{bootstrap, CANDIDATE_PREFIX, SEALED_DIR};
+use crate::publication::serving::{Transport, WorkerRole, WorkersFile};
 use crate::publication::source::{open_writer, Script, ScriptStep};
 use crate::publication::timeline::read_timeline;
 use std::collections::BTreeSet;
-#[cfg(feature = "full-tests")]
-use std::os::unix::fs::FileExt;
-#[cfg(feature = "full-tests")]
-use std::os::unix::fs::MetadataExt;
+use std::os::unix::fs::{FileExt, MetadataExt};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 use transparent_filter::BlockHash;
 use transparent_shard::txid::{DisplayEntry, DisplayRecord, ENTRY_BYTES};
@@ -33,7 +22,6 @@ fn settings() -> Settings {
 }
 
 /// Settings that re-verify every sealed revision when a controller opens.
-#[cfg(feature = "full-tests")]
 fn verifying() -> Settings {
     Settings {
         trust_sealed: false,
@@ -225,25 +213,48 @@ async fn the_recent_window_overlaps_archives_through_reorgs_and_restarts() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[cfg(feature = "full-tests")]
 async fn incremental_stepping_reproduces_bootstrap() {
+    let through = if cfg!(feature = "qualification-tests") {
+        125
+    } else {
+        118
+    };
+    let steps = if cfg!(feature = "qualification-tests") {
+        vec![1, 7]
+    } else {
+        vec![1]
+    };
     let temp = tempfile::tempdir().unwrap();
     let journal = temp.path().join("journal");
-    fixture::write_journal(&journal, 100, 125, 0);
+    fixture::write_journal(&journal, 100, through, 0);
     let layout = layout(&journal, 100);
     let whole_root = temp.path().join("whole");
-    let whole = bootstrap_at(&journal, &whole_root, &layout, 125);
-    for step in [1, 7] {
+    let whole = bootstrap_at(&journal, &whole_root, &layout, through);
+    for step in steps {
         let root = temp.path().join(format!("step-{step}"));
         let started = bootstrap_at(&journal, &root, &layout, 112);
         assert!(
-            started.len() >= 2 && whole.len() >= started.len() + 3,
+            started.len() >= 2
+                && whole.len()
+                    >= started.len()
+                        + if cfg!(feature = "qualification-tests") {
+                            3
+                        } else {
+                            1
+                        },
             "{} then {} seals",
             started.len(),
             whole.len()
         );
         let first = active_map(&root);
-        let run = run_script(&root, &journal, advance(112, 125, step), vec![], settings()).await;
+        let run = run_script(
+            &root,
+            &journal,
+            advance(112, through, step),
+            vec![],
+            settings(),
+        )
+        .await;
         assert_eq!(run.outcome, Outcome::Idle);
         assert_eq!(
             identities(&run.active.seals),
@@ -259,9 +270,9 @@ async fn incremental_stepping_reproduces_bootstrap() {
         for seal in &run.active.seals[started.len()..] {
             verify_dir(&root.join(SEALED_DIR).join(&seal.digest), &seal.digest).unwrap();
         }
-        assert!(run.maps.len() >= (13 / step) as usize);
+        assert!(run.maps.len() >= ((through - 112) / step) as usize);
         check_maps(&run.maps, &first);
-        assert_eq!(run.maps.last().unwrap().covered_through(), Some(125));
+        assert_eq!(run.maps.last().unwrap().covered_through(), Some(through));
         check_windows(&run.maps, fixture::params().recent_window, |h| {
             chain_records(0, h).len() as u64
         });
@@ -393,10 +404,8 @@ async fn reorgs_rebuild_recent_and_a_sealed_fork_halts() {
     assert!(matches!(run.outcome, Outcome::Halted(_)));
 }
 
-#[cfg(feature = "full-tests")]
 type FileIdentity = BTreeMap<PathBuf, (u64, i64)>;
 
-#[cfg(feature = "full-tests")]
 fn sealed_files(root: &Path) -> FileIdentity {
     let mut out = BTreeMap::new();
     for dir in std::fs::read_dir(root.join(SEALED_DIR)).unwrap() {
@@ -413,20 +422,43 @@ fn sealed_files(root: &Path) -> FileIdentity {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[cfg(feature = "full-tests")]
 async fn restart_resumes_without_touching_sealed_files() {
+    let middle = if cfg!(feature = "qualification-tests") {
+        121
+    } else {
+        118
+    };
+    let through = if cfg!(feature = "qualification-tests") {
+        130
+    } else {
+        124
+    };
     let temp = tempfile::tempdir().unwrap();
     let journal = temp.path().join("journal");
-    fixture::write_journal(&journal, 100, 130, 0);
+    fixture::write_journal(&journal, 100, through, 0);
     let layout = layout(&journal, 100);
-    let whole = bootstrap_at(&journal, &temp.path().join("whole"), &layout, 130);
+    let whole = bootstrap_at(&journal, &temp.path().join("whole"), &layout, through);
     let root = temp.path().join("root");
     bootstrap_at(&journal, &root, &layout, 112);
-    let first = run_script(&root, &journal, advance(112, 121, 9), vec![], verifying()).await;
+    let first = run_script(
+        &root,
+        &journal,
+        advance(112, middle, 9),
+        vec![],
+        verifying(),
+    )
+    .await;
     assert_eq!(first.outcome, Outcome::Idle);
     let sealed_before = sealed_files(&root);
     // Recovery verifies sealed bytes and continues from the activated tip.
-    let second = run_script(&root, &journal, advance(121, 130, 9), vec![], verifying()).await;
+    let second = run_script(
+        &root,
+        &journal,
+        advance(middle, through, 9),
+        vec![],
+        verifying(),
+    )
+    .await;
     assert_eq!(second.outcome, Outcome::Idle);
     assert_eq!(identities(&second.active.seals), identities(&whole));
     let sealed_after = sealed_files(&root);
@@ -467,19 +499,30 @@ async fn restart_resumes_without_touching_sealed_files() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[cfg(feature = "full-tests")]
 async fn the_window_drops_oldest_archives_and_keeps_the_rest() {
+    let through = if cfg!(feature = "qualification-tests") {
+        130
+    } else {
+        124
+    };
     let temp = tempfile::tempdir().unwrap();
     let journal = temp.path().join("journal");
-    fixture::write_journal(&journal, 100, 130, 0);
+    fixture::write_journal(&journal, 100, through, 0);
     let layout = layout(&journal, 2);
-    let whole = bootstrap_at(&journal, &temp.path().join("whole"), &layout, 130);
+    let whole = bootstrap_at(&journal, &temp.path().join("whole"), &layout, through);
     let root = temp.path().join("root");
     let started = bootstrap_at(&journal, &root, &layout, 112);
     let first = active_map(&root);
     assert_eq!(first.first_shard_id, started.len() as u64 - 2);
     let sealed_before = sealed_files(&root);
-    let run = run_script(&root, &journal, advance(112, 130, 6), vec![], settings()).await;
+    let run = run_script(
+        &root,
+        &journal,
+        advance(112, through, 6),
+        vec![],
+        settings(),
+    )
+    .await;
     assert_eq!(run.outcome, Outcome::Idle);
     check_maps(&run.maps, &first);
     assert!(run.maps.iter().all(|m| sealed_count(m) <= 2));
@@ -1151,7 +1194,6 @@ async fn an_archive_owner_that_lost_staging_is_staged_again() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[cfg(feature = "full-tests")]
 async fn command_adapters_ship_then_relay_control() {
     use std::os::unix::fs::PermissionsExt;
     let temp = tempfile::tempdir().unwrap();
@@ -1319,11 +1361,15 @@ fn plan_start_leaves_room_for_bootstrap_and_replay_seals() {
 }
 
 #[test]
-#[cfg(feature = "full-tests")]
 fn verify_reproduces_a_running_root() {
+    let through = if cfg!(feature = "qualification-tests") {
+        125
+    } else {
+        118
+    };
     let temp = tempfile::tempdir().unwrap();
     let journal = temp.path().join("journal");
-    fixture::write_journal(&journal, 100, 125, 0);
+    fixture::write_journal(&journal, 100, through, 0);
     let layout = layout(&journal, 3);
     let root = temp.path().join("root");
     let started = bootstrap_at(&journal, &root, &layout, 112).len();
@@ -1335,7 +1381,7 @@ fn verify_reproduces_a_running_root() {
     let run = runtime.block_on(run_script(
         &root,
         &journal,
-        advance(112, 125, 7),
+        advance(112, through, 7),
         vec![],
         settings(),
     ));
@@ -1610,13 +1656,17 @@ fn shipped_files(candidate: &Path) -> BTreeSet<String> {
 /// records the prebuild; revision directories still hold exactly their
 /// manifests' files; and collection removes a candidate with its files.
 #[tokio::test(flavor = "multi_thread")]
-#[cfg(feature = "full-tests")]
 async fn shipped_runtimes_go_out_with_each_candidate_and_go_with_it() {
     use txid_serving::prebuild::build_shipped;
     use txid_serving::set::DisplayRevision;
+    let through = if cfg!(feature = "qualification-tests") {
+        125
+    } else {
+        121
+    };
     let temp = tempfile::tempdir().unwrap();
     let journal = temp.path().join("journal");
-    fixture::write_journal(&journal, 100, 125, 0);
+    fixture::write_journal(&journal, 100, through, 0);
     let layout = layout(&journal, 100);
     let root = temp.path().join("root");
     bootstrap_at(&journal, &root, &layout, 112);
@@ -1625,14 +1675,19 @@ async fn shipped_runtimes_go_out_with_each_candidate_and_go_with_it() {
         retain_candidates: 1,
         ..settings()
     };
-    let run = run_script(&root, &journal, advance(112, 125, 3), vec![], settings).await;
+    let run = run_script(&root, &journal, advance(112, through, 3), vec![], settings).await;
     assert_eq!(run.outcome, Outcome::Idle);
     let cycles: Vec<Value> = read_timeline(&root)
         .unwrap()
         .into_iter()
         .filter(|e| e["kind"] == "cycle")
         .collect();
-    assert!(cycles.len() >= 4, "{} cycles", cycles.len());
+    let minimum_cycles = if cfg!(feature = "qualification-tests") {
+        4
+    } else {
+        3
+    };
+    assert!(cycles.len() >= minimum_cycles, "{} cycles", cycles.len());
     let map = run.maps.last().unwrap();
     let recent = map.shards.last().unwrap();
     let candidate = &run.active.directory;

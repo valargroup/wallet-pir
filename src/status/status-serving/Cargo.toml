@@ -6,8 +6,6 @@ description = "Status PIR serving runtime: generations, distributed controller a
 publish = false
 
 [features]
-# Compile campaign-only correctness tests in full qualification.
-full-tests = []
 default = []
 native-reinspiring = ["status-protocol/native-reinspiring", "pir-serving/native-reinspiring", "dep:pir-native", "dep:reinspiring", "ipir-sp/native-reinspiring"]
 cuda = ["ipir-sp/cuda"]

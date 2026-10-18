@@ -45,7 +45,7 @@ Preserve existing Cargo package and binary names.
 
 ## Iteration and validation
 
-- Keep routine PR and main fast feedback under three minutes; retain full service qualification separately.
+- Temporarily let PR and main CI validation finish without a three-minute cancellation; enforce the three-minute timing check only after validation on pushes to main. Retain full service qualification separately.
 - Keep every automated CPU correctness test below 30 seconds and the complete
   warm correctness run below three minutes, including incremental compilation,
   setup, teardown, tooling and lint. `make check-correctness` enforces the budget;

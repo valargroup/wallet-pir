@@ -2,8 +2,7 @@
 
 Cargo unifies features for the complete selection. Unit tests and the named
 fast integration targets share that build; campaign targets are never selected.
-Test programs retain their package directory, Cargo environment and existing
-slow-case exclusions. On fewer than 8 cores the filter library runs alone;
+Test programs retain their package directory and Cargo environment. On fewer than 8 cores the filter library runs alone;
 otherwise at most three programs, including that library and HTTP integration
 programs, execute together.
 """
@@ -14,7 +13,6 @@ import subprocess
 import tempfile
 
 from stage import ROOT, run, inherited_fds
-from test_tiers import check_discovery, gated_cases
 
 
 def available_cpus():
@@ -39,14 +37,48 @@ def test_names(binary, directory, *, ignored=False):
     return {line[:-6] for line in listing.splitlines() if line.endswith(': test')}
 
 
-def execute(selected, *, offline=False, compile_only=False, jobs=3):
+def bounded_programs(program, names):
+    """Partition large unit executables without increasing the process limit.
+
+    Exact filters are a disjoint cover of discovery, including ignored cases.
+    Each process retains immutable fixture reuse across dozens of cases. Keep
+    the small-runner publisher protection and real HTTP integrations intact.
+    """
+    if program['integration'] or program['exclusive'] or len(names) <= 48:
+        return [program]
+    lanes = min(3, (len(names) + 47) // 48)
+    ordered = sorted(names)
+    distribution = [name for name in ordered
+                    if name.startswith('controller::distribution_tests::')]
+    if program.get('package') == 'transparent-filter-server' and distribution:
+        # These cases share expensive immutable native producer bytes. Keep
+        # them in one process; each consumer still has its own files and HTTP.
+        remaining = sorted(names - set(distribution))
+        other_lanes = lanes - 1
+        partitions = [distribution, *[remaining[index::other_lanes]
+                                     for index in range(other_lanes)]]
+    else:
+        partitions = [ordered[index::lanes] for index in range(lanes)]
+    partitions = [cases for cases in partitions if cases]
+    assert sum(map(len, partitions)) == len(names)
+    assert set().union(*map(set, partitions)) == set(names)
+    return [dict(program, args=[*program['args'], '--exact', *cases],
+                 case_count=len(cases)) for cases in partitions]
+
+
+def execute(selected, *, offline=False, compile_only=False, jobs=3,
+            additional_features=(), environment=None, case_log=None, enforce_budget=True):
     from integration_tests import inventory
+    if any(feature.rsplit('/', 1)[-1] == 'cuda' for feature in additional_features):
+        raise ValueError('ordinary CPU correctness cannot enable CUDA')
+    if any(feature.rsplit('/', 1)[-1] == 'qualification-tests' for feature in additional_features):
+        raise ValueError('ordinary correctness cannot enable qualification test campaigns')
     registry = inventory()
     slow = json.loads((ROOT / 'tools/ci/slow-tests.json').read_text())
     options = ['--offline'] if offline else []
     metadata = json.loads(subprocess.check_output(
         ['cargo', 'metadata', '--locked', '--no-deps', '--format-version=1', *options],
-        cwd=ROOT, **inherited_fds()))
+        cwd=ROOT, env=environment, **inherited_fds()))
     selected = set(selected)
     if 'enhance-pir-server' in selected:
         selected.add('enhance-serving')
@@ -83,6 +115,7 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3):
                 expected_units.add((name, target['name']))
     if not kinds and not integration_names:
         return
+    features.update(additional_features)
     command = ['cargo', 'test', '--locked', '--profile', 'release-fast', '--no-run', *options]
     for name in sorted(selected):
         command += ['-p', name]
@@ -91,7 +124,7 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3):
     if features:
         command += ['--features', ','.join(sorted(features))]
     # Qualification controls cannot expand a routine correctness fixture.
-    env = {key: value for key, value in os.environ.items() if not key.startswith('QUALIFY_')}
+    env = {key: value for key, value in (os.environ if environment is None else environment).items() if not key.startswith('QUALIFY_')}
     run(['cargo', 'fmt', '--all', '--check'], env=env, stage='format')
     artifacts = run(command, env=env, stage='compile:fast', collect_tests=not compile_only,
                     test_details=True)
@@ -110,6 +143,8 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3):
         if package is None:
             raise ValueError('Cargo returned a test from an unselected package')
         name = package['name']
+        if 'qualification-tests' in artifact.get('features', []):
+            raise ValueError(f'{name}: qualification test campaigns leaked into ordinary correctness')
         target = artifact['target']
         integration = 'test' in target['kind']
         identity = (name, target['name'])
@@ -124,16 +159,17 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3):
                 raise ValueError(f'unexpected fast test target kind: {target["kind"]}')
             actual_units.add(identity)
             discovered_units[name].update(names)
-        exclusions = [] if integration else sorted(set(slow.get(name, {})) - gated_cases(name))
+        exclusions = [] if integration else list(slow.get(name, {}))
         # Full archive runtimes use every core on a 4-core runner and push the
         # encrypted HTTP smokes past their 30s deadline. Run that library alone
         # there; an 8-core runner still has cores left for the shared pool.
-        programs.append(dict(executable=binary, directory=directory, package=name,
+        program = dict(executable=binary, directory=directory, package=name,
                              version=package['version'],
                              integration=integration,
                              exclusive=publisher_runs_alone(name, target['kind']),
                              case_count=len(names),
-                             args=[arg for case in exclusions for arg in ('--skip', case)]))
+                             args=[arg for case in exclusions for arg in ('--skip', case)])
+        programs.extend(bounded_programs(program, names))
     if actual_integrations != expected_integrations or expected_units - actual_units:
         raise ValueError(f'fast test executables mismatch: missing_units={sorted(expected_units-actual_units)}, '
                          f'missing_integrations={sorted(expected_integrations-actual_integrations)}, '
@@ -141,8 +177,7 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3):
     if not programs:
         raise ValueError('Cargo reported no fast test executables')
     for name, discovered in discovered_units.items():
-        check_discovery(name, discovered, full=False)
-        stale = set(slow.get(name, {})) - gated_cases(name) - discovered
+        stale = set(slow.get(name, {})) - discovered
         if stale:
             raise ValueError(f'{name}: stale slow-test classification: {sorted(stale)}')
     # On a 4-core runner the publisher is exclusive and finishes before this
@@ -162,14 +197,15 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3):
         cache = root / 'public-fixtures'
         cache.mkdir()
         env['WALLET_PIR_TEST_RUNTIME_CACHE'] = str(cache)
-        env['WALLET_PIR_ENFORCE_BUDGET'] = '1'
-        cases = root / 'cases.jsonl'
+        env['WALLET_PIR_ENFORCE_BUDGET'] = '1' if enforce_budget else '0'
+        cases = Path(case_log) if case_log is not None else root / 'cases.jsonl'
         env['WALLET_PIR_CASE_LOG'] = str(cases)
         try:
             run(['python3', 'tools/ci/unit_tests.py', str(plan), '--budget', '--jobs', str(jobs)],
                 env=env, stage='tests:fast-programs')
         finally:
             timings = [json.loads(line) for line in cases.read_text().splitlines()] if cases.exists() else []
+            timings = [case for case in timings if case.get("executable")]
             print('CI_FAST_CASES ' + json.dumps(dict(
                 completed=len(timings),
                 slowest=sorted(timings, key=lambda case: case['seconds'], reverse=True)[:15])), flush=True)

@@ -1300,7 +1300,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg(feature = "full-tests")]
     async fn backend_evaluation_failure_over_http_releases_permit_and_recovers() {
         evaluation_failure_over_http(MatvecConfig::default()).await;
     }
@@ -1316,7 +1315,6 @@ mod tests {
         .await;
     }
 
-    #[cfg(any(feature = "full-tests", feature = "cuda"))]
     async fn evaluation_failure_over_http(backend: MatvecConfig) {
         use crate::{
             matvec::testing::{scoped, Faults},
@@ -1494,7 +1492,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "full-tests")]
     fn restart_rebuilds_lost_cache_only_from_verified_durable_rows() {
         use super::super::runtime::{plan, unit_rows, Packing};
         use enhance_pir::protocol::{Geometry, Lifecycle, SCHEMA_VERSION};

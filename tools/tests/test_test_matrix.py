@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tools/ci'))
 import test_matrix as matrix
 import cargo_cache
+from stage import inherited_fds
 
 
 class MatrixTests(unittest.TestCase):
@@ -61,8 +62,7 @@ class MatrixTests(unittest.TestCase):
         self.assertNotIn('enhance-serving/cuda', native)
         self.assertIn('enhance-serving/native-reinspiring', cuda)
         self.assertIn('enhance-serving/cuda', cuda)
-        self.assertEqual(matrix.package_features('enhance-serving', contexts['reference'], packages),
-                         ['enhance-serving/full-tests'])
+        self.assertFalse(matrix.package_features('enhance-serving', contexts['reference'], packages))
         self.assertNotIn('enhance-pir-server/native-reinspiring', native)
         commands = matrix.cargo_commands(registry['enhance-cuda-check']['targets'], contexts, targets, packages)
         self.assertEqual(len(commands), 1)
@@ -70,24 +70,8 @@ class MatrixTests(unittest.TestCase):
         self.assertEqual({command[i + 1] for i, arg in enumerate(command) if arg == '-p'},
                          {'enhance-serving', 'status-serving', 'enhance-pir-server', 'status-pir-server',
                           'enhance-pir-load-test'})
-        self.assertEqual(command[command.index('--features') + 1], ','.join(contexts['cuda']['features']))
+        self.assertEqual(command[command.index('--features') + 1], ','.join(matrix.CUDA))
         self.assertTrue(all('--all-targets' in cmd[3] for cmd in commands))
-
-    def test_full_discovery_refuses_missing_campaigns_and_retains_existing_feature_variants(self):
-        from test_tiers import check_discovery, gated_cases
-        for package in ('enhance-serving', 'status-serving', 'enhance-pir-server',
-                        'transparent-filter-server', 'transparent-server-backend'):
-            names = gated_cases(package)
-            self.assertTrue(names)
-            check_discovery(package, names, full=True)
-            with self.assertRaisesRegex(ValueError, 'missing full-only tests'):
-                check_discovery(package, names - {next(iter(names))}, full=True)
-        _, contexts, _, packages, _ = self.plan
-        for context in contexts.values():
-            for package in context['packages']:
-                if gated_cases(package):
-                    self.assertIn(package + '/full-tests',
-                                  matrix.package_features(package, context, packages))
 
     def receipts(self, family):
         registry, _, _, _, digest = self.plan
@@ -103,6 +87,14 @@ class MatrixTests(unittest.TestCase):
                 (root / f'{index}.json').write_text(json.dumps(receipt))
             matrix.verify_receipts('receiver', root, self.plan, 'a' * 40,
                                    {'GITHUB_RUN_ID': '123', 'GITHUB_RUN_ATTEMPT': '2'})
+
+    def test_qualification_rejects_a_bounded_executable_in_place_of_full_fixtures(self):
+        package = copy.deepcopy(self.plan[3]['transparent-server-backend'])
+        artifact = dict(package_id=package['id'],
+                        target=dict(name='transparent_server_backend', kind=['lib']),
+                        executable='/not-executed', features=[])
+        with self.assertRaisesRegex(ValueError, 'qualification fixture feature missing'):
+            matrix.test_programs([artifact], 'transparent', {package['name']: package}, {})
 
     def test_receipts_require_every_shard_and_the_exact_source_and_attempt(self):
         receipts = self.receipts('receiver')
@@ -191,10 +183,8 @@ class MatrixTests(unittest.TestCase):
                         if 'tools/ci/unit_tests.py' in command:
                             subprocess.run(command, cwd=ROOT, env=options['env'], check=True,
                                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                                           **matrix.inherited_fds(options['env']))
-                    with tempfile.TemporaryFile() as lease, \
-                            patch.dict(os.environ, MATRIX_FIXTURE_LOG=str(observed), MATRIX_FIXTURE_FAILURE='1' if failed else '0',
-                                       WALLET_PIR_DEV_LEASE_FD=str(lease.fileno())), \
+                                           **inherited_fds(options['env']))
+                    with patch.dict(os.environ, MATRIX_FIXTURE_LOG=str(observed), MATRIX_FIXTURE_FAILURE='1' if failed else '0'), \
                             patch.object(matrix, 'source_identity', return_value='a' * 40), \
                             patch.object(matrix, 'run', side_effect=command):
                         output = root / 'receipt.json'

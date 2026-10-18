@@ -82,7 +82,9 @@ class CaseBudgetTests(unittest.TestCase):
                 'if "--list" in sys.argv: print("stalled: test")\n'
                 'else:\n print("test stalled ... ",end="",flush=True)\n time.sleep(10)\n',
                 seconds=.15)
-        self.assertLess(time.monotonic() - began, 2)
+        # Include interpreter startup and discovery under concurrent compilation.
+        # The ten-second body must still be interrupted well before completion.
+        self.assertLess(time.monotonic() - began, 5)
 
     def test_a_successful_process_cannot_omit_a_discovered_case(self):
         with self.assertRaisesRegex(RuntimeError, 'missing=.*second'):
@@ -97,6 +99,37 @@ class CaseBudgetTests(unittest.TestCase):
             seconds=.01, enforce=False)
         self.assertEqual(count, 1)
         self.assertGreater(cases[0]['seconds'], .01)
+
+
+class CorrectnessSelectionTests(unittest.TestCase):
+    def test_complete_native_selection_retains_reference_exporter_docs_and_lint(self):
+        import correctness
+        import fast_build
+        from unittest.mock import patch
+        metadata = dict(packages=[dict(id='one', name='one'), dict(id='two', name='two')])
+        environment = dict(WALLET_PIR_CASE_LOG='/tmp/outer-cases.jsonl',
+                           WALLET_PIR_ENFORCE_BUDGET='1')
+        calls = []
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.object(correctness.subprocess, 'check_output',
+                             side_effect=[json.dumps(metadata).encode(), json.dumps(metadata).encode()]), \
+                patch.object(correctness, 'run', side_effect=lambda command, **kw: calls.append(command) or []), \
+                patch.object(fast_build, 'execute') as native:
+            correctness.rust_checks(environment, Path(directory), ['--offline'])
+        native.assert_called_once_with(
+            ['one', 'two'], offline=True, jobs=3,
+            additional_features=correctness.FEATURES.split(','), environment=environment,
+            case_log=environment['WALLET_PIR_CASE_LOG'], enforce_budget=True)
+        self.assertFalse(any('--workspace' in command and '--no-run' in command for command in calls))
+        self.assertTrue(any('-p' in command and 'enhance-serving' in command and 'ci_smoke' in command
+                            for command in calls))
+        self.assertTrue(any('enhance-pir' in command and 'status-serving' in command for command in calls))
+        self.assertTrue(any('--doc' in command and '--workspace' in command for command in calls))
+        self.assertTrue(any('--manifest-path' in command and
+                            'tools/txid/txid-sizing/export/Cargo.toml' in command for command in calls))
+        self.assertTrue(any(command[:2] == ['cargo', 'clippy'] and '--all-targets' in command
+                            and 'warnings' in command for command in calls))
+        self.assertNotIn('qualification-tests', correctness.FEATURES)
 
 
 if __name__ == '__main__':

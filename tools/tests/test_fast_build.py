@@ -43,7 +43,7 @@ class FastBuildTests(unittest.TestCase):
         self.ignored = {}
         self.calls, self.plans = [], []
 
-    def execute(self, *, compile_only=False, jobs=2, cpus=4):
+    def execute(self, *, compile_only=False, jobs=2, cpus=4, **options):
         original_read = Path.read_text
 
         def read(path, *args, **kwargs):
@@ -72,7 +72,38 @@ class FastBuildTests(unittest.TestCase):
                 patch.object(fast_build, 'run', side_effect=run), \
                 patch.dict(os.environ, QUALIFY_PUBLICATIONS='100000'), redirect_stdout(io.StringIO()):
             fast_build.execute([p['name'] for p in self.packages], offline=True,
-                               compile_only=compile_only, jobs=jobs)
+                               compile_only=compile_only, jobs=jobs, **options)
+
+    def test_large_unit_partitions_cover_each_discovered_case_exactly_once(self):
+        names = {f'module::case_{index:03}' for index in range(137)}
+        program = dict(integration=False, exclusive=False, args=[], case_count=len(names))
+        shards = fast_build.bounded_programs(program, names)
+        self.assertEqual(len(shards), 3)
+        actual = [case for shard in shards for case in shard['args'][1:]]
+        self.assertEqual(set(actual), names)
+        self.assertEqual(len(actual), len(names))
+        self.assertTrue(all(shard['args'][0] == '--exact' for shard in shards))
+        self.assertLessEqual(max(shard['case_count'] for shard in shards), 46)
+        for key in ('integration', 'exclusive'):
+            guarded = dict(program, **{key: True})
+            self.assertEqual(fast_build.bounded_programs(guarded, names), [guarded])
+
+    def test_publisher_distribution_consumers_share_one_producer_process(self):
+        distribution = {f'controller::distribution_tests::manager_tests::case_{index}'
+                        for index in range(40)}
+        names = distribution | {f'other::case_{index}' for index in range(102)}
+        program = dict(package='transparent-filter-server', integration=False,
+                       exclusive=False, args=[], case_count=len(names))
+        shards = fast_build.bounded_programs(program, names)
+        self.assertEqual(len(shards), 3)
+        self.assertEqual(set(shards[0]['args'][1:]), distribution)
+        actual = [case for shard in shards for case in shard['args'][1:]]
+        self.assertCountEqual(actual, names)
+        self.assertTrue(all(shard['args'][0] == '--exact' for shard in shards))
+        only_distribution = {f'controller::distribution_tests::case_{index}'
+                             for index in range(60)}
+        [shard] = fast_build.bounded_programs(program, only_distribution)
+        self.assertCountEqual(shard['args'][1:], only_distribution)
 
     def test_one_build_preserves_units_binaries_fast_targets_and_package_specific_exclusions(self):
         self.execute()
@@ -146,6 +177,30 @@ class FastBuildTests(unittest.TestCase):
         self.assertEqual(units[0]['case_count'], 7)
         self.assertEqual(len(self.plans[0]), len(self.artifacts))
 
+    def test_complete_correctness_keeps_native_features_and_the_outer_case_receipt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            receipt = Path(directory) / 'cases.jsonl'
+            self.execute(additional_features=['a/native-reinspiring'],
+                         environment=dict(os.environ, CORRECTNESS_OWNER='outer'),
+                         case_log=receipt, enforce_budget=False)
+        build = next(command for command, _ in self.calls if command[:2] == ['cargo', 'test'])
+        self.assertIn('a/native-reinspiring', build[build.index('--features') + 1].split(','))
+        environment = self.calls[-1][1]['env']
+        self.assertEqual(environment['CORRECTNESS_OWNER'], 'outer')
+        self.assertEqual(environment['WALLET_PIR_CASE_LOG'], str(receipt))
+        self.assertEqual(environment['WALLET_PIR_ENFORCE_BUDGET'], '0')
+        self.assertTrue(all('campaign' not in command for command, _ in self.calls))
+
+    def test_full_campaign_features_cannot_expand_ordinary_correctness(self):
+        with self.assertRaisesRegex(ValueError, 'cannot enable qualification'):
+            self.execute(additional_features=['a/qualification-tests'])
+        self.assertEqual(self.calls, [])
+        self.artifacts[0]['features'] = ['qualification-tests']
+        with self.assertRaisesRegex(ValueError, 'leaked into ordinary'):
+            self.execute()
+        self.assertEqual(self.plans, [])
+
+
     def test_priming_builds_the_same_units_without_running_any_program(self):
         self.execute()
         baseline = next(command for command, _ in self.calls if command[:2] == ['cargo', 'test'])
@@ -189,16 +244,6 @@ class FastBuildTests(unittest.TestCase):
             self.execute()
         self.assertEqual(self.plans, [])
 
-    def test_full_only_cases_are_not_enabled_or_skipped_by_the_fast_build(self):
-        self.slow['a']['campaign_only'] = dict(feature='full-tests', reason='Full-size oracle.')
-        self.execute()
-        build = next(command for command, _ in self.calls if command[:2] == ['cargo', 'test'])
-        self.assertNotIn('full-tests', build[build.index('--features') + 1])
-        self.assertTrue(all('campaign_only' not in p['args'] for p in self.plans[0]))
-        self.listings['/fixture/a-a'].add('campaign_only')
-        with self.assertRaisesRegex(ValueError, 'full-only tests compiled in fast build'):
-            self.execute()
-
     def test_a_fast_name_cannot_silently_select_another_packages_campaign(self):
         self.registry['b'] = dict(fast=[], full=['smoke', 'campaign'])
         with self.assertRaisesRegex(ValueError, 'also select campaign'):
@@ -221,19 +266,15 @@ class PublisherCampaignTierTests(unittest.TestCase):
         import json
         from pathlib import Path
         root = Path(__file__).resolve().parents[2]
-        slow = json.loads((root / 'tools/ci/slow-tests.json').read_text())['transparent-filter-server']
-        prefix = 'controller::distribution_tests::manager_tests::'
-        self.assertIn(prefix + 'manager_primary_read_failure_at_poll_still_fences_http', slow)
-        self.assertIn(prefix + 'manager_fallback_parse_failure_at_guard_still_fences_http', slow)
-        for name in ('manager_reuses_immutable_transfers_and_serves_through_failed_update',
-                     'manager_persists_invalidation_and_refuses_equal_revision_reenable_after_restart',
-                     'manager_owner_fence_write_failure_still_fences_http',
-                     'manager_restarts_interrupted_staging_and_rejects_superseded_activation',
-                     'manager_checks_inventory_and_required_files_on_unchanged_maps'):
-            self.assertNotIn(prefix + name, slow)
+        # Former fault campaigns remain ordinary executable cases; their input
+        # size changes under the explicit full-qualification feature instead.
+        self.assertEqual(json.loads((root / 'tools/ci/slow-tests.json').read_text()), {})
         import sys
         sys.path.insert(0, str(root / 'tools/ci'))
         from full_packages import commands, inventory
         full = commands('transparent', inventory())
         self.assertFalse(any('--skip' in command for command in full))
         self.assertIn('transparent-filter-server', full[-1])
+        features = full[-1][full[-1].index('--features') + 1].split(',')
+        self.assertIn('transparent-filter-server/qualification-tests', features)
+        self.assertIn('transparent-server-backend/qualification-tests', features)

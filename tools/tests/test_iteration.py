@@ -158,10 +158,8 @@ class PlannerTests(unittest.TestCase):
 
     def test_explicit_slow_unit_filter_runs_without_skipping(self):
         package = 'transparent-filter-server'
-        slow = json.loads((ROOT / 'tools/ci/slow-tests.json').read_text())[package]
         selected = 'publication::tests::block_by_block_publication_equals_a_fresh_build'
-        self.assertIn(selected, slow)
-        listing = ''.join(name + ': test\n' for name in slow)
+        listing = selected + ': test\n'
         metadata = {'packages': [{'name': package, 'targets': [{'kind': ['lib']}]}]}
         calls = []
         with patch.object(fast.subprocess, 'check_output', side_effect=[json.dumps(metadata).encode(), listing]), \
@@ -169,7 +167,6 @@ class PlannerTests(unittest.TestCase):
             fast.rust_checks([package], test=selected)
         self.assertIn(selected, calls[-1])
         self.assertNotIn('--skip', calls[-1])
-        self.assertIn('full-tests', calls[-1][calls[-1].index('--features') + 1])
 
     def test_explicit_integration_target_preserves_features_and_filter(self):
         metadata = {'packages': [{'name': 'example', 'targets': [{'name': 'http', 'kind': ['test']}]}]}

@@ -1190,7 +1190,6 @@ mod tests {
     /// content, differing only in revision numbering. Sealed page
     /// shards of the open directory shard are carried by link, not rewritten.
     #[test]
-    #[cfg(feature = "full-tests")]
     fn block_by_block_publication_equals_a_fresh_build() {
         use std::os::unix::fs::MetadataExt;
         let root = tempfile::tempdir().unwrap();
@@ -1203,7 +1202,14 @@ mod tests {
         let mut previous: Option<PathBuf> = None;
         let mut map = None;
         let mut linked = 0;
-        for through in (5..70).step_by(3).chain([69]) {
+        let throughs = if cfg!(feature = "qualification-tests") {
+            (5..70).step_by(3).chain([69]).collect::<Vec<_>>()
+        } else {
+            // Keep consecutive growth, sealed-page linking and the independent
+            // complete rebuild; qualification repeats every intermediate step.
+            vec![20, 23, 26, 29, 69]
+        };
+        for through in throughs {
             let output = root.path().join(format!("c{through}"));
             let published = publish_with(
                 &single_tier(&output, previous.as_deref(), through),

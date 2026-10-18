@@ -2686,8 +2686,8 @@ async fn concurrent_requests_change_nothing_but_when_they_are_sent() {
 /// A batch that sends nothing, or stops at a refused first request, leaves
 /// the rest to the walk, which makes them in sequence with its ordinary
 /// handling: the refusal is waited out where the sequential walk would have
-/// met it, and the result, the charges and what reached the service are the
-/// sequential walk's.
+/// met it. The ledger, transferred bytes and requests reaching the service
+/// match the sequential walk; the refused manifest adds one attempted check.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_failed_batch_falls_back_to_the_sequential_walk() {
     let per_shard = chain();
@@ -2715,7 +2715,13 @@ async fn a_failed_batch_falls_back_to_the_sequential_walk() {
         )
         .await;
         compare(&fallen_back.ledger, &traverse(&per_shard, &wallet, 0));
-        assert_eq!(fallen_back.charges, sequential.charges, "{batches:?}");
+        let mut expected_charges = sequential.charges;
+        if matches!(batches, Batches::RefuseFirst) {
+            // The synthetic refusal carries no downloaded bytes, but counts
+            // as an attempted manifest before the successful sequential retry.
+            expected_charges.manifests_checked += 1;
+        }
+        assert_eq!(fallen_back.charges, expected_charges, "{batches:?}");
         assert_eq!(fallen_back.map_refreshes, 0);
         assert!(log.batches > 0, "{batches:?}: the batch was attempted");
         assert_eq!(

@@ -9,9 +9,9 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import tomllib
 from fast import ROOT, workspace_packages
 from stage import run
-from test_tiers import full_features
 
 
 def inventory(packages=None, groups=None):
@@ -30,19 +30,28 @@ def inventory(packages=None, groups=None):
     return groups
 
 
+def qualification_features(names):
+    """Enable declared test campaigns only in explicit full qualification."""
+    selected = set(names)
+    return sorted(package['name'] + '/qualification-tests'
+                  for package in workspace_packages() if package['name'] in selected
+                  and 'qualification-tests' in tomllib.loads(
+                      Path(package['manifest_path']).read_text()).get('features', {}))
+
+
 def commands(group, groups, lint=False, compile_only=False):
     names = groups[group]
     if lint:
         return [['cargo', 'clippy', '--locked', '--all-targets', '--all-features',
                  *[arg for name in names for arg in ('-p', name)], '--', '-D', 'warnings']]
     runner = ['cargo', 'test', '--no-run'] if compile_only else ['bash', 'tools/ci/full-test.sh']
-    features = full_features(names) + {
+    features = {
         'enhance': ['enhance-pir/cli', 'enhance-pir/native-reinspiring',
                     'enhance-serving/native-reinspiring', 'status-serving/native-reinspiring',
                     'enhance-pir-server/native-reinspiring', 'status-pir-server/native-reinspiring',
           'enhance-pir-load-test/native-reinspiring'],
         'shared': ['pir-control/admission'],
-    }.get(group, [])
+    }.get(group, []) + qualification_features(names)
     result = [[*runner, '--locked', '--profile', 'release-fast',
                *[arg for name in names for arg in ('-p', name)],
                *(['--features', ','.join(features)] if features else [])]]

@@ -419,7 +419,6 @@ pub(crate) enum Database {
 }
 
 #[cfg(test)]
-#[cfg(feature = "full-tests")]
 impl Database {
     /// The stored database as bytes, to compare two runtimes'.
     pub(crate) fn to_bytes(&self) -> Vec<u8> {
@@ -1483,11 +1482,41 @@ pub(crate) mod tests {
     use transparent_shard::display::{TXID_2K8, TXID_4K8};
     use transparent_shard::layout::{DECOUPLED_2K_8K, DECOUPLED_32K_32K};
 
+    // Cache units exercise the generic native API with one supported column
+    // instance. These are test domains, never advertised publication geometries.
+    // Production HTTP checks and qualification retain the registered layouts.
+    pub(crate) const NATIVE_INSTANCE: transparent_shard::layout::Geometry =
+        transparent_shard::layout::Geometry {
+            name: "test-native-instance",
+            directory_row_bytes: 2_048,
+            page_row_bytes: 2_048,
+            ..TXID_2K8
+        };
+    const TWO_NATIVE_BLOCKS: transparent_shard::layout::Geometry =
+        transparent_shard::layout::Geometry {
+            name: "test-native-two-blocks",
+            directory_rows: 4_096,
+            page_rows: 4_096,
+            ..NATIVE_INSTANCE
+        };
+
     /// The masks a table's rows publish, from the whole-table hint over the
     /// columns the profile encodes (single bytes for an 8-bit table, u16
     /// pairs for a 16-bit one), without the scan server: what the certificate
     /// tool rebuilds.
-    #[cfg(feature = "full-tests")]
+    /// Ordinary cache/identity checks need valid native arithmetic, not large
+    /// history rows. Full qualification retains the caller's deployed shape.
+    pub(crate) fn fixture_shape(
+        geometry: &'static transparent_shard::layout::Geometry,
+        table: Table,
+    ) -> (&'static transparent_shard::layout::Geometry, Table) {
+        if cfg!(feature = "qualification-tests") {
+            (geometry, table)
+        } else {
+            (&NATIVE_INSTANCE, Table::TxDirectory)
+        }
+    }
+
     fn reference_masks(profile: &native::TableProfile, rows: &[u8]) -> Vec<u8> {
         let hint = if profile.native.entry_bytes() == 1 {
             let columns: Vec<Vec<u8>> = (0..profile.cols)
@@ -1565,7 +1594,6 @@ pub(crate) mod tests {
     /// four-byte size and no less than the 27-bit packed matrix a CPU with
     /// AVX-512 VBMI may choose, so its charge never exceeds its reservation.
     #[test]
-    #[cfg(feature = "full-tests")]
     fn a_built_runtime_holds_its_planned_size_or_less() {
         let matrix_narrow = (native::D * native::D * native::ELL * 4) as u64;
         let matrix_packed = (native::D * (native::D * native::ELL / 8) * 27 + 8) as u64;
@@ -1662,7 +1690,6 @@ pub(crate) mod tests {
     /// without evicting anything.
     #[cfg(unix)]
     #[tokio::test(flavor = "multi_thread")]
-    #[cfg(feature = "full-tests")]
     async fn a_build_in_flight_keeps_its_bound_until_the_runtime_exists() {
         use std::io::Write;
         // An empty 8-bit table: its one-digit matrix fits four-byte words, so
@@ -1859,10 +1886,13 @@ pub(crate) mod tests {
     /// without the scan server. It binds its report to a snapshot by requiring
     /// those masks to equal the served ones, so the two derivations must agree.
     #[test]
-    #[cfg(feature = "full-tests")]
     fn masks_rebuilt_from_row_bytes_equal_the_served_masks() {
-        let shared =
-            SharedParams::build(&transparent_shard::layout::DECOUPLED_2K_8K, Table::Pages).unwrap();
+        let (geometry, table) = if cfg!(feature = "qualification-tests") {
+            (&DECOUPLED_2K_8K, Table::Pages)
+        } else {
+            (&DECOUPLED_2K_8K, Table::Directory)
+        };
+        let shared = SharedParams::build(geometry, table).unwrap();
         let profile = &shared.profile;
         let rows: Vec<u8> = (0..profile.rows * profile.row_bytes)
             .map(|i| (i.wrapping_mul(2_654_435_761) >> 7) as u8)
@@ -1877,35 +1907,51 @@ pub(crate) mod tests {
     /// Leaving trailing zero blocks out of the hint publishes exactly the
     /// masks the whole-table product does: an empty table, content ending
     /// on either side of a block boundary, and content in the last row.
-    #[test]
-    #[cfg(feature = "full-tests")]
-    fn trailing_zero_blocks_leave_the_published_masks_unchanged() {
-        let shared =
-            SharedParams::build(&transparent_shard::layout::DECOUPLED_2K_8K, Table::Pages).unwrap();
+    fn check_zero_tail(input: impl FnOnce(&native::TableProfile) -> (usize, usize)) {
+        // A two-block native component covers both sides of the boundary.
+        // The independent 16-bit oracle above and HTTP retain history rows.
+        let (geometry, table) = if cfg!(feature = "qualification-tests") {
+            (&DECOUPLED_2K_8K, Table::Pages)
+        } else {
+            (&TWO_NATIVE_BLOCKS, Table::TxDirectory)
+        };
+        let shared = SharedParams::build(geometry, table).unwrap();
         let profile = &shared.profile;
-        let full = |rows: &[u8]| reference_masks(profile, rows);
-        let bytes = profile.rows * profile.row_bytes;
-        for (filled, expected_blocks) in [
-            (0, 1),
-            (1, 1),
-            (native::D * profile.row_bytes, 1),
-            (native::D * profile.row_bytes + 1, 2),
-            (bytes, profile.rows / native::D),
-        ] {
-            let mut rows = vec![0u8; bytes];
-            for (i, byte) in rows[..filled].iter_mut().enumerate() {
-                *byte = (i.wrapping_mul(2_654_435_761) >> 7) as u8 | 1;
-            }
-            assert_eq!(
-                used_blocks(&rows, profile.row_bytes, profile.rows),
-                expected_blocks
-            );
-            assert_eq!(
-                TableRuntime::build(&shared, &rows).unwrap().public_params,
-                full(&rows),
-                "{filled} leading bytes"
-            );
+        let (filled, expected_blocks) = input(profile);
+        let mut rows = vec![0u8; profile.rows * profile.row_bytes];
+        for (i, byte) in rows[..filled].iter_mut().enumerate() {
+            *byte = (i.wrapping_mul(2_654_435_761) >> 7) as u8 | 1;
         }
+        assert_eq!(
+            used_blocks(&rows, profile.row_bytes, profile.rows),
+            expected_blocks
+        );
+        assert_eq!(
+            TableRuntime::build(&shared, &rows).unwrap().public_params,
+            reference_masks(profile, &rows),
+            "{filled} leading bytes"
+        );
+    }
+
+    #[test]
+    fn trailing_zero_blocks_leave_the_published_masks_unchanged() {
+        check_zero_tail(|_| (0, 1));
+    }
+    #[test]
+    fn trailing_zero_masks_match_with_one_nonzero_byte() {
+        check_zero_tail(|_| (1, 1));
+    }
+    #[test]
+    fn trailing_zero_masks_match_at_the_block_boundary() {
+        check_zero_tail(|profile| (native::D * profile.row_bytes, 1));
+    }
+    #[test]
+    fn trailing_zero_masks_match_past_the_block_boundary() {
+        check_zero_tail(|profile| (native::D * profile.row_bytes + 1, 2));
+    }
+    #[test]
+    fn trailing_zero_masks_match_with_content_in_the_last_row() {
+        check_zero_tail(|profile| (profile.rows * profile.row_bytes, profile.rows / native::D));
     }
 
     /// The batched hint changes nothing a client or the disk cache sees. At
@@ -1914,10 +1960,11 @@ pub(crate) mod tests {
     /// prepared from the reference hint over every block, answers byte for
     /// byte as it does, and decodes to the selected row.
     #[test]
-    #[cfg(feature = "full-tests")]
     fn the_batched_hint_runtime_is_the_reference_runtime() {
         for (geometry, table, filled) in [
+            #[cfg(feature = "qualification-tests")]
             (&DECOUPLED_2K_8K, Table::Directory, 2_048),
+            #[cfg(feature = "qualification-tests")]
             (&DECOUPLED_2K_8K, Table::Pages, 5_000),
             (&TXID_2K8, Table::TxDirectory, 2_048),
             (&TXID_2K8, Table::TxDirectory, 700),

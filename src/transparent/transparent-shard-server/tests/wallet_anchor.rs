@@ -547,8 +547,9 @@ async fn an_exact_common_ancestor_inside_a_shard_survives_a_real_fork() {
         hash: hash_forked(fork)(fork + 20).to_display_hex(),
     };
     let mut filters = PublishedFilters::load(new_dir.path(), &map);
+    let source_height = old.shards[1].end_height;
     let result = tokio::task::spawn_blocking(move || {
-        let chain = StaticChain {
+        let mut chain = StaticChain {
             hashes: (FIRST - 1..=target.height)
                 .map(|h| (h, hash_forked(fork)(h).to_display_hex()))
                 .collect(),
@@ -556,6 +557,35 @@ async fn an_exact_common_ancestor_inside_a_shard_survives_a_real_fork() {
         let mut store = SqliteStore::open(path).unwrap();
         let mut transport = HttpShardTransport::new(base, &HttpOptions::default()).unwrap();
         let geometry = transport.geometry().unwrap();
+        let pending = zakura_pir_transparent::engine::sync_into(
+            &mut store,
+            &map,
+            0,
+            &geometry,
+            &chain,
+            &mut scripts(),
+            &mut filters,
+            &mut transport,
+            &WorkLimits::UNLIMITED,
+            &target,
+        )
+        .unwrap();
+        assert_eq!(
+            pending.completion,
+            Completion::Incomplete {
+                reason: zakura_pir_transparent::engine::IncompleteReason::ChainUnknown {
+                    height: source_height,
+                },
+                pending: 0,
+            },
+            "the old publication cannot be judged without its endpoint's accepted header"
+        );
+        // Header knowledge can extend beyond the requested history. Prove the
+        // old publication followed the abandoned branch before re-reading it.
+        chain.hashes.insert(
+            source_height,
+            hash_forked(fork)(source_height).to_display_hex(),
+        );
         zakura_pir_transparent::engine::sync_into(
             &mut store,
             &map,
@@ -574,8 +604,9 @@ async fn an_exact_common_ancestor_inside_a_shard_survives_a_real_fork() {
     .unwrap();
     assert_eq!(result.completion, Completion::Complete);
     assert_eq!(
-        result.rolled_back_to, None,
-        "a verified partial prefix must not be mistaken for a changed full shard"
+        result.rolled_back_to,
+        Some(old.shards[0].end_height),
+        "the abandoned publication's partial prefix must be re-read from the unchanged shard boundary"
     );
     compare(&result.ledger, &expected(&changed, fork + 20));
 }

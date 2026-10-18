@@ -15,9 +15,8 @@ import subprocess
 import tempfile
 import time
 
-from full_packages import inventory, commands as full_commands
+from full_packages import inventory, commands as full_commands, qualification_features
 from stage import ROOT, run, install_cancellation, inherited_fds
-from test_tiers import check_discovery, full_features
 
 REGISTRY = ROOT / 'tools/ci/test-matrix.json'
 EXPORT = 'tools/txid/txid-sizing/export/Cargo.toml'
@@ -30,18 +29,15 @@ CUDA = ['enhance-serving/cuda', 'status-serving/cuda', 'enhance-pir-server/cuda'
 
 
 def variants(groups):
-    result = {
-        'transparent': dict(family='transparent', packages=groups['transparent'], features=[]),
+    return {
+        'transparent': dict(family='transparent', packages=groups['transparent'], features=qualification_features(groups['transparent'])),
         'export': dict(family='transparent', packages=['txid-sizing-export'], features=[], manifest=EXPORT),
-        'native': dict(family='enhance', packages=groups['enhance'], features=NATIVE),
+        'native': dict(family='enhance', packages=groups['enhance'], features=NATIVE + qualification_features(groups['enhance'])),
         'reference': dict(family='enhance', packages=['enhance-serving', 'enhance-pir', 'status-serving'], features=[]),
         'cuda': dict(family='enhance', packages=['enhance-serving', 'status-serving', 'enhance-pir-server',
                                              'status-pir-server', 'enhance-pir-load-test'], features=CUDA),
         'receiver': dict(family='receiver', packages=groups['receiver'], features=[]),
     }
-    for context in result.values():
-        context['features'] = [*context['features'], *full_features(context['packages'])]
-    return result
 
 
 def metadata(manifest=None):
@@ -166,7 +162,7 @@ def cargo_commands(keys, contexts, targets, packages):
             raise ValueError('CUDA all-targets check must retain every original package')
         command = ['cargo', 'check', '--locked',
                    *[arg for package in packages_to_check for arg in ('-p', package)],
-                   '--all-targets', '--features', ','.join(contexts['cuda']['features'])]
+                   '--all-targets', '--features', ','.join(CUDA)]
         commands.append(('cuda', 'check', checks, command))
     for (variant, package, category), selected in batches.items():
         if category == 'check':
@@ -212,6 +208,10 @@ def test_programs(artifacts, variant, packages, env):
     actual, programs, cases = set(), [], {}
     for artifact in artifacts:
         package = next(p for p in packages.values() if p['id'] == artifact['package_id'])
+        if (variant in ('transparent', 'native')
+                and 'qualification-tests' in package.get('features', {})
+                and 'qualification-tests' not in artifact.get('features', [])):
+            raise ValueError(f"{package['name']}: qualification fixture feature missing from executable")
         identity = (package['name'], artifact['target']['name'])
         if identity in actual:
             raise ValueError(f'duplicate executable: {identity}')
@@ -224,11 +224,6 @@ def test_programs(artifacts, variant, packages, env):
         program = dict(executable=artifact['executable'], package=package['name'],
                        version=package['version'], directory=str(Path(package['manifest_path']).parent),
                        integration='test' in artifact['target']['kind'], args=args)
-        if 'lib' in artifact['target']['kind']:
-            listing = subprocess.check_output([program['executable'], '--list'],
-                                              cwd=program['directory'], env=env, text=True, **inherited_fds(env))
-            check_discovery(package['name'],
-                            {line[:-6] for line in listing.splitlines() if line.endswith(': test')}, full=True)
         listing = subprocess.check_output([program['executable'], *args, '--list'],
                                           cwd=program['directory'], env=env, text=True, **inherited_fds(env))
         names = sorted(line[:-6] for line in listing.splitlines() if line.endswith(': test'))
@@ -315,11 +310,11 @@ def baseline_commands(family):
     if family == 'enhance':
         options = ['--locked', '--profile', 'release-fast']
         result += [
-            ('reference', [*options, '-p', 'enhance-serving', '--features', 'full-tests', '--lib', 'ipir::tests']),
-            ('reference', [*options, '-p', 'enhance-serving', '--features', 'full-tests', '--test', 'ci_smoke']),
-            ('reference', [*options, '-p', 'enhance-pir', '-p', 'status-serving', '--features', 'status-serving/full-tests', '--lib', '--tests']),
-            ('cuda', [*options, '-p', 'enhance-pir-server', '--features', 'native-reinspiring,cuda,full-tests,enhance-serving/full-tests,status-serving/full-tests', '--test', 'matvec_config']),
-            ('cuda', [*options, '-p', 'enhance-serving', '--features', 'native-reinspiring,cuda,full-tests', '--lib',
+            ('reference', [*options, '-p', 'enhance-serving', '--lib', 'ipir::tests']),
+            ('reference', [*options, '-p', 'enhance-serving', '--test', 'ci_smoke']),
+            ('reference', [*options, '-p', 'enhance-pir', '-p', 'status-serving', '--lib', '--tests']),
+            ('cuda', [*options, '-p', 'enhance-pir-server', '--features', 'native-reinspiring,cuda', '--test', 'matvec_config']),
+            ('cuda', [*options, '-p', 'enhance-serving', '--features', 'native-reinspiring,cuda', '--lib',
                       'backend_load_failure_does_not_rebuild_or_replace_published_units']),
         ]
     return result
@@ -334,7 +329,7 @@ def run_baseline(family, plan, output):
     if family == 'enhance':
         run(['cargo', 'check', '--locked', '-p', 'enhance-serving', '-p', 'status-serving',
              '-p', 'enhance-pir-server', '-p', 'enhance-pir-load-test', '--all-targets',
-             '--features', ','.join(variants(inventory())['cuda']['features'])], env=env, stage='compile:baseline-cuda')
+             '--features', ','.join(CUDA)], env=env, stage='compile:baseline-cuda')
     for variant, options in baseline_commands(family):
         artifacts = run(['cargo', 'test', '--no-run', *options], env=env,
                         stage='compile:baseline-' + variant, collect_tests=True, test_details=True)

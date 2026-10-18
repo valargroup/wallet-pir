@@ -7,37 +7,42 @@ through the reference HTTP adapters and SQLite persistence.
 
 ## Shipped history runtime correctness
 
-The controller's shipped-runtime success case cold-builds every runtime of a
-mixed `decoupled-2k-8k` recent / `decoupled-32k-32k` archive publication, then
-checks fleet offering, activation ordering and inode-preserving links during
-handover. This full-geometry campaign runs in full CI: it exceeded the 30-second
-case deadline during hosted PR preparation. Routine checks retain the companion
-refusal case, which starts from the same mixed-geometry source
-publication without building successful runtimes first. Superseded preparation
-verifies and retains that source set; replacing a linked table then tests that
-verification is required again. The case also retains the recent-only runtime
-write-failure check. Neither case depends on a warm fixture or test order.
+The controller's shipped-runtime success case cold-builds runtimes and checks
+fleet offering, activation order and inode-preserving links during handover.
+The bounded positive case runs the real cold preparation, fleet offer and
+activation phases on one valid recent publication, then verifies inode-preserving
+links into a separately staged candidate. Qualification additionally acquires
+new blocks and builds both distinct deployed geometries: `decoupled-2k-8k`
+recent and `decoupled-32k-32k` archive. The refusal companion independently checks source verification,
+supersession, linked-table replacement and counted runtime write failures.
+No unit case is omitted by name.
+
+Cache, admission, file identity and corruption matrices use narrow supported
+display tables in ordinary checks. The complete negative matrices, accounting
+assertions, blocked persistence, cancelled restore and cold fallback remain.
+Every malformed file and changed identity goes through the real file loader.
+Ordinary checks exercise cold fallback for missing files, damaged content and
+a changed identity; qualification repeats cold fallback for every refusal.
+`qualification-tests` also restores their original history shapes and the complete
+history/display reconstruction comparisons. The ordinary history HTTP smoke
+and stored-mask tampering check retain actual history data and independent
+answer/refusal evidence.
+
+Publisher tests share immutable producer bytes and finalized inventories within
+each test process. Every consumer owns a fresh directory and independently
+verifies the real HTTP transfer. Cases that mutate publisher files retain owned
+copies. Exit cleanup controls exercise the same owner registry with tiny files;
+certificate material is immutable but listeners, trust checks and fault controls
+remain fresh. Reused encrypted requests stay inside one recovery scenario and
+are first decoded against the original producer rows.
 
 Publisher unit-test processes use up to four available build threads, respecting
 an explicit `TRANSPARENT_BUILD_THREADS`; integration programs and serving defaults
-keep their existing policy. Serving reserves half the CPUs for queries, whereas
-these serial unit cases have no query traffic. This bounds the cold preparation
-work separately from the independent refusal work without excluding targets or
-changing the 30-second case / 180-second warm correctness budgets. Production
-load, HTTP and full service qualification remain separate release gates; fixture
-timings do not qualify a deployment.
-
-Full-only publisher and backend tests compile with the non-default `full-tests`
-feature, enabled by full qualification and complete correctness. Fast discovery
-rejects accidental campaign inclusion; full discovery requires every classified
-case. Run a focused campaign with `FEATURES=full-tests`. Fast helpers overlap
-compilation and test execution, with up to three test programs in the pool; the
-publisher library runs alone on fewer than eight CPUs.
-
-Manager behavior tests reuse immutable prepared publications and verify private
-copies. Tests of fixture ownership, copying and exit cleanup use tiny files and
-the same helpers, without repeating cryptographic preparation in child processes.
-The parent checks cleanup after successful and failing child test processes exit.
+retain their existing policy. Independent test programs share a bounded pool of
+at most three. No production clocks, thresholds or geometry definitions change.
+The 30-second case and 180-second warm correctness limits remain enforced;
+source preparation and larger release/hardware qualification are reported
+separately. A short fixture pass does not qualify a deployment.
 
 ## Running the deployed suite
 

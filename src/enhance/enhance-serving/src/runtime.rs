@@ -695,7 +695,6 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[cfg(feature = "full-tests")]
     use enhance_pir::ROW_BYTES;
     fn records(start: u64, count: usize) -> Result<Vec<u8>, String> {
         let mut bytes = vec![0; count * RECORD_BYTES];
@@ -782,7 +781,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "full-tests")]
     fn encrypted_bootstrap_round_trip_and_cached_restart() {
         round_trip_and_restart(MatvecConfig::default());
     }
@@ -919,7 +917,6 @@ mod tests {
         );
     }
 
-    #[cfg(any(feature = "full-tests", feature = "cuda"))]
     fn round_trip_and_restart(backend: MatvecConfig) {
         let dir = tempfile::tempdir().unwrap();
         let coverage = Lifecycle::default()
@@ -1079,127 +1076,175 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "full-tests")]
     fn partial_preparation_failure_preserves_published_and_retries() {
-        partial_preparation_failure(MatvecConfig::default());
+        partial_preparation_failure(MatvecConfig::default(), false);
+    }
+
+    #[test]
+    fn cached_partial_preparation_failure_preserves_published_and_retries() {
+        partial_preparation_failure(MatvecConfig::default(), true);
     }
 
     #[cfg(feature = "cuda")]
     #[test]
     #[ignore = "requires NVIDIA GPU and NVRTC"]
     fn cuda_partial_preparation_failure_preserves_published_and_retries() {
-        partial_preparation_failure(MatvecConfig {
-            matvec_backend: crate::matvec::Backend::Cuda,
-            cuda_device: None,
-        });
-    }
-
-    #[cfg(any(feature = "full-tests", feature = "cuda"))]
-    fn partial_preparation_failure(backend: MatvecConfig) {
-        use crate::matvec::testing::{scoped, Faults};
-        use std::sync::atomic::Ordering::SeqCst;
         for cached in [false, true] {
-            let root = tempfile::tempdir().unwrap();
-            let old_plan = plan(
-                Lifecycle::default()
-                    .coverage(67, Geometry::default())
-                    .unwrap()
-                    .shards[0]
-                    .clone(),
-                records,
-            )
-            .unwrap();
-            let candidate = plan(
-                Lifecycle::default()
-                    .coverage(8192 * 33 + 17, Geometry::default())
-                    .unwrap()
-                    .shards[0]
-                    .clone(),
-                records,
-            )
-            .unwrap();
-            assert_eq!(candidate.units.len(), 2);
-            assert!(candidate.units.iter().all(|u| !old_plan.units.contains(u)));
-            let mut engine = Engine::with_backend(root.path(), backend);
-            let faults = Arc::new(Faults::default());
-            let published = scoped(&faults, || engine.prepare(old_plan, records))
-                .unwrap()
-                .0;
-            let query = vec![1; published.plan.shard.logical_rows as usize];
-            let before = published.evaluate(&query).unwrap();
-            let published_sizes = engine.live_sizes();
-            let published_bytes = faults.live_bytes.load(SeqCst);
-            if cached {
-                // Populate candidate artifacts through an independent CPU engine.
-                let mut cache = Engine::new(root.path());
-                drop(cache.prepare(candidate.clone(), records).unwrap());
-            }
-            faults
-                .fail_prepare_at
-                .store(faults.prepare_calls.load(SeqCst) + 2, SeqCst);
-            let mut reads = 0;
-            let failed = scoped(&faults, || {
-                engine.prepare(candidate.clone(), |start, count| {
-                    assert!(
-                        !cached,
-                        "backend failure must not rebuild a cached artifact"
-                    );
-                    reads += 1;
-                    records(start, count)
-                })
-            });
-            assert!(failed.is_err());
-            assert_eq!(
-                faults.prepare_calls.load(SeqCst),
-                3,
-                "must fail after preparing two candidate units"
+            partial_preparation_failure(
+                MatvecConfig {
+                    matvec_backend: crate::matvec::Backend::Cuda,
+                    cuda_device: None,
+                },
+                cached,
             );
-            assert_eq!(reads, if cached { 0 } else { 2 });
-            assert_eq!(
-                faults.live_bytes.load(SeqCst),
-                published_bytes,
-                "partial candidate kernels must be dropped"
-            );
-            assert_eq!(engine.live_sizes(), published_sizes);
-            assert_eq!(published.evaluate(&query).unwrap(), before);
-            faults.fail_prepare_at.store(0, SeqCst);
-            let retry = scoped(&faults, || {
-                engine.prepare(candidate.clone(), |start, count| {
-                    assert!(!cached, "cached retry must not require canonical history");
-                    records(start, count)
-                })
-            })
-            .unwrap()
-            .0;
-            let oracle_root = tempfile::tempdir().unwrap();
-            let oracle = Engine::new(oracle_root.path())
-                .prepare(candidate, records)
-                .unwrap()
-                .0;
-            let candidate_query = vec![1; retry.plan.shard.logical_rows as usize];
-            assert_eq!(
-                retry.evaluate(&candidate_query).unwrap(),
-                oracle.evaluate(&candidate_query).unwrap()
-            );
-            assert_eq!(published.evaluate(&query).unwrap(), before);
-            drop(retry);
-            engine.collect_unused().unwrap();
-            assert_eq!(engine.live_sizes(), published_sizes);
-            assert_eq!(faults.live_bytes.load(SeqCst), published_bytes);
-            drop(published);
-            engine.collect_unused().unwrap();
-            assert_eq!(faults.live_bytes.load(SeqCst), 0);
         }
     }
 
+    fn partial_preparation_failure(backend: MatvecConfig, cached: bool) {
+        use crate::matvec::testing::{scoped, Faults};
+        use std::sync::atomic::Ordering::SeqCst;
+        let root = tempfile::tempdir().unwrap();
+        let old_plan = plan(
+            Lifecycle::default()
+                .coverage(67, Geometry::default())
+                .unwrap()
+                .shards[0]
+                .clone(),
+            records,
+        )
+        .unwrap();
+        // Both fixtures prepare two new units and fail on the second.
+        // The valid composed tail uses smaller 4K/2K units; qualification
+        // also exercises the original ordinary 8K/2K domain.
+        let geometry = Geometry::default();
+        let shard = if cfg!(feature = "qualification-tests") || cfg!(feature = "cuda") {
+            Lifecycle::default()
+                .coverage(8192 * 33 + 17, geometry)
+                .unwrap()
+                .shards[0]
+                .clone()
+        } else {
+            Lifecycle::default()
+                .coverage(
+                    geometry.max_shard_rows * RECORDS_PER_ROW as u64 + 17,
+                    geometry,
+                )
+                .unwrap()
+                .shards[1]
+                .clone()
+        };
+        let candidate = plan(shard, records).unwrap();
+        assert_eq!(candidate.units.len(), 2);
+        assert!(candidate.units.iter().all(|u| !old_plan.units.contains(u)));
+        let mut engine = Engine::with_backend(root.path(), backend);
+        let faults = Arc::new(Faults::default());
+        let published = scoped(&faults, || engine.prepare(old_plan, records))
+            .unwrap()
+            .0;
+        let query = vec![1; published.plan.shard.logical_rows as usize];
+        let before = published.evaluate(&query).unwrap();
+        let published_sizes = engine.live_sizes();
+        let published_bytes = faults.live_bytes.load(SeqCst);
+        if cached {
+            // Populate candidate artifacts through an independent CPU engine.
+            let mut cache = Engine::new(root.path());
+            drop(cache.prepare(candidate.clone(), records).unwrap());
+        }
+        faults
+            .fail_prepare_at
+            .store(faults.prepare_calls.load(SeqCst) + 2, SeqCst);
+        let mut reads = 0;
+        let failed = scoped(&faults, || {
+            engine.prepare(candidate.clone(), |start, count| {
+                assert!(
+                    !cached,
+                    "backend failure must not rebuild a cached artifact"
+                );
+                reads += 1;
+                records(start, count)
+            })
+        });
+        assert!(failed.is_err());
+        assert_eq!(
+            faults.prepare_calls.load(SeqCst),
+            3,
+            "must fail after preparing two candidate units"
+        );
+        assert_eq!(reads, if cached { 0 } else { 2 });
+        assert_eq!(
+            faults.live_bytes.load(SeqCst),
+            published_bytes,
+            "partial candidate kernels must be dropped"
+        );
+        assert_eq!(engine.live_sizes(), published_sizes);
+        assert_eq!(published.evaluate(&query).unwrap(), before);
+        faults.fail_prepare_at.store(0, SeqCst);
+        let retry = scoped(&faults, || {
+            engine.prepare(candidate.clone(), |start, count| {
+                assert!(!cached, "cached retry must not require canonical history");
+                records(start, count)
+            })
+        })
+        .unwrap()
+        .0;
+        // The all-one query is the column sum of the committed raw rows.
+        // Use plain integer addition as an independent oracle rather than
+        // preparing a second copy through the same native implementation.
+        let columns = parameters(candidate.shard.logical_rows).unwrap().db_cols;
+        let mut expected = vec![0u64; columns];
+        for spec in &candidate.shard.units {
+            let rows = unit_rows(&candidate.shard, spec, &mut records).unwrap();
+            for row in rows.chunks_exact(ENHANCE_LAYOUT.row_bytes()) {
+                for (sum, bytes) in expected.iter_mut().zip(row.chunks_exact(2)) {
+                    *sum += u64::from(u16::from_le_bytes(bytes.try_into().unwrap()));
+                }
+            }
+        }
+        for value in &mut expected {
+            *value %= modulus();
+        }
+        let candidate_query = vec![1; retry.plan.shard.logical_rows as usize];
+        assert_eq!(retry.evaluate(&candidate_query).unwrap(), expected);
+        assert_eq!(published.evaluate(&query).unwrap(), before);
+        drop(retry);
+        engine.collect_unused().unwrap();
+        assert_eq!(engine.live_sizes(), published_sizes);
+        assert_eq!(faults.live_bytes.load(SeqCst), published_bytes);
+        drop(published);
+        engine.collect_unused().unwrap();
+        assert_eq!(faults.live_bytes.load(SeqCst), 0);
+    }
+
     #[test]
-    #[cfg(feature = "full-tests")]
     fn unequal_units_match_monolithic_preprocessing_and_evaluation() {
         let directory = tempfile::tempdir().unwrap();
-        let coverage = Lifecycle::default()
-            .coverage(8192 * 33 + 17, Geometry::default())
-            .unwrap();
-        let shard = coverage.shards[0].clone();
+        let geometry = Geometry::default();
+        let (shard, monolithic_rows, expected_units, targets) =
+            if cfg!(feature = "qualification-tests") {
+                let coverage = Lifecycle::default()
+                    .coverage(8192 * RECORDS_PER_ROW as u64 + 17, geometry)
+                    .unwrap();
+                (
+                    coverage.shards[0].clone(),
+                    16384,
+                    [8192, 2048],
+                    vec![0, 8191, 8192, 10239, 16383],
+                )
+            } else {
+                let coverage = Lifecycle::default()
+                    .coverage(
+                        geometry.max_shard_rows * RECORDS_PER_ROW as u64 + 17,
+                        geometry,
+                    )
+                    .unwrap();
+                // A real composed tail has unequal units and a zero-filled gap.
+                (
+                    coverage.shards[1].clone(),
+                    8192,
+                    [2048, 4096],
+                    vec![0, 2047, 2048, 4095, 4096, 8191],
+                )
+            };
         let domain = plan(shard.clone(), records).unwrap();
         assert_eq!(
             domain
@@ -1207,19 +1252,36 @@ mod tests {
                 .iter()
                 .map(|u| u.allocated_rows)
                 .collect::<Vec<_>>(),
-            [8192, 2048]
+            expected_units
         );
         let mut engine = Engine::new(directory.path());
         let evaluation = engine.prepare(domain, records).unwrap().0;
         assert!(evaluation.verified_hint_artifact().unwrap().is_none());
-        let mut rows = records(0, shard.records as usize).unwrap();
-        rows.resize(16384 * ENHANCE_LAYOUT.row_bytes(), 0);
+        // Assemble the whole table independently of unit_rows: B's own records
+        // start at local zero, and a composed tail appends A's final 4K rows.
+        let row_bytes = ENHANCE_LAYOUT.row_bytes();
+        let mut rows = vec![0; monolithic_rows * row_bytes];
+        let own = records(
+            shard.global_row_start * RECORDS_PER_ROW as u64,
+            shard.records as usize,
+        )
+        .unwrap();
+        rows[..own.len()].copy_from_slice(&own);
+        if shard.composed() {
+            let suffix = records(
+                (shard.global_row_start - geometry.min_shard_rows) * RECORDS_PER_ROW as u64,
+                (geometry.min_shard_rows * RECORDS_PER_ROW as u64) as usize,
+            )
+            .unwrap();
+            let at = geometry.min_shard_rows as usize * row_bytes;
+            rows[at..at + suffix.len()].copy_from_slice(&suffix);
+        }
         // Native masks are expanded once at full size for every logical size.
         #[cfg(feature = "native-reinspiring")]
         let setup = enhance_pir::native::query_masks(shard.id);
         #[cfg(not(feature = "native-reinspiring"))]
         let setup = {
-            let params = parameters(16384).unwrap();
+            let params = parameters(monolithic_rows as u64).unwrap();
             let client = ipir_sp::IPIRClient::from_profile(
                 params.num_items,
                 params.item_size_bits,
@@ -1233,7 +1295,7 @@ mod tests {
         };
         let monolithic = PreparedShard::build(
             &DatabaseLayout {
-                shard_rows: 16384,
+                shard_rows: monolithic_rows,
                 ..ENHANCE_LAYOUT
             },
             shard.id,
@@ -1245,8 +1307,8 @@ mod tests {
         )
         .unwrap();
         assert_eq!(evaluation.hint().unwrap(), monolithic.crs_blocks().to_vec());
-        for target in [0, 8191, 8192, 10239, 16383] {
-            let mut query = vec![0; 16384];
+        for target in targets {
+            let mut query = vec![0; monolithic_rows];
             query[target] = modulus() - 1;
             assert_eq!(
                 evaluation.evaluate(&query).unwrap(),
@@ -1256,7 +1318,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "full-tests")]
     fn tail_domain_reuses_b_units_and_decodes_b_at_unchanged_coordinates() {
         #[cfg(not(feature = "native-reinspiring"))]
         use ipir_sp::modulus_switch::recover_published_c1;

@@ -26,8 +26,8 @@ name = "txid-display-controller"
 path = "src/bin/txid-display-controller.rs"
 
 [features]
-# Compile campaign-only correctness tests in full qualification.
-full-tests = []
+# Restore the larger test campaigns during full qualification.
+qualification-tests = []
 # Reproduce the existing non-AVX-512 backend on newer benchmark CPUs.
 portable-kernel = ["transparent-server-backend/portable-kernel"]
 

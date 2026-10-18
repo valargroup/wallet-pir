@@ -1,7 +1,7 @@
 name: Prepare hosted PR cache
 
 # Explicit cold preparation in the actual PR merge-ref context. Remove/reapply
-# the label to prepare a newer head; routine PR checks keep their own 180s cap.
+# the label to prepare a newer head; routine PR checks can also finish cold builds.
 on:
   pull_request:
     branches: [main]

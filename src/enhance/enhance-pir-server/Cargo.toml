@@ -12,8 +12,6 @@ name = "enhance-pir-server"
 path = "src/bin/server.rs"
 
 [features]
-# Compile campaign-only correctness tests in full qualification.
-full-tests = []
 default = []
 native-reinspiring = ["enhance-serving/native-reinspiring", "status-serving/native-reinspiring", "status-publication/native-reinspiring", "status-protocol/native-reinspiring", "enhance-pir/native-reinspiring", "dep:pir-native", "dep:reinspiring", "ipir-sp/native-reinspiring"]
 cuda = ["enhance-serving/cuda", "status-serving/cuda", "status-publication/cuda", "ipir-sp/cuda"]
