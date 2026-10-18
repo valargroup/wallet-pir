@@ -61,6 +61,8 @@ numbers are reconciled below rather than retained as a second release checklist.
 The [approved PR5 outcome](recent-provider-plan.md#pr-5-qualify-the-complete-slice)
 remains open. [Executable fixture coverage](prepared-distribution.md#embedded-history-endpoint-and-fixed-archive)
 is correctness evidence, not a qualified operating envelope or rollout approval.
+Follow the [HTTPS recent-fleet procedure](testing.md#https-recent-fleet-qualification)
+for controller campaigns, matched measurements and later production gates.
 
 - [ ] Execute original Vizor v0.0.60/build 195 artifacts at the fixed existing
   origin with valid TLS and isolated test data: recent/historical restore,
@@ -83,6 +85,14 @@ is correctness evidence, not a qualified operating envelope or rollout approval.
   transfer and conditional polling; separate synchronized bootstrap and ordinary
   updates. Measure publisher CPU/bandwidth, serving interference and bounded
   overload admission without provisioning more query hosts.
+- [ ] Qualify an explicit managed HTTPS-recent role through the guarded lifecycle:
+  disposable-state preflight as the service user, exact active readiness, sole
+  synchronization ownership, drain/restart and rollback preserving recovery
+  fences. Retain the standalone provider's operator-managed boundary.
+- [ ] After preceding gates pass, obtain authorization for a reviewed shadow and
+  one-backend canary retaining two other serving recent replicas. Complete both
+  six hours and 300 blocks within a twelve-hour campaign; a passing canary does
+  not authorize fleet-wide migration.
 - [ ] Retain exact source, executable/source hashes, dataset/profile, offered
   load, errors/timeouts and immutable raw inputs for each claim; publish measured
   limits and explicit pass/fail/unavailable results. Enforce every CPU correctness

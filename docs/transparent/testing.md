@@ -44,6 +44,91 @@ The 30-second case and 180-second warm correctness limits remain enforced;
 source preparation and larger release/hardware qualification are reported
 separately. A short fixture pass does not qualify a deployment.
 
+## HTTPS recent-fleet qualification
+
+Qualify recent holdings with the existing archive upstream before migrating
+archive delivery. The [provider contract](prepared-distribution.md) owns source
+trust and recovery semantics; the [open gates](remaining-work.md#independent-history-provider-qualification)
+track acceptance. Distribution, native serving, original-application execution
+and production observation require separate evidence.
+
+Freeze the source revision, operations and binary hashes, publisher configuration,
+dataset/map/profile identities, hardware limits and offered query mix before a
+campaign. Keep raw requests, failures and measurements under ignored `.local-pir/`
+or task-owned retained storage. Changed inputs require new results.
+
+### Controller updates and client correctness
+
+Use the actual controller behind HTTPS, two independent strict providers with
+separate state roots, and an archive owner. Providers must not be prerequisites
+for finalizing the publication they must download. Drive journal growth and
+controller publications while encrypted queries continue. Serving a fixed
+finalized inventory cannot establish continuous-update qualification.
+
+Exercise empty bootstrap, unchanged polling, missed revisions, supersession while
+preparing, interrupted downloads, startup and active-service publisher outages,
+restart during preparation/activation, reorg/replay fences, archive failure and
+ownership-only promotion. Compare recovered ledgers with the frozen released
+client and independent source-event oracles. Preserve admitted old-publication
+requests, refuse invalidated data and retain otherwise valid service during
+ordinary update failures. Required-runtime mode must never build locally to
+make a missing-runtime case pass.
+
+The original Vizor v0.0.60/build 195 gate uses the
+[fixed release artifacts and origin](wallet-adapter.md#fixed-vizor-provider-qualification-baseline)
+with valid TLS, disposable wallet data and same-origin display. Verify the
+artifact hash and bundle build before execution. An installed build 194, rebuilt
+application or frozen library harness cannot replace it. Without an isolated
+fixed-origin environment, mark this gate unavailable and continue server checks;
+do not modify the user's installed wallet, databases, production DNS or TLS
+validation to manufacture a pass.
+
+### Matched measurements
+
+Compare HTTPS and rsync on the same host, dataset, runtime policy and offered
+query load. Separate cold preparation from warm measurements. Measure empty
+bootstrap, normal tail updates, missed-update recovery and repeated handover.
+Record detection delay, network bytes, local hashing/copying and disk I/O,
+runtime loading/self-checks, final checks and activation separately.
+
+Use at least three matched no-update/update pairs. Require at most a 10% query-p99
+increase across the complete update path, alongside existing absolute query and
+30-second public-visibility gates. Include errors, refusals and timeouts with
+successful latency; dropping requests cannot improve the result. HTTPS need not
+beat rsync's bootstrap or update duration, but report both.
+
+Establish complete Recent Only holdings on an existing isolated 64 GB host,
+including router, prepared data, query workspace, old/candidate/retained views,
+scratch and OS memory. Repeat at the intended production worker budget: a 64 GB
+pass does not qualify a smaller worker. Record disk growth and headroom because
+provider object/tree cleanup remains manual.
+
+Run 10 then 100 logical distribution consumers with independent caches and real
+transfers. Separate synchronized bootstrap from updates and conditional polling.
+Measure publisher CPU/bandwidth, canonicality-check cost, publication progress
+and bounded overload while native providers continue independently checked
+queries. These clients do not establish 100 native serving hosts or representative
+memory capacity.
+
+### Lifecycle and production gates
+
+Rehearse guarded install, readiness, drain, restart and rollback on disposable
+hosts. Staged loader checks use disposable state with service-user permissions,
+never the live exclusive root. Live startup revalidates durable state. Rollback
+preserves replay/revocation records and refuses unsafe older readers instead of
+restoring state backups. Publisher sync is the sole data-update owner of an
+HTTPS-managed worker.
+
+After correctness, release, application, resource and lifecycle gates pass,
+prepare a shadow/canary plan through the production-lock deployment wrapper.
+Production execution requires separate explicit authorization. Retain two other
+qualified serving recent replicas when admitting one canary. Require both six
+hours and 300 new blocks in a passing interval, with a twelve-hour campaign
+limit. Incorrect answers, invalidated-data service, readiness gaps, freshness or
+latency breaches, OOM or loss of safe capacity stop canary admission and invoke
+the rehearsed rollback. A passing canary qualifies its tested configuration;
+it does not authorize the remaining fleet rollout.
+
 ## Running the deployed suite
 
 Run `make transparent-regression` against the default public origins, or set
