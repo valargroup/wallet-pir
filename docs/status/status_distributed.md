@@ -65,7 +65,7 @@ host key, and explicit permitted destinations/listen address. Its service key is
 stored in the production `/status-pir/control` folder of the `spendability-pir
 deploy` Infisical project as `STATUS_CONTROL_SSH_PRIVATE_KEY`. The installed copy
 is root-only under `/etc/status-pir-control/`. It is separate from the APM key.
-The service-unit templates are under `ops/enhance/deploy/` and substitute a
+The service-unit templates are under `ops/status/deploy/` and substitute a
 checksummed release directory (`@RELEASE@`), the canonical network genesis hash
 (`@NETWORK@`) and, for the two tunnels, the Status host's private VPC address
 (`@STATUS_HOST@`).
@@ -87,7 +87,7 @@ ordered after it, with a drop-in stating that the tunnels run under it since
 2026-09-30; that is dated evidence, not a current check. No record shows the
 restricted `wallet-pir-control` account or the fault drill of
 [rollout step 1](../control-sessions.md#rollout-order), so treat those
-as not adopted. `ops/deploy/control-sessions.status.example.json`
+as not adopted. `ops/status/deploy/control-sessions.example.json`
 carries the two tunnels' forwards unchanged: 8481, 8482 and 8495 on one master
 with compression, and 8492 to 8484 on another. It keeps the same
 forwarding-only account, key and known-hosts file, and `ServerAliveCountMax 4`.
@@ -118,7 +118,7 @@ For the Status worker and router the tool renders the whole unit from its
 `.service.in` template, with `@RELEASE@` set to `/opt/status-pir/releases/<sha256>` and
 `@NETWORK@` taken from the inventory. The rollout order is worker, router, then
 the coordinator's controller, whose binary alone is swapped. The tunnels are not managed.
-[deploy.toml](../../ops/enhance/deploy/deploy.toml) records each role's `/control/health`
+[services.toml](../../ops/status/deploy/services.toml) records each role's `/control/health`
 or `/internal/health` readiness check. The `status-pir` release kind in
 `tools/ci/release.py` bundles the binary with these templates. It is assembled
 from the `native-reinspiring` target directory; full CI uploads it as the

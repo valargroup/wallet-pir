@@ -20,8 +20,10 @@ PREFIXES = ('ops/lib/', 'ops/scripts/', 'ops/deploy/', 'ops/infra/',
             'ops/enhance/deploy/', 'ops/enhance/scripts/', 'ops/enhance/lib/',
             'ops/transparent/lib/', 'ops/transparent/scripts/', 'ops/transparent/deploy/',
             'ops/transparent/scaler/', 'ops/transparent/systemd/', 'ops/receiver/digitalocean/',
-            'ops/receiver/lib/', 'ops/receiver/deploy/')
+            'ops/receiver/lib/', 'ops/receiver/deploy/', 'ops/status/deploy/', 'ops/status/lib/',
+            'ops/txid/deploy/', 'ops/txid/lib/', 'ops/txid/scripts/')
 EXACT = {'ops/transparent/__init__.py', 'ops/enhance/__init__.py', 'ops/receiver/__init__.py',
+         'ops/status/__init__.py', 'ops/txid/__init__.py',
          'tools/ci/release.py', 'docs/operations.md', 'docs/transparent/prepared-distribution.md'}
 EXTENSIONS = {'.py', '.sh', '.toml', '.service', '.timer', '.in', '.caddy', '.tf', '.tftpl', '.yaml'}
 MAX_BYTES = 32 * 1024 * 1024
@@ -31,6 +33,9 @@ REQUIRED = {'ops/scripts/wallet-pir-deploy.py', 'ops/scripts/wallet-pir-roles.py
             'ops/lib/wallet_pir_ops/release.py', 'ops/transparent/lib/deploy_cli.py',
             'ops/transparent/lib/roles.py', 'ops/receiver/digitalocean/service.toml',
             'ops/enhance/lib/roles.py', 'ops/receiver/lib/roles.py'}
+# Resource directories added after retained releases were installed; those
+# releases name their own inventory and remain valid without them.
+LATER_PREFIXES = ('ops/status/deploy/', 'ops/status/lib/', 'ops/txid/deploy/', 'ops/txid/lib/', 'ops/txid/scripts/')
 
 
 def mode(name):
@@ -55,6 +60,8 @@ def contents(root, *, required_exact=None):
     for prefix in PREFIXES:
         directory = root / prefix
         if not directory.is_dir():
+            if required_exact is not EXACT and prefix in LATER_PREFIXES:
+                continue
             raise ValueError('operations resource directory missing: ' + prefix)
         for path in sorted(directory.rglob('*')):
             name = path.relative_to(root).as_posix()

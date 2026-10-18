@@ -63,16 +63,27 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(set(result['helpers']), {'check-ops-contracts', 'check-ops-parents'})
 
     def test_txid_display_ops_route_to_their_own_check(self):
-        for path in ['ops/transparent/lib/txid_display_poc.py', 'ops/transparent/scripts/txid-display-fleet.py',
-                     'ops/transparent/deploy/txid-display-routes.caddy.in',
-                     'ops/transparent/tests/test_txid_display_router.py']:
+        for path in ['ops/txid/lib/txid_display_poc.py', 'ops/txid/scripts/txid-display-fleet.py',
+                     'ops/txid/deploy/txid-display-routes.caddy.in',
+                     'ops/txid/tests/test_txid_display_router.py']:
             result = fast.plan(self.packages, [path])
             self.assertEqual(set(result['helpers']), {'check-ops-txid-display', 'check-ops-contracts'}, path)
             self.assertEqual(result['packages'], [])
+        for path in ['ops/txid/lib/roles.py', 'ops/txid/deploy/services.toml']:
+            self.assertEqual(set(fast.plan(self.packages, [path])['helpers']),
+                             {'check-ops-txid-display', 'check-ops-shared', 'check-ops-deploy', 'check-ops-contracts'}, path)
         # The history adapter's hook and the pinned firewall sources reach it too.
         for path in ['ops/transparent/scripts/transparent-live-fleet.py',
                      'ops/infra/digitalocean/transparent/main.tf']:
             self.assertIn('check-ops-txid-display', fast.plan(self.packages, [path])['helpers'], path)
+
+    def test_status_ops_route_to_deploy_roles_and_control_sessions(self):
+        for path in ['ops/status/lib/roles.py', 'ops/status/deploy/services.toml',
+                     'ops/status/deploy/control-sessions.example.json']:
+            result = fast.plan(self.packages, [path])
+            self.assertEqual(set(result['helpers']), {'check-ops-shared', 'check-ops-control-sessions',
+                                                      'check-ops-deploy', 'check-ops-contracts'}, path)
+            self.assertEqual(result['packages'], [])
 
     def test_leaf_reverse_dependencies_and_embedded_fixture(self):
         result = fast.plan(self.packages, ['src/shared/pir-apm/src/dashboard.rs'])

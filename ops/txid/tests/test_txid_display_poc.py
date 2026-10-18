@@ -31,7 +31,7 @@ def load(name, path):
     return module
 
 
-P = load('txid_display_poc_test', ROOT / 'ops/transparent/lib/txid_display_poc.py')
+P = load('txid_display_poc_test', ROOT / 'ops/txid/lib/txid_display_poc.py')
 LIVE = load('live_fleet_txid_test', ROOT / 'ops/transparent/scripts/transparent-live-fleet.py')
 RELEASE = load('release_txid_test', ROOT / 'tools/ci/release.py')
 
@@ -609,7 +609,7 @@ class PlanTests(Base):
             '/opt/transparent-publisher/credentials/deploy-ssh', '/opt/transparent-publisher/credentials/known_hosts'))
         self.assertEqual(sorted(fleet['workers']), ['archive'])
         self.assertEqual(fleet['workers']['archive']['ssh_host'], '10.142.0.5')
-        adapter = load('fleet_config_check', ROOT / 'ops/transparent/scripts/txid-display-fleet.py')
+        adapter = load('fleet_config_check', ROOT / 'ops/txid/scripts/txid-display-fleet.py')
         with tempfile.TemporaryDirectory() as tmp:
             config = json.loads(files['fleet.json'])
             config['control_dir'] = tmp + '/ssh'

@@ -54,8 +54,8 @@ SCRIPTS = ('txid-display-fleet.py', 'txid-display-observe.py')
 TEMPLATES = ('transparent-txid-display-worker.service.in', 'transparent-txid-display-controller.service.in',
              'txid-display-routes.caddy.in')
 # Release files by basename, as tools/ci/release.py ships them.
-RELEASE_FILES = {name: 'ops/transparent/deploy/' + name for name in TEMPLATES}
-RELEASE_FILES.update({name: 'ops/transparent/scripts/' + name for name in SCRIPTS})
+RELEASE_FILES = {name: 'ops/txid/deploy/' + name for name in TEMPLATES}
+RELEASE_FILES.update({name: 'ops/txid/scripts/' + name for name in SCRIPTS})
 # What each host runs. Workers never receive the controller or the backfill.
 HOST_RELEASE = {
     'coordinator': ('txid-display-controller', 'transparent-event-ingest', 'txid-inventory', 'txid-control', *SCRIPTS),

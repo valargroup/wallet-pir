@@ -25,7 +25,7 @@ BINARIES = {
     'transparent-shard': ['transparent-shard-server', 'shard-assign', 'shard-prune'],
     'transparent-publisher': ['transparent-publish-controller', 'transparent-shard-server', 'shard-control', 'shard-assign'],
     # Tiered txid display proof of concept beside history; deployed only by
-    # `wallet-pir-deploy.py txid-display-*` (ops/transparent/lib/txid_display_poc.py).
+    # `wallet-pir-deploy.py txid-display-*` (ops/txid/lib/txid_display_poc.py).
     'transparent-txid-display': ['transparent-txid-server', 'txid-control', 'txid-inventory',
                                  'txid-display-controller', 'transparent-event-ingest',
                                  'txid-quality-canary'],
@@ -46,13 +46,13 @@ FILES = {
     'transparent-filter': ['ops/transparent/deploy/transparent-filter-server.service'],
     'transparent-shard': ['ops/transparent/deploy/transparent-shard-server.service', 'ops/transparent/deploy/transparent-Caddyfile'],
     'transparent-publisher': [],
-    'transparent-txid-display': ['ops/transparent/deploy/transparent-txid-display-worker.service.in',
-                                 'ops/transparent/deploy/transparent-txid-display-controller.service.in',
-                                 'ops/transparent/deploy/txid-display-routes.caddy.in',
-                                 'ops/transparent/scripts/txid-display-fleet.py',
-                                 'ops/transparent/scripts/txid-display-observe.py'],
-    'status-pir': ['ops/enhance/deploy/status-worker.service.in', 'ops/enhance/deploy/status-router.service.in',
-                   'ops/enhance/deploy/status-controller-qualification.service.in'],
+    'transparent-txid-display': ['ops/txid/deploy/transparent-txid-display-worker.service.in',
+                                 'ops/txid/deploy/transparent-txid-display-controller.service.in',
+                                 'ops/txid/deploy/txid-display-routes.caddy.in',
+                                 'ops/txid/scripts/txid-display-fleet.py',
+                                 'ops/txid/scripts/txid-display-observe.py'],
+    'status-pir': ['ops/status/deploy/status-worker.service.in', 'ops/status/deploy/status-router.service.in',
+                   'ops/status/deploy/status-controller-qualification.service.in'],
     'receiver-pir': ['ops/receiver/digitalocean/receiver-pir.service.in', 'ops/receiver/digitalocean/Caddyfile',
                      'ops/receiver/digitalocean/cloud-init.yaml'],
 }

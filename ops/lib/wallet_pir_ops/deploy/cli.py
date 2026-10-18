@@ -91,7 +91,7 @@ Transparent schema recipes run on the pinned coordinator under the same lock.
   txid-display-{ingest-start,bootstrap,verify,measure-start,retire} ... --expect-plan-sha256 H
   txid-display-{ingest-stop,measure-stop,stop} --request F --request-sha256 H
   txid-display-rollback --request F --request-sha256 H [--transaction ID]
-      One txid display site beside history (ops/transparent/lib/txid_display_poc.py).
+      One txid display site beside history (ops/txid/lib/txid_display_poc.py).
       Every mutation holds the production lock, journals prior bytes and prints the
       rollback command.
 

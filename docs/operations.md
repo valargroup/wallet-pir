@@ -22,7 +22,9 @@ of the shared supervisor (observed carrying Status; its restricted account and t
 other products not adopted); packaging it does not deploy or adopt it.
 
 Shared operations live in `ops/lib/wallet_pir_ops`. Product adapters live with the
-product, including `ops/transparent/lib/deploy_cli.py`. The shared
+product under `ops/<product>/`: `ops/enhance`, `ops/status`, `ops/transparent`,
+`ops/txid` (transaction-detail display) and `ops/receiver`, including
+`ops/transparent/lib/deploy_cli.py` and the txid display driver it dispatches to. The shared
 [role registry](../ops/deploy/services.toml) includes product-owned descriptors.
 Each inventory role names its actual host, unit, private addresses and artifact
 variant. The [example inventory](../ops/enhance/deploy/deploy-inventory.example.json)
@@ -250,8 +252,8 @@ Every product registers one optional external worker role that an operator can
 add on a host of their own: `enhance.external-worker`, `status.external-worker`,
 `transparent-history.external-worker`, `transparent-display.external-worker`
 and `receiver.serve-publication`. Its whole unit and configuration are rendered
-by the product's adapter (`ops/enhance/lib/roles.py`,
-`ops/transparent/lib/roles.py`, `ops/receiver/lib/roles.py`) from the
+by the product's adapter (`ops/enhance/lib/roles.py`, `ops/status/lib/roles.py`,
+`ops/transparent/lib/roles.py`, `ops/txid/lib/roles.py`, `ops/receiver/lib/roles.py`) from the
 inventory entry's `settings`; the template beside it owns the sandbox. The
 inventory owns hosts, paths, listeners, budgets (`limits`: `MemoryMax`,
 `MemoryHigh`, `MemorySwapMax`, `CPUQuota`, `CPUWeight`, `IOWeight`, `Nice`,

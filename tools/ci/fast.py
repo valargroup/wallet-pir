@@ -87,6 +87,15 @@ def route(path):
                         'ops/infra/digitalocean/transparent/', 'ops/infra/digitalocean/transparent-tx-detail/')):
         # The txid display deploy pins this root's firewall sources.
         return {'check-ops-shared', 'check-ops-control-sessions', 'check-ops-contracts', 'check-ops-deploy', 'check-ops-txid-display'}, {'enhance_infra', 'ops'}
+    if path.startswith('ops/status/'):
+        # Status units and descriptor feed the deploy and role tests; its
+        # control-session example is pinned by the supervisor tests.
+        return {'check-ops-shared', 'check-ops-control-sessions', 'check-ops-deploy', 'check-ops-contracts'}, {'ops'}
+    if path.startswith('ops/txid/'):
+        if 'txid_display' in path or 'txid-display' in path:
+            return {'check-ops-txid-display', 'check-ops-contracts'}, {'ops'}
+        # Its service descriptor and worker role feed the shared deploy and role tests.
+        return {'check-ops-txid-display', 'check-ops-shared', 'check-ops-deploy', 'check-ops-contracts'}, {'ops'}
     if path.startswith('ops/tests/control_sessions/') or 'control-session' in path:
         return {'check-ops-control-sessions'}, {'ops'}
     if path.startswith(('ops/tests/deploy/', 'ops/scripts/wallet-pir-deploy', 'ops/scripts/deploy-')):
@@ -94,9 +103,7 @@ def route(path):
     if path.startswith('ops/enhance/'):
         return {'check-ops-enhance', 'check-ops-deploy', 'check-ops-contracts'}, {'ops'}
     if path.startswith('ops/transparent/'):
-        if 'txid_display' in path or 'txid-display' in path:
-            targets = {'check-ops-txid-display'}
-        elif 'scaler' in path or 'membership_model' in path:
+        if 'scaler' in path or 'membership_model' in path:
             targets = {'check-ops-scaler-fast'}
         elif 'elastic' in path or 'test_transparent_plan' in path:
             targets = {'check-ops-elastic'}

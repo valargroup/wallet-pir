@@ -25,8 +25,9 @@ UNOBSERVED = 'unobserved'
 # Product-local extractors, by service: `module:function(service, role, health, ready_status)`.
 EXTRACTORS = {
     'enhance': 'ops.enhance.lib.roles:report',
-    'status': 'ops.enhance.lib.roles:report',
+    'status': 'ops.status.lib.roles:report',
     'transparent-history': 'ops.transparent.lib.roles:report',
+    # The txid display worker is a Transparent shard server with the same health.
     'transparent-display': 'ops.transparent.lib.roles:report',
     'receiver': 'ops.receiver.lib.roles:report',
 }

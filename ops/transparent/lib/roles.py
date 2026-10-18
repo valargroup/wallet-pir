@@ -3,7 +3,7 @@ from pathlib import Path
 import shlex
 
 from wallet_pir_ops.paths import ROOT
-from wallet_pir_ops.role_config import directory, render
+from wallet_pir_ops.role_config import directory, render, sizes
 from wallet_pir_ops.deploy import units
 
 
@@ -46,18 +46,7 @@ def publisher(config, *, config_path, state_dir, executable='/usr/local/bin/tran
 
 
 HISTORY_TEMPLATE = ROOT / 'ops/transparent/deploy/transparent-history-worker.role.service'
-DISPLAY_TEMPLATE = ROOT / 'ops/transparent/deploy/transparent-display-worker.role.service'
 HISTORY_SOCKET = '/run/transparent-history-worker/control.sock'
-DISPLAY_SOCKET = '/run/transparent-display-worker/control.sock'
-
-
-def _sizes(s, names):
-    from wallet_pir_ops.role_config import number
-    arguments = []
-    for name in names:
-        if name in s:
-            arguments += ['--' + name.replace('_', '-'), number(s[name], name, 1)]
-    return arguments
 
 
 def history_worker(settings, *, release, template=None):
@@ -74,7 +63,7 @@ def history_worker(settings, *, release, template=None):
                      'prune_excess', 'runtime_cache_dir', 'runtime_cache_max_bytes'))
     shards, state = directory(s['shard_dir']), directory(s['state_dir'])
     arguments = ['--listen', address(s['listen'], 'listen'), '--shard-dir', shards]
-    arguments += _sizes(s, ('cache_bytes', 'build_slots', 'query_slots', 'retain_revisions'))
+    arguments += sizes(s, ('cache_bytes', 'build_slots', 'query_slots', 'retain_revisions'))
     reads, writes = [shards], [state]
     if ('assignment' in s) != ('worker_id' in s):
         raise ValueError('assignment and worker_id go together')
@@ -89,7 +78,7 @@ def history_worker(settings, *, release, template=None):
     if 'runtime_cache_dir' in s:
         cache = directory(s['runtime_cache_dir'])
         arguments += ['--runtime-cache-dir', cache]
-        arguments += _sizes(s, ('runtime_cache_max_bytes',))
+        arguments += sizes(s, ('runtime_cache_max_bytes',))
         writes.append(cache)
     arguments += ['--control-socket', HISTORY_SOCKET, '--active-record', state + '/active.json']
     template = HISTORY_TEMPLATE.read_text() if template is None else template
@@ -133,8 +122,8 @@ def history_provider(settings, *, release, template=None):
             path = directory(s[name])
             reads.append(path)
             arguments += ['--' + name.replace('_', '-'), path]
-    arguments += _sizes(s, ('cache_bytes', 'bootstrap_max_bytes', 'query_slots',
-                            'body_bytes', 'query_deadline_secs', 'upload_deadline_secs'))
+    arguments += sizes(s, ('cache_bytes', 'bootstrap_max_bytes', 'query_slots',
+                           'body_bytes', 'query_deadline_secs', 'upload_deadline_secs'))
     if 'query_waiters' in s:
         arguments += ['--query-waiters', number(s['query_waiters'], 'query_waiters')]
     executable = directory(release) + '/transparent-shard-server'
@@ -148,50 +137,11 @@ def history_provider(settings, *, release, template=None):
         'ExecStartPre': shlex.join([executable, *rendered.check])}))
 
 
-def display_worker(settings, *, release, template=None):
-    """`transparent-txid-server` for one display role, under the display controller.
-
-    Shipped publications are read-only unless the inventory names collect
-    roots, which the worker may then prune. The preflight check verifies the
-    initial publication, when one is named, with the server's own loader.
-    """
-    from wallet_pir_ops.role_config import address, settings_of, worker as render_worker
-    s = settings_of(settings, ('listen', 'role', 'state_dir', 'publication_root'),
-                    ('cache_bytes', 'build_slots', 'query_slots', 'retain_revisions', 'publication_dir',
-                     'collect_roots', 'runtime_cache_dir', 'runtime_cache_max_bytes', 'loaded_only'))
-    if s['role'] not in ('archive-owner', 'recent-replica', 'combined'):
-        raise ValueError('role is archive-owner, recent-replica or combined')
-    root, state = directory(s['publication_root']), directory(s['state_dir'])
-    arguments = ['--listen', address(s['listen'], 'listen'), '--role', s['role']]
-    arguments += _sizes(s, ('cache_bytes', 'build_slots', 'query_slots', 'retain_revisions'))
-    writes, reads = [state], []
-    collect = [directory(p) for p in s.get('collect_roots', [])]
-    if collect:
-        writes += collect
-    else:
-        reads.append(root)
-    if 'runtime_cache_dir' in s:
-        cache = directory(s['runtime_cache_dir'])
-        arguments += ['--runtime-cache-dir', cache]
-        arguments += _sizes(s, ('runtime_cache_max_bytes',))
-        writes.append(cache)
-    if s.get('loaded_only', False) is True:
-        arguments.append('--loaded-only')
-    check = ()
-    if 'publication_dir' in s:
-        initial = directory(s['publication_dir'])
-        arguments += ['--publication-dir', initial]
-        check = (*arguments, '--verify-only')
-    arguments += ['--control-socket', DISPLAY_SOCKET, '--active-record', state + '/active.json']
-    for path in collect:
-        arguments += ['--collect-root', path]
-    template = DISPLAY_TEMPLATE.read_text() if template is None else template
-    return render_worker(template, directory(release) + '/transparent-txid-server', arguments,
-                         writable=writes, readonly=reads, settings=s, check=check)
-
-
 def report(service, role, health, ready_status):
-    """Transparent history or display health, separated into the report's axes."""
+    """Transparent shard-server health, separated into the report's axes.
+
+    History and txid display workers run the same server and report the same health.
+    """
     if role == 'provider':
         axes = ('synchronization', 'verified_publication', 'runtime_readiness',
                 'active_coverage', 'archive_reachability')

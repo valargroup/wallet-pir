@@ -304,7 +304,7 @@ def dispatch(args, executor=None, out=print, **options):
     if not args.inventory:
         raise DeployError('pass --inventory or set WALLET_PIR_DEPLOY_INVENTORY')
     if args.command.startswith('txid-display-'):
-        module = import_module('ops.transparent.lib.txid_display_poc')
+        module = import_module('ops.txid.lib.txid_display_poc')
         return module.main(args, descriptors.load_inventory(args.inventory), out, executor=executor, **options)
     if args.command.startswith('schema-candidate-execute-'):
         module = import_module('ops.transparent.lib.activity_candidate_execution')

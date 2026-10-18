@@ -7,7 +7,7 @@ Wants=network-online.target
 Type=simple
 User=root
 # Rendered by `wallet-pir-deploy.py txid-display-deploy --phase controller` from
-# the reviewed request; ops/transparent/lib/txid_display_poc.py owns the values.
+# the reviewed request; ops/txid/lib/txid_display_poc.py owns the values.
 # The controller is the display journal's only writer once the backfill unit has
 # exited. It reaches the workers through workers.json: the archive owner first,
 # then the recent replica that serves the map.

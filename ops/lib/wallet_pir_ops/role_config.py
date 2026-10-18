@@ -205,3 +205,12 @@ def number(value, name, low=0):
     if type(value) is not int or value < low:
         raise ValueError('%s must be an integer of at least %d' % (name, low))
     return str(value)
+
+
+def sizes(s, names):
+    """`--name value` for each positive size setting present, in the given order."""
+    arguments = []
+    for name in names:
+        if name in s:
+            arguments += ['--' + name.replace('_', '-'), number(s[name], name, 1)]
+    return arguments
