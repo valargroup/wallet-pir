@@ -62,7 +62,7 @@ class DistributionTests(unittest.TestCase):
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         context.load_cert_chain(self.root / "ca.pem", self.root / "key.pem")
         self.server.socket = context.wrap_socket(self.server.socket, server_side=True)
-        self.thread = threading.Thread(target=self.server.serve_forever)
+        self.thread = threading.Thread(target=lambda: self.server.serve_forever(poll_interval=.01))
         self.thread.start()
 
     def tearDown(self):
