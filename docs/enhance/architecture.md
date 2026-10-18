@@ -13,7 +13,7 @@ resident serving packing objects in this mode. See the
 
 ## Ingestion application
 
-`enhance_pir_server::application` supplies product operations to the internal
+`enhance_publisher::application` supplies product operations to the internal
 `src/shared/pir-pipeline` lifecycle. Shared supervision waits the existing poll delay
 after each complete pass, with explicit product retry/stop policy. Recovery and
 inventory reconciliation still precede collection. `collect` revokes before
@@ -498,18 +498,31 @@ work by the number of queried domains. See [wallet integration](integration.md).
 ## Package boundaries
 
 Serving and ingestion are separate packages, following Receiver's indexer/server
-split. `src/enhance/enhance-serving` holds the coordinator, query ingress,
-packing router, workers, stores and runtimes; `src/status/status-query-server` holds
-Status generations, the distributed controller and its roles over the
+split. `src/enhance/enhance-query-server` (unpublished) owns the wallet protocol
+(`enhance_query_server::protocol`), the client (`enhance_query_server::client`),
+record types and constants, prepared runtimes, workers, query ingress, packing
+routers, admission, response guards, serving fences, pure placement policy
+(`placement`) and the public `QueryGateway` (`gateway`). `src/status/status-query-server`
+holds Status generations, the distributed controller and its roles over the
 `status_query_server::protocol` wire contract. Both use `src/shared/pir-serving` for the profile
 modulus and native hints, wallet-libraries PIR packages and other `src/shared/`
 runtime helpers, and never chain readers (`zakura-server-chain`, node crates),
-ingestion, applications or another product's packages.
-`src/enhance/enhance-pir-server` composes Enhance serving with chain reading
-(`zakura`), journal ingestion (`ingest`), rebuilds and the `enhance-pir-server`
-command line, and can host the Status publisher. Status observation (`source`)
+ingestion, publishers, applications, tools or another product's packages.
+`src/enhance/enhance-publisher` owns chain reading (`zakura`), the Enhance and
+record journals (`ingest`), the durable control store, publication, preparation
+orchestration (`serving_control`), activation, recovery, retention and artifact
+collection, pool and capacity planning, publication telemetry, rebuilds and the
+`enhance-pir-server` command line, and can host the Status publisher. Its
+`coordinator::Coordinator` is the composition API and composes the `QueryGateway`.
+Dependencies run only from publisher to query server. The gateway reads publisher
+state through the read-only `PublisherStatus` trait, which the publisher
+implements; revocations are read live from publisher state at query acceptance and
+at each streaming-response poll, so a revocation applies to responses already in
+flight. Status observation (`source`)
 and publication (`publisher`), publication authority and the `status-pir` command
-line live in `src/status/status-publisher`. Ingestion checkpoints source state
+line live in `src/status/status-publisher`; its synthetic listeners serve
+`QueryGateway::unpublished()` from `enhance-query-server` and do not depend on
+Enhance publication. Ingestion checkpoints source state
 independently and hands its latest snapshot to publication; slow worker
 preparation does not block source observation.
 Ingestion-dependent tests live with those packages. `tools/ci/boundary.py`
@@ -528,8 +541,8 @@ accumulation validates the entire contribution before changing its destination.
 Status keeps digest-based block reuse while shared packing owns the matrices. Preparation, evaluation and
 packing stay separate calls, so workers evaluate and the packing router or
 coordinator packs. Record layouts, framing, session checks, setup seeds and the
-native profile stay in `enhance-serving` and `status-query-server`; Status takes its
-modulus from `enhance-serving`.
+native profile stay in `enhance-query-server` and `status-query-server`; Status takes its
+modulus from `src/shared/pir-serving`.
 
 ## Validation and deployment
 

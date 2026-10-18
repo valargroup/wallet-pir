@@ -107,10 +107,9 @@ def build(family):
         for name in sorted({name for kind in KINDS[family] for name in release.BINARIES[kind]}):
             command += ['--bin', name]
     else:
-        command += ['-p', 'enhance-pir-server', '-p', 'enhance-pir', '-p', 'enhance-pir-load-test', '-p', 'pir-apm']
+        command += ['-p', 'enhance-publisher', '-p', 'enhance-pir-client', '-p', 'enhance-pir-load-test', '-p', 'pir-apm']
         for name in release.BINARIES['enhance-pir']:
             command += ['--bin', name]
-        command += ['--features', 'enhance-pir/cli']
     run(command, stage=f'compile:release-{family}')
 
 

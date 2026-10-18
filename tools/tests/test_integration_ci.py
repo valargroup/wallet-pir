@@ -16,19 +16,18 @@ import integration_tests as tests
 class IntegrationTests(unittest.TestCase):
     def test_repository_registry_is_complete_and_each_service_has_a_smoke(self):
         registry = tests.inventory()
-        for package in ['receiver-pir-server', 'transparent-shard-server', 'enhance-serving']:
+        for package in ['receiver-pir-server', 'transparent-shard-server', 'enhance-publisher']:
             self.assertIn('ci_smoke', registry[package]['fast'])
 
-    def test_application_only_feedback_keeps_the_serving_library_encrypted_smoke(self):
-        registry = {'enhance-pir-server': {'fast': ['layout'], 'full': []},
-                    'enhance-serving': {'fast': ['ci_smoke'], 'full': []}}
+    def test_publisher_smoke_feedback_runs_its_encrypted_smoke_only(self):
+        registry = {'enhance-publisher': {'fast': ['ci_smoke', 'layout'], 'full': []}}
         with patch.object(tests, 'inventory', return_value=registry), \
                 patch.object(tests, 'run') as run, \
                 patch.object(tests, 'target_features', return_value=[]), \
                 patch.object(tests.subprocess, 'check_output', side_effect=['case: test\n', '']):
-            tests.execute(['enhance-pir-server'], 'fast', smoke_only=True)
+            tests.execute(['enhance-publisher'], 'fast', smoke_only=True)
         commands = [call.args[0] for call in run.call_args_list]
-        self.assertEqual(commands[0][commands[0].index('-p') + 1], 'enhance-serving')
+        self.assertEqual(commands[0][commands[0].index('-p') + 1], 'enhance-publisher')
         self.assertIn('ci_smoke', commands[0])
         self.assertNotIn('layout', str(commands))
 
@@ -80,7 +79,7 @@ class IntegrationTests(unittest.TestCase):
                     {'name': 'fixture', 'manifest_path': str(manifest)}]):
                 self.assertEqual(tests.target_features('fixture', ['golden']), ['--features', 'server'])
                 self.assertEqual(tests.target_features('fixture', ['plain']), [])
-        self.assertEqual(tests.target_features('enhance-pir-server', ['ci_smoke']), [])
+        self.assertEqual(tests.target_features('enhance-publisher', ['ci_smoke']), [])
 
     def test_each_integration_command_selects_a_service_workspace_package_and_targets(self):
         packages = {package['name'] for package in tests.workspace_packages()}

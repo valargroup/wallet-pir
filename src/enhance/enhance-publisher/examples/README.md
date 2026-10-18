@@ -3,7 +3,7 @@
 Build and run outside a qualification workload:
 
 ```sh
-cargo build --locked --release -p enhance-pir-server --example preprocess
+cargo build --locked --release -p enhance-publisher --example preprocess
 ./target/release/examples/preprocess --output /new/disposable/directory --repetitions 3
 ```
 

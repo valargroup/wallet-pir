@@ -7,12 +7,13 @@
     "pir-serving"
   ],
   "enhance": [
-    "enhance-pir",
-    "enhance-serving",
+    "enhance-query-server",
     "status-query-server",
     "status-publisher",
+    "enhance-pir-client",
+    "enhance-pir-exercise",
     "enhance-pir-load-test",
-    "enhance-pir-server",
+    "enhance-publisher",
     "pir-apm",
     "pir-monitor"
   ],

@@ -1,6 +1,9 @@
 # Repository automation
 
-Cargo packages, including Rust development tools, live under `src/<product>/`.
+Product Cargo packages live under `src/<product>/`. Enhance development tools
+(`enhance-pir-client`, `enhance-pir-exercise`, `enhance-pir-load-test` and the
+standalone `enhance-noise-analysis` workspace) are Cargo packages under
+`tools/enhance/`; `pir-monitor` lives under `tools/shared/pir-monitor/`.
 The root tools directory contains CI, development and fleet automation. Product
 scripts, deployment resources and tests live under `tools/<product>/`. Product
 tools keep their existing Cargo package names and CLI flags.
@@ -20,7 +23,11 @@ release directories and their recorded paths are immutable.
 
 | Location | Purpose | Entry point |
 |---|---|---|
-| `src/enhance/loadtest/` | Enhance encrypted-query load generation | `make load-test` |
+| `enhance/loadtest/` | Enhance encrypted-query load generation | `make load-test` |
+| `enhance/client/` | Enhance wallet-protocol CLI (`enhance-pir-cli`) | `cargo run -p enhance-pir-client --bin enhance-pir-cli -- --help` |
+| `enhance/exercise/` | Local Enhance coordinator/worker exercise | `cargo run -p enhance-pir-exercise -- --help` |
+| [noise-analysis](enhance/noise-analysis/README.md) | Standalone Enhance noise analysis | `cargo build --locked --release --manifest-path tools/enhance/noise-analysis/Cargo.toml` |
+| `shared/pir-monitor/` | Independent public PIR correctness monitor | [observability](../docs/enhance/observability-alerting.md) |
 | [transparent-loadtest](../src/transparent/transparent-loadtest/README.md) | Wallet simulations, block comparison and interactive reports | `make transparent-sim-help` |
 | [transparent-regression](../src/transparent/transparent-regression/fixtures/README.md) | Frozen accepted-anchor correctness fixtures and parent-filter conformance | `make transparent-regression` |
 | `src/transparent/transparent-measure/` | Current-shard recovery measurement used by the backfill workflow | `cargo run --release -p transparent-measure -- --help` |

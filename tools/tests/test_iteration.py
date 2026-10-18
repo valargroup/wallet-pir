@@ -114,8 +114,8 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(set(result['packages']), {'pir-apm', 'pir-monitor'})
         self.assertEqual(result['groups'], ['enhance'])
         self.assertEqual(result['helpers'], [])
-        result = fast.plan(self.packages, ['src/enhance/enhance-pir-server/tests/fixtures/README.md'])
-        self.assertIn('enhance-pir-server', result['packages'])
+        result = fast.plan(self.packages, ['src/enhance/enhance-publisher/tests/fixtures/README.md'])
+        self.assertIn('enhance-publisher', result['packages'])
         self.assertIn('check-docs', result['helpers'])
 
     def test_receiver_packages_have_their_own_full_group(self):
@@ -295,7 +295,7 @@ class PlannerTests(unittest.TestCase):
         self.assertIn('cli', calls[-1])
         self.assertNotIn('native-reinspiring', calls[-1])
         groups = full.inventory()
-        self.assertIn('enhance-pir/cli', full.commands('enhance', groups)[0][-1].split(','))
+        self.assertIn('enhance-pir-client/native-reinspiring', full.commands('enhance', groups)[0][-1].split(','))
         self.assertNotIn('--features', full.commands('transparent', groups)[0])
 
 
