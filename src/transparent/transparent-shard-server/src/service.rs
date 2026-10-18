@@ -36,7 +36,7 @@
 //! paths on its own host, so two origins remain available to a wallet that
 //! wants them.
 
-use crate::admission::{Admission, AdmissionConfig, Admitted};
+use crate::admission::{Admission, Admitted};
 use crate::metrics::{Metrics, Snapshot};
 use crate::request::{answer_query, json, within, Query, RequestError, Worker};
 use crate::runtime::disk::{DiskCache, ShippedRuntimes};
@@ -52,73 +52,8 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+pub use transparent_server_backend::config::{ReadinessMode, ServiceConfig};
 use transparent_shard::manifest::query_binding;
-
-/// How the worker is sized. Everything here is per process, not per shard.
-#[derive(Clone, Copy, Debug)]
-pub struct ServiceConfig {
-    /// Bytes of prepared runtime the cache may reserve.
-    ///
-    /// Set below the host's real headroom: the reservation counts the database
-    /// and pack matrices and nothing else, so allocator overhead, the transient
-    /// plaintext a build reads, and in-flight requests all come out of the
-    /// remainder.
-    pub cache_bytes: u64,
-    /// Runtime builds that may run at once.
-    ///
-    /// One by default. A build is a second of CPU and a few hundred megabytes
-    /// of transient allocation; running several concurrently is how a worker
-    /// inside its steady-state budget still dies during a burst of cold
-    /// requests.
-    pub build_slots: usize,
-    /// Query evaluations that may run at once.
-    ///
-    /// Two by default, because evaluation is memory-bandwidth-bound and
-    /// `shard-scaling` measured it saturating at two threads: one core takes 66
-    /// of the ~87 GiB/s the kernel reaches and sixteen return 1.39x one core.
-    /// Admitting more would add queueing without adding throughput, and would
-    /// hold more runtimes pinned against eviction while it did.
-    pub query_slots: usize,
-    /// Requests that may wait beyond those running; see [`AdmissionConfig`].
-    pub max_waiters: usize,
-    /// Query body bytes that may be buffered at once.
-    pub max_body_bytes: u64,
-    /// How long a client has to deliver a query body once admitted.
-    pub upload_deadline: std::time::Duration,
-    /// How long a request may wait in total before a retryable refusal.
-    pub query_deadline: std::time::Duration,
-    /// What `/v1/ready` attests; see [`ReadinessMode`].
-    pub readiness: ReadinessMode,
-}
-
-/// What readiness means for this process.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ReadinessMode {
-    /// Ready once a set is loaded. Runtimes build on demand, so a cold worker
-    /// is serving correctly and slowly. The correctness pilot's mode, and the
-    /// whole-set default.
-    LoadedOnly,
-    /// Ready once every assigned runtime is warm. A worker in a fleet is held
-    /// out of rotation until it can answer at full speed, which is what lets
-    /// a restarting replica rejoin without a wallet meeting its cold cache.
-    Warm,
-}
-
-impl Default for ServiceConfig {
-    fn default() -> Self {
-        let admission = AdmissionConfig::default();
-        Self {
-            cache_bytes: 4 << 30,
-            build_slots: 1,
-            query_slots: admission.query_slots,
-            max_waiters: admission.max_waiters,
-            max_body_bytes: admission.max_body_bytes,
-            upload_deadline: admission.upload_deadline,
-            query_deadline: admission.query_deadline,
-            readiness: ReadinessMode::LoadedOnly,
-        }
-    }
-}
 
 /// The prewarm's progress toward holding every assigned runtime.
 struct WarmState {
@@ -157,18 +92,6 @@ impl PrewarmProduced {
             Produced::Built => &self.built,
         };
         counter.fetch_add(1, Ordering::Relaxed);
-    }
-}
-
-impl ServiceConfig {
-    fn admission(&self) -> AdmissionConfig {
-        AdmissionConfig {
-            query_slots: self.query_slots,
-            max_waiters: self.max_waiters,
-            max_body_bytes: self.max_body_bytes,
-            upload_deadline: self.upload_deadline,
-            query_deadline: self.query_deadline,
-        }
     }
 }
 
@@ -709,7 +632,7 @@ impl ServiceState {
     ///
     /// For tests that need the worker busy without answering anything, so the
     /// bounds in front of the slot can be exercised.
-    pub async fn hold_query_slot(&self) -> crate::admission::HeldSlot {
+    pub async fn hold_query_slot(&self) -> transparent_server_backend::admission::HeldSlot {
         self.inner.admission.hold_slot().await
     }
 

@@ -103,7 +103,7 @@ def build(family):
         command += ['-p', 'receiver-indexer', '--bin', 'receiver-directory', '--bin', 'receiver-probe']
     elif family == 'transparent':
         command += ['-p', 'transparent-filter-server', '-p', 'transparent-shard-server',
-                    '-p', 'transparent-loadtest']
+                    '-p', 'txid-pir-server', '-p', 'transparent-loadtest']
         for name in sorted({name for kind in KINDS[family] for name in release.BINARIES[kind]}):
             command += ['--bin', name]
     else:

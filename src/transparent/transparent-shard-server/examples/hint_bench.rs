@@ -75,7 +75,7 @@ fn main() -> Result<(), String> {
         let bytes = match path.strip_prefix("synthetic:") {
             Some(count) => {
                 let count: usize = count.parse().map_err(|_| "synthetic entry count")?;
-                let records = transparent_shard_server::display::synth::records(count, 1);
+                let records = txid_serving::synth::records(count, 1);
                 let built = transparent_shard::display::build_shard(0, geometry, 1, &records)
                     .map_err(|e| e.0)?;
                 built.buckets[0].directory[0].clone()

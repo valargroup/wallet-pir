@@ -20,7 +20,7 @@ impl Executing {
     pub fn capture() -> Result<Self, AnyError> {
         let mut identity = compiled();
         identity["compiled_source_file_sha256"] = json!({
-            "extractor":hex::encode(Sha256::digest(include_bytes!("../../../../../src/transparent/transparent-filter-server/src/extract.rs"))),
+            "extractor":hex::encode(Sha256::digest(include_bytes!("../../../../../src/shared/transparent-ingest/src/extract.rs"))),
             "census":hex::encode(Sha256::digest(include_bytes!("census.rs"))),
         });
         // The pinned event codec's extents, as compiled into this reader.

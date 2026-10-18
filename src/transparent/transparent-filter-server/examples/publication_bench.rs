@@ -34,11 +34,11 @@ use transparent_events::{
     FeeState, ReceiveEvent, SpendEvent, TransactionMetadata, TransparentEvent, Txid,
 };
 use transparent_filter::{BlockHash, ScriptBytes};
-use transparent_filter_server::{
-    controller::Snapshot,
+use transparent_filter_server::shard_filters::ShardFilters;
+use transparent_ingest::{
     events::EventStore,
     publication::{self, DirectoryChoice, PublishOptions},
-    shard_filters::ShardFilters,
+    snapshot::Snapshot,
 };
 
 #[derive(Parser)]

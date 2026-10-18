@@ -13,7 +13,7 @@
 //! RocksDB as a **secondary instance**: a running node's database is read without
 //! stopping it and without a copy, and previous outputs resolve from its
 //! transaction index. That module also records why the node's address index is
-//! not used: it holds only P2PKH and P2SH, while [`crate::extract`] indexes every
+//! not used: it holds only P2PKH and P2SH, while [`transparent_ingest::extract`] indexes every
 //! nonempty output script that does not begin with `OP_RETURN`, raw. This module
 //! keeps the service's view of it: display-order hashes and event extraction.
 //!
@@ -28,10 +28,10 @@
 //!
 //! [`MissingBlock`]: zakura_server_chain::transparent::ExtractError::MissingBlock
 
-use crate::extract::index;
-use crate::ingest::BuiltEvents;
 use std::path::Path;
 use transparent_filter::BlockHash;
+use transparent_ingest::blocks::BuiltEvents;
+use transparent_ingest::extract::index;
 pub use zakura_server_chain::transparent::state::StateError;
 use zakura_server_chain::transparent::FetchedBlock;
 use zakura_server_chain::Network;

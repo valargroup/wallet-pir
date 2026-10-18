@@ -6,7 +6,7 @@ use std::{
     collections::{HashMap, HashSet},
     path::PathBuf,
 };
-use transparent_filter_server::events::EventStore;
+use transparent_ingest::events::EventStore;
 #[derive(Parser)]
 struct Cli {
     #[arg(long)]

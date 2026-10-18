@@ -90,7 +90,7 @@ fn source_info_mode_reports_the_executing_binary_and_its_compilation_lock() {
         format!(
             "{:x}",
             Sha256::digest(include_bytes!(
-                "../../../../../src/transparent/transparent-filter-server/src/extract.rs"
+                "../../../../../src/shared/transparent-ingest/src/extract.rs"
             ))
         )
     );

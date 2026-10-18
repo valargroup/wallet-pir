@@ -12,7 +12,7 @@ use clap::Parser;
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 use transparent_filter::{build_range_filter_with, BlockHash, ScriptBytes, ShardKey};
-use transparent_filter_server::events::EventStore;
+use transparent_ingest::events::EventStore;
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 

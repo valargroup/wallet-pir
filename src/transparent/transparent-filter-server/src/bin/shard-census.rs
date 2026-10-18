@@ -16,8 +16,8 @@
 use clap::Parser;
 use std::collections::HashSet;
 use std::path::PathBuf;
-use transparent_filter_server::events::EventStore;
 use transparent_filter_server::shard_matches::MatchCounter;
+use transparent_ingest::events::EventStore;
 use transparent_shard::layout::{
     by_name as geometry_by_name, Geometry, PAGE_ROW_BYTES, PAGE_ROW_HEADER_BYTES,
 };

@@ -1,6 +1,7 @@
 //! Real publisher/TLS/manager/owner/recent-worker boundaries, with source rows
 //! as an independent answer oracle. These do not qualify a complete provider.
 use super::*;
+use transparent_events::TransparentEvent;
 use transparent_shard_server::{live::Command, manager::Manager, service::ServiceConfig};
 
 // Prepare immutable producer bytes once per test process. Each test receives
@@ -1646,7 +1647,7 @@ async fn standard_history_lifecycle_queries_advance_and_reconciles_lost_activati
     }));
     let cookie = root.path().join("cookie");
     std::fs::write(&cookie, "fixture:fixture").unwrap();
-    let rpc = crate::zakura::connect(&rpc_origin, &cookie).unwrap();
+    let rpc = transparent_ingest::zakura::connect(&rpc_origin, &cookie).unwrap();
     let owner = authority(&directory, None, rpc.clone());
     let hook = root.path().join("fleet.py");
     std::fs::write(&hook, r#"#!/usr/bin/env python3

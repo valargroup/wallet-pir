@@ -129,7 +129,7 @@ the query waits for a permit. It answers a client at its cap or a full queue wit
 A query longer than its session's query is 413 and a shorter one 400, both
 refused before it waits for a permit.
 
-Transparent keeps its own admission (`transparent-shard-server/src/admission.rs`).
+Transparent and txid share their own admission (`transparent-server-backend/src/admission.rs`).
 It counts running and queued requests together, starts the deadline before the
 upload so reception time counts against it, budgets body bytes before reading,
 and answers overload with 503 and `Retry-After`. Folding it into the shared

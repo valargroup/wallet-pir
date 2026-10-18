@@ -1,13 +1,6 @@
 //! Continuous, chain-checked publication. Ingest owns the journal; builders use
 //! copied suffix snapshots and activation is delegated to the private fleet tool.
-use crate::{
-    events::{BlockEntry, EventStore, EventStoreError, Refreshed},
-    ingest::build_fetched_block_events,
-    prevout::OutputCache,
-    publication::{self, BoxError, Journal, PublishOptions},
-    shard_filters::ShardFilters,
-    zakura::NodeClient,
-};
+use crate::shard_filters::ShardFilters;
 use axum::{
     extract::{Request, State},
     http::StatusCode,
@@ -25,8 +18,15 @@ use std::{
     },
 };
 use tokio::io::AsyncWriteExt;
-use transparent_events::TransparentEvent;
-use transparent_filter::{BlockHash, ScriptBytes, ShardMap};
+use transparent_filter::BlockHash;
+use transparent_ingest::{
+    blocks::build_fetched_block_events,
+    events::{EventStore, EventStoreError, Refreshed},
+    prevout::OutputCache,
+    publication::{self, BoxError, Journal, PublishOptions},
+    snapshot::Snapshot,
+    zakura::NodeClient,
+};
 
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -179,149 +179,6 @@ impl Authority {
     }
 }
 
-/// Snapshot only rebuilt event rows plus the endpoint hashes used to establish
-/// reuse. It stays valid even if ingest truncates and rewrites its journal.
-pub struct Snapshot {
-    journal_version: u16,
-    genesis: String,
-    first: u64,
-    end: u64,
-    count: u64,
-    blocks: BTreeMap<u64, BlockEntry>,
-    events: std::sync::Mutex<std::fs::File>,
-    events_offset: u64,
-    events_first: u64,
-    display_dir: PathBuf,
-}
-impl Snapshot {
-    /// Copies the journal suffix `previous` does not cover as sealed into an
-    /// anonymous file under `temp_dir`.
-    pub fn capture(
-        store: &EventStore,
-        previous: &ShardMap,
-        temp_dir: &Path,
-    ) -> Result<Self, BoxError> {
-        let end = store.covered_through().ok_or("empty journal")?;
-        let mut first = store.start_height();
-        let mut blocks = BTreeMap::new();
-        for entry in &previous.shards {
-            if let Some(block) = store.block_at(entry.end_height) {
-                blocks.insert(entry.end_height, block);
-            }
-        }
-        for entry in &previous.shards {
-            if !entry.sealed
-                || entry.end_height > end
-                || blocks
-                    .get(&entry.end_height)
-                    .is_none_or(|b| b.block_hash.to_display_hex() != entry.terminal_block_hash)
-            {
-                break;
-            }
-            first = entry.end_height + 1;
-        }
-        blocks.insert(end, store.block_at(end).ok_or("snapshot endpoint missing")?);
-        let (events, events_offset) = store.snapshot_suffix(first, temp_dir)?;
-        for height in first..=end {
-            blocks.insert(
-                height,
-                store.block_at(height).ok_or("snapshot block missing")?,
-            );
-        }
-        // A followed journal's writer may have rolled back and rewritten the
-        // suffix while it was copied. An unchanged endpoint means it did not.
-        if !store.still_committed(end, blocks[&end])? {
-            return Err("the journal changed while its suffix was copied".into());
-        }
-        Ok(Self {
-            journal_version: store.version(),
-            genesis: store.genesis_hash().into(),
-            first: store.start_height(),
-            end,
-            count: store.events_stored(),
-            blocks,
-            events: std::sync::Mutex::new(events),
-            events_offset,
-            events_first: first,
-            display_dir: store.directory().to_path_buf(),
-        })
-    }
-}
-impl Journal for Snapshot {
-    fn journal_version(&self) -> u16 {
-        self.journal_version
-    }
-    fn display_at(
-        &self,
-        height: u64,
-    ) -> Result<Vec<transparent_shard::txid::DisplayRecord>, EventStoreError> {
-        let block = self
-            .blocks
-            .get(&height)
-            .ok_or_else(|| EventStoreError::Invariant("snapshot display block missing".into()))?;
-        let sources = crate::display_journal::read_sources(&self.display_dir, block.block_hash)?;
-        crate::display_journal::validate_events(
-            &sources,
-            &self.events_at(height)?.ok_or_else(|| {
-                EventStoreError::Invariant("snapshot display events missing".into())
-            })?,
-        )?;
-        sources
-            .iter()
-            .map(|source| {
-                source
-                    .display_record()
-                    .map_err(|e| EventStoreError::Invariant(e.to_string()))
-            })
-            .collect()
-    }
-    fn genesis_hash(&self) -> &str {
-        &self.genesis
-    }
-    fn start_height(&self) -> u64 {
-        self.first
-    }
-    fn covered_through(&self) -> Option<u64> {
-        Some(self.end)
-    }
-    fn events_stored(&self) -> u64 {
-        self.count
-    }
-    fn block_at(&self, h: u64) -> Option<BlockEntry> {
-        self.blocks.get(&h).copied()
-    }
-    fn events_at(
-        &self,
-        h: u64,
-    ) -> Result<Option<Vec<(ScriptBytes, TransparentEvent)>>, EventStoreError> {
-        if h < self.events_first {
-            return Ok(None);
-        }
-        let Some(mut entry) = self.blocks.get(&h).copied() else {
-            return Ok(None);
-        };
-        entry.offset = entry
-            .offset
-            .checked_sub(self.events_offset)
-            .ok_or_else(|| EventStoreError::Invariant("snapshot offset precedes suffix".into()))?;
-        let mut file = self.events.lock().unwrap();
-        let end = self
-            .blocks
-            .get(&(h + 1))
-            .map_or(file.metadata()?.len(), |next| {
-                next.offset - self.events_offset
-            });
-        let mut events = crate::events::read_event_record(&mut file, entry, end)?;
-        if let Some(events) = &mut events {
-            events.extend(crate::display_journal::oversized_events(
-                &self.display_dir,
-                entry.block_hash,
-            )?);
-        }
-        Ok(events)
-    }
-}
-
 pub async fn fleet(
     config: &Config,
     request: serde_json::Value,
@@ -389,7 +246,7 @@ pub async fn run(config: Config) -> Result<(), BoxError> {
     } else {
         0
     };
-    let rpc = crate::zakura::connect(&config.rpc_url, &config.rpc_cookie)?;
+    let rpc = transparent_ingest::zakura::connect(&config.rpc_url, &config.rpc_cookie)?;
     let existing = EventStore::open_existing(&config.data_dir)?;
     if existing.start_height() != 0 || existing.genesis_hash() != rpc.block_hash_display(0).await? {
         return Err("journal identity does not match genesis RPC history".into());
@@ -465,7 +322,7 @@ pub async fn run(config: Config) -> Result<(), BoxError> {
             store: ingest_store,
             authority: ingest_authority,
             notify,
-            cache: OutputCache::new(crate::prevout::DEFAULT_CACHE_OUTPUTS),
+            cache: OutputCache::new(transparent_ingest::prevout::DEFAULT_CACHE_OUTPUTS),
             pending_invalidation: None,
         };
         if let Err(error) = pir_pipeline::supervise(
@@ -762,7 +619,7 @@ async fn ingest_once(
     }
     if ancestor != end {
         store.lock().await.rollback_to(ancestor)?;
-        *cache = OutputCache::new(crate::prevout::DEFAULT_CACHE_OUTPUTS);
+        *cache = OutputCache::new(transparent_ingest::prevout::DEFAULT_CACHE_OUTPUTS);
         authority.0.status.write().unwrap()["reorg_depth"] = end
             .unwrap_or(0)
             .saturating_sub(ancestor.unwrap_or(0))
@@ -891,7 +748,7 @@ async fn acquire_history(
         let journal = store.lock().await;
         Snapshot::capture(&journal, old.filters.map(), config.snapshot_dir())?
     };
-    let height = snapshot.end;
+    let height = snapshot.end();
     let hash = snapshot
         .block_at(height)
         .ok_or("snapshot has no endpoint")?
@@ -1936,7 +1793,8 @@ mod tests {
         });
         let cookie = root.path().join("cookie");
         std::fs::write(&cookie, "fixture:fixture").unwrap();
-        let client = crate::zakura::connect(format!("http://{address}"), &cookie).unwrap();
+        let client =
+            transparent_ingest::zakura::connect(format!("http://{address}"), &cookie).unwrap();
         let journal_dir = root.path().join("journal");
         let mut journal = EventStore::open(
             &journal_dir,
@@ -2268,7 +2126,8 @@ print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('re
         });
         let cookie = root.path().join("cookie");
         std::fs::write(&cookie, "fixture:fixture").unwrap();
-        let client = crate::zakura::connect(format!("http://{address}"), &cookie).unwrap();
+        let client =
+            transparent_ingest::zakura::connect(format!("http://{address}"), &cookie).unwrap();
         let journal_dir = root.path().join("journal");
         let mut journal = EventStore::open(
             &journal_dir,

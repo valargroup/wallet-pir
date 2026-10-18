@@ -34,7 +34,7 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
 use transparent_events::TransparentEvent;
-use transparent_filter_server::events::EventStore;
+use transparent_ingest::events::EventStore;
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 

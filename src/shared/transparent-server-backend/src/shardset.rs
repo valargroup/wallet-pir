@@ -372,7 +372,7 @@ impl VerificationReport {
     }
 
     /// Records the wall and thread CPU time since `started`.
-    pub(crate) fn finish(&mut self, started: &VerificationClock) {
+    pub fn finish(&mut self, started: &VerificationClock) {
         self.wall_micros = started.wall.elapsed().as_micros() as u64;
         self.cpu_micros = started
             .cpu
@@ -382,13 +382,13 @@ impl VerificationReport {
 }
 
 /// When a load began, by the wall clock and the loading thread's CPU clock.
-pub(crate) struct VerificationClock {
+pub struct VerificationClock {
     wall: std::time::Instant,
     cpu: Option<u64>,
 }
 
 impl VerificationClock {
-    pub(crate) fn start() -> Self {
+    pub fn start() -> Self {
         Self {
             wall: std::time::Instant::now(),
             cpu: crate::procmem::thread_cpu_nanos(),
@@ -399,7 +399,7 @@ impl VerificationClock {
 impl SegmentSource {
     /// A segment as a checked manifest publishes it, not yet verified.
     /// Loader-only: the loaders construct one and then verify or reuse it.
-    pub(crate) fn published(
+    pub fn published(
         path: PathBuf,
         rows: u64,
         row_bytes: u32,
@@ -554,7 +554,7 @@ impl SegmentSource {
 
     /// Takes over earlier verification of the same committed segment, or
     /// verifies it. Used by every loader so no table has a second policy.
-    pub(crate) fn verify_or_reuse<'a>(
+    pub fn verify_or_reuse<'a>(
         self,
         earlier: impl IntoIterator<Item = &'a SegmentSource>,
         report: &mut VerificationReport,

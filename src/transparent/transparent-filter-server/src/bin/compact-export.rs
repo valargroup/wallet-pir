@@ -2,7 +2,8 @@
 use clap::Parser;
 use std::path::PathBuf;
 use transparent_blocks::dataset::{decode, read_batch, write_batch, Manifest};
-use transparent_filter_server::{compact::compact_block, state::StateReader, zakura::NodeClient};
+use transparent_filter_server::{compact::compact_block, state::StateReader};
+use transparent_ingest::zakura::NodeClient;
 use zakura_server_chain::{hash::display, transparent::FetchedBlock, Network};
 type Error = Box<dyn std::error::Error + Send + Sync>;
 #[derive(Parser)]
@@ -34,7 +35,7 @@ async fn main() -> Result<(), Error> {
         .map(|p| StateReader::open(p, Network::Mainnet))
         .transpose()?;
     let rpc = if state.is_none() {
-        Some(transparent_filter_server::zakura::connect(
+        Some(transparent_ingest::zakura::connect(
             &c.rpc_url,
             c.cookie.as_ref().ok_or("--cookie required with RPC")?,
         )?)

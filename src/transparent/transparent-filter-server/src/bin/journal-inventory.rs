@@ -12,9 +12,9 @@
 
 use clap::Parser;
 use std::path::{Path, PathBuf};
-use transparent_filter_server::events::EventStore;
 use transparent_filter_server::state::StateReader;
-use transparent_filter_server::zakura::NodeClient;
+use transparent_ingest::events::EventStore;
+use transparent_ingest::zakura::NodeClient;
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
@@ -112,7 +112,7 @@ fn main() -> Result<(), BoxError> {
         )?)),
         (None, Some(cookie)) => Node::Rpc(
             tokio::runtime::Runtime::new()?,
-            transparent_filter_server::zakura::connect(&cli.zakura_rpc_url, cookie)?,
+            transparent_ingest::zakura::connect(&cli.zakura_rpc_url, cookie)?,
         ),
         (None, None) => Node::None,
     };
