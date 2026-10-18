@@ -50,7 +50,7 @@ HISTORY_SOCKET = '/run/transparent-history-worker/control.sock'
 
 
 def history_worker(settings, *, release, template=None):
-    """`transparent-shard-server` under publication control.
+    """`transparent-query-server` under publication control.
 
     The staged shard set and assignment are read-only inputs; the active
     record and any runtime cache are state. The preflight check is the
@@ -82,7 +82,7 @@ def history_worker(settings, *, release, template=None):
         writes.append(cache)
     arguments += ['--control-socket', HISTORY_SOCKET, '--active-record', state + '/active.json']
     template = HISTORY_TEMPLATE.read_text() if template is None else template
-    return render_worker(template, directory(release) + '/transparent-shard-server', arguments,
+    return render_worker(template, directory(release) + '/transparent-query-server', arguments,
                          writable=writes, readonly=reads, settings=s, check=(*arguments, '--verify-only'))
 
 
@@ -126,7 +126,7 @@ def history_provider(settings, *, release, template=None):
                            'body_bytes', 'query_deadline_secs', 'upload_deadline_secs'))
     if 'query_waiters' in s:
         arguments += ['--query-waiters', number(s['query_waiters'], 'query_waiters')]
-    executable = directory(release) + '/transparent-shard-server'
+    executable = directory(release) + '/transparent-query-server'
     source = ROOT / 'tools/transparent/deploy/transparent-history-provider.role.service'
     rendered = render_worker(source.read_text() if template is None else template,
                              executable, arguments, writable=[state], readonly=reads,
