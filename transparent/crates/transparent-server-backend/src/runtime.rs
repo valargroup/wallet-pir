@@ -1495,7 +1495,7 @@ pub(crate) mod tests {
         if cfg!(feature = "qualification-tests") {
             (geometry, table)
         } else {
-            (&TXID_2K8, Table::TxDirectory)
+            (&DECOUPLED_2K_8K, Table::Directory)
         }
     }
 
@@ -1886,13 +1886,9 @@ pub(crate) mod tests {
     /// masks the whole-table product does: an empty table, content ending
     /// on either side of a block boundary, and content in the last row.
     fn check_zero_tail(input: impl FnOnce(&native::TableProfile) -> (usize, usize)) {
-        // A two-block supported profile is necessary here even though the
-        // ordinary identity/cache fixtures need only the one-block profile.
-        let (geometry, table) = if cfg!(feature = "qualification-tests") {
-            (&DECOUPLED_2K_8K, Table::Pages)
-        } else {
-            (&TXID_4K8, Table::TxDirectory)
-        };
+        // The history page profile crosses block boundaries with fewer native
+        // instances than a display row. Each boundary gets its own deadline.
+        let (geometry, table) = (&DECOUPLED_2K_8K, Table::Pages);
         let shared = SharedParams::build(geometry, table).unwrap();
         let profile = &shared.profile;
         let (filled, expected_blocks) = input(profile);

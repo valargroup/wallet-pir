@@ -1537,7 +1537,7 @@ mod shipped_tests {
         let other_geometry = if cfg!(feature = "qualification-tests") {
             &DECOUPLED_32K_32K
         } else {
-            &transparent_shard::display::TXID_4K8
+            &transparent_shard::display::TXID_2K8
         };
         let wide = SharedParams::build(other_geometry, table).unwrap();
         let display = SharedParams::build_display(s.shared.geometry, table).unwrap();
