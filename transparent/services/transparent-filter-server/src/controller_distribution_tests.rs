@@ -385,6 +385,7 @@ async fn https_bootstrap_verifies_real_prepared_recent_without_archive_tables() 
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[cfg(feature = "full-tests")]
 async fn https_bootstrap_fails_closed_on_origin_network_and_transport_errors() {
     let root = tempfile::tempdir().unwrap();
     let (directory, set) = publication(root.path());
@@ -474,6 +475,7 @@ async fn https_bootstrap_fails_closed_on_origin_network_and_transport_errors() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[cfg(feature = "full-tests")]
 async fn https_bootstrap_consumes_canonicality_withdrawal_and_recovery_state() {
     let root = tempfile::tempdir().unwrap();
     let (directory, set) = publication(root.path());
@@ -641,6 +643,7 @@ fn distribution_revision_refuses_directory_sync_failure_before_acknowledgement()
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[cfg(feature = "full-tests")]
 async fn https_bootstrap_charges_all_response_bytes_at_exact_budget_boundary() {
     let root = tempfile::tempdir().unwrap();
     let (directory, set) = publication(root.path());

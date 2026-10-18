@@ -114,6 +114,22 @@ The fast runner enforces the 30-second limit for every Rust case, including
 setup and teardown inside the case. Each program keeps its package directory and Cargo environment; fast integration
 targets must contain an enabled, unignored case, and unit exclusions must still
 match discovered tests. Cold cache preparation compiles the same target selection.
+Locally owned campaign-only unit tests use the non-default `full-tests` feature,
+so routine test binaries do not compile their bodies or exclusive helpers. Full
+qualification, reference/native variants, cache preparation and complete correctness
+enable it explicitly. Discovery rejects a full-only test in a fast binary or a
+missing classified case in a full library binary. The two upstream-only exclusions
+still use execution filters because this repository does not own their source.
+Use `--features full-tests` for a focused local campaign check.
+
+Enhance smoke cases reuse immutable prepared input bytes for the same record count,
+then copy them into separate writable worker directories. Workers still verify
+their copies and both 67/68-record generic oracles build independently. The encrypted
+restart and pending-commit publication checks retain the required two-worker quorum.
+Transparent fixture exit tests use tiny file trees with the actual ownership and
+copying helpers. Manager behavior tests still prepare and verify real publications.
+Fixture construction, copying, verification and cleanup stay inside measured work.
+
 The package-qualified full-geometry/cache, multi-unit preparation, shipped-runtime
 identity matrices, retained-publication rebuild matrices, repeated HTTPS bootstrap
 fault/canonicality/budget matrices, RPC publication and real HTTP retry cases run

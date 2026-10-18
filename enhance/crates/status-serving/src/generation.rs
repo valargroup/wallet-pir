@@ -625,10 +625,12 @@ fn unit_hint(db: &PreparedDatabase, masks: &[Vec<u64>]) -> Result<Vec<CrsBlock>,
 }
 
 #[cfg(test)]
+#[cfg(feature = "full-tests")]
 mod incremental_tests {
     use super::*;
     use crate::{fixture, now_ms};
     #[test]
+    #[cfg(feature = "full-tests")]
     fn sparse_hint_matches_full_reconstruction_for_signed_negacyclic_boundaries() {
         let mut snapshot = fixture::snapshot(32, false).unwrap();
         let (base, _) =

@@ -27,14 +27,17 @@ changing the 30-second case / 180-second warm correctness budgets. Production
 load, HTTP and full service qualification remain separate release gates; fixture
 timings do not qualify a deployment.
 
-When the standard fast selection includes `transparent-filter-server`, helpers
-still overlap the Rust compilation, then finish before Rust test execution starts.
-Publisher archive preparation already runs apart from other Rust programs in the
-integrated fast runner; this barrier also removes helper contention during that
-CPU window. It preserves the selected helpers, cases, cold fixture caches and
-30-second case guard. The wait remains inside the measured fast command and its
-180-second warm budget. This can lengthen warm runs when helpers outlast
-compilation; full hosted selection still needs qualification on its exact head.
+Full-only publisher and backend tests compile with the non-default `full-tests`
+feature, enabled by full qualification and complete correctness. Fast discovery
+rejects accidental campaign inclusion; full discovery requires every classified
+case. Run a focused campaign with `FEATURES=full-tests`. Fast helpers overlap
+compilation and test execution, with up to three test programs in the pool; the
+publisher library runs alone on fewer than eight CPUs.
+
+Manager behavior tests reuse immutable prepared publications and verify private
+copies. Tests of fixture ownership, copying and exit cleanup use tiny files and
+the same helpers, without repeating cryptographic preparation in child processes.
+The parent checks cleanup after successful and failing child test processes exit.
 
 ## Running the deployed suite
 
