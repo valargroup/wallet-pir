@@ -316,6 +316,9 @@ fn manager(tls: &Tls, root: &Path) -> Manager {
     )
     .unwrap()
 }
+// In-process retirement can outlive the last manager or listener handle while
+// spawned work unwinds. A real process exit closes those ownership descriptors.
+// Bound that harness-only wait; never retry another startup failure.
 async fn restart_manager(tls: &Tls, root: &Path) -> Manager {
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(1);
     loop {
@@ -333,7 +336,9 @@ async fn restart_manager(tls: &Tls, root: &Path) -> Manager {
             {
                 tokio::time::sleep(std::time::Duration::from_millis(1)).await;
             }
-            Err(error) => panic!("retired HTTP owner did not release its directory: {error}"),
+            Err(error) => {
+                panic!("retired publication owner did not release its directory: {error}")
+            }
         }
     }
 }
@@ -695,7 +700,7 @@ async fn manager_persists_invalidation_and_refuses_equal_revision_reenable_after
     drop(follow);
     owner.0.withdrawn.store(false, Ordering::Release);
     owner.0.invalidated_from.store(u64::MAX, Ordering::Release);
-    let mut restarted = manager(&tls, &state);
+    let mut restarted = restart_manager(&tls, &state).await;
     assert!(restarted.poll_once().await.is_err());
     assert!(restarted.live().is_none());
     owner.0.distribution_revision.fetch_add(1, Ordering::AcqRel);
@@ -743,7 +748,7 @@ async fn manager_restarts_interrupted_staging_and_rejects_superseded_activation(
     work.abort();
     assert!(work.await.unwrap_err().is_cancelled());
     std::fs::write(&tls.control, "").unwrap();
-    let mut restarted = manager(&tls, &state);
+    let mut restarted = restart_manager(&tls, &state).await;
     restarted.poll_once().await.unwrap();
     let live = restarted.live().unwrap();
     let (origin, task) = worker(live.clone()).await;
@@ -793,7 +798,7 @@ async fn manager_restarts_interrupted_staging_and_rejects_superseded_activation(
     std::fs::write(&tls.control, "").unwrap();
     // Saved staging/candidate state is not authority. Source outage on restart
     // cannot expose it, even though every immutable object is now cached.
-    let mut restarted = manager(&tls, &state);
+    let mut restarted = restart_manager(&tls, &state).await;
     rpc.available.store(false, Ordering::Release);
     assert!(restarted.poll_once().await.is_err());
     assert!(restarted.live().is_none());
@@ -1097,7 +1102,7 @@ async fn control_write_failure(pause_at: Option<u32>, failed_record: &str) {
     task.stop().await;
     drop(live);
     drop(follow);
-    let mut restarted = manager(&tls, &state);
+    let mut restarted = restart_manager(&tls, &state).await;
     assert!(
         restarted.poll_once().await.is_err(),
         "restart cannot erase revocation"
@@ -1245,7 +1250,7 @@ async fn recovery_poll_write_failure(pause_at: u32) {
     let mut follow = manager(&tls, &state);
     follow.poll_once().await.unwrap();
     drop(follow);
-    let mut restarted = manager(&tls, &state);
+    let mut restarted = restart_manager(&tls, &state).await;
     std::fs::write(&tls.control, format!("pause-current-{pause_at}")).unwrap();
     let work = tokio::spawn(async move {
         let result = restarted.poll_once().await;
@@ -1275,7 +1280,7 @@ async fn recovery_poll_write_failure(pause_at: u32) {
     std::fs::remove_dir(state.join("publisher-high-water.tmp")).unwrap();
     owner.0.withdrawn.store(false, Ordering::Release);
     owner.0.invalidated_from.store(u64::MAX, Ordering::Release);
-    let mut restarted = manager(&tls, &state);
+    let mut restarted = restart_manager(&tls, &state).await;
     assert!(restarted.poll_once().await.is_err());
     assert!(restarted.live().is_none());
     owner.0.distribution_revision.fetch_add(1, Ordering::AcqRel);
@@ -1339,7 +1344,7 @@ async fn manager_rejects_replayed_different_map_below_durable_revocation_floor()
     owner.0.distribution_revision.store(40, Ordering::Release);
     owner.0.withdrawn.store(false, Ordering::Release);
     owner.0.invalidated_from.store(u64::MAX, Ordering::Release);
-    let mut restarted = manager(&tls, &state);
+    let mut restarted = restart_manager(&tls, &state).await;
     for revision in [40, 100] {
         owner
             .0
