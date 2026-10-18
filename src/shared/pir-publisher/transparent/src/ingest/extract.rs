@@ -432,6 +432,7 @@ mod tests {
         // output is valid input to the decoder and contributes no filter item.
         let transactions = [coinbase(vec![output(vec![0x6a, 0x01, 0x00])])];
         assert!(elements_of(&transactions, &mut previous).is_empty());
+        assert_eq!(previous.lookups, 0);
     }
 
     #[test]
