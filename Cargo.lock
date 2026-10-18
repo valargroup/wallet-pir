@@ -3722,8 +3722,23 @@ dependencies = [
  "sha2 0.10.9",
  "tempfile",
  "thiserror 2.0.18",
+ "transparent-journal",
  "transparent-server-backend",
  "zakura-server-chain",
+ "zakura-transparent-events",
+ "zakura-transparent-filter",
+ "zakura-transparent-shard",
+]
+
+[[package]]
+name = "transparent-journal"
+version = "0.1.0-rc.4"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "thiserror 2.0.18",
  "zakura-transparent-events",
  "zakura-transparent-filter",
  "zakura-transparent-shard",
@@ -3765,7 +3780,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
- "transparent-ingest",
+ "transparent-journal",
  "transparent-shard-server",
  "zakura-pir-transparent",
  "zakura-transparent-events",
@@ -3834,6 +3849,7 @@ dependencies = [
  "http-body",
  "ipir-sp",
  "pir-control",
+ "pir-observability",
  "pir-pipeline",
  "rayon",
  "reinspiring",
