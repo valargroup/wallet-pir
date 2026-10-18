@@ -53,6 +53,8 @@ Preserve existing Cargo package and binary names.
   `python3 tools/ci/correctness.py --record-only` diagnoses overruns without
   omitting coverage. Report cold preparation separately. Hardware and explicit
   soak qualification retain their existing release gates.
+- Consolidate repeated test setup and equivalent checks; retain a focused check
+  for every independent correctness guarantee.
 - Batch edits, then use `make check-fast BASE=<comparison-sha>` for affected
   checks. This includes committed, staged, unstaged and untracked changes.
   `make check-package PACKAGE=<name> TEST=<filter> FEATURES=<features>` selects

@@ -228,13 +228,27 @@ class PlannerTests(unittest.TestCase):
             scaler.validate(registry)
 
 
+    def test_tool_stress_campaigns_are_disjoint_from_fast_discovery(self):
+        import python_tests
+        tests = ROOT / 'tools/tests'
+        fast_cases = {case for cases in python_tests.discover(tests).values() for case in cases}
+        stress = {case for cases in python_tests.discover(tests / 'stress').values() for case in cases}
+        self.assertIn('test_stage_cancellation.CancellationTests.test_cancellation_leaves_no_descendant_listener',
+                      fast_cases)
+        self.assertEqual(stress, {'test_stage_cancellation_stress.CancellationStressTests.'
+                                  'test_fifty_cancellations_leave_no_descendant_listener'})
+        self.assertFalse(fast_cases & stress)
+
     def test_full_helper_dispatch_keeps_docs_precise_and_restores_models(self):
         self.assertEqual(helpers.targets(['check-docs'], full=True), ['check-docs'])
         self.assertEqual(helpers.targets(['check-ops-deploy']), ['check-ops-deploy-fast'])
         self.assertEqual(helpers.targets(['check-ops-deploy'], full=True), ['check-ops-deploy'])
         self.assertEqual(helpers.targets(['check-ops-scaler-fast'], full=True), ['check-ops-scaler'])
+        self.assertEqual(helpers.targets(['check-tools']), ['check-tools'])
+        self.assertEqual(helpers.targets(['check-tools'], full=True), ['check-tools-full'])
         self.assertEqual(set(helpers.targets(list(fast.HELPERS), full=True)),
-                         (fast.HELPERS - {'check-ops-scaler-fast'}) | {'check-ops-scaler'})
+                         (fast.HELPERS - {'check-ops-scaler-fast', 'check-tools'})
+                         | {'check-ops-scaler', 'check-tools-full'})
         with self.assertRaisesRegex(ValueError, 'unknown helper'):
             helpers.targets(['check-docs; unsafe'])
 

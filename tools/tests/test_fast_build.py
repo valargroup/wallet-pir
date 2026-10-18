@@ -210,6 +210,30 @@ class FastBuildTests(unittest.TestCase):
         self.assertEqual(environment['WALLET_PIR_ENFORCE_BUDGET'], '0')
         self.assertTrue(all('campaign' not in command for command, _ in self.calls))
 
+    def test_explicit_native_integrations_run_once_and_reject_empty_discovery(self):
+        self.packages[0]['targets'][2]['required-features'] = ['native-reinspiring']
+        self.registry['b'] = dict(fast=['smoke'], full=[])
+        self.artifacts.append(dict(package_id='a', target=self.packages[0]['targets'][2],
+                                   executable='/fixture/a-campaign'))
+        self.listings['/fixture/a-campaign'] = {'wallet'}
+        native = dict(additional_features=['a/native-reinspiring'],
+                      additional_integrations={('a', 'campaign')})
+        self.execute(**native)
+        build = next(command for command, _ in self.calls if command[:2] == ['cargo', 'test'])
+        self.assertEqual([build[i + 1] for i, word in enumerate(build[:-1]) if word == '--test'],
+                         ['campaign', 'smoke'])
+        [program] = [p for p in self.plans[0] if p['executable'] == '/fixture/a-campaign']
+        self.assertTrue(program['integration'])
+        self.listings['/fixture/a-campaign'] = set()
+        with self.assertRaisesRegex(ValueError, 'no enabled, unignored'):
+            self.execute(**native)
+        self.artifacts.pop()
+        with self.assertRaisesRegex(ValueError, 'missing_integrations'):
+            self.execute(**native)
+        self.registry['b'] = dict(fast=['smoke'], full=['campaign'])
+        with self.assertRaisesRegex(ValueError, 'also select campaign'):
+            self.execute(**native)
+
     def test_full_campaign_features_cannot_expand_ordinary_correctness(self):
         with self.assertRaisesRegex(ValueError, 'cannot enable qualification'):
             self.execute(additional_features=['a/qualification-tests'])

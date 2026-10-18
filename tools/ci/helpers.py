@@ -11,7 +11,7 @@ def targets(selected, full=False):
     unknown = set(selected) - HELPERS
     if unknown:
         raise ValueError(f'unknown helper checks: {sorted(unknown)}')
-    tiers = ({'check-ops-scaler-fast': 'check-ops-scaler'} if full else
+    tiers = ({'check-ops-scaler-fast': 'check-ops-scaler', 'check-tools': 'check-tools-full'} if full else
              {'check-ops-deploy': 'check-ops-deploy-fast'})
     return sorted({tiers.get(name, name) for name in selected})
 

@@ -54,7 +54,8 @@ three-process limit; each group keeps fixture reuse and serial case deadlines.
 HTTP integrations and the small-runner publisher protection remain intact.
 
 `make check-correctness` runs that complete bounded unit/integration population
-with native arithmetic, the independent reference checks, exporter contracts,
+with native arithmetic, including the native-only Status wallet and wallet HTTP
+integrations, the independent reference checks, exporter contracts,
 doctests, formatting, lint and Python helpers. Its 180-second deadline includes
 warm compilation, fixture construction, execution and cleanup. Every CPU case
 retains its 30-second deadline. `--record-only` records overruns without omitting
@@ -80,7 +81,9 @@ crypto, fault injection, restart and deployment qualification remain required.
 Fast scaler feedback runs decision, forecast, signal, daemon and metrics unit
 tests. Seeded fleet simulations and exhaustive membership/mutant checks remain
 in full operations qualification; their module registry rejects missing or
-renamed assignments. No production clocks or thresholds change.
+renamed assignments. No production clocks or thresholds change. Tooling checks run each
+stage-cancellation contract once; `check-tools-full` (part of `make check-full`
+and full helper qualification) adds the repeated campaigns in `tools/tests/stress`.
 
 Only fast checks run automatically for pushes and PRs. Full regression runs
 nightly or on explicit dispatch, and service qualification is dispatch-only.

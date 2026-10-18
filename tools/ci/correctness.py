@@ -32,6 +32,11 @@ FEATURES = ','.join([
     'pir-control/admission', 'transparent-publisher/rocksdb-reader', 'transparent-query-server/test-support', 'transparent-tools/compact-export',
 ])
 
+# Native-only wallet integrations, compiled with the complete native build and
+# rejected there if they discover no enabled cases.
+NATIVE_INTEGRATIONS = {('status-query-server', 'status_wallet'),
+                       ('status-query-server', 'status_wallet_http')}
+
 
 def source_identity():
     head = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
@@ -83,6 +88,7 @@ def rust_checks(env, temporary, offline):
     from fast_build import execute
     execute([package['name'] for package in metadata['packages']],
             offline=bool(offline), jobs=3, additional_features=FEATURES.split(','),
+            additional_integrations=NATIVE_INTEGRATIONS,
             environment=env, case_log=env['WALLET_PIR_CASE_LOG'],
             enforce_budget=env['WALLET_PIR_ENFORCE_BUDGET'] == '1')
     # Reference checks have the same package/feature graph and are compiled
@@ -92,7 +98,8 @@ def rust_checks(env, temporary, offline):
                     env=env, stage='compile:reference', collect_tests=True, test_details=True)
     reference += run(['cargo', 'test', '--no-run', *options, '-p', 'enhance-publisher', '--test', 'ci_smoke'],
                      env=env, stage='compile:reference', collect_tests=True, test_details=True)
-    reference += run(['cargo', 'test', '--no-run', *options, '-p', 'status-query-server', '--lib', '--tests'],
+    # Status wallet integrations require native arithmetic and ran above.
+    reference += run(['cargo', 'test', '--no-run', *options, '-p', 'status-query-server', '--lib'],
                      env=env, stage='compile:reference', collect_tests=True, test_details=True)
     reference_plan = programs(reference, metadata)
     for program in reference_plan:

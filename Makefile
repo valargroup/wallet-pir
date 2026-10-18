@@ -39,7 +39,7 @@ prepare-dev:
 	cargo fetch --locked
 	python3 tools/ci/main_health.py --install
 
-check-full: check-hygiene check-ops check-docs check-reports check-tools
+check-full: check-hygiene check-ops check-docs check-reports check-tools-full
 	cargo fmt --all --check
 	cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
 	tools/ci/full-test.sh --locked --workspace --profile release-fast --features enhance-query-server/qualification-tests,transparent-publisher/qualification-tests,transparent-shared/qualification-tests,transparent-publisher/rocksdb-reader,transparent-query-server/test-support,transparent-tools/compact-export
@@ -350,6 +350,11 @@ check-tools:
 	python3 -m unittest discover -s tools/transparent/filters -p 'test_*.py'
 	python3 -m unittest discover -s tools/transparent/parent-filters -p 'test_*.py'
 	python3 tools/ci/python_tests.py tools/tests --jobs 2 --isolate-ci-output
+
+# Repeated stress campaigns over the same contracts check-tools covers once.
+.PHONY: check-tools-full
+check-tools-full: check-tools
+	python3 tools/ci/python_tests.py tools/tests/stress --jobs 1 --isolate-ci-output
 
 .PHONY: transparent-txid-demo
 transparent-txid-demo:

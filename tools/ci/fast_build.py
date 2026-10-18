@@ -67,7 +67,8 @@ def bounded_programs(program, names):
 
 
 def execute(selected, *, offline=False, compile_only=False, jobs=3,
-            additional_features=(), environment=None, case_log=None, enforce_budget=True):
+            additional_features=(), additional_integrations=(), environment=None,
+            case_log=None, enforce_budget=True):
     from integration_tests import inventory
     if any(feature.rsplit('/', 1)[-1] == 'cuda' for feature in additional_features):
         raise ValueError('ordinary CPU correctness cannot enable CUDA')
@@ -89,6 +90,18 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3,
     collisions = {(name, target) for name in selected
                   for target in registry.get(name, {}).get('full', [])
                   if target in integration_names}
+    # Complete correctness names native-only integrations explicitly; their
+    # names must still select exactly one target in the build.
+    additional_integrations = set(additional_integrations)
+    if {name for name, _ in additional_integrations} - selected:
+        raise ValueError('additional integrations name unselected packages')
+    explicit_names = {target for _, target in additional_integrations}
+    collisions |= {(name, target) for name in selected
+                   for target in [*registry.get(name, {}).get('fast', []),
+                                  *registry.get(name, {}).get('full', [])]
+                   if target in explicit_names and (name, target) not in additional_integrations}
+    expected_integrations |= additional_integrations
+    integration_names |= explicit_names
     if collisions:
         raise ValueError(f'fast target names also select campaign targets: {sorted(collisions)}')
     features = set()
@@ -102,7 +115,10 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3,
                  and set(t['kind']) & {'lib', 'bin'}]
         enabled = classified | {f for t in units for f in t.get('required-features', []) if f == 'cli'}
         for target in package['targets']:
-            if (name, target['name']) in expected_integrations and 'test' in target['kind']:
+            # Explicit native integrations get their features from the caller;
+            # an unmet requirement leaves the target unbuilt and fails below.
+            if ((name, target['name']) in expected_integrations - additional_integrations
+                    and 'test' in target['kind']):
                 enabled.update(target.get('required-features', []))
         if any(f.rsplit('/', 1)[-1] in {'native-reinspiring', 'cuda'} for f in enabled):
             raise ValueError(f'{name}: CPU fast builds must keep reference arithmetic separate from native/CUDA features')
