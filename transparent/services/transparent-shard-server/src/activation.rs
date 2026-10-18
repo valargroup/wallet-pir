@@ -68,3 +68,6 @@ pub(crate) async fn activate<A: Adapter>(
     .await
     .map_err(|e| e.to_string())?
 }
+
+#[cfg(test)]
+mod tests;
