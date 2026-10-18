@@ -3,6 +3,10 @@
 //! publishes display shards from the transparent event journal
 //! ([`publication`]).
 
+// Both workers compile the same transaction privately; product adapters stay local.
+#[path = "../../../shared/activation/mod.rs"]
+mod activation;
+
 pub mod display;
 pub mod publication;
 

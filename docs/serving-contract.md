@@ -84,8 +84,10 @@ in the owner, immediately before activation. Shared code provides only the
 durability mechanisms in `src/shared/pir-control`; each owner keeps its own
 authority and retention rules above.
 
-Transparent history and txid display share a private activation transaction in
-`transparent-shard-server`. It holds command serialization in a blocking job,
+Transparent history and txid display compile the same private activation
+transaction from `src/shared/activation` into their separate worker crates.
+The adapters stay private to each worker, without a new crate dependency or
+public Rust API. The transaction holds command serialization in a blocking job,
 so a disconnected caller cannot release it while persistence is in progress.
 After checking already-active success and the expected predecessor, it locks
 the candidate and then the publication gate. Under that gate it checks the
