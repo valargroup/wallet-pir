@@ -12,6 +12,6 @@ default = []
 native-reinspiring = ["dep:pir-native", "ipir-sp/native-reinspiring"]
 
 [dependencies]
-ipir-sp = "=0.1.0-rc.7"
+ipir-sp = { version = "=0.1.0-rc.7", git = "https://github.com/valargroup/ipir-sp", rev = "1d637dba8a9e6dcf749a2054e33ea8ff03fac8c9" }
 pir-runtime = { path = "../pir-runtime" }
 pir-native = { package = "zakura-pir-native", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "63d31b4486dffe60982c395fffb40e9a02497008", optional = true }
