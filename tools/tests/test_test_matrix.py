@@ -82,6 +82,29 @@ class MatrixTests(unittest.TestCase):
                      passed=True, compile_only=False, completed=sorted(shard['targets']), cases={})
                 for name, shard in registry.items() if shard['family'] == family]
 
+    def test_reference_qualification_keeps_oracles_and_native_keeps_http_lifecycles(self):
+        package = self.plan[3]['enhance-serving']
+        artifact = dict(package_id=package['id'], target=dict(name='ci_smoke', kind=['test']),
+                        executable='/not-executed', features=['qualification-tests'])
+        lifecycle = {'encrypted_http_answers_survive_coordinator_restart',
+                     'encrypted_publication_advances_while_another_commit_is_pending'}
+        oracles = {'single_unit_hint_matches_independent_generic_67',
+                   'single_unit_hint_matches_independent_generic_68',
+                   'single_unit_hint_rejects_damage_and_pins_retired_file'}
+
+        def listing(command, **_):
+            names = set() if '--ignored' in command else lifecycle | oracles
+            excluded = {command[index + 1] for index, arg in enumerate(command) if arg == '--skip'}
+            return ''.join(f'{name}: test\n' for name in sorted(names - excluded))
+
+        for variant in ('reference', 'native'):
+            with self.subTest(variant=variant), patch.object(matrix.subprocess, 'check_output', side_effect=listing):
+                _, programs, cases = matrix.test_programs([artifact], variant, {package['name']: package}, {})
+            actual = set(cases[f'{variant}:enhance-serving:ci_smoke']['tests'])
+            self.assertEqual(actual, oracles if variant == 'reference' else lifecycle | oracles)
+            if variant == 'native':
+                self.assertEqual(programs[0]['args'], [])
+
     def verify(self, receipts):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

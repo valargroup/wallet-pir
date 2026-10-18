@@ -57,7 +57,10 @@ Receiver jobs. Receiver lint runs separately. Hosted test shards and lint start 
 alongside helper checks. The final completion and artifact publication gates still
 require every selected helper check to pass. Whole test executables retain their
 fixture reuse and existing thread limits. Reference arithmetic and CUDA checks
-have separate feature/cache partitions; deployment builds remain on the dedicated
+have separate feature/cache partitions. The reference shard retains the independent
+generic-hint and damaged-artifact checks; encrypted lifecycle smokes run with
+reference arithmetic in fast correctness and with the native backend in full
+qualification. Deployment builds remain on the dedicated
 build runner. Example builds, doctests, binary tests and the standalone sizing
 exporter are included. New or removed targets require an explicit matrix update.
 
