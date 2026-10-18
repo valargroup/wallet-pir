@@ -9,6 +9,10 @@ on:
         description: Repeat each encrypted HTTP and recovery smoke 50 times
         type: boolean
         default: false
+      correctness:
+        description: Prepare complete CPU correctness and enforce three warm runs
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -44,6 +48,25 @@ jobs:
       - name: Repeat independent HTTP and recovery checks
         if: inputs.stress
         run: umask 022 && TMPDIR="$RUNNER_TEMP" python3 tools/ci/integration_tests.py --tier fast --smoke-only --repeat 50
+      - name: Diagnose complete CPU correctness
+        if: inputs.correctness
+        run: umask 022 && TMPDIR="$RUNNER_TEMP" python3 tools/ci/correctness.py --record-only
+      - name: Validate three warm complete correctness runs
+        if: inputs.correctness
+        run: |
+          set -euo pipefail
+          umask 022
+          for attempt in 1 2 3; do
+            TMPDIR="$RUNNER_TEMP" python3 tools/ci/correctness.py --offline
+          done
+      - name: Retain complete correctness case and stage receipts
+        if: always() && inputs.correctness
+        uses: actions/upload-artifact@v4
+        with:
+          name: complete-correctness-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .local-pir/correctness/
+          include-hidden-files: true
+          if-no-files-found: warn
       - name: Report Cargo cache reuse
         if: always()
         continue-on-error: true
