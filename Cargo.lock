@@ -829,6 +829,7 @@ name = "enhance-pir-server"
 version = "0.0.1"
 dependencies = [
  "axum",
+ "base64",
  "clap",
  "enhance-pir",
  "enhance-serving",

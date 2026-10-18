@@ -621,7 +621,7 @@ impl Coordinator {
                         let pack = Packing::new(
                             plan.shard.logical_rows,
                             &hint,
-                            &self.gateway.packing_budget(),
+                            self.gateway.packing_budget(),
                         )?;
                         if self.serving.is_some() {
                             crate::prepared_packing::persist(&self.root, &pack)?;
