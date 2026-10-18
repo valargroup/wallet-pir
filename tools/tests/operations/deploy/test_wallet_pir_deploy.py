@@ -48,6 +48,7 @@ class ImmutableWrapperSource(unittest.TestCase):
 
 
 DEPLOY = ROOT / 'tools/enhance/deploy'
+STATUS_DEPLOY = ROOT / 'tools/status/deploy'
 SERVICES = descriptors.load_descriptors(ROOT / 'tools/deploy/services.toml')
 LOCK = ('coordinator', descriptors.LOCK_PATH)
 
@@ -688,7 +689,7 @@ class StatusTests(Fleet):
         sha = sha256(STATUS_NEW)
         journal = deployer.deploy(sha, self.status_binary, allow_drift=True)
         self.assertEqual(journal.status, 'committed')
-        expected = units.render((DEPLOY / 'status-worker.service.in').read_text(),
+        expected = units.render((STATUS_DEPLOY / 'status-worker.service.in').read_text(),
                                 {'RELEASE': '/opt/status-pir/releases/' + sha, 'NETWORK': NETWORK})
         self.assertEqual(self.fake.host('status-01').files['/etc/systemd/system/status-worker.service'].decode(), expected)
         self.assertEqual(self.restarts(), [('status-01', 'status-worker.service'), ('status-01', 'status-router.service'),
@@ -977,7 +978,7 @@ class UnitTests(unittest.TestCase):
 
     def test_render_refuses_unset_placeholders(self):
         with self.assertRaisesRegex(units.UnitError, '@NETWORK@'):
-            units.render((DEPLOY / 'status-worker.service.in').read_text(), {'RELEASE': '/opt/status-pir/releases/x'})
+            units.render((STATUS_DEPLOY / 'status-worker.service.in').read_text(), {'RELEASE': '/opt/status-pir/releases/x'})
 
     def test_repository_descriptors_and_example_inventory_load(self):
         inventory = descriptors.load_inventory(DEPLOY / 'deploy-inventory.example.json')
