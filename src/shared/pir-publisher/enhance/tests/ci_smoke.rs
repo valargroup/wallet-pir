@@ -259,6 +259,26 @@ async fn encrypted_http_answers_survive_coordinator_restart() {
         drop(client);
         http.stop().await;
         drop(coordinator);
+        // A real process restart waits for every old request-owned view to drop.
+        // The in-process server can finish draining before Tokio drops its last
+        // completed connection task, so observe exclusive ownership explicitly.
+        phase.set("waiting for the old controller's request views to close");
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                match enhance_publisher::control::Store::open(&state_dir) {
+                    Ok(store) => {
+                        drop(store);
+                        break;
+                    }
+                    Err(error) if error.starts_with("controller already running:") => {
+                        tokio::task::yield_now().await;
+                    }
+                    Err(error) => panic!("cannot reopen controller state: {error}"),
+                }
+            }
+        })
+        .await
+        .expect("old HTTP request views retained the controller lock");
         phase.set("restoring the coordinator from disk");
         let restored = Coordinator::open(&state_dir, groups).unwrap();
         let restored_http = serve(restored.router()).await;
