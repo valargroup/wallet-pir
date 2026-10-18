@@ -9,7 +9,7 @@ elapsed times are retained in [the measurement record](results.json).
 This record is historical: publications then started at 4 rows, so the revision
 below is not what the same range publishes today at 8192 rows or more. The
 batching it measured is unchanged; it is now `receiver_batch` in
-[`blocks.rs`](../../../src/receiver/receiver-indexer/src/blocks.rs).
+[`blocks.rs`](../../../src/shared/pir-publisher/receiver/src/blocks.rs).
 
 Both binaries indexed heights 3,496,100–3,496,200 into fresh, separate SQLite
 directories with the ordinary backfill paused. They used the same local Cargo
@@ -61,7 +61,7 @@ These observations come from its original note; none of its outputs were retaine
   block response; the row digest was recomputed independently, and a rerun gave
   identical counts and revision. The raw transaction is retained as the
   indexer's test fixture
-  ([`receiver-refund.hex`](../../../src/receiver/receiver-indexer/tests/fixtures/receiver-refund.hex)),
+  ([`receiver-refund.hex`](../../../src/shared/pir-publisher/receiver/tests/fixtures/receiver-refund.hex)),
   whose tests recover the same Action.
 - That revision's suites passed: six shared-crate tests with `--features store`
   and three server `--test receiver` tests, including a command-line restart and

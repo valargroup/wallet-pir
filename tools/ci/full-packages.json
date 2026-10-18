@@ -15,7 +15,8 @@
     "enhance-pir-load-test",
     "enhance-publisher",
     "pir-apm",
-    "pir-monitor"
+    "pir-monitor",
+    "pir-publisher"
   ],
   "receiver": [
     "receiver-indexer",

@@ -92,5 +92,11 @@
       "service_tools",
       "simulation"
     ]
+  },
+  "pir-publisher": {
+    "fast": [
+      "lifecycle"
+    ],
+    "full": []
   }
 }

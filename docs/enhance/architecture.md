@@ -14,7 +14,7 @@ resident serving packing objects in this mode. See the
 ## Ingestion application
 
 `enhance_publisher::application` supplies product operations to the internal
-`src/shared/pir-pipeline` lifecycle. Shared supervision waits the existing poll delay
+`src/shared/pir-publisher/pipeline` lifecycle. Shared supervision waits the existing poll delay
 after each complete pass, with explicit product retry/stop policy. Recovery and
 inventory reconciliation still precede collection. `collect` revokes before
 journal rewind and commits validated records independently of publication; its
@@ -508,7 +508,7 @@ holds Status generations, the distributed controller and its roles over the
 modulus and native hints, wallet-libraries PIR packages and other `src/shared/`
 runtime helpers, and never chain readers (`zakura-server-chain`, node crates),
 ingestion, publishers, applications, tools or another product's packages.
-`src/enhance/enhance-publisher` owns chain reading (`zakura`), the Enhance and
+`src/shared/pir-publisher/enhance` owns chain reading (`zakura`), the Enhance and
 record journals (`ingest`), the durable control store, publication, preparation
 orchestration (`serving_control`), activation, recovery, retention and artifact
 collection, pool and capacity planning, publication telemetry, rebuilds and the
@@ -520,7 +520,7 @@ implements; revocations are read live from publisher state at query acceptance a
 at each streaming-response poll, so a revocation applies to responses already in
 flight. Status observation (`source`)
 and publication (`publisher`), publication authority and the `status-pir` command
-line live in `src/status/status-publisher`; its synthetic listeners serve
+line live in `src/shared/pir-publisher/status`; its synthetic listeners serve
 `QueryGateway::unpublished()` from `enhance-query-server` and do not depend on
 Enhance publication. Ingestion checkpoints source state
 independently and hands its latest snapshot to publication; slow worker

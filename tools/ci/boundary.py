@@ -75,7 +75,7 @@ PURE = {
 SERVING = {'enhance-query-server', 'status-query-server', 'transparent-shared', 'pir-runtime',
            'pir-serving'}
 INGESTION = {
-    'pir-pipeline', 'zakura-server-chain', 'enhance-publisher', 'receiver-indexer',
+    'pir-publisher', 'pir-pipeline', 'zakura-server-chain', 'enhance-publisher', 'receiver-indexer',
     'transparent-publisher', 'status-publisher',
     # Optional publisher diagnostics make the tools package node-capable.
     'transparent-tools',
@@ -87,7 +87,7 @@ TOOLS = 'tools/'
 # Application packages: services, operational dashboards and development tools.
 # Serving libraries compose into them, never the reverse.
 APPLICATIONS = {
-    'enhance-publisher', 'status-publisher', 'pir-apm', 'enhance-pir-load-test', 'pir-monitor',
+    'pir-publisher', 'enhance-publisher', 'status-publisher', 'pir-apm', 'enhance-pir-load-test', 'pir-monitor',
     'enhance-pir-client', 'enhance-pir-exercise', 'enhance-noise-analysis', 'transparent-publisher',
     'transparent-query-server', 'transparent-tools', 'receiver-indexer', 'receiver-pir-server',
 }
@@ -138,6 +138,8 @@ def serving_target_problem(owner, target, name=None):
     `name` at repository path `target`, or None. Paths are directories relative to
     the root."""
     product = next((p for p in PRODUCTS if owner.startswith(p)), None)
+    if target.startswith('src/shared/pir-publisher/') and name != PIPELINE:
+        return 'publisher package'
     if name in APPLICATIONS:
         return 'application package'
     if target.startswith(TOOLS):

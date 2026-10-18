@@ -216,3 +216,10 @@ that build the database-reader tools enable it explicitly.
 `transparent-journal` owns the saved event journal and its display sidecars.
 Journal consumers such as `transparent-measure` depend on it directly, so they
 do not compile the publisher, node parser or database reader.
+
+## Publisher source layout
+
+Publisher implementations and the shared lifecycle live under
+`src/shared/pir-publisher/`; query-serving crates remain in product directories.
+Cargo package names and standalone commands are preserved. See the
+[unified publisher](publisher.md) for configuration and service ownership.
