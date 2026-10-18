@@ -72,17 +72,40 @@ pub async fn serve(router: axum::Router) -> String {
     url
 }
 
-/// A FIFO in place of a record's temporary file: the write that creates it
-/// blocks until `release`, which then reads what was written and removes the
-/// FIFO so a later write uses an ordinary file.
+/// A FIFO holds the temporary write until release. A directory at the final
+/// record path makes rename fail even on platforms that allow syncing a FIFO.
+/// Keep that blocker until a subsequent serialized command proves persistence
+/// has returned, then restore the original record before retrying activation.
 pub struct BlockedWrite {
     path: PathBuf,
+    restore: RecordRestore,
     release: std::sync::mpsc::Sender<()>,
     reader: std::thread::JoinHandle<()>,
 }
 
+pub struct RecordRestore {
+    record: PathBuf,
+    backup: Option<PathBuf>,
+}
+
+impl RecordRestore {
+    pub fn restore(self) {
+        std::fs::remove_dir(&self.record).unwrap();
+        if let Some(backup) = self.backup {
+            std::fs::rename(backup, self.record).unwrap();
+        }
+    }
+}
+
 impl BlockedWrite {
-    pub fn at(path: PathBuf) -> Self {
+    pub fn at(record: PathBuf) -> Self {
+        let backup = record.exists().then(|| {
+            let backup = record.with_extension("before-block");
+            std::fs::rename(&record, &backup).unwrap();
+            backup
+        });
+        std::fs::create_dir(&record).unwrap();
+        let path = record.with_extension("tmp");
         assert!(std::process::Command::new("mkfifo")
             .arg(&path)
             .status()
@@ -92,8 +115,7 @@ impl BlockedWrite {
         let reader = std::thread::spawn({
             let path = path.clone();
             move || {
-                // Bounded so a broken test ends rather than hanging.
-                let _ = released.recv_timeout(Duration::from_secs(60));
+                let _ = released.recv_timeout(Duration::from_secs(10));
                 let mut bytes = Vec::new();
                 std::fs::File::open(path)
                     .unwrap()
@@ -103,16 +125,16 @@ impl BlockedWrite {
         });
         Self {
             path,
+            restore: RecordRestore { record, backup },
             release,
             reader,
         }
     }
 
-    pub fn release(self) {
+    pub fn release(self) -> RecordRestore {
         let _ = self.release.send(());
         self.reader.join().unwrap();
-        // The write may fail its sync on a FIFO; either way it has returned
-        // once a status poll sees the candidate free, which callers check.
-        let _ = std::fs::remove_file(&self.path);
+        std::fs::remove_file(&self.path).unwrap();
+        self.restore
     }
 }

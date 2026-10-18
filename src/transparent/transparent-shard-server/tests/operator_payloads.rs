@@ -65,10 +65,11 @@ const GEOMETRIES: [&Geometry; 2] = [&DECOUPLED_2K_8K, &DECOUPLED_2K_8K];
 
 fn fixture_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../ops/fixtures/transparent-shard")
+        .join("../../../ops/transparent/fixtures/transparent-shard")
         .canonicalize()
         .unwrap_or_else(|_| {
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../ops/fixtures/transparent-shard")
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../../ops/transparent/fixtures/transparent-shard")
         })
 }
 
