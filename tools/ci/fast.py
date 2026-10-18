@@ -133,7 +133,7 @@ def route(path):
         return targets | {'check-ops-contracts'}, {'ops'}
     if path.startswith(('tools/tests/operations/', 'tools/scripts/', 'tools/deploy/', 'tools/infra/')):
         return {'check-ops-shared', 'check-ops-contracts', 'check-ops-deploy'}, {'ops'}
-    if path.startswith('src/transparent/transparent-loadtest/'):
+    if path.startswith(('tools/transparent/loadtest/', 'tools/transparent/src/loadtest/')):
         return {'check-reports'}, {'transparent', 'ops'}
     if path.startswith(('tools/', 'tools/transparent/filters/', 'tools/transparent/parent-filters/')):
         return {'check-tools'}, {'ops'}
@@ -191,7 +191,7 @@ def plan(packages, paths, *, all_checks=False):
         if package:
             if path.endswith('.md'):
                 helpers.add('check-docs'); groups.add('ops')
-            if path.startswith('src/transparent/transparent-loadtest/'):
+            if path.startswith(('tools/transparent/loadtest/', 'tools/transparent/src/loadtest/')):
                 helpers.add('check-reports')
             # Serialized payloads are consumed by jq/deploy scripts.
             if path.endswith('operator_payloads.rs'):

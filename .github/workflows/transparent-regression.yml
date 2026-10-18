@@ -4,7 +4,7 @@ on:
     inputs:
       fixture:
         description: Repository path to a frozen regression fixture
-        default: src/transparent/transparent-regression/fixtures/mainnet.json
+        default: tools/transparent/fixtures/regression/mainnet.json
         required: true
         type: string
       shard_url:
@@ -36,7 +36,7 @@ jobs:
           SHARD_URL: ${{ inputs.shard_url }}
           FILTER_URL: ${{ inputs.filter_url }}
         run: |
-          cargo run --locked --release -p transparent-regression --bin transparent-regression -- \
+          cargo run --locked --release -p transparent-tools --bin transparent-regression -- \
             --fixture "$FIXTURE" --shard-url "$SHARD_URL" --filter-url "$FILTER_URL" \
             --source-sha "$GITHUB_SHA" --out-dir regression-results
       - uses: actions/upload-artifact@v4

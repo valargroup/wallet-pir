@@ -113,7 +113,7 @@ jobs:
           set -euo pipefail
           NICE=(nice -n 19)
           if command -v ionice >/dev/null; then NICE+=(ionice -c3); fi
-          "${NICE[@]}" cargo build --locked --release -p transparent-filter-server --bin script-sample
+          "${NICE[@]}" cargo build --locked --release -p transparent-publisher --bin script-sample
           mkdir -p sample
           # Read-only over the journal, through its read-only opener; the
           # journal lives under the ingest unit's user, hence sudo.

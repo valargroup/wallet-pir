@@ -23,15 +23,9 @@
     "receiver-store"
   ],
   "transparent": [
-    "transparent-blocks",
-    "transparent-journal",
-    "transparent-block-server",
-    "transparent-filter-server",
-    "transparent-server-backend",
-    "transparent-ingest",
-    "transparent-shard-server",
-    "transparent-loadtest",
-    "transparent-measure",
-    "transparent-regression"
+    "transparent-shared",
+    "transparent-publisher",
+    "transparent-query-server",
+    "transparent-tools"
   ]
 }

@@ -117,7 +117,7 @@ jobs:
           # Output is intentionally owned by the runner for artifact upload.
           # shellcheck disable=SC2024
           sudo journalctl -u transparent-publish-controller --since '20 minutes ago' --no-pager > publisher-evidence/controller.log || true
-          for binary in transparent-publish-controller transparent-shard-server shard-control shard-assign; do
+          for binary in transparent-publish-controller transparent-query-server shard-control shard-assign; do
             test ! -f "artifact/$binary" || sha256sum "artifact/$binary"
           done > publisher-evidence/binaries.sha256
 
