@@ -1,6 +1,6 @@
 //! Frozen journal expectations and a reference reducer independent of wallet replay.
+use zakura_pir_client::transparent::filter as transparent_filter;
 use zakura_pir_protocol::transparent::events as transparent_events;
-use zakura_pir_protocol::transparent::filter as transparent_filter;
 
 pub mod journal;
 use anyhow::{bail, Context, Result};

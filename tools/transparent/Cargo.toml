@@ -123,11 +123,11 @@ sha2 = "0.10"
 sysinfo = "0.36"
 tokio = { version = "1", features = ["full"] }
 tokio-util = { version = "0.7", features = ["io"] }
-zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "bffb3cdcfcc5442b612cad91df26619d7b909d89", default-features = false, features = ["transparent"], optional = true }
+zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "3ce402717973dd4cf791cde74902435663e50a9c", default-features = false, features = ["transparent"], optional = true }
 
-zakura-pir-protocol = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "bffb3cdcfcc5442b612cad91df26619d7b909d89", default-features = false, features = ["transparent"] }
-zakura-pir-publisher = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "bffb3cdcfcc5442b612cad91df26619d7b909d89", default-features = false, features = ["transparent"] }
-zakura-pir-client = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "bffb3cdcfcc5442b612cad91df26619d7b909d89", default-features = false, features = ["transparent", "engine-store", "reqwest"] }
+zakura-pir-protocol = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "3ce402717973dd4cf791cde74902435663e50a9c", default-features = false, features = ["transparent"] }
+zakura-pir-publisher = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "3ce402717973dd4cf791cde74902435663e50a9c", default-features = false, features = ["transparent"] }
+zakura-pir-client = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "3ce402717973dd4cf791cde74902435663e50a9c", default-features = false, features = ["transparent", "engine-store", "reqwest"] }
 
 [build-dependencies]
 prost-build = { version = "0.13", optional = true }

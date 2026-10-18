@@ -32,10 +32,13 @@ thiserror = "2"
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
 
-zakura-pir-protocol = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "bffb3cdcfcc5442b612cad91df26619d7b909d89", default-features = false, features = ["transparent"] }
-zakura-pir-query-server = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "bffb3cdcfcc5442b612cad91df26619d7b909d89", default-features = false, features = ["transparent"] }
-zakura-pir-server-core = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "bffb3cdcfcc5442b612cad91df26619d7b909d89", default-features = false, features = ["transparent"] }
-zakura-pir-publisher = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "bffb3cdcfcc5442b612cad91df26619d7b909d89", default-features = false, features = ["transparent"], optional = true }
+zakura-pir-protocol = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "3ce402717973dd4cf791cde74902435663e50a9c", default-features = false, features = ["transparent"] }
+zakura-pir-query-server = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "3ce402717973dd4cf791cde74902435663e50a9c", default-features = false, features = ["transparent"] }
+zakura-pir-server-core = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "3ce402717973dd4cf791cde74902435663e50a9c", default-features = false, features = ["transparent"] }
+zakura-pir-publisher = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "3ce402717973dd4cf791cde74902435663e50a9c", default-features = false, features = ["transparent"], optional = true }
+
+# Disk-cache verification encrypts one sample query; no product client is selected.
+zakura-pir-client = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "3ce402717973dd4cf791cde74902435663e50a9c", default-features = false, features = ["native"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 rustix = { version = "1.1", features = ["fs", "process", "thread"] }
@@ -43,5 +46,5 @@ rustix = { version = "1.1", features = ["fs", "process", "thread"] }
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
 tempfile = "3"
-zakura-pir-publisher = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "bffb3cdcfcc5442b612cad91df26619d7b909d89", default-features = false, features = ["transparent"] }
-zakura-pir-client = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "bffb3cdcfcc5442b612cad91df26619d7b909d89", default-features = false, features = ["transparent"] }
+zakura-pir-publisher = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "3ce402717973dd4cf791cde74902435663e50a9c", default-features = false, features = ["transparent"] }
+zakura-pir-client = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "3ce402717973dd4cf791cde74902435663e50a9c", default-features = false, features = ["transparent"] }

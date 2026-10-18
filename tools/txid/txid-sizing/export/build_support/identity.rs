@@ -60,6 +60,6 @@ pub fn from_lock(bytes: &[u8]) -> Result<Value, String> {
     Ok(json!({"schema":"txid-sizing-export-source-v1",
         "node_parser":identify("zakura-chain")?,
         "server_adapter":identify("zakura-server-chain")?,
-        "event_codec":identify("zakura-transparent-events")?,
+        "event_codec":identify("zakura-pir-protocol")?,
         "cargo_lock_sha256":format!("{:x}", Sha256::digest(bytes))}))
 }

@@ -1,7 +1,7 @@
 //! Executes the shipped binary and child protocol against real HTTP shard
 //! fixtures. Deadlines and shutdown are tested at the OS process boundary.
+use zakura_pir_client::transparent::filter as transparent_filter;
 use zakura_pir_protocol::transparent::events as transparent_events;
-use zakura_pir_protocol::transparent::filter as transparent_filter;
 use zakura_pir_publisher::transparent as transparent_shard;
 
 #[path = "../../../src/transparent/transparent-query-server/tests/common/mod.rs"]

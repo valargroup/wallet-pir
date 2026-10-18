@@ -1,5 +1,6 @@
 //! Real HTTP parent traversal + PIR, with SQLite restarts and an independent oracle.
-use zakura_pir_protocol::transparent::filter as transparent_filter;
+use zakura_pir_client::transparent::filter as transparent_filter;
+use zakura_pir_publisher::transparent::filter::ParentPublisherExt as _;
 
 #[path = "../../../src/transparent/transparent-query-server/tests/common/mod.rs"]
 mod common;

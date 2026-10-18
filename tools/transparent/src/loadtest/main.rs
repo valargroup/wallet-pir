@@ -12,8 +12,8 @@
 //! as the wallet charges them; TLS and connection overhead are not measured
 //! and the report says so rather than estimating them.
 
+use zakura_pir_client::transparent::filter as transparent_filter;
 use zakura_pir_protocol::transparent::events as transparent_events;
-use zakura_pir_protocol::transparent::filter as transparent_filter;
 
 mod preparation_cache;
 mod scenario;

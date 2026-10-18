@@ -9,6 +9,7 @@ use ipir_sp::{ClientSeed, IPIRClient, PublicQuerySetup, SimplePirProfile};
 use rand::{rngs::OsRng, Rng};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+#[cfg(any(test, feature = "client"))]
 use std::time::Duration;
 #[cfg(any(test, feature = "client"))]
 use std::time::Instant;
@@ -37,6 +38,7 @@ pub const MAX_AGE_MS: u64 = 20_000;
 pub const SKEW_MS: u64 = 5_000;
 pub type Hash = [u8; 32];
 
+#[cfg(any(test, feature = "client"))]
 fn query_timed_out(elapsed: Duration) -> bool {
     elapsed > Duration::from_millis(MAX_AGE_MS)
 }

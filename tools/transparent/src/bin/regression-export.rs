@@ -1,6 +1,6 @@
 //! Read-only journal export of explicit wallet cases and accepted checkpoint hashes.
 //! No expected data comes from PIR responses or the wallet ledger reducer.
-use zakura_pir_protocol::transparent::filter as transparent_filter;
+use zakura_pir_client::transparent::filter as transparent_filter;
 
 use clap::Parser;
 use serde::Deserialize;

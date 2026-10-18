@@ -1,7 +1,7 @@
 //! Read-only journal reader for fixture export. Pins committed lengths once.
 //! Kept independent of the ingest service and its RocksDB/node dependencies.
+use zakura_pir_client::transparent::filter as transparent_filter;
 use zakura_pir_protocol::transparent::events as transparent_events;
-use zakura_pir_protocol::transparent::filter as transparent_filter;
 
 use anyhow::{bail, Context, Result};
 use serde::Deserialize;

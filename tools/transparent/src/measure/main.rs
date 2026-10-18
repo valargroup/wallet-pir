@@ -18,8 +18,8 @@
 //! labelled as such in the output rather than presented as a measurement of
 //! this range.
 
+use zakura_pir_client::transparent::filter as transparent_filter;
 use zakura_pir_protocol::transparent::events as transparent_events;
-use zakura_pir_protocol::transparent::filter as transparent_filter;
 use zakura_pir_publisher::transparent as transparent_shard;
 
 mod workload;

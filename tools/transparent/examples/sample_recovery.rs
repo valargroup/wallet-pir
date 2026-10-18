@@ -11,7 +11,7 @@
 //!
 //! Prints one JSON line per wallet with its outcome and private bill.
 //! Usage: sample_recovery SHARD_URL SAMPLE [CONCURRENCY]
-use zakura_pir_protocol::transparent::filter as transparent_filter;
+use zakura_pir_client::transparent::filter as transparent_filter;
 
 use sha2::{Digest, Sha256};
 use std::sync::atomic::{AtomicUsize, Ordering};

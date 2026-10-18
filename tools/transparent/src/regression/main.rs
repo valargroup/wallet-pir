@@ -1,5 +1,5 @@
 //! Sequential deployed correctness checks. Each case runs in a deadline-bounded child.
-use zakura_pir_protocol::transparent::filter as transparent_filter;
+use zakura_pir_client::transparent::filter as transparent_filter;
 
 mod counting;
 mod http_evidence;

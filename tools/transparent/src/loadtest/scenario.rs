@@ -1,7 +1,7 @@
 //! Reproducible mixed-wallet scenarios. The supervisor owns admission, evidence
 //! and hard deadlines; blocking wallet work runs in killable child processes.
+use zakura_pir_client::transparent::filter as transparent_filter;
 use zakura_pir_protocol::transparent::events as transparent_events;
-use zakura_pir_protocol::transparent::filter as transparent_filter;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File};

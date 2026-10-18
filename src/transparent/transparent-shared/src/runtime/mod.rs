@@ -77,9 +77,11 @@ use transparent_native::{
     self as native, NativeKeys, NativePreprocessed, NativeScheme, Profile, TableProfile,
 };
 use transparent_shard::layout::Geometry;
+use zakura_pir_client::native::ProfileClientExt as _;
+use zakura_pir_query_server::native::ProfileQueryExt as _;
 use zakura_pir_query_server::transparent::native::TableQueryExt as _;
 use zakura_pir_server_core::batched_hint;
-use zakura_pir_server_core::native::{preprocess, publish, ProfilePublicationExt as _};
+use zakura_pir_server_core::native::ProfilePublicationExt as _;
 
 const _: () = assert!(transparent_shard::manifest::QUERY_ROW_QUANTUM as usize == native::D);
 
@@ -735,11 +737,20 @@ impl TableRuntime {
         }
         let row = sample_row(rows, profile.row_bytes, profile.rows);
         let binding = *b"selfchck";
-        let (secret, upload) = profile.prepare(row)?;
+        let (secret, upload) =
+            profile
+                .native
+                .prepare(&profile.setup, &profile.masks, profile.rows, row)?;
         let mut body = binding.to_vec();
         body.extend(upload);
         let answer = self.evaluate(shared, binding, &body)?;
-        let decoded = profile.decode(&secret, &self.public_params, &answer[16..])?;
+        let mut decoded = profile.native.decode_cols(
+            &secret,
+            &self.public_params,
+            &answer[16..],
+            profile.cols,
+        )?;
+        decoded.truncate(profile.row_bytes);
         let at = row * profile.row_bytes;
         if decoded != rows[at..at + profile.row_bytes] {
             return Err(format!("row {row} does not decode to the segment's row"));

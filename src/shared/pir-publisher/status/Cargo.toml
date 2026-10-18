@@ -36,16 +36,16 @@ sha2 = "0.10"
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "bffb3cdcfcc5442b612cad91df26619d7b909d89", default-features = false, features = ["status"] }
+zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "3ce402717973dd4cf791cde74902435663e50a9c", default-features = false, features = ["status"] }
 
-zakura-pir-publisher = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "bffb3cdcfcc5442b612cad91df26619d7b909d89", default-features = false, optional = true }
+zakura-pir-publisher = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "3ce402717973dd4cf791cde74902435663e50a9c", default-features = false, features = ["status"], optional = true }
 
 [dev-dependencies]
 # Independent Status client for the real HTTP runtime regression.
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
-zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "bffb3cdcfcc5442b612cad91df26619d7b909d89", default-features = false, features = ["status", "testing"] }
-zakura-pir-client = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "bffb3cdcfcc5442b612cad91df26619d7b909d89", default-features = false, features = ["status"] }
+zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "3ce402717973dd4cf791cde74902435663e50a9c", default-features = false, features = ["status", "testing"] }
+zakura-pir-client = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "3ce402717973dd4cf791cde74902435663e50a9c", default-features = false, features = ["status"] }
 
 
 [dev-dependencies.enhance-query-server]

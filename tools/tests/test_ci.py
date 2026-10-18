@@ -219,6 +219,32 @@ class BoundaryTests(unittest.TestCase):
         self.assertEqual(boundary.resolved_violations(metadata, workspace_unified=True),
                          ['receiver-pir-server: resolves zakura-orchard'])
 
+    def test_client_fixture_unification_still_rejects_production_crypto_and_nodes(self):
+        def node(name, deps=(), features=()):
+            return {'id': name, 'features': features,
+                    'deps': [{'pkg': dep, 'dep_kinds': [{'kind': None}]} for dep in deps]}
+        metadata = {
+            'packages': [
+                {'id': 'pir', 'name': 'transparent-query-server', 'source': None},
+                {'id': 'client', 'name': 'zakura-pir-client',
+                 'source': 'git+https://github.com/zakura-core/wallet-libraries'},
+                {'id': 'orchard', 'name': 'zakura-orchard', 'source': 'registry'},
+                {'id': 'chain', 'name': 'zakura-chain', 'source': 'registry'},
+            ],
+            'resolve': {'nodes': [node('pir', ['client']),
+                                  node('client', ['orchard'], ['testing']),
+                                  node('orchard'), node('chain')]},
+        }
+        self.assertEqual(boundary.resolved_violations(metadata, workspace_unified=True), [])
+        self.assertEqual(boundary.resolved_violations(metadata),
+                         ['transparent-query-server: resolves zakura-orchard'])
+        metadata['resolve']['nodes'][1] = node('client', ['orchard', 'chain'], ['testing'])
+        self.assertEqual(boundary.resolved_violations(metadata, workspace_unified=True),
+                         ['transparent-query-server: resolves zakura-chain'])
+        metadata['resolve']['nodes'][1] = node('client', ['orchard'])
+        self.assertEqual(boundary.resolved_violations(metadata, workspace_unified=True),
+                         ['transparent-query-server: resolves zakura-orchard'])
+
     def test_default_publisher_refuses_transitive_database_dependencies(self):
         def node(name, dependencies=()):
             return {'id': name, 'deps': [{'pkg': dep, 'dep_kinds': [{'kind': None}]}
