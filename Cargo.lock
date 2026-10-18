@@ -790,23 +790,34 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "48c757948c5ede0e46177b7add2e67155f70e33c07fea8284df6576da70b3719"
 
 [[package]]
-name = "enhance-pir"
+name = "enhance-pir-client"
 version = "0.0.1"
 dependencies = [
- "base64",
  "clap",
+ "enhance-query-server",
  "hex",
- "ipir-sp",
- "rand 0.8.5",
- "rand_chacha 0.3.1",
- "reinspiring",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "enhance-pir-exercise"
+version = "0.0.1"
+dependencies = [
+ "axum",
+ "clap",
+ "enhance-publisher",
+ "enhance-query-server",
+ "hdrhistogram",
+ "hex",
  "reqwest",
  "serde",
  "serde_json",
  "sha2",
- "thiserror 2.0.18",
+ "tempfile",
  "tokio",
- "zakura-pir-native",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -815,7 +826,7 @@ version = "0.0.1"
 dependencies = [
  "anyhow",
  "clap",
- "enhance-pir",
+ "enhance-query-server",
  "hdrhistogram",
  "humantime",
  "rand 0.8.5",
@@ -825,16 +836,17 @@ dependencies = [
 ]
 
 [[package]]
-name = "enhance-pir-server"
+name = "enhance-publisher"
 version = "0.0.1"
 dependencies = [
  "axum",
  "clap",
- "enhance-pir",
- "enhance-serving",
+ "enhance-publisher",
+ "enhance-query-server",
  "hex",
  "inspiring",
  "ipir-sp",
+ "libc",
  "pir-control",
  "pir-pipeline",
  "rayon",
@@ -859,13 +871,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "enhance-serving"
+name = "enhance-query-server"
 version = "0.0.1"
 dependencies = [
  "axum",
  "base64",
  "clap",
- "enhance-pir",
  "hdrhistogram",
  "hex",
  "http-body",
@@ -879,6 +890,7 @@ dependencies = [
  "pir-serving",
  "prometheus",
  "rand 0.8.5",
+ "rand_chacha 0.3.1",
  "reinspiring",
  "reqwest",
  "serde",
@@ -2080,7 +2092,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
- "enhance-pir",
+ "enhance-query-server",
  "hex",
  "pir-apm",
  "reqwest",
@@ -2992,7 +3004,7 @@ version = "0.0.1"
 dependencies = [
  "axum",
  "clap",
- "enhance-serving",
+ "enhance-query-server",
  "hex",
  "ipir-sp",
  "pir-control",
