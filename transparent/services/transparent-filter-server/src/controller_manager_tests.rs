@@ -228,15 +228,50 @@ fn manager(tls: &Tls, root: &Path) -> Manager {
     )
     .unwrap()
 }
-async fn worker(
-    live: transparent_shard_server::live::LiveService,
-) -> (String, tokio::task::JoinHandle<()>) {
+struct Listening {
+    task: tokio::task::JoinHandle<()>,
+    stop: Option<tokio::sync::oneshot::Sender<()>>,
+}
+
+impl Listening {
+    async fn stop(mut self) {
+        self.stop.take().unwrap().send(()).unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(5), &mut self.task)
+            .await
+            .expect("worker HTTP connections did not drain")
+            .unwrap();
+    }
+}
+
+impl Drop for Listening {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+
+async fn serve_worker(app: axum::Router) -> (String, Listening) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let origin = format!("http://{}", listener.local_addr().unwrap());
+    let (stop, stopped) = tokio::sync::oneshot::channel();
     let task = tokio::spawn(async move {
-        axum::serve(listener, live.router()).await.unwrap();
+        axum::serve(listener, app)
+            .with_graceful_shutdown(async {
+                let _ = stopped.await;
+            })
+            .await
+            .unwrap();
     });
-    (origin, task)
+    (
+        origin,
+        Listening {
+            task,
+            stop: Some(stop),
+        },
+    )
+}
+
+async fn worker(live: transparent_shard_server::live::LiveService) -> (String, Listening) {
+    serve_worker(live.router()).await
 }
 async fn get(origin: &str, path: &str) -> reqwest::Response {
     reqwest::Client::new()
@@ -338,12 +373,7 @@ async fn manager_reuses_immutable_transfers_and_serves_through_failed_update() {
     let first = follow.poll_once().await.unwrap();
     assert!(first.downloaded_files > 0);
     let live = follow.live().unwrap();
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let origin = format!("http://{}", listener.local_addr().unwrap());
-    let app = follow.router().unwrap();
-    let task = tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
+    let (origin, task) = serve_worker(follow.router().unwrap()).await;
     let observed: serde_json::Value = get(&origin, "/v1/provider-status")
         .await
         .json()
@@ -394,8 +424,7 @@ async fn manager_reuses_immutable_transfers_and_serves_through_failed_update() {
     }
     // A restart during a failed update recovers the complete predecessor only
     // after live source checks; failure of the new transfer still leaves it up.
-    task.abort();
-    let _ = task.await;
+    task.stop().await;
     drop(live);
     drop(follow);
     std::fs::write(&tls.control, "missing").unwrap();
@@ -463,8 +492,7 @@ async fn manager_reuses_immutable_transfers_and_serves_through_failed_update() {
     std::fs::write(&tls.control, "refused-body").unwrap();
     assert!(follow.poll_once().await.is_err());
     query(&origin, &next_set).await;
-    task.abort();
-    let _ = task.await;
+    task.stop().await;
     drop(live);
     drop(follow);
     std::fs::write(&tls.control, "").unwrap();
@@ -489,8 +517,7 @@ async fn manager_reuses_immutable_transfers_and_serves_through_failed_update() {
     assert_eq!(status["runtimes"]["shipped_fallbacks"], 0);
     let (origin, task) = worker(restarted.live().unwrap()).await;
     query(&origin, &next_set).await;
-    task.abort();
-    let _ = task.await;
+    task.stop().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -526,8 +553,7 @@ async fn manager_persists_invalidation_and_refuses_equal_revision_reenable_after
             .unwrap();
     assert_eq!(intent["revision"], 0);
     std::fs::remove_dir(state.join("revocation-floor.tmp")).unwrap();
-    task.abort();
-    let _ = task.await;
+    task.stop().await;
     drop(live);
     drop(follow);
     owner.0.withdrawn.store(false, Ordering::Release);
@@ -552,8 +578,7 @@ async fn manager_persists_invalidation_and_refuses_equal_revision_reenable_after
     assert!(live.command(Command::Status).await.unwrap()["invalidated"]
         .as_bool()
         .unwrap());
-    task.abort();
-    let _ = task.await;
+    task.stop().await;
 }
 
 async fn entered(tls: &Tls) {
@@ -630,8 +655,7 @@ async fn manager_restarts_interrupted_staging_and_rejects_superseded_activation(
     query(&origin, &set).await;
     work.abort();
     assert!(work.await.unwrap_err().is_cancelled());
-    task.abort();
-    let _ = task.await;
+    task.stop().await;
     drop(live);
     std::fs::write(&tls.control, "").unwrap();
     // Saved staging/candidate state is not authority. Source outage on restart
@@ -645,8 +669,7 @@ async fn manager_restarts_interrupted_staging_and_rejects_superseded_activation(
     assert_eq!(done.downloaded_files, 0);
     let (origin, task) = worker(restarted.live().unwrap()).await;
     query(&origin, &next_set).await;
-    task.abort();
-    let _ = task.await;
+    task.stop().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -690,8 +713,7 @@ async fn manager_checks_inventory_and_required_files_on_unchanged_maps() {
     std::fs::write(&tls.control, "").unwrap();
     let repaired = follow.poll_once().await.unwrap();
     assert_eq!(repaired.downloaded_files, 1);
-    task.abort();
-    let _ = task.await;
+    task.stop().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -730,8 +752,7 @@ async fn manager_refuses_changed_holdings_on_an_unchanged_map() {
         "{failure}"
     );
     query(&origin, &set).await;
-    task.abort();
-    let _ = task.await;
+    task.stop().await;
 }
 
 // A validated withdrawal must reach the owner even when any one control-record
@@ -945,8 +966,7 @@ async fn control_write_failure(pause_at: Option<u32>, failed_record: &str) {
     owner.0.withdrawn.store(false, Ordering::Release);
     owner.0.invalidated_from.store(u64::MAX, Ordering::Release);
     assert!(follow.poll_once().await.is_err(), "same-revision reenable");
-    task.abort();
-    let _ = task.await;
+    task.stop().await;
     drop(live);
     drop(follow);
     let mut restarted = manager(&tls, &state);
@@ -959,8 +979,7 @@ async fn control_write_failure(pause_at: Option<u32>, failed_record: &str) {
     restarted.poll_once().await.unwrap();
     let (origin, task) = worker(restarted.live().unwrap()).await;
     query(&origin, &set).await;
-    task.abort();
-    let _ = task.await;
+    task.stop().await;
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[cfg(feature = "full-tests")]
@@ -1088,8 +1107,7 @@ async fn manager_bounds_memory_while_retaining_admitted_upload() {
             >= 8,
         "memory collection does not delete disk trees"
     );
-    task.abort();
-    let _ = task.await;
+    task.stop().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1150,8 +1168,7 @@ async fn recovery_poll_write_failure(pause_at: u32) {
     restarted.poll_once().await.unwrap();
     let (origin, task) = worker(restarted.live().unwrap()).await;
     query(&origin, &set).await;
-    task.abort();
-    let _ = task.await;
+    task.stop().await;
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[cfg(feature = "full-tests")]
@@ -1205,8 +1222,7 @@ async fn manager_rejects_replayed_different_map_below_durable_revocation_floor()
         get(&origin, "/v2/shards/init").await.status(),
         StatusCode::SERVICE_UNAVAILABLE
     );
-    task.abort();
-    let _ = task.await;
+    task.stop().await;
     drop(follow);
     std::fs::remove_dir(state.join("publisher-high-water.tmp")).unwrap();
     std::fs::remove_dir(state.join("publisher-high-water-fallback.tmp")).unwrap();
@@ -1234,8 +1250,7 @@ async fn manager_rejects_replayed_different_map_below_durable_revocation_floor()
     restarted.poll_once().await.unwrap();
     let (origin, task) = worker(restarted.live().unwrap()).await;
     query(&origin, &next_set).await;
-    task.abort();
-    let _ = task.await;
+    task.stop().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1364,8 +1379,7 @@ async fn manager_double_intent_write_failure_retains_exact_negative_revision() {
     owner.0.distribution_revision.store(101, Ordering::Release);
     follow.poll_once().await.unwrap();
     query(&origin, &set).await;
-    task.abort();
-    let _ = task.await;
+    task.stop().await;
 }
 
 /// Standard controller/followed-journal adoption. Reuse the provider tests'
