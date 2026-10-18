@@ -104,8 +104,7 @@ class MatrixTests(unittest.TestCase):
         package = self.plan[3]['enhance-publisher']
         artifact = dict(package_id=package['id'], target=dict(name='ci_smoke', kind=['test']),
                         executable='/not-executed', features=['qualification-tests'])
-        lifecycle = {'encrypted_http_answers_survive_coordinator_restart',
-                     'encrypted_publication_advances_while_another_commit_is_pending'}
+        lifecycle = {'encrypted_publication_advances_with_a_pending_commit_and_survives_restart'}
         oracles = {'single_unit_hint_matches_independent_generic_67',
                    'single_unit_hint_matches_independent_generic_68',
                    'single_unit_hint_rejects_damage_and_pins_retired_file'}

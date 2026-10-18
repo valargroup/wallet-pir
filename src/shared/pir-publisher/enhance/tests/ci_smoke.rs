@@ -134,7 +134,7 @@ async fn workers(
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn encrypted_publication_advances_while_another_commit_is_pending() {
+async fn encrypted_publication_advances_with_a_pending_commit_and_survives_restart() {
     let phase = std::cell::Cell::new("starting listeners");
     tokio::time::timeout(Duration::from_secs(30), async {
         let root = tempfile::tempdir().unwrap();
@@ -194,6 +194,15 @@ async fn encrypted_publication_advances_while_another_commit_is_pending() {
                 .as_ref(),
             record(67)
         );
+        assert_eq!(
+            current
+                .query_position_with_timing(66)
+                .await
+                .unwrap()
+                .0
+                .as_ref(),
+            record(66)
+        );
         phase.set("retrying the pending commit");
         reject_commit.store(false, Ordering::SeqCst);
         coordinator.reconcile().await.unwrap();
@@ -209,54 +218,7 @@ async fn encrypted_publication_advances_while_another_commit_is_pending() {
             .unwrap();
         assert!(malformed.status().is_client_error());
         let _ = malformed.bytes().await.unwrap();
-    })
-    .await
-    .unwrap_or_else(|_| {
-        panic!(
-            "encrypted HTTP smoke exceeded its deadline while {}",
-            phase.get()
-        )
-    });
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn encrypted_http_answers_survive_coordinator_restart() {
-    let phase = std::cell::Cell::new("publishing the initial block");
-    tokio::time::timeout(Duration::from_secs(30), async {
-        let root = tempfile::tempdir().unwrap();
-        let (_listeners, groups) = workers(root.path(), 2, Arc::new(AtomicBool::new(false))).await;
-        let state_dir = root.path().join("coordinator");
-        let coordinator = Coordinator::open(&state_dir, groups.clone()).unwrap();
-        let mut journal = RecordJournal::open(
-            root.path().join("journal"),
-            DatabaseId::Enhance,
-            ENHANCE_LAYOUT,
-        )
-        .unwrap();
-        journal
-            .append_block(
-                3428143,
-                "01".repeat(32),
-                &(0..67).map(record).collect::<Vec<_>>(),
-            )
-            .unwrap();
-        coordinator
-            .publish(&journal, 3428143, "01".repeat(32))
-            .await
-            .unwrap();
-        let http = serve(coordinator.clone().router()).await;
-        phase.set("querying before restart");
-        let mut client = EnhancePirClient::connect(&http.url).await.unwrap();
-        assert_eq!(
-            client
-                .query_position_with_timing(66)
-                .await
-                .unwrap()
-                .0
-                .as_ref(),
-            record(66)
-        );
-        drop(client);
+        drop(current);
         http.stop().await;
         drop(coordinator);
         // A real process restart waits for every old request-owned view to drop.
@@ -293,11 +255,22 @@ async fn encrypted_http_answers_survive_coordinator_restart() {
                 .as_ref(),
             record(0)
         );
+        assert_eq!(
+            client
+                .query_position_with_timing(67)
+                .await
+                .unwrap()
+                .0
+                .as_ref(),
+            record(67)
+        );
+        drop(client);
+        restored_http.stop().await;
     })
     .await
     .unwrap_or_else(|_| {
         panic!(
-            "encrypted restart exceeded its deadline while {}",
+            "encrypted HTTP smoke exceeded its deadline while {}",
             phase.get()
         )
     });
