@@ -317,7 +317,7 @@ retains; published coverage is that many blocks or fewer. The live controller
 has used 4,096 blocks, about 3.6 days at the measured 75.5-second spacing, since
 the [September 27 change](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/evidence/enhance/status-window-4096-2026-09-27/README.md).
 That value is `MAX_INSPECTION_BLOCKS` in
-`src/status/status-publication/src/source.rs`, a cap from the
+`src/status/status-publisher/src/source.rs`, a cap from the
 read-only inspection source that `RollingWindow` applies to every caller. The
 change raised the window from 64 blocks to the cap without a separate sizing
 analysis, so 4,096 is not a derived retention target. A larger window needs a

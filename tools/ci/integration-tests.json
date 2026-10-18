@@ -52,7 +52,7 @@
       "store"
     ]
   },
-  "status-pir-server": {
+  "status-query-server": {
     "fast": [],
     "full": [
       "status_wallet",

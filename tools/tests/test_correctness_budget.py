@@ -123,7 +123,7 @@ class CorrectnessSelectionTests(unittest.TestCase):
         self.assertFalse(any('--workspace' in command and '--no-run' in command for command in calls))
         self.assertTrue(any('-p' in command and 'enhance-serving' in command and 'ci_smoke' in command
                             for command in calls))
-        self.assertTrue(any('enhance-pir' in command and 'status-serving' in command for command in calls))
+        self.assertTrue(any('enhance-pir' in command and 'status-query-server' in command for command in calls))
         self.assertTrue(any('--doc' in command and '--workspace' in command for command in calls))
         self.assertTrue(any('--manifest-path' in command and
                             'tools/txid/txid-sizing/export/Cargo.toml' in command for command in calls))

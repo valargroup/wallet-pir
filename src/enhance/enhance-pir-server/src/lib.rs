@@ -1,7 +1,7 @@
 //! The Enhance PIR application: chain reading, ingestion, rebuilds and the
 //! `enhance-pir-server` command line. The coordinator can host the Status
-//! publisher from `status-publication`; the `status-pir` command line lives in
-//! `status-pir-server`.
+//! publisher from `status-publisher`; the `status-pir` command line lives in
+//! `status-publisher`.
 //!
 //! Serving lives in `enhance-serving`, which never depends on the chain readers
 //! here. Its modules are re-exported so existing paths under

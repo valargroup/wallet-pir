@@ -477,9 +477,9 @@ jobs:
         run: |
           umask 022
           python3 tools/ci/stage.py compile:native -- cargo build --locked --release \
-            -p enhance-pir-server -p status-pir-server -p enhance-pir -p enhance-pir-load-test \
+            -p enhance-pir-server -p status-publisher -p enhance-pir -p enhance-pir-load-test \
             --bin enhance-pir-server --bin enhance-pir-load-test --bin enhance-pir-cli --bin status-pir \
-            --features enhance-pir/cli,enhance-pir/native-reinspiring,enhance-pir-server/native-reinspiring,status-pir-server/native-reinspiring,enhance-pir-load-test/native-reinspiring
+            --features enhance-pir/cli,enhance-pir/native-reinspiring,enhance-pir-server/native-reinspiring,status-publisher/native-reinspiring,enhance-pir-load-test/native-reinspiring
           python3 tools/ci/qualification.py assemble --family enhance --native --sha "$GITHUB_SHA"
       - name: Report Cargo cache reuse
         if: always() && inputs.family != 'ops'

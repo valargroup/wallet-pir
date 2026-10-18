@@ -67,24 +67,24 @@ PURE = {
     'pir-observability', 'pir-control', 'pir-runtime', 'enhance-pir', 'transparent-blocks',
     'transparent-journal', 'transparent-measure',
     'transparent-shard-server', 'transparent-server-backend',
-    'enhance-serving', 'status-serving', 'status-protocol', 'pir-serving',
+    'enhance-serving', 'status-query-server', 'pir-serving',
 }
 # Serving libraries and the chain reading, ingestion and application packages
 # they must never reach. Each product's applications compose its serving library;
 # the shared raw PIR runtime they call is held to the same rule.
-SERVING = {'enhance-serving', 'status-serving', 'transparent-server-backend', 'pir-runtime',
+SERVING = {'enhance-serving', 'status-query-server', 'transparent-server-backend', 'pir-runtime',
            'pir-serving'}
 INGESTION = {
     'pir-pipeline', 'zakura-server-chain', 'enhance-pir-server', 'receiver-indexer',
     'transparent-filter-server', 'transparent-block-server', 'transparent-measure',
-    'status-publication', 'status-pir-server', 'transparent-ingest',
+    'status-publisher', 'transparent-ingest',
 }
 PRODUCTS = ('src/enhance/', 'src/status/', 'src/transparent/', 'src/receiver/')
 SHARED = 'src/shared/'
 # Application packages: services, operational dashboards and development tools.
 # Serving libraries compose into them, never the reverse.
 APPLICATIONS = {
-    'enhance-pir-server', 'status-pir-server', 'pir-apm', 'enhance-pir-load-test', 'pir-monitor',
+    'enhance-pir-server', 'status-publisher', 'pir-apm', 'enhance-pir-load-test', 'pir-monitor',
     'enhance-noise-analysis', 'transparent-filter-server', 'transparent-block-server',
     'transparent-shard-server', 'transparent-loadtest', 'transparent-regression',
     'transparent-measure', 'receiver-indexer', 'receiver-pir-server',
@@ -123,7 +123,7 @@ CANONICAL = {
     'zakura-pir-native', 'zakura-transparent-native', 'zakura-transparent-events',
     'zakura-transparent-filter', 'zakura-transparent-shard',
     'zakura-transparent-txid-client', 'zakura-receiver-directory', 'zakura-receiver-pir',
-    'zakura-pir-transparent',
+    'zakura-pir-transparent', 'zakura-pir-status',
 }
 # Retained evidence outside the active product. It is still checked for direct
 # Common and node edges; only the pure-package rules skip it.

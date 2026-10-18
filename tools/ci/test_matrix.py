@@ -21,10 +21,10 @@ from stage import ROOT, run, install_cancellation, inherited_fds
 REGISTRY = ROOT / 'tools/ci/test-matrix.json'
 EXPORT = 'tools/txid/txid-sizing/export/Cargo.toml'
 NATIVE = ['enhance-pir/cli', 'enhance-pir/native-reinspiring',
-          'enhance-serving/native-reinspiring', 'status-serving/native-reinspiring',
-          'enhance-pir-server/native-reinspiring', 'status-pir-server/native-reinspiring',
+          'enhance-serving/native-reinspiring', 'status-query-server/native-reinspiring',
+          'enhance-pir-server/native-reinspiring', 'status-publisher/native-reinspiring',
           'enhance-pir-load-test/native-reinspiring']
-CUDA = ['enhance-serving/cuda', 'status-serving/cuda', 'enhance-pir-server/cuda', 'status-pir-server/cuda',
+CUDA = ['enhance-serving/cuda', 'status-query-server/cuda', 'enhance-pir-server/cuda', 'status-publisher/cuda',
         'enhance-pir-server/native-reinspiring', 'enhance-pir-load-test/native-reinspiring']
 
 
@@ -33,9 +33,9 @@ def variants(groups):
         'transparent': dict(family='transparent', packages=groups['transparent'], features=['transparent-filter-server/rocksdb-reader'] + qualification_features(groups['transparent'])),
         'export': dict(family='transparent', packages=['txid-sizing-export'], features=[], manifest=EXPORT),
         'native': dict(family='enhance', packages=groups['enhance'], features=NATIVE + qualification_features(groups['enhance'])),
-        'reference': dict(family='enhance', packages=['enhance-serving', 'enhance-pir', 'status-serving'], features=[]),
-        'cuda': dict(family='enhance', packages=['enhance-serving', 'status-serving', 'enhance-pir-server',
-                                             'status-pir-server', 'enhance-pir-load-test'], features=CUDA),
+        'reference': dict(family='enhance', packages=['enhance-serving', 'enhance-pir', 'status-query-server'], features=[]),
+        'cuda': dict(family='enhance', packages=['enhance-serving', 'status-query-server', 'enhance-pir-server',
+                                             'status-publisher', 'enhance-pir-load-test'], features=CUDA),
         'receiver': dict(family='receiver', packages=groups['receiver'], features=[]),
     }
 
@@ -312,7 +312,7 @@ def baseline_commands(family):
         result += [
             ('reference', [*options, '-p', 'enhance-serving', '--lib', 'ipir::tests']),
             ('reference', [*options, '-p', 'enhance-serving', '--test', 'ci_smoke']),
-            ('reference', [*options, '-p', 'enhance-pir', '-p', 'status-serving', '--lib', '--tests']),
+            ('reference', [*options, '-p', 'enhance-pir', '-p', 'status-query-server', '--lib', '--tests']),
             ('cuda', [*options, '-p', 'enhance-pir-server', '--features', 'native-reinspiring,cuda', '--test', 'matvec_config']),
             ('cuda', [*options, '-p', 'enhance-serving', '--features', 'native-reinspiring,cuda', '--lib',
                       'backend_load_failure_does_not_rebuild_or_replace_published_units']),
@@ -327,7 +327,7 @@ def run_baseline(family, plan, output):
     env = {key: value for key, value in os.environ.items() if not key.startswith('QUALIFY_')}
     env['RUST_TEST_THREADS'] = '2' if family == 'transparent' else '1'
     if family == 'enhance':
-        run(['cargo', 'check', '--locked', '-p', 'enhance-serving', '-p', 'status-serving',
+        run(['cargo', 'check', '--locked', '-p', 'enhance-serving', '-p', 'status-query-server',
              '-p', 'enhance-pir-server', '-p', 'enhance-pir-load-test', '--all-targets',
              '--features', ','.join(CUDA)], env=env, stage='compile:baseline-cuda')
     for variant, options in baseline_commands(family):

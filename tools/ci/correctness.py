@@ -27,8 +27,8 @@ from fast import HELPERS, local_target
 
 FEATURES = ','.join([
     'enhance-pir/cli', 'enhance-pir/native-reinspiring',
-    'enhance-serving/native-reinspiring', 'status-serving/native-reinspiring',
-    'enhance-pir-server/native-reinspiring', 'status-pir-server/native-reinspiring',
+    'enhance-serving/native-reinspiring', 'status-query-server/native-reinspiring',
+    'enhance-pir-server/native-reinspiring', 'status-publisher/native-reinspiring',
           'enhance-pir-load-test/native-reinspiring',
     'pir-control/admission', 'transparent-filter-server/rocksdb-reader',
 ])
@@ -90,7 +90,7 @@ def rust_checks(env, temporary, offline):
     # together. The full native workspace graph is never rebuilt without native.
     reference = run(['cargo', 'test', '--no-run', *options, '-p', 'enhance-serving', '--lib', '--test', 'ci_smoke'],
                     env=env, stage='compile:reference', collect_tests=True, test_details=True)
-    reference += run(['cargo', 'test', '--no-run', *options, '-p', 'enhance-pir', '-p', 'status-serving', '--lib', '--tests'],
+    reference += run(['cargo', 'test', '--no-run', *options, '-p', 'enhance-pir', '-p', 'status-query-server', '--lib', '--tests'],
                      env=env, stage='compile:reference', collect_tests=True, test_details=True)
     reference_plan = programs(reference, metadata)
     for program in reference_plan:
