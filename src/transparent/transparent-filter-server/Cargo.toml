@@ -17,6 +17,7 @@ path = "src/bin/shard-census.rs"
 
 [[bin]]
 name = "transparent-event-ingest"
+required-features = ["rocksdb-reader"]
 path = "src/bin/event-ingest.rs"
 
 [[bin]]
@@ -33,10 +34,12 @@ path = "src/bin/sample-redigest.rs"
 
 [[bin]]
 name = "shard-cutoff"
+required-features = ["rocksdb-reader"]
 path = "src/bin/shard-cutoff.rs"
 
 [[bin]]
 name = "journal-inventory"
+required-features = ["rocksdb-reader"]
 path = "src/bin/journal-inventory.rs"
 
 [[bin]]
@@ -59,7 +62,15 @@ path = "src/bin/filter-sweep.rs"
 name = "txid-display-controller"
 path = "src/bin/txid-display-controller.rs"
 
+[[bin]]
+name = "compact-export"
+path = "src/bin/compact-export.rs"
+required-features = ["rocksdb-reader"]
+
 [features]
+default = []
+# Direct node database access is needed only by the offline reader tools.
+rocksdb-reader = ["zakura-server-chain/rocksdb"]
 # Keep large test campaigns explicit; production behavior is unchanged.
 qualification-tests = []
 
@@ -82,7 +93,6 @@ sha2 = "0.10"
 thiserror = "2"
 tokio = { version = "1", features = ["full"] }
 tokio-util = { version = "0.7", features = ["io"] }
-tower-http = { version = "0.5", features = ["limit", "trace"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 transparent-events = { package = "zakura-transparent-events", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "886db40137caef486d32d5bc594b2c20b1dde75e" }
@@ -95,7 +105,7 @@ transparent-server-backend = { path = "../transparent-server-backend" }
 # reader, pinned to an exact wallet-libraries revision. The reader opens the
 # node's RocksDB directly: before deploying it, verify that the zakura-state
 # revision wallet-libraries pins matches the running node's database format.
-zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "886db40137caef486d32d5bc594b2c20b1dde75e", features = ["rocksdb"] }
+zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "886db40137caef486d32d5bc594b2c20b1dde75e" }
 
 [dev-dependencies]
 transparent-shard-server = { path = "../transparent-shard-server" }
@@ -106,4 +116,4 @@ reqwest = { version = "0.12", default-features = false, features = ["blocking", 
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
 # Raw synthetic blocks for the extraction tests.
-zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "886db40137caef486d32d5bc594b2c20b1dde75e", features = ["rocksdb", "testing"] }
+zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "886db40137caef486d32d5bc594b2c20b1dde75e", features = ["testing"] }

@@ -18,6 +18,7 @@ members = [
     "src/transparent/transparent-blocks",
     "src/transparent/transparent-server-backend",
     "src/transparent/transparent-ingest",
+    "src/transparent/transparent-journal",
     # Services and operational dashboard.
     "src/enhance/enhance-pir-server",
     "src/status/status-pir-server",
@@ -32,6 +33,13 @@ members = [
     "src/transparent/transparent-regression",
     "src/transparent/transparent-measure",
 ]
+
+# Consume the library-only dependency cleanup at one exact upstream revision.
+[patch.crates-io]
+ipir-sp = { git = "https://github.com/valargroup/ipir-sp.git", rev = "1d637dba8a9e6dcf749a2054e33ea8ff03fac8c9" }
+inspiring = { git = "https://github.com/valargroup/ipir-sp.git", rev = "1d637dba8a9e6dcf749a2054e33ea8ff03fac8c9" }
+reinspiring = { git = "https://github.com/valargroup/ipir-sp.git", rev = "1d637dba8a9e6dcf749a2054e33ea8ff03fac8c9" }
+simplepir-kernel = { git = "https://github.com/valargroup/ipir-sp.git", rev = "1d637dba8a9e6dcf749a2054e33ea8ff03fac8c9" }
 
 # spiral-rs's Barrett reduction is intentionally wrapping: `barrett_raw_u128`
 # computes `zy * cr1 + tmp3 + carry` and relies on it wrapping modulo 2^64. That

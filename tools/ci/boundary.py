@@ -65,6 +65,7 @@ WALLET_LIBRARIES = 'github.com/zakura-core/wallet-libraries'
 PURE = {
     'receiver-pir-server',
     'pir-observability', 'pir-control', 'pir-runtime', 'enhance-pir', 'transparent-blocks',
+    'transparent-journal', 'transparent-measure',
     'transparent-shard-server', 'transparent-server-backend',
     'enhance-serving', 'status-serving', 'status-protocol', 'pir-serving',
 }
@@ -335,12 +336,35 @@ def serving_resolved_violations(root_id, packages, nodes):
     return problems
 
 
+def database_reader_violations(metadata):
+    """The default publisher may read node RPCs, but must not build a database reader."""
+    packages = {p['id']: p for p in metadata['packages']}
+    nodes = {n['id']: n for n in metadata['resolve']['nodes']}
+    problems = set()
+    for root in metadata['packages']:
+        if root['name'] != 'transparent-filter-server' or root['source'] is not None:
+            continue
+        seen, pending = set(), [root['id']]
+        while pending:
+            current = pending.pop()
+            if current in seen:
+                continue
+            seen.add(current)
+            name = packages[current]['name']
+            if name in {'zakura-state', 'rocksdb', 'librocksdb-sys'}:
+                problems.add(f"transparent-filter-server: default build resolves {name}")
+            pending.extend(dep['pkg'] for dep in nodes[current]['deps']
+                           if any(k['kind'] in (None, 'build') for k in dep['dep_kinds']))
+    return sorted(problems)
+
+
 def standalone_metadata(names):
     """Resolve a fresh consumer of the named repository packages alone, without
     features other workspace members unify into them (such as the indexer's
     receiver crypto).
 
-    Seed from the committed lockfile so compatible versions stay pinned. The
+    Seed from the committed lockfile and source overrides so dependencies retain
+    the workspace's pinned identities. The
     temporary consumer adds only its own root; it cannot modify repository files.
     Dependencies have already been fetched by the locked workspace metadata check.
     """
@@ -352,6 +376,20 @@ def standalone_metadata(names):
                  'version = "0.0.0"', 'edition = "2021"', '[workspace]', '[dependencies]']
         for name in sorted(names):
             lines.append(f'{name} = {{ path = {json.dumps(str(ROOT / folders[name]))} }}')
+        patches = tomllib.loads((ROOT / 'Cargo.toml').read_text()).get('patch', {})
+        for source, dependencies in patches.items():
+            lines.append(f'[patch.{json.dumps(source)}]')
+            for name, specification in dependencies.items():
+                if isinstance(specification, dict):
+                    specification = dict(specification)
+                    if 'path' in specification:
+                        specification['path'] = str((ROOT / specification['path']).resolve())
+                    value = '{ ' + ', '.join(
+                        f'{json.dumps(key)} = {json.dumps(value)}'
+                        for key, value in specification.items()) + ' }'
+                else:
+                    value = json.dumps(specification)
+                lines.append(f'{json.dumps(name)} = {value}')
         (root / 'Cargo.toml').write_text('\n'.join(lines) + '\n')
         (root / 'src').mkdir()
         (root / 'src/lib.rs').write_text('')
@@ -375,6 +413,7 @@ def main(argv=None):
              *(['--offline'] if args.offline else [])], cwd=ROOT))
         problems += resolved_violations(metadata, workspace_unified=True)
         problems += resolved_violations(standalone_metadata(RECEIVER))
+        problems += database_reader_violations(standalone_metadata({'transparent-filter-server'}))
         for name in sorted(SERVING | PIPELINE_FOUNDATIONS | {PIPELINE}):
             problems += resolved_violations(standalone_metadata({name}))
     for problem in problems:

@@ -2,7 +2,7 @@
 //! service/RocksDB stack. No fee implementation is copied into this tool.
 // The service re-exports adapter items this tool does not use.
 #[allow(dead_code, unused_imports)]
-#[path = "../../../../../src/transparent/transparent-ingest/src/extract.rs"]
+#[path = "../../../../../src/transparent/transparent-journal/src/extract.rs"]
 mod extract;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -28,10 +28,10 @@ fn read_block(raw: &[u8]) -> Result<FetchedBlock, AnyError> {
 }
 mod census;
 #[allow(dead_code)]
-#[path = "../../../../../src/transparent/transparent-ingest/src/display_journal.rs"]
+#[path = "../../../../../src/transparent/transparent-journal/src/display_journal.rs"]
 mod display_journal;
 #[allow(dead_code)]
-#[path = "../../../../../src/transparent/transparent-ingest/src/events.rs"]
+#[path = "../../../../../src/transparent/transparent-journal/src/events.rs"]
 mod events;
 #[allow(dead_code)]
 mod historical_v1;

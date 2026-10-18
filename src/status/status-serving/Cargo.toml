@@ -23,7 +23,6 @@ axum = "0.7"
 clap = { version = "4", features = ["derive", "env"] }
 hex = "0.4"
 libc = "0.2"
-inspiring = "=0.1.0-rc.3"
 ipir-sp = "=0.1.0-rc.7"
 prometheus = { version = "0.13", default-features = false, features = ["process"] }
 rand = "0.8"

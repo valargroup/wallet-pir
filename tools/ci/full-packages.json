@@ -25,6 +25,7 @@
   ],
   "transparent": [
     "transparent-blocks",
+    "transparent-journal",
     "transparent-block-server",
     "transparent-filter-server",
     "transparent-server-backend",

@@ -10,6 +10,7 @@ publish = false
 qualification-tests = []
 
 [dependencies]
+transparent-journal = { path = "../transparent-journal" }
 chrono = { version = "0.4", default-features = false, features = ["std", "serde"] }
 clap = { version = "4", features = ["derive"] }
 hex = "0.4"
