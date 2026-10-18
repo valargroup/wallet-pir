@@ -104,8 +104,10 @@ targets are excluded from that build. Local and CI checks then execute at most
 three Cargo-reported test programs concurrently. The publisher library builds
 full archive runtimes on every core of a 4-core hosted runner, so it runs alone
 there before the pool; beside it, the encrypted HTTP smokes miss the 30-second
-case deadline. The 8-core fast runner keeps it in the pool, where four build
-threads leave cores for those smokes. HTTP integration programs use the pool
+case deadline. The 8-core fast runner keeps that library in the pool with four
+build threads. The Enhance encrypted HTTP executable runs alone before the
+pool on every runner: concurrent runtime preparation exceeded its per-case
+deadline even on eight cores. Other HTTP integration programs use the pool
 ahead of ordinary units. Within each group, binaries with more discovered cases start first,
 independently of Cargo's artifact order. Large unit executables are divided into
 at most three disjoint groups of exact discovered case names, within that same
