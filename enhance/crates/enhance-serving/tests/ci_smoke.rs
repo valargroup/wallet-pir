@@ -75,11 +75,13 @@ async fn workers(
     let mut listeners = Vec::new();
     let mut replicas = Vec::new();
     for index in 0..count {
-        let worker = Worker::open(&root.join(format!("worker-{index}"))).unwrap();
+        let worker_root = root.join(format!("worker-{index}"));
+        let worker = Worker::open(&worker_root).unwrap();
         let rejected = reject_commit.clone();
         let router = worker.router().layer(axum::middleware::from_fn(
             move |request: axum::extract::Request, next: axum::middleware::Next| {
                 let rejected = rejected.clone();
+                let worker_root = worker_root.clone();
                 async move {
                     use axum::response::IntoResponse;
                     if index == 0
@@ -87,6 +89,24 @@ async fn workers(
                         && rejected.load(Ordering::SeqCst)
                     {
                         axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response()
+                    } else if request.uri().path() == "/internal/prepare" {
+                        let (parts, body) = request.into_parts();
+                        let bytes = axum::body::to_bytes(body, 1 << 20).await.unwrap();
+                        let candidate: enhance_serving::worker::Candidate =
+                            serde_json::from_slice(&bytes).unwrap();
+                        for plan in candidate.plans {
+                            let root = worker_root.clone();
+                            tokio::task::spawn_blocking(move || {
+                                seed_hint_fixture(&root, plan.shard.records, &plan);
+                            })
+                            .await
+                            .unwrap();
+                        }
+                        next.run(axum::extract::Request::from_parts(
+                            parts,
+                            axum::body::Body::from(bytes),
+                        ))
+                        .await
                     } else {
                         next.run(request).await
                     }
@@ -283,7 +303,11 @@ fn copy_hint_fixture(source: &std::path::Path, target: &std::path::Path) {
             copy_hint_fixture(&entry.path(), &destination);
         } else {
             assert!(kind.is_file(), "hint fixtures contain only regular files");
-            std::fs::copy(entry.path(), destination).unwrap();
+            // Never replace a file a live runtime may have mapped, or repair a
+            // deliberately damaged file before the production loader sees it.
+            if !destination.exists() {
+                std::fs::copy(entry.path(), destination).unwrap();
+            }
         }
     }
 }
@@ -318,7 +342,7 @@ fn seed_hint_fixture(
     // verifies its own private copy, and the generic oracle cold-builds separately.
     copy_hint_fixture(
         &source.path().join("artifacts-9"),
-        &root.join("worker-0/artifacts-9"),
+        &root.join("artifacts-9"),
     );
 }
 
@@ -365,7 +389,6 @@ async fn prepare_hint_fixture(
         .error_for_status()
         .unwrap();
     }
-    seed_hint_fixture(root, count, &plan);
     hint_command(&http, &listening.url, "prepare", &candidate).await;
     (listening, candidate)
 }

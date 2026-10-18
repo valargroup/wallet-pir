@@ -189,8 +189,11 @@ class MatrixTests(unittest.TestCase):
                                     if (t := targets[key])['package'] == package and t['kind'] in ('lib', 'bin', 'test')]
                         if 'tools/ci/unit_tests.py' in command:
                             subprocess.run(command, cwd=ROOT, env=options['env'], check=True,
-                                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                    with patch.dict(os.environ, MATRIX_FIXTURE_LOG=str(observed), MATRIX_FIXTURE_FAILURE='1' if failed else '0'), \
+                                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                           **matrix.inherited_fds(options['env']))
+                    with tempfile.TemporaryFile() as lease, \
+                            patch.dict(os.environ, MATRIX_FIXTURE_LOG=str(observed), MATRIX_FIXTURE_FAILURE='1' if failed else '0',
+                                       WALLET_PIR_DEV_LEASE_FD=str(lease.fileno())), \
                             patch.object(matrix, 'source_identity', return_value='a' * 40), \
                             patch.object(matrix, 'run', side_effect=command):
                         output = root / 'receipt.json'

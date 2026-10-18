@@ -122,7 +122,7 @@ missing classified case in a full library binary. The two upstream-only exclusio
 still use execution filters because this repository does not own their source.
 Use `--features full-tests` for a focused local campaign check.
 
-Enhance hint cases reuse immutable prepared input bytes for the same record count,
+Enhance smoke cases reuse immutable prepared input bytes for the same record count,
 then copy them into separate writable worker directories. Workers still verify
 their copies and both 67/68-record generic oracles build independently. The encrypted
 restart and pending-commit publication checks retain the required two-worker quorum.
