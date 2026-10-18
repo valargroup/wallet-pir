@@ -6,7 +6,7 @@ import pathlib
 import struct
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
-fixture = json.loads((ROOT / 'src/enhance/enhance-pir/tests/fixtures/v7-session.json').read_text())
+fixture = json.loads((ROOT / 'src/enhance/enhance-query-server/tests/fixtures/v7-session.json').read_text())
 m = fixture['manifest']
 s = m['coverage']['shards'][0]
 r = m['sessions'][0]

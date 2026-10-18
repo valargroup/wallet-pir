@@ -74,11 +74,7 @@ def target_features(package, names):
 
 def execute(packages, tier, *, offline=False, compile_only=False, smoke_only=False, repeat=1):
     registry = inventory()
-    # The application's HTTP serving implementation lives in enhance-serving.
-    # Keep its encrypted smoke in application-only feedback and stress runs too.
     packages = set(packages)
-    if 'enhance-pir-server' in packages:
-        packages.add('enhance-serving')
     env = {k: v for k, v in dict(os.environ, RUST_TEST_THREADS='1').items() if not k.startswith('QUALIFY_')}
     prepared = []
     for package in sorted(packages):

@@ -12,8 +12,9 @@ deployed source `ac7cf9d` in `/opt/enhance-pir-v7/releases/ac7cf9d` on the same
 three hosts. Its focused workload was stopped early at the operator's request;
 the memory observation is promising but not a completed qualification.
 
-The binaries are `enhance-pir-server`, `enhance-pir-cli` and
-`enhance-pir-load-test`. Server subcommands are `coordinator`, `worker`, `exercise`,
+The binaries are `enhance-pir-server` (package `enhance-publisher`),
+`enhance-pir-cli` (`enhance-pir-client`), `enhance-pir-load-test` and the local
+`enhance-pir-exercise`. Server subcommands are `coordinator`, `worker`,
 `repair-rows` and `rebuild-journal`. Protocol v7 retains schema-11 records and q48, but changes
 routing, session identity and framing. v6 clients and serving state are incompatible.
 Use fresh controller, worker, hint and cache directories. A schema-11 canonical
@@ -36,7 +37,7 @@ and artifact receipt.
 ## Build and local validation
 
 ```sh
-cargo build --locked --release -p enhance-pir-server -p enhance-pir -p enhance-pir-load-test --bins --features enhance-pir/cli
+cargo build --locked --release -p enhance-publisher -p enhance-pir-client -p enhance-pir-load-test --bins
 python3 tools/enhance/scripts/test-local.py --help
 python3 tools/enhance/schema11-interop/run.py /absolute/path/to/pinned/wallet-libraries
 ```
@@ -66,7 +67,7 @@ shared bearer token on the private APIs. Worker routes, packing-router control
 routes and query-ingress control routes (all `/internal/*` paths except the
 ingress `/internal/metrics` scrape) then reject requests without
 `Authorization: Bearer <token>` with HTTP 401. The coordinator, packing router
-and `exercise` clients read the same variable and attach the header. Set it on
+and `enhance-pir-exercise` clients read the same variable and attach the header. Set it on
 all roles together, or on none: a worker with the token and a coordinator
 without it stops publication. Unset keeps the previous behaviour. Provide the
 value through the unit's environment file, never on the command line.
@@ -223,7 +224,7 @@ then adopted by the coordinator at startup. Neither step touches `control/`,
 workers, routers or ingress.
 
 1. Build the server with its source revision recorded in the receipt:
-   `WALLET_PIR_SOURCE_REVISION=$(git rev-parse HEAD) cargo build --locked --release -p enhance-pir-server`.
+   `WALLET_PIR_SOURCE_REVISION=$(git rev-parse HEAD) cargo build --locked --release -p enhance-publisher --bin enhance-pir-server`.
 2. While the coordinator keeps serving, rebuild into the staged directory of its
    data directory:
 

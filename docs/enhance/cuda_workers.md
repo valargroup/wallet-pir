@@ -4,7 +4,7 @@ CUDA is an opt-in build and a per-worker runtime choice. The default build and
 normal release bundles remain CPU-only. Build a CUDA-capable worker with:
 
 ```sh
-cargo build --locked --release -p enhance-pir-server --features cuda
+cargo build --locked --release -p enhance-publisher --bin enhance-pir-server --features cuda
 ./target/release/enhance-pir-server worker \
   --data-dir /srv/enhance-pir/worker --listen 127.0.0.1:8091 \
   --matvec-backend cuda --cuda-device 0
@@ -90,9 +90,9 @@ in-flight evaluation is never replayed. CPU replicas remain eligible throughout.
 Ordinary correctness and configuration tests run without a GPU:
 
 ```sh
-cargo test --locked -p enhance-pir-server --test matvec_config
-cargo test --locked -p enhance-pir-server --features cuda --test matvec_config
-cargo test --locked -p enhance-pir-server --features cuda --lib \
+cargo test --locked -p enhance-publisher --test matvec_config
+cargo test --locked -p enhance-publisher --features cuda --test matvec_config
+cargo test --locked -p enhance-query-server --features cuda --lib \
   backend_load_failure_does_not_rebuild_or_replace_published_units
 ```
 
@@ -100,15 +100,15 @@ On an isolated NVIDIA host, explicitly invoke hardware tests (absence of CUDA is
 an error, not a skipped success):
 
 ```sh
-cargo test --locked --profile release-fast -p enhance-pir-server --features cuda \
+cargo test --locked --profile release-fast -p enhance-query-server --features cuda \
   --lib cuda_encrypted_bootstrap_round_trip_and_cached_restart -- --ignored
-cargo test --locked --profile release-fast -p enhance-pir-server --features cuda \
+cargo test --locked --profile release-fast -p enhance-publisher --features cuda \
   --test http cuda_distributed_round_trip_retention_failover_and_restart -- --ignored
-cargo test --locked --profile release-fast -p enhance-pir-server --features cuda \
+cargo test --locked --profile release-fast -p enhance-query-server --features cuda \
   --lib cuda_partial_preparation_failure_preserves_published_and_retries -- --ignored
-cargo test --locked --profile release-fast -p enhance-pir-server --features cuda \
+cargo test --locked --profile release-fast -p enhance-query-server --features cuda \
   --lib cuda_backend_evaluation_failure_over_http_releases_permit_and_recovers -- --ignored
-cargo run --locked --release -p enhance-pir-server --features cuda --example cuda_domain
+cargo run --locked --release -p enhance-publisher --features cuda --example cuda_domain
 ```
 
 The HTTP test covers encrypted requests through real coordinator/worker listeners,

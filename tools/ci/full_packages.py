@@ -25,8 +25,8 @@ def inventory(packages=None, groups=None):
     expected = {p['name'] for p in packages}
     if expected != set(names):
         raise ValueError(f'full coverage mismatch: unclassified={sorted(expected-set(names))}, stale={sorted(set(names)-expected)}')
-    if 'enhance-pir-server' not in groups['enhance']:
-        raise ValueError('Enhance server must retain classified integration coverage')
+    if 'enhance-publisher' not in groups['enhance']:
+        raise ValueError('Enhance publisher must retain classified integration coverage')
     return groups
 
 
@@ -46,10 +46,9 @@ def commands(group, groups, lint=False, compile_only=False):
                  *[arg for name in names for arg in ('-p', name)], '--', '-D', 'warnings']]
     runner = ['cargo', 'test', '--no-run'] if compile_only else ['bash', 'tools/ci/full-test.sh']
     features = {
-        'enhance': ['enhance-pir/cli', 'enhance-pir/native-reinspiring',
-                    'enhance-serving/native-reinspiring', 'status-query-server/native-reinspiring',
-                    'enhance-pir-server/native-reinspiring', 'status-publisher/native-reinspiring',
-          'enhance-pir-load-test/native-reinspiring'],
+        'enhance': ['enhance-query-server/native-reinspiring', 'status-query-server/native-reinspiring',
+                    'enhance-publisher/native-reinspiring', 'status-publisher/native-reinspiring',
+                    'enhance-pir-client/native-reinspiring', 'enhance-pir-load-test/native-reinspiring'],
         'shared': ['pir-control/admission'],
         'transparent': ['transparent-filter-server/rocksdb-reader'],
     }.get(group, []) + qualification_features(names)

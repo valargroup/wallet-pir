@@ -23,13 +23,13 @@ Preserve existing Cargo package and binary names.
 - Fetch pinned dependencies and install the local push guard with
   `make prepare-dev`; verify prerequisites with `make doctor`.
 - Compile all CPU workspace binaries, including the Enhance CLI, for local use:
-  `cargo build --locked --workspace --bins --profile release-fast --features enhance-pir/cli,transparent-filter-server/rocksdb-reader`.
+  `cargo build --locked --workspace --bins --profile release-fast --features transparent-filter-server/rocksdb-reader`.
   Use `make build` for deploy-profile binaries (fat-LTO `release`, slower
   and more memory-intensive). Do not enable CUDA on a CPU-only devbox.
 - Inspect entrypoints without starting a fleet:
-  `cargo run --locked --profile release-fast -p enhance-pir-server --bin enhance-pir-server -- --help`
+  `cargo run --locked --profile release-fast -p enhance-publisher --bin enhance-pir-server -- --help`
   and
-  `cargo run --locked --profile release-fast -p enhance-pir --features cli --bin enhance-pir-cli -- --help`.
+  `cargo run --locked --profile release-fast -p enhance-pir-client --bin enhance-pir-cli -- --help`.
   `make run-server` and `make run-worker` also show help, using `release`.
 - To start an isolated local worker after building:
   `target/release-fast/enhance-pir-server worker --listen 127.0.0.1:8091 --data-dir .local-pir/worker`.

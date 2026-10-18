@@ -18,7 +18,7 @@ therefore also resolves a fresh standalone receiver consumer with crypto disable
 Serving libraries (`SERVING`) serve prepared publications. No dependency of any
 kind, including target-specific ones, may reach a chain reader, an ingestion or
 application package (`INGESTION` or `APPLICATIONS`), or another product's
-package. Packages live under `src/<product>/` or `src/shared/`. Their workspace graphs (including
+package, or a tool under `tools/`. Packages live under `src/<product>/` or `src/shared/`. Their workspace graphs (including
 their own dev-dependencies) and standalone graphs are resolved and checked too.
 
 Common and node packages are named exactly: wallet-libraries adapters are
@@ -65,28 +65,30 @@ WALLET_LIBRARIES = 'github.com/zakura-core/wallet-libraries'
 # Protocol framing packages that must not acquire chain or wallet behaviour.
 PURE = {
     'receiver-pir-server',
-    'pir-observability', 'pir-control', 'pir-runtime', 'enhance-pir', 'transparent-blocks',
+    'pir-observability', 'pir-control', 'pir-runtime', 'transparent-blocks',
     'transparent-journal', 'transparent-measure',
     'transparent-shard-server', 'transparent-server-backend',
-    'enhance-serving', 'status-query-server', 'pir-serving',
+    'enhance-query-server', 'status-query-server', 'pir-serving',
 }
 # Serving libraries and the chain reading, ingestion and application packages
 # they must never reach. Each product's applications compose its serving library;
 # the shared raw PIR runtime they call is held to the same rule.
-SERVING = {'enhance-serving', 'status-query-server', 'transparent-server-backend', 'pir-runtime',
+SERVING = {'enhance-query-server', 'status-query-server', 'transparent-server-backend', 'pir-runtime',
            'pir-serving'}
 INGESTION = {
-    'pir-pipeline', 'zakura-server-chain', 'enhance-pir-server', 'receiver-indexer',
+    'pir-pipeline', 'zakura-server-chain', 'enhance-publisher', 'receiver-indexer',
     'transparent-filter-server', 'transparent-block-server', 'transparent-measure',
     'status-publisher', 'transparent-ingest',
 }
 PRODUCTS = ('src/enhance/', 'src/status/', 'src/transparent/', 'src/receiver/')
 SHARED = 'src/shared/'
+# Development and operations tools consume product libraries, never the reverse.
+TOOLS = 'tools/'
 # Application packages: services, operational dashboards and development tools.
 # Serving libraries compose into them, never the reverse.
 APPLICATIONS = {
-    'enhance-pir-server', 'status-publisher', 'pir-apm', 'enhance-pir-load-test', 'pir-monitor',
-    'enhance-noise-analysis', 'transparent-filter-server', 'transparent-block-server',
+    'enhance-publisher', 'status-publisher', 'pir-apm', 'enhance-pir-load-test', 'pir-monitor',
+    'enhance-pir-client', 'enhance-pir-exercise', 'enhance-noise-analysis', 'transparent-filter-server', 'transparent-block-server',
     'transparent-shard-server', 'transparent-loadtest', 'transparent-regression',
     'transparent-measure', 'receiver-indexer', 'receiver-pir-server',
 }
@@ -139,6 +141,8 @@ def serving_target_problem(owner, target, name=None):
     product = next((p for p in PRODUCTS if owner.startswith(p)), None)
     if name in APPLICATIONS:
         return 'application package'
+    if target.startswith(TOOLS):
+        return 'tool package'
     if not target.startswith(SHARED) and (product is None or not target.startswith(product)):
         return "another product's package"
     scope = next((s for folder, s in SHARED_SCOPES.items() if target.startswith(folder)), None)

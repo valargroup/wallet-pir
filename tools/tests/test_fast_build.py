@@ -169,10 +169,10 @@ class FastBuildTests(unittest.TestCase):
         self.assertEqual(self.plans[0][0]['executable'], '/fixture/a-a')
 
     def test_enhance_http_smokes_are_isolated_even_on_eight_cores(self):
-        self.packages[0]['name'] = 'enhance-serving'
-        self.registry['enhance-serving'] = dict(fast=['ci_smoke'], full=['campaign'])
+        self.packages[0]['name'] = 'enhance-publisher'
+        self.registry['enhance-publisher'] = dict(fast=['ci_smoke'], full=['campaign'])
         self.registry.pop('a')
-        self.slow['enhance-serving'] = self.slow.pop('a')
+        self.slow['enhance-publisher'] = self.slow.pop('a')
         for target in self.packages[0]['targets']:
             if target['name'] == 'smoke':
                 target['name'] = 'ci_smoke'
@@ -182,7 +182,7 @@ class FastBuildTests(unittest.TestCase):
         self.execute(cpus=8)
         isolated = [program for program in self.plans[0] if program['exclusive']]
         self.assertEqual(len(isolated), 1)
-        self.assertEqual(isolated[0]['package'], 'enhance-serving')
+        self.assertEqual(isolated[0]['package'], 'enhance-publisher')
         self.assertTrue(isolated[0]['integration'])
         self.assertEqual(isolated[0]['args'], [])
         self.assertEqual(len(self.plans[0]), len(self.artifacts))

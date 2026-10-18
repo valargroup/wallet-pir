@@ -4,7 +4,6 @@
 //! Prepared datasets are served by `status-query-server`; Enhance can embed
 //! this publisher without depending on the standalone command-line executable.
 
-use enhance_serving::{control, coordinator};
 use pir_control::admission;
 use status_query_server as status;
 use status_query_server::*;

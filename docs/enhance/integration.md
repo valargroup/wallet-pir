@@ -5,8 +5,8 @@ Use the `enhance-v7` implementation of `zakura/pir-enhance` in
 publishes schema 11 with 653-byte records and 33 records per row. Its protocol
 revision is fixed at build time: `ironwood-enhance-pir-v7` by default, or
 `ironwood-enhance-pir-v9-native-two-mask-m29` when the server is built with the
-`native-reinspiring` feature. The `enhance-pir` client crate must be built with
-the same feature as the server it talks to; a mismatched build rejects the
+`native-reinspiring` feature. The `enhance_query_server::client` module, and the
+`enhance-pir-cli` built from `enhance-pir-client`, must be built with the same feature as the server it talks to; a mismatched build rejects the
 manifest. The retired `ironwood-enhance-pir-v8-native-poc` revision is not served.
 v6 clients are incompatible. The q48 IPIR dependency remains pinned to
 `611a29284264d844bf4dba00de2874c5b762f8c2`. See [protocol](protocol.md) for the
@@ -87,9 +87,9 @@ compute cost explicitly.
 ## CLI and reproducible interoperability
 
 ```sh
-cargo run -p enhance-pir --features cli --bin enhance-pir-cli -- \
+cargo run -p enhance-pir-client --bin enhance-pir-cli -- \
   --server http://127.0.0.1:8280 metadata
-cargo run -p enhance-pir --features cli --bin enhance-pir-cli -- \
+cargo run -p enhance-pir-client --bin enhance-pir-cli -- \
   --server http://127.0.0.1:8280 query 0
 python3 tools/enhance/v7-interop/check_vectors.py
 python3 tools/enhance/schema11-interop/run.py /absolute/path/to/wallet-libraries \

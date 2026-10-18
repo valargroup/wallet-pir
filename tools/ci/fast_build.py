@@ -80,8 +80,6 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3,
         ['cargo', 'metadata', '--locked', '--no-deps', '--format-version=1', *options],
         cwd=ROOT, env=environment, **inherited_fds()))
     selected = set(selected)
-    if 'enhance-pir-server' in selected:
-        selected.add('enhance-serving')
     packages = {p['id']: p for p in metadata['packages'] if p['name'] in selected}
     if {p['name'] for p in packages.values()} != selected:
         raise ValueError('selected fast packages are missing from Cargo metadata')
@@ -163,7 +161,7 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3,
         # Real Enhance HTTP preparation exceeds its case deadline beside
         # archive and native runtime builds, including on the 8-core runner.
         # Isolate this executable without relaxing its assertions or deadline.
-        isolated_http = integration and name == 'enhance-serving' and target['name'] == 'ci_smoke'
+        isolated_http = integration and name == 'enhance-publisher' and target['name'] == 'ci_smoke'
         program = dict(executable=binary, directory=directory, package=name,
                              version=package['version'],
                              integration=integration,

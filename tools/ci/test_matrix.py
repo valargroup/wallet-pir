@@ -20,12 +20,17 @@ from stage import ROOT, run, install_cancellation, inherited_fds
 
 REGISTRY = ROOT / 'tools/ci/test-matrix.json'
 EXPORT = 'tools/txid/txid-sizing/export/Cargo.toml'
-NATIVE = ['enhance-pir/cli', 'enhance-pir/native-reinspiring',
-          'enhance-serving/native-reinspiring', 'status-query-server/native-reinspiring',
-          'enhance-pir-server/native-reinspiring', 'status-publisher/native-reinspiring',
-          'enhance-pir-load-test/native-reinspiring']
-CUDA = ['enhance-serving/cuda', 'status-query-server/cuda', 'enhance-pir-server/cuda', 'status-publisher/cuda',
-        'enhance-pir-server/native-reinspiring', 'enhance-pir-load-test/native-reinspiring']
+NATIVE = ['enhance-query-server/native-reinspiring', 'status-query-server/native-reinspiring',
+          'enhance-publisher/native-reinspiring', 'status-publisher/native-reinspiring',
+          'enhance-pir-client/native-reinspiring', 'enhance-pir-load-test/native-reinspiring']
+CUDA = ['enhance-query-server/cuda', 'status-query-server/cuda', 'enhance-publisher/cuda', 'status-publisher/cuda',
+        'enhance-publisher/native-reinspiring', 'enhance-pir-load-test/native-reinspiring']
+# Reference arithmetic runs the IPIR units and the absorbed protocol, client and
+# record units of the query-server library, its protocol contract tests, and the
+# publisher's bounded HTTP smoke test.
+REFERENCE_LIB_FILTERS = ['ipir::tests', 'client::', 'protocol::', 'record::', 'record_types::']
+REFERENCE_TESTS = {('enhance-query-server', 'routing_contract'), ('enhance-query-server', 'v7_contract'),
+                   ('enhance-publisher', 'ci_smoke')}
 
 
 def variants(groups):
@@ -33,8 +38,9 @@ def variants(groups):
         'transparent': dict(family='transparent', packages=groups['transparent'], features=['transparent-filter-server/rocksdb-reader'] + qualification_features(groups['transparent'])),
         'export': dict(family='transparent', packages=['txid-sizing-export'], features=[], manifest=EXPORT),
         'native': dict(family='enhance', packages=groups['enhance'], features=NATIVE + qualification_features(groups['enhance'])),
-        'reference': dict(family='enhance', packages=['enhance-serving', 'enhance-pir', 'status-query-server'], features=[]),
-        'cuda': dict(family='enhance', packages=['enhance-serving', 'status-query-server', 'enhance-pir-server',
+        'reference': dict(family='enhance', packages=['enhance-query-server', 'enhance-publisher', 'status-query-server'],
+                          features=[]),
+        'cuda': dict(family='enhance', packages=['enhance-query-server', 'status-query-server', 'enhance-publisher',
                                              'status-publisher', 'enhance-pir-load-test'], features=CUDA),
         'receiver': dict(family='receiver', packages=groups['receiver'], features=[]),
     }
@@ -72,7 +78,9 @@ def target_inventory(contexts, packages):
                     continue
                 kinds = []
                 if variant == 'reference':
-                    if name == 'enhance-serving' and not (kind == 'lib' or kind == 'test' and target['name'] == 'ci_smoke'):
+                    if name.startswith('enhance-') and not (
+                            kind == 'lib' and name == 'enhance-query-server'
+                            or kind == 'test' and (name, target['name']) in REFERENCE_TESTS):
                         continue
                     if kind not in ('lib', 'bin', 'test') or not target.get('test', True):
                         continue
@@ -81,8 +89,8 @@ def target_inventory(contexts, packages):
                     # Preserve the existing all-targets check and the two runtime tests.
                     kinds = ['check'] if kind == 'lib' else []
                     if (name, kind, target['name']) in {
-                        ('enhance-serving', 'lib', 'enhance_serving'),
-                        ('enhance-pir-server', 'test', 'matvec_config'),
+                        ('enhance-query-server', 'lib', 'enhance_query_server'),
+                        ('enhance-publisher', 'test', 'matvec_config'),
                     }:
                         kinds.append('example-test' if kind == 'example' and target.get('test') else kind)
                 else:
@@ -217,15 +225,15 @@ def test_programs(artifacts, variant, packages, env):
             raise ValueError(f'duplicate executable: {identity}')
         actual.add(identity)
         args = []
-        if variant == 'reference' and identity == ('enhance-serving', 'enhance_serving'):
-            args = ['ipir::tests']
-        if variant == 'reference' and identity == ('enhance-serving', 'ci_smoke'):
+        if variant == 'reference' and identity == ('enhance-query-server', 'enhance_query_server'):
+            args = list(REFERENCE_LIB_FILTERS)
+        if variant == 'reference' and identity == ('enhance-publisher', 'ci_smoke'):
             # Fast correctness already runs these lifecycle checks with reference
             # arithmetic; native qualification repeats them on the deployed backend.
             # Keep the independent generic-hint oracles and damaged-file checks here.
             args = ['--skip', 'encrypted_http_answers_survive_coordinator_restart',
                     '--skip', 'encrypted_publication_advances_while_another_commit_is_pending']
-        if variant == 'cuda' and identity == ('enhance-serving', 'enhance_serving'):
+        if variant == 'cuda' and identity == ('enhance-query-server', 'enhance_query_server'):
             args = ['backend_load_failure_does_not_rebuild_or_replace_published_units']
         program = dict(executable=artifact['executable'], package=package['name'],
                        version=package['version'], directory=str(Path(package['manifest_path']).parent),
@@ -316,11 +324,12 @@ def baseline_commands(family):
     if family == 'enhance':
         options = ['--locked', '--profile', 'release-fast']
         result += [
-            ('reference', [*options, '-p', 'enhance-serving', '--lib', 'ipir::tests']),
-            ('reference', [*options, '-p', 'enhance-serving', '--test', 'ci_smoke']),
-            ('reference', [*options, '-p', 'enhance-pir', '-p', 'status-query-server', '--lib', '--tests']),
-            ('cuda', [*options, '-p', 'enhance-pir-server', '--features', 'native-reinspiring,cuda', '--test', 'matvec_config']),
-            ('cuda', [*options, '-p', 'enhance-serving', '--features', 'native-reinspiring,cuda', '--lib',
+            ('reference', [*options, '-p', 'enhance-query-server', '--lib', '--', *REFERENCE_LIB_FILTERS]),
+            ('reference', [*options, '-p', 'enhance-query-server', '--test', 'routing_contract', '--test', 'v7_contract']),
+            ('reference', [*options, '-p', 'enhance-publisher', '--test', 'ci_smoke']),
+            ('reference', [*options, '-p', 'status-query-server', '--lib', '--tests']),
+            ('cuda', [*options, '-p', 'enhance-publisher', '--features', 'native-reinspiring,cuda', '--test', 'matvec_config']),
+            ('cuda', [*options, '-p', 'enhance-query-server', '--features', 'native-reinspiring,cuda', '--lib',
                       'backend_load_failure_does_not_rebuild_or_replace_published_units']),
         ]
     return result
@@ -333,8 +342,8 @@ def run_baseline(family, plan, output):
     env = {key: value for key, value in os.environ.items() if not key.startswith('QUALIFY_')}
     env['RUST_TEST_THREADS'] = '2' if family == 'transparent' else '1'
     if family == 'enhance':
-        run(['cargo', 'check', '--locked', '-p', 'enhance-serving', '-p', 'status-query-server',
-             '-p', 'enhance-pir-server', '-p', 'enhance-pir-load-test', '--all-targets',
+        run(['cargo', 'check', '--locked', '-p', 'enhance-query-server', '-p', 'status-query-server',
+             '-p', 'enhance-publisher', '-p', 'enhance-pir-load-test', '--all-targets',
              '--features', ','.join(CUDA)], env=env, stage='compile:baseline-cuda')
     for variant, options in baseline_commands(family):
         artifacts = run(['cargo', 'test', '--no-run', *options], env=env,

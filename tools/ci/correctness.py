@@ -26,10 +26,9 @@ from stage import ROOT, run, install_cancellation, stop
 from fast import HELPERS, local_target
 
 FEATURES = ','.join([
-    'enhance-pir/cli', 'enhance-pir/native-reinspiring',
-    'enhance-serving/native-reinspiring', 'status-query-server/native-reinspiring',
-    'enhance-pir-server/native-reinspiring', 'status-publisher/native-reinspiring',
-          'enhance-pir-load-test/native-reinspiring',
+    'enhance-query-server/native-reinspiring', 'status-query-server/native-reinspiring',
+    'enhance-publisher/native-reinspiring', 'status-publisher/native-reinspiring',
+    'enhance-pir-client/native-reinspiring', 'enhance-pir-load-test/native-reinspiring',
     'pir-control/admission', 'transparent-filter-server/rocksdb-reader',
 ])
 
@@ -88,14 +87,19 @@ def rust_checks(env, temporary, offline):
             enforce_budget=env['WALLET_PIR_ENFORCE_BUDGET'] == '1')
     # Reference checks have the same package/feature graph and are compiled
     # together. The full native workspace graph is never rebuilt without native.
-    reference = run(['cargo', 'test', '--no-run', *options, '-p', 'enhance-serving', '--lib', '--test', 'ci_smoke'],
+    reference = run(['cargo', 'test', '--no-run', *options, '-p', 'enhance-query-server', '--lib',
+                     '--test', 'routing_contract', '--test', 'v7_contract'],
                     env=env, stage='compile:reference', collect_tests=True, test_details=True)
-    reference += run(['cargo', 'test', '--no-run', *options, '-p', 'enhance-pir', '-p', 'status-query-server', '--lib', '--tests'],
+    reference += run(['cargo', 'test', '--no-run', *options, '-p', 'enhance-publisher', '--test', 'ci_smoke'],
+                     env=env, stage='compile:reference', collect_tests=True, test_details=True)
+    reference += run(['cargo', 'test', '--no-run', *options, '-p', 'status-query-server', '--lib', '--tests'],
                      env=env, stage='compile:reference', collect_tests=True, test_details=True)
     reference_plan = programs(reference, metadata)
     for program in reference_plan:
-        if program['package'] == 'enhance-serving' and not program['integration']:
-            program['args'] = ['ipir::tests']
+        # The IPIR units plus the protocol, client and record units the query
+        # server absorbed from the former protocol library.
+        if program['package'] == 'enhance-query-server' and not program['integration']:
+            program['args'] = ['ipir::tests', 'client::', 'protocol::', 'record::', 'record_types::']
     path = temporary / 'reference.json'
     path.write_text(json.dumps(reference_plan))
     run(['python3', 'tools/ci/unit_tests.py', str(path), '--jobs=1', '--budget'], env=env, stage='tests:reference')
