@@ -447,6 +447,10 @@ pub(crate) struct Staged {
     pub inventory: Inventory,
     pub options: LoadOptions,
     pub downloaded_files: usize,
+    /// Wall time spent on the inventory request and artifact bodies; the rest
+    /// of the stage is local copying, verification and syncing.
+    pub transfer_seconds: f64,
+    pub stage_seconds: f64,
 }
 pub(crate) async fn stage(
     config: &Config,
@@ -454,6 +458,7 @@ pub(crate) async fn stage(
     current: &Current,
     cache: bool,
 ) -> Result<Staged, Error> {
+    let started = std::time::Instant::now();
     let raw = source
         .small(
             &format!("inventories/{}", current.inventory_sha256),
@@ -463,6 +468,7 @@ pub(crate) async fn stage(
     if publication::digest(&raw) != current.inventory_sha256 {
         return Err("inventory digest mismatch".into());
     }
+    let mut transfer = started.elapsed();
     let inventory: Inventory = serde_json::from_slice(&raw)?;
     inventory.validate(&config.network, &config.genesis_hash)?;
     let total = inventory
@@ -506,6 +512,7 @@ pub(crate) async fn stage(
             if reuse {
                 tokio::fs::copy(&cached, &target).await?;
             } else {
+                let fetching = std::time::Instant::now();
                 let mut output = tokio::fs::OpenOptions::new()
                     .create_new(true)
                     .write(true)
@@ -525,6 +532,7 @@ pub(crate) async fn stage(
                 if remaining != 0 {
                     return Err("artifact incomplete".into());
                 }
+                transfer += fetching.elapsed();
                 output.sync_all().await?;
                 drop(output);
                 downloaded_files += 1;
@@ -612,6 +620,8 @@ pub(crate) async fn stage(
             inventory,
             options,
             downloaded_files,
+            transfer_seconds: transfer.as_secs_f64(),
+            stage_seconds: started.elapsed().as_secs_f64(),
         })
     }
     .await;

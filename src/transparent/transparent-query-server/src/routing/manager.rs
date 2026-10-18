@@ -39,6 +39,22 @@ pub struct Progress {
     pub revision: u64,
     pub downloaded_bytes: u64,
     pub downloaded_files: usize,
+    /// Wall seconds of each stage of a changed pass; absent when unchanged.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stages: Option<Stages>,
+}
+/// Observed durations only: diagnostics for campaigns, never authority.
+#[derive(Debug, Clone, Copy, Default, serde::Serialize)]
+pub struct Stages {
+    /// Inventory request and downloaded artifact bodies.
+    pub transfer_seconds: f64,
+    /// Local copies, verification and syncing of the staging tree.
+    pub staging_seconds: f64,
+    /// Strict load of the staged set before its runtimes warm.
+    pub loading_seconds: f64,
+    pub prewarm_seconds: f64,
+    /// Final source/anchor checks, the predecessor CAS and collection.
+    pub activation_seconds: f64,
 }
 impl Manager {
     pub fn new(mut config: Config, mut service: ServiceConfig) -> Result<Self, Error> {
@@ -124,6 +140,13 @@ impl Manager {
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_secs());
         let mut sync = self.synchronization.write().unwrap();
+        // The last activated change survives later unchanged or refused polls.
+        let last_change = match &result {
+            Ok(progress) if !progress.unchanged => {
+                serde_json::json!({"completed_unix":at,"progress":progress})
+            }
+            _ => sync["last_change"].clone(),
+        };
         *sync = match &result {
             Ok(progress) => {
                 serde_json::json!({"in_progress":false,"completed_unix":at,"state":"synchronized","progress":progress})
@@ -132,6 +155,7 @@ impl Manager {
                 serde_json::json!({"in_progress":false,"completed_unix":at,"state":"refused","error":error.to_string()})
             }
         };
+        sync["last_change"] = last_change;
         result
     }
     async fn reconcile(&mut self) -> Result<Progress, Error> {
@@ -147,6 +171,7 @@ impl Manager {
                     .revision,
                 downloaded_bytes: self.source.downloaded,
                 downloaded_files: 0,
+                stages: None,
             }),
             // HTTPS acquisition has no deferred queue or admission outcome.
             Input::Deferred => unreachable!("HTTPS acquisition never defers work"),
@@ -329,12 +354,18 @@ struct Prepared<'a> {
     live: LiveService,
     expected: String,
     initial: bool,
+    stages: Stages,
 }
 
 impl<'a> Acquired<'a> {
     async fn prepare(self) -> Result<Input<Prepared<'a>>, Error> {
         let Acquired { owner, current } = self;
         let staged = bootstrap::stage(&owner.config, &mut owner.source, &current, true).await?;
+        let mut stages = Stages {
+            transfer_seconds: staged.transfer_seconds,
+            staging_seconds: staged.stage_seconds - staged.transfer_seconds,
+            ..Stages::default()
+        };
         let publication = Publication {
             directory: staged.directory.clone(),
             assignment: Some(staged.directory.join("assignment.json")),
@@ -345,6 +376,7 @@ impl<'a> Acquired<'a> {
         let live = if let Some(live) = &owner.live {
             live.clone()
         } else {
+            let loading = std::time::Instant::now();
             let root = staged.directory.clone();
             let options = staged.options.clone();
             let set =
@@ -359,10 +391,13 @@ impl<'a> Acquired<'a> {
                 Some(archive) => state.with_archive(archive.clone()),
                 None => state,
             };
+            stages.loading_seconds = loading.elapsed().as_secs_f64();
+            let warming = std::time::Instant::now();
             state.spawn_prewarm().await?;
             if !state.is_warm() {
                 return Err("required publication failed prewarm".into());
             }
+            stages.prewarm_seconds = warming.elapsed().as_secs_f64();
             LiveService::new_required(
                 state,
                 publication.clone(),
@@ -383,11 +418,14 @@ impl<'a> Acquired<'a> {
             .ok_or("owner has no predecessor")?
             .to_string();
         if !initial {
-            live.command(Command::Prepare {
-                expected: expected.clone(),
-                publication: publication.clone(),
-            })
-            .await?;
+            let reply = live
+                .command(Command::Prepare {
+                    expected: expected.clone(),
+                    publication: publication.clone(),
+                })
+                .await?;
+            stages.loading_seconds = reply["loading_seconds"].as_f64().unwrap_or_default();
+            stages.prewarm_seconds = reply["warming_seconds"].as_f64().unwrap_or_default();
         }
         Ok(Input::Work(Prepared {
             work: Acquired { owner, current },
@@ -396,6 +434,7 @@ impl<'a> Acquired<'a> {
             live,
             expected,
             initial,
+            stages,
         }))
     }
 }
@@ -409,7 +448,9 @@ impl Prepared<'_> {
             live,
             expected,
             initial,
+            mut stages,
         } = self;
+        let activating = std::time::Instant::now();
         let config = &owner.config;
         let root = &config.directory;
         let revocations = &mut owner.revocations;
@@ -483,11 +524,13 @@ impl Prepared<'_> {
         live.collect_memory().await?;
         owner.live = Some(live);
         owner.current = Some(current.clone());
+        stages.activation_seconds = activating.elapsed().as_secs_f64();
         Ok(Progress {
             unchanged: false,
             revision: current.revision,
             downloaded_bytes: owner.source.downloaded,
             downloaded_files: staged.downloaded_files,
+            stages: Some(stages),
         })
     }
 }
