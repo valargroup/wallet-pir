@@ -1250,6 +1250,58 @@ mod shipped_tests {
         }
     }
 
+    // These checks exercise cache admission, refusal, ownership and fallback.
+    // Build their public arithmetic input once per shape/content, then restore
+    // fresh runtimes. Anonymous files have no retained path and close at exit.
+    // Cold-build equivalence and independent mask/query oracles do not use this.
+    fn prepared_input(segment: &Segment) -> TableRuntime {
+        if cfg!(feature = "qualification-tests") {
+            return TableRuntime::build(&segment.shared, &segment.rows).unwrap();
+        }
+        use std::collections::HashMap;
+        use std::sync::{LazyLock, Mutex};
+        static INPUTS: LazyLock<Mutex<HashMap<[u8; 32], File>>> =
+            LazyLock::new(|| Mutex::new(HashMap::new()));
+        let shared = &segment.shared;
+        assert!(
+            shared.transport.is_none(),
+            "control input uses byte coefficients"
+        );
+        let source = hex::encode(Sha256::digest(&segment.rows));
+        let identity = DiskCache::identity(&(String::new(), shared.table, 0), shared, &source);
+        let mut inputs = INPUTS.lock().unwrap();
+        let file = inputs.entry(identity).or_insert_with(|| {
+            let runtime = TableRuntime::build(shared, &segment.rows).unwrap();
+            let mut file = tempfile::tempfile().unwrap();
+            reinspiring::prepared_native::write(&mut file, &runtime.preprocessed).unwrap();
+            file
+        });
+        // SAFETY: this private anonymous inode is written only before insertion.
+        // No caller receives the file or a writable mapping, and it never changes.
+        let map = unsafe { memmap2::Mmap::map(&*file) }.unwrap();
+        drop(inputs);
+        let profile = &shared.profile;
+        let preprocessed =
+            reinspiring::prepared_native::read(map, 0, &profile.setup, profile.blocks()).unwrap();
+        let mut database =
+            super::super::column_major_bytes(&segment.rows, profile.rows, profile.row_bytes);
+        super::super::interleave(&mut database, profile.rows);
+        TableRuntime::assemble(
+            profile.native,
+            super::super::Database::Bytes(database),
+            preprocessed,
+        )
+        .unwrap()
+    }
+
+    fn control_segment(dir: &Path, table: Table, filled: usize, seed: usize) -> Segment {
+        if cfg!(feature = "qualification-tests") {
+            history_segment(dir, table, filled, seed)
+        } else {
+            history_segment(dir, table, 900, 3)
+        }
+    }
+
     fn candidate(dir: &Path, name: &str) -> ShippedRuntimes {
         let path = dir.join(name);
         fs::create_dir_all(&path).unwrap();
@@ -1329,7 +1381,7 @@ mod shipped_tests {
     async fn refused_shipped_files_fall_back_to_a_counted_local_build() {
         let dir = tempfile::tempdir().unwrap();
         let s = segment(dir.path(), Table::TxDirectory, 700, 2);
-        let local = TableRuntime::build(&s.shared, &s.rows).unwrap();
+        let local = prepared_input(&s);
         let mut other_revision = s.key.clone();
         other_revision.0 = "cd".repeat(32);
         let mut other_bucket = s.key.clone();
@@ -1516,9 +1568,9 @@ mod shipped_tests {
     async fn history_identity_refusals(table: Table) {
         use transparent_shard::layout::DECOUPLED_32K_32K;
         let dir = tempfile::tempdir().unwrap();
-        let s = history_segment(dir.path(), table, 900, 3);
+        let s = control_segment(dir.path(), table, 900, 3);
         let table = s.shared.table;
-        let local = TableRuntime::build(&s.shared, &s.rows).unwrap();
+        let local = prepared_input(&s);
         let other_kind = match table {
             Table::Directory => Table::Pages,
             _ => Table::Directory,
@@ -1616,15 +1668,10 @@ mod shipped_tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn a_corrupt_source_fails_even_with_a_valid_shipped_file() {
         let dir = tempfile::tempdir().unwrap();
-        let s = history_segment(dir.path(), Table::Pages, 1_200, 4);
+        let s = control_segment(dir.path(), Table::Pages, 1_200, 4);
         let shipped = candidate(dir.path(), "candidate");
         shipped
-            .write(
-                &s.key,
-                &s.shared,
-                s.source.sha256(),
-                &TableRuntime::build(&s.shared, &s.rows).unwrap(),
-            )
+            .write(&s.key, &s.shared, s.source.sha256(), &prepared_input(&s))
             .unwrap();
         let mut corrupt = s.rows.clone();
         corrupt[17] ^= 1;
@@ -1650,15 +1697,10 @@ mod shipped_tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn concurrent_callers_share_one_shipped_load() {
         let dir = tempfile::tempdir().unwrap();
-        let s = history_segment(dir.path(), Table::Directory, 2_048, 5);
+        let s = control_segment(dir.path(), Table::Directory, 2_048, 5);
         let shipped = candidate(dir.path(), "candidate");
         shipped
-            .write(
-                &s.key,
-                &s.shared,
-                s.source.sha256(),
-                &TableRuntime::build(&s.shared, &s.rows).unwrap(),
-            )
+            .write(&s.key, &s.shared, s.source.sha256(), &prepared_input(&s))
             .unwrap();
         let metrics = Arc::new(Metrics::default());
         let cache = Arc::new(RuntimeCache::new(
@@ -1741,7 +1783,7 @@ mod shipped_tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn a_refusal_is_counted_once_across_admission_retries() {
         let dir = tempfile::tempdir().unwrap();
-        let s = history_segment(dir.path(), Table::Pages, 700, 6);
+        let s = control_segment(dir.path(), Table::Pages, 700, 6);
         let other = history_segment(dir.path(), Table::Pages, 700, 9);
         let shipped = candidate(dir.path(), "candidate");
         // A consistent runtime of other rows under this segment's identity:
@@ -1751,7 +1793,7 @@ mod shipped_tests {
                 &s.key,
                 &s.shared,
                 s.source.sha256(),
-                &TableRuntime::build(&other.shared, &other.rows).unwrap(),
+                &prepared_input(&other),
             )
             .unwrap();
         let disk = DiskCache::new(dir.path().join("cache"), s.shared.reserved_bytes() * 4).unwrap();
@@ -1831,7 +1873,7 @@ mod shipped_tests {
         assert_eq!(Metrics::get(&metrics.builds), 1);
         assert_eq!(Metrics::get(&metrics.shipped_loads), 0);
         assert!(cache.refused_shipped.lock().unwrap().is_empty());
-        let expected = TableRuntime::build(&s.shared, &s.rows).unwrap();
+        let expected = prepared_input(&s);
         assert_eq!(handle.get().public_params, expected.public_params);
         // A new production operation, once the runtime is gone, tries the
         // offered file afresh: a valid one now.
@@ -1869,15 +1911,10 @@ mod shipped_tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn a_cancelled_shipped_load_keeps_its_reservations_until_it_ends() {
         let dir = tempfile::tempdir().unwrap();
-        let s = history_segment(dir.path(), Table::Directory, 300, 7);
+        let s = control_segment(dir.path(), Table::Directory, 300, 7);
         let shipped = candidate(dir.path(), "candidate");
         shipped
-            .write(
-                &s.key,
-                &s.shared,
-                s.source.sha256(),
-                &TableRuntime::build(&s.shared, &s.rows).unwrap(),
-            )
+            .write(&s.key, &s.shared, s.source.sha256(), &prepared_input(&s))
             .unwrap();
         let metrics = Arc::new(Metrics::default());
         let cache = Arc::new(RuntimeCache::new(
