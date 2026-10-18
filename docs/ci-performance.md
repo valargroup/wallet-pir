@@ -53,9 +53,14 @@ builds are measured separately. These are targets, not established guarantees.
 
 The checked-in [test matrix](../tools/ci/test-matrix.json) assigns every enabled
 family target exactly once: seven Transparent jobs, eight Enhance jobs and two
-Receiver jobs. Receiver lint runs separately. Whole test executables retain their
+Receiver jobs. Receiver lint runs separately. Hosted test shards and lint start after selection,
+alongside helper checks. The final completion and artifact publication gates still
+require every selected helper check to pass. Whole test executables retain their
 fixture reuse and existing thread limits. Reference arithmetic and CUDA checks
-have separate feature/cache partitions; deployment builds remain on the dedicated
+have separate feature/cache partitions. The reference shard retains the independent
+generic-hint and damaged-artifact checks; encrypted lifecycle smokes run with
+reference arithmetic in fast correctness and with the native backend in full
+qualification. Deployment builds remain on the dedicated
 build runner. Example builds, doctests, binary tests and the standalone sizing
 exporter are included. New or removed targets require an explicit matrix update.
 
@@ -93,8 +98,9 @@ qualification without starting unrelated operations fixtures in fast feedback.
 Documentation-only changes run documentation checks without installing Rust.
 Operations-only changes run helper checks without compiling Rust. Main compares against
 the last successful main fast run or a newer completed full fast preparation on
-main's ancestry. Preparation reuse requires successful compile and validation
-steps from the same successful attempt and the canonical repository/workflow.
+main's ancestry. Preparation reuse requires successful complete-workspace compile
+and validation plus affected-graph validation from the same successful attempt
+and the canonical repository/workflow.
 Partial diagnostic dispatches, canceled or skipped validation, unrelated branches
 and stale ancestry cannot leave unchecked changes behind.
 
@@ -172,7 +178,10 @@ main revision captured by dispatch; newer pushes do not cancel manual runs.
 
 Receiver, Transparent, Enhance/Status and the operations package qualify
 independently, using the existing full family suites, shared tests and helper
-checks. Common helper, shared-library and infrastructure checks run once per qualification, before service-specific native work. Helpers run on hosted runners to reserve the fast queue for main. Operations archives
+checks. Common helper, shared-library and infrastructure checks run once per qualification,
+alongside service-specific native work. Full completion still requires every
+selected helper, shared and infrastructure check. Helpers run on hosted runners
+to reserve the fast queue for main. Operations archives
 assemble on hosted runners without Rust. Full tests and lint run on separate
 Ubuntu 24.04 hosted runners; CPU release builds use the dedicated build runner.
 CPU and Ubuntu 22.04 CUDA candidate builds start alongside family testing;
@@ -418,10 +427,16 @@ retains persistent build lanes. A missing cache never relaxes validation or the
 ## Cold preparation and representative latency
 
 Dispatch **Prepare fast validation** on a dependency/toolchain upgrade branch
-before landing it. It compiles and validates the same fast units using the fast
-runner's cache. Main pushes preempt preparation; preparation cannot cancel a
-running main check. Main rejects an entirely empty cache with an explicit
+before landing it. Branch preparation uses hosted runners and a branch-specific
+concurrency group, so it cannot occupy main's runner or scheduling slot. Dispatch
+on `main` to prepare its trusted persistent cache. Main pushes preempt that
+preparation; preparation cannot cancel a running main check.
+Main rejects an entirely empty cache with an explicit
 preparation error instead of spending its three-minute budget on native builds.
+Preparation validates the complete fast selection, then validates the affected
+selection using the same command as routine CI: Cargo can unify dependency
+features differently for those roots. The optional `comparison-base` input pins
+a full comparison SHA; otherwise preparation uses successful main history.
 Cargo still validates dependencies and rebuilds changed units on every run.
 The optional `stress` input repeats each family's encrypted HTTP/recovery smoke
 50 times with fresh service state and no test retries. It remains preemptible

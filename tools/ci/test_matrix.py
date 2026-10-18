@@ -219,6 +219,12 @@ def test_programs(artifacts, variant, packages, env):
         args = []
         if variant == 'reference' and identity == ('enhance-serving', 'enhance_serving'):
             args = ['ipir::tests']
+        if variant == 'reference' and identity == ('enhance-serving', 'ci_smoke'):
+            # Fast correctness already runs these lifecycle checks with reference
+            # arithmetic; native qualification repeats them on the deployed backend.
+            # Keep the independent generic-hint oracles and damaged-file checks here.
+            args = ['--skip', 'encrypted_http_answers_survive_coordinator_restart',
+                    '--skip', 'encrypted_publication_advances_while_another_commit_is_pending']
         if variant == 'cuda' and identity == ('enhance-serving', 'enhance_serving'):
             args = ['backend_load_failure_does_not_rebuild_or_replace_published_units']
         program = dict(executable=artifact['executable'], package=package['name'],

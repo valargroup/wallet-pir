@@ -1,6 +1,10 @@
 """A newer docs push must cover changes from a canceled source push."""
 from pathlib import Path
+from contextlib import redirect_stdout
+import io
+import os
 import sys
+import tempfile
 import unittest
 from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/ci'))
@@ -25,6 +29,30 @@ class ComparisonTests(unittest.TestCase):
             with self.assertRaises(TimeoutError):
                 feedback_base.comparison('push', 'b'*40, 'v/p')
 
+    def test_preparation_uses_main_history_unless_given_a_full_commit(self):
+        with patch.object(feedback_base, 'comparison', return_value='a'*40) as compare:
+            self.assertEqual(feedback_base.preparation_comparison('', 'v/p', 'c'*40), 'a'*40)
+            compare.assert_called_once_with('push', '', 'v/p', 'c'*40)
+            compare.reset_mock()
+            self.assertEqual(feedback_base.preparation_comparison('b'*40, 'v/p', 'c'*40), 'b'*40)
+            compare.assert_not_called()
+            for invalid in ('main', '--all', 'b'*39, 'b'*40 + '\n'):
+                with self.assertRaisesRegex(ValueError, 'full commit SHA'):
+                    feedback_base.preparation_comparison(invalid, 'v/p', 'c'*40)
+
+    def test_preparation_cli_exports_the_same_comparison_it_prints(self):
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / 'env'
+            with patch.dict(os.environ, {'GITHUB_EVENT_NAME': 'workflow_dispatch',
+                                         'GITHUB_REPOSITORY': 'v/p', 'GITHUB_SHA': 'c'*40,
+                                         'GITHUB_ENV': str(destination), 'BASE': ''}), \
+                    patch.object(feedback_base, 'comparison', return_value='a'*40) as compare, \
+                    redirect_stdout(io.StringIO()) as output:
+                feedback_base.main(['--prepare'])
+                compare.assert_called_once_with('push', '', 'v/p', 'c'*40)
+            self.assertEqual(output.getvalue(), 'a'*40 + '\n')
+            self.assertEqual(destination.read_text(), 'FAST_BASE=' + 'a'*40 + '\n')
+
 
 class PreparedComparisonTests(unittest.TestCase):
     def setUp(self):
@@ -34,7 +62,7 @@ class PreparedComparisonTests(unittest.TestCase):
                         path='.github/workflows/ci-prepare.yml', head_repository={'full_name': 'v/p'})
         self.job = dict(status='completed', conclusion='success', steps=[
             dict(name=name, status='completed', conclusion='success')
-            for name in ('Compile fast units', 'Validate prepared units')])
+            for name in ('Compile fast units', 'Validate prepared units', 'Validate affected fast units')])
         self.ancestry = ['ahead', 'ahead']
 
     def api(self, path, **kwargs):
@@ -55,6 +83,10 @@ class PreparedComparisonTests(unittest.TestCase):
     def test_preparation_can_establish_the_first_verified_baseline(self):
         self.previous = ''
         self.assertEqual(self.selected(), self.prepared)
+
+    def test_preparation_without_affected_validation_cannot_establish_a_baseline(self):
+        self.job['steps'].pop()
+        self.assertEqual(self.selected(), self.previous)
 
     def test_wrong_repository_branch_workflow_and_unfinished_results_are_refused(self):
         for changes in [dict(head_repository={'full_name': 'fork/p'}), dict(head_branch='feature'),

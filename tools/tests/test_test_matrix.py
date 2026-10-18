@@ -6,6 +6,8 @@ from pathlib import Path
 import re
 import sys
 import tempfile
+import subprocess
+import textwrap
 import unittest
 from unittest.mock import patch
 
@@ -94,6 +96,29 @@ class MatrixTests(unittest.TestCase):
                      workflow={'GITHUB_RUN_ID': '123', 'GITHUB_RUN_ATTEMPT': '2'},
                      passed=True, compile_only=False, completed=sorted(shard['targets']), cases={})
                 for name, shard in registry.items() if shard['family'] == family]
+
+    def test_reference_qualification_keeps_oracles_and_native_keeps_http_lifecycles(self):
+        package = self.plan[3]['enhance-serving']
+        artifact = dict(package_id=package['id'], target=dict(name='ci_smoke', kind=['test']),
+                        executable='/not-executed', features=['qualification-tests'])
+        lifecycle = {'encrypted_http_answers_survive_coordinator_restart',
+                     'encrypted_publication_advances_while_another_commit_is_pending'}
+        oracles = {'single_unit_hint_matches_independent_generic_67',
+                   'single_unit_hint_matches_independent_generic_68',
+                   'single_unit_hint_rejects_damage_and_pins_retired_file'}
+
+        def listing(command, **_):
+            names = set() if '--ignored' in command else lifecycle | oracles
+            excluded = {command[index + 1] for index, arg in enumerate(command) if arg == '--skip'}
+            return ''.join(f'{name}: test\n' for name in sorted(names - excluded))
+
+        for variant in ('reference', 'native'):
+            with self.subTest(variant=variant), patch.object(matrix.subprocess, 'check_output', side_effect=listing):
+                _, programs, cases = matrix.test_programs([artifact], variant, {package['name']: package}, {})
+            actual = set(cases[f'{variant}:enhance-serving:ci_smoke']['tests'])
+            self.assertEqual(actual, oracles if variant == 'reference' else lifecycle | oracles)
+            if variant == 'native':
+                self.assertEqual(programs[0]['args'], [])
 
     def verify(self, receipts):
         with tempfile.TemporaryDirectory() as directory:
@@ -232,6 +257,34 @@ class WorkflowTests(unittest.TestCase):
                 self.assertIn(f"needs.{gate}.result == 'success'", publish)
             self.assertIn('!cancelled()', publish)
             self.assertIn('qualify-artifacts', publish)
+
+    def test_hosted_checks_overlap_helpers_but_failed_helpers_block_completion(self):
+        text = (ROOT / '.github/workflows/ci-full.yml').read_text()
+        for name in ('test-shards', 'transparent-lint', 'enhance-lint',
+                     'shared-test', 'receiver-lint'):
+            job = self.job(text, name)
+            self.assertIn('    needs: select\n', job, name)
+            self.assertNotIn('needs.validate-ops', job, name)
+            self.assertIn('!cancelled()', job, name)
+
+        complete = self.job(text, 'complete')
+        needs = next(line for line in complete.splitlines() if line.strip().startswith('needs:'))
+        self.assertIn('validate-ops', needs)
+        code = textwrap.dedent(complete.split("python3 - <<'PYCHECK'\n", 1)[1].split('          PYCHECK', 1)[0])
+        outputs = dict.fromkeys(('transparent', 'enhance', 'receiver', 'shared',
+                                 'ops', 'enhance_infra', 'transparent_infra'), 'true')
+        checks = ('transparent-lint', 'transparent-test', 'enhance-lint', 'enhance-test',
+                  'shared-test', 'receiver-test', 'validate-ops', 'validate-enhance-infra',
+                  'validate-transparent-elastic-infra')
+        results = {name: {'result': 'success'} for name in checks}
+        results['select'] = {'result': 'success', 'outputs': outputs}
+        for outcome in ('success', 'failure', 'skipped', 'cancelled'):
+            results['validate-ops']['result'] = outcome
+            result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True,
+                                    env={**os.environ, 'RESULTS': json.dumps(results)})
+            self.assertEqual(result.returncode == 0, outcome == 'success', result.stderr)
+            if outcome != 'success':
+                self.assertIn('validate-ops', result.stderr)
 
     def test_aggregate_checks_receipts_and_matrix_failures_cannot_hide(self):
         text = (ROOT / '.github/workflows/ci-full.yml').read_text()

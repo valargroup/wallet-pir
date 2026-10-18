@@ -475,7 +475,7 @@ fn the_plan_balances_owners_and_the_router_matches_the_golden_file() {
         .map(|line| format!("{line}\n"))
         .collect();
     let golden = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../ops/fixtures/transparent-shard/Caddyfile.router");
+        .join("../../../ops/transparent/fixtures/transparent-shard/Caddyfile.router");
     if std::env::var_os("UPDATE_OPS_FIXTURES").is_some() {
         std::fs::write(&golden, &stable).unwrap();
     }
