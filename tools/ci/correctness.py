@@ -94,13 +94,14 @@ def rust_checks(env, temporary, offline):
         env=env, stage='tests:all-native')
     # Reference checks have the same package/feature graph and are compiled
     # together. The full native workspace graph is never rebuilt without native.
-    reference = run(['cargo', 'test', '--no-run', *options, '-p', 'enhance-serving', '--lib', '--test', 'ci_smoke'],
+    reference = run(['cargo', 'test', '--no-run', *options, '-p', 'enhance-serving', '-p', 'enhance-runtime', '--lib', '--test', 'ci_smoke'],
                     env=env, stage='compile:reference', collect_tests=True, test_details=True)
     reference += run(['cargo', 'test', '--no-run', *options, '-p', 'enhance-pir', '-p', 'status-serving', '--lib', '--tests'],
                      env=env, stage='compile:reference', collect_tests=True, test_details=True)
-    reference_plan = programs(reference, metadata)
+    reference_plan = [program for program in programs(reference, metadata)
+                      if program['package'] != 'enhance-serving' or program['integration']]
     for program in reference_plan:
-        if program['package'] == 'enhance-serving' and not program['integration']:
+        if program['package'] == 'enhance-runtime' and not program['integration']:
             program['args'] = ['ipir::tests']
     path = temporary / 'reference.json'
     path.write_text(json.dumps(reference_plan))

@@ -53,7 +53,8 @@ class MatrixTests(unittest.TestCase):
     def test_reference_filters_and_cuda_modes_do_not_expand_or_disappear(self):
         registry, contexts, targets, packages, _ = self.plan
         reference = registry['enhance-reference']['targets']
-        self.assertIn('reference:enhance-serving:lib:enhance_serving', reference)
+        self.assertIn('reference:enhance-runtime:lib:enhance_runtime', reference)
+        self.assertNotIn('reference:enhance-serving:lib:enhance_serving', reference)
         self.assertNotIn('reference:enhance-serving:test:http', reference)
         native = matrix.package_features('enhance-serving', contexts['native'], packages)
         cuda = matrix.package_features('enhance-serving', contexts['cuda'], packages)
@@ -67,7 +68,7 @@ class MatrixTests(unittest.TestCase):
         self.assertEqual(len(commands), 1)
         command = commands[0][3]
         self.assertEqual({command[i + 1] for i, arg in enumerate(command) if arg == '-p'},
-                         {'enhance-serving', 'status-serving', 'enhance-pir-server', 'enhance-pir-load-test'})
+                         {'enhance-runtime', 'enhance-serving', 'status-serving', 'enhance-pir-server', 'enhance-pir-load-test'})
         self.assertEqual(command[command.index('--features') + 1], ','.join(matrix.CUDA))
         self.assertTrue(all('--all-targets' in cmd[3] for cmd in commands))
 

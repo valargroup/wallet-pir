@@ -67,12 +67,12 @@ PURE = {
     'pir-observability', 'pir-control', 'pir-runtime', 'enhance-pir', 'transparent-blocks',
     'transparent-journal', 'transparent-measure',
     'transparent-shard-server', 'transparent-server-backend',
-    'enhance-serving', 'status-serving',
+    'enhance-serving', 'enhance-runtime', 'status-serving',
 }
 # Serving libraries and the chain reading, ingestion and application packages
 # they must never reach. Each product's applications compose its serving library;
 # the shared raw PIR runtime they call is held to the same rule.
-SERVING = {'enhance-serving', 'status-serving', 'transparent-server-backend', 'pir-runtime'}
+SERVING = {'enhance-serving', 'enhance-runtime', 'status-serving', 'transparent-server-backend', 'pir-runtime'}
 INGESTION = {
     'pir-pipeline', 'zakura-server-chain', 'enhance-pir-server', 'receiver-indexer',
     'transparent-filter-server', 'transparent-block-server', 'transparent-measure',

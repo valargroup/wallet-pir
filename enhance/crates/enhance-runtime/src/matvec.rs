@@ -2,9 +2,9 @@
 use ipir_sp::{server::KernelError, IPIRServer, YpirSchemeParams};
 use serde::Serialize;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "testing"))]
 #[path = "matvec_test.rs"]
-pub(crate) mod testing;
+pub mod testing;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, clap::ValueEnum, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -62,7 +62,7 @@ impl MatvecConfig {
         coefficients: impl Iterator<Item = u16>,
         transposed: bool,
     ) -> Result<IPIRServer<u16>, KernelError> {
-        #[cfg(test)]
+        #[cfg(any(test, feature = "testing"))]
         if let Some(faults) = testing::current() {
             return testing::server(self, params, coefficients, transposed, faults);
         }
@@ -133,18 +133,5 @@ mod tests {
         .unwrap()
         .config;
         assert!(gpu.validate().is_err());
-    }
-    #[cfg(not(feature = "cuda"))]
-    #[test]
-    fn cuda_without_feature_fails_before_creating_worker_state() {
-        let root = tempfile::tempdir().unwrap();
-        let config = MatvecConfig {
-            matvec_backend: Backend::Cuda,
-            cuda_device: None,
-        };
-        let result =
-            crate::worker::Worker::open_with_backend(root.path(), Default::default(), config);
-        assert!(matches!(result, Err(e) if e.contains("--features cuda")));
-        assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
     }
 }

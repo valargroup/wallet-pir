@@ -34,10 +34,6 @@
     "controller::distribution_tests::manager_tests::manager_double_intent_write_failure_retains_exact_negative_revision": "Repeated real TLS/publication/owner recovery campaigns exceed the warm three-minute fast deadline. Full qualification runs this case unchanged; fast immutable-transfer, interrupted-staging, durable invalidation, inventory and owner-fence failure checks remain."
   },
   "enhance-serving": {
-    "runtime::tests::partial_preparation_failure_preserves_published_and_retries": "Real multi-unit cryptographic preparation and independent evaluation; full CI retains the complete test.",
-    "runtime::tests::tail_domain_reuses_b_units_and_decodes_b_at_unchanged_coordinates": "Real multi-unit cryptographic preparation and independent evaluation; full CI retains the complete test.",
-    "runtime::tests::unequal_units_match_monolithic_preprocessing_and_evaluation": "Real multi-unit cryptographic preparation and independent evaluation; full CI retains the complete test.",
-    "runtime::tests::encrypted_bootstrap_round_trip_and_cached_restart": "Measured 5.45s locally: real encrypted bootstrap, independent CPU evaluation and durable runtime restart; full CI retains all assertions.",
     "worker::tests::restart_rebuilds_lost_cache_only_from_verified_durable_rows": "Measured 4.91s locally: real runtime preparation and corrupt/missing-cache recovery; full CI retains the complete HTTP/runtime evidence.",
     "coordinator::admission_tests::full_queue_and_expired_wait_return_retryable_429": "Measured 2.02s locally: real queue expiry and HTTP timeout coverage; full CI retains real elapsed-time assertions.",
     "worker::tests::backend_evaluation_failure_over_http_releases_permit_and_recovers": "Measured 2.28s locally: real cryptographic evaluation, malformed-query rejection, injected backend failure and HTTP recovery; full CI retains all assertions."
@@ -67,5 +63,11 @@
     "runtime::tests::a_built_runtime_holds_its_planned_size_or_less": "Builds full deployed runtime geometries to compare actual and planned size. Full qualification retains the geometry comparison; fast reservation and admission accounting checks remain.",
     "runtime::tests::masks_rebuilt_from_row_bytes_equal_the_served_masks": "Independent full-runtime mask reconstruction. Full qualification retains this comparison; fast arithmetic tests and encrypted HTTP decoded-byte assertions remain.",
     "runtime::disk::tests::a_restored_entry_must_publish_the_masks_it_stored": "Full-runtime persistence and mask reconstruction. Full qualification retains the stored-mask comparison; fast encrypted HTTP restart and corrupt-cache fallback remain."
+  },
+  "enhance-runtime": {
+    "runtime::tests::partial_preparation_failure_preserves_published_and_retries": "Real multi-unit cryptographic preparation and independent evaluation; full CI retains the complete test.",
+    "runtime::tests::tail_domain_reuses_b_units_and_decodes_b_at_unchanged_coordinates": "Real multi-unit cryptographic preparation and independent evaluation; full CI retains the complete test.",
+    "runtime::tests::unequal_units_match_monolithic_preprocessing_and_evaluation": "Real multi-unit cryptographic preparation and independent evaluation; full CI retains the complete test.",
+    "runtime::tests::encrypted_bootstrap_round_trip_and_cached_restart": "Measured 5.45s locally: real encrypted bootstrap, independent CPU evaluation and durable runtime restart; full CI retains all assertions."
   }
 }
