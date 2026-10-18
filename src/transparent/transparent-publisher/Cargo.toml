@@ -73,11 +73,6 @@ path = "src/bin/sample-oracle.rs"
 name = "transparent-publish-controller"
 path = "src/bin/transparent-publish-controller.rs"
 
-[[bin]]
-name = "compact-export"
-path = "src/bin/compact-export.rs"
-required-features = ["rocksdb-reader"]
-
 [features]
 default = []
 # Direct node database access is needed only by the offline reader tools.
@@ -89,10 +84,10 @@ qualification-tests = []
 pir-pipeline = { path = "../../shared/pir-pipeline" }
 pir-control = { path = "../../shared/pir-control", features = ["admission"] }
 pir-observability = { path = "../../shared/pir-observability" }
-transparent-blocks = { path = "../transparent-blocks" }
 tempfile = "3"
 axum = "0.7"
-chrono = { version = "0.4", default-features = false, features = ["std", "serde"] }
+# `clock` for publication timestamps; ingest relied on feature unification.
+chrono = { version = "0.4", default-features = false, features = ["std", "serde", "clock"] }
 clap = { version = "4", features = ["derive"] }
 hex = "0.4"
 libc = "0.2"
