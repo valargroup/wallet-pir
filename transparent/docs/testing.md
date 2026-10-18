@@ -20,7 +20,10 @@ No unit case is omitted by name.
 Cache, admission, file identity and corruption matrices use narrow supported
 display tables in ordinary checks. The complete negative matrices, accounting
 assertions, blocked persistence, cancelled restore and cold fallback remain.
-`qualification-tests` restores their original history shapes and the complete
+Every malformed file and changed identity goes through the real file loader.
+Ordinary checks exercise cold fallback for missing files, damaged content and
+a changed identity; qualification repeats cold fallback for every refusal.
+`qualification-tests` also restores their original history shapes and the complete
 history/display reconstruction comparisons. The ordinary history HTTP smoke
 and stored-mask tampering check retain actual history data and independent
 answer/refusal evidence.
