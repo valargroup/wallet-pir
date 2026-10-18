@@ -31,7 +31,7 @@ Type=simple
 # roster's budgets and slots and
 # `--assignment <file> --worker-id <id> --prune-excess`, under which it loads
 # only its assigned tables, prewarms them, and reports ready only once warm.
-ExecStart=/usr/local/bin/transparent-shard-server --listen 0.0.0.0:8093 --shard-dir TRANSPARENT_SHARD_SET_PATH --cache-bytes TRANSPARENT_CACHE_BYTES --build-slots TRANSPARENT_BUILD_SLOTS --query-slots 2 TRANSPARENT_EXTRA_ARGS
+ExecStart=/usr/local/bin/transparent-query-server --listen 0.0.0.0:8093 --shard-dir TRANSPARENT_SHARD_SET_PATH --cache-bytes TRANSPARENT_CACHE_BYTES --build-slots TRANSPARENT_BUILD_SLOTS --query-slots 2 TRANSPARENT_EXTRA_ARGS
 Restart=on-failure
 RestartSec=10
 User=root

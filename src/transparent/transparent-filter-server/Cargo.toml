@@ -100,7 +100,7 @@ transparent-filter = { package = "zakura-transparent-filter", git = "https://git
 transparent-native = { package = "zakura-transparent-native", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "b7fffbbc98d75af5ebc9c9d9da92ca19e9f0fdbd" }
 transparent-shard = { package = "zakura-transparent-shard", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "b7fffbbc98d75af5ebc9c9d9da92ca19e9f0fdbd" }
 transparent-ingest = { path = "../transparent-ingest" }
-transparent-server-backend = { path = "../transparent-server-backend" }
+transparent-shared = { path = "../transparent-shared", features = ["test-support"] }
 # Node reads, transparent extraction, compact blocks and the RocksDB state
 # reader, pinned to an exact wallet-libraries revision. The reader opens the
 # node's RocksDB directly: before deploying it, verify that the zakura-state
@@ -108,7 +108,7 @@ transparent-server-backend = { path = "../transparent-server-backend" }
 zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "b7fffbbc98d75af5ebc9c9d9da92ca19e9f0fdbd", default-features = false, features = ["transparent"] }
 
 [dev-dependencies]
-transparent-shard-server = { path = "../transparent-shard-server" }
+transparent-query-server = { path = "../transparent-query-server" }
 base64 = "0.22"
 sysinfo = "0.36"
 transparent-txid-client = { package = "zakura-transparent-txid-client", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "b7fffbbc98d75af5ebc9c9d9da92ca19e9f0fdbd", features = ["testing"] }

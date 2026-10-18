@@ -1,6 +1,6 @@
 //! Executes the shipped binary and child protocol against real HTTP shard
 //! fixtures. Deadlines and shutdown are tested at the OS process boundary.
-#[path = "../../transparent-shard-server/tests/common/mod.rs"]
+#[path = "../../transparent-query-server/tests/common/mod.rs"]
 mod common;
 
 use std::fs;
@@ -16,9 +16,9 @@ use axum::response::IntoResponse;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use transparent_filter::ShardMap;
+use transparent_query_server::history::service::{router, ServiceConfig, ServiceState};
 use transparent_shard::layout::DECOUPLED_2K_8K;
-use transparent_shard_server::service::{router, ServiceConfig, ServiceState};
-use transparent_shard_server::shardset::{ShardSet, DEFAULT_RETAIN_REVISIONS};
+use transparent_shared::history::shardset::{ShardSet, DEFAULT_RETAIN_REVISIONS};
 
 fn sample(path: &Path, map: &ShardMap, tags: &[u32], wrong: bool) {
     let chain = common::chain();

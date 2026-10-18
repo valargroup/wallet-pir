@@ -1,5 +1,5 @@
 //! Real HTTP parent traversal + PIR, with SQLite restarts and an independent oracle.
-#[path = "../../transparent-shard-server/tests/common/mod.rs"]
+#[path = "../../transparent-query-server/tests/common/mod.rs"]
 mod common;
 use axum::{
     extract::{Path, State},

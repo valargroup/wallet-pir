@@ -18,9 +18,9 @@ use clap::Parser;
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 use transparent_filter::BlockHash;
-use transparent_ingest::events::EventStore;
-use transparent_server_backend::shardset::{ShardSet, DEFAULT_RETAIN_REVISIONS};
 use transparent_shard::build::build_directory_shard;
+use transparent_shared::history::shardset::{ShardSet, DEFAULT_RETAIN_REVISIONS};
+use transparent_shared::journal::events::EventStore;
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 

@@ -9,9 +9,9 @@ use transparent_filter_server::txid_display::{
     serving::WorkersFile,
     source::{open_writer, LiveSource, ReplaySource, Source},
 };
-use transparent_ingest::events::EventStore;
 use transparent_ingest::publication::BoxError;
 use transparent_shard::display::DisplaySealParams;
+use transparent_shared::journal::events::EventStore;
 
 #[derive(Parser)]
 #[command(
@@ -294,8 +294,7 @@ async fn main() -> Result<(), BoxError> {
             let settings = Settings {
                 trust_sealed,
                 ship_runtimes: ship_runtimes.then_some(
-                    transparent_server_backend::display::prebuild::build_shipped
-                        as controller::Prebuild,
+                    transparent_shared::tx_detail::prebuild::build_shipped as controller::Prebuild,
                 ),
                 max_recent_records,
                 exit_when_idle,

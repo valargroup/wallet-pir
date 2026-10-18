@@ -5,12 +5,12 @@ use sha2::{Digest, Sha256};
 use std::path::Path;
 use transparent_events::{FeeState, TransactionMetadata, Txid};
 use transparent_filter::BlockHash;
-use transparent_ingest::events::EventStore;
 use transparent_ingest::publication::Journal;
 use transparent_shard::display::{DisplaySealParams, TXID_2K8};
 use transparent_shard::txid::{DisplayOutput, DisplayRecord};
 use transparent_shard::txid_v1::TransparentDisplayRecord;
 use transparent_shard::txid_v2x::{DisplayInput, TransparentDisplayRecordV2x};
+use transparent_shared::journal::events::EventStore;
 
 /// The published entry of a non-coinbase transaction spending one P2PKH
 /// output into `outputs` P2PKH outputs; more than two set the entry's
@@ -108,7 +108,8 @@ pub(crate) fn write_journal(dir: &Path, start: u64, through: u64, tag: u8) {
     let mut store = EventStore::open(dir, GENESIS, start).unwrap();
     for height in start..=through {
         let sources = chain_sources(tag, height);
-        let events = transparent_ingest::display_journal::implied_events(height, &sources).unwrap();
+        let events =
+            transparent_shared::journal::display_journal::implied_events(height, &sources).unwrap();
         store
             .append_block_with_display(height, block_hash(tag, height), &events, &sources)
             .unwrap();

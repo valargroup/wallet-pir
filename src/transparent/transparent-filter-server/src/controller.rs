@@ -100,7 +100,7 @@ pub struct ActivePublication {
 struct Public {
     publication: ActivePublication,
     filters: ShardFilters,
-    distribution: Option<transparent_server_backend::distribution::Finalized>,
+    distribution: Option<transparent_shared::publication::Finalized>,
 }
 struct Inner {
     cycle_duration: pir_observability::Distribution,
@@ -132,7 +132,7 @@ struct Inner {
     membership: Option<PathBuf>,
     /// The last candidate whose runtimes were prepared, as verified then: the
     /// next one's unchanged tables are its hard links and are not read again.
-    prepared_set: std::sync::Mutex<Option<transparent_server_backend::shardset::ShardSet>>,
+    prepared_set: std::sync::Mutex<Option<transparent_shared::history::shardset::ShardSet>>,
     /// Runtime preparation outcomes since this process started.
     runtime_preparations: AtomicU64,
     runtime_preparation_failures: AtomicU64,
@@ -173,7 +173,7 @@ impl Authority {
             .fallback(public_request)
             .layer(axum::middleware::from_fn_with_state(
                 self.0.telemetry.clone(),
-                transparent_server_backend::http::observe,
+                transparent_shared::http::observe,
             ))
             .with_state(self.clone())
     }
@@ -852,8 +852,7 @@ async fn prepare_history(
         let root = directory.clone();
         let cutoff = config.recent_from;
         let (set, distribution) = tokio::task::spawn_blocking(move || {
-            let result =
-                transparent_server_backend::distribution::Finalized::prepare(&root, &set, cutoff);
+            let result = transparent_shared::publication::Finalized::prepare(&root, &set, cutoff);
             (set, result)
         })
         .await?;
@@ -1067,7 +1066,7 @@ async fn prepare_runtimes(
     directory: &Path,
     epoch: u64,
 ) -> Result<serde_json::Value, BoxError> {
-    use transparent_server_backend::shardset::{LoadOptions, ShardSet};
+    use transparent_shared::history::shardset::{LoadOptions, ShardSet};
     let mut retained = vec![authority
         .0
         .active
@@ -1099,11 +1098,11 @@ async fn prepare_runtimes(
         // may a worker.
         let options = LoadOptions {
             prune_excess: true,
-            ..LoadOptions::whole(transparent_server_backend::shardset::DEFAULT_RETAIN_REVISIONS)
+            ..LoadOptions::whole(transparent_shared::history::shardset::DEFAULT_RETAIN_REVISIONS)
         };
         match ShardSet::open_reusing(&directory, &options, previous.as_ref()) {
             Ok(set) => {
-                let prepared = transparent_server_backend::prebuild::prepare_publication(
+                let prepared = transparent_shared::runtime::prebuild::prepare_publication(
                     &set, &directory, &retained, &stop,
                 );
                 (Some(set), prepared.map_err(|e| e.to_string()))
@@ -1189,7 +1188,7 @@ fn advance_distribution_revision_with_sync(
 /// is positive noncanonical evidence. Snapshot fencing brackets both RPC reads.
 async fn check_distribution_anchor(
     authority: &Authority,
-    current: &transparent_server_backend::distribution::Current,
+    current: &transparent_shared::publication::Current,
     height: u64,
     hash: &str,
 ) -> Result<bool, BoxError> {
@@ -1223,7 +1222,7 @@ async fn check_distribution_anchor(
 }
 
 async fn distribution_request(authority: Authority, request: Request) -> Response {
-    use transparent_server_backend::distribution::{self, Current, Eligibility};
+    use transparent_shared::publication::{self, Current, Eligibility};
     if request.method() != axum::http::Method::GET || request.uri().query().is_some() {
         return StatusCode::METHOD_NOT_ALLOWED.into_response();
     }
@@ -1236,7 +1235,7 @@ async fn distribution_request(authority: Authority, request: Request) -> Respons
             return unavailable();
         };
         let current = Current {
-            schema: distribution::SCHEMA.into(),
+            schema: publication::SCHEMA.into(),
             revision: authority.0.distribution_revision.load(Ordering::Acquire),
             recovery_epoch: authority.0.epoch.load(Ordering::Acquire),
             inventory_sha256: finalized.sha256().to_string(),
@@ -1259,7 +1258,7 @@ async fn distribution_request(authority: Authority, request: Request) -> Respons
     let suffix = request
         .uri()
         .path()
-        .strip_prefix(distribution::PREFIX)
+        .strip_prefix(publication::PREFIX)
         .unwrap();
     if let Some(anchor) = suffix.strip_prefix("anchors/") {
         let Some((height, hash)) = anchor.split_once('/') else {
@@ -1268,7 +1267,7 @@ async fn distribution_request(authority: Authority, request: Request) -> Respons
         let Ok(height) = height.parse::<u64>() else {
             return StatusCode::NOT_FOUND.into_response();
         };
-        if !distribution::is_digest(hash) {
+        if !publication::is_digest(hash) {
             return StatusCode::NOT_FOUND.into_response();
         }
         let canonical = match check_distribution_anchor(&authority, &current, height, hash).await {
@@ -1277,8 +1276,8 @@ async fn distribution_request(authority: Authority, request: Request) -> Respons
         };
         return (
             [("cache-control", "no-store")],
-            axum::Json(distribution::AnchorCheck {
-                schema: distribution::SCHEMA.into(),
+            axum::Json(publication::AnchorCheck {
+                schema: publication::SCHEMA.into(),
                 revision: current.revision,
                 recovery_epoch: current.recovery_epoch,
                 genesis_hash: current.genesis_hash,
@@ -1319,7 +1318,7 @@ async fn distribution_request(authority: Authority, request: Request) -> Respons
         }
         let etag = format!(
             "\"{}\"",
-            distribution::digest(&serde_json::to_vec(&current).expect("serializable current"))
+            publication::digest(&serde_json::to_vec(&current).expect("serializable current"))
         );
         if request
             .headers()
@@ -1384,7 +1383,7 @@ async fn distribution_request(authority: Authority, request: Request) -> Respons
 
 async fn public_request(State(authority): State<Authority>, request: Request) -> Response {
     let path = request.uri().path();
-    if path.starts_with(transparent_server_backend::distribution::PREFIX) {
+    if path.starts_with(transparent_shared::publication::PREFIX) {
         return distribution_request(authority, request).await;
     }
     let epoch = authority.0.epoch.load(Ordering::Acquire);
@@ -2280,7 +2279,7 @@ print(json.dumps({'ok':True,'upstreams':[],'workers':{},'retained_publication':b
             let first = ready.candidate.publication.clone();
             let files = runtime_files(&first.directory);
             let set =
-                transparent_server_backend::shardset::ShardSet::open(&first.directory, 3).unwrap();
+                transparent_shared::history::shardset::ShardSet::open(&first.directory, 3).unwrap();
             assert!(!files.is_empty());
             assert_eq!(files.len(), set.warm_targets().len());
             assert_eq!(ready.runtimes.as_ref().unwrap()["built"], files.len());
@@ -2332,7 +2331,7 @@ print(json.dumps({'ok':True,'upstreams':[],'workers':{},'retained_publication':b
                 .expect("a prepare request");
             assert_eq!(prepare["runtimes"], serde_json::json!(first.directory));
             let set =
-                transparent_server_backend::shardset::ShardSet::open(&first.directory, 3).unwrap();
+                transparent_shared::history::shardset::ShardSet::open(&first.directory, 3).unwrap();
             let files = runtime_files(&first.directory);
             assert_eq!(
                 files.len(),

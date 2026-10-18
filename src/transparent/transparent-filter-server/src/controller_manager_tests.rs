@@ -2,7 +2,9 @@
 //! as an independent answer oracle. These do not qualify a complete provider.
 use super::*;
 use transparent_events::TransparentEvent;
-use transparent_shard_server::{live::Command, manager::Manager, service::ServiceConfig};
+use transparent_query_server::history::live::Command;
+use transparent_query_server::history::service::ServiceConfig;
+use transparent_query_server::routing::manager::Manager;
 
 // Prepare immutable producer bytes once per test process. Each test receives
 // separate copies: corruption, missing-file and restart cases must stay isolated.
@@ -385,7 +387,7 @@ async fn serve_worker(app: axum::Router) -> (String, Listening) {
     )
 }
 
-async fn worker(live: transparent_shard_server::live::LiveService) -> (String, Listening) {
+async fn worker(live: transparent_query_server::history::live::LiveService) -> (String, Listening) {
     serve_worker(live.router()).await
 }
 async fn get(origin: &str, path: &str) -> reqwest::Response {
@@ -418,7 +420,7 @@ async fn query_and_upload(origin: &str, set: &ShardSet) -> Vec<u8> {
     query_with_reply(origin, set).await.0
 }
 async fn query_with_reply(origin: &str, set: &ShardSet) -> (Vec<u8>, Vec<u8>) {
-    use transparent_server_backend::shardset::{Table, TableRef};
+    use transparent_shared::history::shardset::{Table, TableRef};
     let shard = set.get(1).unwrap();
     let source = shard
         .segment(TableRef::Directory, 0)
@@ -875,8 +877,10 @@ async fn manager_refuses_changed_holdings_on_an_unchanged_map() {
     // Changing only holdings is a full inventory change, never an unchanged map
     // shortcut. PR2 preserves the existing owner assignment fence.
     let prepared =
-        transparent_server_backend::prebuild::prepare_publication(&set, &directory, &[], &|| false)
-            .unwrap();
+        transparent_shared::runtime::prebuild::prepare_publication(&set, &directory, &[], &|| {
+            false
+        })
+        .unwrap();
     assert!(prepared.failures.is_empty());
     let mut public = read_public(directory.clone(), Vec::new()).unwrap();
     public.distribution = Some(Finalized::prepare(&directory, &set, 0).unwrap());
@@ -886,7 +890,7 @@ async fn manager_refuses_changed_holdings_on_an_unchanged_map() {
     assert!(
         failure
             .to_string()
-            .contains(transparent_shard_server::live::ASSIGNMENT_CHANGED),
+            .contains(transparent_query_server::history::live::ASSIGNMENT_CHANGED),
         "{failure}"
     );
     query(&origin, &set).await;
@@ -1136,7 +1140,7 @@ async fn manager_owner_fence_write_failure_still_fences_http() {
 async fn manager_bounds_memory_while_retaining_admitted_upload() {
     use tokio::io::AsyncWriteExt;
     use tower::ServiceExt;
-    use transparent_server_backend::shardset::{Table, TableRef};
+    use transparent_shared::history::shardset::{Table, TableRef};
     let root = tempfile::tempdir().unwrap();
     let (directory, set, distribution) = immutable_publication(2);
     let rpc = canonical_rpc(root.path(), &set).await;
@@ -1485,11 +1489,9 @@ async fn manager_double_intent_write_failure_retains_exact_negative_revision() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn standard_history_lifecycle_queries_advance_and_reconciles_lost_activation() {
     use std::os::unix::fs::PermissionsExt;
-    use transparent_shard_server::{
-        live::{LiveService, Publication},
-        service::ServiceState,
-        shardset::LoadScope,
-    };
+    use transparent_query_server::history::live::{LiveService, Publication};
+    use transparent_query_server::history::service::ServiceState;
+    use transparent_shared::history::shardset::LoadScope;
     let root = tempfile::tempdir().unwrap();
     let (directory, set) = publication_through(root.path(), 2);
     let service_config = ServiceConfig {
@@ -1497,7 +1499,7 @@ async fn standard_history_lifecycle_queries_advance_and_reconciles_lost_activati
         ..ServiceConfig::default()
     };
     let mut options = recent_options(&set);
-    options.retain_revisions = transparent_shard_server::shardset::DEFAULT_RETAIN_REVISIONS;
+    options.retain_revisions = transparent_shared::history::shardset::DEFAULT_RETAIN_REVISIONS;
     let state = ServiceState::build(
         ShardSet::open_with(&directory, &options).unwrap(),
         service_config,
@@ -1531,7 +1533,7 @@ async fn standard_history_lifecycle_queries_advance_and_reconciles_lost_activati
                 let directory = PathBuf::from(request["directory"].as_str().unwrap());
                 let set = ShardSet::open(
                     &directory,
-                    transparent_shard_server::shardset::DEFAULT_RETAIN_REVISIONS,
+                    transparent_shared::history::shardset::DEFAULT_RETAIN_REVISIONS,
                 )
                 .unwrap();
                 let LoadScope::Assigned { assignment, .. } = recent_options(&set).scope else {
@@ -1763,21 +1765,27 @@ with urllib.request.urlopen(r,timeout=20) as response: sys.stdout.buffer.write(r
     .unwrap();
     let next_set = ShardSet::open(
         &activated.directory,
-        transparent_shard_server::shardset::DEFAULT_RETAIN_REVISIONS,
+        transparent_shared::history::shardset::DEFAULT_RETAIN_REVISIONS,
     )
     .unwrap();
     query(&origin, &next_set).await;
     let old_rows = set
         .get(1)
         .unwrap()
-        .segment(transparent_server_backend::shardset::TableRef::Directory, 0)
+        .segment(
+            transparent_shared::history::shardset::TableRef::Directory,
+            0,
+        )
         .unwrap()
         .load()
         .unwrap();
     let new_rows = next_set
         .get(1)
         .unwrap()
-        .segment(transparent_server_backend::shardset::TableRef::Directory, 0)
+        .segment(
+            transparent_shared::history::shardset::TableRef::Directory,
+            0,
+        )
         .unwrap()
         .load()
         .unwrap();
@@ -1823,7 +1831,7 @@ with urllib.request.urlopen(r,timeout=20) as response: sys.stdout.buffer.write(r
         &origin,
         &ShardSet::open(
             &current.directory,
-            transparent_shard_server::shardset::DEFAULT_RETAIN_REVISIONS,
+            transparent_shared::history::shardset::DEFAULT_RETAIN_REVISIONS,
         )
         .unwrap(),
     )

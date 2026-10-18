@@ -3465,8 +3465,8 @@ dependencies = [
  "tracing-subscriber",
  "transparent-blocks",
  "transparent-ingest",
- "transparent-server-backend",
- "transparent-shard-server",
+ "transparent-query-server",
+ "transparent-shared",
  "zakura-server-chain",
  "zakura-transparent-events",
  "zakura-transparent-filter",
@@ -3487,23 +3487,8 @@ dependencies = [
  "sha2",
  "tempfile",
  "thiserror 2.0.18",
- "transparent-journal",
- "transparent-server-backend",
+ "transparent-shared",
  "zakura-server-chain",
- "zakura-transparent-events",
- "zakura-transparent-filter",
- "zakura-transparent-shard",
-]
-
-[[package]]
-name = "transparent-journal"
-version = "0.1.0-rc.4"
-dependencies = [
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
- "thiserror 2.0.18",
  "zakura-transparent-events",
  "zakura-transparent-filter",
  "zakura-transparent-shard",
@@ -3527,7 +3512,8 @@ dependencies = [
  "tempfile",
  "tokio",
  "transparent-blocks",
- "transparent-shard-server",
+ "transparent-query-server",
+ "transparent-shared",
  "zakura-pir-transparent",
  "zakura-transparent-events",
  "zakura-transparent-filter",
@@ -3545,8 +3531,8 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
- "transparent-journal",
- "transparent-shard-server",
+ "transparent-query-server",
+ "transparent-shared",
  "zakura-pir-transparent",
  "zakura-transparent-events",
  "zakura-transparent-filter",
@@ -3554,57 +3540,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "transparent-regression"
-version = "0.1.0-rc.4"
-dependencies = [
- "anyhow",
- "axum",
- "clap",
- "hex",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
- "tokio",
- "transparent-shard-server",
- "zakura-pir-transparent",
- "zakura-transparent-events",
- "zakura-transparent-filter",
- "zakura-transparent-shard",
-]
-
-[[package]]
-name = "transparent-server-backend"
-version = "0.1.0-rc.4"
-dependencies = [
- "axum",
- "hex",
- "http-body",
- "ipir-sp",
- "memmap2",
- "pir-control",
- "pir-observability",
- "pir-runtime",
- "rayon",
- "reinspiring",
- "rustix 1.1.4",
- "serde",
- "serde_json",
- "sha2",
- "sysinfo",
- "tempfile",
- "thiserror 2.0.18",
- "tokio",
- "tower",
- "tracing",
- "zakura-transparent-events",
- "zakura-transparent-filter",
- "zakura-transparent-native",
- "zakura-transparent-shard",
-]
-
-[[package]]
-name = "transparent-shard-server"
+name = "transparent-query-server"
 version = "0.1.0-rc.4"
 dependencies = [
  "axum",
@@ -3630,13 +3566,62 @@ dependencies = [
  "tower-http 0.5.2",
  "tracing",
  "tracing-subscriber",
- "transparent-server-backend",
+ "transparent-shared",
  "zakura-pir-transparent",
  "zakura-transparent-events",
  "zakura-transparent-filter",
  "zakura-transparent-native",
  "zakura-transparent-shard",
  "zakura-transparent-txid-client",
+]
+
+[[package]]
+name = "transparent-regression"
+version = "0.1.0-rc.4"
+dependencies = [
+ "anyhow",
+ "axum",
+ "clap",
+ "hex",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "tokio",
+ "transparent-query-server",
+ "transparent-shared",
+ "zakura-pir-transparent",
+ "zakura-transparent-events",
+ "zakura-transparent-filter",
+ "zakura-transparent-shard",
+]
+
+[[package]]
+name = "transparent-shared"
+version = "0.1.0-rc.4"
+dependencies = [
+ "axum",
+ "hex",
+ "ipir-sp",
+ "memmap2",
+ "pir-observability",
+ "pir-runtime",
+ "rayon",
+ "reinspiring",
+ "rustix 1.1.4",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sysinfo",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tower",
+ "tracing",
+ "zakura-transparent-events",
+ "zakura-transparent-filter",
+ "zakura-transparent-native",
+ "zakura-transparent-shard",
 ]
 
 [[package]]

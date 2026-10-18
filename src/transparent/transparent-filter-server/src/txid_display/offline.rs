@@ -5,10 +5,10 @@
 use super::publisher::{read_map, verify_dir, ActiveRecord, DisplayRoot, SealRecord, ShardSpec};
 use serde_json::{json, Value};
 use std::path::Path;
-use transparent_ingest::events::EventStore;
 use transparent_ingest::publication::{BoxError, Journal};
 use transparent_shard::display::plan_seals;
 use transparent_shard::display::split::{index_file, RECENT_MAP_FILE};
+use transparent_shared::journal::events::EventStore;
 
 /// Re-bootstraps into a scratch root at the journal end and checks every
 /// recorded seal against it; verifies every revision of the active candidate.
@@ -295,7 +295,8 @@ pub fn synth_journal(
     seed: u64,
 ) -> Result<u64, BoxError> {
     use sha2::{Digest, Sha256};
-    let mut store = transparent_ingest::events::EventStore::open(out, SYNTHETIC_GENESIS, start)?;
+    let mut store =
+        transparent_shared::journal::events::EventStore::open(out, SYNTHETIC_GENESIS, start)?;
     if store.next_height() != start {
         return Err("synthetic journal directory is not empty".into());
     }
@@ -311,7 +312,8 @@ pub fn synth_journal(
         let hash = transparent_filter::BlockHash::from_internal_bytes(
             Sha256::digest([b"synthetic".as_slice(), &block_seed.to_le_bytes()].concat()).into(),
         );
-        let events = transparent_ingest::display_journal::implied_events(height, &sources)?;
+        let events =
+            transparent_shared::journal::display_journal::implied_events(height, &sources)?;
         store.append_block_with_display(height, hash, &events, &sources)?;
         total += count;
         if (height - start + 1).is_multiple_of(1_000) {

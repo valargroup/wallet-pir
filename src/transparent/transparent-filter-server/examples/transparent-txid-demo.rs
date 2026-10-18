@@ -33,14 +33,14 @@ use transparent_ingest::{
     events::EventStore,
     extract::{index, read_transaction, BoxError, FetchedBlock, Output, PreviousOutputs},
 };
-use transparent_server_backend::config::{ReadinessMode, ServiceConfig};
-use transparent_shard::display::{self, DisplaySealParams, DisplayTable, TXID_2K8};
-use transparent_shard::txid::{AddressKind, DisplayEntry, DisplayRecord, Tag};
-use transparent_shard_server::display::DisplayRole;
-use transparent_shard_server::display::{
+use transparent_query_server::config::{ReadinessMode, ServiceConfig};
+use transparent_query_server::tx_detail::{
     live::{DisplayCommand, DisplayLive, DisplayPublication},
     service::DisplayRuntime,
 };
+use transparent_shard::display::{self, DisplaySealParams, DisplayTable, TXID_2K8};
+use transparent_shard::txid::{AddressKind, DisplayEntry, DisplayRecord, Tag};
+use transparent_shared::tx_detail::DisplayRole;
 use transparent_txid_client::{
     Method, Placement, Route, TransportError, TxidDisplayClient, TxidLookup, TxidReply,
     TxidRequest, TxidTransport,

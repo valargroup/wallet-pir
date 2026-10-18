@@ -55,10 +55,10 @@ use std::path::PathBuf;
 use transparent_events::TransparentEvent;
 use transparent_filter::ScriptBytes;
 use transparent_filter_server::state::StateReader;
-use transparent_ingest::events::EventStore;
 use transparent_ingest::zakura::NodeClient;
 use transparent_shard::layout::{by_name as geometry_by_name, Geometry};
 use transparent_shard::seal::{DecoupledPolicy, DisplacementSealer};
+use transparent_shared::journal::events::EventStore;
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
