@@ -42,7 +42,7 @@ prepare-dev:
 check-full: check-hygiene check-ops check-docs check-reports check-tools
 	cargo fmt --all --check
 	cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
-	tools/ci/full-test.sh --locked --workspace --profile release-fast
+	tools/ci/full-test.sh --locked --workspace --profile release-fast --features enhance-serving/full-tests,status-serving/full-tests,enhance-pir-server/full-tests,transparent-filter-server/full-tests,transparent-server-backend/full-tests
 
 # The deploy scripts' jq programs, compiled and run against payloads the server
 # serializes. Part of `check` because both of the bugs it exists to catch got
@@ -155,7 +155,7 @@ check-docs:
 	tools/check-doc-links.sh
 
 test:
-	tools/ci/full-test.sh --locked --workspace --profile release-fast
+	tools/ci/full-test.sh --locked --workspace --profile release-fast --features enhance-serving/full-tests,status-serving/full-tests,enhance-pir-server/full-tests,transparent-filter-server/full-tests,transparent-server-backend/full-tests
 
 run-server:
 	cargo run --release -p enhance-pir-server --bin enhance-pir-server -- --help

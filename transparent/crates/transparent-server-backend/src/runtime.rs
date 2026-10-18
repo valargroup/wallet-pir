@@ -419,6 +419,7 @@ pub(crate) enum Database {
 }
 
 #[cfg(test)]
+#[cfg(feature = "full-tests")]
 impl Database {
     /// The stored database as bytes, to compare two runtimes'.
     pub(crate) fn to_bytes(&self) -> Vec<u8> {
@@ -1486,6 +1487,7 @@ pub(crate) mod tests {
     /// columns the profile encodes (single bytes for an 8-bit table, u16
     /// pairs for a 16-bit one), without the scan server: what the certificate
     /// tool rebuilds.
+    #[cfg(feature = "full-tests")]
     fn reference_masks(profile: &native::TableProfile, rows: &[u8]) -> Vec<u8> {
         let hint = if profile.native.entry_bytes() == 1 {
             let columns: Vec<Vec<u8>> = (0..profile.cols)
@@ -1563,6 +1565,7 @@ pub(crate) mod tests {
     /// four-byte size and no less than the 27-bit packed matrix a CPU with
     /// AVX-512 VBMI may choose, so its charge never exceeds its reservation.
     #[test]
+    #[cfg(feature = "full-tests")]
     fn a_built_runtime_holds_its_planned_size_or_less() {
         let matrix_narrow = (native::D * native::D * native::ELL * 4) as u64;
         let matrix_packed = (native::D * (native::D * native::ELL / 8) * 27 + 8) as u64;
@@ -1659,6 +1662,7 @@ pub(crate) mod tests {
     /// without evicting anything.
     #[cfg(unix)]
     #[tokio::test(flavor = "multi_thread")]
+    #[cfg(feature = "full-tests")]
     async fn a_build_in_flight_keeps_its_bound_until_the_runtime_exists() {
         use std::io::Write;
         // An empty 8-bit table: its one-digit matrix fits four-byte words, so
@@ -1855,6 +1859,7 @@ pub(crate) mod tests {
     /// without the scan server. It binds its report to a snapshot by requiring
     /// those masks to equal the served ones, so the two derivations must agree.
     #[test]
+    #[cfg(feature = "full-tests")]
     fn masks_rebuilt_from_row_bytes_equal_the_served_masks() {
         let shared =
             SharedParams::build(&transparent_shard::layout::DECOUPLED_2K_8K, Table::Pages).unwrap();
@@ -1873,6 +1878,7 @@ pub(crate) mod tests {
     /// masks the whole-table product does: an empty table, content ending
     /// on either side of a block boundary, and content in the last row.
     #[test]
+    #[cfg(feature = "full-tests")]
     fn trailing_zero_blocks_leave_the_published_masks_unchanged() {
         let shared =
             SharedParams::build(&transparent_shard::layout::DECOUPLED_2K_8K, Table::Pages).unwrap();
@@ -1908,6 +1914,7 @@ pub(crate) mod tests {
     /// prepared from the reference hint over every block, answers byte for
     /// byte as it does, and decodes to the selected row.
     #[test]
+    #[cfg(feature = "full-tests")]
     fn the_batched_hint_runtime_is_the_reference_runtime() {
         for (geometry, table, filled) in [
             (&DECOUPLED_2K_8K, Table::Directory, 2_048),

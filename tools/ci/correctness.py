@@ -24,13 +24,14 @@ from full_packages import inventory
 from integration_tests import inventory as integration_inventory
 from stage import ROOT, run, install_cancellation, stop
 from fast import local_target
+from test_tiers import check_discovery, classifications, full_features
 
 FEATURES = ','.join([
     'enhance-pir/cli', 'enhance-pir/native-reinspiring',
     'enhance-serving/native-reinspiring', 'status-serving/native-reinspiring',
     'enhance-pir-server/native-reinspiring', 'enhance-pir-load-test/native-reinspiring',
     'pir-control/admission',
-])
+] + full_features(classifications()))
 
 
 def source_identity():
@@ -65,6 +66,10 @@ def programs(artifacts, metadata):
             continue
         seen.add(binary)
         package = packages[artifact['package_id']]
+        if 'lib' in artifact['target']['kind']:
+            listing = subprocess.check_output([binary, '--list'], cwd=ROOT, text=True)
+            check_discovery(package['name'],
+                            {line[:-6] for line in listing.splitlines() if line.endswith(': test')}, full=True)
         result.append(dict(executable=binary, directory=str(Path(package['manifest_path']).parent),
                            package=package['name'], version=package['version'], args=[],
                            integration='test' in artifact['target']['kind'],
@@ -94,9 +99,11 @@ def rust_checks(env, temporary, offline):
         env=env, stage='tests:all-native')
     # Reference checks have the same package/feature graph and are compiled
     # together. The full native workspace graph is never rebuilt without native.
-    reference = run(['cargo', 'test', '--no-run', *options, '-p', 'enhance-serving', '--lib', '--test', 'ci_smoke'],
+    reference = run(['cargo', 'test', '--no-run', *options, '-p', 'enhance-serving', '--lib', '--test', 'ci_smoke',
+                     '--features', ','.join(full_features(['enhance-serving']))],
                     env=env, stage='compile:reference', collect_tests=True, test_details=True)
-    reference += run(['cargo', 'test', '--no-run', *options, '-p', 'enhance-pir', '-p', 'status-serving', '--lib', '--tests'],
+    reference += run(['cargo', 'test', '--no-run', *options, '-p', 'enhance-pir', '-p', 'status-serving', '--lib', '--tests',
+                      '--features', ','.join(full_features(['status-serving']))],
                      env=env, stage='compile:reference', collect_tests=True, test_details=True)
     reference_plan = programs(reference, metadata)
     for program in reference_plan:

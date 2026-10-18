@@ -61,15 +61,32 @@ class MatrixTests(unittest.TestCase):
         self.assertNotIn('enhance-serving/cuda', native)
         self.assertIn('enhance-serving/native-reinspiring', cuda)
         self.assertIn('enhance-serving/cuda', cuda)
-        self.assertFalse(matrix.package_features('enhance-serving', contexts['reference'], packages))
+        self.assertEqual(matrix.package_features('enhance-serving', contexts['reference'], packages),
+                         ['enhance-serving/full-tests'])
         self.assertNotIn('enhance-pir-server/native-reinspiring', native)
         commands = matrix.cargo_commands(registry['enhance-cuda-check']['targets'], contexts, targets, packages)
         self.assertEqual(len(commands), 1)
         command = commands[0][3]
         self.assertEqual({command[i + 1] for i, arg in enumerate(command) if arg == '-p'},
                          {'enhance-serving', 'status-serving', 'enhance-pir-server', 'enhance-pir-load-test'})
-        self.assertEqual(command[command.index('--features') + 1], ','.join(matrix.CUDA))
+        self.assertEqual(command[command.index('--features') + 1], ','.join(contexts['cuda']['features']))
         self.assertTrue(all('--all-targets' in cmd[3] for cmd in commands))
+
+    def test_full_discovery_refuses_missing_campaigns_and_retains_existing_feature_variants(self):
+        from test_tiers import check_discovery, gated_cases
+        for package in ('enhance-serving', 'status-serving', 'enhance-pir-server',
+                        'transparent-filter-server', 'transparent-server-backend'):
+            names = gated_cases(package)
+            self.assertTrue(names)
+            check_discovery(package, names, full=True)
+            with self.assertRaisesRegex(ValueError, 'missing full-only tests'):
+                check_discovery(package, names - {next(iter(names))}, full=True)
+        _, contexts, _, packages, _ = self.plan
+        for context in contexts.values():
+            for package in context['packages']:
+                if gated_cases(package):
+                    self.assertIn(package + '/full-tests',
+                                  matrix.package_features(package, context, packages))
 
     def receipts(self, family):
         registry, _, _, _, digest = self.plan

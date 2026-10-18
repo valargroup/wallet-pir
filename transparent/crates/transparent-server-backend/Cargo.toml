@@ -7,6 +7,8 @@ license = "MIT"
 repository = "https://github.com/valargroup/wallet-pir"
 
 [features]
+# Compile campaign-only correctness tests in full qualification.
+full-tests = []
 portable-kernel = []
 
 [dependencies]

@@ -1190,6 +1190,7 @@ mod tests {
     /// content, differing only in revision numbering. Sealed page
     /// shards of the open directory shard are carried by link, not rewritten.
     #[test]
+    #[cfg(feature = "full-tests")]
     fn block_by_block_publication_equals_a_fresh_build() {
         use std::os::unix::fs::MetadataExt;
         let root = tempfile::tempdir().unwrap();

@@ -695,6 +695,7 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "full-tests")]
     use enhance_pir::ROW_BYTES;
     fn records(start: u64, count: usize) -> Result<Vec<u8>, String> {
         let mut bytes = vec![0; count * RECORD_BYTES];
@@ -781,6 +782,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "full-tests")]
     fn encrypted_bootstrap_round_trip_and_cached_restart() {
         round_trip_and_restart(MatvecConfig::default());
     }
@@ -916,6 +918,7 @@ mod tests {
         );
     }
 
+    #[cfg(any(feature = "full-tests", feature = "cuda"))]
     fn round_trip_and_restart(backend: MatvecConfig) {
         let dir = tempfile::tempdir().unwrap();
         let coverage = Lifecycle::default()
@@ -1075,6 +1078,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "full-tests")]
     fn partial_preparation_failure_preserves_published_and_retries() {
         partial_preparation_failure(MatvecConfig::default());
     }
@@ -1089,6 +1093,7 @@ mod tests {
         });
     }
 
+    #[cfg(any(feature = "full-tests", feature = "cuda"))]
     fn partial_preparation_failure(backend: MatvecConfig) {
         use crate::matvec::testing::{scoped, Faults};
         use std::sync::atomic::Ordering::SeqCst;
@@ -1187,6 +1192,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "full-tests")]
     fn unequal_units_match_monolithic_preprocessing_and_evaluation() {
         let directory = tempfile::tempdir().unwrap();
         let coverage = Lifecycle::default()
@@ -1249,6 +1255,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "full-tests")]
     fn tail_domain_reuses_b_units_and_decodes_b_at_unchanged_coordinates() {
         #[cfg(not(feature = "native-reinspiring"))]
         use ipir_sp::modulus_switch::recover_published_c1;

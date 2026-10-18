@@ -1917,6 +1917,7 @@ mod tests {
         Json(serde_json::json!({"id":request["id"],"result":result,"error":null}))
     }
     #[tokio::test(flavor = "multi_thread")]
+    #[cfg(feature = "full-tests")]
     async fn rpc_follow_publishes_empty_blocks_and_recovers_a_sealed_reorg() {
         use std::os::unix::fs::PermissionsExt;
         let root = tempfile::tempdir().unwrap();
@@ -2235,6 +2236,7 @@ print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('re
     /// fleet's prepare request; the next candidate links the unchanged ones
     /// from the active publication and builds only what changed.
     #[tokio::test(flavor = "multi_thread")]
+    #[cfg(feature = "full-tests")]
     async fn shipped_runtimes_are_prepared_linked_and_offered_with_the_candidate() {
         shipped_runtime_scenario(false).await;
     }
