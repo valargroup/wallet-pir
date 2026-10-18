@@ -53,7 +53,9 @@ builds are measured separately. These are targets, not established guarantees.
 
 The checked-in [test matrix](../tools/ci/test-matrix.json) assigns every enabled
 family target exactly once: seven Transparent jobs, eight Enhance jobs and two
-Receiver jobs. Receiver lint runs separately. Whole test executables retain their
+Receiver jobs. Receiver lint runs separately. Hosted test shards and lint start after selection,
+alongside helper checks. The final completion and artifact publication gates still
+require every selected helper check to pass. Whole test executables retain their
 fixture reuse and existing thread limits. Reference arithmetic and CUDA checks
 have separate feature/cache partitions; deployment builds remain on the dedicated
 build runner. Example builds, doctests, binary tests and the standalone sizing
@@ -172,7 +174,10 @@ main revision captured by dispatch; newer pushes do not cancel manual runs.
 
 Receiver, Transparent, Enhance/Status and the operations package qualify
 independently, using the existing full family suites, shared tests and helper
-checks. Common helper, shared-library and infrastructure checks run once per qualification, before service-specific native work. Helpers run on hosted runners to reserve the fast queue for main. Operations archives
+checks. Common helper, shared-library and infrastructure checks run once per qualification,
+alongside service-specific native work. Full completion still requires every
+selected helper, shared and infrastructure check. Helpers run on hosted runners
+to reserve the fast queue for main. Operations archives
 assemble on hosted runners without Rust. Full tests and lint run on separate
 Ubuntu 24.04 hosted runners; CPU release builds use the dedicated build runner.
 CPU and Ubuntu 22.04 CUDA candidate builds start alongside family testing;

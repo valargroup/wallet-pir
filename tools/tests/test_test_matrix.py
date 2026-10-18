@@ -6,6 +6,8 @@ from pathlib import Path
 import re
 import sys
 import tempfile
+import subprocess
+import textwrap
 import unittest
 from unittest.mock import patch
 
@@ -217,6 +219,34 @@ class WorkflowTests(unittest.TestCase):
                 self.assertIn(f"needs.{gate}.result == 'success'", publish)
             self.assertIn('!cancelled()', publish)
             self.assertIn('qualify-artifacts', publish)
+
+    def test_hosted_checks_overlap_helpers_but_failed_helpers_block_completion(self):
+        text = (ROOT / '.github/workflows/ci-full.yml').read_text()
+        for name in ('test-shards', 'transparent-lint', 'enhance-lint',
+                     'shared-test', 'receiver-lint'):
+            job = self.job(text, name)
+            self.assertIn('    needs: select\n', job, name)
+            self.assertNotIn('needs.validate-ops', job, name)
+            self.assertIn('!cancelled()', job, name)
+
+        complete = self.job(text, 'complete')
+        needs = next(line for line in complete.splitlines() if line.strip().startswith('needs:'))
+        self.assertIn('validate-ops', needs)
+        code = textwrap.dedent(complete.split("python3 - <<'PYCHECK'\n", 1)[1].split('          PYCHECK', 1)[0])
+        outputs = dict.fromkeys(('transparent', 'enhance', 'receiver', 'shared',
+                                 'ops', 'enhance_infra', 'transparent_infra'), 'true')
+        checks = ('transparent-lint', 'transparent-test', 'enhance-lint', 'enhance-test',
+                  'shared-test', 'receiver-test', 'validate-ops', 'validate-enhance-infra',
+                  'validate-transparent-elastic-infra')
+        results = {name: {'result': 'success'} for name in checks}
+        results['select'] = {'result': 'success', 'outputs': outputs}
+        for outcome in ('success', 'failure', 'skipped', 'cancelled'):
+            results['validate-ops']['result'] = outcome
+            result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True,
+                                    env={**os.environ, 'RESULTS': json.dumps(results)})
+            self.assertEqual(result.returncode == 0, outcome == 'success', result.stderr)
+            if outcome != 'success':
+                self.assertIn('validate-ops', result.stderr)
 
     def test_aggregate_checks_receipts_and_matrix_failures_cannot_hide(self):
         text = (ROOT / '.github/workflows/ci-full.yml').read_text()

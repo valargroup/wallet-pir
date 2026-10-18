@@ -87,8 +87,8 @@ jobs:
 
   test-shards:
     name: Qualification / ${{ matrix.shard }}
-    needs: [select, validate-ops]
-    if: ${{ !cancelled() && needs.select.result == 'success' && needs.select.outputs.test_count != '0' && (needs.validate-ops.result == 'success' || needs.validate-ops.result == 'skipped') }}
+    needs: select
+    if: ${{ !cancelled() && needs.select.result == 'success' && needs.select.outputs.test_count != '0' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
@@ -116,8 +116,8 @@ jobs:
         run: umask 022 && python3 tools/ci/cargo_cache.py report
 
   transparent-lint:
-    needs: [select, validate-ops]
-    if: ${{ !cancelled() && needs.select.result == 'success' && (needs.validate-ops.result == 'success' || needs.validate-ops.result == 'skipped') && needs.select.outputs.transparent == 'true' }}
+    needs: select
+    if: ${{ !cancelled() && needs.select.result == 'success' && needs.select.outputs.transparent == 'true' }}
     name: Transparent lint
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -317,8 +317,8 @@ jobs:
           refuses "second ExecStart"
 
   enhance-lint:
-    needs: [select, validate-ops]
-    if: ${{ !cancelled() && needs.select.result == 'success' && (needs.validate-ops.result == 'success' || needs.validate-ops.result == 'skipped') && needs.select.outputs.enhance == 'true' }}
+    needs: select
+    if: ${{ !cancelled() && needs.select.result == 'success' && needs.select.outputs.enhance == 'true' }}
     name: Enhance lint
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -357,8 +357,8 @@ jobs:
 
   shared-test:
     name: Shared lint and tests
-    needs: [select, validate-ops]
-    if: ${{ !cancelled() && needs.select.result == 'success' && (needs.validate-ops.result == 'success' || needs.validate-ops.result == 'skipped') && needs.select.outputs.shared == 'true' }}
+    needs: select
+    if: ${{ !cancelled() && needs.select.result == 'success' && needs.select.outputs.shared == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
@@ -380,8 +380,8 @@ jobs:
 
   receiver-lint:
     name: Receiver lint
-    needs: [select, validate-ops]
-    if: ${{ !cancelled() && needs.select.result == 'success' && needs.select.outputs.receiver == 'true' && (needs.validate-ops.result == 'success' || needs.validate-ops.result == 'skipped') }}
+    needs: select
+    if: ${{ !cancelled() && needs.select.result == 'success' && needs.select.outputs.receiver == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
