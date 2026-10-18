@@ -497,9 +497,12 @@ original raw captures. The final tool retains those exact response bytes directl
 The original journal checkpoint before its first append was not separately
 captured; original immutable publication bytes and event/block prefixes remain.
 Later lifecycle runs retain journal before-images. Setup/control failures remain
-retained separately and do not count as passing campaigns. The final driver
+retained separately and do not count as passing campaigns. Historical driver
+SHA256 `2194fcab6f2bf8d20c8ae94d3b835a40fdc0b9ecc48f1828f0d91344ae53b64f`
 also completed one real-controller integration control at revision 12, retaining
-exact metadata bodies; that control is not another 10-consumer wave.
+exact metadata bodies; that control is not another 10-consumer wave. The current
+corrected driver has only transport controls so far, with no real-controller
+campaign replay.
 
 The related continuity diagnostic initially assigned the sealed 32k shard 0
 locally, then moved only its ownership to the archive while the 2k tail advanced.

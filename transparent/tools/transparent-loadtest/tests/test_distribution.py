@@ -259,6 +259,65 @@ class DistributionTests(unittest.TestCase):
         self.assertEqual(receipt["bytes"], len(body))
         self.assertEqual((consumer.root / receipt["body_path"]).read_bytes(), body)
 
+    def test_non_ascii_or_empty_content_length_rejects_exact_artifact_at_eof(self):
+        consumer = self.consumer("bootstrap")
+        consumer.args.attempts = 1
+        body = b"exact artifact"
+        length = [""]
+        def malformed(handler):
+            handler.send_response(200)
+            handler.send_header("Content-Length", length[0])
+            handler.end_headers()
+            handler.wfile.write(body)
+        self.server.RequestHandlerClass.do_GET = malformed
+        for index, value in enumerate((chr(178), "", "1" + chr(178))):
+            with self.subTest(length=value):
+                length[0] = value
+                target = consumer.objects / f"malformed-{index}"
+                with self.assertRaisesRegex(ValueError, "ambiguous HTTP framing"):
+                    consumer.request("artifacts/" + hashlib.sha256(body).hexdigest(), len(body), target=target)
+                self.assertFalse(target.exists())
+        receipts = self.assert_retained_receipts(consumer)
+        self.assertEqual(len(receipts), 3)
+        self.assertTrue(all(r["status"] == 200 and r["bytes"] == 0 and
+                            "ambiguous HTTP framing" in r["error"] for r in receipts))
+
+    def test_non_ascii_content_length_cannot_complete_full_bootstrap(self):
+        original = self.server.RequestHandlerClass.send_header
+        def malformed(handler, name, value):
+            if name == "Content-Length" and "/artifacts/" in handler.path:
+                value = chr(178)
+            original(handler, name, value)
+        self.server.RequestHandlerClass.send_header = malformed
+        consumer = self.consumer("bootstrap")
+        result = consumer.run()
+        self.assertFalse(result["complete"], result)
+        self.assertIn("ambiguous HTTP framing", result["error"])
+        self.assertEqual(result["requests"], 3)
+        self.assertEqual(result["failed_attempts"], 1)
+        self.assertFalse((consumer.root / "current.json").exists())
+        self.assertFalse(list(consumer.objects.iterdir()))
+        receipts = self.assert_retained_receipts(consumer)
+        self.assertEqual(receipts[-1]["status"], 200)
+        self.assertEqual(receipts[-1]["bytes"], 0)
+        self.assertEqual(json.loads((consumer.root / "bootstrap.result.json").read_text()), result)
+
+    def test_close_delimited_without_content_length_completes_full_bootstrap(self):
+        original = self.server.RequestHandlerClass.send_header
+        def close_delimited(handler, name, value):
+            if name != "Content-Length":
+                original(handler, name, value)
+        self.server.RequestHandlerClass.send_header = close_delimited
+        consumer = self.consumer("bootstrap")
+        result = consumer.run()
+        self.assertTrue(result["complete"], result)
+        self.assertEqual(result["requests"], 9)
+        self.assertEqual(result["failed_attempts"], 0)
+        self.assertTrue((consumer.root / "current.json").exists())
+        self.assertEqual(len(list(consumer.objects.iterdir())), 5)
+        self.assert_retained_receipts(consumer)
+        self.assertNotIn(distribution.PREFIX + "artifacts/" + self.archive_digest, self.paths)
+
     def test_chunked_completion_requires_terminal_chunk_and_trailer(self):
         consumer = self.consumer("bootstrap")
         consumer.args.attempts = 1

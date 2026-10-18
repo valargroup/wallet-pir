@@ -374,7 +374,10 @@ class Consumer:
                         raise ValueError("oversized ETag")
                     record["etag"] = received_etag
                     lengths = response.headers.get_all("Content-Length", [])
-                    if lengths and (len(lengths) != 1 or not lengths[0].isdigit() or response.chunked):
+                    # HTTP field values are Latin-1 strings here. Unicode digit
+                    # predicates accept values (e.g. superscript two) that the
+                    # HTTP parser cannot interpret as a length and treats as EOF.
+                    if lengths and (len(lengths) != 1 or not re.fullmatch(r"[0-9]+", lengths[0]) or response.chunked):
                         raise ValueError("ambiguous HTTP framing")
                     encoding = response.getheader("Transfer-Encoding")
                     if encoding and encoding.lower() != "chunked":
