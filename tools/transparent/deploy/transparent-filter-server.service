@@ -27,7 +27,7 @@ Type=simple
 # is a startup failure -- inside the Enhance coordinated rollout, which will
 # roll the whole thing back. Repoint this in the same change that ships a
 # binary of the new schema, never after it.
-ExecStart=/usr/local/bin/transparent-filter-server --listen 127.0.0.1:8090 --zakura-rpc-url http://127.0.0.1:8232 --zakura-cookie /root/.cache/zakura/.cookie --data-dir /srv/zakura/transparent-filter-data --start-height 3428143 --shard-dir /srv/zakura/transparent-shards-v7
+ExecStart=/usr/local/bin/transparent-publisher --listen 127.0.0.1:8090 --zakura-rpc-url http://127.0.0.1:8232 --zakura-cookie /root/.cache/zakura/.cookie --data-dir /srv/zakura/transparent-filter-data --start-height 3428143 --shard-dir /srv/zakura/transparent-shards-v7
 Restart=on-failure
 RestartSec=10
 User=root

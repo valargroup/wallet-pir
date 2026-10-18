@@ -47,9 +47,9 @@ class MatrixTests(unittest.TestCase):
             elif change == 'duplicate': shard.append(shard[0])
             elif change == 'stale': shard[0] += '-removed'
             else:
-                target = copy.deepcopy(discovered['transparent-shard-server']['targets'][-1])
+                target = copy.deepcopy(discovered['transparent-query-server']['targets'][-1])
                 target['name'] = 'new_wallet_boundary'
-                discovered['transparent-shard-server']['targets'].append(target)
+                discovered['transparent-query-server']['targets'].append(target)
             with self.subTest(change=change), self.assertRaises(ValueError):
                 matrix.load_plan(selected, discovered)
 
@@ -79,16 +79,19 @@ class MatrixTests(unittest.TestCase):
         registry, contexts, targets, packages, _ = self.plan
         keys = registry['transparent-publisher']['targets']
         commands = matrix.cargo_commands(keys, contexts, targets, packages)
-        for binary in ('transparent-event-ingest', 'shard-cutoff',
-                       'journal-inventory', 'compact-export'):
-            key = f'transparent:transparent-filter-server:bin:{binary}'
+        for package, binary, feature in (
+                ('transparent-publisher', 'transparent-event-ingest', 'transparent-publisher/rocksdb-reader'),
+                ('transparent-publisher', 'shard-cutoff', 'transparent-publisher/rocksdb-reader'),
+                ('transparent-publisher', 'journal-inventory', 'transparent-publisher/rocksdb-reader'),
+                ('transparent-tools', 'compact-export', 'transparent-tools/compact-export')):
+            key = f'transparent:{package}:bin:{binary}'
             self.assertIn(key, keys)
             selected = [command for _, _, covered, command in commands
                         if any(target['target'] == binary for target in covered)]
             self.assertTrue(selected, binary)
             for command in selected:
                 features = command[command.index('--features') + 1].split(',')
-                self.assertIn('transparent-filter-server/rocksdb-reader', features)
+                self.assertIn(feature, features)
 
     def receipts(self, family):
         registry, _, _, _, digest = self.plan
@@ -129,7 +132,7 @@ class MatrixTests(unittest.TestCase):
                                    {'GITHUB_RUN_ID': '123', 'GITHUB_RUN_ATTEMPT': '2'})
 
     def test_qualification_rejects_a_bounded_executable_in_place_of_full_fixtures(self):
-        package = copy.deepcopy(self.plan[3]['transparent-server-backend'])
+        package = copy.deepcopy(self.plan[3]['transparent-shared'])
         artifact = dict(package_id=package['id'],
                         target=dict(name='transparent_server_backend', kind=['lib']),
                         executable='/not-executed', features=[])

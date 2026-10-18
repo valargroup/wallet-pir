@@ -177,7 +177,7 @@ class PlannerTests(unittest.TestCase):
         groups = full.inventory()
         for group in groups:
             self.assertIn('--group ' + group, workflow)
-        for name in ['pir-control', 'pir-observability', 'pir-monitor', 'transparent-blocks']:
+        for name in ['pir-control', 'pir-observability', 'pir-monitor', 'transparent-shared']:
             command = next(command for group in groups for command in full.commands(group, groups) if '-p' in command and name in command)
             self.assertIn('tools/ci/full-test.sh', command)
         self.assertIn('needs: [complete, build-cuda]', workflow)
@@ -192,7 +192,7 @@ class PlannerTests(unittest.TestCase):
             full.inventory(self.packages, groups)
 
     def test_explicit_slow_unit_filter_runs_without_skipping(self):
-        package = 'transparent-filter-server'
+        package = 'transparent-publisher'
         selected = 'publication::tests::block_by_block_publication_equals_a_fresh_build'
         listing = selected + ': test\n'
         metadata = {'packages': [{'name': package, 'targets': [{'kind': ['lib']}]}]}
@@ -256,7 +256,7 @@ class PlannerTests(unittest.TestCase):
             started.set()
 
         paths = ['tools/tests/operations/deploy/test_ops_package.py',
-                 'src/transparent/transparent-filter-server/src/lib.rs']
+                 'src/transparent/transparent-publisher/src/lib.rs']
         with patch.object(sys, 'argv', ['fast.py', '--base', 'HEAD', '--committed-only']), \
                 patch.object(fast, 'changed_paths', return_value=paths), \
                 patch('hygiene.check', return_value=0), \

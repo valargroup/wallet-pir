@@ -21,7 +21,7 @@ BINARIES = {
     # protocol and come from a separate target directory.
     'enhance-pir-native': ['enhance-pir-server', 'enhance-pir-cli', 'enhance-pir-load-test'],
     'enhance-pir-native-cuda': ['enhance-pir-server', 'enhance-pir-cli', 'enhance-pir-load-test'],
-    'transparent-filter': ['transparent-filter-server'],
+    'transparent-filter': ['transparent-publisher'],
     'transparent-shard': ['transparent-query-server', 'shard-assign', 'shard-prune'],
     'transparent-publisher': ['transparent-publish-controller', 'transparent-query-server', 'shard-control', 'shard-assign'],
     # Tiered txid display proof of concept beside history; deployed only by

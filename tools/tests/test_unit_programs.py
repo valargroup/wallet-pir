@@ -78,8 +78,8 @@ class ProgramTests(unittest.TestCase):
         programs = [dict(executable='/deps/' + name, directory='/p', package=package,
                          version='1', args=[], integration=integration)
                     for name, package, integration in [
-                        ('publisher', 'transparent-filter-server', False),
-                        ('http', 'transparent-filter-server', True),
+                        ('publisher', 'transparent-publisher', False),
+                        ('http', 'transparent-publisher', True),
                         ('other', 'other', False)]]
         for cpus, configured, expected in [(2, None, '2'), (4, None, '4'),
                                             (16, None, '4'), (4, '1', '1')]:

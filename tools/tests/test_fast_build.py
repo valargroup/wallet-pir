@@ -92,7 +92,7 @@ class FastBuildTests(unittest.TestCase):
         distribution = {f'controller::distribution_tests::manager_tests::case_{index}'
                         for index in range(40)}
         names = distribution | {f'other::case_{index}' for index in range(102)}
-        program = dict(package='transparent-filter-server', integration=False,
+        program = dict(package='transparent-publisher', integration=False,
                        exclusive=False, args=[], case_count=len(names))
         shards = fast_build.bounded_programs(program, names)
         self.assertEqual(len(shards), 3)
@@ -142,9 +142,9 @@ class FastBuildTests(unittest.TestCase):
         baseline = {p['executable']: p for p in self.plans[0]}
         self.calls.clear()
         self.plans.clear()
-        self.packages[0]['name'] = 'transparent-filter-server'
-        self.registry['transparent-filter-server'] = self.registry.pop('a')
-        self.slow['transparent-filter-server'] = self.slow.pop('a')
+        self.packages[0]['name'] = 'transparent-publisher'
+        self.registry['transparent-publisher'] = self.registry.pop('a')
+        self.slow['transparent-publisher'] = self.slow.pop('a')
         self.execute()
         plan = {p['executable']: p for p in self.plans[0]}
         self.assertEqual(set(plan), set(baseline))
@@ -293,7 +293,7 @@ class PublisherCampaignTierTests(unittest.TestCase):
         from full_packages import commands, inventory
         full = commands('transparent', inventory())
         self.assertFalse(any('--skip' in command for command in full))
-        self.assertIn('transparent-filter-server', full[-1])
+        self.assertIn('transparent-publisher', full[-1])
         features = full[-1][full[-1].index('--features') + 1].split(',')
-        self.assertIn('transparent-filter-server/qualification-tests', features)
-        self.assertIn('transparent-server-backend/qualification-tests', features)
+        self.assertIn('transparent-publisher/qualification-tests', features)
+        self.assertIn('transparent-shared/qualification-tests', features)
