@@ -1217,10 +1217,33 @@ mod tests {
     #[test]
     fn unequal_units_match_monolithic_preprocessing_and_evaluation() {
         let directory = tempfile::tempdir().unwrap();
-        let coverage = Lifecycle::default()
-            .coverage(8192 * 33 + 17, Geometry::default())
-            .unwrap();
-        let shard = coverage.shards[0].clone();
+        let geometry = Geometry::default();
+        let (shard, monolithic_rows, expected_units, targets) =
+            if cfg!(feature = "qualification-tests") {
+                let coverage = Lifecycle::default()
+                    .coverage(8192 * RECORDS_PER_ROW as u64 + 17, geometry)
+                    .unwrap();
+                (
+                    coverage.shards[0].clone(),
+                    16384,
+                    [8192, 2048],
+                    vec![0, 8191, 8192, 10239, 16383],
+                )
+            } else {
+                let coverage = Lifecycle::default()
+                    .coverage(
+                        geometry.max_shard_rows * RECORDS_PER_ROW as u64 + 17,
+                        geometry,
+                    )
+                    .unwrap();
+                // A real composed tail has unequal units and a zero-filled gap.
+                (
+                    coverage.shards[1].clone(),
+                    8192,
+                    [2048, 4096],
+                    vec![0, 2047, 2048, 4095, 4096, 8191],
+                )
+            };
         let domain = plan(shard.clone(), records).unwrap();
         assert_eq!(
             domain
@@ -1228,19 +1251,36 @@ mod tests {
                 .iter()
                 .map(|u| u.allocated_rows)
                 .collect::<Vec<_>>(),
-            [8192, 2048]
+            expected_units
         );
         let mut engine = Engine::new(directory.path());
         let evaluation = engine.prepare(domain, records).unwrap().0;
         assert!(evaluation.verified_hint_artifact().unwrap().is_none());
-        let mut rows = records(0, shard.records as usize).unwrap();
-        rows.resize(16384 * ENHANCE_LAYOUT.row_bytes(), 0);
+        // Assemble the whole table independently of unit_rows: B's own records
+        // start at local zero, and a composed tail appends A's final 4K rows.
+        let row_bytes = ENHANCE_LAYOUT.row_bytes();
+        let mut rows = vec![0; monolithic_rows * row_bytes];
+        let own = records(
+            shard.global_row_start * RECORDS_PER_ROW as u64,
+            shard.records as usize,
+        )
+        .unwrap();
+        rows[..own.len()].copy_from_slice(&own);
+        if shard.composed() {
+            let suffix = records(
+                (shard.global_row_start - geometry.min_shard_rows) * RECORDS_PER_ROW as u64,
+                (geometry.min_shard_rows * RECORDS_PER_ROW as u64) as usize,
+            )
+            .unwrap();
+            let at = geometry.min_shard_rows as usize * row_bytes;
+            rows[at..at + suffix.len()].copy_from_slice(&suffix);
+        }
         // Native masks are expanded once at full size for every logical size.
         #[cfg(feature = "native-reinspiring")]
         let setup = enhance_pir::native::query_masks(shard.id);
         #[cfg(not(feature = "native-reinspiring"))]
         let setup = {
-            let params = parameters(16384).unwrap();
+            let params = parameters(monolithic_rows as u64).unwrap();
             let client = ipir_sp::IPIRClient::from_profile(
                 params.num_items,
                 params.item_size_bits,
@@ -1254,7 +1294,7 @@ mod tests {
         };
         let monolithic = PreparedShard::build(
             &DatabaseLayout {
-                shard_rows: 16384,
+                shard_rows: monolithic_rows,
                 ..ENHANCE_LAYOUT
             },
             shard.id,
@@ -1266,8 +1306,8 @@ mod tests {
         )
         .unwrap();
         assert_eq!(evaluation.hint().unwrap(), monolithic.crs_blocks().to_vec());
-        for target in [0, 8191, 8192, 10239, 16383] {
-            let mut query = vec![0; 16384];
+        for target in targets {
+            let mut query = vec![0; monolithic_rows];
             query[target] = modulus() - 1;
             assert_eq!(
                 evaluation.evaluate(&query).unwrap(),
