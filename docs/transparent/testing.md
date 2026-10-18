@@ -193,7 +193,7 @@ the previous anchor and cutoff and refuses unless it matches the frozen file.
 
 ```sh
 python3 tools/transparent/scripts/recut-regression-cases.py \
-  --previous-cases src/transparent/transparent-regression/fixtures/mainnet-cases.json \
+  --previous-cases tools/transparent/fixtures/regression/mainnet-cases.json \
   --self-check --cutoff-json /path/to/publication/cutoff.json \
   --out cases-next.json
 ```
@@ -208,7 +208,7 @@ fixture it replaces before freezing:
 
 ```sh
 python3 tools/transparent/scripts/compare-regression-fixtures.py \
-  --previous src/transparent/transparent-regression/fixtures/mainnet.json \
+  --previous tools/transparent/fixtures/regression/mainnet.json \
   --next fixture-next.json --out compare.json
 ```
 
@@ -259,7 +259,7 @@ new fixture against the re-cut publication rather than relaxing the pin.
 
 ## Local conformance checks
 
-The [accepted-anchor HTTP tests](../../src/transparent/transparent-shard-server/tests/wallet_anchor.rs)
+The [accepted-anchor HTTP tests](../../src/transparent/transparent-query-server/tests/wallet_anchor.rs)
 cover arbitrary endpoints, overlap, restart, bounded pagination, changed targets,
 future-only discovery, and rollback within a shard. The existing wallet HTTP
 suites retain geometry, segment, revision, malformed-response and overload
@@ -269,7 +269,7 @@ crate tests the oracle independently.
 
 ```sh
 cargo test -p transparent-blocks --test recovery
-cargo test -p transparent-shard-server --test wallet_anchor \
+cargo test -p transparent-query-server --test wallet_anchor \
   --test wallet_continuation --test wallet_recut --test wallet_sync
 cargo test -p transparent-regression
 ```
@@ -299,7 +299,7 @@ hash as well as a height; it never puts a shard-end hash on a clipped range.
 
 ## Concurrent recovery simulation
 
-The [scenario runner](../../src/transparent/transparent-loadtest/README.md) runs saved
+The [scenario runner](../../tools/transparent/loadtest/README.md) runs saved
 20-user mixed recovery waves and sustained concurrent load through the reference
 HTTP adapters, with independent SQLite stores, hard per-recovery deadlines, exact
 event verification, and saved HTML/JSON reports with worker APM and per-wallet
