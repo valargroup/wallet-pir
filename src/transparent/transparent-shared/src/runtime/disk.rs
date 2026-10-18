@@ -26,6 +26,11 @@
 //! by `prepared_native::read`, and the masks it publishes must equal the stored
 //! bytes — so a restored runtime cannot publish masks its preprocessing does
 //! not answer under.
+#[cfg(test)]
+use zakura_pir_client::transparent::native::TableClientExt as _;
+
+use zakura_pir_protocol::transparent::shard as transparent_shard;
+
 use super::{RuntimeKey, SharedParams, TableRuntime};
 use sha2::{Digest, Sha256};
 use std::fs::{self, File, OpenOptions};

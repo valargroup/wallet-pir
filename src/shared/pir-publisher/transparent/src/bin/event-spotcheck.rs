@@ -19,6 +19,9 @@
 //! blocks, so the early chain, the recent chain and spend-heavy blocks are all
 //! represented. Explicit heights can be added.
 
+use zakura_pir_protocol::transparent::events as transparent_events;
+use zakura_pir_publisher::transparent::filter as transparent_filter;
+
 use clap::Parser;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::PathBuf;
@@ -121,7 +124,9 @@ fn metadata_line(event: &TransparentEvent) -> Option<(String, u32, bool)> {
     event.metadata().map(|m| {
         (
             match m.fee {
-                transparent_events::FeeState::Exact(fee) => format!("exact:{fee}"),
+                transparent_events::FeeState::Exact(fee) => {
+                    format!("exact:{fee}")
+                }
                 transparent_events::FeeState::Unknown => "unknown".into(),
                 transparent_events::FeeState::NotApplicable => "not-applicable".into(),
             },

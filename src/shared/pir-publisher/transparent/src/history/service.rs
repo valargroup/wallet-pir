@@ -1,5 +1,7 @@
 //! Shared service state and the HTTP surface.
 
+use zakura_pir_publisher::transparent::filter as transparent_filter;
+
 use crate::ingest::store::{FilterStore, StoreError};
 use axum::extract::{Query, State};
 use axum::http::StatusCode;

@@ -48,6 +48,12 @@
 //! the accounting for a runtime a request is still evaluating against would
 //! free budget that is not free.
 
+#[cfg(test)]
+use zakura_pir_client::transparent::native::TableClientExt as _;
+
+use zakura_pir_protocol::transparent::shard as transparent_shard;
+use zakura_pir_query_server::transparent::native as transparent_native;
+
 pub mod disk;
 pub(crate) mod filecache;
 pub mod memory;
@@ -71,6 +77,9 @@ use transparent_native::{
     self as native, NativeKeys, NativePreprocessed, NativeScheme, Profile, TableProfile,
 };
 use transparent_shard::layout::Geometry;
+use zakura_pir_query_server::transparent::native::TableQueryExt as _;
+use zakura_pir_server_core::batched_hint;
+use zakura_pir_server_core::native::{preprocess, publish, ProfilePublicationExt as _};
 
 const _: () = assert!(transparent_shard::manifest::QUERY_ROW_QUANTUM as usize == native::D);
 
@@ -563,16 +572,19 @@ impl TableRuntime {
             // The batched hint computes the reference's exact integers several
             // times faster.
             let used = used_blocks(rows, profile.row_bytes, profile.rows);
-            native::batched_hint::hint(
+            batched_hint::hint(
                 &profile.masks[..used],
                 used * native::D,
                 profile.cols,
                 |col| &db[col * padded..col * padded + used * native::D],
             )?
         } else {
-            native::hint(&profile.masks, profile.rows, profile.cols, |col| {
-                &db[col * padded..col * padded + profile.rows]
-            })?
+            zakura_pir_server_core::native::hint(
+                &profile.masks,
+                profile.rows,
+                profile.cols,
+                |col| &db[col * padded..col * padded + profile.rows],
+            )?
         };
         tracing::debug!(
             geometry = shared.geometry.name,
@@ -582,7 +594,7 @@ impl TableRuntime {
             "construction stage"
         );
         phase = std::time::Instant::now();
-        let preprocessed = native::preprocess(&profile.setup, &hint)?;
+        let preprocessed = zakura_pir_server_core::native::preprocess(&profile.setup, &hint)?;
         drop(hint);
         tracing::debug!(
             geometry = shared.geometry.name,
@@ -603,18 +615,18 @@ impl TableRuntime {
         let mut db = column_major_bytes(rows, row_count, profile.row_bytes);
         let hint = if uses_batched_hint(shared.geometry) {
             let used = used_blocks(rows, profile.row_bytes, row_count);
-            native::batched_hint::hint(
+            batched_hint::hint(
                 &profile.masks[..used],
                 used * native::D,
                 profile.cols,
                 |col| &db[col * row_count..col * row_count + used * native::D],
             )?
         } else {
-            native::hint(&profile.masks, row_count, profile.cols, |col| {
+            zakura_pir_server_core::native::hint(&profile.masks, row_count, profile.cols, |col| {
                 &db[col * row_count..(col + 1) * row_count]
             })?
         };
-        let preprocessed = native::preprocess(&profile.setup, &hint)?;
+        let preprocessed = zakura_pir_server_core::native::preprocess(&profile.setup, &hint)?;
         drop(hint);
         interleave(&mut db, row_count);
         Self::assemble(profile.native, Database::Bytes(db), preprocessed)
@@ -1532,7 +1544,9 @@ pub(crate) mod tests {
                         .collect()
                 })
                 .collect();
-            native::hint(&profile.masks, profile.rows, profile.cols, |c| &columns[c])
+            zakura_pir_server_core::native::hint(&profile.masks, profile.rows, profile.cols, |c| {
+                &columns[c]
+            })
         } else {
             let columns: Vec<Vec<u16>> = (0..profile.cols)
                 .map(|col| {
@@ -1541,12 +1555,14 @@ pub(crate) mod tests {
                         .collect()
                 })
                 .collect();
-            native::hint(&profile.masks, profile.rows, profile.cols, |c| &columns[c])
+            zakura_pir_server_core::native::hint(&profile.masks, profile.rows, profile.cols, |c| {
+                &columns[c]
+            })
         }
         .unwrap();
         profile
             .native
-            .publish(&native::preprocess(&profile.setup, &hint).unwrap())
+            .publish(&zakura_pir_server_core::native::preprocess(&profile.setup, &hint).unwrap())
             .unwrap()
     }
 
@@ -1996,20 +2012,28 @@ pub(crate) mod tests {
                     false,
                 );
                 let (padded, db) = (server.db_rows_padded(), server.db());
-                let hint = native::hint(&profile.masks, profile.rows, profile.cols, |c| {
-                    &db[c * padded..c * padded + profile.rows]
-                })
+                let hint = zakura_pir_server_core::native::hint(
+                    &profile.masks,
+                    profile.rows,
+                    profile.cols,
+                    |c| &db[c * padded..c * padded + profile.rows],
+                )
                 .unwrap();
-                let preprocessed = native::preprocess(&profile.setup, &hint).unwrap();
+                let preprocessed =
+                    zakura_pir_server_core::native::preprocess(&profile.setup, &hint).unwrap();
                 TableRuntime::assemble(profile.native, Database::Wide(server), preprocessed)
                     .unwrap()
             } else {
                 let mut db = column_major_bytes(&rows, profile.rows, profile.row_bytes);
-                let hint = native::hint(&profile.masks, profile.rows, profile.cols, |c| {
-                    &db[c * profile.rows..(c + 1) * profile.rows]
-                })
+                let hint = zakura_pir_server_core::native::hint(
+                    &profile.masks,
+                    profile.rows,
+                    profile.cols,
+                    |c| &db[c * profile.rows..(c + 1) * profile.rows],
+                )
                 .unwrap();
-                let preprocessed = native::preprocess(&profile.setup, &hint).unwrap();
+                let preprocessed =
+                    zakura_pir_server_core::native::preprocess(&profile.setup, &hint).unwrap();
                 interleave(&mut db, profile.rows);
                 TableRuntime::assemble(profile.native, Database::Bytes(db), preprocessed).unwrap()
             };
@@ -2064,8 +2088,8 @@ pub(crate) mod tests {
             for table in tables {
                 let shared = SharedParams::build(geometry, table).unwrap();
                 assert_eq!(
-                    native::batched_hint::path(&shared.profile.masks).unwrap(),
-                    native::batched_hint::Path::Batched,
+                    batched_hint::path(&shared.profile.masks).unwrap(),
+                    batched_hint::Path::Batched,
                     "{} {table:?}",
                     geometry.name
                 );

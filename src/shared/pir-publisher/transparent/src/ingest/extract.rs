@@ -20,6 +20,10 @@
 //! output and spent-output scripts with its exact fee, and fails the block on an
 //! output it cannot resolve. This module applies the rules above to what it read.
 
+use zakura_pir_protocol::transparent::events as transparent_events;
+use zakura_pir_publisher::transparent as transparent_shard;
+use zakura_pir_publisher::transparent::filter as transparent_filter;
+
 use transparent_events::{
     FeeState, ReceiveEvent, SpendEvent, TransactionMetadata, TransparentEvent, Txid,
 };

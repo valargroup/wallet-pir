@@ -8,6 +8,8 @@
 //! count equals the count the sample recorded. Equal counts over the same
 //! scripts and ranges are what show that only the encoding moved.
 
+use zakura_pir_protocol::transparent::events as transparent_events;
+
 use clap::Parser;
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};

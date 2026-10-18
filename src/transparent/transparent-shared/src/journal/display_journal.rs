@@ -7,6 +7,10 @@
 //! Published v2 entries are derived from it when read, so changing what an
 //! entry holds is a republish rather than a new ingest. Earlier v1 sidecars
 //! are read only for the oversized history events they carry.
+use zakura_pir_protocol::transparent::events as transparent_events;
+use zakura_pir_protocol::transparent::filter as transparent_filter;
+use zakura_pir_protocol::transparent::shard as transparent_shard;
+
 use super::events::EventStoreError;
 use sha2::{Digest, Sha256};
 use std::{

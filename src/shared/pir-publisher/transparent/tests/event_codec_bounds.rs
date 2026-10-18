@@ -1,5 +1,7 @@
 //! Keep the operations snapshot bounds tied to the codec compiled by normal
 //! Transparent CI, including when only the wallet-libraries pin changes.
+use zakura_pir_protocol::transparent::events as transparent_events;
+
 use std::path::Path;
 use std::process::Command;
 

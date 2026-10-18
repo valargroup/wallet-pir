@@ -3,12 +3,15 @@
 //! The default build uses the q48 SimplePIR/InspiRING profile. The
 //! `native-reinspiring` feature selects a separate native two-mask protocol
 //! with its own identifiers, setup domains and query magic.
-#[cfg(not(feature = "native-reinspiring"))]
+#[cfg(all(not(feature = "native-reinspiring"), any(test, feature = "client")))]
 use ipir_sp::{ClientSeed, IPIRClient, PublicQuerySetup, SimplePirProfile};
+#[cfg(any(test, feature = "client"))]
 use rand::{rngs::OsRng, Rng};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+#[cfg(any(test, feature = "client"))]
+use std::time::Instant;
 
 pub const ROWS: usize = 8192;
 pub const SLOTS: usize = 256;
@@ -156,14 +159,17 @@ pub fn native_packing_seed(network: &Hash, salt: &Hash) -> Hash {
 
 #[cfg(feature = "native-reinspiring")]
 pub fn native_query_masks(network: &Hash, salt: &Hash) -> Vec<Vec<u64>> {
-    pir_native::P16
+    zakura_pir_query_server::native::P16
         .public_query_masks(native_setup_seed(network, salt), ROWS, COLS)
         .unwrap()
 }
 
 #[cfg(feature = "native-reinspiring")]
 pub fn native_packing_setup(network: &Hash, salt: &Hash) -> reinspiring::native::NativeSetup {
-    reinspiring::native::NativeSetup::new(pir_native::params(), native_packing_seed(network, salt))
+    reinspiring::native::NativeSetup::new(
+        zakura_pir_query_server::native::params(),
+        native_packing_seed(network, salt),
+    )
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -330,6 +336,7 @@ pub fn decode_row(
     }
 }
 
+#[cfg(any(test, feature = "client"))]
 pub struct Query {
     pub body: Vec<u8>,
     #[cfg(not(feature = "native-reinspiring"))]
@@ -341,6 +348,7 @@ pub struct Query {
     issued_at: Instant,
 }
 
+#[cfg(any(test, feature = "client"))]
 pub struct Client {
     pub manifest: Manifest,
     #[cfg(not(feature = "native-reinspiring"))]
@@ -358,6 +366,7 @@ pub struct Client {
 }
 
 #[derive(Debug, thiserror::Error)]
+#[cfg(any(test, feature = "client"))]
 pub enum HttpError {
     #[error(transparent)]
     Transport(#[from] reqwest::Error),
@@ -369,12 +378,14 @@ pub enum HttpError {
 
 /// A wallet-owned session. The anchor callback must consult independently
 /// accepted chain state on every initialization, including a conflict retry.
+#[cfg(any(test, feature = "client"))]
 pub struct HttpClient {
     origin: String,
     http: reqwest::Client,
     session: Option<Client>,
 }
 
+#[cfg(any(test, feature = "client"))]
 impl HttpClient {
     pub fn new(origin: impl Into<String>, http: reqwest::Client) -> Self {
         Self {
@@ -476,6 +487,7 @@ impl HttpClient {
     }
 }
 
+#[cfg(any(test, feature = "client"))]
 fn successful(response: reqwest::Response) -> Result<reqwest::Response, HttpError> {
     if response.status().is_success() {
         Ok(response)
@@ -485,16 +497,19 @@ fn successful(response: reqwest::Response) -> Result<reqwest::Response, HttpErro
 }
 
 #[cfg(feature = "native-reinspiring")]
+#[cfg(any(test, feature = "client"))]
 fn expected_public_len() -> Result<usize, Error> {
-    Ok(pir_native::public_len(COLS))
+    Ok(zakura_pir_query_server::native::public_len(COLS))
 }
 
 #[cfg(feature = "native-reinspiring")]
+#[cfg(any(test, feature = "client"))]
 fn expected_response_len() -> Result<usize, Error> {
-    Ok(HEADER_BYTES + pir_native::response_len(COLS))
+    Ok(HEADER_BYTES + zakura_pir_query_server::native::response_len(COLS))
 }
 
 #[cfg(not(feature = "native-reinspiring"))]
+#[cfg(any(test, feature = "client"))]
 fn expected_public_len() -> Result<usize, Error> {
     let (rlwe, params) =
         ipir_sp::params_for_simplepir_profile(ROWS as u64, ITEM_BITS, SimplePirProfile::P16Q48)
@@ -503,6 +518,7 @@ fn expected_public_len() -> Result<usize, Error> {
 }
 
 #[cfg(not(feature = "native-reinspiring"))]
+#[cfg(any(test, feature = "client"))]
 fn expected_response_len() -> Result<usize, Error> {
     let (rlwe, params) =
         ipir_sp::params_for_simplepir_profile(ROWS as u64, ITEM_BITS, SimplePirProfile::P16Q48)
@@ -512,6 +528,7 @@ fn expected_response_len() -> Result<usize, Error> {
             * ipir_sp::modulus_switch::response_body_len(rlwe.d, params.q_prime_1))
 }
 
+#[cfg(any(test, feature = "client"))]
 async fn read_bounded(mut response: reqwest::Response, max: usize) -> Result<Vec<u8>, HttpError> {
     let mut bytes = Vec::new();
     while let Some(chunk) = response.chunk().await? {
@@ -526,6 +543,7 @@ async fn read_bounded(mut response: reqwest::Response, max: usize) -> Result<Vec
     Ok(bytes)
 }
 
+#[cfg(any(test, feature = "client"))]
 fn current_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -534,6 +552,7 @@ fn current_ms() -> u64 {
 }
 
 #[cfg(feature = "native-reinspiring")]
+#[cfg(any(test, feature = "client"))]
 impl Client {
     pub fn new(
         manifest: Manifest,
@@ -561,8 +580,9 @@ impl Client {
         self.manifest.fresh(now_ms)?;
         let issued_at = Instant::now();
         let row = bucket(&self.manifest.network, &self.manifest.salt, &txid);
-        let (secret, payload) = pir_native::prepare_with(&self.packing, &self.masks, ROWS, row)
-            .map_err(|_| Error::Pir)?;
+        let (secret, payload) =
+            zakura_pir_client::native::prepare_with(&self.packing, &self.masks, ROWS, row)
+                .map_err(|_| Error::Pir)?;
         let mut body = QUERY_MAGIC.to_vec();
         body.extend(self.manifest.id());
         body.extend(OsRng.gen::<[u8; 16]>());
@@ -586,14 +606,19 @@ impl Client {
         {
             return Err(Error::Malformed);
         }
-        let row =
-            pir_native::decode_cols(&query.secret, &self.public, &response[HEADER_BYTES..], COLS)
-                .map_err(|_| Error::Pir)?;
+        let row = zakura_pir_client::native::decode_cols(
+            &query.secret,
+            &self.public,
+            &response[HEADER_BYTES..],
+            COLS,
+        )
+        .map_err(|_| Error::Pir)?;
         decode_row(&self.manifest, &query.txid, query.earliest, &row)
     }
 }
 
 #[cfg(not(feature = "native-reinspiring"))]
+#[cfg(any(test, feature = "client"))]
 impl Client {
     pub fn new(
         manifest: Manifest,

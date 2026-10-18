@@ -83,16 +83,16 @@ tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.5", features = ["limit"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-transparent-filter = { package = "zakura-transparent-filter", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "b7fffbbc98d75af5ebc9c9d9da92ca19e9f0fdbd" }
 # The native profile helper. Deliberately not enhance-pir[-server]: their
 # `native-reinspiring` feature would switch the q48 Enhance binaries through
 # feature unification.
-transparent-native = { package = "zakura-transparent-native", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "b7fffbbc98d75af5ebc9c9d9da92ca19e9f0fdbd" }
-transparent-shard = { package = "zakura-transparent-shard", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "b7fffbbc98d75af5ebc9c9d9da92ca19e9f0fdbd" }
 # Record types for the display tooling's synthetic publications.
-transparent-events = { package = "zakura-transparent-events", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "b7fffbbc98d75af5ebc9c9d9da92ca19e9f0fdbd" }
+
+zakura-pir-protocol = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "bffb3cdcfcc5442b612cad91df26619d7b909d89", default-features = false, features = ["transparent"] }
+zakura-pir-query-server = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "bffb3cdcfcc5442b612cad91df26619d7b909d89", default-features = false, features = ["transparent"] }
 
 [dev-dependencies]
+zakura-pir-server-core = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "bffb3cdcfcc5442b612cad91df26619d7b909d89", default-features = false, features = ["transparent"] }
 # Synthetic transaction-detail publications for the display tests.
 transparent-shared = { path = "../transparent-shared", features = ["test-support"] }
 rayon = "1"
@@ -102,9 +102,8 @@ serde_json = "1"
 sha2 = "0.10"
 hex = "0.4"
 tempfile = "3"
-transparent-events = { package = "zakura-transparent-events", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "b7fffbbc98d75af5ebc9c9d9da92ca19e9f0fdbd" }
 ipir-sp = "=0.1.0-rc.7"
 tower = { version = "0.5", features = ["util"] }
-zakura-pir-transparent = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "b7fffbbc98d75af5ebc9c9d9da92ca19e9f0fdbd", default-features = false, features = ["engine-store", "reqwest"] }
-transparent-txid-client = { package = "zakura-transparent-txid-client", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "b7fffbbc98d75af5ebc9c9d9da92ca19e9f0fdbd", features = ["testing"] }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "json"] }
+zakura-pir-client = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "bffb3cdcfcc5442b612cad91df26619d7b909d89", default-features = false, features = ["transparent", "engine-store", "reqwest", "testing"] }
+zakura-pir-publisher = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "bffb3cdcfcc5442b612cad91df26619d7b909d89", default-features = false, features = ["transparent"] }

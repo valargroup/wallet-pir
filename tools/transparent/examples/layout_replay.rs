@@ -1,6 +1,10 @@
 //! Read-only, coverage-matched v10 census against a recorded v9 shard map.
 //! Usage: cargo run --release -p transparent-regression --example layout_replay -- JOURNAL V9_MAP
 //! Reuses the independent committed-prefix reader; never opens a writer lock.
+use zakura_pir_protocol::transparent::events as transparent_events;
+use zakura_pir_protocol::transparent::filter as transparent_filter;
+use zakura_pir_publisher::transparent as transparent_shard;
+
 #[path = "../src/regression/journal.rs"]
 mod journal;
 use anyhow::{bail, Context, Result};

@@ -16,13 +16,13 @@ required-features = ["native-reinspiring"]
 
 [features]
 default = []
-native-reinspiring = ["pir-serving/native-reinspiring", "dep:pir-native", "dep:reinspiring", "ipir-sp/native-reinspiring"]
+native-reinspiring = ["pir-serving/native-reinspiring", "dep:zakura-pir-query-server", "dep:reinspiring", "ipir-sp/native-reinspiring"]
 cuda = ["ipir-sp/cuda"]
 
+client = ["dep:zakura-pir-client"]
 [dependencies]
 # Profile modulus and native hint helpers are shared with Enhance serving.
 pir-serving = { path = "../../shared/pir-serving" }
-pir-native = { package = "zakura-pir-native", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "b7fffbbc98d75af5ebc9c9d9da92ca19e9f0fdbd", optional = true }
 pir-control = { path = "../../shared/pir-control", features = ["admission"] }
 pir-runtime = { path = "../../shared/pir-runtime" }
 rayon = "1"
@@ -42,8 +42,16 @@ thiserror = "2"
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
 
+zakura-pir-query-server = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "bffb3cdcfcc5442b612cad91df26619d7b909d89", default-features = false, optional = true }
+zakura-pir-client = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "bffb3cdcfcc5442b612cad91df26619d7b909d89", default-features = false, features = ["native"], optional = true }
+
 [dev-dependencies]
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
 # Independent wallet client exercises the serving wire contract over HTTP.
-zakura-pir-status = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "b7fffbbc98d75af5ebc9c9d9da92ca19e9f0fdbd" }
+zakura-pir-client = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "bffb3cdcfcc5442b612cad91df26619d7b909d89", default-features = false, features = ["native", "status"] }
+
+
+[dev-dependencies.status-query-server]
+path = "."
+features = ["client"]

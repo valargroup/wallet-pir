@@ -10,6 +10,9 @@
 //! these scripts, and the numbers they produce are workload measurements rather
 //! than user traces. That distinction matters when the results are quoted.
 
+use zakura_pir_protocol::transparent::filter as transparent_filter;
+use zakura_pir_publisher::transparent as transparent_shard;
+
 use std::collections::BTreeMap;
 use transparent_filter::ScriptBytes;
 use transparent_shard::MAX_SCRIPT_BYTES;

@@ -12,6 +12,9 @@
 //! as the wallet charges them; TLS and connection overhead are not measured
 //! and the report says so rather than estimating them.
 
+use zakura_pir_protocol::transparent::events as transparent_events;
+use zakura_pir_protocol::transparent::filter as transparent_filter;
+
 mod preparation_cache;
 mod scenario;
 mod simulation_report;
@@ -26,17 +29,19 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use transparent_filter::ShardMap;
-use zakura_pir_transparent::engine::client::Table;
-use zakura_pir_transparent::engine::http::{HttpFilterSource, HttpOptions, HttpShardTransport};
-use zakura_pir_transparent::engine::store::{ScriptEntry, ScriptOrigin, WalletStore};
-use zakura_pir_transparent::engine::transport::{
+use zakura_pir_client::transparent::engine::client::Table;
+use zakura_pir_client::transparent::engine::http::{
+    HttpFilterSource, HttpOptions, HttpShardTransport,
+};
+use zakura_pir_client::transparent::engine::store::{ScriptEntry, ScriptOrigin, WalletStore};
+use zakura_pir_client::transparent::engine::transport::{
     BoxError, FilterSource, ShardReply, ShardRequest, ShardTransport,
 };
-use zakura_pir_transparent::engine::{
+use zakura_pir_client::transparent::engine::{
     sync_into, Completion, IncompleteReason, MemoryStore, ServiceGeometry, StaticChain,
     StaticScripts, WorkLimits,
 };
-use zakura_pir_transparent::engine_store::SqliteStore;
+use zakura_pir_client::transparent::engine_store::SqliteStore;
 
 #[derive(Parser, Debug, Clone)]
 #[command(
@@ -87,7 +92,7 @@ struct Args {
     /// Shard service requests one sync keeps in flight across matched shards;
     /// 1 walks every request in sequence. A sync with --max-queries always
     /// walks in sequence.
-    #[arg(long, default_value_t = zakura_pir_transparent::engine::http::SHARD_REQUEST_CONCURRENCY)]
+    #[arg(long, default_value_t = zakura_pir_client::transparent::engine::http::SHARD_REQUEST_CONCURRENCY)]
     shard_concurrency: usize,
     /// Only these classes, comma separated.
     #[arg(long, value_delimiter = ',')]
@@ -181,9 +186,11 @@ impl<T> Counting<T> {
             Ok(down) => entry.down += down,
             Err(error) => {
                 let text = error.to_string();
-                if zakura_pir_transparent::engine::StaleRevision::found_in(error).is_some() {
+                if zakura_pir_client::transparent::engine::StaleRevision::found_in(error).is_some()
+                {
                     entry.http_409 += 1;
-                } else if zakura_pir_transparent::engine::Overloaded::found_in(error).is_some()
+                } else if zakura_pir_client::transparent::engine::Overloaded::found_in(error)
+                    .is_some()
                     || text.contains("503")
                 {
                     entry.http_503 += 1;
@@ -353,7 +360,7 @@ impl Outcome {
 /// refusing: 128 clients recorded about 28,000 failed syncs in ten minutes,
 /// each one more request against a pool that had none to spare.
 fn resubmit_backoff(failures: u32) -> Duration {
-    zakura_pir_transparent::engine::backoff::exponential(
+    zakura_pir_client::transparent::engine::backoff::exponential(
         Duration::from_millis(500),
         failures,
         Duration::from_secs(16),
@@ -393,7 +400,7 @@ fn run_client(
     map: &ShardMap,
     map_bytes: u64,
     geometry: &ServiceGeometry,
-    target: &zakura_pir_transparent::engine::Anchor,
+    target: &zakura_pir_client::transparent::engine::Anchor,
     index: usize,
 ) -> Outcome {
     let started = Instant::now();
@@ -741,7 +748,7 @@ async fn legacy_main() -> anyhow::Result<()> {
         bail!("no clients selected");
     }
     let target = if pinned {
-        zakura_pir_transparent::engine::Anchor {
+        zakura_pir_client::transparent::engine::Anchor {
             height: sample.anchor_height,
             hash: sample
                 .anchor_hash
@@ -749,7 +756,7 @@ async fn legacy_main() -> anyhow::Result<()> {
                 .expect("pinned requires the anchor hash"),
         }
     } else {
-        zakura_pir_transparent::engine::Anchor {
+        zakura_pir_client::transparent::engine::Anchor {
             height: tip.end_height,
             hash: tip.terminal_block_hash.clone(),
         }

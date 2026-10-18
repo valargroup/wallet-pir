@@ -48,6 +48,10 @@
 //! checked against the journal, so the record names the chain the journal
 //! actually holds.
 
+use zakura_pir_protocol::transparent::events as transparent_events;
+use zakura_pir_publisher::transparent as transparent_shard;
+use zakura_pir_publisher::transparent::filter as transparent_filter;
+
 use chrono::{DateTime, Months, Utc};
 use clap::Parser;
 use std::collections::BTreeMap;

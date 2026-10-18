@@ -122,11 +122,9 @@ CODEC = 'zakura-receiver-crypto'
 # The canonical PIR primitive and protocol packages wallet-libraries owns. A pure
 # package may consume them; their own graphs are checked like the package's.
 CANONICAL = {
-    'zakura-filters', 'zakura-pir-native', 'zakura-transparent-native',
-    'zakura-transparent-events',
-    'zakura-transparent-filter', 'zakura-transparent-shard',
-    'zakura-transparent-txid-client', 'zakura-receiver-directory', 'zakura-receiver-pir',
-    'zakura-pir-transparent', 'zakura-pir-status',
+    'zakura-filters', 'zakura-pir-protocol', 'zakura-pir-client',
+    'zakura-pir-publisher', 'zakura-pir-query-server', 'zakura-pir-server-core',
+    'zakura-receiver-directory', 'zakura-receiver-pir',
 }
 # Retained evidence outside the active product. It is still checked for direct
 # Common and node edges; only the pure-package rules skip it.

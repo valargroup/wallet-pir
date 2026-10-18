@@ -14,7 +14,7 @@ use enhance_query_server::{
     types::{DatabaseId, ENHANCE_LAYOUT},
     worker::Worker,
 };
-use zakura_pir_enhance::testing::{
+use zakura_pir_client::enhance::testing::{
     decrypt_incoming, recover_outgoing, FixtureKey, IronwoodOutputFixture, NoteDomain, OutputBytes,
     RecoveredNote, FIXTURE_MEMO, FIXTURE_VALUE,
 };

@@ -1,4 +1,6 @@
 //! Sequential deployed correctness checks. Each case runs in a deadline-bounded child.
+use zakura_pir_protocol::transparent::filter as transparent_filter;
+
 mod counting;
 mod http_evidence;
 use anyhow::{bail, Context, Result};
@@ -14,14 +16,14 @@ use std::{
     time::{Duration, Instant},
 };
 use transparent_tools::regression::{actual, validate, Case, Fixture};
-use zakura_pir_transparent::engine::{
+use zakura_pir_client::transparent::engine::{
     http::{HttpFilterSource, HttpOptions, HttpShardTransport},
     store::{ScriptEntry, ScriptOrigin},
     sync_into,
     transport::{FilterSource, ShardTransport},
     Completion, SetIdentity, StaticChain, StaticScripts, WalletStore, WorkLimits,
 };
-use zakura_pir_transparent::engine_store::SqliteStore;
+use zakura_pir_client::transparent::engine_store::SqliteStore;
 
 #[derive(Parser)]
 struct Args {
@@ -44,7 +46,7 @@ struct Args {
     source_sha: String,
     /// Shard service requests a sync keeps in flight across matched shards;
     /// 1 walks every request in sequence.
-    #[arg(long, default_value_t = zakura_pir_transparent::engine::http::SHARD_REQUEST_CONCURRENCY)]
+    #[arg(long, default_value_t = zakura_pir_client::transparent::engine::http::SHARD_REQUEST_CONCURRENCY)]
     shard_concurrency: usize,
     #[arg(long, hide = true)]
     worker_case: Option<String>,
@@ -341,8 +343,8 @@ fn run_case(a: &Args, f: &Fixture, case: &Case, stages: &mut Vec<Value>) -> Resu
             stages: counts.clone(),
         };
         let (init, _) = transport.init().map_err(anyhow::Error::msg)?;
-        let geometry =
-            zakura_pir_transparent::engine::parse_init(&init).map_err(anyhow::Error::msg)?;
+        let geometry = zakura_pir_client::transparent::engine::parse_init(&init)
+            .map_err(anyhow::Error::msg)?;
         let mut store = SqliteStore::open(&path)?;
         let mut scripts = StaticScripts(entries.clone());
         let result = sync_into(
@@ -413,7 +415,7 @@ fn run_case(a: &Args, f: &Fixture, case: &Case, stages: &mut Vec<Value>) -> Resu
         }
         for script in &entries {
             let ranges = reopened.coverage(&script.script)?;
-            if !zakura_pir_transparent::engine::store::uncovered(
+            if !zakura_pir_client::transparent::engine::store::uncovered(
                 &ranges,
                 script.required_from,
                 cp.anchor.height,

@@ -55,6 +55,10 @@
 //! same bytes at the same paths on its own host, so a wallet that wants two
 //! origins still has them.
 
+use zakura_pir_protocol::transparent::filter as transparent_filter;
+use zakura_pir_protocol::transparent::shard as transparent_shard;
+use zakura_pir_query_server::transparent::native as transparent_native;
+
 use crate::history::assignment::{Assignment, WorkerRole, WorkerScope};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};

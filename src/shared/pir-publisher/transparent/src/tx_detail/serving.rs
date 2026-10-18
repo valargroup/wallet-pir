@@ -14,6 +14,8 @@
 //! publication activates archive owners first, and only when the sealed set
 //! changed, and workers holding the recent shard after them.
 
+use zakura_pir_publisher::transparent as transparent_shard;
+
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};

@@ -10,6 +10,8 @@
 //! optional anchor hashes against the node, and reports the node's tip so a
 //! reader can see how far behind the journal is.
 
+use zakura_pir_publisher::transparent::filter as transparent_filter;
+
 use clap::Parser;
 use std::path::{Path, PathBuf};
 use transparent_publisher::ingest::state::StateReader;

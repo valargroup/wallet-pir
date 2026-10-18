@@ -14,6 +14,10 @@
 //! replaced tail, and unfinished work dropped and done again under the shard
 //! that now covers it. The same re-cut undeclared is refused, and one
 //! published while a sync is reading ends that sync and not the next.
+use zakura_pir_protocol::transparent::events as transparent_events;
+use zakura_pir_protocol::transparent::filter as transparent_filter;
+use zakura_pir_publisher::transparent as transparent_shard;
+
 mod common;
 use common::*;
 use std::collections::BTreeMap;
@@ -22,14 +26,14 @@ use std::sync::{Arc, Mutex};
 use transparent_events::{ReceiveEvent, SpendEvent, TransparentEvent};
 use transparent_filter::{Recut, ScriptBytes, ShardMap, ShardMapEntry, SupersededShard};
 use transparent_shard::layout::{DECOUPLED_2K_8K, DECOUPLED_32K_32K};
-use zakura_pir_transparent::engine::client::Table;
-use zakura_pir_transparent::engine::http::{HttpOptions, HttpShardTransport};
-use zakura_pir_transparent::engine::transport::{BoxError, FilterSource, ShardTransport};
-use zakura_pir_transparent::engine::{
+use zakura_pir_client::transparent::engine::client::Table;
+use zakura_pir_client::transparent::engine::http::{HttpOptions, HttpShardTransport};
+use zakura_pir_client::transparent::engine::transport::{BoxError, FilterSource, ShardTransport};
+use zakura_pir_client::transparent::engine::{
     Anchor, Completion, IncompleteReason, Ledger, ScriptEntry, ScriptOrigin, StaticChain,
     StaticScripts, SyncError, SyncReport, WalletStore, WorkLimits,
 };
-use zakura_pir_transparent::engine_store::SqliteStore;
+use zakura_pir_client::transparent::engine_store::SqliteStore;
 
 /// Where both tails start: the five sealed shards end just below.
 const TAIL: u64 = FIRST + 5 * SPAN;
@@ -326,7 +330,7 @@ async fn run_on(
         };
         let geometry = transport.inner.geometry().unwrap();
         let (mut filters, mut scripts) = (filters, scripts);
-        zakura_pir_transparent::engine::sync_into(
+        zakura_pir_client::transparent::engine::sync_into(
             &mut store,
             &map,
             0,
@@ -570,7 +574,7 @@ async fn held_with_merged_pages(
     path: &Path,
     base: &str,
     sets: &Publications,
-) -> Vec<zakura_pir_transparent::engine::StoredEvent> {
+) -> Vec<zakura_pir_client::transparent::engine::StoredEvent> {
     let filters = || PublishedFilters::load(sets.before_dir.path(), &sets.before);
     let (report, _) = run(
         path,

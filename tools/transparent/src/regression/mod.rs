@@ -1,4 +1,7 @@
 //! Frozen journal expectations and a reference reducer independent of wallet replay.
+use zakura_pir_protocol::transparent::events as transparent_events;
+use zakura_pir_protocol::transparent::filter as transparent_filter;
+
 pub mod journal;
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
@@ -6,7 +9,7 @@ use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use transparent_events::TransparentEvent;
 use transparent_filter::ShardMap;
-use zakura_pir_transparent::engine::{Anchor, WalletStore};
+use zakura_pir_client::transparent::engine::{Anchor, WalletStore};
 
 pub const SCHEMA: &str = "transparent-regression-v1";
 

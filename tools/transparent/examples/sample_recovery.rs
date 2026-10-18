@@ -11,14 +11,18 @@
 //!
 //! Prints one JSON line per wallet with its outcome and private bill.
 //! Usage: sample_recovery SHARD_URL SAMPLE [CONCURRENCY]
+use zakura_pir_protocol::transparent::filter as transparent_filter;
+
 use sha2::{Digest, Sha256};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use transparent_filter::ShardMap;
-use zakura_pir_transparent::engine::http::{HttpFilterSource, HttpOptions, HttpShardTransport};
-use zakura_pir_transparent::engine::store::{ScriptEntry, ScriptOrigin, WalletStore};
-use zakura_pir_transparent::engine::transport::{FilterSource, ShardTransport};
-use zakura_pir_transparent::engine::{
+use zakura_pir_client::transparent::engine::http::{
+    HttpFilterSource, HttpOptions, HttpShardTransport,
+};
+use zakura_pir_client::transparent::engine::store::{ScriptEntry, ScriptOrigin, WalletStore};
+use zakura_pir_client::transparent::engine::transport::{FilterSource, ShardTransport};
+use zakura_pir_client::transparent::engine::{
     parse_init, sync_into, Anchor, MemoryStore, StaticChain, StaticScripts, TableCharges,
     WorkLimits,
 };

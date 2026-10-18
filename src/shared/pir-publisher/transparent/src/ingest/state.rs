@@ -28,6 +28,8 @@
 //!
 //! [`MissingBlock`]: zakura_server_chain::transparent::ExtractError::MissingBlock
 
+use zakura_pir_publisher::transparent::filter as transparent_filter;
+
 use crate::ingest::blocks::BuiltEvents;
 use crate::ingest::extract::index;
 use std::path::Path;

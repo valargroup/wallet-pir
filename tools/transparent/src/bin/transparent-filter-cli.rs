@@ -6,6 +6,8 @@
 //! filters, which a real wallet must never do. It exists to exercise the fetch,
 //! validate and match path end to end against a live service.
 
+use zakura_pir_protocol::transparent::filter as transparent_filter;
+
 use clap::{Parser, Subcommand};
 use std::io::{BufRead, Write};
 use transparent_filter::{

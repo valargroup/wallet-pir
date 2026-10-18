@@ -1,5 +1,8 @@
 //! History-only prepared-publication distribution. Verified bytes alone never
 //! grant serving authority. This inventory is not a wallet format.
+use zakura_pir_protocol::transparent::filter as transparent_filter;
+use zakura_pir_protocol::transparent::shard as transparent_shard;
+
 use crate::{
     history::shardset::ShardSet,
     runtime::{disk::ShippedRuntimes, SharedParams},

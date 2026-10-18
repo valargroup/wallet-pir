@@ -282,7 +282,7 @@ class BoundaryTests(unittest.TestCase):
         library = 'https://github.com/zakura-core/wallet-libraries.git'
         allowed = [{**self.edge('pir-control'), 'path': 'src/shared/pir-control/'},
                    {**self.edge('pir-serving'), 'path': 'src/shared/pir-serving/'},
-                   self.edge('zakura-pir-native', git=library), self.edge('axum')]
+                   self.edge('zakura-pir-protocol', git=library), self.edge('axum')]
         self.assertEqual(boundary.violations(package(*allowed), []), [])
         # The publisher, chain readers, ingestion and every tool are refused.
         forbidden = [{**self.edge('pir-publisher'), 'path': 'src/shared/pir-publisher/server/'},
@@ -401,7 +401,7 @@ class BoundaryTests(unittest.TestCase):
         for kind in ['dependencies', 'dev-dependencies', 'build-dependencies',
                      'target.cfg(unix).dependencies', 'target.cfg(unix).dev-dependencies',
                      'target.cfg(unix).build-dependencies']:
-            for name in ['receiver-store', 'zakura-server-chain', 'zakura-pir-native',
+            for name in ['receiver-store', 'zakura-server-chain', 'zakura-pir-protocol',
                          'sha2', 'rand', 'enhance-query-server', 'pir-runtime']:
                 package = {'name': 'pir-pipeline', 'manifest': 'src/shared/pir-publisher/pipeline/Cargo.toml',
                            'dependencies': [self.edge(name, kind)]}

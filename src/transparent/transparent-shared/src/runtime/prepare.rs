@@ -17,6 +17,8 @@
 //! header. Anything else is rebuilt. A worker checksums and self-checks every
 //! file it loads whichever way the publisher came by it.
 
+use zakura_pir_protocol::transparent::shard as transparent_shard;
+
 use super::disk::ShippedRuntimes;
 use super::{build_pool, RuntimeKey, SharedParams, TableRuntime};
 use crate::history::shardset::SegmentSource;

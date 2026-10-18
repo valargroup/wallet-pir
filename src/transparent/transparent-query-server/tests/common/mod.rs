@@ -3,6 +3,10 @@
 //! independent traversal, and an exact comparison.
 #![allow(dead_code)]
 
+use zakura_pir_protocol::transparent::events as transparent_events;
+use zakura_pir_protocol::transparent::filter as transparent_filter;
+use zakura_pir_publisher::transparent as transparent_shard;
+
 use std::collections::BTreeMap;
 use std::path::Path;
 use transparent_events::{ReceiveEvent, SpendEvent, TransparentEvent, Txid};
@@ -19,8 +23,8 @@ use transparent_shard::manifest::{
     ManifestLayout, ManifestOccupancy, ManifestSeal, ShardManifest, TableGeometry, SCHEMA,
 };
 use transparent_shared::history::shardset::{ShardSet, DEFAULT_RETAIN_REVISIONS};
-use zakura_pir_transparent::engine::ledger::Ledger;
-use zakura_pir_transparent::engine::transport::{BoxError, FilterSource};
+use zakura_pir_client::transparent::engine::ledger::Ledger;
+use zakura_pir_client::transparent::engine::transport::{BoxError, FilterSource};
 
 pub const GENESIS: &str = transparent_filter::MAINNET_GENESIS_DISPLAY;
 pub const FIRST: u64 = 3_428_143;

@@ -1,6 +1,8 @@
 //! The operations snapshot checker bounds committed event extents with
 //! `EVENT_BYTES` and `MAX_EVENT_BYTES`. Both must equal the pinned event codec
 //! this reader compiles, reported through `--source-info`.
+use zakura_pir_protocol::transparent::events as transparent_events;
+
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::process::Command;

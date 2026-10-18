@@ -1,4 +1,7 @@
 //! Frozen, read-only-journal evaluation of experimental parent filters.
+use zakura_pir_protocol::transparent::events as transparent_events;
+use zakura_pir_protocol::transparent::filter as transparent_filter;
+
 use anyhow::{ensure, Context, Result};
 use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};

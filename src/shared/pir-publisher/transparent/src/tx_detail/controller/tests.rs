@@ -1,3 +1,7 @@
+use zakura_pir_client::transparent::txid_client as transparent_txid_client;
+use zakura_pir_publisher::transparent as transparent_shard;
+use zakura_pir_publisher::transparent::filter as transparent_filter;
+
 use super::*;
 use crate::tx_detail::fixture::{self, block_hash, chain_records, chain_sources};
 use crate::tx_detail::offline::{bench_recent, plan_start, synthetic_records, verify};

@@ -156,12 +156,16 @@ fn main() {
                     let shard: u64 = flags.get("shard").map_or(0, |s| s.parse().unwrap());
                     let columns = synthetic_columns(fill, *seed, rows, n::COLS);
                     let masks = n::query_masks(shard);
-                    let hint =
-                        pir_native::hint(&masks[..rows / n::D], rows, n::COLS, |c| &columns[c])
-                            .unwrap()
-                            .into_iter()
-                            .map(|rows| CrsBlock { rows })
-                            .collect();
+                    let hint = zakura_pir_publisher::native::hint(
+                        &masks[..rows / n::D],
+                        rows,
+                        n::COLS,
+                        |c| &columns[c],
+                    )
+                    .unwrap()
+                    .into_iter()
+                    .map(|rows| CrsBlock { rows })
+                    .collect();
                     let binding = format!("synthetic:{fill}:seed={seed}:rows={rows}:shard={shard}");
                     (rows, hint, binding)
                 }

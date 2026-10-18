@@ -322,7 +322,8 @@ impl Generation {
                 preparation_threads = rayon::current_num_threads(),
                 "Status native packing material geometry"
             );
-            let public = pir_native::publish(&packing).map_err(|_| Error::Pir)?;
+            let public =
+                zakura_pir_query_server::native::publish(&packing).map_err(|_| Error::Pir)?;
             manifest.public_digest = Sha256::digest(&public).into();
             Ok(Self {
                 manifest,
@@ -515,13 +516,17 @@ impl Generation {
         // The selection is 49 bits, as the wallet-pir client sends it, or 44
         // dithered bits; the exact length says which. The envelope is the same.
         if bytes.len() < HEADER_BYTES
-            || pir_native::accepted_query_bits(ROWS, bytes.len() - HEADER_BYTES).is_none()
+            || zakura_pir_query_server::native::accepted_query_bits(
+                ROWS,
+                bytes.len() - HEADER_BYTES,
+            )
+            .is_none()
             || &bytes[..4] != QUERY_MAGIC
             || bytes[4..36] != self.manifest.id()
         {
             return Err(Error::Malformed);
         }
-        pir_native::parse_accepted(
+        zakura_pir_query_server::native::parse_accepted(
             &native_packing_setup(&self.manifest.network, &self.manifest.salt),
             &bytes[HEADER_BYTES..],
             ROWS,
@@ -542,7 +547,10 @@ impl Generation {
             return Err(Error::Malformed);
         }
         let mut response = body[..HEADER_BYTES].to_vec();
-        response.extend(pir_native::pack(&self.packing, &keys, values).map_err(|_| Error::Pir)?);
+        response.extend(
+            zakura_pir_query_server::native::pack(&self.packing, &keys, values)
+                .map_err(|_| Error::Pir)?,
+        );
         Ok(response)
     }
     #[cfg(not(feature = "native-reinspiring"))]

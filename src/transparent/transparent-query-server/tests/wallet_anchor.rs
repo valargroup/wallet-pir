@@ -1,13 +1,17 @@
 //! Accepted checkpoints inside published shards, recovered through real HTTP PIR.
+use zakura_pir_protocol::transparent::events as transparent_events;
+use zakura_pir_protocol::transparent::filter as transparent_filter;
+use zakura_pir_publisher::transparent as transparent_shard;
+
 mod common;
 use common::*;
 use std::path::Path;
 use transparent_filter::ShardMap;
-use zakura_pir_transparent::engine::{
+use zakura_pir_client::transparent::engine::{
     http::HttpOptions, http::HttpShardTransport, store::ScriptOrigin, Anchor, Completion,
     ScriptEntry, ScriptProvider, StaticChain, StaticScripts, WalletStore, WorkLimits,
 };
-use zakura_pir_transparent::engine_store::SqliteStore;
+use zakura_pir_client::transparent::engine_store::SqliteStore;
 
 fn anchor(height: u64) -> Anchor {
     Anchor {
@@ -32,7 +36,7 @@ fn expected(
         transparent_events::TransparentEvent,
     )>],
     through: u64,
-) -> zakura_pir_transparent::engine::Ledger {
+) -> zakura_pir_client::transparent::engine::Ledger {
     let mut events = all
         .iter()
         .flatten()
@@ -43,7 +47,7 @@ fn expected(
         })
         .map(|(s, e)| (s.as_slice().to_vec(), *e))
         .collect::<Vec<_>>();
-    let mut ledger = zakura_pir_transparent::engine::Ledger::new();
+    let mut ledger = zakura_pir_client::transparent::engine::Ledger::new();
     ledger.replay(&mut events).unwrap();
     ledger
 }
@@ -56,7 +60,10 @@ async fn run<P: ScriptProvider + Send + 'static>(
     target: Anchor,
     provider: P,
     limits: WorkLimits,
-) -> Result<zakura_pir_transparent::engine::SyncReport, zakura_pir_transparent::engine::SyncError> {
+) -> Result<
+    zakura_pir_client::transparent::engine::SyncReport,
+    zakura_pir_client::transparent::engine::SyncError,
+> {
     let mut filters = PublishedFilters::load(dir, map);
     let map = map.clone();
     let base = base.to_string();
@@ -71,7 +78,7 @@ async fn run<P: ScriptProvider + Send + 'static>(
         }
         let mut transport = HttpShardTransport::new(base, &HttpOptions::default()).unwrap();
         let geometry = transport.geometry().unwrap();
-        zakura_pir_transparent::engine::sync_into(
+        zakura_pir_client::transparent::engine::sync_into(
             &mut store,
             &map,
             0,
@@ -282,7 +289,7 @@ async fn unknown_rejected_and_unpublished_targets_do_not_commit_progress() {
         let mut chain = StaticChain::from_map(&map);
         let mut scripts = scripts();
         let h = FIRST + 17;
-        let r = zakura_pir_transparent::engine::sync_into(
+        let r = zakura_pir_client::transparent::engine::sync_into(
             &mut store,
             &map,
             0,
@@ -298,12 +305,12 @@ async fn unknown_rejected_and_unpublished_targets_do_not_commit_progress() {
         assert!(matches!(
             r.completion,
             Completion::Incomplete {
-                reason: zakura_pir_transparent::engine::IncompleteReason::ChainUnknown { .. },
+                reason: zakura_pir_client::transparent::engine::IncompleteReason::ChainUnknown { .. },
                 ..
             }
         ));
         chain.hashes.insert(h, "ff".repeat(32));
-        assert!(zakura_pir_transparent::engine::sync_into(
+        assert!(zakura_pir_client::transparent::engine::sync_into(
             &mut store,
             &map,
             0,
@@ -323,7 +330,7 @@ async fn unknown_rejected_and_unpublished_targets_do_not_commit_progress() {
         };
         chain.hashes.insert(boundary, conflicting.hash.clone());
         assert!(
-            zakura_pir_transparent::engine::sync_into(
+            zakura_pir_client::transparent::engine::sync_into(
                 &mut store,
                 &map,
                 0,
@@ -340,7 +347,7 @@ async fn unknown_rejected_and_unpublished_targets_do_not_commit_progress() {
         );
         let future = map.shards.last().unwrap().end_height + 1;
         chain.hashes.insert(future, anchor(future).hash);
-        let r = zakura_pir_transparent::engine::sync_into(
+        let r = zakura_pir_client::transparent::engine::sync_into(
             &mut store,
             &map,
             0,
@@ -356,7 +363,7 @@ async fn unknown_rejected_and_unpublished_targets_do_not_commit_progress() {
         assert!(matches!(
             r.completion,
             Completion::Incomplete {
-                reason: zakura_pir_transparent::engine::IncompleteReason::PublicationBehind { .. },
+                reason: zakura_pir_client::transparent::engine::IncompleteReason::PublicationBehind { .. },
                 ..
             }
         ));
@@ -481,7 +488,7 @@ async fn a_replaced_tail_rewinds_pending_events_without_completed_coverage() {
         })
         .map(|(s, e)| (s.as_slice().to_vec(), *e))
         .collect::<Vec<_>>();
-    let mut expected = zakura_pir_transparent::engine::Ledger::new();
+    let mut expected = zakura_pir_client::transparent::engine::Ledger::new();
     expected.replay(&mut expected_events).unwrap();
     compare(&result.ledger, &expected);
 }
@@ -557,7 +564,7 @@ async fn an_exact_common_ancestor_inside_a_shard_survives_a_real_fork() {
         let mut store = SqliteStore::open(path).unwrap();
         let mut transport = HttpShardTransport::new(base, &HttpOptions::default()).unwrap();
         let geometry = transport.geometry().unwrap();
-        let pending = zakura_pir_transparent::engine::sync_into(
+        let pending = zakura_pir_client::transparent::engine::sync_into(
             &mut store,
             &map,
             0,
@@ -573,7 +580,7 @@ async fn an_exact_common_ancestor_inside_a_shard_survives_a_real_fork() {
         assert_eq!(
             pending.completion,
             Completion::Incomplete {
-                reason: zakura_pir_transparent::engine::IncompleteReason::ChainUnknown {
+                reason: zakura_pir_client::transparent::engine::IncompleteReason::ChainUnknown {
                     height: source_height,
                 },
                 pending: 0,
@@ -586,7 +593,7 @@ async fn an_exact_common_ancestor_inside_a_shard_survives_a_real_fork() {
             source_height,
             hash_forked(fork)(source_height).to_display_hex(),
         );
-        zakura_pir_transparent::engine::sync_into(
+        zakura_pir_client::transparent::engine::sync_into(
             &mut store,
             &map,
             0,

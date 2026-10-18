@@ -9,7 +9,7 @@ use std::{
     sync::{mpsc, Arc, Mutex},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
-use zakura_pir_transparent::engine::{
+use zakura_pir_client::transparent::engine::{
     client::{Table, TableClient},
     http::{HttpOptions, HttpShardTransport},
     transport::{BoxError, ShardTransport},
@@ -349,7 +349,9 @@ mod tests {
         let wrong: BoxError = "decoded row differs from independent plaintext oracle".into();
         assert!(!retryable_transport(&wrong));
         let protocol: BoxError = Box::new(
-            zakura_pir_transparent::engine::client::ClientError::Response("bad epoch".into()),
+            zakura_pir_client::transparent::engine::client::ClientError::Response(
+                "bad epoch".into(),
+            ),
         );
         assert!(!retryable_transport(&protocol));
     }

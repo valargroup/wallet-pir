@@ -7,6 +7,8 @@
 //! coverage over the gap. That is a silent wrong answer, so the service refuses
 //! to start rather than serve it.
 
+use zakura_pir_publisher::transparent::filter as transparent_filter;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use std::path::Path;

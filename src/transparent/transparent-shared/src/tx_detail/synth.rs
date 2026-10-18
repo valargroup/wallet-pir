@@ -6,6 +6,9 @@
 //! `txid-shards.json`. Block hashes are a deterministic function of height, so
 //! adjacent shards chain. Nothing here is used to serve.
 
+use zakura_pir_protocol::transparent::events as transparent_events;
+use zakura_pir_publisher::transparent as transparent_shard;
+
 use crate::tx_detail::set::{index_file, MANIFEST_FILE, MAP_FILE, RECENT_MAP_FILE};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};

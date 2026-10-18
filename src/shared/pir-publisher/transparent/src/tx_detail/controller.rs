@@ -22,6 +22,9 @@
 //! restart that finds the journal off the activated chain without such a
 //! record withdraws the whole recent range.
 
+use zakura_pir_publisher::transparent as transparent_shard;
+use zakura_pir_publisher::transparent::filter as transparent_filter;
+
 use super::cache::DisplayCache;
 use super::metrics::{Gauges, Metrics};
 use super::now_ms;

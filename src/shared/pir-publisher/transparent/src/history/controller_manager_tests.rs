@@ -1,5 +1,13 @@
 //! Real publisher/TLS/manager/owner/recent-worker boundaries, with source rows
 //! as an independent answer oracle. These do not qualify a complete provider.
+#[cfg(test)]
+use zakura_pir_client::transparent::native as transparent_native;
+#[cfg(test)]
+use zakura_pir_client::transparent::native::TableClientExt as _;
+use zakura_pir_protocol::transparent::events as transparent_events;
+use zakura_pir_publisher::transparent as transparent_shard;
+use zakura_pir_publisher::transparent::filter as transparent_filter;
+
 use super::*;
 use transparent_events::TransparentEvent;
 use transparent_query_server::history::live::Command;
