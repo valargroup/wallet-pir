@@ -61,7 +61,7 @@ pattern = "ops/transparent/benchmarks/*.json"
 reason = "Maintained block-comparison scenario and fresh input sample."
 
 [[allow_data]]
-pattern = "src/transparent/transparent-filter-server/examples/fixtures/*.json"
+pattern = "src/txid/txid-pir-server/examples/fixtures/*.json"
 reason = "Confirmed transaction input for the display example."
 
 [[allow_data]]
