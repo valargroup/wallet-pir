@@ -112,6 +112,13 @@ pub async fn supervise<T: Task>(
 ) -> Result<(), T::Error> {
     tokio::pin!(shutdown);
     loop {
+        // Poll cancellation before entering a new pass, without racing it
+        // against acquisition or an activation that must finish atomically.
+        tokio::select! {
+            biased;
+            _ = &mut shutdown => return Ok(()),
+            _ = std::future::ready(()) => {},
+        }
         let started = Instant::now();
         let result = task.run().await;
         task.finished(started.elapsed());
@@ -160,6 +167,26 @@ mod tests {
         fn finished(&mut self, phase: Phase, elapsed: Duration, succeeded: bool) {
             self.0.push((phase, elapsed, succeeded));
         }
+    }
+
+    #[tokio::test]
+    async fn shutdown_already_requested_starts_no_new_pass() {
+        struct Count(usize);
+        impl Task for Count {
+            type Error = ();
+            async fn run(&mut self) -> Result<(), ()> {
+                self.0 += 1;
+                Ok(())
+            }
+            fn failed(&mut self, _: &()) -> FailurePolicy {
+                FailurePolicy::Stop
+            }
+        }
+        let mut task = Count(0);
+        supervise(&mut task, Duration::from_secs(1), std::future::ready(()))
+            .await
+            .unwrap();
+        assert_eq!(task.0, 0);
     }
 
     #[tokio::test(start_paused = true)]
