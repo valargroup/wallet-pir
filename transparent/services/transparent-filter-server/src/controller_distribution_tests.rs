@@ -35,7 +35,7 @@ fn authority(directory: &Path, distribution: Option<Finalized>, rpc: NodeClient)
 }
 
 fn publication(root: &Path) -> (PathBuf, ShardSet) {
-    manager_tests::prepared_publication(root, 2)
+    publication_through(root, 2)
 }
 fn publication_through(root: &Path, through: u64) -> (PathBuf, ShardSet) {
     let journal_dir = root.join("journal");

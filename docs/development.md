@@ -72,7 +72,11 @@ and hardware qualification remain separate from fast feedback.
 
 Before landing a dependency/toolchain upgrade, dispatch **Prepare fast
 validation** on its branch. Cold preparation and hosted cache priming run
-separately from main CI. A main push preempts fast preparation.
+separately from main CI. The optional `correctness` input first diagnoses the
+complete CPU run (including cold native/reference and lint preparation), then
+requires three enforced warm runs on that same source. Their per-case, stage
+and source receipts are retained as an attempt-specific Actions artifact; cold
+diagnostics never count as a three-minute pass. A main push preempts fast preparation.
 
 ## Keep changes focused
 

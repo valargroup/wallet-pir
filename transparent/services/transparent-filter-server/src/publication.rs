@@ -1207,7 +1207,7 @@ mod tests {
         } else {
             // Keep consecutive growth, sealed-page linking and the independent
             // complete rebuild; qualification repeats every intermediate step.
-            vec![65, 68, 69]
+            vec![5, 8, 11, 14, 17, 20, 69]
         };
         for through in throughs {
             let output = root.path().join(format!("c{through}"));
