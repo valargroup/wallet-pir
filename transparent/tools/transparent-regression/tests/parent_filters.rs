@@ -204,7 +204,7 @@ async fn parent_negatives_restart_import_and_corrupt_fallback_recover_exactly() 
     )
     .await;
     requests.lock().unwrap().clear();
-    recover_at(
+    let (advanced, _) = recover_at(
         partial.clone(),
         map.clone(),
         pir.clone(),
@@ -214,10 +214,19 @@ async fn parent_negatives_restart_import_and_corrupt_fallback_recover_exactly() 
         FIRST + SPAN - 1,
     )
     .await;
-    assert!(
-        requests.lock().unwrap().is_empty(),
-        "advancing within a cached parent must not fetch metadata or children"
+    // Map adoption prunes caches not keyed by a published child revision.
+    // Experimental parent keys must therefore be discovered and validated
+    // again; the negative still saves downloading the individual children.
+    let parent_requests = vec![
+        "candidate.json".to_owned(),
+        format!("artifacts/{}.bin", manifest.parents[0].filter_hash),
+    ];
+    assert_eq!(
+        *requests.lock().unwrap(),
+        parent_requests,
+        "advancing a partial negative should revalidate the parent without fetching children"
     );
+    assert!(advanced.events.is_empty());
     {
         use zakura_pir_transparent::engine::WalletStore;
         let mut store = SqliteStore::open(&partial).unwrap();
@@ -232,7 +241,7 @@ async fn parent_negatives_restart_import_and_corrupt_fallback_recover_exactly() 
             .unwrap();
     }
     requests.lock().unwrap().clear();
-    recover_at(
+    let (rolled_back, _) = recover_at(
         partial,
         map.clone(),
         pir.clone(),
@@ -242,10 +251,12 @@ async fn parent_negatives_restart_import_and_corrupt_fallback_recover_exactly() 
         FIRST + SPAN - 1,
     )
     .await;
-    assert!(
-        requests.lock().unwrap().is_empty(),
-        "rollback may reuse a parent only under the same child identity"
+    assert_eq!(
+        *requests.lock().unwrap(),
+        parent_requests,
+        "rollback should revalidate the same parent before advancing coverage"
     );
+    assert_eq!(rolled_back, advanced);
     let db = dir.path().join("wallet.sqlite");
     let (empty, _) = recover(
         db.clone(),
@@ -287,11 +298,22 @@ async fn parent_negatives_restart_import_and_corrupt_fallback_recover_exactly() 
     .unwrap();
     let (actual, _) = recover(db, map.clone(), pir.clone(), base, vec![1, 2, 3], true).await;
     let imported_requests = requests.lock().unwrap().clone();
+    let imported_parents = imported_requests
+        .iter()
+        .filter(|path| path.starts_with("artifacts/"))
+        .collect::<Vec<_>>();
     assert!(
-        !imported_requests
+        !imported_parents.is_empty(),
+        "new scripts must be tested against revalidated parent bytes: {imported_requests:?}"
+    );
+    assert_eq!(
+        imported_parents
             .iter()
-            .any(|p| p.starts_with("artifacts/")),
-        "script import should reuse validated parent bytes: {imported_requests:?}"
+            .copied()
+            .collect::<BTreeSet<_>>()
+            .len(),
+        imported_parents.len(),
+        "each parent body is fetched once within a sync, even when several children need it"
     );
     assert_eq!(actual, expected);
     for mode in ["corrupt", "missing", "stale", "wrong-schema", "overlap"] {
