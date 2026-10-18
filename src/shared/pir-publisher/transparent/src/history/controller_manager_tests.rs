@@ -419,8 +419,28 @@ async fn query(origin: &str, set: &ShardSet) {
 async fn query_and_upload(origin: &str, set: &ShardSet) -> Vec<u8> {
     query_with_reply(origin, set).await.0
 }
+
+// Derive the public client masks once for this fixed producer geometry. Each
+// query still creates its own secret and checks decoded bytes against the source.
+fn query_profile() -> &'static transparent_native::TableProfile {
+    use transparent_shard::layout::DECOUPLED_2K_8K;
+    use transparent_shared::history::shardset::Table;
+    static PROFILE: std::sync::LazyLock<transparent_native::TableProfile> =
+        std::sync::LazyLock::new(|| {
+            transparent_native::TableProfile::new(
+                transparent_shard::manifest::SCHEMA,
+                DECOUPLED_2K_8K.name,
+                "directory",
+                Table::Directory.rows(&DECOUPLED_2K_8K),
+                DECOUPLED_2K_8K.directory_row_bytes as u32,
+            )
+            .unwrap()
+        });
+    &PROFILE
+}
+
 async fn query_with_reply(origin: &str, set: &ShardSet) -> (Vec<u8>, Vec<u8>) {
-    use transparent_shared::history::shardset::{Table, TableRef};
+    use transparent_shared::history::shardset::TableRef;
     let shard = set.get(1).unwrap();
     let source = shard
         .segment(TableRef::Directory, 0)
@@ -432,14 +452,8 @@ async fn query_with_reply(origin: &str, set: &ShardSet) -> (Vec<u8>, Vec<u8>) {
         .chunks_exact(width)
         .position(|r| r.iter().any(|b| *b != 0))
         .unwrap();
-    let profile = transparent_native::TableProfile::new(
-        transparent_shard::manifest::SCHEMA,
-        shard.geometry.name,
-        "directory",
-        Table::Directory.rows(shard.geometry),
-        width as u32,
-    )
-    .unwrap();
+    assert_eq!(shard.geometry, &transparent_shard::layout::DECOUPLED_2K_8K);
+    let profile = query_profile();
     let setup: serde_json::Value = get(
         origin,
         &format!("/v2/shards/1/revisions/{}/setup/directory/0", shard.digest),
@@ -1140,7 +1154,7 @@ async fn manager_owner_fence_write_failure_still_fences_http() {
 async fn manager_bounds_memory_while_retaining_admitted_upload() {
     use tokio::io::AsyncWriteExt;
     use tower::ServiceExt;
-    use transparent_shared::history::shardset::{Table, TableRef};
+    use transparent_shared::history::shardset::TableRef;
     let root = tempfile::tempdir().unwrap();
     let (directory, set, distribution) = immutable_publication(2);
     let rpc = canonical_rpc(root.path(), &set).await;
@@ -1153,14 +1167,8 @@ async fn manager_bounds_memory_while_retaining_admitted_upload() {
     let (origin, task) = worker(live.clone()).await;
     let shard = set.get(1).unwrap();
     let width = shard.geometry.directory_row_bytes;
-    let profile = transparent_native::TableProfile::new(
-        transparent_shard::manifest::SCHEMA,
-        shard.geometry.name,
-        "directory",
-        Table::Directory.rows(shard.geometry),
-        width as u32,
-    )
-    .unwrap();
+    assert_eq!(shard.geometry, &transparent_shard::layout::DECOUPLED_2K_8K);
+    let profile = query_profile();
     let setup: serde_json::Value = get(
         &origin,
         &format!("/v2/shards/1/revisions/{}/setup/directory/0", shard.digest),
