@@ -2036,7 +2036,7 @@ class Wrapper(unittest.TestCase):
         self.assertEqual(S.SNAPSHOTS, Path('/srv/transparent-activity/snapshots/journal'))
         self.assertEqual(S.OWNERS, Path('/srv/transparent-activity/ops/input-staging'))
         self.assertEqual((S.RECORD_BYTES, S.CHECKPOINT_BYTES, S.FORMAT_VERSION, S.START_HEIGHT), (48, 16, 3, 0))
-        source = (HERE.parents[2]/'src/transparent/transparent-journal/src/events.rs').read_text()
+        source = (HERE.parents[2]/'src/transparent/transparent-shared/src/journal/events.rs').read_text()
         self.assertIn('const STORE_VERSION: u16 = 3;', source)
         self.assertIn('const BLOCK_RECORD_BYTES: usize = 32 + 8 + 8;', source)
         self.assertIn('lock.try_lock()', source)
