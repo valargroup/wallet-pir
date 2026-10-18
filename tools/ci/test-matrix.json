@@ -86,8 +86,14 @@
   "transparent-backend": {
     "family": "transparent",
     "targets": [
+      "transparent:transparent-ingest:doc:transparent_ingest",
+      "transparent:transparent-ingest:lib:transparent_ingest",
       "transparent:transparent-server-backend:doc:transparent_server_backend",
-      "transparent:transparent-server-backend:lib:transparent_server_backend"
+      "transparent:transparent-server-backend:lib:transparent_server_backend",
+      "transparent:txid-pir-server:doc:txid_pir_server",
+      "transparent:txid-pir-server:lib:txid_pir_server",
+      "transparent:txid-serving:doc:txid_serving",
+      "transparent:txid-serving:lib:txid_serving"
     ]
   },
   "transparent-recovery": {
