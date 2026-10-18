@@ -26,7 +26,7 @@ def execute(programs, jobs, *, budget=False, test_threads=1):
         env = dict(os.environ, RUST_TEST_THREADS=str(test_threads), CARGO_MANIFEST_DIR=directory,
                    CARGO_MANIFEST_PATH=str(Path(directory) / 'Cargo.toml'),
                    CARGO_PKG_NAME=program['package'], CARGO_PKG_VERSION=program['version'])
-        if program['package'] == 'transparent-filter-server' and not program.get('integration'):
+        if program['package'] == 'transparent-publisher' and not program.get('integration'):
             # Publisher correctness builds full archive runtimes. Serving keeps
             # half the CPUs for queries; serial unit cases have no query load.
             # Bound this process's build pool without changing serving defaults

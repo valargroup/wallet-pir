@@ -109,7 +109,7 @@ jobs:
           set -euo pipefail
           NICE=(nice -n 19)
           if command -v ionice >/dev/null; then NICE+=(ionice -c3); fi
-          "${NICE[@]}" cargo build --locked --release -p transparent-filter-server --features rocksdb-reader \
+          "${NICE[@]}" cargo build --locked --release -p transparent-publisher --features rocksdb-reader \
             --bin journal-inventory --bin shard-cutoff --bin event-spotcheck
           DATA="${DATA_DIR_INPUT:-$DATA_DIR}"
           mkdir -p inventory
@@ -164,7 +164,7 @@ jobs:
               systemctl cat "$unit" 2>/dev/null | grep -E '^(ExecStart|MemoryMax)' || echo "(no persistent unit)"
             done
             echo; echo "## binaries"
-            sudo sha256sum /usr/local/bin/transparent-filter-server /usr/local/bin/transparent-event-ingest 2>/dev/null || true
+            sudo sha256sum /usr/local/bin/transparent-publisher /usr/local/bin/transparent-event-ingest 2>/dev/null || true
             echo; echo "## filter service (loopback)"
             curl -fsS --max-time 10 http://127.0.0.1:8090/v1/health || echo "(no answer)"
             echo; printf 'filters map sha256 (loopback): '; curl -fsS --max-time 10 http://127.0.0.1:8090/v1/filters/shards | sha256sum | cut -d' ' -f1 || echo "(no answer)"
@@ -202,7 +202,7 @@ jobs:
           echo; echo "## unit: $(systemctl is-active transparent-shard-server 2>/dev/null)"
           systemctl cat transparent-shard-server 2>/dev/null | grep -E '^(ExecStart|MemoryMax|MemorySwapMax)'
           echo; echo "## release"; cat /opt/transparent-pir/current-release 2>/dev/null || echo "(none)"
-          sudo sha256sum /usr/local/bin/transparent-shard-server 2>/dev/null
+          sudo sha256sum /usr/local/bin/transparent-query-server 2>/dev/null
           echo; echo "## rollback"; ls -l /opt/transparent-pir/rollback 2>/dev/null || echo "(none)"
           echo; echo "## sets"
           for dir in /srv/transparent-pir/sets/* /srv/transparent-pir/shards; do

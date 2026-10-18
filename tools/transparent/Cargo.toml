@@ -1,0 +1,138 @@
+[package]
+name = "transparent-tools"
+version = "0.1.0-rc.4"
+edition = "2021"
+description = "Transparent PIR measurement, regression, diagnostics and benchmark tools"
+publish = false
+# Every target is listed below; Python tests and fixtures share these directories.
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+
+[lib]
+name = "transparent_tools"
+path = "src/lib.rs"
+
+[features]
+default = []
+# Pinned compact-block baseline, load generation and heavier experiments.
+benchmarks = ["dep:prost", "dep:prost-build", "dep:flate2"]
+# Diagnostics that link the publisher and its node-reading code.
+publisher-tools = ["dep:transparent-publisher", "dep:zakura-server-chain"]
+# Direct node-database readers; implies the publisher diagnostics.
+rocksdb-reader = ["publisher-tools", "transparent-publisher/rocksdb-reader", "zakura-server-chain/rocksdb"]
+# Compact blocks exported from the node database for the benchmark baseline.
+compact-export = ["benchmarks", "rocksdb-reader"]
+
+[[bin]]
+name = "transparent-measure"
+path = "src/measure/main.rs"
+
+[[bin]]
+name = "transparent-regression"
+path = "src/regression/main.rs"
+
+[[bin]]
+name = "hierarchical-filter-eval"
+path = "src/bin/hierarchical-filter-eval.rs"
+
+[[bin]]
+name = "regression-export"
+path = "src/bin/regression-export.rs"
+
+[[bin]]
+name = "transparent-filter-cli"
+path = "src/bin/transparent-filter-cli.rs"
+
+[[bin]]
+name = "txid-quality-canary"
+path = "src/bin/txid-quality-canary.rs"
+
+[[bin]]
+name = "transparent-loadtest"
+path = "src/loadtest/main.rs"
+required-features = ["benchmarks"]
+
+[[bin]]
+name = "transparent-block-server"
+path = "src/bin/transparent-block-server.rs"
+required-features = ["benchmarks"]
+
+[[bin]]
+name = "compact-export"
+path = "src/bin/compact-export.rs"
+required-features = ["compact-export"]
+
+[[example]]
+name = "layout_replay"
+path = "examples/layout_replay.rs"
+
+[[example]]
+name = "activity-reopen"
+path = "examples/activity-reopen.rs"
+
+[[example]]
+name = "sample_recovery"
+path = "examples/sample_recovery.rs"
+
+[[test]]
+name = "regression_runner"
+path = "tests/regression_runner.rs"
+
+[[test]]
+name = "parent_filters"
+path = "tests/parent_filters.rs"
+
+[[test]]
+name = "service_tools"
+path = "tests/service_tools.rs"
+
+[[test]]
+name = "simulation"
+path = "tests/simulation.rs"
+required-features = ["benchmarks"]
+
+[[test]]
+name = "compact_recovery"
+path = "tests/compact_recovery.rs"
+required-features = ["benchmarks"]
+
+[[test]]
+name = "compact_export"
+path = "tests/compact_export.rs"
+required-features = ["benchmarks", "publisher-tools"]
+
+[dependencies]
+transparent-publisher = { path = "../../src/transparent/transparent-publisher", optional = true }
+transparent-query-server = { path = "../../src/transparent/transparent-query-server" }
+transparent-shared = { path = "../../src/transparent/transparent-shared" }
+anyhow = "1"
+axum = "0.7"
+clap = { version = "4", features = ["derive"] }
+flate2 = { version = "1", optional = true }
+futures-util = "0.3"
+hdrhistogram = "7"
+hex = "0.4"
+humantime = "2"
+prost = { version = "0.13", optional = true }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+sysinfo = "0.36"
+tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["io"] }
+transparent-events = { package = "zakura-transparent-events", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "b7fffbbc98d75af5ebc9c9d9da92ca19e9f0fdbd" }
+transparent-filter = { package = "zakura-transparent-filter", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "b7fffbbc98d75af5ebc9c9d9da92ca19e9f0fdbd", features = ["client"] }
+transparent-shard = { package = "zakura-transparent-shard", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "b7fffbbc98d75af5ebc9c9d9da92ca19e9f0fdbd" }
+transparent-txid-client = { package = "zakura-transparent-txid-client", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "b7fffbbc98d75af5ebc9c9d9da92ca19e9f0fdbd" }
+zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "b7fffbbc98d75af5ebc9c9d9da92ca19e9f0fdbd", default-features = false, features = ["transparent"], optional = true }
+zakura-pir-transparent = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "b7fffbbc98d75af5ebc9c9d9da92ca19e9f0fdbd", default-features = false, features = ["engine", "engine-store", "reqwest"] }
+
+[build-dependencies]
+prost-build = { version = "0.13", optional = true }
+sha2 = "0.10"
+
+[dev-dependencies]
+tempfile = "3"

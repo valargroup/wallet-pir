@@ -54,37 +54,16 @@
       "status_wallet_http"
     ]
   },
-  "transparent-blocks": {
+  "transparent-publisher": {
     "fast": [],
     "full": [
-      "recovery"
-    ]
-  },
-  "transparent-filter-server": {
-    "fast": [],
-    "full": [
-      "compact",
       "event_codec_bounds",
       "service_round_trip",
       "shard_filters",
       "txid_shipped_runtimes"
     ]
   },
-  "transparent-loadtest": {
-    "fast": [],
-    "full": [
-      "service_tools",
-      "simulation"
-    ]
-  },
-  "transparent-regression": {
-    "fast": [],
-    "full": [
-      "parent_filters",
-      "runner"
-    ]
-  },
-  "transparent-shard-server": {
+  "transparent-query-server": {
     "fast": [
       "ci_smoke"
     ],
@@ -94,13 +73,24 @@
       "operator_payloads",
       "revisions_and_cache",
       "round_trip",
+      "txid_client",
+      "txid_sharded",
+      "verification_reuse",
       "wallet_anchor",
       "wallet_continuation",
       "wallet_recut",
-      "wallet_sync",
-      "verification_reuse",
-      "txid_client",
-      "txid_sharded"
+      "wallet_sync"
+    ]
+  },
+  "transparent-tools": {
+    "fast": [],
+    "full": [
+      "compact_export",
+      "compact_recovery",
+      "parent_filters",
+      "regression_runner",
+      "service_tools",
+      "simulation"
     ]
   }
 }

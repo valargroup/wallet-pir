@@ -29,7 +29,7 @@ FEATURES = ','.join([
     'enhance-query-server/native-reinspiring', 'status-query-server/native-reinspiring',
     'enhance-publisher/native-reinspiring', 'status-publisher/native-reinspiring',
     'enhance-pir-client/native-reinspiring', 'enhance-pir-load-test/native-reinspiring',
-    'pir-control/admission', 'transparent-filter-server/rocksdb-reader',
+    'pir-control/admission', 'transparent-publisher/rocksdb-reader', 'transparent-query-server/test-support', 'transparent-tools/compact-export',
 ])
 
 

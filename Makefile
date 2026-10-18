@@ -14,7 +14,7 @@ TRANSPARENT_LOAD_STEP_DURATION ?= 10m
 TRANSPARENT_LOAD_JSON ?= .local-pir/runs/transparent/load-report.json
 
 build:
-	cargo build --release --workspace --bins --features transparent-filter-server/rocksdb-reader
+	cargo build --release --workspace --bins --features transparent-publisher/rocksdb-reader,transparent-query-server/test-support,transparent-tools/compact-export
 
 check: check-full
 
@@ -42,7 +42,7 @@ prepare-dev:
 check-full: check-hygiene check-ops check-docs check-reports check-tools
 	cargo fmt --all --check
 	cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
-	tools/ci/full-test.sh --locked --workspace --profile release-fast --features enhance-query-server/qualification-tests,transparent-filter-server/qualification-tests,transparent-server-backend/qualification-tests,transparent-filter-server/rocksdb-reader
+	tools/ci/full-test.sh --locked --workspace --profile release-fast --features enhance-query-server/qualification-tests,transparent-publisher/qualification-tests,transparent-shared/qualification-tests,transparent-publisher/rocksdb-reader,transparent-query-server/test-support,transparent-tools/compact-export
 
 # The deploy scripts' jq programs, compiled and run against payloads the server
 # serializes. Part of `check` because both of the bugs it exists to catch got
@@ -145,8 +145,8 @@ check-ops-scaler-fast:
 
 .PHONY: check-reports
 check-reports:
-	python3 -m unittest discover -s src/transparent/transparent-loadtest/tests -p 'test_*.py'
-	node --test src/transparent/transparent-loadtest/tests/apm.test.cjs
+	python3 -m unittest discover -s tools/transparent/loadtest/tests -p 'test_*.py'
+	node --test tools/transparent/loadtest/tests/apm.test.cjs
 
 # Every relative Markdown link must resolve. The transparent PIR documentation
 # rules delete superseded prose instead of leaving stubs, so a dangling link is
@@ -155,7 +155,7 @@ check-docs:
 	tools/check-doc-links.sh
 
 test:
-	tools/ci/full-test.sh --locked --workspace --profile release-fast --features enhance-query-server/qualification-tests,transparent-filter-server/qualification-tests,transparent-server-backend/qualification-tests,transparent-filter-server/rocksdb-reader
+	tools/ci/full-test.sh --locked --workspace --profile release-fast --features enhance-query-server/qualification-tests,transparent-publisher/qualification-tests,transparent-shared/qualification-tests,transparent-publisher/rocksdb-reader,transparent-query-server/test-support,transparent-tools/compact-export
 
 run-server:
 	cargo run --release -p enhance-publisher --bin enhance-pir-server -- --help
@@ -181,7 +181,7 @@ load-test:
 # measures correct recoveries per second, not requests.
 transparent-load-test:
 	@mkdir -p .local-pir/runs/transparent
-	cargo run --release -p transparent-loadtest -- \
+	cargo run --release -p transparent-tools --features benchmarks --bin transparent-loadtest -- \
 		--shard-url "$(TRANSPARENT_LOAD_URL)" \
 		$(if $(strip $(TRANSPARENT_LOAD_FILTER_URL)),--filter-url "$(TRANSPARENT_LOAD_FILTER_URL)") \
 		--sample "$(TRANSPARENT_LOAD_SAMPLE)" \
@@ -198,12 +198,12 @@ fmt:
 
 # Correctness at wallet-accepted anchors; each run preserves its SQLite stores
 # and exact mismatch evidence in a new output directory.
-TRANSPARENT_REGRESSION_FIXTURE ?= src/transparent/transparent-regression/fixtures/mainnet.json
+TRANSPARENT_REGRESSION_FIXTURE ?= tools/transparent/fixtures/regression/mainnet.json
 TRANSPARENT_REGRESSION_OUT ?= .local-pir/runs/transparent/regression
 TRANSPARENT_REGRESSION_FILTER_URL ?= https://enhance-pir.valargroup.dev
 .PHONY: transparent-regression
 transparent-regression:
-	cargo run --locked --release -p transparent-regression --bin transparent-regression -- \
+	cargo run --locked --release -p transparent-tools --bin transparent-regression -- \
 		--fixture "$(TRANSPARENT_REGRESSION_FIXTURE)" \
 		--shard-url "$(TRANSPARENT_LOAD_URL)" \
 		--filter-url "$(TRANSPARENT_REGRESSION_FILTER_URL)" \
@@ -212,7 +212,7 @@ transparent-regression:
 
 # Mixed-wallet simulations. Leave URL overrides blank to use the scenario's
 # origins. Export options so the shell receives paths and labels as data.
-SIM_SCENARIO ?= src/transparent/transparent-loadtest/scenarios/mixed-20-wave.json
+SIM_SCENARIO ?= tools/transparent/loadtest/scenarios/mixed-20-wave.json
 SIM_URL ?=
 SIM_FILTER_URL ?=
 SIM_METRICS ?=
@@ -227,9 +227,9 @@ export SIM_SCENARIO SIM_URL SIM_FILTER_URL SIM_METRICS SIM_OUT SIM_RUN_ID
 
 .PHONY: transparent-sim transparent-sim-wave transparent-sim-sustained transparent-sim-help transparent-sim-open
 
-transparent-sim-wave: SIM_SCENARIO = src/transparent/transparent-loadtest/scenarios/mixed-20-wave.json
+transparent-sim-wave: SIM_SCENARIO = tools/transparent/loadtest/scenarios/mixed-20-wave.json
 
-transparent-sim-sustained: SIM_SCENARIO = src/transparent/transparent-loadtest/scenarios/mixed-20-sustained.json
+transparent-sim-sustained: SIM_SCENARIO = tools/transparent/loadtest/scenarios/mixed-20-sustained.json
 
 # Each invocation gets a fresh report directory unless SIM_OUT is supplied.
 # SIM_METRICS is a space-separated list of NAME=http(s)://host/metrics entries.
@@ -249,12 +249,12 @@ transparent-sim transparent-sim-wave transparent-sim-sustained:
 	for target in $$SIM_METRICS; do set -- "$$@" --metrics-target "$$target"; done; \
 	printf 'Scenario: %s\nReport directory: %s\n' "$$SIM_SCENARIO" "$$out"; \
 	sim_status=0; \
-	cargo run --locked --release -p transparent-loadtest -- "$$@" || sim_status=$$?; \
-	if [ -f "$$out/report.html" ]; then python3 src/transparent/transparent-loadtest/open_report.py --remember "$$out" || :; printf '\nOpen report: %s/report.html\n' "$$out"; fi; \
+	cargo run --locked --release -p transparent-tools --features benchmarks --bin transparent-loadtest -- "$$@" || sim_status=$$?; \
+	if [ -f "$$out/report.html" ]; then python3 tools/transparent/loadtest/open_report.py --remember "$$out" || :; printf '\nOpen report: %s/report.html\n' "$$out"; fi; \
 	exit "$$sim_status"
 
 transparent-sim-open:
-	@python3 src/transparent/transparent-loadtest/open_report.py
+	@python3 tools/transparent/loadtest/open_report.py
 
 transparent-sim-help:
 	@printf '%s\n' \
@@ -294,18 +294,18 @@ export SIM_COMPARISON_METADATA
 export BLOCK_DATASET BLOCK_URL BLOCK_FRESH_SAMPLE BLOCK_METRICS_URL BLOCK_ENCODING
 .PHONY: transparent-block-export transparent-block-serve transparent-sim-freeze transparent-sim-compare
 transparent-block-export:
-	cargo run --locked --release -p transparent-filter-server --features rocksdb-reader --bin compact-export -- $(BLOCK_EXPORT_ARGS) --out-dir "$(BLOCK_DATASET)"
+	cargo run --locked --release -p transparent-tools --features compact-export --bin compact-export -- $(BLOCK_EXPORT_ARGS) --out-dir "$(BLOCK_DATASET)"
 
 transparent-block-serve:
-	cargo run --locked --release -p transparent-block-server -- --dataset "$(BLOCK_DATASET)" $(BLOCK_SERVE_ARGS)
+	cargo run --locked --release -p transparent-tools --features benchmarks --bin transparent-block-server -- --dataset "$(BLOCK_DATASET)" $(BLOCK_SERVE_ARGS)
 
 transparent-sim-freeze:
 	@test -n "$(BLOCK_SELECTED_SAMPLE)" || { echo 'Set BLOCK_SELECTED_SAMPLE=/path/selected-sample.json'; exit 1; }
-	cargo run --locked --release -p transparent-loadtest -- --scenario "$(SIM_SCENARIO)" --selected-sample "$(BLOCK_SELECTED_SAMPLE)"
+	cargo run --locked --release -p transparent-tools --features benchmarks --bin transparent-loadtest -- --scenario "$(SIM_SCENARIO)" --selected-sample "$(BLOCK_SELECTED_SAMPLE)"
 
 transparent-sim-compare:
-	@test -n "$(BLOCK_URL)" -a -n "$(BLOCK_FRESH_SAMPLE)" || { echo 'Set BLOCK_URL and BLOCK_FRESH_SAMPLE (see src/transparent/transparent-loadtest/README.md)'; exit 1; }
-	cargo build --locked --release -p transparent-loadtest
+	@test -n "$(BLOCK_URL)" -a -n "$(BLOCK_FRESH_SAMPLE)" || { echo 'Set BLOCK_URL and BLOCK_FRESH_SAMPLE (see tools/transparent/loadtest/README.md)'; exit 1; }
+	cargo build --locked --release -p transparent-tools --features benchmarks --bin transparent-loadtest
 	@set -eu; \
 	out="$${SIM_OUT:-$${TMPDIR:-/tmp}/transparent-sim-compare-$$(date -u +%Y%m%dT%H%M%SZ)-$$$$}"; \
 	set -- --binary "$${CARGO_TARGET_DIR:-target}/release/transparent-loadtest" --scenario "$$SIM_SCENARIO" --fresh-sample "$$BLOCK_FRESH_SAMPLE" --block-url "$$BLOCK_URL" --encoding "$$BLOCK_ENCODING" --out-dir "$$out"; \
@@ -318,8 +318,8 @@ transparent-sim-compare:
 	if [ -n "$$SIM_COMPARISON_METADATA" ]; then set -- "$$@" --metadata "$$SIM_COMPARISON_METADATA"; fi; \
 	if [ -n "$$BLOCK_METRICS_URL" ]; then set -- "$$@" --block-metrics-url "$$BLOCK_METRICS_URL"; fi; \
 	set -f; for target in $$SIM_METRICS; do set -- "$$@" --pir-metrics "$$target"; done; \
-	status=0; python3 src/transparent/transparent-loadtest/compare.py "$$@" || status=$$?; \
-	if [ -f "$$out/report.html" ]; then python3 src/transparent/transparent-loadtest/open_report.py --remember "$$out"; fi; \
+	status=0; python3 tools/transparent/loadtest/compare.py "$$@" || status=$$?; \
+	if [ -f "$$out/report.html" ]; then python3 tools/transparent/loadtest/open_report.py --remember "$$out"; fi; \
 	exit "$$status"
 
 # Local-only worker-stage burst comparison; no fleet endpoints or live state.

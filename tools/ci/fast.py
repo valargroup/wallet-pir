@@ -58,9 +58,29 @@ def workspace_packages(root=ROOT):
     return packages
 
 
+# The Transparent tools package shares tools/transparent with operations scripts;
+# only these inputs belong to the Cargo package.
+SHARED_PACKAGE_INPUTS = {
+    'tools/transparent/': ('Cargo.toml', 'build.rs', 'src/', 'examples/', 'loadtest/',
+                           'fixtures/regression/', 'tests/fixtures/', 'tests/*.rs'),
+}
+
+
+def package_input(directory, path):
+    inputs = SHARED_PACKAGE_INPUTS.get(directory)
+    if inputs is None:
+        return True
+    relative = path[len(directory):]
+    return any(relative.startswith('tests/') and '/' not in relative[6:] and relative.endswith('.rs')
+               if prefix == 'tests/*.rs' else relative.startswith(prefix) for prefix in inputs)
+
+
 def owner(packages, path):
-    return next((p['name'] for p in packages
-                 if path.startswith(Path(p['manifest_path']).parent.relative_to(ROOT).as_posix() + '/')), None)
+    for p in packages:
+        directory = Path(p['manifest_path']).parent.relative_to(ROOT).as_posix() + '/'
+        if path.startswith(directory) and package_input(directory, path):
+            return p['name']
+    return None
 
 
 def route(path):
@@ -133,7 +153,7 @@ def route(path):
         return targets | {'check-ops-contracts'}, {'ops'}
     if path.startswith(('tools/tests/operations/', 'tools/scripts/', 'tools/deploy/', 'tools/infra/')):
         return {'check-ops-shared', 'check-ops-contracts', 'check-ops-deploy'}, {'ops'}
-    if path.startswith('src/transparent/transparent-loadtest/'):
+    if path.startswith(('tools/transparent/loadtest/', 'tools/transparent/src/loadtest/')):
         return {'check-reports'}, {'transparent', 'ops'}
     if path.startswith(('tools/', 'tools/transparent/filters/', 'tools/transparent/parent-filters/')):
         return {'check-tools'}, {'ops'}
@@ -191,7 +211,7 @@ def plan(packages, paths, *, all_checks=False):
         if package:
             if path.endswith('.md'):
                 helpers.add('check-docs'); groups.add('ops')
-            if path.startswith('src/transparent/transparent-loadtest/'):
+            if path.startswith(('tools/transparent/loadtest/', 'tools/transparent/src/loadtest/')):
                 helpers.add('check-reports')
             # Serialized payloads are consumed by jq/deploy scripts.
             if path.endswith('operator_payloads.rs'):

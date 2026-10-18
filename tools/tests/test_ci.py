@@ -101,9 +101,9 @@ class BoundaryTests(unittest.TestCase):
     def test_transparent_workers_and_backend_do_not_pull_in_the_publisher(self):
         packages = {package['name']: package for package in boundary.manifests()
                     if not package['preserved']}
-        backend = 'transparent-server-backend'
-        worker = 'transparent-shard-server'
-        publisher = 'transparent-filter-server'
+        backend = 'transparent-shared'
+        worker = 'transparent-query-server'
+        publisher = 'transparent-publisher'
         self.assertIn(backend, boundary.PURE)
         publisher_dependencies = {edge['name'] for edge in packages[publisher]['dependencies']
                                   if edge['kind'] == 'dependencies'}
@@ -225,14 +225,14 @@ class BoundaryTests(unittest.TestCase):
                                         for dep in dependencies]}
         metadata = {
             'packages': [dict(id=name, name=name, source=None) for name in
-                         ('transparent-filter-server', 'zakura-server-chain', 'rocksdb')],
-            'resolve': {'nodes': [node('transparent-filter-server', ['zakura-server-chain']),
+                         ('transparent-publisher', 'zakura-server-chain', 'rocksdb')],
+            'resolve': {'nodes': [node('transparent-publisher', ['zakura-server-chain']),
                                   node('zakura-server-chain'), node('rocksdb')]},
         }
         self.assertEqual(boundary.database_reader_violations(metadata), [])
         metadata['resolve']['nodes'][1] = node('zakura-server-chain', ['rocksdb'])
         self.assertEqual(boundary.database_reader_violations(metadata),
-                         ['transparent-filter-server: default build resolves rocksdb'])
+                         ['transparent-publisher: default build resolves rocksdb'])
 
     def test_standalone_consumer_keeps_the_workspace_dependency_sources(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -294,8 +294,8 @@ class BoundaryTests(unittest.TestCase):
                      {**self.edge('pir-monitor'), 'path': 'tools/shared/pir-monitor/'},
                      {**self.edge('unlisted-tool'), 'path': 'tools/enhance/unlisted/'},
                      {**self.edge('receiver-store'), 'path': 'src/receiver/receiver-store/'},
-                     {**self.edge('transparent-server-backend'),
-                      'path': 'src/transparent/transparent-server-backend/'}]
+                     {**self.edge('transparent-shared'),
+                      'path': 'src/transparent/transparent-shared/'}]
         for kind in ['dependencies', 'dev-dependencies', 'build-dependencies',
                      'target.cfg(unix).dependencies', 'target.cfg(unix).dev-dependencies',
                      'target.cfg(unix).build-dependencies']:
@@ -490,11 +490,11 @@ class ReleaseTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             release.extract(self.bundle(root), root / 'artifact', SHA, 'transparent-filter')
-            self.assertTrue((root / 'artifact/transparent-filter-server').stat().st_mode & 0o111)
+            self.assertTrue((root / 'artifact/transparent-publisher').stat().st_mode & 0o111)
 
     def test_wrong_sha_tampered_missing_extra_or_path_escape_refused_before_write(self):
         mutations = [lambda d: d.update(revision=b'b' * 40),
-                     lambda d: d.update({'transparent-filter-server': b'tampered'}),
+                     lambda d: d.update({'transparent-publisher': b'tampered'}),
                      lambda d: d.pop('transparent-filter-server.service'),
                      lambda d: d.update({'extra': b'x'}),
                      lambda d: d.update({'../outside': b'x'}),
@@ -1257,7 +1257,7 @@ class CacheWorkflowTests(unittest.TestCase):
 
     def test_transparent_full_checks_include_the_standalone_exporter(self):
         full = load_full()
-        groups = {'transparent': ['transparent-filter-server'], 'shared': ['pir-control']}
+        groups = {'transparent': ['transparent-publisher'], 'shared': ['pir-control']}
         manifest = 'tools/txid/txid-sizing/export/Cargo.toml'
         self.assertEqual(full.commands('transparent', groups)[0], [
             'bash', 'tools/ci/full-test.sh', '--locked', '--profile', 'release-fast',
@@ -1268,7 +1268,7 @@ class CacheWorkflowTests(unittest.TestCase):
             '--manifest-path', manifest,
         ])
         self.assertEqual(len(full.commands('transparent', groups)), 2)
-        self.assertIn('transparent-filter-server', full.commands('transparent', groups)[1])
+        self.assertIn('transparent-publisher', full.commands('transparent', groups)[1])
         self.assertEqual(len(full.commands('shared', groups)), 1)
         self.assertEqual(len(full.commands('transparent', groups, lint=True)), 1)
 
