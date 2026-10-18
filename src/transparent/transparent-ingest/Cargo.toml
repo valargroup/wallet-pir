@@ -19,12 +19,12 @@ serde_json = "1"
 sha2 = "0.10"
 tempfile = "3"
 thiserror = "2"
-transparent-events = { package = "zakura-transparent-events", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "68315eac8aa6dfc018c79a48b90ff51460caaee8" }
-transparent-filter = { package = "zakura-transparent-filter", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "68315eac8aa6dfc018c79a48b90ff51460caaee8" }
-transparent-shard = { package = "zakura-transparent-shard", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "68315eac8aa6dfc018c79a48b90ff51460caaee8" }
-zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "68315eac8aa6dfc018c79a48b90ff51460caaee8", default-features = false, features = ["transparent"] }
+transparent-events = { package = "zakura-transparent-events", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "b7fffbbc98d75af5ebc9c9d9da92ca19e9f0fdbd" }
+transparent-filter = { package = "zakura-transparent-filter", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "b7fffbbc98d75af5ebc9c9d9da92ca19e9f0fdbd" }
+transparent-shard = { package = "zakura-transparent-shard", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "b7fffbbc98d75af5ebc9c9d9da92ca19e9f0fdbd" }
+zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "b7fffbbc98d75af5ebc9c9d9da92ca19e9f0fdbd", default-features = false, features = ["transparent"] }
 
 [dev-dependencies]
 # The shared prepared-runtime loader that verifies what publication wrote.
 transparent-server-backend = { path = "../transparent-server-backend" }
-zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "68315eac8aa6dfc018c79a48b90ff51460caaee8", default-features = false, features = ["transparent", "testing"] }
+zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "b7fffbbc98d75af5ebc9c9d9da92ca19e9f0fdbd", default-features = false, features = ["transparent", "testing"] }

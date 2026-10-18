@@ -34,10 +34,10 @@ members = [
 
 # Consume the library-only dependency cleanup at one exact upstream revision.
 [patch.crates-io]
-ipir-sp = { git = "https://github.com/valargroup/ipir-sp", rev = "1d637dba8a9e6dcf749a2054e33ea8ff03fac8c9" }
-inspiring = { git = "https://github.com/valargroup/ipir-sp", rev = "1d637dba8a9e6dcf749a2054e33ea8ff03fac8c9" }
-reinspiring = { git = "https://github.com/valargroup/ipir-sp", rev = "1d637dba8a9e6dcf749a2054e33ea8ff03fac8c9" }
-simplepir-kernel = { git = "https://github.com/valargroup/ipir-sp", rev = "1d637dba8a9e6dcf749a2054e33ea8ff03fac8c9" }
+ipir-sp = { git = "https://github.com/valargroup/ipir-sp", rev = "5ea080a3281a01c5459f585e0a1bbbde50ec2bd2" }
+inspiring = { git = "https://github.com/valargroup/ipir-sp", rev = "5ea080a3281a01c5459f585e0a1bbbde50ec2bd2" }
+reinspiring = { git = "https://github.com/valargroup/ipir-sp", rev = "5ea080a3281a01c5459f585e0a1bbbde50ec2bd2" }
+simplepir-kernel = { git = "https://github.com/valargroup/ipir-sp", rev = "5ea080a3281a01c5459f585e0a1bbbde50ec2bd2" }
 
 # Keep transitive Common dependencies on the same main revision.
 zakura-address = { git = "https://github.com/zakura-core/common.git", rev = "b58202174969a4d4029827de140da458dd429986" }
