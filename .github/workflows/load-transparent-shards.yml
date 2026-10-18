@@ -37,7 +37,7 @@ on:
       sample_path:
         description: Workload sample, relative to the checkout
         required: false
-        default: src/transparent/transparent-regression/fixtures/load-sample-v2codec.json
+        default: tools/transparent/fixtures/regression/load-sample-v2codec.json
         type: string
       steps:
         description: Concurrency steps, comma separated
@@ -178,7 +178,7 @@ jobs:
           HOST_SKU: ${{ inputs.host_sku }}
         run: |
           set -euo pipefail
-          cargo build --locked --release -p transparent-loadtest
+          cargo build --locked --release -p transparent-tools --features benchmarks --bin transparent-loadtest
           mkdir -p load
           if [[ -n "$SCENARIO" ]]; then
             ARGS=(--scenario "$SCENARIO" --out-dir load/scenario --shard-url "$SHARD_URL" --run-id "$RUN_ID")

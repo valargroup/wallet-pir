@@ -65,20 +65,20 @@ WALLET_LIBRARIES = 'github.com/zakura-core/wallet-libraries'
 # Protocol framing packages that must not acquire chain or wallet behaviour.
 PURE = {
     'receiver-pir-server',
-    'pir-observability', 'pir-control', 'pir-runtime', 'enhance-pir', 'transparent-blocks',
-    'transparent-journal', 'transparent-measure',
-    'transparent-shard-server', 'transparent-server-backend',
+    'pir-observability', 'pir-control', 'pir-runtime', 'enhance-pir',
+    'transparent-shared', 'transparent-query-server',
     'enhance-serving', 'status-query-server', 'pir-serving',
 }
 # Serving libraries and the chain reading, ingestion and application packages
 # they must never reach. Each product's applications compose its serving library;
 # the shared raw PIR runtime they call is held to the same rule.
-SERVING = {'enhance-serving', 'status-query-server', 'transparent-server-backend', 'pir-runtime',
+SERVING = {'enhance-serving', 'status-query-server', 'transparent-shared', 'pir-runtime',
            'pir-serving'}
 INGESTION = {
     'pir-pipeline', 'zakura-server-chain', 'enhance-pir-server', 'receiver-indexer',
-    'transparent-filter-server', 'transparent-block-server', 'transparent-measure',
-    'status-publisher', 'transparent-ingest',
+    'transparent-publisher', 'status-publisher',
+    # Optional publisher diagnostics make the tools package node-capable.
+    'transparent-tools',
 }
 PRODUCTS = ('src/enhance/', 'src/status/', 'src/transparent/', 'src/receiver/')
 SHARED = 'src/shared/'
@@ -86,9 +86,8 @@ SHARED = 'src/shared/'
 # Serving libraries compose into them, never the reverse.
 APPLICATIONS = {
     'enhance-pir-server', 'status-publisher', 'pir-apm', 'enhance-pir-load-test', 'pir-monitor',
-    'enhance-noise-analysis', 'transparent-filter-server', 'transparent-block-server',
-    'transparent-shard-server', 'transparent-loadtest', 'transparent-regression',
-    'transparent-measure', 'receiver-indexer', 'receiver-pir-server',
+    'enhance-noise-analysis', 'transparent-publisher', 'transparent-query-server',
+    'transparent-tools', 'receiver-indexer', 'receiver-pir-server',
 }
 # Shared packages consumed by a subset of products. A serving library of any other
 # product reaching one still crosses a product boundary.
@@ -102,7 +101,7 @@ SHARED_SCOPES = {
 PIPELINE = 'pir-pipeline'
 PIPELINE_DIRECT = {'tokio'}
 # These chain-free serving foundations also must not import the lifecycle.
-# transparent-shard-server is an application; its HTTPS manager uses the lifecycle.
+# transparent-query-server is an application; its HTTPS manager uses the lifecycle.
 PIPELINE_FOUNDATIONS = {'receiver-pir-server', 'pir-control', 'pir-observability'}
 PIPELINE_UTILITIES = {
     'tokio', 'tokio-macros', 'pin-project-lite', 'proc-macro2', 'quote', 'syn',
@@ -338,13 +337,21 @@ def serving_resolved_violations(root_id, packages, nodes):
     return problems
 
 
+DATABASE = {'zakura-state', 'rocksdb', 'librocksdb-sys'}
+DATABASE_FREE = {
+    'transparent-publisher': DATABASE,
+    'transparent-tools': DATABASE | {'zakura-server-chain', 'transparent-publisher'},
+}
+
+
 def database_reader_violations(metadata):
-    """The default publisher may read node RPCs, but must not build a database reader."""
+    """The default publisher may read node RPCs, but must not build a database reader;
+    default tools builds resolve neither."""
     packages = {p['id']: p for p in metadata['packages']}
     nodes = {n['id']: n for n in metadata['resolve']['nodes']}
     problems = set()
     for root in metadata['packages']:
-        if root['name'] != 'transparent-filter-server' or root['source'] is not None:
+        if root['name'] not in DATABASE_FREE or root['source'] is not None:
             continue
         seen, pending = set(), [root['id']]
         while pending:
@@ -353,8 +360,8 @@ def database_reader_violations(metadata):
                 continue
             seen.add(current)
             name = packages[current]['name']
-            if name in {'zakura-state', 'rocksdb', 'librocksdb-sys'}:
-                problems.add(f"transparent-filter-server: default build resolves {name}")
+            if name in DATABASE_FREE[root['name']]:
+                problems.add(f"{root['name']}: default build resolves {name}")
             pending.extend(dep['pkg'] for dep in nodes[current]['deps']
                            if any(k['kind'] in (None, 'build') for k in dep['dep_kinds']))
     return sorted(problems)
@@ -446,7 +453,7 @@ def main(argv=None):
         problems += common_family_violations(metadata['packages'], patches)
         problems += resolved_violations(metadata, workspace_unified=True)
         problems += resolved_violations(standalone_metadata(RECEIVER))
-        problems += database_reader_violations(standalone_metadata({'transparent-filter-server'}))
+        problems += database_reader_violations(standalone_metadata(set(DATABASE_FREE)))
         for name in sorted(SERVING | PIPELINE_FOUNDATIONS | {PIPELINE}):
             problems += resolved_violations(standalone_metadata({name}))
     for problem in problems:

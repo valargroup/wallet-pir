@@ -19,7 +19,7 @@
 #
 # The programs come from the scripts themselves, via their `jq-programs` mode,
 # and the payloads come from `tools/transparent/fixtures/`, written by
-# src/transparent/transparent-shard-server/tests/operator_payloads.rs from the server's
+# src/transparent/transparent-query-server/tests/operator_payloads.rs from the server's
 # own types. Neither side transcribes the other, so a rename cannot leave one of
 # them agreeing with a stale copy of the other.
 #

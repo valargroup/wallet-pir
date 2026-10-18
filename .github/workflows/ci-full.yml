@@ -139,9 +139,9 @@ jobs:
       - name: Test simulation report helpers
         run: |
           umask 022
-          node --test src/transparent/transparent-loadtest/tests/apm.test.cjs
-          python3 src/transparent/transparent-loadtest/tests/test_open_report.py
-          python3 src/transparent/transparent-loadtest/tests/test_compare.py
+          node --test tools/transparent/loadtest/tests/apm.test.cjs
+          python3 tools/transparent/loadtest/tests/test_open_report.py
+          python3 tools/transparent/loadtest/tests/test_compare.py
       - run: python3 tools/ci/full_packages.py --group transparent --lint
       - name: Report Cargo cache reuse
         if: always()

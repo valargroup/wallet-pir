@@ -27,7 +27,7 @@ def publisher_runs_alone(name, kinds):
     The 8-core fast runner still has cores left when the publisher keeps four
     build threads, so it stays in the shared pool there.
     """
-    return name == 'transparent-filter-server' and 'lib' in kinds and available_cpus() < 8
+    return name == 'transparent-publisher' and 'lib' in kinds and available_cpus() < 8
 
 
 def test_names(binary, directory, *, ignored=False):
@@ -50,7 +50,7 @@ def bounded_programs(program, names):
     ordered = sorted(names)
     distribution = [name for name in ordered
                     if name.startswith('controller::distribution_tests::')]
-    if program.get('package') == 'transparent-filter-server' and distribution:
+    if program.get('package') == 'transparent-publisher' and distribution:
         # These cases share expensive immutable native producer bytes. Keep
         # them in one process; each consumer still has its own files and HTTP.
         remaining = sorted(names - set(distribution))
@@ -184,7 +184,7 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3,
     # On a 4-core runner the publisher is exclusive and finishes before this
     # pool. On more cores it starts first in the pool. HTTP programs are next.
     def queue_key(program):
-        publisher = (program['package'] == 'transparent-filter-server'
+        publisher = (program['package'] == 'transparent-publisher'
                      and not program['integration'] and program['case_count'] > 0)
         group = 0 if publisher else 1 if program['integration'] else 2
         return group, -program['case_count']
