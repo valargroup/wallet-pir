@@ -996,18 +996,40 @@ mod tests {
     /// while the shared lifecycle activates different rows at the next anchor.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn shared_pipeline_handover_keeps_an_admitted_old_publication_response() {
-        use sha2::{Digest, Sha256};
         let mut paused = Paused::new(|_| {}).await;
         paused.refresh().await.unwrap();
         let old = paused.get("init").await;
         let old_manifest: receiver_pir::Manifest = serde_json::from_value(old.clone()).unwrap();
-        let response = reqwest::get(format!(
-            "{}/v1/receiver/rows/{}",
+        let public = reqwest::get(format!(
+            "{}/v1/receiver/public/{}",
             paused.origin,
             hex::encode(old_manifest.id().unwrap())
         ))
         .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .bytes()
+        .await
         .unwrap();
+        let client = receiver_pir::Client::new(
+            old_manifest.clone(),
+            &public,
+            receiver_pir::AcceptedCoverage {
+                genesis: old_manifest.directory.genesis,
+                required_start: old_manifest.directory.start_height,
+                height: old_manifest.directory.end_height,
+                hash: old_manifest.directory.end_hash,
+            },
+        )
+        .unwrap();
+        let request = client.prepare(super::common::receiver(), 0).unwrap();
+        let response = reqwest::Client::new()
+            .post(format!("{}/v1/receiver/query", paused.origin))
+            .body(request.body().to_vec())
+            .send()
+            .await
+            .unwrap();
         assert!(response.status().is_success());
         // Reuse the same valid public record as the preparation/restart case;
         // writable store and publication ownership remain independent.
@@ -1045,12 +1067,8 @@ mod tests {
             old_manifest.directory.data_sha256
         );
         let bytes = response.bytes().await.unwrap();
-        // This empty index has an independently known all-zero row oracle.
-        assert!(bytes.iter().all(|byte| *byte == 0));
-        assert_eq!(
-            <[u8; 32]>::from(Sha256::digest(&bytes)),
-            old_manifest.directory.data_sha256
-        );
+        // The old publication contains no payments, even though the new one does.
+        assert_eq!(client.decode(request, &bytes).unwrap(), None);
     }
 
     /// A refresh with nothing new keeps the publication, and a changed report

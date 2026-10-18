@@ -169,6 +169,7 @@ class PlannerTests(unittest.TestCase):
             fast.rust_checks([package], test=selected)
         self.assertIn(selected, calls[-1])
         self.assertNotIn('--skip', calls[-1])
+        self.assertIn('full-tests', calls[-1][calls[-1].index('--features') + 1])
 
     def test_explicit_integration_target_preserves_features_and_filter(self):
         metadata = {'packages': [{'name': 'example', 'targets': [{'name': 'http', 'kind': ['test']}]}]}

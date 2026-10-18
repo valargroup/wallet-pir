@@ -36,37 +36,28 @@ fn copy_fixture_tree(source: &Path, target: &Path) {
     }
 }
 
-// Set only by the exact private exit-control entry. Its parent remains alive
-// while the child copies these immutable producer bytes into its own owned roots.
-static EXIT_FIXTURE_SOURCES: std::sync::OnceLock<BTreeMap<u64, PathBuf>> =
-    std::sync::OnceLock::new();
+fn retain_prepared_fixture(build: impl FnOnce(&Path)) -> PathBuf {
+    static CLEANUP: std::sync::Once = std::sync::Once::new();
+    CLEANUP.call_once(|| {
+        // SAFETY: the callback only drops owned TempDirs after test threads exit.
+        assert_eq!(unsafe { libc::atexit(cleanup_prepared_fixtures) }, 0);
+    });
+    let root = tempfile::Builder::new()
+        .prefix("provider-prepared-fixture-")
+        .tempdir()
+        .unwrap();
+    build(root.path());
+    let path = root.path().to_path_buf();
+    PREPARED_FIXTURES.lock().unwrap().push(root);
+    path
+}
 
 fn prepared_fixture(through: u64) -> &'static Path {
     fn build(through: u64) -> PathBuf {
-        static CLEANUP: std::sync::Once = std::sync::Once::new();
-        CLEANUP.call_once(|| {
-            // SAFETY: the callback has C ABI, cannot unwind, and only drops
-            // registered TempDirs. It never initializes FIRST or NEXT.
-            assert_eq!(unsafe { libc::atexit(cleanup_prepared_fixtures) }, 0);
-        });
-        let root = tempfile::Builder::new()
-            .prefix("provider-prepared-fixture-")
-            .tempdir()
-            .unwrap();
-        if let Some(sources) = EXIT_FIXTURE_SOURCES.get() {
-            let directory = root.path().join("publication");
-            copy_fixture_tree(&sources[&through].join("publication"), &directory);
-            let set = ShardSet::open(&directory, 0).unwrap();
-            // Reuse construction, never its verification result. The production
-            // finalizer verifies the copied table/runtime bytes independently.
-            Finalized::prepare(&directory, &set, 2).unwrap();
-        } else {
-            let (directory, set) = publication_through(root.path(), through);
+        retain_prepared_fixture(|root| {
+            let (directory, set) = publication_through(root, through);
             prepare_recent(&directory, &set);
-        }
-        let path = root.path().to_path_buf();
-        PREPARED_FIXTURES.lock().unwrap().push(root);
-        path
+        })
     }
     static FIRST: std::sync::LazyLock<PathBuf> = std::sync::LazyLock::new(|| build(2));
     static NEXT: std::sync::LazyLock<PathBuf> = std::sync::LazyLock::new(|| build(3));
@@ -92,12 +83,6 @@ fn fixture_exit_control(both: bool, fail: bool) {
         "{}::prepared_fixtures_exit_child",
         module_path!().split_once("::").unwrap().1
     );
-    // Count construction inside this test when not already built by an earlier
-    // case. There is no disk cache, unmeasured warmup, or mutable shared tree.
-    let mut sources = BTreeMap::from([(2, prepared_fixture(2))]);
-    if both {
-        sources.insert(3, prepared_fixture(3));
-    }
     let scratch = tempfile::tempdir().unwrap();
     let output = std::process::Command::new(std::env::current_exe().unwrap())
         .args([&child, "--exact", "--test-threads=1", "--nocapture"])
@@ -110,14 +95,6 @@ fn fixture_exit_control(both: bool, fail: bool) {
             } else {
                 "first"
             },
-        )
-        .env(
-            "WALLET_PIR_FIXTURE_EXIT_SOURCES",
-            serde_json::to_string(&sources).unwrap(),
-        )
-        .env(
-            "TRANSPARENT_BUILD_THREADS",
-            std::env::var("TRANSPARENT_BUILD_THREADS").unwrap_or_else(|_| "4".into()),
         )
         .env("TMPDIR", scratch.path())
         .env("TMP", scratch.path())
@@ -164,34 +141,26 @@ fn prepared_fixtures_exit_child() {
         Ok("fail") => (true, true),
         other => panic!("missing child mode: {other:?}"),
     };
-    let sources: BTreeMap<u64, PathBuf> =
-        serde_json::from_str(&std::env::var("WALLET_PIR_FIXTURE_EXIT_SOURCES").unwrap()).unwrap();
-    assert_eq!(
-        sources.keys().copied().collect::<Vec<_>>(),
-        if both { vec![2, 3] } else { vec![2] }
-    );
-    EXIT_FIXTURE_SOURCES.set(sources).unwrap();
-    let first = tempfile::tempdir().unwrap();
-    let (directory, set) = prepared_publication(first.path(), 2);
+    // Cleanup concerns ownership and process exit, independently of PIR size.
+    // Real publication and verification remain in the manager behavior tests.
+    let first = retain_prepared_fixture(|root| {
+        std::fs::write(root.join("bytes"), b"first immutable fixture").unwrap();
+    });
     let copy = tempfile::tempdir().unwrap();
-    let (copy_directory, copy_set) = prepared_publication(copy.path(), 2);
-    assert_eq!(set.map_digest, copy_set.map_digest);
-    let map = std::fs::read(copy_directory.join("shards.json")).unwrap();
-    std::fs::write(directory.join("shards.json"), b"corrupt").unwrap();
+    let directory = copy.path().join("copy");
+    copy_fixture_tree(&first, &directory);
     assert_eq!(
-        std::fs::read(copy_directory.join("shards.json")).unwrap(),
-        map
-    );
-    let fresh = tempfile::tempdir().unwrap();
-    let (fresh_directory, _) = prepared_publication(fresh.path(), 2);
-    assert_eq!(
-        std::fs::read(fresh_directory.join("shards.json")).unwrap(),
-        map
+        std::fs::read(directory.join("bytes")).unwrap(),
+        b"first immutable fixture"
     );
     if both {
-        let next = tempfile::tempdir().unwrap();
-        let (_, next_set) = prepared_publication(next.path(), 3);
-        assert_ne!(set.map_digest, next_set.map_digest);
+        let next = retain_prepared_fixture(|root| {
+            std::fs::write(root.join("bytes"), b"next immutable fixture").unwrap();
+        });
+        assert_ne!(
+            std::fs::read(first.join("bytes")).unwrap(),
+            std::fs::read(next.join("bytes")).unwrap()
+        );
     }
     assert_eq!(
         PREPARED_FIXTURES.lock().unwrap().len(),
@@ -259,15 +228,50 @@ fn manager(tls: &Tls, root: &Path) -> Manager {
     )
     .unwrap()
 }
-async fn worker(
-    live: transparent_shard_server::live::LiveService,
-) -> (String, tokio::task::JoinHandle<()>) {
+struct Listening {
+    task: tokio::task::JoinHandle<()>,
+    stop: Option<tokio::sync::oneshot::Sender<()>>,
+}
+
+impl Listening {
+    async fn stop(mut self) {
+        self.stop.take().unwrap().send(()).unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(5), &mut self.task)
+            .await
+            .expect("worker HTTP connections did not drain")
+            .unwrap();
+    }
+}
+
+impl Drop for Listening {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+
+async fn serve_worker(app: axum::Router) -> (String, Listening) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let origin = format!("http://{}", listener.local_addr().unwrap());
+    let (stop, stopped) = tokio::sync::oneshot::channel();
     let task = tokio::spawn(async move {
-        axum::serve(listener, live.router()).await.unwrap();
+        axum::serve(listener, app)
+            .with_graceful_shutdown(async {
+                let _ = stopped.await;
+            })
+            .await
+            .unwrap();
     });
-    (origin, task)
+    (
+        origin,
+        Listening {
+            task,
+            stop: Some(stop),
+        },
+    )
+}
+
+async fn worker(live: transparent_shard_server::live::LiveService) -> (String, Listening) {
+    serve_worker(live.router()).await
 }
 async fn get(origin: &str, path: &str) -> reqwest::Response {
     reqwest::Client::new()
@@ -369,12 +373,7 @@ async fn manager_reuses_immutable_transfers_and_serves_through_failed_update() {
     let first = follow.poll_once().await.unwrap();
     assert!(first.downloaded_files > 0);
     let live = follow.live().unwrap();
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let origin = format!("http://{}", listener.local_addr().unwrap());
-    let app = follow.router().unwrap();
-    let task = tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
+    let (origin, task) = serve_worker(follow.router().unwrap()).await;
     let observed: serde_json::Value = get(&origin, "/v1/provider-status")
         .await
         .json()
@@ -425,8 +424,7 @@ async fn manager_reuses_immutable_transfers_and_serves_through_failed_update() {
     }
     // A restart during a failed update recovers the complete predecessor only
     // after live source checks; failure of the new transfer still leaves it up.
-    task.abort();
-    let _ = task.await;
+    task.stop().await;
     drop(live);
     drop(follow);
     std::fs::write(&tls.control, "missing").unwrap();
@@ -494,8 +492,7 @@ async fn manager_reuses_immutable_transfers_and_serves_through_failed_update() {
     std::fs::write(&tls.control, "refused-body").unwrap();
     assert!(follow.poll_once().await.is_err());
     query(&origin, &next_set).await;
-    task.abort();
-    let _ = task.await;
+    task.stop().await;
     drop(live);
     drop(follow);
     std::fs::write(&tls.control, "").unwrap();
@@ -520,8 +517,7 @@ async fn manager_reuses_immutable_transfers_and_serves_through_failed_update() {
     assert_eq!(status["runtimes"]["shipped_fallbacks"], 0);
     let (origin, task) = worker(restarted.live().unwrap()).await;
     query(&origin, &next_set).await;
-    task.abort();
-    let _ = task.await;
+    task.stop().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -557,8 +553,7 @@ async fn manager_persists_invalidation_and_refuses_equal_revision_reenable_after
             .unwrap();
     assert_eq!(intent["revision"], 0);
     std::fs::remove_dir(state.join("revocation-floor.tmp")).unwrap();
-    task.abort();
-    let _ = task.await;
+    task.stop().await;
     drop(live);
     drop(follow);
     owner.0.withdrawn.store(false, Ordering::Release);
@@ -583,8 +578,7 @@ async fn manager_persists_invalidation_and_refuses_equal_revision_reenable_after
     assert!(live.command(Command::Status).await.unwrap()["invalidated"]
         .as_bool()
         .unwrap());
-    task.abort();
-    let _ = task.await;
+    task.stop().await;
 }
 
 async fn entered(tls: &Tls) {
@@ -661,8 +655,7 @@ async fn manager_restarts_interrupted_staging_and_rejects_superseded_activation(
     query(&origin, &set).await;
     work.abort();
     assert!(work.await.unwrap_err().is_cancelled());
-    task.abort();
-    let _ = task.await;
+    task.stop().await;
     drop(live);
     std::fs::write(&tls.control, "").unwrap();
     // Saved staging/candidate state is not authority. Source outage on restart
@@ -676,8 +669,7 @@ async fn manager_restarts_interrupted_staging_and_rejects_superseded_activation(
     assert_eq!(done.downloaded_files, 0);
     let (origin, task) = worker(restarted.live().unwrap()).await;
     query(&origin, &next_set).await;
-    task.abort();
-    let _ = task.await;
+    task.stop().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -721,11 +713,11 @@ async fn manager_checks_inventory_and_required_files_on_unchanged_maps() {
     std::fs::write(&tls.control, "").unwrap();
     let repaired = follow.poll_once().await.unwrap();
     assert_eq!(repaired.downloaded_files, 1);
-    task.abort();
-    let _ = task.await;
+    task.stop().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[cfg(feature = "full-tests")]
 async fn manager_refuses_changed_holdings_on_an_unchanged_map() {
     let root = tempfile::tempdir().unwrap();
     let (directory, set) = publication(root.path());
@@ -760,8 +752,7 @@ async fn manager_refuses_changed_holdings_on_an_unchanged_map() {
         "{failure}"
     );
     query(&origin, &set).await;
-    task.abort();
-    let _ = task.await;
+    task.stop().await;
 }
 
 // A validated withdrawal must reach the owner even when any one control-record
@@ -975,8 +966,7 @@ async fn control_write_failure(pause_at: Option<u32>, failed_record: &str) {
     owner.0.withdrawn.store(false, Ordering::Release);
     owner.0.invalidated_from.store(u64::MAX, Ordering::Release);
     assert!(follow.poll_once().await.is_err(), "same-revision reenable");
-    task.abort();
-    let _ = task.await;
+    task.stop().await;
     drop(live);
     drop(follow);
     let mut restarted = manager(&tls, &state);
@@ -989,18 +979,20 @@ async fn control_write_failure(pause_at: Option<u32>, failed_record: &str) {
     restarted.poll_once().await.unwrap();
     let (origin, task) = worker(restarted.live().unwrap()).await;
     query(&origin, &set).await;
-    task.abort();
-    let _ = task.await;
+    task.stop().await;
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[cfg(feature = "full-tests")]
 async fn manager_high_water_write_failure_still_fences_http() {
     control_write_failure(None, "publisher-high-water.tmp").await;
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[cfg(feature = "full-tests")]
 async fn manager_activation_poll_write_failure_still_fences_http() {
     control_write_failure(Some(2), "publisher-high-water.tmp").await;
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[cfg(feature = "full-tests")]
 async fn manager_final_poll_write_failure_still_fences_http() {
     control_write_failure(Some(3), "publisher-high-water.tmp").await;
 }
@@ -1010,6 +1002,7 @@ async fn manager_owner_fence_write_failure_still_fences_http() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[cfg(feature = "full-tests")]
 async fn manager_bounds_memory_while_retaining_admitted_upload() {
     use tokio::io::AsyncWriteExt;
     use tower::ServiceExt;
@@ -1114,15 +1107,16 @@ async fn manager_bounds_memory_while_retaining_admitted_upload() {
             >= 8,
         "memory collection does not delete disk trees"
     );
-    task.abort();
-    let _ = task.await;
+    task.stop().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[cfg(feature = "full-tests")]
 async fn manager_unreadable_revocation_floor_still_fences_http() {
     control_write_failure(None, "revocation-floor.json").await;
 }
 
+#[cfg(feature = "full-tests")]
 async fn recovery_poll_write_failure(pause_at: u32) {
     let root = tempfile::tempdir().unwrap();
     let (directory, set) = prepared_publication(root.path(), 2);
@@ -1174,19 +1168,21 @@ async fn recovery_poll_write_failure(pause_at: u32) {
     restarted.poll_once().await.unwrap();
     let (origin, task) = worker(restarted.live().unwrap()).await;
     query(&origin, &set).await;
-    task.abort();
-    let _ = task.await;
+    task.stop().await;
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[cfg(feature = "full-tests")]
 async fn manager_recovery_poll_write_failure_keeps_saved_view_unexposed() {
     recovery_poll_write_failure(2).await;
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[cfg(feature = "full-tests")]
 async fn manager_recovery_final_poll_write_failure_keeps_saved_view_unexposed() {
     recovery_poll_write_failure(3).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[cfg(feature = "full-tests")]
 async fn manager_missing_durable_revision_cannot_reenable_revoked_view() {
     // Lose both exact-revision writes, retaining only the owner's digest fence.
     // A large missed-revision jump prevents an old high-water-plus-one shortcut.
@@ -1194,11 +1190,13 @@ async fn manager_missing_durable_revision_cannot_reenable_revoked_view() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[cfg(feature = "full-tests")]
 async fn manager_malformed_revocation_floor_still_fences_http() {
     control_write_failure(None, "malformed").await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[cfg(feature = "full-tests")]
 async fn manager_rejects_replayed_different_map_below_durable_revocation_floor() {
     let root = tempfile::tempdir().unwrap();
     let (directory, set) = prepared_publication(root.path(), 2);
@@ -1224,8 +1222,7 @@ async fn manager_rejects_replayed_different_map_below_durable_revocation_floor()
         get(&origin, "/v2/shards/init").await.status(),
         StatusCode::SERVICE_UNAVAILABLE
     );
-    task.abort();
-    let _ = task.await;
+    task.stop().await;
     drop(follow);
     std::fs::remove_dir(state.join("publisher-high-water.tmp")).unwrap();
     std::fs::remove_dir(state.join("publisher-high-water-fallback.tmp")).unwrap();
@@ -1253,51 +1250,59 @@ async fn manager_rejects_replayed_different_map_below_durable_revocation_floor()
     restarted.poll_once().await.unwrap();
     let (origin, task) = worker(restarted.live().unwrap()).await;
     query(&origin, &next_set).await;
-    task.abort();
-    let _ = task.await;
+    task.stop().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[cfg(feature = "full-tests")]
 async fn manager_primary_read_failure_at_poll_still_fences_http() {
     control_write_failure(None, "read:publisher-high-water.json").await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[cfg(feature = "full-tests")]
 async fn manager_primary_read_failure_at_guard_still_fences_http() {
     control_write_failure(Some(2), "read:publisher-high-water.json").await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[cfg(feature = "full-tests")]
 async fn manager_primary_parse_failure_at_poll_still_fences_http() {
     control_write_failure(None, "parse:publisher-high-water.json").await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[cfg(feature = "full-tests")]
 async fn manager_primary_parse_failure_at_guard_still_fences_http() {
     control_write_failure(Some(3), "parse:publisher-high-water.json").await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[cfg(feature = "full-tests")]
 async fn manager_fallback_read_failure_at_poll_still_fences_http() {
     control_write_failure(None, "read:publisher-high-water-fallback.json").await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[cfg(feature = "full-tests")]
 async fn manager_fallback_read_failure_at_guard_still_fences_http() {
     control_write_failure(Some(2), "read:publisher-high-water-fallback.json").await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[cfg(feature = "full-tests")]
 async fn manager_fallback_parse_failure_at_poll_still_fences_http() {
     control_write_failure(None, "parse:publisher-high-water-fallback.json").await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[cfg(feature = "full-tests")]
 async fn manager_fallback_parse_failure_at_guard_still_fences_http() {
     control_write_failure(Some(3), "parse:publisher-high-water-fallback.json").await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[cfg(feature = "full-tests")]
 async fn manager_double_intent_write_failure_retains_exact_negative_revision() {
     let root = tempfile::tempdir().unwrap();
     let (directory, set) = prepared_publication(root.path(), 2);
@@ -1374,8 +1379,7 @@ async fn manager_double_intent_write_failure_retains_exact_negative_revision() {
     owner.0.distribution_revision.store(101, Ordering::Release);
     follow.poll_once().await.unwrap();
     query(&origin, &set).await;
-    task.abort();
-    let _ = task.await;
+    task.stop().await;
 }
 
 /// Standard controller/followed-journal adoption. Reuse the provider tests'

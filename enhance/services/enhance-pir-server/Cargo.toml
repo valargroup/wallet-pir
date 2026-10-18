@@ -16,6 +16,8 @@ name = "status-pir"
 path = "src/bin/status.rs"
 
 [features]
+# Compile campaign-only correctness tests in full qualification.
+full-tests = []
 default = []
 native-reinspiring = ["enhance-serving/native-reinspiring", "status-serving/native-reinspiring", "enhance-pir/native-reinspiring", "dep:pir-native", "dep:reinspiring", "ipir-sp/native-reinspiring"]
 cuda = ["enhance-serving/cuda", "status-serving/cuda", "ipir-sp/cuda"]
