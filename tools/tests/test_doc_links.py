@@ -35,7 +35,7 @@ class DocumentationLinks(unittest.TestCase):
         (self.root / "docs/old.md").unlink()
         self.write("evidence/transparent/run/README.md", "# Results\n[data](raw.json)\n")
         self.write("evidence/transparent/run/raw.json", "{}\n")
-        self.write("docs/README.md", "[result](../transparent/evidence/run/README.md#results)\n")
+        self.write("docs/README.md", "[result](../evidence/transparent/run/README.md#results)\n")
         result = self.check()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("2 files", result.stdout)
@@ -72,8 +72,9 @@ class DocumentationLinks(unittest.TestCase):
         directory = root / 'evidence/transparent/transparent-native'
         for name, digest in expected.items():
             source = directory / 'testdata' / name
-            relative = source.relative_to(root).as_posix()
-            self.assertEqual(manifest['sources']['source_sha256'][relative], digest)
+            # The immutable capture names the oracle by its historical path.
+            historical = f'transparent/crates/transparent-native/testdata/{name}'
+            self.assertEqual(manifest['sources']['source_sha256'][historical], digest)
             self.assertEqual(hashlib.sha256(source.read_bytes()).hexdigest(), digest)
         self.assertIn('`2bb5c0299eb752b68a5ad5fad9b156b046bef8c9`',
                       (capture / 'results.md').read_text())

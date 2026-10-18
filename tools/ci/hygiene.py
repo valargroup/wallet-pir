@@ -66,9 +66,10 @@ def violation(path, data, policy):
         return 'agent report: put findings in chat or the PR description'
     if any(part in {'__pycache__', 'target', 'node_modules', '.local-pir'} for part in p.parts) or p.suffix == '.pyc':
         return 'generated output: keep this file outside Git'
-    if evidence and p.suffix in SCRIPTS:
-        return 'experiment script: promote reusable code into a maintained tool with tests'
     allowed = any(fnmatchcase(path, entry['pattern']) for entry in policy['allow_data'])
+    # A declared independent oracle generator may stay beside its frozen output.
+    if evidence and p.suffix in SCRIPTS and not allowed:
+        return 'experiment script: promote reusable code into a maintained tool with tests'
     if p.suffix in CAPTURED and not allowed:
         return 'captured output: use .local-pir/ or CI artifacts'
     if p.suffix in STRUCTURED and not allowed:

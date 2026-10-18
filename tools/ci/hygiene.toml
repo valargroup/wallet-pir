@@ -49,6 +49,10 @@ pattern = "evidence/transparent/transparent-native/testdata/*.json"
 reason = "Frozen independent prewarm-hint known-answer oracle."
 
 [[allow_data]]
+pattern = "evidence/transparent/transparent-native/testdata/*.py"
+reason = "Independent generator of the frozen prewarm-hint oracle, retained unchanged."
+
+[[allow_data]]
 pattern = "ops/transparent/fixtures/*.json"
 reason = "Frozen deployment and API payloads used by operations tests."
 

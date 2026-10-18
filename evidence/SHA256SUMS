@@ -98,3 +98,5 @@ d729392ae03cc0925b6f73559c5b39a16eb04eb913f193342928d67048f2c751  evidence/trans
 67d5e9ff319156156495f5eb614adecdb4fd2a34835de0a9065adab26eb34dd5  evidence/transparent/v12-native-certificates-2026-10-12/synthetic-decoupled-32k-32k-pages-random-dithered.report.json
 acf46db969741c0fb51c66ff23a57e1f0b5b32846c82d4005a34132fc5e3c20b  evidence/transparent/v12-native-certificates-2026-10-12/synthetic-decoupled-32k-32k-pages-random-nearest.certificate.json
 48fed8c209aab4171607b4509bdb13d8800837474fe951b980213e57071e2e6a  evidence/transparent/v12-native-certificates-2026-10-12/synthetic-decoupled-32k-32k-pages-random-nearest.report.json
+fde5f38a601777e86d17ba0766ad34a83986a360718984ae18de5d380342ebdb  evidence/transparent/transparent-native/testdata/batched_hint_kat.json
+99a2736eabc253d2c1cfe573eb0e1925cf745362fe5e4a178ea5af1db7315fe3  evidence/transparent/transparent-native/testdata/batched_hint_kat.py
