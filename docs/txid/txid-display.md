@@ -87,7 +87,7 @@ chain and is not encoded.
 **Trust.** The entry is a trusted publisher's assertion, like the v1 fee.
 - The publisher resolves every input's spent output (script and value) to
   compute the fee and to key spend events. The source and flag 2 come from the
-  same resolved outputs (`extract_block`, `transparent-filter-server/src/extract.rs`).
+  same resolved outputs (`extract_block`, `transparent-ingest/src/extract.rs`).
 - A wallet cannot check a foreign source without the parent transaction. It
   checks the entry only against the inputs and outputs it owns.
 - A shielded-only transaction, with neither transparent inputs nor outputs,
@@ -279,8 +279,8 @@ geometry.
 
 Source:
 - `transparent-shard/src/display/` (format, placement and seal rule);
-- `transparent-filter-server/src/txid_display/` (`txid-display-controller`);
-- `transparent-shard-server/src/display/` (`transparent-txid-server`,
+- `txid-pir-server/src/publication/` (`txid-display-controller`);
+- `txid-pir-server/src/display/` (`transparent-txid-server`,
   `txid-control`, `txid-inventory`);
 - the `txid-display-*` deploy commands.
 
