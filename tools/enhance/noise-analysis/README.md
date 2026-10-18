@@ -13,7 +13,9 @@ cargo test --locked --release --manifest-path tools/enhance/noise-analysis/Cargo
 python3 -m unittest discover -s tools/enhance/noise-analysis -v
 ```
 
-The standalone lockfile pins research dependencies. The current candidate uses
+The standalone lockfile pins research dependencies, including the wallet geometry
+and shard-composition sources at their qualification revision (`f26595ac`); the
+live query server uses a newer IPIR+SP. The current candidate uses
 P16Q48 (`6f74a2d7`) with an explicitly selected `2^-78` full-query correctness
 target and production protocol v6. Historical q46 and q49 inputs keep their
 original `2^-128` target; the verifier binds each target to its exact dependency

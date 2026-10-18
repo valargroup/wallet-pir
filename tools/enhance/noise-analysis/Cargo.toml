@@ -7,7 +7,10 @@ publish = false
 [workspace]
 
 [dependencies]
-enhance-query-server = { path = "../../../src/enhance/enhance-query-server" }
+# The qualified research measured these sources at ipir-sp 6f74a2d (#91). The
+# live query server has moved to a newer ipir-sp, so pin the matching revision.
+enhance-pir = { git = "https://github.com/valargroup/wallet-pir.git", rev = "f26595aca5684e2e1dc6c941a194b64905bff1f5" }
+enhance-pir-server = { git = "https://github.com/valargroup/wallet-pir.git", rev = "f26595aca5684e2e1dc6c941a194b64905bff1f5" }
 ipir-sp = { git = "https://github.com/valargroup/ipir-sp.git", rev = "6f74a2d754b58934f925fc8a347f46620148ad47" }
 inspiring = { git = "https://github.com/valargroup/ipir-sp.git", rev = "6f74a2d754b58934f925fc8a347f46620148ad47" }
 spiral-rs = { package = "valar-spiral-rs", git = "https://github.com/valargroup/spiral-rs.git", rev = "584fee3893b1d2d17b5d774c83bd801fb70d5ace" }
