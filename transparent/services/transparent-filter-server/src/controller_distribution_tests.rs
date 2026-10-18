@@ -35,16 +35,19 @@ fn authority(directory: &Path, distribution: Option<Finalized>, rpc: NodeClient)
 }
 
 fn publication(root: &Path) -> (PathBuf, ShardSet) {
-    publication_through(root, 2)
+    publication_fixture(root, 2, !cfg!(feature = "qualification-tests"))
 }
 fn publication_through(root: &Path, through: u64) -> (PathBuf, ShardSet) {
+    publication_fixture(root, through, false)
+}
+fn publication_fixture(root: &Path, through: u64, bounded: bool) -> (PathBuf, ShardSet) {
     let journal_dir = root.join("journal");
     let mut journal =
         EventStore::open(&journal_dir, transparent_filter::MAINNET_GENESIS_DISPLAY, 0).unwrap();
     for h in 0..=through {
-        // One real recent receive; the archive has no private records. This
-        // keeps native correctness cases small without changing any geometry.
-        let events = if h == 2 {
+        // Keep the occupied recent row used by the independent answer oracle.
+        // Full qualification retains the original mixed deployed geometries.
+        let mut events = if h == 2 || (bounded && h == 1) {
             vec![(
                 ScriptBytes::new(vec![
                     0x76, 0xa9, 0x14, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -56,8 +59,8 @@ fn publication_through(root: &Path, through: u64) -> (PathBuf, ShardSet) {
                         transparent_input_count: 1,
                         has_shielded_components: false,
                     }),
-                    height: 2,
-                    txid: transparent_events::Txid([7; 32]),
+                    height: h as u32,
+                    txid: transparent_events::Txid([h as u8 + 5; 32]),
                     transaction_index: 0,
                     output_index: 0,
                     value: 50_000,
@@ -67,6 +70,17 @@ fn publication_through(root: &Path, through: u64) -> (PathBuf, ShardSet) {
         } else {
             Vec::new()
         };
+        if bounded && h == 1 {
+            // Two archive scripts close the first real shard at height one.
+            // The single recent script stays below this small sealing target.
+            let mut other = events[0].clone();
+            other.0 = ScriptBytes::new(vec![0x51]);
+            let TransparentEvent::Receive(event) = &mut other.1 else {
+                unreachable!()
+            };
+            event.output_index = 1;
+            events.push(other);
+        }
         journal
             .append_block(
                 h,
@@ -82,14 +96,14 @@ fn publication_through(root: &Path, through: u64) -> (PathBuf, ShardSet) {
     }
     journal.commit().unwrap();
     let output = root.join("publication");
-    publication::publish(
+    publication::publish_with(
         &PublishOptions {
             data_dir: journal_dir,
             output: output.clone(),
             previous: None,
             recent_geometry: "decoupled-2k-8k".into(),
-            archive_geometry: Some("decoupled-32k-32k".into()),
-            recent_from: Some(2),
+            archive_geometry: (!bounded).then(|| "decoupled-32k-32k".into()),
+            recent_from: (!bounded).then_some(2),
             zakura_rpc_url: String::new(),
             zakura_cookie: root.join("unused"),
             through: None,
@@ -100,9 +114,19 @@ fn publication_through(root: &Path, through: u64) -> (PathBuf, ShardSet) {
         },
         &journal,
         BlockHash::from_internal_bytes([0; 32]),
+        &|geometry| {
+            let mut policy = transparent_shard::seal::DecoupledPolicy::for_geometry(geometry);
+            if bounded {
+                policy.scripts.target = 2;
+            }
+            policy
+        },
     )
     .unwrap();
     let set = ShardSet::open(&output, 0).unwrap();
+    assert_eq!(set.map.shards.len(), 2);
+    assert_eq!(set.map.shards[0].end_height, 1);
+    assert_eq!(set.map.shards[1].start_height, 2);
     (output, set)
 }
 fn recent_options(set: &ShardSet) -> transparent_shard_server::shardset::LoadOptions {
