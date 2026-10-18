@@ -1,0 +1,69 @@
+[package]
+name = "txid-pir-server"
+version = "0.0.1"
+edition = "2021"
+description = "Txid display PIR: display worker HTTP service, publication controller and command lines"
+publish = false
+
+[lib]
+name = "txid_pir_server"
+path = "src/lib.rs"
+
+[[bin]]
+name = "transparent-txid-server"
+path = "src/bin/txid-server.rs"
+
+[[bin]]
+name = "txid-control"
+path = "src/bin/txid-control.rs"
+
+[[bin]]
+name = "txid-inventory"
+path = "src/bin/txid-inventory.rs"
+
+[[bin]]
+name = "txid-display-controller"
+path = "src/bin/txid-display-controller.rs"
+
+[features]
+# Compile campaign-only correctness tests in full qualification.
+full-tests = []
+# Reproduce the existing non-AVX-512 backend on newer benchmark CPUs.
+portable-kernel = ["transparent-server-backend/portable-kernel"]
+
+[dependencies]
+axum = "0.7"
+base64 = "0.22"
+clap = { version = "4", features = ["derive"] }
+hex = "0.4"
+pir-control = { version = "=0.1.0", path = "../../shared/pir-control", features = ["admission"] }
+pir-observability = { version = "=0.1.0", path = "../../shared/pir-observability" }
+pir-pipeline = { path = "../../shared/pir-pipeline" }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tempfile = "3"
+thiserror = "2"
+tokio = { version = "1", features = ["full"] }
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.5", features = ["limit", "trace"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+transparent-events = { package = "zakura-transparent-events", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "886db40137caef486d32d5bc594b2c20b1dde75e" }
+transparent-filter = { package = "zakura-transparent-filter", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "886db40137caef486d32d5bc594b2c20b1dde75e" }
+transparent-ingest = { path = "../../shared/transparent-ingest" }
+transparent-native = { package = "zakura-transparent-native", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "886db40137caef486d32d5bc594b2c20b1dde75e" }
+transparent-server-backend = { path = "../../shared/transparent-server-backend" }
+transparent-shard = { package = "zakura-transparent-shard", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "886db40137caef486d32d5bc594b2c20b1dde75e" }
+txid-serving = { path = "../txid-serving" }
+zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "886db40137caef486d32d5bc594b2c20b1dde75e" }
+
+[dev-dependencies]
+http-body = "1"
+rayon = "1"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "json"] }
+sysinfo = "0.36"
+transparent-txid-client = { package = "zakura-transparent-txid-client", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "886db40137caef486d32d5bc594b2c20b1dde75e", features = ["testing"] }
+zakura-pir-transparent = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "886db40137caef486d32d5bc594b2c20b1dde75e", default-features = false, features = ["engine-store", "reqwest"] }
+zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "886db40137caef486d32d5bc594b2c20b1dde75e", features = ["testing"] }

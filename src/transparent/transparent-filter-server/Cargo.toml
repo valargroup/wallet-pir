@@ -55,10 +55,6 @@ path = "src/bin/script-sample.rs"
 name = "filter-sweep"
 path = "src/bin/filter-sweep.rs"
 
-[[bin]]
-name = "txid-display-controller"
-path = "src/bin/txid-display-controller.rs"
-
 [features]
 # Compile campaign-only correctness tests in full qualification.
 full-tests = []
@@ -89,6 +85,7 @@ transparent-events = { package = "zakura-transparent-events", git = "https://git
 transparent-filter = { package = "zakura-transparent-filter", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "886db40137caef486d32d5bc594b2c20b1dde75e" }
 transparent-native = { package = "zakura-transparent-native", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "886db40137caef486d32d5bc594b2c20b1dde75e" }
 transparent-shard = { package = "zakura-transparent-shard", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "886db40137caef486d32d5bc594b2c20b1dde75e" }
+transparent-ingest = { path = "../../shared/transparent-ingest" }
 transparent-server-backend = { path = "../../shared/transparent-server-backend" }
 # Node reads, transparent extraction, compact blocks and the RocksDB state
 # reader, pinned to an exact wallet-libraries revision. The reader opens the

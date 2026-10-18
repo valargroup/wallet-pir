@@ -66,17 +66,17 @@ PURE = {
     'receiver-pir-server',
     'pir-observability', 'pir-control', 'pir-runtime', 'enhance-pir', 'transparent-blocks',
     'transparent-shard-server', 'transparent-server-backend',
-    'enhance-serving', 'status-serving', 'status-protocol', 'pir-serving',
+    'enhance-serving', 'status-serving', 'status-protocol', 'pir-serving', 'txid-serving',
 }
 # Serving libraries and the chain reading, ingestion and application packages
 # they must never reach. Each product's applications compose its serving library;
 # the shared raw PIR runtime they call is held to the same rule.
 SERVING = {'enhance-serving', 'status-serving', 'transparent-server-backend', 'pir-runtime',
-           'pir-serving'}
+           'pir-serving', 'txid-serving'}
 INGESTION = {
     'pir-pipeline', 'zakura-server-chain', 'enhance-pir-server', 'receiver-indexer',
     'transparent-filter-server', 'transparent-block-server', 'transparent-measure',
-    'status-publication', 'status-pir-server',
+    'status-publication', 'status-pir-server', 'transparent-ingest', 'txid-pir-server',
 }
 PRODUCTS = ('src/enhance/', 'src/status/', 'src/transparent/', 'src/txid/', 'src/receiver/')
 SHARED = 'src/shared/'
@@ -86,7 +86,7 @@ APPLICATIONS = {
     'enhance-pir-server', 'status-pir-server', 'pir-apm', 'enhance-pir-load-test', 'pir-monitor',
     'enhance-noise-analysis', 'transparent-filter-server', 'transparent-block-server',
     'transparent-shard-server', 'transparent-loadtest', 'transparent-regression',
-    'transparent-measure', 'receiver-indexer', 'receiver-pir-server',
+    'transparent-measure', 'txid-pir-server', 'receiver-indexer', 'receiver-pir-server',
 }
 # Shared packages consumed by a subset of products. A serving library of any other
 # product reaching one still crosses a product boundary.

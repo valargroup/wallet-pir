@@ -6,6 +6,8 @@ description = "Status PIR chain observation and publication, composed by the Sta
 publish = false
 
 [features]
+# Compile campaign-only correctness tests in full qualification.
+full-tests = []
 default = []
 native-reinspiring = ["status-serving/native-reinspiring", "status-protocol/native-reinspiring"]
 cuda = ["status-serving/cuda"]

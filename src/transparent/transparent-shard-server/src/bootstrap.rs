@@ -227,10 +227,13 @@ impl Source {
             origin: self.origin.to_string(),
             current: current.clone(),
         };
-        let primary = crate::control::persist(&directory.join("publisher-high-water.json"), &saved);
+        let primary = transparent_server_backend::control::persist(
+            &directory.join("publisher-high-water.json"),
+            &saved,
+        );
         let fallback = directory.join("publisher-high-water-fallback.json");
         if primary.is_err() || fallback.exists() {
-            crate::control::persist(&fallback, &saved)?;
+            transparent_server_backend::control::persist(&fallback, &saved)?;
         }
         primary?;
         Ok(())
@@ -419,7 +422,10 @@ pub async fn verify(config: Config) -> Result<Report, Error> {
         }
         let runtime_preparation = state.preparation();
         drop(state);
-        crate::control::persist(&stage.join("verified-inventory.json"), &inventory)?;
+        transparent_server_backend::control::persist(
+            &stage.join("verified-inventory.json"),
+            &inventory,
+        )?;
         Ok(Report {
             current,
             map_sha256: inventory.map_sha256,
@@ -598,7 +604,10 @@ pub(crate) async fn stage(
             ..LoadOptions::whole(0)
         };
         if let LoadScope::Assigned { assignment, .. } = &options.scope {
-            crate::control::persist(&stage.join("assignment.json"), assignment.as_ref())?;
+            transparent_server_backend::control::persist(
+                &stage.join("assignment.json"),
+                assignment.as_ref(),
+            )?;
         }
         if cache {
             sync_tree(&stage)?;
@@ -711,27 +720,31 @@ mod observation_tests {
                     origin: source.origin.to_string(),
                     current: next.clone(),
                 };
-                crate::control::persist(&root.path().join(companion), &saved).unwrap();
+                transparent_server_backend::control::persist(&root.path().join(companion), &saved)
+                    .unwrap();
                 assert!(source
                     .validate_observation(root.path(), &next)
                     .unwrap()
                     .is_some());
                 saved.current.revision += 1;
-                crate::control::persist(&root.path().join(companion), &saved).unwrap();
+                transparent_server_backend::control::persist(&root.path().join(companion), &saved)
+                    .unwrap();
                 assert!(
                     source.validate_observation(root.path(), &next).is_err(),
                     "a damaged record must not hide a newer readable companion"
                 );
                 saved.current = next.clone();
                 saved.current.inventory_sha256 = "33".repeat(32);
-                crate::control::persist(&root.path().join(companion), &saved).unwrap();
+                transparent_server_backend::control::persist(&root.path().join(companion), &saved)
+                    .unwrap();
                 assert!(
                     source.validate_observation(root.path(), &next).is_err(),
                     "equal revisions cannot substitute another inventory"
                 );
                 saved.current = next.clone();
                 saved.origin = "https://another.invalid/".into();
-                crate::control::persist(&root.path().join(companion), &saved).unwrap();
+                transparent_server_backend::control::persist(&root.path().join(companion), &saved)
+                    .unwrap();
                 assert!(
                     source.validate_observation(root.path(), &next).is_err(),
                     "a damaged record must not hide a readable origin mismatch"

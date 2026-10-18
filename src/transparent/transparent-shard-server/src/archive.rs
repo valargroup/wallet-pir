@@ -32,7 +32,7 @@ struct Setup {
 }
 // A completed reply still owns admission until its transport releases it.
 // Completing on drop avoids counting a successfully produced reply as cancelled.
-struct ReplyAdmission(Option<crate::admission::Pending>);
+struct ReplyAdmission(Option<transparent_server_backend::admission::Pending>);
 impl Drop for ReplyAdmission {
     fn drop(&mut self) {
         if let Some(pending) = self.0.take() {

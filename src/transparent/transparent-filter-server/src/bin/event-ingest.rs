@@ -20,11 +20,11 @@ use clap::Parser;
 use std::path::PathBuf;
 use std::time::Instant;
 use tracing_subscriber::EnvFilter;
-use transparent_filter_server::events::EventStore;
-use transparent_filter_server::ingest::{build_fetched_block_events, BoxError};
-use transparent_filter_server::prevout::OutputCache;
 use transparent_filter_server::state::StateReader;
-use transparent_filter_server::zakura::NodeClient;
+use transparent_ingest::blocks::{build_fetched_block_events, BoxError};
+use transparent_ingest::events::EventStore;
+use transparent_ingest::prevout::OutputCache;
+use transparent_ingest::zakura::NodeClient;
 
 #[derive(Parser, Clone)]
 #[command(
@@ -78,7 +78,7 @@ struct Cli {
     /// Counted in outputs, not transactions: an early-chain mining-pool
     /// coinbase carries thousands of outputs, so a transaction count does not
     /// bound what the cache holds.
-    #[arg(long, default_value_t = transparent_filter_server::prevout::DEFAULT_CACHE_OUTPUTS)]
+    #[arg(long, default_value_t = transparent_ingest::prevout::DEFAULT_CACHE_OUTPUTS)]
     cache_outputs: usize,
     /// Blocks between durable checkpoints.
     #[arg(long, default_value_t = 1_000)]
@@ -100,7 +100,7 @@ fn append(
     store: &mut EventStore,
     cli: &Cli,
     height: u64,
-    built: transparent_filter_server::ingest::BuiltEvents,
+    built: transparent_ingest::blocks::BuiltEvents,
 ) -> Result<(), BoxError> {
     if cli.txid_display {
         store.append_block_with_display(height, built.block_hash, &built.events, &built.display)?;
@@ -243,9 +243,7 @@ async fn run_state_backfill(cli: Cli, state_dir: PathBuf) -> Result<(), BoxError
     );
 
     let mut inflight: std::collections::VecDeque<
-        tokio::task::JoinHandle<
-            Result<(u64, transparent_filter_server::ingest::BuiltEvents), BoxError>,
-        >,
+        tokio::task::JoinHandle<Result<(u64, transparent_ingest::blocks::BuiltEvents), BoxError>>,
     > = std::collections::VecDeque::new();
     let mut to_spawn = first;
     let mut height = first;
@@ -314,7 +312,7 @@ async fn main() -> Result<(), BoxError> {
     let Some(cookie) = cli.zakura_cookie.clone() else {
         return Err("--zakura-cookie is required unless --state-dir is given".into());
     };
-    let zakura = transparent_filter_server::zakura::connect(&cli.zakura_rpc_url, &cookie)?;
+    let zakura = transparent_ingest::zakura::connect(&cli.zakura_rpc_url, &cookie)?;
     // Chain identity comes from the node, once, and is then pinned in the
     // store: a journal built against one chain must never be read as another's.
     let genesis_hash = zakura.block_hash_display(0).await?;

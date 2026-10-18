@@ -1,0 +1,19 @@
+[package]
+name = "txid-serving"
+version = "0.0.1"
+edition = "2021"
+description = "Verified txid display publications and ahead-of-time runtime preparation; no chain reading or publication"
+publish = false
+
+[dependencies]
+hex = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tracing = "0.1"
+transparent-events = { package = "zakura-transparent-events", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "886db40137caef486d32d5bc594b2c20b1dde75e" }
+transparent-server-backend = { path = "../../shared/transparent-server-backend" }
+transparent-shard = { package = "zakura-transparent-shard", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "886db40137caef486d32d5bc594b2c20b1dde75e" }
+
+[dev-dependencies]
+tempfile = "3"

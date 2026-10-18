@@ -34,7 +34,7 @@ struct Cli {
     #[arg(long, default_value_t = transparent_filter::START_HEIGHT)]
     start_height: u64,
     /// Transactions retained in the previous-output cache.
-    #[arg(long, default_value_t = transparent_filter_server::prevout::DEFAULT_CACHE_OUTPUTS)]
+    #[arg(long, default_value_t = transparent_ingest::prevout::DEFAULT_CACHE_OUTPUTS)]
     cache_outputs: usize,
     #[arg(long, default_value_t = 10)]
     poll_seconds: u64,
@@ -90,7 +90,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .zakura_cookie
         .as_ref()
         .ok_or("--zakura-cookie is required to serve")?;
-    let zakura = transparent_filter_server::zakura::connect(&cli.zakura_rpc_url, cookie)?;
+    let zakura = transparent_ingest::zakura::connect(&cli.zakura_rpc_url, cookie)?;
     // Chain identity comes from the node, once, and is then pinned in the
     // store: a store built against one chain must never be served as another.
     let genesis_hash = zakura.block_hash_display(0).await?;

@@ -24,8 +24,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::PathBuf;
 use transparent_events::TransparentEvent;
 use transparent_filter::ScriptBytes;
-use transparent_filter_server::events::EventStore;
-use transparent_filter_server::zakura::NodeClient;
+use transparent_ingest::events::EventStore;
+use transparent_ingest::zakura::NodeClient;
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
@@ -62,7 +62,7 @@ struct Cli {
     ///
     /// The ingester's own batch size against this node. Larger batches have
     /// been refused as a whole.
-    #[arg(long, default_value_t = transparent_filter_server::prevout::PREVOUT_BATCH)]
+    #[arg(long, default_value_t = transparent_ingest::prevout::PREVOUT_BATCH)]
     batch: usize,
     #[arg(long)]
     out: Option<PathBuf>,
@@ -311,7 +311,7 @@ async fn verbose_transactions(
                 }
                 start = end;
             }
-            Err(transparent_filter_server::zakura::NodeError::Rpc(BATCH_RESPONSE_TOO_LARGE, _))
+            Err(transparent_ingest::zakura::NodeError::Rpc(BATCH_RESPONSE_TOO_LARGE, _))
                 if size > 1 =>
             {
                 size /= 2;
@@ -518,8 +518,7 @@ fn sample_heights(store: &EventStore, cli: &Cli) -> Result<Vec<u64>, BoxError> {
 async fn main() -> Result<(), BoxError> {
     let cli = Cli::parse();
     let store = EventStore::open_existing(&cli.data_dir)?;
-    let client =
-        transparent_filter_server::zakura::connect(&cli.zakura_rpc_url, &cli.zakura_cookie)?;
+    let client = transparent_ingest::zakura::connect(&cli.zakura_rpc_url, &cli.zakura_cookie)?;
     let genesis = client.block_hash_display(0).await?;
     if genesis != store.genesis_hash() {
         return Err(format!(

@@ -54,9 +54,9 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use transparent_events::TransparentEvent;
 use transparent_filter::ScriptBytes;
-use transparent_filter_server::events::EventStore;
 use transparent_filter_server::state::StateReader;
-use transparent_filter_server::zakura::NodeClient;
+use transparent_ingest::events::EventStore;
+use transparent_ingest::zakura::NodeClient;
 use transparent_shard::layout::{by_name as geometry_by_name, Geometry};
 use transparent_shard::seal::{DecoupledPolicy, DisplacementSealer};
 
@@ -317,7 +317,7 @@ fn main() -> Result<(), BoxError> {
         )?)),
         (None, Some(cookie)) => Box::new(RpcHeaders {
             runtime: tokio::runtime::Runtime::new()?,
-            client: transparent_filter_server::zakura::connect(&cli.zakura_rpc_url, cookie)?,
+            client: transparent_ingest::zakura::connect(&cli.zakura_rpc_url, cookie)?,
         }),
         (None, None) => return Err("give --state-dir or --zakura-cookie".into()),
     };

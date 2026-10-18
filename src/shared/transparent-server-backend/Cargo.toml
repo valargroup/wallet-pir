@@ -13,6 +13,8 @@ portable-kernel = []
 
 [dependencies]
 axum = "0.7"
+http-body = "1"
+pir-control = { version = "=0.1.0", path = "../pir-control", features = ["admission"] }
 pir-observability = { version = "=0.1.0", path = "../pir-observability" }
 pir-runtime = { version = "=0.1.0", path = "../pir-runtime" }
 hex = "0.4"

@@ -1,6 +1,8 @@
 //! Real producer → TLS termination → strict production-loader bootstrap.
 use super::*;
 use tokio::io::{AsyncBufReadExt, BufReader};
+use transparent_events::TransparentEvent;
+use transparent_filter::ScriptBytes;
 use transparent_server_backend::distribution::{Finalized, Kind};
 use transparent_server_backend::shardset::ShardSet;
 use transparent_shard_server::bootstrap;
@@ -226,7 +228,7 @@ async fn canonical_rpc(root: &Path, set: &ShardSet) -> CanonicalRpc {
     let cookie = root.join("node-cookie");
     std::fs::write(&cookie, "fixture:fixture").unwrap();
     CanonicalRpc {
-        client: crate::zakura::connect(format!("http://{address}"), cookie).unwrap(),
+        client: transparent_ingest::zakura::connect(format!("http://{address}"), cookie).unwrap(),
         hash,
         genesis,
         available,

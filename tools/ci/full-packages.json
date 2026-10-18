@@ -28,7 +28,10 @@
     "transparent-block-server",
     "transparent-filter-server",
     "transparent-server-backend",
+    "transparent-ingest",
     "transparent-shard-server",
+    "txid-serving",
+    "txid-pir-server",
     "transparent-loadtest",
     "transparent-measure",
     "transparent-regression"
