@@ -91,7 +91,7 @@ Transparent schema recipes run on the pinned coordinator under the same lock.
   txid-display-{ingest-start,bootstrap,verify,measure-start,retire} ... --expect-plan-sha256 H
   txid-display-{ingest-stop,measure-stop,stop} --request F --request-sha256 H
   txid-display-rollback --request F --request-sha256 H [--transaction ID]
-      One txid display site beside history (transparent/ops/lib/txid_display_poc.py).
+      One txid display site beside history (ops/transparent/lib/txid_display_poc.py).
       Every mutation holds the production lock, journals prior bytes and prints the
       rollback command.
 
@@ -99,7 +99,7 @@ Transparent schema recipes run on the pinned coordinator under the same lock.
   transparent-binary-deploy --request F --request-sha256 H [--binary F] [--skip-exact-check]
   transparent-binary-rollback --request F --request-sha256 H [--transaction ID]
       Worker or controller binary upgrade (the request's component) of the current
-      v12 history or 4k8 display fleet (transparent/ops/lib/binary_upgrade.py).
+      v12 history or 4k8 display fleet (ops/transparent/lib/binary_upgrade.py).
       Publication identity is pinned, current map and assignment come from the
       controller, all re-checked under the lock, after every restart and after
       rollback; history's continuous load is paused and re-pinned.
@@ -134,7 +134,7 @@ def load_release():
 
 
 def transparent_cli():
-    from transparent.ops.lib import deploy_cli
+    from ops.transparent.lib import deploy_cli
     return deploy_cli
 
 

@@ -6,9 +6,9 @@ Transparent and Receiver pack inside the worker. Their controllers still answer
 the same questions about a serving process: which executable it runs, whether it
 has restarted, whether it holds current authority, and what a refusal means to a
 caller. This document records the shared answers and the deliberate differences.
-Code that implements the shared parts lives in `shared/pir-control`; the raw
+Code that implements the shared parts lives in `src/shared/pir-control`; the raw
 PIR parameter, evaluation and packing integration they share lives in
-`shared/pir-runtime`.
+`src/shared/pir-runtime`.
 
 ## Process identity
 
@@ -81,14 +81,14 @@ hex form, layout) happen when a record or manifest is read or prepared;
 cryptographic checks (artifact digests, public parameters) happen when an
 artifact is loaded or a view is prepared; chain-anchor acceptance happens only
 in the owner, immediately before activation. Shared code provides only the
-durability mechanisms in `shared/pir-control`; each owner keeps its own
+durability mechanisms in `src/shared/pir-control`; each owner keeps its own
 authority and retention rules above.
 
 ## Publication identity
 
 Status and Receiver name a publication by a domain-separated SHA-256 of their
 manifest's fields at fixed width, strings length-prefixed: Status's
-`Manifest::id` (`enhance/crates/enhance-pir/src/status.rs`), and Receiver's
+`Manifest::id` (`src/enhance/enhance-pir/src/status.rs`), and Receiver's
 directory revision and session ID. Their manifests, like Enhance's protocol
 values, refuse unknown fields, so a new field is a new profile or protocol rather
 than one an older reader skips.
@@ -111,7 +111,7 @@ code maps to each product's codes rather than unifying them.
 
 Enhance's roles, Status and Receiver share one implementation of the bounded
 wait queue, bounded body reception and the per-client concurrency cap
-(`shared/pir-control/src/admission.rs`, the `admission` feature). Each caller
+(`src/shared/pir-control/src/admission.rs`, the `admission` feature). Each caller
 keeps its own limits and refusal mapping:
 
 | | Executing / waiting | Wait | Queue without a free permit | Per-client cap |

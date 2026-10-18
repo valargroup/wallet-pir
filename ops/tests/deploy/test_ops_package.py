@@ -30,7 +30,7 @@ from wallet_pir_ops.deploy.transaction import Journal  # noqa: E402
 
 A, B = 'a' * 40, 'b' * 40
 MACHINE = '0123456789abcdef0123456789abcdef'
-EXAMPLE = ROOT / 'enhance/ops/deploy/deploy-inventory.example.json'
+EXAMPLE = ROOT / 'ops/enhance/deploy/deploy-inventory.example.json'
 FILES = bundle.contents(ROOT)
 
 

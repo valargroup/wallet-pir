@@ -5,8 +5,8 @@ SSH masters that carry restricted forwards. This page describes source; each
 product's deployment and status documents record what runs.
 
 Recorded state, not a live check: the Status baselines retained with the
-[2026-10-09](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/enhance/evidence/production-deploy-06a972db-2026-10-09/README.md)
-and [2026-10-10](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/enhance/evidence/production-deploy-9d2cbda0-2026-10-10/README.md)
+[2026-10-09](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/evidence/enhance/production-deploy-06a972db-2026-10-09/README.md)
+and [2026-10-10](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/evidence/enhance/production-deploy-9d2cbda0-2026-10-10/README.md)
 deploys show the Status controller ordered after
 `wallet-pir-control-sessions.service`, through a drop-in stating that the Status
 tunnels run under it since 2026-09-30. The shared supervisor was therefore
@@ -67,7 +67,7 @@ Transparent's own supervisor (`transparent-live-fleet.py --control-sessions`)
 keeps its standalone copy of the socket naming and SSH arguments, because the
 live reconciler is installed as a single script; a test holds its arguments
 equal to this library's (see
-[Transparent deployment](../transparent/docs/deployment.md#hardening-rollout-gate)).
+[Transparent deployment](transparent/deployment.md#hardening-rollout-gate)).
 
 ## Restricted forwarding account
 
@@ -192,7 +192,7 @@ Status query path, so it needs a window.
    - restart the Status host.
 
    Rollback is starting the two tunnel units again after stopping the
-   supervisor. Their templates stay in `enhance/ops/deploy/`.
+   supervisor. Their templates stay in `ops/enhance/deploy/`.
 2. **Transparent.**
    - Decide on and build the loopback TCP control endpoint.
    - Add a `pir-control` account through Terraform cloud-init, with its key in

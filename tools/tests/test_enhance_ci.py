@@ -43,7 +43,7 @@ class ClassificationTests(unittest.TestCase):
 
     def test_repository_registry_matches_source_targets(self):
         registry = json.loads((ROOT / 'tools/ci/integration-tests.json').read_text())[enhance.PACKAGE]
-        targets = ROOT / 'enhance/services/enhance-pir-server/tests'
+        targets = ROOT / 'src/enhance/enhance-pir-server/tests'
         enhance.validate(metadata([p.stem for p in targets.glob('*.rs')]), registry)
 
 

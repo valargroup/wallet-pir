@@ -223,7 +223,7 @@ jobs:
           TRANSPARENT_FORCE_REDEPLOY: ${{ inputs.force_redeploy }}
           TRANSPARENT_CANARY_WORKER_IDS: ${{ inputs.canary_worker_ids }}
           TRANSPARENT_ASSIGNMENT: ${{ github.workspace }}/artifact/assignment.json
-        run: transparent/ops/scripts/deploy-transparent-shard.sh '${{ inputs.mode }}'
+        run: ops/transparent/scripts/deploy-transparent-shard.sh '${{ inputs.mode }}'
 
       - name: Preserve deployment decisions and timing
         if: always()

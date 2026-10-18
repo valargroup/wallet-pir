@@ -1,0 +1,221 @@
+//! Wallets reach this service through wallet-libraries' receiver client
+//! (`zakura-receiver-pir`). These tests drive that
+//! client against the production router over real HTTP, so its manifest, filter, PIR,
+//! witness and revision handling interoperate with these routes byte for byte.
+#[path = "../../receiver-store/tests/common/mod.rs"]
+mod common;
+#[path = "common/history.rs"]
+mod history;
+use common::{manifest, receiver, record};
+use history::history;
+use receiver_directory::snapshot::Snapshot;
+use receiver_pir::{server::Server, MIN_ROWS};
+use receiver_pir::{
+    transport::{DirectoryClient, Transport},
+    AcceptedCoverage, Error,
+};
+use receiver_pir_server::{router_with_publications, Publication, Publications};
+use std::{
+    sync::atomic::{AtomicUsize, Ordering},
+    time::Duration,
+};
+
+/// The chain anchor that [`manifest`] ends at.
+fn accepted() -> AcceptedCoverage {
+    AcceptedCoverage {
+        genesis: [1; 32],
+        required_start: 100,
+        height: 101,
+        hash: [3; 32],
+    }
+}
+
+/// A publication with `count` pages for the fixture receiver.
+fn snapshot(count: u32) -> Snapshot {
+    let records: Vec<_> = (0..count).map(|page| record(page, count)).collect();
+    let mut manifest = manifest(MIN_ROWS);
+    manifest.end_position = manifest.end_position.max(200 + u64::from(count));
+    Snapshot::build(manifest, &records, &[]).unwrap()
+}
+
+struct Running {
+    origin: String,
+    publications: Publications,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl Drop for Running {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+
+/// Serves `publication` through the production router on a local socket.
+async fn serve(publication: Publication) -> Running {
+    let publications = Publications::default();
+    assert!(publications.publish(publication, 0));
+    let app = router_with_publications(publications.clone());
+    let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = format!("http://{}", socket.local_addr().unwrap());
+    let task = tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
+    Running {
+        origin,
+        publications,
+        task,
+    }
+}
+
+/// A wallet's transport over reqwest: no redirects, 410 as [`Error::Revision`], and
+/// a body refused once it crosses its limit. It counts encrypted queries.
+struct Http {
+    client: reqwest::Client,
+    queries: AtomicUsize,
+}
+
+impl Http {
+    fn new() -> Self {
+        Self {
+            client: reqwest::Client::builder()
+                .timeout(Duration::from_secs(30))
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .unwrap(),
+            queries: AtomicUsize::new(0),
+        }
+    }
+}
+
+impl Transport for Http {
+    async fn get(&self, url: &str, limit: usize) -> Result<Vec<u8>, Error> {
+        read(self.client.get(url), limit).await
+    }
+    async fn post(&self, url: &str, body: Vec<u8>, limit: usize) -> Result<Vec<u8>, Error> {
+        self.queries.fetch_add(1, Ordering::Relaxed);
+        read(self.client.post(url).body(body), limit).await
+    }
+}
+
+async fn read(request: reqwest::RequestBuilder, limit: usize) -> Result<Vec<u8>, Error> {
+    let failed = |e: reqwest::Error| Error::Transport(e.to_string());
+    let mut response = request.send().await.map_err(failed)?;
+    match response.status() {
+        reqwest::StatusCode::GONE => return Err(Error::Revision),
+        status if !status.is_success() => return Err(Error::Transport(status.to_string())),
+        _ => {}
+    }
+    let mut body = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(failed)? {
+        if body.len() + chunk.len() > limit {
+            return Err(Error::Malformed);
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body)
+}
+
+/// Connects over PIR to the publication `origin` advertises.
+async fn connect<'a>(origin: &str, http: &'a Http) -> Result<DirectoryClient<&'a Http>, Error> {
+    let manifest = DirectoryClient::fetch_manifest(origin, http).await?;
+    DirectoryClient::connect_manifest(origin, http, accepted(), manifest).await
+}
+
+/// The library client reads a two-page history over this service's PIR, one encrypted
+/// query per page.
+#[tokio::test]
+async fn the_library_client_looks_up_over_pir() {
+    let server = serve(Publication::verified(
+        Server::new(snapshot(2)).unwrap(),
+        None,
+    ))
+    .await;
+    let http = Http::new();
+    let client = connect(&server.origin, &http).await.unwrap();
+    let payments = history(&client, receiver()).await.unwrap();
+    let expected: Vec<_> = (0..2).map(|page| record(page, 2).payment).collect();
+    assert_eq!(payments.len(), 2);
+    for (payment, expected) in payments.iter().zip(&expected) {
+        assert_eq!(
+            (
+                payment.position,
+                payment.txid,
+                payment.tx_index,
+                payment.cmx
+            ),
+            (
+                expected.position,
+                expected.txid,
+                expected.tx_index,
+                expected.cmx
+            ),
+        );
+    }
+    assert_eq!(http.queries.load(Ordering::Relaxed), 2);
+    // A receiver without payments reads as empty, not as an error.
+    let mut other = receiver();
+    other[0] ^= 1;
+    assert!(history(&client, other).await.unwrap().is_empty());
+}
+
+/// The library client checks the publication's filter file against its manifest and
+/// tests receivers against it.
+#[tokio::test]
+async fn the_library_client_reads_the_publication_filters() {
+    let server = serve(Publication::verified(
+        Server::new(snapshot(1)).unwrap(),
+        None,
+    ))
+    .await;
+    let http = Http::new();
+    let manifest = DirectoryClient::fetch_manifest(&server.origin, &http)
+        .await
+        .unwrap();
+    let filters = DirectoryClient::fetch_filters(&server.origin, &http, &manifest)
+        .await
+        .unwrap();
+    let paid = filters.get(receiver_directory::filter::PAID).unwrap();
+    assert_eq!(
+        paid.matches(&manifest.directory.salt, &[receiver()]),
+        [true]
+    );
+}
+
+/// The common witness file reaches the library client byte for byte; a publication
+/// without one serves none.
+#[tokio::test]
+async fn the_library_client_downloads_the_common_witness_file() {
+    let proof = b"IWPROOF1 opaque to the server".to_vec();
+    let server = serve(Publication::verified(
+        Server::new(snapshot(0)).unwrap(),
+        Some(proof.clone()),
+    ))
+    .await;
+    let http = Http::new();
+    let client = connect(&server.origin, &http).await.unwrap();
+    assert_eq!(client.witnesses().await.unwrap(), proof);
+    let server = serve(Publication::verified(
+        Server::new(snapshot(0)).unwrap(),
+        None,
+    ))
+    .await;
+    let client = connect(&server.origin, &http).await.unwrap();
+    assert!(client.witnesses().await.is_err());
+}
+
+/// A revoked publication answers the library client's next query 410, which it
+/// reports as a revision change rather than a result.
+#[tokio::test]
+async fn a_revoked_publication_is_a_revision_to_the_library_client() {
+    let server = serve(Publication::verified(
+        Server::new(snapshot(1)).unwrap(),
+        None,
+    ))
+    .await;
+    let http = Http::new();
+    let client = connect(&server.origin, &http).await.unwrap();
+    server.publications.revoke();
+    assert!(matches!(
+        history(&client, receiver()).await,
+        Err(Error::Revision)
+    ));
+    assert!(matches!(client.witnesses().await, Err(Error::Revision)));
+}

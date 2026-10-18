@@ -50,7 +50,7 @@ FRAGMENT = Path('/etc/systemd/system/'+UNIT)
 # Root-verified installed bytes; the repository template differs.
 FRAGMENT_SHA256 = '869e260606f0ad020824a14c906ea6f7ac235c5832739452e027033631ca4915'
 SCRIPT_SOURCE = '4c85b6c20ced1e2077245491e77d3afc98bfd644'
-SCRIPT = Path('/srv/transparent-activity/ops/sources')/SCRIPT_SOURCE/'transparent/ops/scripts/transparent-live-fleet.py'
+SCRIPT = Path('/srv/transparent-activity/ops/sources')/SCRIPT_SOURCE/'ops/transparent/scripts/transparent-live-fleet.py'
 # The txid display router hook replaced the script in place on 2026-10-06 with
 # git d191f86b's bytes; the 4c85b6c2 original was f3df5c53.
 SCRIPT_SHA256 = '35b6b436225c9c0871b8ea6b47c3e192d4080756fb6bbf781749f970f5704b4a'

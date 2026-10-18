@@ -40,7 +40,7 @@ import urllib.request
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tools/ci'))
 import workspace_cache  # noqa: E402
-sys.path.insert(0, str(ROOT / 'shared/dev'))
+sys.path.insert(0, str(ROOT / 'tools/dev'))
 from target_lease import build_flags  # noqa: E402
 
 try:

@@ -3,8 +3,8 @@
 Status: proposed implementation plan. No codec, journal, wallet, or Vizor change
 is implemented by this document; no publication, deployment, or qualification is
 claimed. The current schema remains described in the
-[transparent architecture](../transparent/docs/architecture.md). The
-[recovery contract](../transparent/docs/contract.md) continues to govern coverage,
+[transparent architecture](transparent/architecture.md). The
+[recovery contract](transparent/contract.md) continues to govern coverage,
 privacy, and spendability.
 
 ## Goal and accepted coverage
@@ -20,7 +20,7 @@ Confirmation and display-detail completeness are independent.
 | --- | --- | --- |
 | Transparent-only send funded entirely by the selected account | Aggregate amount leaving the account, fee, transparent classification, chain status/date, after complete owned-effect recovery | Recipient addresses and individual external outputs wait until opening |
 | Several owned transparent inputs or external recipients | Group events by spending txid; show the aggregate outgoing amount under the same complete-recovery and ownership conditions | No per-recipient breakdown |
-| Ordinary transparent-only receive | Owned received amount, transparent classification, chain status/date | Sender details come from [txid display v2](../transparent/docs/txid-display.md): the first address-shaped source, with further source scripts named as an omission |
+| Ordinary transparent-only receive | Owned received amount, transparent classification, chain status/date | Sender details come from [txid display v2](txid/txid-display.md): the first address-shaped source, with further source scripts named as an omission |
 | Locally created transaction with retained records | Preserve its existing payment details and classification | Do not replace rich records with partial summaries |
 | Shared funding across accounts or parties | Known selected-account movement and whole-transaction fee | Do not infer that account's payment amount or fee share |
 | Self-transfer or cross-account transfer | Ownership/scope-based presentation where supported | Net movement alone does not reproduce gross self-payment presentation |
@@ -163,7 +163,7 @@ Recipient, fee-verification, and ledger completion remain distinct capabilities.
    verification is an operational control, not an omission/completeness proof.
 
 Executable milestone checklists belong in
-[remaining work](../transparent/docs/remaining-work.md) when implementation
+[remaining work](transparent/remaining-work.md) when implementation
 tracking is added. This document specifies the proposal rather than duplicating
 that authoritative checklist. Fee-only script enrichment and txid detail retrieval
 have separate qualification and rollout gates; neither enables private financial

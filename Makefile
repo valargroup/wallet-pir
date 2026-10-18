@@ -1,4 +1,4 @@
-.PHONY: build check check-ops check-docs test run-server run-worker load-test transparent-load-test demo-check fmt
+.PHONY: build check check-ops check-docs test run-server run-worker load-test transparent-load-test fmt
 
 LOAD_TEST_DURATION ?= 60s
 LOAD_TEST_PARALLELISM ?= 8
@@ -53,7 +53,7 @@ check-full: check-hygiene check-ops check-docs check-reports check-tools
 check-ops: check-ops-enhance check-ops-shared check-ops-control-sessions check-ops-deploy check-ops-contracts check-ops-parents check-ops-fleet check-ops-publication check-ops-burst check-ops-regression-recut check-ops-regression-fixtures check-ops-observation check-ops-stage-timing check-ops-membership check-ops-elastic check-ops-scaler check-ops-txid-display
 
 check-ops-enhance:
-	python3 -m unittest discover -s enhance/ops/tests -p 'test_*.py'
+	python3 -m unittest discover -s ops/enhance/tests -p 'test_*.py'
 
 check-ops-shared:
 	python3 -m unittest discover -s ops/tests -p 'test_*.py'
@@ -68,70 +68,70 @@ check-ops-control-sessions:
 # an in-memory fleet, plus its host helper run locally.
 check-ops-deploy:
 	python3 tools/ci/python_tests.py ops/tests/deploy --jobs 2 --split-module test_ops_package
-	python3 transparent/ops/tests/test_activity_schema_operation.py
-	python3 transparent/ops/tests/test_activity_schema_baseline.py
+	python3 ops/transparent/tests/test_activity_schema_operation.py
+	python3 ops/transparent/tests/test_activity_schema_baseline.py
 
 .PHONY: check-ops-deploy-fast
 check-ops-deploy-fast:
 	python3 tools/ci/python_tests.py ops/tests/deploy --jobs 2 --split-module test_ops_package --selection tools/ci/deploy-fast-tests.json
-	python3 transparent/ops/tests/test_activity_schema_operation.py
-	python3 transparent/ops/tests/test_activity_schema_baseline.py
+	python3 ops/transparent/tests/test_activity_schema_operation.py
+	python3 ops/transparent/tests/test_activity_schema_baseline.py
 
 check-ops-contracts:
 	ops/scripts/check-jq-contracts.sh
 
 check-ops-parents:
-	python3 transparent/ops/tests/test_transparent_parents.py
+	python3 ops/transparent/tests/test_transparent_parents.py
 
 check-ops-fleet:
-	python3 transparent/ops/tests/test_transparent_fleet.py
-	python3 transparent/ops/tests/test_txid_display_router.py
-	python3 transparent/ops/tests/test_public_router.py
+	python3 ops/transparent/tests/test_transparent_fleet.py
+	python3 ops/transparent/tests/test_txid_display_router.py
+	python3 ops/transparent/tests/test_public_router.py
 
 check-ops-publication:
-	python3 transparent/ops/tests/test_transparent_publication.py
+	python3 ops/transparent/tests/test_transparent_publication.py
 
 check-ops-burst:
-	python3 transparent/ops/tests/test_transparent_burst.py
+	python3 ops/transparent/tests/test_transparent_burst.py
 
 check-ops-regression-recut:
-	python3 transparent/ops/tests/test_regression_recut.py
+	python3 ops/transparent/tests/test_regression_recut.py
 
 check-ops-regression-fixtures:
-	python3 transparent/ops/tests/test_regression_fixture_compare.py
+	python3 ops/transparent/tests/test_regression_fixture_compare.py
 
 check-ops-observation:
-	python3 transparent/ops/tests/test_observation_audit.py
-	python3 transparent/ops/tests/test_activity_prototype_build.py
+	python3 ops/transparent/tests/test_observation_audit.py
+	python3 ops/transparent/tests/test_activity_prototype_build.py
 
 check-ops-stage-timing:
-	python3 -m unittest discover -s transparent/ops/tests -p 'test_transparent_stage_timing.py'
+	python3 -m unittest discover -s ops/transparent/tests -p 'test_transparent_stage_timing.py'
 
 # Fleet membership, managed preparation, the archive standby and the rollouts
 # that rewrite fleet config.
 check-ops-membership:
-	python3 -m unittest discover -s transparent/ops/tests -p 'test_transparent_membership.py'
-	python3 -m unittest discover -s transparent/ops/tests -p 'test_transparent_managed_preparation.py'
-	python3 -m unittest discover -s transparent/ops/tests -p 'test_transparent_reconciler.py'
-	python3 -m unittest discover -s transparent/ops/tests -p 'test_transparent_maintenance.py'
-	python3 -m unittest discover -s transparent/ops/tests -p 'test_transparent_worker_upgrade.py'
-	python3 -m unittest discover -s transparent/ops/tests -p 'test_transparent_rolling.py'
-	python3 -m unittest discover -s transparent/ops/tests -p 'test_transparent_inventory.py'
-	python3 -m unittest discover -s transparent/ops/tests -p 'test_transparent_actuator.py'
-	python3 -m unittest discover -s transparent/ops/tests -p 'test_archive_standby.py'
-	python3 -m unittest discover -s transparent/ops/tests -p 'test_quality_rollout_load.py'
-	python3 -m unittest discover -s transparent/ops/scripts -p 'test_transparent_quality_load.py'
+	python3 -m unittest discover -s ops/transparent/tests -p 'test_transparent_membership.py'
+	python3 -m unittest discover -s ops/transparent/tests -p 'test_transparent_managed_preparation.py'
+	python3 -m unittest discover -s ops/transparent/tests -p 'test_transparent_reconciler.py'
+	python3 -m unittest discover -s ops/transparent/tests -p 'test_transparent_maintenance.py'
+	python3 -m unittest discover -s ops/transparent/tests -p 'test_transparent_worker_upgrade.py'
+	python3 -m unittest discover -s ops/transparent/tests -p 'test_transparent_rolling.py'
+	python3 -m unittest discover -s ops/transparent/tests -p 'test_transparent_inventory.py'
+	python3 -m unittest discover -s ops/transparent/tests -p 'test_transparent_actuator.py'
+	python3 -m unittest discover -s ops/transparent/tests -p 'test_archive_standby.py'
+	python3 -m unittest discover -s ops/transparent/tests -p 'test_quality_rollout_load.py'
+	python3 -m unittest discover -s ops/transparent/scripts -p 'test_transparent_quality_load.py'
 
 # The txid display proof of concept's deploy family against an in-memory fleet,
 # its command-transport adapter and observers against shimmed ssh and rsync, and
 # the history router's opt-in import hook.
 check-ops-txid-display:
-	python3 -m unittest discover -s transparent/ops/tests -p 'test_txid_display_*.py'
+	python3 -m unittest discover -s ops/transparent/tests -p 'test_txid_display_*.py'
 
 # Elastic recent replicas: the saved-plan validator and the Terraform root runner.
 check-ops-elastic:
-	python3 -m unittest discover -s transparent/ops/tests -p 'test_transparent_plan.py'
-	python3 -m unittest discover -s transparent/ops/tests -p 'test_elastic_root.py'
+	python3 -m unittest discover -s ops/transparent/tests -p 'test_transparent_plan.py'
+	python3 -m unittest discover -s ops/transparent/tests -p 'test_elastic_root.py'
 
 # Recent-tier scaler: unit tests of every decision rule, the seeded fleet
 # simulator (test_scaler_sim.py) and the exhaustive membership and actuation
@@ -145,8 +145,8 @@ check-ops-scaler-fast:
 
 .PHONY: check-reports
 check-reports:
-	python3 -m unittest discover -s transparent/tools/transparent-loadtest/tests -p 'test_*.py'
-	node --test transparent/tools/transparent-loadtest/tests/apm.test.cjs
+	python3 -m unittest discover -s src/transparent/transparent-loadtest/tests -p 'test_*.py'
+	node --test src/transparent/transparent-loadtest/tests/apm.test.cjs
 
 # Every relative Markdown link must resolve. The transparent PIR documentation
 # rules delete superseded prose instead of leaving stubs, so a dangling link is
@@ -193,16 +193,12 @@ transparent-load-test:
 		--source-sha "$$(git rev-parse HEAD)" \
 		--json-out "$(TRANSPARENT_LOAD_JSON)"
 
-demo-check:
-	cargo check --manifest-path demos/legacy-spendability/Cargo.toml --workspace
-
 fmt:
 	cargo fmt --all
-	cargo fmt --manifest-path demos/legacy-spendability/Cargo.toml --all
 
 # Correctness at wallet-accepted anchors; each run preserves its SQLite stores
 # and exact mismatch evidence in a new output directory.
-TRANSPARENT_REGRESSION_FIXTURE ?= transparent/tools/transparent-regression/fixtures/mainnet.json
+TRANSPARENT_REGRESSION_FIXTURE ?= src/transparent/transparent-regression/fixtures/mainnet.json
 TRANSPARENT_REGRESSION_OUT ?= .local-pir/runs/transparent/regression
 TRANSPARENT_REGRESSION_FILTER_URL ?= https://enhance-pir.valargroup.dev
 .PHONY: transparent-regression
@@ -216,7 +212,7 @@ transparent-regression:
 
 # Mixed-wallet simulations. Leave URL overrides blank to use the scenario's
 # origins. Export options so the shell receives paths and labels as data.
-SIM_SCENARIO ?= transparent/tools/transparent-loadtest/scenarios/mixed-20-wave.json
+SIM_SCENARIO ?= src/transparent/transparent-loadtest/scenarios/mixed-20-wave.json
 SIM_URL ?=
 SIM_FILTER_URL ?=
 SIM_METRICS ?=
@@ -231,9 +227,9 @@ export SIM_SCENARIO SIM_URL SIM_FILTER_URL SIM_METRICS SIM_OUT SIM_RUN_ID
 
 .PHONY: transparent-sim transparent-sim-wave transparent-sim-sustained transparent-sim-help transparent-sim-open
 
-transparent-sim-wave: SIM_SCENARIO = transparent/tools/transparent-loadtest/scenarios/mixed-20-wave.json
+transparent-sim-wave: SIM_SCENARIO = src/transparent/transparent-loadtest/scenarios/mixed-20-wave.json
 
-transparent-sim-sustained: SIM_SCENARIO = transparent/tools/transparent-loadtest/scenarios/mixed-20-sustained.json
+transparent-sim-sustained: SIM_SCENARIO = src/transparent/transparent-loadtest/scenarios/mixed-20-sustained.json
 
 # Each invocation gets a fresh report directory unless SIM_OUT is supplied.
 # SIM_METRICS is a space-separated list of NAME=http(s)://host/metrics entries.
@@ -254,11 +250,11 @@ transparent-sim transparent-sim-wave transparent-sim-sustained:
 	printf 'Scenario: %s\nReport directory: %s\n' "$$SIM_SCENARIO" "$$out"; \
 	sim_status=0; \
 	cargo run --locked --release -p transparent-loadtest -- "$$@" || sim_status=$$?; \
-	if [ -f "$$out/report.html" ]; then python3 transparent/tools/transparent-loadtest/open_report.py --remember "$$out" || :; printf '\nOpen report: %s/report.html\n' "$$out"; fi; \
+	if [ -f "$$out/report.html" ]; then python3 src/transparent/transparent-loadtest/open_report.py --remember "$$out" || :; printf '\nOpen report: %s/report.html\n' "$$out"; fi; \
 	exit "$$sim_status"
 
 transparent-sim-open:
-	@python3 transparent/tools/transparent-loadtest/open_report.py
+	@python3 src/transparent/transparent-loadtest/open_report.py
 
 transparent-sim-help:
 	@printf '%s\n' \
@@ -290,7 +286,7 @@ transparent-sim-help:
 # comes from sample-oracle's separate journal pass.
 BLOCK_DATASET ?= /srv/transparent-sync-bench/data
 BLOCK_URL ?= https://transparent-sync-bench.valargroup.dev
-BLOCK_FRESH_SAMPLE ?= transparent/ops/benchmarks/transparent-comparison-fresh-sample.json
+BLOCK_FRESH_SAMPLE ?= ops/transparent/benchmarks/transparent-comparison-fresh-sample.json
 BLOCK_METRICS_URL ?=
 BLOCK_ENCODING ?= gzip
 SIM_COMPARISON_METADATA ?=
@@ -308,7 +304,7 @@ transparent-sim-freeze:
 	cargo run --locked --release -p transparent-loadtest -- --scenario "$(SIM_SCENARIO)" --selected-sample "$(BLOCK_SELECTED_SAMPLE)"
 
 transparent-sim-compare:
-	@test -n "$(BLOCK_URL)" -a -n "$(BLOCK_FRESH_SAMPLE)" || { echo 'Set BLOCK_URL and BLOCK_FRESH_SAMPLE (see transparent/tools/transparent-loadtest/README.md)'; exit 1; }
+	@test -n "$(BLOCK_URL)" -a -n "$(BLOCK_FRESH_SAMPLE)" || { echo 'Set BLOCK_URL and BLOCK_FRESH_SAMPLE (see src/transparent/transparent-loadtest/README.md)'; exit 1; }
 	cargo build --locked --release -p transparent-loadtest
 	@set -eu; \
 	out="$${SIM_OUT:-$${TMPDIR:-/tmp}/transparent-sim-compare-$$(date -u +%Y%m%dT%H%M%SZ)-$$$$}"; \
@@ -322,8 +318,8 @@ transparent-sim-compare:
 	if [ -n "$$SIM_COMPARISON_METADATA" ]; then set -- "$$@" --metadata "$$SIM_COMPARISON_METADATA"; fi; \
 	if [ -n "$$BLOCK_METRICS_URL" ]; then set -- "$$@" --block-metrics-url "$$BLOCK_METRICS_URL"; fi; \
 	set -f; for target in $$SIM_METRICS; do set -- "$$@" --pir-metrics "$$target"; done; \
-	status=0; python3 transparent/tools/transparent-loadtest/compare.py "$$@" || status=$$?; \
-	if [ -f "$$out/report.html" ]; then python3 transparent/tools/transparent-loadtest/open_report.py --remember "$$out"; fi; \
+	status=0; python3 src/transparent/transparent-loadtest/compare.py "$$@" || status=$$?; \
+	if [ -f "$$out/report.html" ]; then python3 src/transparent/transparent-loadtest/open_report.py --remember "$$out"; fi; \
 	exit "$$status"
 
 # Local-only worker-stage burst comparison; no fleet endpoints or live state.
@@ -333,7 +329,7 @@ TRANSPARENT_BURST_SYSTEMD ?= 0
 TRANSPARENT_BURST_EXTERNAL_CLIENTS ?= 0
 .PHONY: transparent-burst
 transparent-burst:
-	python3 transparent/ops/scripts/run-transparent-burst.py \
+	python3 ops/transparent/scripts/run-transparent-burst.py \
 		--repetitions "$(TRANSPARENT_BURST_REPETITIONS)" \
 		--build-slots $(TRANSPARENT_BURST_BUILD_SLOTS) \
 		$(if $(strip $(TRANSPARENT_BURST_WORKER_BUDGET_SECONDS)),--worker-budget-seconds "$(TRANSPARENT_BURST_WORKER_BUDGET_SECONDS)") \
@@ -351,10 +347,10 @@ check-tools:
 	python3 tools/ci/scaler_tests.py
 	python3 tools/ci/full_packages.py
 	python3 tools/ci/enhance_tests.py
-	python3 -m unittest discover -s transparent/tools/filters -p 'test_*.py'
-	python3 -m unittest discover -s transparent/tools/parent-filters -p 'test_*.py'
+	python3 -m unittest discover -s tools/transparent/filters -p 'test_*.py'
+	python3 -m unittest discover -s tools/transparent/parent-filters -p 'test_*.py'
 	python3 tools/ci/python_tests.py tools/tests --jobs 2 --isolate-ci-output
 
 .PHONY: transparent-txid-demo
 transparent-txid-demo:
-	python3 transparent/tools/txid-display/demo.py $(if $(REPORT),--report "$(REPORT)") $(if $(filter 1,$(OFFLINE)),--offline)
+	python3 tools/txid/txid-display/demo.py $(if $(REPORT),--report "$(REPORT)") $(if $(filter 1,$(OFFLINE)),--offline)

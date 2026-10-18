@@ -25,7 +25,7 @@ BINARIES = {
     'transparent-shard': ['transparent-shard-server', 'shard-assign', 'shard-prune'],
     'transparent-publisher': ['transparent-publish-controller', 'transparent-shard-server', 'shard-control', 'shard-assign'],
     # Tiered txid display proof of concept beside history; deployed only by
-    # `wallet-pir-deploy.py txid-display-*` (transparent/ops/lib/txid_display_poc.py).
+    # `wallet-pir-deploy.py txid-display-*` (ops/transparent/lib/txid_display_poc.py).
     'transparent-txid-display': ['transparent-txid-server', 'txid-control', 'txid-inventory',
                                  'txid-display-controller', 'transparent-event-ingest',
                                  'txid-quality-canary'],
@@ -39,28 +39,28 @@ BINARIES = {
 }
 FILES = {
     'wallet-pir-ops': [],
-    'enhance-pir': ['enhance/ops/scripts/test-local.py', 'enhance/ops/scripts/bootstrap-worker.py',
-        'enhance/ops/scripts/sample-worker.py',
-        'enhance/ops/scripts/summarize-samples.py', 'enhance/ops/scripts/assess-campaign.py',
-        'enhance/ops/deploy/workers.example.json'],
-    'transparent-filter': ['transparent/ops/deploy/transparent-filter-server.service'],
-    'transparent-shard': ['transparent/ops/deploy/transparent-shard-server.service', 'transparent/ops/deploy/transparent-Caddyfile'],
+    'enhance-pir': ['ops/enhance/scripts/test-local.py', 'ops/enhance/scripts/bootstrap-worker.py',
+        'ops/enhance/scripts/sample-worker.py',
+        'ops/enhance/scripts/summarize-samples.py', 'ops/enhance/scripts/assess-campaign.py',
+        'ops/enhance/deploy/workers.example.json'],
+    'transparent-filter': ['ops/transparent/deploy/transparent-filter-server.service'],
+    'transparent-shard': ['ops/transparent/deploy/transparent-shard-server.service', 'ops/transparent/deploy/transparent-Caddyfile'],
     'transparent-publisher': [],
-    'transparent-txid-display': ['transparent/ops/deploy/transparent-txid-display-worker.service.in',
-                                 'transparent/ops/deploy/transparent-txid-display-controller.service.in',
-                                 'transparent/ops/deploy/txid-display-routes.caddy.in',
-                                 'transparent/ops/scripts/txid-display-fleet.py',
-                                 'transparent/ops/scripts/txid-display-observe.py'],
-    'status-pir': ['enhance/ops/deploy/status-worker.service.in', 'enhance/ops/deploy/status-router.service.in',
-                   'enhance/ops/deploy/status-controller-qualification.service.in'],
-    'receiver-pir': ['receiver/ops/digitalocean/receiver-pir.service.in', 'receiver/ops/digitalocean/Caddyfile',
-                     'receiver/ops/digitalocean/cloud-init.yaml'],
+    'transparent-txid-display': ['ops/transparent/deploy/transparent-txid-display-worker.service.in',
+                                 'ops/transparent/deploy/transparent-txid-display-controller.service.in',
+                                 'ops/transparent/deploy/txid-display-routes.caddy.in',
+                                 'ops/transparent/scripts/txid-display-fleet.py',
+                                 'ops/transparent/scripts/txid-display-observe.py'],
+    'status-pir': ['ops/enhance/deploy/status-worker.service.in', 'ops/enhance/deploy/status-router.service.in',
+                   'ops/enhance/deploy/status-controller-qualification.service.in'],
+    'receiver-pir': ['ops/receiver/digitalocean/receiver-pir.service.in', 'ops/receiver/digitalocean/Caddyfile',
+                     'ops/receiver/digitalocean/cloud-init.yaml'],
 }
-FILES['enhance-pir-native'] = FILES['enhance-pir'] + ['enhance/ops/deploy/native-tag-integration.md']
+FILES['enhance-pir-native'] = FILES['enhance-pir'] + ['ops/enhance/deploy/native-tag-integration.md']
 # Kinds built with their own features and target directory, so only assembled
 # when requested explicitly.
 FILES['enhance-pir-native-cuda'] = FILES['enhance-pir-native'] + [
-    'enhance/ops/scripts/cuda-smoke.py', 'enhance/ops/scripts/verify-cuda-deployment.py',
+    'ops/enhance/scripts/cuda-smoke.py', 'ops/enhance/scripts/verify-cuda-deployment.py',
 ]
 # The operations package needs no compiled binary: full CI assembles and tests
 # it in its own job, so publishing it never waits on Rust compilation.

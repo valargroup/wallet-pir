@@ -1,8 +1,9 @@
 # Evidence retention
 
-- [Enhance and Status](../enhance/evidence/README.md)
-- [Transparent history and txid display](../transparent/evidence/README.md)
-- [Receiver directory](../receiver/evidence/README.md)
+- [Enhance and Status](enhance/README.md)
+- [Transparent history](transparent/README.md)
+- [Transaction-detail (txid) display](txid/README.md)
+- [Receiver directory](../docs/receiver/README.md)
 
 ## Current evidence
 

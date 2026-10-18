@@ -236,7 +236,7 @@ class ProviderLifecycle(unittest.TestCase):
     deployer = ExternalWorkers.deployer
     def setUp(self):
         ExternalWorkers.setUp(self)
-        settings = json.loads((ROOT / 'transparent/ops/deploy/history-provider.example.json').read_text())
+        settings = json.loads((ROOT / 'ops/transparent/deploy/history-provider.example.json').read_text())
         self.write_inventory(extra={'transparent-history': {'roles': {'provider': [{
             'host': 'edge-01', 'vars': {'listen': settings['listen']},
             'settings': settings, 'install': True}]}}})

@@ -139,9 +139,9 @@ jobs:
       - name: Test simulation report helpers
         run: |
           umask 022
-          node --test transparent/tools/transparent-loadtest/tests/apm.test.cjs
-          python3 transparent/tools/transparent-loadtest/tests/test_open_report.py
-          python3 transparent/tools/transparent-loadtest/tests/test_compare.py
+          node --test src/transparent/transparent-loadtest/tests/apm.test.cjs
+          python3 src/transparent/transparent-loadtest/tests/test_open_report.py
+          python3 src/transparent/transparent-loadtest/tests/test_compare.py
       - run: python3 tools/ci/full_packages.py --group transparent --lint
       - name: Report Cargo cache reuse
         if: always()
@@ -249,7 +249,7 @@ jobs:
         # The current candidate validator owns filter/publisher artifact inputs.
         # Exercise valid inputs and refusal cases; the retired shell wrapper is
         # no longer an executable deployment contract.
-        run: umask 022 && python3 -B transparent/ops/tests/test_activity_candidate.py
+        run: umask 022 && python3 -B ops/transparent/tests/test_activity_candidate.py
 
       - name: Validate transparent shard inputs
         if: contains(needs.select.outputs.helpers, 'check-ops-contracts') || contains(needs.select.outputs.helpers, 'check-ops-deploy')
@@ -268,10 +268,10 @@ jobs:
           shard_set="$RUNNER_TEMP/shard-set"
           mkdir -p "$shard_set/aaa" "$shard_set/bbb"
           printf '%s\n' '{"shards":[{"shard_id":0,"manifest_digest":"aaa"},{"shard_id":1,"manifest_digest":"bbb"}]}' >"$shard_set/shards.json"
-          TRANSPARENT_SHARD_SOURCE="$shard_set" transparent/ops/scripts/deploy-transparent-shard.sh validate
+          TRANSPARENT_SHARD_SOURCE="$shard_set" ops/transparent/scripts/deploy-transparent-shard.sh validate
           # And the same set with a shard directory missing must be refused.
           rmdir "$shard_set/bbb"
-          if TRANSPARENT_SHARD_SOURCE="$shard_set" transparent/ops/scripts/deploy-transparent-shard.sh validate; then
+          if TRANSPARENT_SHARD_SOURCE="$shard_set" ops/transparent/scripts/deploy-transparent-shard.sh validate; then
             echo "an incomplete shard set was accepted" >&2
             exit 1
           fi
@@ -289,11 +289,11 @@ jobs:
           unit="$art/transparent-shard-server.service"
           export TRANSPARENT_ARTIFACT_DIR="$art" TRANSPARENT_SHARD_SOURCE="$shard_set"
 
-          cp transparent/ops/deploy/transparent-shard-server.service "$unit"
-          transparent/ops/scripts/deploy-transparent-shard.sh validate
+          cp ops/transparent/deploy/transparent-shard-server.service "$unit"
+          ops/transparent/scripts/deploy-transparent-shard.sh validate
 
           refuses() {
-            if transparent/ops/scripts/deploy-transparent-shard.sh validate >/dev/null 2>&1; then
+            if ops/transparent/scripts/deploy-transparent-shard.sh validate >/dev/null 2>&1; then
               echo "a malformed unit was accepted: $1" >&2
               exit 1
             fi

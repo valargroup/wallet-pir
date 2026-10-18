@@ -7,14 +7,14 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'ops/lib'))
 from wallet_pir_ops.deploy import units  # noqa: E402
-from transparent.ops.lib.roles import publisher  # noqa: E402
+from ops.transparent.lib.roles import publisher  # noqa: E402
 
 
 class PublisherRoleTests(unittest.TestCase):
     def config(self, follow=False):
         return dict(data_dir='/srv/history/journal', publication_root='/srv/publications',
                     initial_publication='/srv/publications/initial', follow_journal=follow,
-                    fleet_command='/opt/operations/transparent/ops/scripts/transparent-live-fleet.py',
+                    fleet_command='/opt/operations/ops/transparent/scripts/transparent-live-fleet.py',
                     fleet_config='/etc/history/fleet.json', listen='127.0.0.1:8096')
 
     def role(self, config, **kwargs):

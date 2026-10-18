@@ -10,7 +10,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 TEMPLATE = ROOT / 'ops/deploy/coordinator/Caddyfile'
-PUBLISHER = ROOT / 'transparent/ops/scripts/deploy-transparent-publisher.py'
+PUBLISHER = ROOT / 'ops/transparent/scripts/deploy-transparent-publisher.py'
 
 
 class CoordinatorTemplate(unittest.TestCase):

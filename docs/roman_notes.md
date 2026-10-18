@@ -184,7 +184,7 @@ be rare enough for it to not matter.
 > Superseded: never route a transaction to lightwalletd because of an Enhance PIR
 > record's transparent flags. They are unauthenticated server assertions, so this
 > fallback would let the server turn private enhancement into public txid fetches.
-> See [Transparent flags](../enhance/docs/integration.md#transparent-flags).
+> See [Transparent flags](enhance/integration.md#transparent-flags).
 
 #### Handling Transparent
 

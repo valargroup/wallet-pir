@@ -76,7 +76,7 @@ class OperationsBundleTests(unittest.TestCase):
         self.assertEqual(set(registry), {'enhance', 'status', 'receiver', 'transparent-history', 'transparent-display'})
         self.assertTrue(all(r.template is None or r.template.is_relative_to(destination.resolve())
                             for s in registry.values() for r in s.roles.values()))
-        probe = "from wallet_pir_ops import release; from transparent.ops.lib import txid_display_poc; assert release.ROOT == txid_display_poc.ROOT"
+        probe = "from wallet_pir_ops import release; from ops.transparent.lib import txid_display_poc; assert release.ROOT == txid_display_poc.ROOT"
         result = subprocess.run([sys.executable, '-B', '-c', probe], cwd=self.root,
                                 env={**environment, 'PYTHONPATH': str(destination / 'ops/lib')},
                                 capture_output=True, text=True, timeout=15)
@@ -87,10 +87,10 @@ class OperationsBundleTests(unittest.TestCase):
     def test_new_role_resources_do_not_raise_the_retained_v1_inventory_floor(self):
         # A retained v1 release predating the provider still has a valid core
         # inventory. Its own archived renderer determines its available roles.
-        provider = {'transparent/docs/prepared-distribution.md',
-                    'transparent/ops/deploy/history-provider.example.json',
-                    'transparent/ops/deploy/history-provider.caddy',
-                    'transparent/ops/deploy/transparent-history-provider.role.service'}
+        provider = {'docs/transparent/prepared-distribution.md',
+                    'ops/transparent/deploy/history-provider.example.json',
+                    'ops/transparent/deploy/history-provider.caddy',
+                    'ops/transparent/deploy/transparent-history-provider.role.service'}
         files = {name: data for name, data in bundle.contents(ROOT).items() if name not in provider}
         archive = self.root / 'retained-v1.tar.gz'
         bundle.write_archive(archive, 'b' * 40, files, False)
@@ -102,7 +102,7 @@ class OperationsBundleTests(unittest.TestCase):
         bundle.self_check('b' * 40, root=destination)
         # Optional files unexpectedly added to an old installation still alter
         # its exact inventory; accepting old manifests must not hide additions.
-        guide = destination / 'transparent/docs/prepared-distribution.md'
+        guide = destination / 'docs/transparent/prepared-distribution.md'
         guide.parent.mkdir(parents=True, exist_ok=True)
         guide.write_text('unexpected resource')
         with self.assertRaisesRegex(ValueError, 'inventory changed'):
@@ -143,7 +143,7 @@ class OperationsBundleTests(unittest.TestCase):
     def test_inventory_excludes_runtime_credentials_and_evidence(self):
         self.assertFalse(any(not bundle.allowed(name) for name in self.manifest['files']))
         for name in ('ops/deploy/.env', 'ops/infra/production/secrets.tfvars',
-                     'transparent/evidence/run/raw.py', 'ops/lib/__pycache__/a.pyc',
+                     'evidence/transparent/run/raw.py', 'ops/lib/__pycache__/a.pyc',
                      'ops/deploy/id_ed25519', 'ops/deploy/inventory.json'):
             self.assertFalse(bundle.allowed(name), name)
 
@@ -154,7 +154,7 @@ class OperationsBundleTests(unittest.TestCase):
             path.write_text('include = ["registry.toml"]\n')
             with self.assertRaisesRegex(ValueError, 'cyclic'):
                 descriptors.load_descriptors(path)
-            source = str(ROOT / 'enhance/ops/deploy/deploy.toml')
+            source = str(ROOT / 'ops/enhance/deploy/deploy.toml')
             path.write_text('include = '+json.dumps([source, source])+'\n')
             with self.assertRaisesRegex(ValueError, 'duplicate'):
                 descriptors.load_descriptors(path)
