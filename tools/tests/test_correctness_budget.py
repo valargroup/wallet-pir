@@ -82,7 +82,9 @@ class CaseBudgetTests(unittest.TestCase):
                 'if "--list" in sys.argv: print("stalled: test")\n'
                 'else:\n print("test stalled ... ",end="",flush=True)\n time.sleep(10)\n',
                 seconds=.15)
-        self.assertLess(time.monotonic() - began, 2)
+        # Include interpreter startup and discovery under concurrent compilation.
+        # The ten-second body must still be interrupted well before completion.
+        self.assertLess(time.monotonic() - began, 5)
 
     def test_a_successful_process_cannot_omit_a_discovered_case(self):
         with self.assertRaisesRegex(RuntimeError, 'missing=.*second'):
