@@ -20,7 +20,7 @@ use transparent_shard::txid::{DisplayRecord, Tag};
 use transparent_txid_client::{
     Placement, Route, Tier, TxidDisplayClient, TxidError, TxidLookup, TxidReply,
 };
-use txid_pir_server::display::live::DisplayCommand;
+use txid_pir_server::display::live::{DisplayCommand, DisplayPublication};
 use txid_pir_server::display::service::{router, DisplayRuntime, DisplayState};
 use txid_serving::set::DisplaySet;
 use txid_serving::synth::{self, Published};
@@ -403,6 +403,209 @@ async fn a_seal_is_staged_then_published_without_rebuilding_archives() {
     for worker in [&world.archive, &world.recent] {
         assert_eq!(collect(worker).await, serde_json::json!([]));
     }
+}
+
+/// A worker whose durable records live in their own directory under the
+/// world's root, so a test can make that directory alone fail writes.
+fn recorded_owner(world: &World) -> (Worker, PathBuf) {
+    let records = world.root.path().join("records");
+    std::fs::create_dir(&records).unwrap();
+    let role = DisplayRole::ArchiveOwner;
+    let record = records.join(format!("{}.active.json", role.as_str()));
+    (Worker::new(&records, role, config(), Vec::new()), record)
+}
+
+fn saved_map(record: &Path) -> Option<String> {
+    std::fs::read(record).ok().map(|bytes| {
+        serde_json::from_slice::<serde_json::Value>(&bytes).unwrap()["map_sha256"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    })
+}
+
+async fn served_map(worker: &Worker) -> String {
+    let response = worker
+        .live
+        .router()
+        .oneshot(
+            axum::http::Request::get("/v2/txid/shards")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    response.headers()["x-txid-map-sha256"]
+        .to_str()
+        .unwrap()
+        .to_owned()
+}
+
+/// A durable display activation write that fails installs nothing in memory
+/// and reports failure, before the record is renamed into place and after.
+/// The staged seal the candidate names stays staged and the predecessor is
+/// not retired; only the controller's retry activates, and only then does
+/// staging hand the seal over.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_failed_display_activation_write_installs_nothing() {
+    use std::os::unix::fs::PermissionsExt;
+    let world = World::start().await;
+    let (owner, record) = recorded_owner(&world);
+    let records = record.parent().unwrap().to_path_buf();
+    owner.publish(&world.p0.0, &world.p0.1).await;
+    let Seal { a1, p1, .. } = Seal::write(&world);
+    owner
+        .command(DisplayCommand::Stage {
+            directory: a1.dir.clone(),
+        })
+        .await
+        .unwrap();
+    owner
+        .command(DisplayCommand::Prepare {
+            expected: world.p0.1.clone(),
+            publication: DisplayPublication {
+                directory: p1.0.clone(),
+                map_sha256: p1.1.clone(),
+            },
+        })
+        .await
+        .unwrap();
+    let activate = || DisplayCommand::Activate {
+        expected: world.p0.1.clone(),
+        map_sha256: p1.1.clone(),
+    };
+    let unchanged = |status: serde_json::Value| {
+        assert_eq!(status["active"]["map_sha256"], world.p0.1);
+        assert_eq!(status["candidate"]["map_sha256"], p1.1);
+        assert_eq!(status["staged"], serde_json::json!([a1.digest]));
+        assert_eq!(status["retired_snapshots"], 0);
+    };
+
+    // Before the rename: the temporary record cannot be created.
+    let temporary = record.with_extension("tmp");
+    std::fs::create_dir(&temporary).unwrap();
+    assert!(owner.command(activate()).await.is_err());
+    unchanged(owner.command(DisplayCommand::Status).await.unwrap());
+    assert_eq!(served_map(&owner).await, world.p0.1);
+    assert_eq!(saved_map(&record), Some(world.p0.1.clone()));
+    std::fs::remove_dir(&temporary).unwrap();
+
+    // After the rename: the directory is searchable but not readable, so the
+    // record is replaced and then its directory sync fails.
+    std::fs::set_permissions(&records, std::fs::Permissions::from_mode(0o300)).unwrap();
+    assert!(
+        std::fs::File::open(&records).is_err(),
+        "a post-rename write failure needs an unprivileged test user"
+    );
+    let refused = owner.command(activate()).await;
+    std::fs::set_permissions(&records, std::fs::Permissions::from_mode(0o700)).unwrap();
+    assert!(refused.is_err());
+    unchanged(owner.command(DisplayCommand::Status).await.unwrap());
+    assert_eq!(served_map(&owner).await, world.p0.1);
+    assert_eq!(saved_map(&record), Some(p1.1.clone()));
+
+    // The controller's retry activates the same candidate, retires p0 and
+    // releases the staged seal the active map now pins.
+    assert_eq!(
+        owner.command(activate()).await.unwrap(),
+        serde_json::json!({})
+    );
+    let status = owner.command(DisplayCommand::Status).await.unwrap();
+    assert_eq!(status["active"]["map_sha256"], p1.1);
+    assert!(status["candidate"].is_null());
+    assert_eq!(status["staged"], serde_json::json!([]));
+    assert_eq!(status["retired_snapshots"], 1);
+    assert_eq!(served_map(&owner).await, p1.1);
+}
+
+/// A display activation blocked on its durable write keeps status and
+/// serving responsive, and a cancelled caller does not release command
+/// serialization while the write is still in flight.
+#[cfg(unix)]
+#[tokio::test(flavor = "current_thread")]
+async fn a_blocked_display_activation_write_keeps_serialization() {
+    let world = World::start().await;
+    let (owner, record) = recorded_owner(&world);
+    owner.publish(&world.p0.0, &world.p0.1).await;
+    let Seal { p1, .. } = Seal::write(&world);
+    owner
+        .command(DisplayCommand::Prepare {
+            expected: world.p0.1.clone(),
+            publication: DisplayPublication {
+                directory: p1.0.clone(),
+                map_sha256: p1.1.clone(),
+            },
+        })
+        .await
+        .unwrap();
+    // Creating the temporary record opens a FIFO, which blocks until a
+    // reader arrives; the reader is held back until the checks are done.
+    let temporary = record.with_extension("tmp");
+    assert!(std::process::Command::new("mkfifo")
+        .arg(&temporary)
+        .status()
+        .unwrap()
+        .success());
+    let (release, released) = std::sync::mpsc::channel();
+    let reader = std::thread::spawn(move || {
+        let _ = released.recv_timeout(Duration::from_secs(20));
+        use std::io::Read;
+        let mut bytes = Vec::new();
+        std::fs::File::open(temporary)
+            .unwrap()
+            .read_to_end(&mut bytes)
+            .unwrap();
+    });
+    let live = owner.live.clone();
+    let mutation = tokio::spawn({
+        let live = live.clone();
+        let expected = world.p0.1.clone();
+        let map_sha256 = p1.1.clone();
+        async move {
+            live.command(DisplayCommand::Activate {
+                expected,
+                map_sha256,
+            })
+            .await
+        }
+    });
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    let pending = !mutation.is_finished();
+    let began = std::time::Instant::now();
+    let status = live.command(DisplayCommand::Status).await.unwrap();
+    let ready = live
+        .router()
+        .oneshot(
+            axum::http::Request::get("/v1/ready")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let responsive = began.elapsed() < Duration::from_secs(1);
+    mutation.abort();
+    let _ = mutation.await;
+    let next = tokio::spawn({
+        let live = live.clone();
+        async move { live.command(DisplayCommand::Collect).await }
+    });
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    let serialized = !next.is_finished();
+    let _ = release.send(());
+    reader.join().unwrap();
+    next.await.unwrap().unwrap();
+    assert!(pending, "the activation write did not remain blocked");
+    assert!(
+        responsive,
+        "a blocked activation write stalled status/readiness"
+    );
+    assert!(
+        serialized,
+        "a cancelled activation released command serialization"
+    );
+    assert_eq!(status["active"]["map_sha256"], world.p0.1);
+    assert_eq!(ready.status(), StatusCode::OK);
 }
 
 /// Every display table source follows a revision into the candidate that
@@ -1055,6 +1258,7 @@ fn the_worker_binary_takes_and_restores_a_publication_by_control() {
         &spec(1, 200, 260, false, &a0.digest),
         &records(20, &[]),
     );
+    let recent = r0.digest.clone();
     let (dir, map_sha256) =
         synth::write_candidate(root.path(), &params(1), &[a0, r0], "p0").unwrap();
     let socket = root.path().join("control.sock");
@@ -1137,6 +1341,18 @@ fn the_worker_binary_takes_and_restores_a_publication_by_control() {
     assert_eq!(refused["error"], "reorg reaches sealed display shard 0");
     let (ok, _) = control(serde_json::json!({"operation": "stage", "directory": "relative"}));
     assert!(!ok);
+    // A reorg below the recent shard's end revokes that revision durably.
+    let (ok, invalidated) = control(serde_json::json!({
+        "operation": "invalidate", "expected": map_sha256, "from_height": 250,
+    }));
+    assert!(ok, "{invalidated}");
+    assert_eq!(invalidated["invalidated"], serde_json::json!([recent]));
+    let revoked = || {
+        reqwest::blocking::get(format!("{url}/v2/txid/recent/revisions/{recent}/setup"))
+            .unwrap()
+            .status()
+    };
+    assert_eq!(revoked(), 409);
     drop(worker);
 
     // A restart serves the recorded publication once its runtimes are warm.
@@ -1152,6 +1368,10 @@ fn the_worker_binary_takes_and_restores_a_publication_by_control() {
     let (ok, status) = control(serde_json::json!({"operation": "status"}));
     assert!(ok);
     assert_eq!(status["active"]["map_sha256"], map_sha256);
+    // The revocation survives the restart: the recorded publication serves,
+    // but never the orphaned recent revision.
+    assert_eq!(status["revoked_revisions"], 1);
+    assert_eq!(revoked(), 409);
 }
 
 #[path = "../../../transparent/transparent-shard-server/tests/support/golden.rs"]

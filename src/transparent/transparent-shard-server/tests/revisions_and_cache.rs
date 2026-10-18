@@ -1157,6 +1157,131 @@ async fn blocked_invalidation_refuses_without_blocking_executor() {
     blocked_publication_write(true).await;
 }
 
+/// Makes `directory` writable and searchable but unreadable, so a durable
+/// record write inside it renames into place and then fails to sync the
+/// directory. Panics for a user whom permissions do not bind.
+#[cfg(unix)]
+fn fail_after_rename(directory: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(directory, std::fs::Permissions::from_mode(0o300)).unwrap();
+    assert!(
+        std::fs::File::open(directory).is_err(),
+        "a post-rename write failure needs an unprivileged test user"
+    );
+}
+
+/// A durable activation write that fails installs nothing in memory and
+/// reports failure, both when it fails before the record is renamed into
+/// place and after. The candidate stays prepared, nothing retries on its own,
+/// and a later activation by the controller succeeds. A post-rename failure
+/// leaves the new record on disk, which a restart serves.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_failed_activation_write_installs_nothing() {
+    use std::os::unix::fs::PermissionsExt;
+    use transparent_shard_server::live::{Command, LiveService, Publication};
+    use transparent_shard_server::shardset::LoadOptions;
+    let root = tempfile::tempdir().unwrap();
+    let a = root.path().join("a");
+    let b = root.path().join("b");
+    let records = root.path().join("records");
+    for dir in [&a, &b, &records] {
+        std::fs::create_dir_all(dir).unwrap();
+    }
+    let (old, count) = write_revision(&a, FIRST + 1, 0, "");
+    write_map(&a, &old, FIRST + 1, 0, count);
+    let set = ShardSet::open(&a, 3).unwrap();
+    let old_map = set.map_digest.clone();
+    let config = ServiceConfig::default();
+    let record = records.join("active.json");
+    let live = LiveService::new(
+        ServiceState::build(set, config).unwrap(),
+        Publication {
+            directory: a,
+            assignment: None,
+            map_sha256: old_map.clone(),
+            runtimes: None,
+        },
+        config,
+        LoadOptions::whole(3),
+        record.clone(),
+    )
+    .unwrap();
+    let (new, count) = write_revision(&b, FIRST + 2, 1, &old);
+    write_map(&b, &new, FIRST + 2, 1, count);
+    let new_map = ShardSet::open(&b, 3).unwrap().map_digest;
+    live.command(Command::Prepare {
+        expected: old_map.clone(),
+        publication: Publication {
+            directory: b,
+            assignment: None,
+            map_sha256: new_map.clone(),
+            runtimes: None,
+        },
+    })
+    .await
+    .unwrap();
+    let activate = || Command::Activate {
+        expected: old_map.clone(),
+        map_sha256: new_map.clone(),
+    };
+    let served = |live: &LiveService| {
+        let router = live.router();
+        async move {
+            let response = router
+                .oneshot(Request::get("/v2/shards").body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            response.headers()["x-shard-map-sha256"]
+                .to_str()
+                .unwrap()
+                .to_owned()
+        }
+    };
+    let saved = || -> Option<String> {
+        std::fs::read(&record).ok().map(|bytes| {
+            serde_json::from_slice::<Publication>(&bytes)
+                .unwrap()
+                .map_sha256
+        })
+    };
+    let unchanged = |status: &serde_json::Value| {
+        assert_eq!(status["active"]["map_sha256"], old_map);
+        assert_eq!(status["candidate"]["map_sha256"], new_map);
+        assert_eq!(status["retired_snapshots"], 0);
+    };
+
+    // Before the rename: the temporary record cannot be created.
+    std::fs::create_dir(record.with_extension("tmp")).unwrap();
+    assert!(live.command(activate()).await.is_err());
+    unchanged(&live.command(Command::Status).await.unwrap());
+    assert_eq!(served(&live).await, old_map);
+    assert_eq!(saved(), None);
+    std::fs::remove_dir(record.with_extension("tmp")).unwrap();
+
+    // After the rename: the record names the candidate, but the directory
+    // sync fails, so the activation is still refused and nothing swaps.
+    fail_after_rename(&records);
+    let refused = live.command(activate()).await;
+    std::fs::set_permissions(&records, std::fs::Permissions::from_mode(0o700)).unwrap();
+    assert!(refused.is_err());
+    unchanged(&live.command(Command::Status).await.unwrap());
+    assert_eq!(served(&live).await, old_map);
+    assert_eq!(saved().as_deref(), Some(new_map.as_str()));
+
+    // The controller's retry activates the same candidate.
+    assert_eq!(
+        live.command(activate()).await.unwrap(),
+        serde_json::json!({"active": new_map})
+    );
+    let status = live.command(Command::Status).await.unwrap();
+    assert_eq!(status["active"]["map_sha256"], new_map);
+    assert!(status["candidate"].is_null());
+    assert_eq!(status["retired_snapshots"], 1);
+    assert_eq!(served(&live).await, new_map);
+    assert_eq!(saved().as_deref(), Some(new_map.as_str()));
+}
+
 /// Hot activation keeps the old revision usable, shares bounded runtime state,
 /// and refuses orphaned answers after a reorg without restarting the server.
 #[tokio::test(flavor = "multi_thread")]
