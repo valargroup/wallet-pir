@@ -149,7 +149,7 @@ RocksDB dependency. A case specification is a JSON list:
 Use actual selected public scripts and heights in the pinned publication:
 
 ```sh
-cargo run --release -p transparent-regression --bin regression-export -- \
+cargo run --release -p transparent-tools --bin regression-export -- \
   --data-dir /path/to/transparent-event-data \
   --map /path/to/publication/shards.json --cases cases.json \
   --cutoff-height CUT_OFF_HEIGHT --source-sha SOURCE_COMMIT --out fixture.json
@@ -268,10 +268,10 @@ exercise memory/SQLite parity and legacy progress migration. The regression
 crate tests the oracle independently.
 
 ```sh
-cargo test -p transparent-blocks --test recovery
+cargo test -p transparent-tools --features benchmarks --test compact_recovery
 cargo test -p transparent-query-server --test wallet_anchor \
   --test wallet_continuation --test wallet_recut --test wallet_sync
-cargo test -p transparent-regression
+cargo test -p transparent-tools --test regression_runner
 ```
 
 The artifact build selects service workspace targets only. Library-internal

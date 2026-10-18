@@ -9,7 +9,7 @@ under `docs/<product>/` and evidence under `evidence/<product>/`; shared automat
 lives under `tools/{ci,dev,scripts,lib,deploy,infra}/`. A product never depends
 on another product's application package, and serving packages never depend on
 chain reading or ingestion packages (`tools/ci/boundary.py`).
-`src/transparent/transparent-measure` uses the current shard stack and remains part of the
+`tools/transparent/src/measure` uses the current shard stack and remains part of the
 backfill workflow; its extrapolated baseline is not a whole-wallet measurement.
 
 Follow [AGENTS.md](AGENTS.md) for shared iteration and validation rules. Use

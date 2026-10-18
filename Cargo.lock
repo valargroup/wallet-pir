@@ -3526,6 +3526,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-util",
+ "tower",
  "transparent-publisher",
  "transparent-query-server",
  "transparent-shared",
@@ -3533,6 +3534,7 @@ dependencies = [
  "zakura-server-chain",
  "zakura-transparent-events",
  "zakura-transparent-filter",
+ "zakura-transparent-native",
  "zakura-transparent-shard",
  "zakura-transparent-txid-client",
 ]

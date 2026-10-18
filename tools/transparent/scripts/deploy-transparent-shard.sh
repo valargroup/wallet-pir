@@ -49,7 +49,7 @@ readonly JQ_MAP_FIRST_DIGEST='.shards[0].manifest_digest'
 readonly JQ_MAP_GEOMETRIES='[.shards[].geometry] | unique | join(",")'
 
 # /v1/health on the VPC. An inline serde_json::json! in
-# src/transparent/transparent-shard-server/src/service.rs, so nothing in the type system
+# src/transparent/transparent-query-server/src/history/service.rs, so nothing in the type system
 # catches a rename here.
 readonly JQ_HEALTH_SERVING='.phase == "serving"'
 readonly JQ_HEALTH_SHARDS='.shards'

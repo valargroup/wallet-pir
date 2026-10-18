@@ -777,7 +777,7 @@ async fn main() -> Result<(), Error> {
             return Err(format!("missing required confirmed case {case}").into());
         }
     }
-    let lock = include_bytes!("../../../../Cargo.lock");
+    let lock = include_bytes!("../../../Cargo.lock");
     let system = sysinfo::System::new_all();
     let report = json!({
         "format": "transparent-txid-native-demo-v2",

@@ -3386,7 +3386,7 @@ and the one-query txid display are monitored, v1 is not.
   no extra flag. It refuses with `oracle_invalid` until it has a v12 fixture.
 - **Txid display (`txid`).** `txid-quality-canary`, a binary in the service-owned
   `transparent-loadtest` package
-  (`cargo build --release -p transparent-loadtest --bin txid-quality-canary`).
+  (`cargo build --release -p transparent-tools --bin txid-quality-canary`).
   `--url` defaults to `https://transparent-pir.valargroup.dev`; the client appends
   `/v2/txid/`. `--fixture FILE` holds `{"txid": "<display hex>", "height": N,
   "entry_sha256": "<hex>"}`: copy one archive-tier sample from a
