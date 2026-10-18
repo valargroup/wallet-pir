@@ -58,9 +58,29 @@ def workspace_packages(root=ROOT):
     return packages
 
 
+# The Transparent tools package shares tools/transparent with operations scripts;
+# only these inputs belong to the Cargo package.
+SHARED_PACKAGE_INPUTS = {
+    'tools/transparent/': ('Cargo.toml', 'build.rs', 'src/', 'examples/', 'loadtest/',
+                           'fixtures/regression/', 'tests/fixtures/', 'tests/*.rs'),
+}
+
+
+def package_input(directory, path):
+    inputs = SHARED_PACKAGE_INPUTS.get(directory)
+    if inputs is None:
+        return True
+    relative = path[len(directory):]
+    return any(relative.startswith('tests/') and '/' not in relative[6:] and relative.endswith('.rs')
+               if prefix == 'tests/*.rs' else relative.startswith(prefix) for prefix in inputs)
+
+
 def owner(packages, path):
-    return next((p['name'] for p in packages
-                 if path.startswith(Path(p['manifest_path']).parent.relative_to(ROOT).as_posix() + '/')), None)
+    for p in packages:
+        directory = Path(p['manifest_path']).parent.relative_to(ROOT).as_posix() + '/'
+        if path.startswith(directory) and package_input(directory, path):
+            return p['name']
+    return None
 
 
 def route(path):
