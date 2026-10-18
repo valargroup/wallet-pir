@@ -2,7 +2,7 @@
 //! service/RocksDB stack. No fee implementation is copied into this tool.
 // The service re-exports adapter items this tool does not use.
 #[allow(dead_code, unused_imports)]
-#[path = "../../../../../src/transparent/transparent-journal/src/extract.rs"]
+#[path = "../../../../../src/transparent/transparent-ingest/src/extract.rs"]
 mod extract;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};

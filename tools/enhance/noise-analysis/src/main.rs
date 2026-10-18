@@ -1,12 +1,12 @@
 mod certificate;
 mod fast_weights;
 use clap::Parser;
-use enhance_query_server::ipir::{
-    add_crs_blocks_assign_mod, add_intermediate_assign_mod, deserialize_first_dim_query,
-};
-use enhance_query_server::{
+use enhance_pir::{
     v4::{self, Geometry},
     RECORDS_PER_ROW, RECORD_BYTES,
+};
+use enhance_pir_server::ipir::{
+    add_crs_blocks_assign_mod, add_intermediate_assign_mod, deserialize_first_dim_query,
 };
 use inspiring::TopKeyImages;
 use ipir_sp::modulus_switch::{recover_published_c1, serialize_rlwe_response_bodies};

@@ -1469,9 +1469,10 @@ mod live {
 
     type Chain = Arc<RwLock<Vec<Vec<u8>>>>;
 
-    fn raw_block(parent: [u8; 32], nonce: u8) -> Vec<u8> {
-        // A syntactically valid header and no transactions; consensus is the
-        // node's job, not the controller's.
+    fn raw_block(parent: [u8; 32], height: u32, nonce: u8) -> Vec<u8> {
+        // A syntactically valid header and a coinbase with no outputs; consensus
+        // is the node's job, not the controller's. The chain parser rejects
+        // blocks without transactions.
         let mut raw = 4u32.to_le_bytes().to_vec();
         raw.extend(parent);
         raw.extend([0; 64]);
@@ -1480,7 +1481,10 @@ mod live {
         raw.extend([nonce; 32]);
         raw.extend([0xfd, 0x40, 0x05]);
         raw.extend([0; 1344]);
-        raw.push(0);
+        raw.push(1);
+        // A height-zero coinbase must carry the real genesis script, and nothing
+        // here reads coinbase heights, so genesis encodes height one.
+        raw.extend(zakura_server_chain::testing::coinbase(height.max(1), &[]).bytes());
         raw
     }
 
@@ -1495,7 +1499,7 @@ mod live {
                 .last()
                 .map(|b| *hash(b).internal_bytes())
                 .unwrap_or([0; 32]);
-            chain.push(raw_block(parent, tag + i as u8));
+            chain.push(raw_block(parent, chain.len() as u32, tag + i as u8));
         }
     }
 
