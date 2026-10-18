@@ -1,0 +1,106 @@
+{
+  "management_listen": "127.0.0.1:18080",
+  "enhance": {
+    "enabled": true,
+    "settings": {
+      "packing_router_config": "/etc/enhance-pir/packing-routers.json",
+      "query_ingress": [
+        "http://127.0.0.1:8083"
+      ],
+      "pool_placement": false,
+      "frontier_replicas": 2,
+      "artifact_listen": "10.0.0.1:8084",
+      "listen": "127.0.0.1:8080",
+      "data_dir": "/srv/pir-publisher/enhance",
+      "worker_config": "/etc/enhance-pir/workers.json",
+      "zakura_rpc_url": "http://127.0.0.1:8232",
+      "zakura_cookie": "/run/credentials/pir-publisher.service/chain-cookie",
+      "isolated_fixture": false,
+      "fixture_records": 67,
+      "fixture_append_records": 1,
+      "poll_seconds": 10,
+      "prevout_cache_outputs": 250000,
+      "capacity_fallback_rows_per_second": 1.0,
+      "capacity_readiness_seconds": 21600.0,
+      "capacity_burst_rows": 4096,
+      "sealed_shards": 6
+    }
+  },
+  "status": {
+    "enabled": true,
+    "settings": {
+      "publisher": {
+        "state_dir": "/srv/pir-publisher/status",
+        "salt_hex": "0101010101010101010101010101010101010101010101010101010101010101",
+        "window_blocks": 4096,
+        "worker_origin": "http://127.0.0.1:8481",
+        "router_origin": "http://127.0.0.1:8482",
+        "query_router_origin": "http://127.0.0.1:8492",
+        "private_listen": "127.0.0.1:8480",
+        "public_enabled": true
+      },
+      "rpc_url": "http://127.0.0.1:8232",
+      "cookie": "/run/credentials/pir-publisher.service/chain-cookie",
+      "public_listen": "127.0.0.1:8489"
+    }
+  },
+  "transparent_history": {
+    "enabled": true,
+    "settings": {
+      "data_dir": "/srv/pir-publisher/history/journal",
+      "publication_root": "/srv/pir-publisher/history/publications",
+      "initial_publication": "/srv/pir-publisher/history/bootstrap",
+      "recent_from": 0,
+      "recent_geometry": "recent-4k-8k",
+      "archive_geometry": "archive-wide",
+      "rpc_url": "http://127.0.0.1:8232",
+      "rpc_cookie": "/run/credentials/pir-publisher.service/chain-cookie",
+      "fleet_command": "/opt/transparent-publisher/transparent-live-fleet.py",
+      "fleet_config": "/etc/transparent-pir/fleet.json",
+      "listen": "10.0.0.1:8096",
+      "source_sha": "replace-with-release-revision",
+      "follow_journal": false,
+      "ship_runtimes": false,
+      "distribute_prepared": false
+    }
+  },
+  "transaction_details": {
+    "enabled": true,
+    "settings": {
+      "root": "/srv/pir-publisher/txid/root",
+      "journal": "/srv/pir-publisher/txid/journal",
+      "workers": "/etc/txid-pir/workers.json",
+      "rpc_url": "http://127.0.0.1:8232",
+      "rpc_cookie": "/run/credentials/pir-publisher.service/chain-cookie",
+      "poll_ms": 1000,
+      "status_listen": "127.0.0.1:8098",
+      "trust_sealed": false,
+      "ship_runtimes": false,
+      "max_recent_records": null
+    }
+  },
+  "receiver": {
+    "enabled": true,
+    "settings": {
+      "data_dir": "/srv/pir-publisher/receiver",
+      "min_rows": 8192,
+      "witnesses": true,
+      "max_witness_commitments": 16777216,
+      "rpc_url": [
+        "http://127.0.0.1:8232"
+      ],
+      "cookie": "/run/credentials/pir-publisher.service/chain-cookie",
+      "no_auth": false,
+      "start_height": 3428143,
+      "end_height": null,
+      "depth": 2,
+      "serve": true,
+      "bind": "127.0.0.1:18380",
+      "poll_seconds": 10,
+      "batch_size": 64,
+      "concurrency": 8,
+      "near_since": null,
+      "near_poll_seconds": 60
+    }
+  }
+}

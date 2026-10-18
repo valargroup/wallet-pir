@@ -114,13 +114,13 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(set(result['packages']), {'pir-apm', 'pir-monitor'})
         self.assertEqual(result['groups'], ['enhance'])
         self.assertEqual(result['helpers'], [])
-        result = fast.plan(self.packages, ['src/enhance/enhance-publisher/tests/fixtures/README.md'])
+        result = fast.plan(self.packages, ['src/shared/pir-publisher/enhance/tests/fixtures/README.md'])
         self.assertIn('enhance-publisher', result['packages'])
         self.assertIn('check-docs', result['helpers'])
 
-    def test_receiver_packages_have_their_own_full_group(self):
-        result = fast.plan(self.packages, ['src/receiver/receiver-store/src/lib.rs'])
-        self.assertEqual(result['groups'], ['receiver'])
+    def test_receiver_packages_also_qualify_the_composed_publisher(self):
+        result = fast.plan(self.packages, ['src/shared/pir-publisher/receiver-store/src/lib.rs'])
+        self.assertEqual(result['groups'], ['enhance', 'receiver'])
         self.assertIn('receiver-store', full.commands('receiver', full.inventory())[0])
 
     def test_receiver_ops_config_changes_run_their_contract_suite(self):
@@ -256,7 +256,7 @@ class PlannerTests(unittest.TestCase):
             started.set()
 
         paths = ['tools/tests/operations/deploy/test_ops_package.py',
-                 'src/transparent/transparent-publisher/src/lib.rs']
+                 'src/shared/pir-publisher/transparent/src/lib.rs']
         with patch.object(sys, 'argv', ['fast.py', '--base', 'HEAD', '--committed-only']), \
                 patch.object(fast, 'changed_paths', return_value=paths), \
                 patch('hygiene.check', return_value=0), \

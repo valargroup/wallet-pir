@@ -18,7 +18,7 @@ from .paths import ROOT
 # publication revisions) belongs to the product controller, not the inventory.
 ROLE_FIELDS = {'host', 'unit', 'vars', 'health_equals', 'artifact_kind', 'responsibilities', 'settings', 'install'}
 ANCILLARY_FIELDS = {'host', 'unit', 'kind', 'consumers', 'operations', 'note'}
-SERVICE_FIELDS = {'roles', 'vars', 'template_vars', 'exact_check'}
+SERVICE_FIELDS = {'roles', 'vars', 'template_vars', 'exact_check', 'managed_products'}
 
 
 def machine(inventory, host):

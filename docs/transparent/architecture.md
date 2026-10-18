@@ -108,7 +108,7 @@ production processes remain separate so publication can prepare a new revision
 without sharing the query worker's CPU, memory limit or restart lifecycle.
 Existing query-library paths re-export the moved backend types for tooling.
 
-The standard history controller composes `src/shared/pir-pipeline` without joining
+The standard history controller composes `src/shared/pir-publisher/pipeline` without joining
 its input and publication schedules. Shared supervision runs the existing ingest
 or followed-journal pass and stops on typed journal I/O failures; transient source
 failures retain the checkpoint and retry after the existing delay. Publication

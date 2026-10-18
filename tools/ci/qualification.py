@@ -19,7 +19,7 @@ FAMILIES = {'ops': 'Operations', 'receiver': 'Receiver',
 KINDS = {'ops': ['wallet-pir-ops'], 'receiver': ['receiver-pir'],
          'transparent': ['transparent-filter', 'transparent-shard', 'transparent-publisher',
                          'transparent-txid-display'],
-         'enhance': ['enhance-pir', 'enhance-pir-native', 'status-pir']}
+         'enhance': ['enhance-pir', 'enhance-pir-native', 'status-pir', 'pir-publisher']}
 
 
 def history(repo):
@@ -114,9 +114,9 @@ def build(family):
 
 
 def assemble(family, sha, target, output, native=False):
-    kinds = ['enhance-pir-native', 'status-pir'] if native else KINDS[family]
+    kinds = ['enhance-pir-native', 'status-pir', 'pir-publisher'] if native else KINDS[family]
     for kind in kinds:
-        if not native and kind in ('enhance-pir-native', 'status-pir'):
+        if not native and kind in ('enhance-pir-native', 'status-pir', 'pir-publisher'):
             continue
         release.assemble(sha, target, output / kind, kind)
 

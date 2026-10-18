@@ -2135,6 +2135,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "pir-publisher"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "clap",
+ "enhance-publisher",
+ "pir-pipeline",
+ "receiver-indexer",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "status-publisher",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "transparent-publisher",
+]
+
+[[package]]
 name = "pir-runtime"
 version = "0.1.0"
 dependencies = [

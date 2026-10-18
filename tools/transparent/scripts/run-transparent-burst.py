@@ -70,7 +70,7 @@ def main():
         paths += [ROOT / 'Cargo.toml', ROOT / 'Cargo.lock']
         paths += sorted((ROOT / 'pir').glob('*/Cargo.toml'))
         paths += sorted((ROOT / 'server').glob('*/Cargo.toml'))
-        paths += sorted((ROOT / 'src/transparent/transparent-shard-server').rglob('*.rs'))
+        paths += sorted((ROOT / 'src/transparent/transparent-query-server').rglob('*.rs'))
         json.dump({'source_sha': source, 'machine': platform.platform(), 'cpu_info': Path('/proc/cpuinfo').read_text() if Path('/proc/cpuinfo').exists() else None,
                    'external_clients': args.external_clients, 'client_cpus': '4-7' if args.systemd and args.external_clients else None,
                    'worker_budget_seconds': args.worker_budget_seconds, 'build_slots': args.build_slots, 'repetitions': args.repetitions, 'isolated_cgroup': args.systemd,
@@ -79,7 +79,7 @@ def main():
                    'test_binary_sha256': hashlib.sha256(args.test_binary.read_bytes()).hexdigest() if args.test_binary else None,
                    'source_files_sha256': {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest() for p in paths if not p.name.startswith('._')}}, stream, indent=2)
     print(f'Reports: {output}', flush=True)
-    command = ['cargo', 'test', '--release', '-p', 'transparent-shard-server',
+    command = ['cargo', 'test', '--release', '-p', 'transparent-query-server',
                '--test', 'revisions_and_cache', 'burst::publication_burst_under_exact_load',
                '--', '--ignored', '--exact', '--nocapture']
     if args.test_binary:

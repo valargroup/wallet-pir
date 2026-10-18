@@ -16,7 +16,7 @@ import integration_tests as tests
 class IntegrationTests(unittest.TestCase):
     def test_repository_registry_is_complete_and_each_service_has_a_smoke(self):
         registry = tests.inventory()
-        for package in ['receiver-pir-server', 'transparent-shard-server', 'enhance-publisher']:
+        for package in ['receiver-pir-server', 'transparent-query-server', 'enhance-publisher']:
             self.assertIn('ci_smoke', registry[package]['fast'])
 
     def test_publisher_smoke_feedback_runs_its_encrypted_smoke_only(self):
@@ -47,16 +47,16 @@ class IntegrationTests(unittest.TestCase):
                                     f'{source.relative_to(ROOT)}: missing {relative}')
 
     def test_operational_filter_and_txid_canary_targets_are_service_owned(self):
-        directory = ROOT / 'src/transparent/transparent-loadtest'
+        directory = ROOT / 'tools/transparent'
         manifest = tomllib.loads((directory / 'Cargo.toml').read_text())
-        self.assertEqual(manifest['package']['name'], 'transparent-loadtest')
+        self.assertEqual(manifest['package']['name'], 'transparent-tools')
         for binary in ['transparent-filter-cli', 'txid-quality-canary']:
             self.assertTrue((directory / 'src/bin' / (binary + '.rs')).is_file(), binary)
         self.assertIn('client', manifest['dependencies']['transparent-filter']['features'])
         self.assertEqual(manifest['dependencies']['transparent-txid-client']['package'],
                          'zakura-transparent-txid-client')
         registry = json.loads((ROOT / 'tools/ci/integration-tests.json').read_text())
-        self.assertIn('service_tools', registry['transparent-loadtest']['full'])
+        self.assertIn('service_tools', registry['transparent-tools']['full'])
 
     def test_missing_stale_duplicate_and_malformed_assignments_fail(self):
         for registry in [{}, {'p': {'fast': [], 'full': []}},

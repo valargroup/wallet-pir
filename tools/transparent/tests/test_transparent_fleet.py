@@ -290,7 +290,7 @@ class RouterCaddyCompatibility(unittest.TestCase):
         root = Path(__file__).resolve().parents[3]
         texts = {
             'live fleet script': (root / 'tools/transparent/scripts/transparent-live-fleet.py').read_text(),
-            'shard-assign renderer': (root / 'src/transparent/transparent-shard-server/src/router.rs').read_text().split('#[cfg(test)]')[0],
+            'shard-assign renderer': (root / 'src/transparent/transparent-query-server/src/routing/router.rs').read_text().split('#[cfg(test)]')[0],
             'router fixture': (root / 'tools/transparent/fixtures/transparent-shard/Caddyfile.router').read_text(),
         }
         for name, text in texts.items():

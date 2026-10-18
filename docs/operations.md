@@ -4,6 +4,9 @@ Start here for the shared operating model. Product runbooks own their publicatio
 authority, resource and encrypted-answer checks. Source and release preparation do
 not establish what is running; inspect the fleet and retained deployment evidence.
 
+See [the unified publisher](publisher.md) for the opt-in executable that composes
+these product owners into one process. Packaging it does not establish deployment.
+
 ## Architecture and ownership
 
 | Product | What runs | Product authority |
