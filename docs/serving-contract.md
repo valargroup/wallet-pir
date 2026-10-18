@@ -113,7 +113,7 @@ activation. Request handles and collection retain their existing lifetimes.
 
 Status and Receiver name a publication by a domain-separated SHA-256 of their
 manifest's fields at fixed width, strings length-prefixed: Status's
-`Manifest::id` (`src/status/status-protocol/src/lib.rs`), and Receiver's
+`Manifest::id` (`src/status/status-query-server/src/protocol.rs`), and Receiver's
 directory revision and session ID. Their manifests, like Enhance's protocol
 values, refuse unknown fields, so a new field is a new profile or protocol rather
 than one an older reader skips.

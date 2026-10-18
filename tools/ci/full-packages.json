@@ -9,12 +9,10 @@
   "enhance": [
     "enhance-pir",
     "enhance-serving",
-    "status-protocol",
-    "status-serving",
-    "status-publication",
+    "status-query-server",
+    "status-publisher",
     "enhance-pir-load-test",
     "enhance-pir-server",
-    "status-pir-server",
     "pir-apm",
     "pir-monitor"
   ],

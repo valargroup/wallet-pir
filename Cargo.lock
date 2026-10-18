@@ -922,9 +922,8 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
- "status-protocol",
- "status-publication",
- "status-serving",
+ "status-publisher",
+ "status-query-server",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
@@ -3176,7 +3175,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
-name = "status-pir-server"
+name = "status-publisher"
 version = "0.0.1"
 dependencies = [
  "axum",
@@ -3185,15 +3184,16 @@ dependencies = [
  "hex",
  "ipir-sp",
  "pir-control",
+ "pir-pipeline",
  "reqwest",
  "serde",
  "serde_json",
  "sha2 0.10.9",
- "status-protocol",
- "status-publication",
- "status-serving",
+ "status-query-server",
  "tempfile",
+ "thiserror 2.0.18",
  "tokio",
+ "tower",
  "tracing",
  "tracing-subscriber",
  "zakura-pir-native",
@@ -3202,46 +3202,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "status-protocol"
-version = "0.0.1"
-dependencies = [
- "hex",
- "ipir-sp",
- "rand 0.8.5",
- "reinspiring",
- "reqwest",
- "serde",
- "sha2 0.10.9",
- "thiserror 2.0.18",
- "zakura-pir-native",
-]
-
-[[package]]
-name = "status-publication"
-version = "0.0.1"
-dependencies = [
- "axum",
- "hex",
- "ipir-sp",
- "pir-control",
- "pir-pipeline",
- "reqwest",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "status-protocol",
- "status-serving",
- "tempfile",
- "thiserror 2.0.18",
- "tokio",
- "tower",
- "tracing",
- "zakura-pir-status",
- "zakura-server-chain",
-]
-
-[[package]]
-name = "status-serving"
+name = "status-query-server"
 version = "0.0.1"
 dependencies = [
  "axum",
@@ -3260,13 +3221,13 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
- "status-protocol",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
  "tower",
  "tracing",
  "zakura-pir-native",
+ "zakura-pir-status",
 ]
 
 [[package]]

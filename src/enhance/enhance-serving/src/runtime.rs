@@ -861,7 +861,7 @@ mod tests {
         }
 
         // A real persisted unit with the Status row layout (12288-byte rows,
-        // `status_protocol::ROW_BYTES`) has a different output width, even though
+        // `status_query_server::protocol::ROW_BYTES`) has a different output width, even though
         // its degree and plaintext profile agree.
         let layout = DatabaseLayout {
             record_bytes: 12288,
