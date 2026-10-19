@@ -3951,6 +3951,26 @@ is the supported way to upgrade the coordinator's running pir-apm and change onl
 The second setting is one family covering the Receiver, Status, Transparent and txid probes together. The
 monitor's global `PIR_MONITOR_ALERT_MODE` and pir-apm's other families are not changed.
 
+Production activated Transparent and txid quality alerts and the external service probes on
+2026-10-19 at about 17:39 UTC with source `653793f985c5b17622d581e4d616a341c2aea613`.
+Transaction `transparent-alerts-20261019T173754Z-ea059a45242d-4d2ecc` committed; subsequent status verified
+both running modes and preserved credential wrappers. The APM binary is
+`ea059a45242dd83ac60db8569a7828ce841840a0670a8f88ad1e50d2fce5c0cd`. Operations qualification
+[39293602410](https://github.com/valargroup/wallet-pir/actions/runs/39293602410), main CI, and all 154 APM
+and 5 monitor tests passed at that source. The binary came from the successful release-build job in
+[39293606439](https://github.com/valargroup/wallet-pir/actions/runs/39293606439); the unrelated Enhance
+publisher lifecycle timeout was explicitly excluded from this APM-only acceptance. Full Enhance
+qualification is not claimed.
+
+The isolated live-source check passed before activation. Final checks found ready workers, fresh canonical
+publications agreeing across origins, four successful public exact probes, no active disabled-scaler incident,
+and empty outboxes. Both labelled firing/recovery pairs reached Slack:
+[APM](https://zcashzcaloors.slack.com/archives/C0C3L7DDKC2/p1792431633161929) and
+[external monitor](https://zcashzcaloors.slack.com/archives/C0C3L7DDKC2/p1792431673654559).
+Capacity and scaling modes retain their prior shadow settings. The 24-hour active observation window
+starts at activation; the delivery tests do not complete that window or the separate policy-threshold drills.
+Rollback uses the pinned request and the committed transaction above, with the command shown below.
+
 The request (`transparent-alert-activation/1`, bound by `--request-sha256`) has two components. `apm` is
 `pir-apm.service` and `monitor` is `pir-monitor.service`; `monitor` may be `null`. Each component pins:
 

@@ -265,28 +265,25 @@ Not planned with it: other row widths, a two-digit 8-bit key, or any change to `
 
 ## Transparent monitoring on /v2
 
-pir-apm watches the v12 history service and the one-query txid display, and
-pir-monitor probes both, every family in shadow since about 04:00 UTC on
-2026-10-13 ([evidence](../../evidence/transparent/observability-v2-2026-10-13/README.md),
-[rules](../enhance/observability-alerting.md)). v1 is not monitored.
+pir-apm watches the v12 history service and the one-query txid display, and pir-monitor probes both.
+Transparent/txid quality and external service alerts became active on 2026-10-19 at about 17:39 UTC
+([activation and rollback](deployment.md#transparent-alert-activation)). Capacity and scaling retain their
+shadow settings. v1 is not monitored.
 
-- [ ] Roll the v12 workers to a release with `transparent_shard_prepare_seconds`
-  (`8ec7eed1` or later) so the worker prepare rows and alerts have data.
-- [ ] After 24 hours of shadow, review every incident of the `quality-transparent`,
-  `quality-txid` and `transparent_capacity` families and the `transparent` and
-  `txid` probes; adjust thresholds in the alert policy, not in code.
-- [ ] Exercise one fire and recovery per family through the outbox with a
-  temporary low threshold in the policy file, then restore it.
-- [x] A locked `transparent-alerts-*` operation that upgrades pir-apm through its credential
-  wrapper and changes only the Transparent/txid `alert_mode` and pir-monitor's service-family
-  mode, with rollback and a real outbox test
-  ([deployment](deployment.md#transparent-alert-activation)). The new pir-apm also retires the
-  stale `scaling_heartbeat` incident left over from the disabled scaling family. Not yet run in
-  production.
-- [ ] Set `alert_mode` to `active` for both services, `capacity_alert_mode` to
-  `active`, and `PIR_MONITOR_SERVICE_ALERT_MODE=active`; observe 24 active hours.
-- [ ] After three days of daily peaks, check the capacity forecasts against the
-  hosts' known growth and record the first reprovisioning dates.
+- [x] The deployed workers expose `transparent_shard_prepare_seconds`; all three worker series had
+  1,440 minute samples in the reviewed shadow window.
+- [x] Review Transparent/txid quality incidents and independent probes over 24 retained hours
+  (2026-10-18 10:38 through 2026-10-19 10:37 UTC). Canonical warnings matched real one-block reorgs;
+  subsequent redeploy availability incidents recovered. No threshold changes were needed.
+- [ ] Review `transparent_capacity` candidates and promote that family separately.
+- [ ] Exercise one fire and recovery per family with a temporary policy threshold, then restore it.
+- [x] Deploy the locked alert operation and APM fix that retires the disabled scaler's stale heartbeat.
+  Only the intended three alert-mode values changed; the credential wrappers and incident history remain.
+- [x] Enable both service `alert_mode` values and `PIR_MONITOR_SERVICE_ALERT_MODE`. Verify labelled
+  firing/recovery through each real outbox and confirm both pairs in Slack.
+- [ ] Complete 24 active hours after the 2026-10-19 activation and review the retained incidents.
+- [ ] After three days of daily peaks, check capacity forecasts against known host growth and record
+  the first reprovisioning dates.
 
 ## Dithered 44-bit queries (deployed 2026-10-09)
 
