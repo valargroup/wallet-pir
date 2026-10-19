@@ -3992,7 +3992,15 @@ What a deploy changes:
   - it is stopped and removed within 120 s.
 
   It must evaluate with the Transparent configuration enabled and record `shadow` for `transparent` and `txid`.
-  Otherwise the deploy fails with nothing live changed.
+  Through its `/api/quality`, with the same bound, each service must also have:
+  - at least one configured source;
+  - every source sampled without error, within APM's own freshness limits (45 s, or 90 s for the independent
+    probe);
+  - every source that reports readiness ready;
+  - a publication sampled within 90 s, canonical and agreed across origins.
+
+  Only source names reach the runner, never their error text. If any of this fails, the deploy fails with nothing
+  live changed.
 
   Only the final binary argument of `python3 <credential-exec.py> <pir-apm>` changes, through the managed
   `zzz…-wallet-pir-release.conf` ExecStart drop-in. A deploy refuses when:
