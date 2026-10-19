@@ -803,6 +803,33 @@ mod tests {
         assert!(stale.build(10, &[]).0.epoch >= 1);
     }
 
+    /// Importing a missing database, an empty file or a database without recovery
+    /// state is refused, creates nothing and leaves the destination as it was.
+    #[test]
+    fn importing_without_recovery_state_changes_nothing() {
+        let mut index = Index::new();
+        index.extend(100, 1, |_| None);
+        index.build(2, &provider(&[1], 10, 20));
+        let mut recovery = index.recovery();
+        recovery.bump_epoch().unwrap();
+        let before = (recovery.epoch().unwrap(), recovery.seen().unwrap());
+        let sources = tempfile::tempdir().unwrap();
+        let missing = sources.path().join("typo.sqlite");
+        let empty = sources.path().join("empty.sqlite");
+        std::fs::write(&empty, b"").unwrap();
+        // A SQLite database, but the provider store's.
+        let unrelated = sources.path().join("unrelated.sqlite");
+        drop(receiver_store::ProviderStore::open(&unrelated).unwrap());
+        for source in [&missing, &empty, &unrelated] {
+            assert!(recovery.import(source).is_err(), "{}", source.display());
+        }
+        assert!(!missing.exists());
+        assert_eq!(
+            (recovery.epoch().unwrap(), recovery.seen().unwrap()),
+            before
+        );
+    }
+
     /// Without the old database, adoption publishes above the live epoch at once, and
     /// later corrections compare against the new host's own first publication.
     #[test]

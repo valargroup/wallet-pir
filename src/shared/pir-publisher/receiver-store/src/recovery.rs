@@ -6,7 +6,7 @@
 //! live publication.
 use crate::Error;
 use receiver_directory::{catalog::CatalogHead, seen::SeenSet, Hash};
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
 use std::path::Path;
 
 /// One interval of payment history as last published: its start, the hashes of the
@@ -184,21 +184,30 @@ impl RecoveryStore {
     /// in its boundary hashes, as when the two hosts published different forks, keeps
     /// this database's record and increments the epoch above both, since a later
     /// correction to either fork cannot be compared with the other's published records.
-    /// Any refusal changes nothing.
+    ///
+    /// The database at `path` is opened read-only and never created: a missing file, or
+    /// one without recovery state for this network, is refused. Any refusal changes
+    /// nothing.
     pub fn import(&mut self, path: impl AsRef<Path>) -> Result<(), Error> {
-        let other = Self::open(path, self.genesis)?;
+        let other = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        let genesis: Option<Vec<u8>> = other
+            .query_row("SELECT genesis FROM state", [], |r| r.get(0))
+            .optional()
+            .map_err(|_| Error::Coverage)?;
+        if genesis.as_deref() != Some(self.genesis.as_slice()) {
+            return Err(Error::Coverage);
+        }
         let tx = self.db.transaction()?;
-        if let Some(seen) = other.seen()? {
+        if let Some(seen) = recorded_seen(&other)? {
             merge_seen(&tx, &self.genesis, &seen)?;
         }
         let mut corrected = false;
         let starts = other
-            .db
             .prepare("SELECT start FROM segments")?
             .query_map([], |r| r.get::<_, u32>(0))?
             .collect::<Result<Vec<_>, _>>()?;
         for start in starts {
-            let theirs = recorded_segment(&other.db, start)?.expect("a listed segment");
+            let theirs = recorded_segment(&other, start)?.expect("a listed segment");
             match recorded_segment(&tx, start)? {
                 None => write_segment(
                     &tx,
@@ -207,13 +216,13 @@ impl RecoveryStore {
                         start_hash: theirs.0,
                         end_hash: theirs.1,
                         records: theirs.2,
-                        blocks: recorded_blocks(&other.db, start)?,
+                        blocks: recorded_blocks(&other, start)?,
                     },
                 )?,
                 Some(ours) => corrected |= ours != theirs,
             }
         }
-        raise_epoch(&tx, other.epoch()?)?;
+        raise_epoch(&tx, epoch(&other)?)?;
         if corrected {
             tx.execute("UPDATE state SET epoch=epoch+1", [])?;
         }

@@ -162,7 +162,9 @@ lowering the epoch or recording a seen set that lacks a recorded value.
 On a replacement host, `recovery --data-dir <dir> import --from <old
 recovery.sqlite>` takes over the old host's epoch, seen union and published
 records, so a correction the new host's rebuilt index makes is still detected,
-however old. Without the old database, `recovery adopt --catalog <file> --seen
+however old. It reads the old database without changing or creating it, refuses
+one without recovery state, and moves the epoch above both hosts' when their
+published records for an interval differ, as after publishing different forks. Without the old database, `recovery adopt --catalog <file> --seen
 <file>` takes the seen set from the objects as served and raises the epoch above
 the live catalog's, since the published records it would compare with are lost.
 These commands hold the data directory's lock, so they run only while the service
