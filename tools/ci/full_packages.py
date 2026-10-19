@@ -31,6 +31,10 @@ def inventory(packages=None, groups=None):
     return groups
 
 
+# The Transparent family also runs the publisher host and its end-to-end tests.
+TRANSPARENT_HOSTS = ['pir-publisher', 'pir-e2e-tests']
+
+
 def qualification_features(names):
     """Enable declared test campaigns only in explicit full qualification."""
     selected = set(names)
@@ -51,14 +55,15 @@ def commands(group, groups, lint=False, compile_only=False):
         'enhance': NATIVE + [
             'pir-publisher/enhance', 'pir-publisher/status', 'pir-publisher/transparent',
             'pir-publisher/receiver', 'pir-publisher/native-reinspiring',
-            'pir-publisher/enhance-tests', 'pir-publisher/status-tests',
+            'pir-publisher/status-tests', 'pir-e2e-tests/enhance-tests',
+            'pir-e2e-tests/native-reinspiring',
             'pir-query-server/enhance', 'pir-query-server/status', 'pir-query-server/transparent',
             'pir-query-server/native-reinspiring'],
         'shared': ['pir-control/admission'],
         'transparent': TRANSPARENT,
-    }.get(group, []) + qualification_features([*names, *(['pir-publisher'] if group == 'transparent' else [])])
+    }.get(group, []) + qualification_features([*names, *(TRANSPARENT_HOSTS if group == 'transparent' else [])])
     if group == 'transparent':
-        names = [*names, 'pir-publisher']
+        names = [*names, *TRANSPARENT_HOSTS]
     result = [[*runner, '--locked', '--profile', 'release-fast',
                *[arg for name in names for arg in ('-p', name)],
                *(['--features', ','.join(features)] if features else [])]]

@@ -4,6 +4,7 @@
 //! Production runs `role`, `serve-distributed`, `probe-live` and
 //! `probe-live-load`. The other commands serve or check the synthetic fixture,
 //! or run the experimental single-process live loop.
+pub mod http_client;
 mod live;
 mod live_load;
 mod production;

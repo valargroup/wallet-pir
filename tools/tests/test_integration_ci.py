@@ -18,7 +18,7 @@ class IntegrationTests(unittest.TestCase):
         registry = tests.inventory()
         for package in ['receiver-pir-server', 'transparent-query-server']:
             self.assertIn('ci_smoke', registry[package]['fast'])
-        host = registry['pir-publisher']
+        host = registry['pir-e2e-tests']
         self.assertIn('ci_hint', host['fast'])
         self.assertIn('encrypted_lifecycle', host['full'])
 

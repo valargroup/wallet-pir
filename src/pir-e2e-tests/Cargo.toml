@@ -1,0 +1,187 @@
+[package]
+name = "pir-e2e-tests"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Regressions that run a publisher and a query server together"
+autotests = false
+autobins = false
+
+[features]
+default = []
+# The copied query-host entrypoint selects its diagnostic subcommands with this feature.
+enhance = ["dep:enhance-publisher", "dep:enhance-query-server", "dep:pir-query-server", "pir-query-server/enhance"]
+native-reinspiring = ["enhance-publisher?/native-reinspiring"]
+# The Enhance hint cache records whether this build includes CUDA.
+cuda = ["enhance-query-server?/cuda"]
+# Larger hint oracles. Ordinary correctness leaves this off.
+qualification-tests = []
+# Wallet-client and chain-fixture regressions.
+enhance-tests = [
+    "enhance",
+    "dep:enhance-publisher",
+    "enhance-publisher/fault-injection",
+    "enhance-publisher/fixtures",
+    "dep:enhance-query-server",
+    "enhance-query-server/client",
+    "dep:pir-query-server",
+    "pir-query-server/enhance",
+    "dep:zakura-server-chain",
+    "zakura-server-chain/enhance",
+    "zakura-server-chain/testing-node",
+    "dep:zakura-pir-client",
+    "zakura-pir-client/enhance",
+    "zakura-pir-client/testing",
+]
+transparent-tests = [
+    "dep:transparent-publisher",
+    "transparent-publisher/fixtures",
+    "dep:transparent-query-server",
+    "dep:transparent-shared",
+    "transparent-shared/test-support",
+    "dep:zakura-server-chain",
+    "zakura-server-chain/transparent",
+    "zakura-server-chain/testing-node",
+    "dep:zakura-pir-client",
+    "zakura-pir-client/transparent",
+    "zakura-pir-client/testing",
+    "dep:zakura-pir-publisher",
+    "zakura-pir-publisher/transparent",
+    "dep:zakura-pir-protocol",
+    "zakura-pir-protocol/transparent",
+    "reqwest/blocking",
+]
+
+[dependencies]
+enhance-publisher = { path = "../enhance/enhance-publisher", optional = true }
+transparent-publisher = { path = "../transparent/transparent-publisher", optional = true }
+enhance-query-server = { path = "../enhance/enhance-query-server", optional = true }
+pir-query-server = { path = "../pir-query-server", optional = true }
+transparent-query-server = { path = "../transparent/transparent-query-server", optional = true }
+transparent-shared = { path = "../transparent/transparent-shared", optional = true }
+zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "f48b62b80ec7d9d7fb7893401435a24b189b8ec2", default-features = false, optional = true }
+zakura-pir-client = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "f48b62b80ec7d9d7fb7893401435a24b189b8ec2", default-features = false, optional = true }
+zakura-pir-publisher = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "f48b62b80ec7d9d7fb7893401435a24b189b8ec2", default-features = false, optional = true }
+zakura-pir-protocol = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "f48b62b80ec7d9d7fb7893401435a24b189b8ec2", default-features = false, optional = true }
+pir-pipeline = { path = "../shared/pir-pipeline" }
+axum = "0.7"
+clap = { version = "4", features = ["derive"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# The tests start these processes beside the in-process publishers.
+[[bin]]
+name = "enhance-pir-server-test"
+path = "../enhance/enhance-publisher/src/bin/server.rs"
+required-features = ["enhance-tests"]
+test = false
+
+[[bin]]
+name = "pir-query-server-test"
+path = "../pir-query-server/src/main.rs"
+required-features = ["enhance-tests"]
+test = false
+
+[[bin]]
+name = "transparent-publish-controller-test"
+path = "../transparent/transparent-publisher/src/bin/transparent-publish-controller.rs"
+required-features = ["transparent-tests"]
+test = false
+
+[dev-dependencies]
+tempfile = "3"
+tower = { version = "0.5", features = ["util"] }
+sha2 = "0.10"
+hex = "0.4"
+base64 = "0.22"
+libc = "0.2"
+tokio-stream = "0.1"
+
+[[test]]
+name = "boundary_recovery_model"
+path = "tests/boundary_recovery_model.rs"
+required-features = ["enhance-tests"]
+
+[[test]]
+name = "canonical_record"
+path = "tests/canonical_record.rs"
+required-features = ["enhance-tests"]
+
+[[test]]
+name = "ci_hint"
+path = "tests/ci_hint.rs"
+required-features = ["enhance-tests"]
+
+[[test]]
+name = "encrypted_lifecycle"
+path = "tests/encrypted_lifecycle.rs"
+required-features = ["enhance-tests"]
+
+[[test]]
+name = "http"
+path = "tests/http.rs"
+required-features = ["enhance-tests"]
+
+[[test]]
+name = "note_recovery"
+path = "tests/note_recovery.rs"
+required-features = ["enhance-tests"]
+
+[[test]]
+name = "packing_http"
+path = "tests/packing_http.rs"
+required-features = ["enhance-tests"]
+
+[[test]]
+name = "record_layout"
+path = "tests/record_layout.rs"
+required-features = ["enhance-tests"]
+
+[[test]]
+name = "row_repair_http"
+path = "tests/row_repair_http.rs"
+required-features = ["enhance-tests"]
+
+[[test]]
+name = "rpc"
+path = "tests/rpc.rs"
+required-features = ["enhance-tests"]
+
+[[test]]
+name = "status_routes"
+path = "tests/status_routes.rs"
+required-features = ["enhance-tests"]
+
+[[test]]
+name = "enhance_wallet_native"
+path = "tests/enhance_wallet_native.rs"
+required-features = ["enhance-tests", "native-reinspiring"]
+
+[[test]]
+name = "controller_update_campaign"
+path = "tests/controller_update_campaign.rs"
+required-features = ["transparent-tests"]
+
+[[test]]
+name = "event_codec_bounds"
+path = "tests/event_codec_bounds.rs"
+required-features = ["transparent-tests"]
+
+[[test]]
+name = "service_round_trip"
+path = "tests/service_round_trip.rs"
+required-features = ["transparent-tests"]
+
+[[test]]
+name = "shard_filters"
+path = "tests/shard_filters.rs"
+required-features = ["transparent-tests"]
+
+[[test]]
+name = "unified_http_sync_campaign"
+path = "tests/unified_http_sync_campaign.rs"
+required-features = ["transparent-tests"]

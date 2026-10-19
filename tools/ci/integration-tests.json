@@ -79,9 +79,14 @@
   },
   "pir-publisher": {
     "fast": [
+      "lifecycle"
+    ],
+    "full": []
+  },
+  "pir-e2e-tests": {
+    "fast": [
       "boundary_recovery_model",
       "ci_hint",
-      "lifecycle",
       "record_layout",
       "status_routes"
     ],

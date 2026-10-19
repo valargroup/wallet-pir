@@ -1354,7 +1354,7 @@ class CacheWorkflowTests(unittest.TestCase):
         self.assertNotIn('tests:native-server-lib', workflow)
         matrix = json.loads((ROOT / 'tools/ci/test-matrix.json').read_text())
         self.assertIn('reference:enhance-query-server:lib:enhance_query_server', matrix['enhance-reference']['targets'])
-        self.assertIn('reference:pir-publisher:test:ci_hint', matrix['enhance-reference']['targets'])
+        self.assertIn('reference:pir-e2e-tests:test:ci_hint', matrix['enhance-reference']['targets'])
         self.assertIn('cuda:pir-query-server:test:operator', matrix['enhance-cuda-tests']['targets'])
         self.assertNotIn('matvec_config', json.dumps(matrix))
         self.assertNotIn('enhance-publisher/cuda', json.dumps(matrix))

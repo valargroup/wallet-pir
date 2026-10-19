@@ -4,7 +4,7 @@ import tomllib
 
 ROOT = Path(__file__).resolve().parents[2]
 FORWARDERS = {'enhance-query-server', 'status-query-server', 'status-publisher',
-              'pir-publisher', 'pir-query-server'}
+              'pir-e2e-tests', 'pir-query-server'}
 
 
 def manifest_violations(root=ROOT):
