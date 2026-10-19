@@ -752,7 +752,7 @@ mod tests {
                 }
             }
         }
-        source = prepared.join("artifacts-9");
+        let source = prepared.join("artifacts-9");
         assert!(
             source.is_dir(),
             "published fixture is missing its artifact tree"
