@@ -146,17 +146,22 @@ the rows:
   interval and every object's digest.
 
 `recovery.sqlite`, beside the index, holds what must outlive it: the epoch, the
-seen union and each published interval's boundary hashes and membership digest.
-Before a publication is prepared, an interval whose boundary hashes match the
-recorded ones but whose members differ is a correction to published history, and
-the epoch increments, however old the interval. A reorg changes boundary hashes
-instead, so the buckets above the fork are rebuilt under the same epoch. The
-database refuses lowering the epoch or recording a seen set that lacks a recorded
-value. `receiver-directory recovery --data-dir <dir> bump-epoch` increments the
-epoch for a correction the indexer cannot detect, and `recovery adopt --catalog
-<file> --seen <file>` takes over the live epoch and seen set on a replacement host
-from the objects as served. Both hold the data directory's lock, so they run only
-while the service is stopped.
+seen union and, for each published interval, its boundary hashes, a digest of its
+payment records (each payment's transaction, Action, position, receiver and
+height) and a digest of each of its blocks that holds payments. Before a
+publication is prepared, any change to a published record increments the epoch,
+however old the interval, including a second payment to a receiver already paid
+there, which leaves the filters unchanged. A reorg changes boundary hashes
+instead, so the buckets above the fork are rebuilt under the same epoch. When a
+reorg lands inside an interval, the interval's blocks up to its last recorded
+payment block still on the chain are compared as well. Only a payment added to a
+block that held none, above that block, in an interval the same reorg changed,
+goes unseen. After such a correction, or any other the indexer cannot detect, run
+`receiver-directory recovery --data-dir <dir> bump-epoch`. The database refuses
+lowering the epoch or recording a seen set that lacks a recorded value.
+`recovery adopt --catalog <file> --seen <file>` takes over the live epoch and seen
+set on a replacement host from the objects as served. Both hold the data
+directory's lock, so they run only while the service is stopped.
 
 A seen set over its format's 4,194,304 values stops publication with an error
 naming that limit; the served publication stays.

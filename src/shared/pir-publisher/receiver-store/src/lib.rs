@@ -403,15 +403,26 @@ impl Store {
         ))
     }
 
-    /// The height and receiver of every stored payment at or below `end`, by height.
-    pub fn paid(&self, end: u32) -> Result<Vec<(u32, ReceiverBytes)>, Error> {
-        let mut query = self
-            .db
-            .prepare("SELECT height,receiver FROM payments WHERE height<=?1 ORDER BY height")?;
-        let rows = query.query_map([end], |r| Ok((r.get(0)?, r.get::<_, Vec<u8>>(1)?)))?;
+    /// Every stored payment at or below `end`, by note position: its height, receiver
+    /// and canonical record, stored as a lone page, which identifies the payment by its
+    /// transaction, Action and position.
+    pub fn paid(
+        &self,
+        end: u32,
+    ) -> Result<Vec<(u32, ReceiverBytes, [u8; receiver_directory::RECORD_BYTES])>, Error> {
+        let mut query = self.db.prepare(
+            "SELECT height,receiver,record FROM payments WHERE height<=?1 ORDER BY position",
+        )?;
+        let rows = query.query_map([end], |r| {
+            Ok((r.get(0)?, r.get::<_, Vec<u8>>(1)?, r.get::<_, Vec<u8>>(2)?))
+        })?;
         rows.map(|row| {
-            let (height, receiver) = row?;
-            Ok((height, receiver.try_into().map_err(|_| Error::Malformed)?))
+            let (height, receiver, record) = row?;
+            Ok((
+                height,
+                receiver.try_into().map_err(|_| Error::Malformed)?,
+                record.try_into().map_err(|_| Error::Malformed)?,
+            ))
         })
         .collect()
     }

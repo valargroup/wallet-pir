@@ -10,30 +10,32 @@
 //! end, or the index's start boundary before one closes: the index holds every
 //! payment from Ironwood activation, before which there are none.
 //!
-//! [`RecoveryStore`] records each interval's membership as published, the payment-history
-//! epoch and the seen union. Before a publication, a recorded interval with the same
-//! boundary hashes but other members is a correction of published history, which
-//! increments the epoch; changed boundary hashes are a reorg, rebuilt without one.
-//! The seen set is the recorded union with the values of every receiver the provider
-//! seen sets now hold, so it never loses one, whatever the provider store or index
-//! later holds.
+//! [`RecoveryStore`] records the payment records of each interval as published, the
+//! payment-history epoch and the seen union. Before a publication, a changed record
+//! in published history increments the epoch, while changed boundary hashes are a
+//! reorg, rebuilt without one ([`RecoveryStore::commit`] has the exact rule). The seen
+//! set is the recorded union with the values of every receiver the provider seen sets
+//! now hold, so it never loses one, whatever the provider store or index later holds.
 use receiver_directory::{
     catalog::{BucketIndex, CatalogHead},
     filter::SEEN,
     paid::{bucket_start, PaidSet, Span, BUCKET_BLOCKS},
     seen::{SeenSet, MAX_SEEN_VALUES},
     snapshot::ProviderSet,
-    Hash, ReceiverBytes,
+    Hash, ReceiverBytes, RECORD_BYTES,
 };
 use receiver_pir_server::Recovery;
 use receiver_store::{
-    recovery::{RecoveryStore, Segment},
+    recovery::{Block, RecoveryStore, Segment},
     Store,
 };
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
+
+/// A stored payment's height, receiver and canonical record; see [`Store::paid`].
+type Payment = (u32, ReceiverBytes, [u8; RECORD_BYTES]);
 
 /// The recovery database's file in the configured data directory; see
 /// [`RecoveryStore`].
@@ -50,21 +52,41 @@ struct History {
     latest_end: u32,
     /// The cumulative span and its distinct receivers, ascending.
     paid: (Span, Vec<ReceiverBytes>),
-    /// Every interval from the start boundary to `paid`'s end, ascending, with its
-    /// distinct receivers: the span up to `first` when it is not empty, then each
-    /// bucket.
-    segments: Vec<(Span, Vec<ReceiverBytes>)>,
+    /// Every interval from the start boundary to `paid`'s end, ascending: the span up
+    /// to `first` when it is not empty, then each bucket.
+    intervals: Vec<Interval>,
 }
 
-/// Groups `payments` (height and receiver, at heights above `start_height - 1`) into
-/// the [`History`] of an index from `start_height` whose tip is `tip`, with `hash`
-/// giving the block hash at a height at or above `start_height - 1`, and `genesis` at
-/// zero.
+/// One interval of a [`History`].
+#[derive(Debug)]
+struct Interval {
+    span: Span,
+    /// Its distinct receivers, ascending.
+    members: Vec<ReceiverBytes>,
+    /// See [`Segment::records`].
+    records: Hash,
+    /// See [`Segment::blocks`].
+    blocks: Vec<Block>,
+}
+
+/// A digest of payment `records` in position order, which identifies every payment
+/// (its transaction, Action, position, receiver and height) and its fields.
+fn digest<'a>(records: impl ExactSizeIterator<Item = &'a [u8; RECORD_BYTES]>) -> Hash {
+    let mut digest = Sha256::new();
+    digest.update(b"receiver-indexer/payment-records\0");
+    digest.update((records.len() as u64).to_le_bytes());
+    records.for_each(|r| digest.update(r));
+    digest.finalize().into()
+}
+
+/// Groups `payments` (by position, at heights above `start_height - 1`) into the
+/// [`History`] of an index from `start_height` whose tip is `tip`, with `hash` giving
+/// the block hash at a height at or above `start_height - 1`, and `genesis` at zero.
 fn history(
     genesis: Hash,
     start_height: u32,
     tip: u32,
-    payments: &[(u32, ReceiverBytes)],
+    payments: &[Payment],
     hash: impl Fn(u32) -> Result<Hash>,
 ) -> Result<History> {
     let boundary = start_height - 1;
@@ -78,33 +100,46 @@ fn history(
         }
         starts.extend((first..latest_end).step_by(BUCKET_BLOCKS as usize));
     }
-    let mut segments = Vec::with_capacity(starts.len());
-    for (i, &start) in starts.iter().enumerate() {
-        let end = starts.get(i + 1).copied().unwrap_or(latest_end);
-        let span = Span {
-            start,
-            start_hash: hash(start)?,
-            end,
-            end_hash: hash(end)?,
-        };
-        segments.push((span, Vec::new()));
-    }
-    let mut all = Vec::new();
-    for &(height, receiver) in payments.iter().filter(|(h, _)| *h <= end) {
-        if height <= boundary {
+    let mut grouped = vec![Vec::new(); starts.len()];
+    for (height, receiver, record) in payments.iter().filter(|(h, ..)| *h <= end) {
+        if *height <= boundary {
             return Err("a stored payment precedes the index's start".into());
         }
-        let segment = match bucket_start(height).filter(|s| *s >= first) {
+        let i = match bucket_start(*height).filter(|s| *s >= first) {
             Some(start) => starts.binary_search(&start),
             None => Ok(0),
         };
-        let segment = segment.map_err(|_| "a payment outside every segment")?;
-        segments[segment].1.push(receiver);
-        all.push(receiver);
+        grouped[i.map_err(|_| "a payment outside every segment")?]
+            .push((*height, receiver, record));
     }
-    for (_, members) in &mut segments {
+    let mut intervals = Vec::with_capacity(starts.len());
+    let mut all = Vec::new();
+    for (i, payments) in grouped.into_iter().enumerate() {
+        let start = starts[i];
+        let end = starts.get(i + 1).copied().unwrap_or(latest_end);
+        let mut members: Vec<_> = payments.iter().map(|p| *p.1).collect();
+        all.extend(&members);
         members.sort_unstable();
         members.dedup();
+        let mut blocks = Vec::new();
+        for block in payments.chunk_by(|a, b| a.0 == b.0) {
+            blocks.push(Block {
+                height: block[0].0,
+                hash: hash(block[0].0)?,
+                records: digest(block.iter().map(|p| p.2)),
+            });
+        }
+        intervals.push(Interval {
+            span: Span {
+                start,
+                start_hash: hash(start)?,
+                end,
+                end_hash: hash(end)?,
+            },
+            members,
+            records: digest(payments.iter().map(|p| p.2)),
+            blocks,
+        });
     }
     all.sort_unstable();
     all.dedup();
@@ -118,26 +153,21 @@ fn history(
         first,
         latest_end,
         paid: (paid, all),
-        segments,
+        intervals,
     })
 }
 
 impl History {
     /// Each interval as [`RecoveryStore::commit`] records it.
-    fn records(&self) -> Vec<Segment> {
-        self.segments
+    fn segments(&self) -> Vec<Segment> {
+        self.intervals
             .iter()
-            .map(|(span, members)| {
-                let mut digest = Sha256::new();
-                digest.update(b"receiver-indexer/segment-members\0");
-                digest.update((members.len() as u64).to_le_bytes());
-                members.iter().for_each(|m| digest.update(m));
-                Segment {
-                    start: span.start,
-                    start_hash: span.start_hash,
-                    end_hash: span.end_hash,
-                    members: digest.finalize().into(),
-                }
+            .map(|interval| Segment {
+                start: interval.span.start,
+                start_hash: interval.span.start_hash,
+                end_hash: interval.span.end_hash,
+                records: interval.records,
+                blocks: interval.blocks.clone(),
             })
             .collect()
     }
@@ -159,10 +189,10 @@ impl History {
             false => self.latest_end,
         };
         let buckets = self
-            .segments
+            .intervals
             .iter()
-            .filter(|(span, _)| span.is_bucket() && span.start >= oldest_start)
-            .map(|(span, members)| PaidSet::build(genesis, epoch, *span, members))
+            .filter(|i| i.span.is_bucket() && i.span.start >= oldest_start)
+            .map(|i| PaidSet::build(genesis, epoch, i.span, &i.members))
             .collect::<std::result::Result<Vec<_>, _>>()?;
         let index = BucketIndex::new(
             genesis,
@@ -227,7 +257,9 @@ pub fn build(
         )
         .into());
     }
-    let epoch = recovery.commit(&history.records(), &seen)?;
+    let epoch = recovery.commit(&history.segments(), &seen, |height| {
+        Ok(store.checkpoint(height)?.hash)
+    })?;
     history.catalog(genesis, epoch, retained, &seen)
 }
 
@@ -246,8 +278,8 @@ pub struct Args {
 #[derive(clap::Subcommand)]
 pub enum Command {
     /// Increment the payment-history epoch after correcting already published history
-    /// in a way the indexer cannot detect, so wallets recheck it. The indexer increments
-    /// it itself when a published interval's members change.
+    /// in a way the indexer cannot detect, so wallets recheck it; see
+    /// [`RecoveryStore::commit`] for what it detects itself.
     BumpEpoch,
     /// Take over from the live publication, as on a replacement host: raise the epoch
     /// to the catalog head's and adopt its seen set, both as served at
@@ -266,12 +298,15 @@ pub fn run(args: Args) -> Result<()> {
     let _lock = pir_pipeline::service::lock(&args.data_dir)?;
     let genesis = zakura_server_chain::Network::Mainnet.genesis_hash();
     let mut store = RecoveryStore::open(args.data_dir.join(RECOVERY), genesis)?;
-    if let Command::Adopt { catalog, seen } = &args.command {
-        let read = |path: &Path| std::fs::read(path);
-        let head = CatalogHead::decode(&read(catalog)?)?;
-        store.adopt(&head, &SeenSet::decode(&read(seen)?)?)?;
-    } else {
-        store.bump_epoch()?;
+    match &args.command {
+        Command::BumpEpoch => {
+            store.bump_epoch()?;
+        }
+        Command::Adopt { catalog, seen } => {
+            let read = |path: &Path| std::fs::read(path);
+            let head = CatalogHead::decode(&read(catalog)?)?;
+            store.adopt(&head, &SeenSet::decode(&read(seen)?)?)?;
+        }
     }
     println!("{}", serde_json::json!({ "epoch": store.epoch()? }));
     Ok(())
@@ -283,6 +318,7 @@ mod tests {
     use receiver_store::{Config, IndexedBlock};
     use serde_json::Value;
 
+    /// The hash a vector holds as hex.
     fn hex32(value: &Value) -> Hash {
         hex::decode(value.as_str().unwrap())
             .unwrap()
@@ -311,13 +347,16 @@ mod tests {
             .collect();
         // Receiver 3 is paid long before retention, 1 twice in the first bucket, and the
         // tip lies inside the open bucket after the latest closed one.
-        let payments = [
+        let payments: Vec<Payment> = [
             (100, r[3]),
             (4993, r[1]),
             (5000, r[0]),
             (5001, r[1]),
             (5040, r[2]),
-        ];
+        ]
+        .into_iter()
+        .map(|(h, r)| (h, r, [h as u8; RECORD_BYTES]))
+        .collect();
         let hashes = |h| -> Result<Hash> {
             Ok(match h {
                 4992 => hex32(&v["bucket"]["start_hash"]),
@@ -365,6 +404,7 @@ mod tests {
     const GENESIS: Hash = [1; 32];
 
     impl Index {
+        /// An empty index in a new directory.
         fn new() -> Self {
             Self::open(tempfile::tempdir().unwrap())
         }
@@ -418,6 +458,7 @@ mod tests {
             }
         }
 
+        /// Opens the recovery database beside the index.
         fn recovery(&self) -> RecoveryStore {
             RecoveryStore::open(self.dir.path().join(RECOVERY), GENESIS).unwrap()
         }
@@ -589,7 +630,8 @@ mod tests {
         assert_eq!(seen_of(&recovery), next);
         // The store refuses recording a smaller union.
         let smaller = SeenSet::new(GENESIS, 0).union(&[[1; 43]]);
-        assert!(rebuilt.recovery().commit(&[], &smaller).is_err());
+        let hash_at = |_| unreachable!("no segment to compare");
+        assert!(rebuilt.recovery().commit(&[], &smaller, hash_at).is_err());
     }
 
     /// Adoption raises the epoch to the live catalog's and takes its seen set when it
@@ -624,5 +666,61 @@ mod tests {
         head.seen = older.digest().unwrap();
         fresh.adopt(&head, &older).unwrap();
         assert_eq!(fresh.seen().unwrap(), Some(live));
+    }
+
+    /// Restoring a missing second payment to a receiver already paid in an old interval
+    /// changes no filter membership but still increments the epoch, so wallets that
+    /// completed that receiver's lookup look again.
+    #[test]
+    fn a_restored_payment_to_a_paid_receiver_bumps_the_epoch() {
+        let mut index = Index::new();
+        index.extend(400, 1, |h| (h == 60).then_some(1));
+        let (_, before) = index.build(2, &[]);
+        index.store.rewind(59, block_hash(59, 1)).unwrap();
+        index.extend(400, 1, |h| [60, 61].contains(&h).then_some(1));
+        let (head, after) = index.build(2, &[]);
+        assert_eq!(head.epoch, 1);
+        let paid = |recovery: &Recovery| {
+            recovery
+                .objects()
+                .find(|(o, _)| matches!(o, receiver_pir_server::Object::Paid(_)))
+                .map(|(_, b)| PaidSet::decode(b).unwrap().count())
+                .unwrap()
+        };
+        assert_eq!(paid(&before), paid(&after));
+    }
+
+    /// A correction to a block below a reorg inside the same interval increments the
+    /// epoch: blocks up to the last recorded payment block still on the chain are
+    /// unchanged and compared.
+    #[test]
+    fn a_correction_beside_a_reorg_in_one_interval_bumps_the_epoch() {
+        let mut index = Index::new();
+        index.extend(300, 1, |h| (h == 250).then_some(1));
+        index.build(10, &[]);
+        index.store.rewind(249, block_hash(249, 1)).unwrap();
+        index.extend(270, 1, |h| (h == 250).then_some(2));
+        index.extend(300, 2, |_| None);
+        assert_eq!(index.build(10, &[]).0.epoch, 1);
+    }
+
+    /// A payment added to a block that held none, above the last recorded payment block
+    /// a reorg in the same interval left on the chain, is not detected; the operator's
+    /// `bump-epoch` covers it, as the receiver README says.
+    #[test]
+    fn a_new_payment_beside_a_reorg_needs_the_operator_bump() {
+        let mut index = Index::new();
+        index.extend(300, 1, |h| (h == 250).then_some(1));
+        index.build(10, &[]);
+        index.store.rewind(249, block_hash(249, 1)).unwrap();
+        index.extend(270, 1, |h| match h {
+            250 => Some(1),
+            260 => Some(3),
+            _ => None,
+        });
+        index.extend(300, 2, |_| None);
+        assert_eq!(index.build(10, &[]).0.epoch, 0);
+        assert_eq!(index.recovery().bump_epoch().unwrap(), 1);
+        assert_eq!(index.build(10, &[]).0.epoch, 1);
     }
 }
