@@ -197,7 +197,7 @@ has the existing connect/request deadlines and response-body budget. Transfers
 are sequential (concurrency one); successful synchronization waits five seconds
 plus up to one second of jitter, while failures back off exponentially to 120
 seconds plus jitter. The acquisition, strict preparation and checked owner publication phases compose
-`src/shared/pir-publisher/pipeline` using private borrowed tokens; no phase token is persisted.
+`src/shared/pir-pipeline` using private borrowed tokens; no phase token is persisted.
 Shared boundary waiting preserves this delay-after-pass schedule and never drops
 an in-progress activation. Every failed pass starts the next attempt with source
 reconciliation rather than retrying an uncertain activation directly.
@@ -404,7 +404,7 @@ gate.
 
 `tools/transparent/scripts/https-update-campaign.py` runs the ignored
 `controller_update_campaign` test in
-`src/shared/pir-publisher/transparent/tests/`. Run it through the repository's
+`src/transparent/transparent-publisher/tests/`. Run it through the repository's
 build wrapper with `--consumers 10,100`. It builds the packaged
 `transparent-query-server`, the real `transparent-publish-controller`, the
 isolated released391 client (with `verify-sources.py` receipts) and the

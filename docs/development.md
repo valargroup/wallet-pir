@@ -235,7 +235,8 @@ do not compile the publisher, node parser or database reader.
 
 ## Publisher source layout
 
-Publisher implementations and the shared lifecycle live under
-`src/shared/pir-publisher/`; query-serving crates remain in product directories.
+The publisher host lives at `src/pir-publisher` and the query-server host at
+`src/pir-query-server`. Each product publisher lives beside that product's
+query server. `src/shared` holds shared libraries, including `pir-pipeline`.
 Cargo package names and standalone commands are preserved. See the
 [unified publisher](publisher.md) for configuration and service ownership.

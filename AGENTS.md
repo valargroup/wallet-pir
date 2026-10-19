@@ -1,7 +1,10 @@
 # Wallet PIR development
 
 Cargo packages live under `src/<product>/`; packages shared by products live
-under `src/shared/`. Operations and standalone scripts live under `tools/<product>/`;
+under `src/shared/`. The publisher and query-server hosts live at
+`src/pir-publisher` and `src/pir-query-server`. Each product publisher lives
+beside that product's query server, and `src/shared` holds libraries only.
+Operations and standalone scripts live under `tools/<product>/`;
 shared automation lives under `tools/{ci,dev,scripts,lib,deploy,infra}/`. Docs and
 evidence live under `docs/<product>/` and `evidence/<product>/`.
 Preserve existing Cargo package and binary names.

@@ -8,17 +8,20 @@ checks and activation. Products do not wait for a common publication height.
 
 ## Source and dependency ownership
 
-Publisher packages live under `src/shared/pir-publisher/`: `server` is the new
-`pir-publisher` application; `pipeline` retains the `pir-pipeline` package;
-`enhance`, `status`, `transparent` and `receiver` retain their existing publisher
-package names. `receiver-store` holds the indexer's SQLite stores. History and
-transaction details remain separate modes of `transparent-publisher`.
+The publisher host lives at `src/pir-publisher`. Each product publisher lives
+beside that product's query server: `src/enhance/enhance-publisher`,
+`src/status/status-publisher`, `src/transparent/transparent-publisher`, and
+`src/receiver/receiver-indexer`. Those packages keep their existing names.
+`src/shared/pir-pipeline` is the shared lifecycle library, and `src/shared`
+otherwise holds shared libraries only. `src/receiver/receiver-store` holds the
+indexer's SQLite stores. History and transaction details remain separate modes
+of `transparent-publisher`.
 
-Query serving is the separate [query-server host](query-server.md). Product
-query libraries remain under their product directories. Serving libraries must
-not depend on publisher packages, even though the latter now live under
-`shared`. Shared protocol, verification and runtime libraries remain outside the
-publisher subtree. The pipeline depends only on Tokio: its HTTP adapter is
+Query serving is the separate [query-server host](query-server.md) at
+`src/pir-query-server`. Product query libraries remain under their product
+directories. Serving libraries must not depend on publisher packages. Shared
+protocol, verification and runtime libraries remain under `src/shared`. The
+pipeline depends only on Tokio: its HTTP adapter is
 generic over a product's router, and the application supplies the actual server.
 
 `pir-publisher` compiles a product only when that product's Cargo feature is

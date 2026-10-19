@@ -19,7 +19,9 @@ production graphs without those unified features.
 Serving libraries (`SERVING`) serve prepared publications. No dependency of any
 kind, including target-specific ones, may reach a chain reader, an ingestion or
 application package (`INGESTION` or `APPLICATIONS`), or another product's
-package, or a tool under `tools/`. Packages live under `src/<product>/` or `src/shared/`. Their workspace graphs (including
+package, or a tool under `tools/`. Product packages live under `src/<product>/`,
+shared libraries under `src/shared/`, and the publisher and query-server hosts at
+`src/pir-publisher` and `src/pir-query-server`. Their workspace graphs (including
 their own dev-dependencies) and standalone graphs are resolved and checked too.
 
 Common and node packages are named exactly: wallet-libraries adapters are
@@ -137,8 +139,6 @@ def serving_target_problem(owner, target, name=None):
     `name` at repository path `target`, or None. Paths are directories relative to
     the root."""
     product = next((p for p in PRODUCTS if owner.startswith(p)), None)
-    if target.startswith('src/shared/pir-publisher/') and name != PIPELINE:
-        return 'publisher package'
     if name in APPLICATIONS:
         return 'application package'
     if target.startswith(TOOLS):
