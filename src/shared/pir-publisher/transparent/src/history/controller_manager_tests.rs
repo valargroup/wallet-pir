@@ -783,7 +783,10 @@ async fn manager_restarts_interrupted_staging_and_rejects_superseded_activation(
     assert!(work.await.unwrap_err().is_cancelled());
     std::fs::write(&tls.control, "").unwrap();
     let mut restarted = restart_manager(&tls, &state).await;
-    restarted.poll_once().await.unwrap();
+    let activated = restarted.poll_once().await.unwrap();
+    // A changed pass reports the wall time of each stage it ran.
+    let stages = activated.stages.expect("a changed pass reports its stages");
+    assert!(stages.transfer_seconds > 0.0 && stages.prewarm_seconds > 0.0);
     let live = restarted.live().unwrap();
     let (origin, task) = worker(live.clone()).await;
     query(&origin, &set).await;

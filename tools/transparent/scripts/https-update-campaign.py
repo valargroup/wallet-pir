@@ -124,7 +124,8 @@ def main():
     controller = next(a["executable"] for a in built
                       if a.get("target", {}).get("name") == "transparent-publish-controller")
     library = executable(cargo_artifacts(args.profile, [
-        "test", "-p", "transparent-publisher", "--lib", "--no-run"]), "transparent_publisher")
+        "test", "-p", "transparent-publisher", "--lib", "--features", "qualification-tests",
+        "--no-run"]), "transparent_publisher")
     client = executable(cargo_artifacts(args.profile, ["build"], CLIENT / "Cargo.toml"),
                         "frozen-provider-client")
     stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
