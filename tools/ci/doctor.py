@@ -21,6 +21,15 @@ def probe(command, timeout=15):
         return False
 
 
+def libclang_available():
+    """Check that bindgen can load a native clang library, not just its CLI."""
+    candidates = [str(p) for p in Path(os.environ.get('LIBCLANG_PATH', '/nonexistent')).glob('*clang*')]
+    candidates += [ctypes.util.find_library(name) for name in ['clang', 'clang-18', 'clang-19', 'clang-17', 'clang-14']]
+    if platform.system() == 'Darwin':
+        candidates.append('/Library/Developer/CommandLineTools/usr/lib/libclang.dylib')
+    return any(path and probe(['python3', '-c', 'import ctypes,sys; ctypes.CDLL(sys.argv[1])', path]) for path in candidates)
+
+
 def inspect(network=False):
     channel = tomllib.loads((ROOT / 'rust-toolchain.toml').read_text())['toolchain']['channel']
     rows = []
@@ -31,11 +40,7 @@ def inspect(network=False):
         add(tool, probe(['rustup', 'run', channel, tool, *args]), f'rustup toolchain install {channel} --component rustfmt --component clippy')
     for tool in ['git', 'python3', 'clang', 'protoc', 'jq', 'shellcheck', 'node', 'make']:
         add(tool, shutil.which(tool), 'Install repository prerequisites listed in docs/development.md')
-    candidates = [str(p) for p in Path(os.environ.get('LIBCLANG_PATH', '/nonexistent')).glob('*clang*')]
-    candidates += [ctypes.util.find_library(name) for name in ['clang', 'clang-18', 'clang-19', 'clang-17', 'clang-14']]
-    if platform.system() == 'Darwin':
-        candidates.append('/Library/Developer/CommandLineTools/usr/lib/libclang.dylib')
-    add('libclang', any(path and probe(['python3', '-c', 'import ctypes,sys; ctypes.CDLL(sys.argv[1])', path]) for path in candidates),
+    add('libclang', libclang_available(),
         'Install libclang (macOS: Xcode Command Line Tools; Linux: libclang-dev) or set LIBCLANG_PATH')
     cargo_home = Path(os.environ.get('CARGO_HOME', Path.home() / '.cargo'))
     add('dependency cache', (cargo_home / 'registry').is_dir() and (cargo_home / 'git').is_dir()
