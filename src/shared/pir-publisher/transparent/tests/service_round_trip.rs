@@ -9,13 +9,11 @@ use zakura_pir_publisher::transparent::filter as transparent_filter;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use tower::ServiceExt;
-use transparent_filter::{
-    build_filter, FilterBatch, FilterLimits, ScriptBytes,
-};
+use transparent_filter::{build_filter, FilterBatch, FilterLimits, ScriptBytes};
 use transparent_filter::{BlockHash, FilterServiceInfo};
-use zakura_pir_client::transparent::filter::{check_batch, ChainMap, RangeRequest};
 use transparent_publisher::history::service::{router, Phase, ServiceState};
 use transparent_publisher::ingest::store::FilterStore;
+use zakura_pir_client::transparent::filter::{check_batch, ChainMap, RangeRequest};
 
 const GENESIS: &str = transparent_filter::MAINNET_GENESIS_DISPLAY;
 const START: u64 = 3_428_143;
