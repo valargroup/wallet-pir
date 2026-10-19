@@ -521,6 +521,8 @@ async fn manager_reuses_immutable_transfers_and_serves_through_failed_update() {
     let mut follow = manager(&tls, &state);
     let first = follow.poll_once().await.unwrap();
     assert!(first.downloaded_files > 0);
+    let stages = first.stages.expect("a changed pass reports its stages");
+    assert!(stages.transfer_seconds > 0.0 && stages.prewarm_seconds > 0.0);
     let live = follow.live().unwrap();
     let (origin, task) = serve_worker(follow.router().unwrap()).await;
     let observed: serde_json::Value = get(&origin, "/v1/provider-status")
@@ -539,8 +541,18 @@ async fn manager_reuses_immutable_transfers_and_serves_through_failed_update() {
     let count = artifact_requests(&tls);
     let unchanged = follow.poll_once().await.unwrap();
     assert!(unchanged.unchanged);
+    assert!(unchanged.stages.is_none());
     assert_eq!(unchanged.downloaded_bytes, 0);
     assert_eq!(count, artifact_requests(&tls));
+    // The last activated change, with its stage timings, survives the 304.
+    let observed: serde_json::Value = get(&origin, "/v1/provider-status")
+        .await
+        .json()
+        .await
+        .unwrap();
+    let change = &observed["synchronization"]["last_change"]["progress"];
+    assert_eq!(change["revision"], first.revision);
+    assert!(change["stages"]["activation_seconds"].as_f64().is_some());
     // Missing many revisions does not require a retained delta base.
     owner.0.distribution_revision.store(40, Ordering::Release);
     let reused = follow.poll_once().await.unwrap();

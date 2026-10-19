@@ -267,7 +267,10 @@ impl Terminator {
         let deadline = Instant::now() + timeout;
         while !self.control.with_extension("entered").exists() {
             if Instant::now() > deadline {
-                ledger.record("fault_not_entered", serde_json::json!({"terminator":self.name}));
+                ledger.record(
+                    "fault_not_entered",
+                    serde_json::json!({"terminator":self.name}),
+                );
                 panic!("{}: fault point never entered", self.name);
             }
             tokio::time::sleep(Duration::from_millis(20)).await;
@@ -401,7 +404,10 @@ async fn recover(
     let output = tokio::time::timeout(RECOVERY_DEADLINE, child.wait_with_output()).await;
     let ms = started.elapsed().as_secs_f64() * 1e3;
     let Ok(output) = output else {
-        return ("timeout", serde_json::json!({"ms":ms,"error":"whole-recovery deadline"}));
+        return (
+            "timeout",
+            serde_json::json!({"ms":ms,"error":"whole-recovery deadline"}),
+        );
     };
     let output = output.unwrap();
     if !output.status.success() {
@@ -410,29 +416,54 @@ async fn recover(
         let lower = error.to_ascii_lowercase();
         // The client maps transport failures, including its own request
         // deadline, to one variant; elapsed time separates a deadline.
-        let outcome = if started.elapsed() >= CLIENT_REQUEST_DEADLINE || lower.contains("timed out") {
+        let outcome = if started.elapsed() >= CLIENT_REQUEST_DEADLINE || lower.contains("timed out")
+        {
             "timeout"
-        } else if ["409", "429", "503", "busy", "retry", "refus", "unavailable", "conflict"]
-            .iter()
-            .any(|s| lower.contains(s))
+        } else if lower.contains("unreachable") {
+            // Includes a provider the campaign stopped on purpose; the phase
+            // and provider fields say which.
+            "unreachable"
+        } else if [
+            "409",
+            "429",
+            "503",
+            "busy",
+            "retry",
+            "refus",
+            "unavailable",
+            "conflict",
+        ]
+        .iter()
+        .any(|s| lower.contains(s))
         {
             "refusal"
         } else {
             "error"
         };
-        return (outcome, serde_json::json!({"ms":ms,"status":output.status.to_string(),"error":error}));
+        return (
+            outcome,
+            serde_json::json!({"ms":ms,"status":output.status.to_string(),"error":error}),
+        );
     }
     let recovered: serde_json::Value = match serde_json::from_slice(&output.stdout) {
         Ok(v) => v,
-        Err(e) => return ("error", serde_json::json!({"ms":ms,"error":format!("client output: {e}")})),
+        Err(e) => {
+            return (
+                "error",
+                serde_json::json!({"ms":ms,"error":format!("client output: {e}")}),
+            )
+        }
     };
     let through = recovered["covered_through"].as_u64();
     let expected = through.and_then(|h| oracle.lock().unwrap().get(&h).cloned());
     let detail = serde_json::json!({"ms":ms,"covered_through":through,
         "matched_shards":recovered["matched_shards"]});
     let Some(expected) = expected else {
-        return ("wrong", serde_json::json!({"ms":ms,"error":"anchor is not a committed journal tip",
-            "recovered":recovered}));
+        return (
+            "wrong",
+            serde_json::json!({"ms":ms,"error":"anchor is not a committed journal tip",
+            "recovered":recovered}),
+        );
     };
     let exact = ["utxos", "spends", "history"]
         .iter()
@@ -441,8 +472,11 @@ async fn recover(
     if exact {
         ("ok", detail)
     } else {
-        ("wrong", serde_json::json!({"ms":ms,"error":"ledger differs from journal events",
-            "recovered":recovered,"expected":expected}))
+        (
+            "wrong",
+            serde_json::json!({"ms":ms,"error":"ledger differs from journal events",
+            "recovered":recovered,"expected":expected}),
+        )
     }
 }
 
@@ -462,7 +496,12 @@ async fn recoveries(
         detail["provider"] = provider.0.into();
         detail["outcome"] = outcome.into();
         ledger.record("recovery", detail);
-        tokio::time::sleep(Duration::from_millis(if outcome == "ok" { 50 } else { 250 })).await;
+        tokio::time::sleep(Duration::from_millis(if outcome == "ok" {
+            50
+        } else {
+            250
+        }))
+        .await;
     }
 }
 
@@ -480,7 +519,7 @@ async fn watch(
         let observed = status(&provider.1).await;
         let sync = &observed["synchronization"];
         let key = serde_json::json!({"state":sync["state"],"error":sync["error"],
-            "in_progress":sync["in_progress"],"completed_unix":sync["completed_unix"],
+            "in_progress":sync["in_progress"],
             "map_sha256":observed["verified_publication"]["map_sha256"],
             "archive":observed["archive_reachability"]["state"],
             "reachable":!observed.is_null()});
@@ -594,8 +633,10 @@ fn process_sample(pid: u32) -> Option<serde_json::Value> {
             .find_map(|l| l.strip_prefix(name))
             .and_then(|v| v.trim().parse::<u64>().ok())
     };
-    Some(serde_json::json!({"cpu_ticks":ticks,"rss_bytes":rss_kb*1024,
-        "rchar":field("rchar:"),"wchar":field("wchar:")}))
+    Some(
+        serde_json::json!({"cpu_ticks":ticks,"rss_bytes":rss_kb*1024,
+        "rchar":field("rchar:"),"wchar":field("wchar:")}),
+    )
 }
 
 /// One distribution wave of the corrected PR #201 driver against the real
@@ -678,7 +719,10 @@ fn output_dir_name(consumers: u32) -> String {
 /// Every convergence must name a strictly newer controller revision.
 fn advanced(previous: u64, record: &serde_json::Value) -> u64 {
     let next = record["revision"].as_u64().unwrap();
-    assert!(next > previous, "revision {next} does not follow {previous}");
+    assert!(
+        next > previous,
+        "revision {next} does not follow {previous}"
+    );
     next
 }
 
@@ -715,7 +759,11 @@ async fn archive(
         .unwrap() as u64;
     let roster = [
         ("archive-01", WorkerRole::ArchiveOwner, None),
-        ("recent-01", WorkerRole::RecentReplica, Some("recent".to_string())),
+        (
+            "recent-01",
+            WorkerRole::RecentReplica,
+            Some("recent".to_string()),
+        ),
     ]
     .map(|(id, role, replica_group)| RosterEntry {
         id: id.into(),
@@ -966,7 +1014,10 @@ async fn controller_updates_reach_independent_https_providers_under_queries() {
     let (archive_origin, mut archive_owner, mut archive_tls, archive_identity) =
         archive(&root, &binary, &initial, &ledger).await;
     let mut providers = Vec::new();
-    for (name, terminator) in [("provider-a", &terminators[0]), ("provider-b", &terminators[1])] {
+    for (name, terminator) in [
+        ("provider-a", &terminators[0]),
+        ("provider-b", &terminators[1]),
+    ] {
         let cwd = root.join(name);
         std::fs::create_dir(&cwd).unwrap();
         let addr = free_port();
@@ -1066,7 +1117,11 @@ async fn controller_updates_reach_independent_https_providers_under_queries() {
         phase.set(&ledger, &format!("update-{update}"));
         append(&mut journal, &mut tip_height);
         let (record, _) = campaign
-            .converge(&providers.iter().collect::<Vec<_>>(), tip_height, Duration::from_secs(180))
+            .converge(
+                &providers.iter().collect::<Vec<_>>(),
+                tip_height,
+                Duration::from_secs(180),
+            )
             .await;
         assert!(record["revision"].as_u64().unwrap() > revision);
         revision = advanced(revision, &record);
@@ -1125,7 +1180,11 @@ async fn controller_updates_reach_independent_https_providers_under_queries() {
     }
     providers[1].start(&binary, &ledger).await;
     let (record, _) = campaign
-        .converge(&providers.iter().collect::<Vec<_>>(), tip_height, Duration::from_secs(180))
+        .converge(
+            &providers.iter().collect::<Vec<_>>(),
+            tip_height,
+            Duration::from_secs(180),
+        )
         .await;
     revision = advanced(revision, &record);
     for p in &providers {
@@ -1147,7 +1206,9 @@ async fn controller_updates_reach_independent_https_providers_under_queries() {
     phase.set(&ledger, "activation-restart");
     terminators[1].fault("pause-artifact");
     append(&mut journal, &mut tip_height);
-    terminators[1].entered(&ledger, Duration::from_secs(120)).await;
+    terminators[1]
+        .entered(&ledger, Duration::from_secs(120))
+        .await;
     terminators[1].fault("pause-anchor");
     terminators[1]
         .entered(&ledger, Duration::from_secs(120))
@@ -1165,7 +1226,11 @@ async fn controller_updates_reach_independent_https_providers_under_queries() {
     terminators[1].fault("");
     providers[1].start(&binary, &ledger).await;
     let (record, _) = campaign
-        .converge(&providers.iter().collect::<Vec<_>>(), tip_height, Duration::from_secs(180))
+        .converge(
+            &providers.iter().collect::<Vec<_>>(),
+            tip_height,
+            Duration::from_secs(180),
+        )
         .await;
     revision = advanced(revision, &record);
 
@@ -1181,7 +1246,11 @@ async fn controller_updates_reach_independent_https_providers_under_queries() {
     providers[1].start(&binary, &ledger).await;
     phase.set(&ledger, "missed-recovery");
     let (record, _) = campaign
-        .converge(&providers.iter().collect::<Vec<_>>(), tip_height, Duration::from_secs(120))
+        .converge(
+            &providers.iter().collect::<Vec<_>>(),
+            tip_height,
+            Duration::from_secs(120),
+        )
         .await;
     revision = advanced(revision, &record);
 
@@ -1226,7 +1295,11 @@ async fn controller_updates_reach_independent_https_providers_under_queries() {
     phase.set(&ledger, "post-restart-update");
     append(&mut journal, &mut tip_height);
     let (record, _) = campaign
-        .converge(&providers.iter().collect::<Vec<_>>(), tip_height, Duration::from_secs(180))
+        .converge(
+            &providers.iter().collect::<Vec<_>>(),
+            tip_height,
+            Duration::from_secs(180),
+        )
         .await;
     revision = advanced(revision, &record);
 
@@ -1266,5 +1339,8 @@ async fn controller_updates_reach_independent_https_providers_under_queries() {
         .lines()
         .filter(|l| l.contains("\"kind\":\"recovery\"") && l.contains("\"outcome\":\"wrong\""))
         .count();
-    assert_eq!(wrong, 0, "a provider served a ledger that differs from the journal");
+    assert_eq!(
+        wrong, 0,
+        "a provider served a ledger that differs from the journal"
+    );
 }
