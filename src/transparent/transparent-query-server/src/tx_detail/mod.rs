@@ -35,7 +35,5 @@
 //! under `"{digest}/directory-{b}"`, so two buckets of one revision never
 //! share a cache entry.
 
-use zakura_pir_protocol::transparent::shard as transparent_shard;
-
 pub mod live;
 pub mod service;
