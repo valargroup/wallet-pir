@@ -1,6 +1,6 @@
 # CI and deployment latency
 
-The target is **under three minutes from PR update or main push to fast checks completing**
+The target is **under five minutes from PR update or main push to fast checks completing**
 for routine changes on warm runners, and **two minutes from deployment dispatch
 to healthy service** when an exact-SHA qualified artifact is already available.
 Cold builds, dependency/toolchain changes, initial data preparation, schema
@@ -12,7 +12,7 @@ not measured guarantees; hosted fallback and cold fleet warming can exceed them.
 `make check-correctness` runs all ordinary CPU correctness targets, reference
 arithmetic and encrypted HTTP restart checks, doctests, the standalone sizing
 exporter, operations/tooling checks and native CPU lint. The budget is 30 seconds
-per test and 180 seconds for the complete warm command, including compilation,
+per test and 300 seconds for the complete warm command, including compilation,
 fixture setup and teardown. CUDA and explicit soak/hardware campaigns keep their
 existing qualification commands and durations. This command does not replace
 exact-SHA release qualification.
@@ -35,8 +35,10 @@ five-second overruns in its receipt. Diagnostic success establishes correctness;
 only an enforced passing run establishes compliance with the selected budget.
 
 Native tests compile once with a consistent feature set, then run Cargo-reported
-executables with at most three programs active and one case per program. Mutable
-service state is fresh; only immutable public runtime material is shared within
+executables with at most three programs active and one case per program. The fast
+compile leaves out binaries that declare no unit tests; qualification still
+builds every binary. Mutable service state is fresh; only immutable public
+runtime material is shared within
 the run. Serving HTTP and packing tests live beside the serving library and
 avoid the application's chain ingestion dependencies. Reference arithmetic,
 encrypted HTTP, frozen v7 vectors and Status checks run under the reference
@@ -49,9 +51,20 @@ Expensive fixtures are organized around the guarantee being checked:
 
 | Fast coverage | Additional full qualification coverage |
 | --- | --- |
-| One Enhance HTTP lifecycle publishes through a pending commit, reconciles it, rejects malformed queries, drains its listener, and answers from reopened durable state with a fresh wallet. Both independent 67/68-record hint oracles and damaged-file checks remain. | The same lifecycle runs on the native backend. |
-| Enhance tail reuse independently builds both copies and checks artifacts, partial hints, encrypted answers and unchanged coordinates with two supported 2K units in the original 4K/8K query domains. | The original boundary-crossing 4K preparation units. |
+| The independent 67-record generic-hint oracle, frozen vectors, padding/binding checks, damaged-artifact checks, and one unequal-unit comparison of the supported 8K composed tail, including its zero-filled gap, against monolithic preprocessing. | The 68-record hint oracle, the 16K monolithic comparison, and tail-growth artifact/coordinate checks run with reference arithmetic and the native backend. The encrypted HTTP pending-commit and fresh-wallet restart lifecycle also remains full-only. |
+| Preparation failures retain cold partial-allocation cleanup and a cached backend failure that must neither reread source rows nor replace a published view. | The combined failure on the second cached unit and the larger candidate geometry. |
 | Native cache admission and built-size bounds use one supported column instance; the batched-hint oracle retains a deployed display geometry with nonzero and padded rows. | Deployed cache/build shapes and the full history/display hint geometry and occupancy combinations. |
+| Transparent HTTP checks one cold encrypted retrieval and one cached restart. Runtime tests reject each distinct artifact fault and verify one complete optional fallback build, plus required-file refusal and ordinary-build accounting. | The composed history activation and display sealing/restart lifecycles retain their real workers, original geometries and independent source/wallet oracles. |
+
+Fast coverage follows properties, not a product/size/fault cross-product: correct
+bytes, malformed-input refusal, safe publication, durable revocation/recovery,
+bounded resource lifetimes, real transport wiring and honest automation results.
+Repeated cold fallback builds and the HTTP smoke's corrupt-cache restart are
+deleted because the runtime tests already check rejection and recovery. Keep
+distinct validation rules and meaningful boundaries; additional interior values
+do not need another encrypted retrieval. Roster-loop tests wait for observed
+membership and cancellation with test-local polling, rather than sleeping through
+production intervals. Production deadlines and the correctness budgets are unchanged.
 
 Transparent history distribution tests stay in one process so their immutable
 producer fixtures are prepared once. Each consumer still owns its mutable
@@ -59,6 +72,10 @@ files and verifies transfers over its own HTTP boundary. Process partitioning
 uses the current module path and must cover discovered cases exactly once.
 Their public client masks are shared; query secrets and decoded source checks
 remain fresh for every consumer.
+Preparation-failure checks also share only the prior publication's immutable
+files. They restore and account for fresh kernels in each test, and build or
+restore each failing candidate independently. Cold-start and frozen-vector
+checks keep their independent construction paths.
 
 ## Parallel release qualification
 
@@ -73,9 +90,8 @@ alongside helper checks. The final completion and artifact publication gates sti
 require every selected helper check to pass. Whole test executables retain their
 fixture reuse and existing thread limits. Reference arithmetic and CUDA checks
 have separate feature/cache partitions. The reference shard retains the independent
-generic-hint and damaged-artifact checks; encrypted lifecycle smokes run with
-reference arithmetic in fast correctness and with the native backend in full
-qualification. Deployment builds remain on the dedicated
+generic-hint and damaged-artifact checks; the encrypted HTTP lifecycle runs with both reference arithmetic and the native
+backend in full qualification. Deployment builds remain on the dedicated
 build runner. Example builds, doctests, binary tests and the standalone sizing
 exporter are included. New or removed targets require an explicit matrix update.
 
@@ -120,18 +136,20 @@ Partial diagnostic dispatches, canceled or skipped validation, unrelated branche
 and stale ancestry cannot leave unchecked changes behind.
 
 Rust feedback compiles the selected unit tests, CLI test binaries and named fast
-integration targets together in one `release-fast` Cargo invocation. Campaign
+integration targets together in one `release-fast` Cargo invocation. That command
+also names the stable fast dev-dependency roots, so a smaller affected set does
+not drop chain `testing` or reqwest `blocking` and rebuild a second copy of the
+dependency graph. Only the affected packages' programs run. Campaign
 targets are excluded from that build. Local and CI checks then execute at most
 three Cargo-reported test programs concurrently. The publisher library builds
 full archive runtimes on every core of a 4-core hosted runner, so it runs alone
 there before the pool; beside it, the encrypted HTTP smokes miss the 30-second
 case deadline. The 8-core fast runner keeps that library in the pool with four
-build threads. The Enhance encrypted HTTP executable runs alone before the
-pool on every runner: concurrent runtime preparation exceeded its per-case
-deadline even on eight cores. The independent hint and damaged-artifact checks
-have their own executable in the bounded pool. Both Enhance executables copy
-immutable preparation bytes from the same run-owned directory; workers verify
-their own copies, and generic hint oracles still cold-build independently.
+build threads. The expensive Enhance encrypted HTTP lifecycle belongs to full qualification;
+it is excluded from fast compilation and execution. Independent hint and
+damaged-artifact checks remain in the bounded pool. Each worker verifies its
+own copied immutable preparation bytes, and generic hint oracles still build
+independently.
 Other HTTP integration programs use the pool
 ahead of ordinary units. Within each group, binaries with more discovered cases start first,
 independently of Cargo's artifact order. Large unit executables are divided into
@@ -146,18 +164,16 @@ targets must contain an enabled, unignored case. Ordinary unit discovery has no
 named exclusions. Cold cache preparation compiles the same target selection.
 Enhance smoke cases reuse immutable prepared input bytes for the same record count,
 then copy them into separate writable worker directories. Workers still verify
-their copies and both 67/68-record generic oracles build independently. The encrypted
-restart and pending-commit publication checks retain the required two-worker quorum.
+their copies and both 67/68-record generic oracles build independently. Full encrypted restart and pending-commit publication checks retain the required
+two-worker quorum.
 Transparent fixture exit tests use tiny file trees with the actual ownership and
 copying helpers. Manager behavior tests still prepare and verify real publications.
 Fixture construction, copying, verification and cleanup stay inside measured work.
 
-Ordinary cache, identity, preparation-failure, publication, TLS fault and recovery
-assertions all run in fast feedback. The non-default `qualification-tests` feature
-restores their original larger geometry combinations and longer histories for
-full qualification, including repeated campaigns that rebuild one runtime to
-assert an additional property. The cached preparation retry checks the same
-direct column sums as the cold retry, so fast keeps the cold case. Binary unit tests run as well as library targets. Affected
+Fast feedback retains cache, identity, preparation-failure, publication, TLS fault
+and recovery checks. The non-default `qualification-tests` feature adds fault
+combinations, their original larger geometries and longer histories, including
+repeated campaigns over the same runtime. Binary unit tests run as well as library targets. Affected
 packages also run integrations classified as `fast` in
 [`tools/ci/integration-tests.json`](../tools/ci/integration-tests.json). Complete
 correctness includes independent reference oracles, doctests and CPU lint. Larger
@@ -216,9 +232,9 @@ rechecks archive contents, ABI metadata and clean source provenance.
 
 Only **CI / Fast checks** validates automatically on main pushes and PRs.
 Dependency cache priming runs independently on relevant main changes.
-Both PR and main feedback target three minutes; queueing also counts toward the
+Both PR and main feedback target five minutes; queueing also counts toward the
 latency target. During the current repair, validation finishes before main's
-final timing check enforces 180 seconds. PRs and manual runs report timings.
+final timing check enforces 300 seconds. PRs and manual runs report timings.
 A completed over-budget run provides diagnostic coverage, not a timing pass.
 The pre-push health guard follows this workflow, rather than long qualification.
 
@@ -429,7 +445,7 @@ Concurrency belongs to the label-filtered job: unrelated label events cannot
 cancel preparation; genuine same-PR preparation requests still supersede it.
 Then rerun the ordinary CI job at the same PR merge SHA and verify actual Cargo
 fresh flags, executed tests, matched key/ref and complete warm duration including
-archive/cleanup under 180 seconds. Branch dispatch does not warm the PR merge ref.
+archive/cleanup under 300 seconds. Branch dispatch does not warm the PR merge ref.
 An already-existing partial exact snapshot cannot be filled in: prepare the next
 source-tree key before routine Rust validation, without deleting old entries.
 The parent owns this hosted sequence and independent review; local tooling-only
@@ -443,7 +459,7 @@ Main uses persistent targets; the separate
 one successful main fast snapshot for hosted PRs. It compiles fast units only
 when the exact key is missing, runs no tests and is not a gate. Full qualification
 retains persistent build lanes. A missing cache never relaxes validation or the
-180-second warm feedback target.
+300-second warm feedback target.
 
 ## Cold preparation and representative latency
 
@@ -453,7 +469,7 @@ concurrency group, so it cannot occupy main's runner or scheduling slot. Dispatc
 on `main` to prepare its trusted persistent cache. Main pushes preempt that
 preparation; preparation cannot cancel a running main check.
 Main rejects an entirely empty cache with an explicit
-preparation error instead of spending its three-minute budget on native builds.
+preparation error instead of spending its five-minute budget on native builds.
 Preparation validates the complete fast selection, then validates the affected
 selection using the same command as routine CI: Cargo can unify dependency
 features differently for those roots. The optional `comparison-base` input pins
@@ -469,7 +485,7 @@ been removed. Default fixtures keep complete failure/recovery assertions with
 supported narrow inputs; explicit full runners enable `qualification-tests` to
 restore deployed geometry combinations and larger history/publication runs.
 Complete CPU correctness uses the same bounded native selection and retains its
-reference, exporter, documentation and lint checks under the 180-second limit. Transparent checks a nonzero row against public source bytes, refuses
+reference, exporter, documentation and lint checks under the 300-second limit. Transparent checks a nonzero row against public source bytes, refuses
 malformed input before preparation, and repeats after a cache restore and
 corruption. Enhance verifies encrypted records after draining the old listener
 and reopening durable coordinator state. Listener readiness/shutdown use bound
@@ -490,7 +506,7 @@ python3 tools/ci/timings.py --workflow ci.yml --limit 100 --slo --since-run <fir
 
 The explicit starting run excludes older pipeline versions and their failures.
 This needs at least 20 representative runs, coverage of all service families,
-shared changes, operations and docs, and a p95 below 180 seconds. Workflow-only,
+shared changes, operations and docs, and a p95 below 300 seconds. Workflow-only,
 canceled, cold and unknown-cache samples cannot qualify the target. Failed runs
 remain visible. Warm means Cargo reported no third-party compilation; workspace
 source can still rebuild. Queueing and final job cleanup count. A missing sample

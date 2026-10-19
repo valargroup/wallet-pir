@@ -3,13 +3,13 @@
     "fast": [
       "boundary_recovery_model",
       "ci_hint",
-      "ci_smoke",
       "record_layout",
       "schema11_cutover",
       "status_routes"
     ],
     "full": [
       "canonical_record",
+      "encrypted_lifecycle",
       "enhance_wallet_native",
       "http",
       "matvec_config",

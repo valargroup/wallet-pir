@@ -117,24 +117,12 @@ async fn encrypted_publication_advances_with_a_pending_commit_and_survives_resta
         let restored_http = serve(restored.router()).await;
         phase.set("querying after restart with a fresh wallet");
         let mut client = EnhancePirClient::connect(&restored_http.url).await.unwrap();
-        assert_eq!(
-            client
-                .query_position_with_timing(0)
-                .await
-                .unwrap()
-                .0
-                .as_ref(),
-            record(0)
-        );
-        assert_eq!(
-            client
-                .query_position_with_timing(67)
-                .await
-                .unwrap()
-                .0
-                .as_ref(),
-            record(67)
-        );
+        // These positions share a row. One encrypted request checks that the
+        // update preserved the old slot beside the appended record, and that
+        // a fresh wallet can recover both after reopening durable state.
+        let recovered = client.query_positions(&[66, 67]).await.unwrap();
+        assert_eq!(recovered[0].as_ref(), record(66));
+        assert_eq!(recovered[1].as_ref(), record(67));
         drop(client);
         restored_http.stop().await;
     })

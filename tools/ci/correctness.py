@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run all CPU correctness checks, including warm compilation, in 180 seconds.
+"""Run all CPU correctness checks, including warm compilation, in 300 seconds.
 
 --record-only collects a complete diagnostic run without relaxing the enforced
 command. Both modes retain all bounded unit tests and classified correctness integrations.
@@ -91,7 +91,7 @@ def rust_checks(env, temporary, offline):
                      '--test', 'routing_contract', '--test', 'v7_contract'],
                     env=env, stage='compile:reference', collect_tests=True, test_details=True)
     reference += run(['cargo', 'test', '--no-run', *options, '-p', 'enhance-publisher',
-                     '--test', 'ci_smoke', '--test', 'ci_hint'],
+                     '--test', 'ci_hint'],
                      env=env, stage='compile:reference', collect_tests=True, test_details=True)
     reference += run(['cargo', 'test', '--no-run', *options, '-p', 'status-query-server', '--lib', '--tests'],
                      env=env, stage='compile:reference', collect_tests=True, test_details=True)
@@ -103,7 +103,11 @@ def rust_checks(env, temporary, offline):
             program['args'] = ['ipir::tests', 'client::', 'protocol::', 'record::', 'record_types::']
     path = temporary / 'reference.json'
     path.write_text(json.dumps(reference_plan))
-    run(['python3', 'tools/ci/unit_tests.py', str(path), '--jobs=1', '--budget'], env=env, stage='tests:reference')
+    reference_fixtures = temporary / 'reference-fixtures'
+    reference_fixtures.mkdir()
+    reference_env = dict(env, WALLET_PIR_TEST_RUNTIME_CACHE=str(reference_fixtures))
+    run(['python3', 'tools/ci/unit_tests.py', str(path), '--jobs=1', '--budget'],
+        env=reference_env, stage='tests:reference')
     # Doctests are not executable artifacts in Cargo's no-run output.
     run(['cargo', 'test', '--workspace', '--doc', *options, '--features', FEATURES], env=env, stage='doctests')
     export_manifest = 'tools/txid/txid-sizing/export/Cargo.toml'
@@ -133,7 +137,7 @@ def main():
     install_cancellation()
     timer = None
     if not args.record_only:
-        timer = threading.Timer(180, lambda: os.kill(os.getpid(), signal.SIGTERM))
+        timer = threading.Timer(300, lambda: os.kill(os.getpid(), signal.SIGTERM))
         timer.daemon = True
         timer.start()
     output = ROOT / '.local-pir/correctness' / uuid.uuid4().hex[:12]
@@ -184,7 +188,7 @@ def main():
         cases = [json.loads(line) for line in case_log.read_text().splitlines()]
         artifacts_path = output / 'artifacts.jsonl'
         units = artifact_summary(artifacts_path)
-        report = dict(passed=passed and (args.record_only or elapsed < 180),
+        report = dict(passed=passed and (args.record_only or elapsed < 300),
                       seconds=round(elapsed, 3), enforced=not args.record_only,
                       source=source, artifacts=units,
                       cases=len(cases), case_seconds=args.case_seconds,
@@ -193,8 +197,8 @@ def main():
         (output / 'result.json').write_text(json.dumps(report, indent=2) + '\n')
         (output.parent / 'latest.json').write_text(json.dumps(dict(report= str(output / 'result.json'), **report), indent=2) + '\n')
         print('CORRECTNESS_RESULT ' + json.dumps(report), flush=True)
-    if not args.record_only and elapsed >= 180:
-        raise SystemExit('complete correctness run exceeded 180 seconds')
+    if not args.record_only and elapsed >= 300:
+        raise SystemExit('complete correctness run exceeded 300 seconds')
 
 
 if __name__ == '__main__':

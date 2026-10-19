@@ -14,6 +14,7 @@ name = "enhance-pir-server"
 path = "src/bin/server.rs"
 
 [features]
+qualification-tests = []
 default = []
 native-reinspiring = ["enhance-query-server/native-reinspiring", "status-query-server/native-reinspiring", "status-publisher/native-reinspiring", "dep:pir-native", "dep:reinspiring", "ipir-sp/native-reinspiring"]
 cuda = ["enhance-query-server/cuda", "status-query-server/cuda", "status-publisher/cuda", "ipir-sp/cuda"]

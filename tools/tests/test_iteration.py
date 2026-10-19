@@ -54,18 +54,21 @@ class PlannerTests(unittest.TestCase):
         for path in ('tools/transparent/filters/transparent_filter_build.py',
                      'tools/transparent/parent-filters/transparent_parent_evaluate.py',
                      'tools/enhance/v7-qualification/assess.py',
-                     'tools/enhance/schema11-interop/run.py'):
+                     'tools/enhance/schema11-interop/run.py',
+                     'tools/status/status_qualification.py',
+                     'tools/txid/txid-sizing/survey.py', 'tools/txid/txid-display/demo.py'):
             self.assertEqual(fast.route(path), ({'check-tools'}, {'ops'}), path)
 
     def test_docs_do_not_need_rust_or_other_helpers(self):
-        result = fast.plan(self.packages, ['README.md'])
+        result = fast.plan(self.packages, ['README.md', 'docs/ci.md', 'evidence/receiver/run.json'])
         self.assertEqual(result['packages'], [])
         self.assertEqual(result['helpers'], ['check-docs'])
         with patch.object(fast.subprocess, 'check_output', side_effect=AssertionError('no Cargo in manifest selection')):
             self.assertEqual(fast.workspace_packages(), self.packages)
 
     def test_ops_and_deploy_workflow_do_not_select_workspace_rust(self):
-        for path in ['tools/tests/operations/control_sessions/fake_ssh.py', '.github/workflows/deploy-enhance-cuda.yml']:
+        for path in ['tools/tests/operations/control_sessions/fake_ssh.py', '.github/workflows/deploy-enhance-cuda.yml',
+                     'tools/scripts/example.py', 'tools/receiver/digitalocean/Caddyfile']:
             result = fast.plan(self.packages, [path])
             self.assertEqual(result['packages'], [])
             self.assertEqual(result['groups'], ['ops'])

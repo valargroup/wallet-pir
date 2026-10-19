@@ -695,13 +695,69 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ROW_BYTES;
     fn records(start: u64, count: usize) -> Result<Vec<u8>, String> {
         let mut bytes = vec![0; count * RECORD_BYTES];
         for (i, row) in bytes.chunks_exact_mut(RECORD_BYTES).enumerate() {
             row[..8].copy_from_slice(&(start + i as u64).to_le_bytes());
         }
         Ok(bytes)
+    }
+
+    // Failure tests need a published predecessor, not another cold build of
+    // the same public rows. Copy its immutable bytes; each engine still loads
+    // and accounts for its own kernels under the test's fault instrumentation.
+    fn seed_published_fixture(root: &Path, domain: &DomainPlan) {
+        if cfg!(feature = "qualification-tests") || cfg!(feature = "cuda") {
+            return;
+        }
+        let Some(cache) = std::env::var_os("WALLET_PIR_TEST_RUNTIME_CACHE") else {
+            return;
+        };
+        let cache = PathBuf::from(cache);
+        let prepared = cache.join(format!(
+            "enhance-unit-{}-{}",
+            cfg!(feature = "native-reinspiring"),
+            hex::encode(Sha256::digest(serde_json::to_vec(domain).unwrap()))
+        ));
+        let lock = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(cache.join("enhance-unit.lock"))
+            .unwrap();
+        lock.lock().unwrap();
+        if !prepared.exists() {
+            let temporary = tempfile::tempdir_in(&cache).unwrap();
+            drop(
+                Engine::new(temporary.path())
+                    .prepare(domain.clone(), records)
+                    .unwrap(),
+            );
+            std::fs::rename(temporary.path(), &prepared).unwrap();
+        }
+        fn copy(source: &Path, target: &Path) {
+            std::fs::create_dir_all(target).unwrap();
+            for entry in std::fs::read_dir(source).unwrap() {
+                let entry = entry.unwrap();
+                let kind = entry.file_type().unwrap();
+                let to = target.join(entry.file_name());
+                if kind.is_dir() {
+                    copy(&entry.path(), &to);
+                } else {
+                    assert!(
+                        kind.is_file(),
+                        "published fixtures contain only regular files"
+                    );
+                    std::fs::copy(entry.path(), to).unwrap();
+                }
+            }
+        }
+        let source = prepared.join("artifacts-9");
+        assert!(
+            source.is_dir(),
+            "published fixture is missing its artifact tree"
+        );
+        copy(&source, &root.join("artifacts-9"));
     }
 
     /// Deterministic bytes for fixed-input regression vectors.
@@ -729,8 +785,12 @@ mod tests {
             .coverage(67, Geometry::default())
             .unwrap();
         let plan = plan(coverage.shards[0].clone(), records).unwrap();
+        // The 67-record publication is the same immutable predecessor other
+        // failure tests build. Reuse those bytes; this case still checks the
+        // pinned digests and packed answer.
+        seed_published_fixture(dir.path(), &plan);
         let mut engine = Engine::new(dir.path());
-        let (eval, _) = engine.prepare(plan.clone(), records).unwrap();
+        let (eval, _) = engine.prepare(plan, records).unwrap();
         let hint = eval.hint().unwrap();
         let pack = Packing::new(4096, &hint, &crate::PackingBudget::coordinator()).unwrap();
         let mut hint_digest = Sha256::new();
@@ -830,6 +890,7 @@ mod tests {
             .coverage(67, Geometry::default())
             .unwrap();
         let domain = plan(coverage.shards[0].clone(), records).unwrap();
+        seed_published_fixture(dir.path(), &domain);
         let eval = Engine::new(dir.path())
             .prepare(domain.clone(), records)
             .unwrap()
@@ -1021,21 +1082,23 @@ mod tests {
             })
             .unwrap();
         assert_eq!(outcome.restored, restored.units.len());
-        drop(restored);
         // CPU can reopen a GPU-created artifact, and CUDA can open the same CPU-readable bytes.
-        let mut cpu = Engine::new(dir.path());
-        let (cpu_eval, _) = cpu
-            .prepare(plan.clone(), |_, _| panic!("artifact must be reusable"))
-            .unwrap();
-        let mut selected = Engine::with_backend(dir.path(), backend);
-        let (selected_eval, _) = selected
-            .prepare(plan, |_, _| panic!("artifact must be reusable"))
-            .unwrap();
+        let selected_eval = restored;
+        let cpu_eval = if backend.matvec_backend == crate::matvec::Backend::Cpu {
+            selected_eval.clone()
+        } else {
+            Engine::new(dir.path())
+                .prepare(plan, |_, _| panic!("artifact must be reusable"))
+                .unwrap()
+                .0
+        };
         let query = vec![modulus() - 1; 4096];
-        assert_eq!(
-            cpu_eval.evaluate(&query).unwrap(),
-            selected_eval.evaluate(&query).unwrap()
-        );
+        if backend.matvec_backend != crate::matvec::Backend::Cpu {
+            assert_eq!(
+                cpu_eval.evaluate(&query).unwrap(),
+                selected_eval.evaluate(&query).unwrap()
+            );
+        }
         std::thread::scope(|scope| {
             for _ in 0..4 {
                 let eval = &selected_eval;
@@ -1046,8 +1109,44 @@ mod tests {
         });
         drop(cpu_eval);
         drop(selected_eval);
-        selected.collect_unused().unwrap();
-        assert_eq!(selected.live_bytes(), 0);
+        restarted.collect_unused().unwrap();
+        assert_eq!(restarted.live_bytes(), 0);
+    }
+
+    #[test]
+    fn cached_backend_failure_does_not_read_rows_or_replace_published_units() {
+        use crate::matvec::testing::{scoped, Faults};
+        use std::sync::atomic::Ordering::SeqCst;
+        let root = tempfile::tempdir().unwrap();
+        let domain = plan(
+            Lifecycle::default()
+                .coverage(67, Geometry::default())
+                .unwrap()
+                .shards[0]
+                .clone(),
+            records,
+        )
+        .unwrap();
+        seed_published_fixture(root.path(), &domain);
+        let published = Engine::new(root.path())
+            .prepare(domain.clone(), records)
+            .unwrap()
+            .0;
+        let query = vec![1; 4096];
+        let before = published.evaluate(&query).unwrap();
+        let faults = Arc::new(Faults::default());
+        faults.fail_prepare_at.store(1, SeqCst);
+        let mut failed = Engine::new(root.path());
+        let error = scoped(&faults, || {
+            failed.prepare(domain, |_, _| {
+                panic!("a backend failure must not reread canonical rows")
+            })
+        });
+        assert!(matches!(error, Err(PrepareError::Runtime(_))));
+        assert_eq!(faults.prepare_calls.load(SeqCst), 1);
+        assert_eq!(faults.live_bytes.load(SeqCst), 0);
+        assert_eq!(failed.live_bytes(), 0);
+        assert_eq!(published.evaluate(&query).unwrap(), before);
     }
 
     #[cfg(feature = "cuda")]
@@ -1082,8 +1181,9 @@ mod tests {
         partial_preparation_failure(MatvecConfig::default(), false);
     }
 
-    /// The cached retry is checked against the same direct column sums as
-    /// the cold retry, so fast keeps that one case.
+    // Fast checks cover partial cleanup on a cold candidate and refusal to
+    // rebuild a cached unit after a backend error independently. Qualification
+    // retains their combination at the second cached unit.
     #[cfg(feature = "qualification-tests")]
     #[test]
     fn cached_partial_preparation_failure_preserves_published_and_retries() {
@@ -1141,6 +1241,7 @@ mod tests {
         let candidate = plan(shard, records).unwrap();
         assert_eq!(candidate.units.len(), 2);
         assert!(candidate.units.iter().all(|u| !old_plan.units.contains(u)));
+        seed_published_fixture(root.path(), &old_plan);
         let mut engine = Engine::with_backend(root.path(), backend);
         let faults = Arc::new(Faults::default());
         let published = scoped(&faults, || engine.prepare(old_plan, records))
@@ -1224,32 +1325,17 @@ mod tests {
     fn unequal_units_match_monolithic_preprocessing_and_evaluation() {
         let directory = tempfile::tempdir().unwrap();
         let geometry = Geometry::default();
-        let (shard, monolithic_rows, expected_units, targets) =
-            if cfg!(feature = "qualification-tests") {
-                let coverage = Lifecycle::default()
-                    .coverage(8192 * RECORDS_PER_ROW as u64 + 17, geometry)
-                    .unwrap();
-                (
-                    coverage.shards[0].clone(),
-                    16384,
-                    [8192, 2048],
-                    vec![0, 8191, 8192, 10239, 16383],
-                )
-            } else {
-                let coverage = Lifecycle::default()
-                    .coverage(
-                        geometry.max_shard_rows * RECORDS_PER_ROW as u64 + 17,
-                        geometry,
-                    )
-                    .unwrap();
-                // A real composed tail has unequal units and a zero-filled gap.
-                (
-                    coverage.shards[1].clone(),
-                    8192,
-                    [2048, 4096],
-                    vec![0, 2047, 2048, 4095, 4096, 8191],
-                )
-            };
+        let coverage = Lifecycle::default()
+            .coverage(
+                geometry.max_shard_rows * RECORDS_PER_ROW as u64 + 17,
+                geometry,
+            )
+            .unwrap();
+        // One composed tail exercises unequal units, A's suffix and a padded gap.
+        let shard = coverage.shards[1].clone();
+        let monolithic_rows = 8192;
+        let expected_units = [2048, 4096];
+        let targets = [0, 2047, 2048, 4095, 4096, 8191];
         let domain = plan(shard.clone(), records).unwrap();
         assert_eq!(
             domain
@@ -1322,26 +1408,18 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "qualification-tests")]
     #[test]
     fn tail_domain_reuses_b_units_and_decodes_b_at_unchanged_coordinates() {
+        use crate::ROW_BYTES;
         #[cfg(not(feature = "native-reinspiring"))]
         use ipir_sp::modulus_switch::recover_published_c1;
         #[cfg(not(feature = "native-reinspiring"))]
         use ipir_sp::serialize::serialize_packing_keys;
 
         const B_START: u64 = 32768;
-        // Reuse and coordinate binding need two valid units, not two 4K
-        // units on every push. Qualification keeps the boundary-crossing B.
-        const B_ROWS: u64 = if cfg!(feature = "qualification-tests") {
-            2049
-        } else {
-            17
-        };
-        const B_SLOT: u64 = if cfg!(feature = "qualification-tests") {
-            4096
-        } else {
-            2048
-        };
+        const B_ROWS: u64 = 2049;
+        const B_SLOT: u64 = 4096;
         const SUFFIX_ROWS: u64 = B_SLOT;
         let directory = tempfile::tempdir().unwrap();
         let shard = QueryShard {

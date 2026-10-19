@@ -119,6 +119,7 @@ async fn single_unit_hint_matches_independent_generic_67() {
     hint_matches_generic(67).await;
 }
 
+#[cfg(feature = "qualification-tests")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn single_unit_hint_matches_independent_generic_68() {
     hint_matches_generic(68).await;
@@ -130,6 +131,7 @@ async fn single_unit_hint_rejects_damage_and_pins_retired_file() {
         ipir::shard_artifact_dir,
         worker::{Abort, Retain},
     };
+    use sha2::Digest;
     use std::io::{Seek, SeekFrom, Write};
     let root = tempfile::tempdir().unwrap();
     let (worker, mut candidate) = prepare_hint_fixture(root.path(), 67).await;
@@ -141,9 +143,28 @@ async fn single_unit_hint_rejects_damage_and_pins_retired_file() {
     let original = std::fs::read(&path).unwrap();
     let http = reqwest::Client::new();
     let url = format!("{}/internal/hint/0", worker.url);
-    // Damage the real owning worker's pinned material after successful prepare.
-    // Each retry restores immutable material and obtains a fresh verified handle.
-    for fault in ["corrupt", "truncated", "shape", "trailing", "format"] {
+    // Each distinct fault is refused on these bytes. Re-preparing the runtime
+    // for every fault rebuilds the same candidate; qualification keeps that
+    // campaign. Fast re-opens the file for the other faults and recovers once
+    // over HTTP.
+    let faults = ["corrupt", "truncated", "shape", "trailing", "format"];
+    let degree = enhance_query_server::runtime::rlwe().d;
+    let per_block = (degree * 8 + 4) * degree + 4;
+    assert_eq!((original.len() - 8) % per_block, 0, "hint encoding length");
+    let blocks = (original.len() - 8) / per_block;
+    let digest = hex::encode(sha2::Sha256::digest(&original));
+    assert!(
+        enhance_query_server::artifact::PublicationArtifact::revalidate_hint_file(
+            &path,
+            original.len() as u64,
+            &digest,
+            blocks,
+            degree,
+        )
+        .is_ok(),
+        "prepared hint must pass the worker checks"
+    );
+    let damage = |fault: &str| {
         let mut file = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
         match fault {
             "truncated" => file.set_len(original.len() as u64 - 1).unwrap(),
@@ -161,13 +182,56 @@ async fn single_unit_hint_rejects_damage_and_pins_retired_file() {
                 file.write_all(&[original[offset] ^ 1]).unwrap();
             }
         }
-        drop(file);
+    };
+    if cfg!(feature = "qualification-tests") {
+        for fault in faults {
+            damage(fault);
+            let response = http.get(&url).send().await.unwrap();
+            assert_eq!(
+                response.status(),
+                reqwest::StatusCode::SERVICE_UNAVAILABLE,
+                "{fault}"
+            );
+            let _ = response.bytes().await.unwrap();
+            hint_command(
+                &http,
+                &worker.url,
+                "abort",
+                &Abort {
+                    epoch: candidate.epoch,
+                    operation: candidate.operation.clone(),
+                    attempt: candidate.attempt,
+                },
+            )
+            .await;
+            let replacement = path.with_extension("replacement");
+            std::fs::write(&replacement, &original).unwrap();
+            std::fs::rename(replacement, &path).unwrap();
+            candidate.attempt += 1;
+            hint_command(&http, &worker.url, "reserve", &candidate).await;
+            hint_command(&http, &worker.url, "prepare", &candidate).await;
+        }
+    } else {
+        for fault in faults {
+            damage(fault);
+            assert!(
+                enhance_query_server::artifact::PublicationArtifact::revalidate_hint_file(
+                    &path,
+                    original.len() as u64,
+                    &digest,
+                    blocks,
+                    degree,
+                )
+                .is_err(),
+                "{fault}"
+            );
+            let replacement = path.with_extension("replacement");
+            std::fs::write(&replacement, &original).unwrap();
+            std::fs::rename(replacement, &path).unwrap();
+        }
+        damage("corrupt");
         let response = http.get(&url).send().await.unwrap();
-        assert_eq!(
-            response.status(),
-            reqwest::StatusCode::SERVICE_UNAVAILABLE,
-            "{fault}"
-        );
+        assert_eq!(response.status(), reqwest::StatusCode::SERVICE_UNAVAILABLE);
         let _ = response.bytes().await.unwrap();
         hint_command(
             &http,
@@ -180,7 +244,6 @@ async fn single_unit_hint_rejects_damage_and_pins_retired_file() {
             },
         )
         .await;
-        // Atomic replacement, never mutate the diagnostic author's raw inputs.
         let replacement = path.with_extension("replacement");
         std::fs::write(&replacement, &original).unwrap();
         std::fs::rename(replacement, &path).unwrap();

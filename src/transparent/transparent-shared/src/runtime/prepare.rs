@@ -314,54 +314,62 @@ mod tests {
         .unwrap();
         assert!(!rebuilt.linked);
 
-        // A file of another identity placed under this one's name is not
-        // linked either.
-        let foreign = publication(dir.path(), "foreign");
-        let other = ("cd".repeat(32), shared.table, 0);
-        prepare_segment(&foreign, &[], &other, &shared, &source, "pages".into()).unwrap();
-        fs::rename(
-            foreign.path(&other, &shared, source.sha256()),
-            foreign.path(&key, &shared, source.sha256()),
-        )
-        .unwrap();
-        // Only an interrupted write's partial file in another.
-        let interrupted = publication(dir.path(), "interrupted");
-        fs::copy(
-            first.path(&key, &shared, source.sha256()),
-            interrupted
-                .path(&key, &shared, source.sha256())
-                .with_extension("partial"),
-        )
-        .unwrap();
-        let fourth = publication(dir.path(), "fourth");
-        let rebuilt = prepare_segment(
-            &fourth,
-            &[foreign, interrupted],
-            &key,
-            &shared,
-            &source,
-            "pages".into(),
-        )
-        .unwrap();
-        assert!(!rebuilt.linked);
-        // An invalid file already in the publication is replaced.
-        fs::write(fourth.path(&key, &shared, source.sha256()), b"invalid").unwrap();
-        let replaced = prepare_segment(
-            &fourth,
-            std::slice::from_ref(&first),
-            &key,
-            &shared,
-            &source,
-            "pages".into(),
-        )
-        .unwrap();
-        assert!(replaced.linked);
-        assert_eq!(
-            fs::metadata(fourth.path(&key, &shared, source.sha256()))
-                .unwrap()
-                .ino(),
-            a.ino()
-        );
+        // Foreign and interrupted files are the same "not linked, so rebuilt"
+        // rule as truncation. Qualification repeats them; fast keeps one rebuild.
+        if cfg!(feature = "qualification-tests") {
+            // A file of another identity placed under this one's name is not
+            // linked either.
+            let foreign = publication(dir.path(), "foreign");
+            let other = ("cd".repeat(32), shared.table, 0);
+            let runtime = first.load(&key, &shared, source.sha256()).unwrap();
+            foreign
+                .write(&other, &shared, source.sha256(), &runtime)
+                .unwrap();
+            drop(runtime);
+            fs::rename(
+                foreign.path(&other, &shared, source.sha256()),
+                foreign.path(&key, &shared, source.sha256()),
+            )
+            .unwrap();
+            // Only an interrupted write's partial file in another.
+            let interrupted = publication(dir.path(), "interrupted");
+            fs::copy(
+                first.path(&key, &shared, source.sha256()),
+                interrupted
+                    .path(&key, &shared, source.sha256())
+                    .with_extension("partial"),
+            )
+            .unwrap();
+            let fourth = publication(dir.path(), "fourth");
+            let rebuilt = prepare_segment(
+                &fourth,
+                &[foreign, interrupted],
+                &key,
+                &shared,
+                &source,
+                "pages".into(),
+            )
+            .unwrap();
+            assert!(!rebuilt.linked);
+            // An invalid file already in the publication is replaced.
+            fs::write(fourth.path(&key, &shared, source.sha256()), b"invalid").unwrap();
+            let replaced = prepare_segment(
+                &fourth,
+                std::slice::from_ref(&first),
+                &key,
+                &shared,
+                &source,
+                "pages".into(),
+            )
+            .unwrap();
+            assert!(replaced.linked);
+            assert_eq!(
+                fs::metadata(fourth.path(&key, &shared, source.sha256()))
+                    .unwrap()
+                    .ino(),
+                a.ino()
+            );
+        }
 
         // A source that no longer matches its digest is the publication's
         // fault, not an optional runtime's.

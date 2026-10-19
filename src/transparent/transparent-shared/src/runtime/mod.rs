@@ -1892,11 +1892,9 @@ pub(crate) mod tests {
     /// those masks to equal the served ones, so the two derivations must agree.
     #[test]
     fn masks_rebuilt_from_row_bytes_equal_the_served_masks() {
-        let (geometry, table) = if cfg!(feature = "qualification-tests") {
-            (&DECOUPLED_2K_8K, Table::Pages)
-        } else {
-            (&DECOUPLED_2K_8K, Table::Directory)
-        };
+        // Fast uses one native column instance. Qualification keeps the
+        // deployed history page geometry this oracle was first pinned on.
+        let (geometry, table) = fixture_shape(&DECOUPLED_2K_8K, Table::Pages);
         let shared = SharedParams::build(geometry, table).unwrap();
         let profile = &shared.profile;
         let rows: Vec<u8> = (0..profile.rows * profile.row_bytes)

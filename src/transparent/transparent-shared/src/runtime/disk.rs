@@ -830,7 +830,7 @@ mod tests {
                 })
                 .collect::<Vec<_>>()
         } else {
-            vec![(&transparent_shard::display::TXID_2K8, Table::TxDirectory)]
+            vec![(&super::super::tests::NATIVE_INSTANCE, Table::TxDirectory)]
         };
         for (geometry, table) in shapes {
             let dir = tempfile::tempdir().unwrap();
@@ -1230,7 +1230,22 @@ mod shipped_tests {
         } else {
             &super::super::tests::NATIVE_INSTANCE
         };
-        let shared = Arc::new(SharedParams::build_display(geometry, table).unwrap());
+        let shared = if cfg!(feature = "qualification-tests") {
+            Arc::new(SharedParams::build_display(geometry, table).unwrap())
+        } else {
+            static SHARED: std::sync::LazyLock<Arc<SharedParams>> =
+                std::sync::LazyLock::new(|| {
+                    Arc::new(
+                        SharedParams::build_display(
+                            &super::super::tests::NATIVE_INSTANCE,
+                            Table::TxDirectory,
+                        )
+                        .unwrap(),
+                    )
+                });
+            assert_eq!(table, Table::TxDirectory);
+            SHARED.clone()
+        };
         let profile = &shared.profile;
         let mut rows = vec![0u8; profile.rows * profile.row_bytes];
         for (i, byte) in rows[..filled * profile.row_bytes].iter_mut().enumerate() {
@@ -1265,7 +1280,13 @@ mod shipped_tests {
     /// filled page table. It is never written to the worker's disk cache.
     #[tokio::test(flavor = "multi_thread")]
     async fn a_shipped_runtime_is_the_locally_built_runtime() {
-        for (table, filled) in [(Table::TxDirectory, 2_048), (Table::TxDirectory, 700)] {
+        let filled_rows: &[usize] = if cfg!(feature = "qualification-tests") {
+            &[2_048, 700]
+        } else {
+            &[700]
+        };
+        for &filled in filled_rows {
+            let table = Table::TxDirectory;
             let dir = tempfile::tempdir().unwrap();
             let s = segment(dir.path(), table, filled, 1);
             let local = TableRuntime::build(&s.shared, &s.rows).unwrap();
@@ -1325,8 +1346,8 @@ mod shipped_tests {
     }
 
     /// Missing, truncated, corrupted and wrongly named shipped files are all
-    /// refused. Missing and corrupted files also exercise counted cold fallback
-    /// builds; full qualification exercises that fallback for every refusal.
+    /// refused. One damaged artifact exercises counted cold fallback; ordinary
+    /// builds without an offered artifact have separate accounting.
     #[tokio::test(flavor = "multi_thread")]
     async fn refused_shipped_files_fall_back_to_a_counted_local_build() {
         let dir = tempfile::tempdir().unwrap();
@@ -1398,9 +1419,9 @@ mod shipped_tests {
                 "{name} must be rejected before use"
             );
             // Rejection and cold construction are separate contracts. Exercise
-            // every refusal here, then the complete fallback for a missing file
-            // and damaged content. Qualification repeats it for every identity.
-            if !cfg!(feature = "qualification-tests") && !matches!(name, "missing" | "corrupted") {
+            // every refusal here, then build once to verify fallback and its
+            // accounting. The loader owns identity and format validation.
+            if name != "corrupted" {
                 continue;
             }
             let metrics = Arc::new(Metrics::default());
@@ -1443,43 +1464,50 @@ mod shipped_tests {
         let b = segment(dir.path(), Table::TxDirectory, 2_048, 5);
         let from_a = TableRuntime::build(&a.shared, &a.rows).unwrap();
         let expected = from_a.public_params.clone();
+        // The matching runtime is checked before its parts are moved into the forgery.
+        assert!(from_a.self_check(&a.shared, &a.rows).unwrap() < 2_048);
         let from_b = TableRuntime::build(&b.shared, &b.rows).unwrap();
+        // Other rows while that runtime is still whole; forging moves its preprocessing.
+        expect_self_check_fallback(dir.path(), "other rows", &a, &from_b, &expected, true).await;
         let TableRuntime { native, db, .. } = from_a;
         let forged = TableRuntime::assemble(native, db, from_b.preprocessed).unwrap();
-        let from_b = TableRuntime::build(&b.shared, &b.rows).unwrap();
-        // The forged database is the segment's, so only its answer can fail.
-        for (name, runtime, database_differs) in
-            [("forged", &forged, false), ("other rows", &from_b, true)]
-        {
-            let shipped = candidate(dir.path(), name);
-            shipped
-                .write(&a.key, &a.shared, a.source.sha256(), runtime)
-                .unwrap();
-            let loaded = shipped.load(&a.key, &a.shared, a.source.sha256()).unwrap();
-            let refused = loaded.self_check(&a.shared, &a.rows).unwrap_err();
-            assert_eq!(
-                refused.contains("differs from the segment"),
-                database_differs,
-                "{name}: {refused}"
-            );
-            let metrics = Arc::new(Metrics::default());
-            let cache = RuntimeCache::new(a.shared.reserved_bytes() * 2, 1, metrics.clone());
-            let (handle, produced) = cache
-                .get_from(
-                    a.key.clone(),
-                    a.shared.clone(),
-                    a.source.clone(),
-                    Some(shipped),
-                )
-                .await
-                .unwrap();
-            assert_eq!(produced, Produced::Fallback, "{name}");
-            assert_eq!(Metrics::get(&metrics.shipped_fallbacks), 1);
-            assert_eq!(handle.get().public_params, expected);
-        }
-        // The check passes for a runtime of the segment's own rows.
-        let own = TableRuntime::build(&a.shared, &a.rows).unwrap();
-        assert!(own.self_check(&a.shared, &a.rows).unwrap() < 2_048);
+        expect_self_check_fallback(dir.path(), "forged", &a, &forged, &expected, false).await;
+    }
+
+    async fn expect_self_check_fallback(
+        dir: &Path,
+        name: &str,
+        segment: &Segment,
+        runtime: &TableRuntime,
+        expected: &[u8],
+        database_differs: bool,
+    ) {
+        let a = segment;
+        let shipped = candidate(dir, name);
+        shipped
+            .write(&a.key, &a.shared, a.source.sha256(), runtime)
+            .unwrap();
+        let loaded = shipped.load(&a.key, &a.shared, a.source.sha256()).unwrap();
+        let refused = loaded.self_check(&a.shared, &a.rows).unwrap_err();
+        assert_eq!(
+            refused.contains("differs from the segment"),
+            database_differs,
+            "{name}: {refused}"
+        );
+        let metrics = Arc::new(Metrics::default());
+        let cache = RuntimeCache::new(a.shared.reserved_bytes() * 2, 1, metrics.clone());
+        let (handle, produced) = cache
+            .get_from(
+                a.key.clone(),
+                a.shared.clone(),
+                a.source.clone(),
+                Some(shipped),
+            )
+            .await
+            .unwrap();
+        assert_eq!(produced, Produced::Fallback, "{name}");
+        assert_eq!(Metrics::get(&metrics.shipped_fallbacks), 1);
+        assert_eq!(handle.get().public_params, expected);
     }
 
     /// A history segment of `table` at `decoupled-2k-8k` whose first
@@ -1488,7 +1516,22 @@ mod shipped_tests {
     fn history_segment(dir: &Path, table: Table, filled: usize, seed: usize) -> Segment {
         use transparent_shard::layout::DECOUPLED_2K_8K;
         let (geometry, table) = super::super::tests::fixture_shape(&DECOUPLED_2K_8K, table);
-        let shared = Arc::new(SharedParams::build(geometry, table).unwrap());
+        let shared = if cfg!(feature = "qualification-tests") {
+            Arc::new(SharedParams::build(geometry, table).unwrap())
+        } else {
+            static SHARED: std::sync::LazyLock<Arc<SharedParams>> =
+                std::sync::LazyLock::new(|| {
+                    Arc::new(
+                        SharedParams::build(
+                            &super::super::tests::NATIVE_INSTANCE,
+                            Table::TxDirectory,
+                        )
+                        .unwrap(),
+                    )
+                });
+            assert_eq!(table, Table::TxDirectory);
+            SHARED.clone()
+        };
         let profile = &shared.profile;
         let mut rows = vec![0u8; profile.rows * profile.row_bytes];
         for (i, byte) in rows[..filled * profile.row_bytes].iter_mut().enumerate() {

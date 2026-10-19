@@ -557,6 +557,8 @@ jobs:
           CACHE_HIT: ${{ steps.restore.outputs.cache-hit }}
         run: umask 022 && python3 tools/ci/cargo_cache.py restored --lane native-cuda --cache-hit "$CACHE_HIT"
       - name: Build isolated native CUDA binaries and record ABI
+        env:
+          WALLET_PIR_SOURCE_REVISION: ${{ github.sha }}
         run: umask 022 && tools/ci/build-cuda.sh
       - name: Assemble checksummed native CUDA bundle
         env:
