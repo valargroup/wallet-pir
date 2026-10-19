@@ -116,8 +116,14 @@ async fn full_display_consumers_follow_https_and_restart_without_building() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let origin = format!("http://{}", listener.local_addr().unwrap());
     let router = first.router();
+    let (stop, stopped) = tokio::sync::oneshot::channel();
     let query_task = tokio::spawn(async move {
-        axum::serve(listener, router).await.unwrap();
+        axum::serve(listener, router)
+            .with_graceful_shutdown(async {
+                let _ = stopped.await;
+            })
+            .await
+            .unwrap();
     });
     let mut wallet = display_world::Wallet::at(&origin);
     for height in [1, 8, 16] {
@@ -138,8 +144,9 @@ async fn full_display_consumers_follow_https_and_restart_without_building() {
         builds, "0",
         "managed servers must not construct PIR runtimes"
     );
-    query_task.abort();
-    let _ = query_task.await;
+    tokio::task::block_in_place(|| drop(wallet));
+    stop.send(()).unwrap();
+    query_task.await.unwrap();
     drop(first);
     let mut restarted = manager(&first_root, &tls.origin, tls.cert.clone());
     let result = restarted.poll_once().await.unwrap();
