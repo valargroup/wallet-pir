@@ -102,10 +102,13 @@ impl State {
     }
 
     /// Drops the previous revision once its grace has ended, freeing its rows and PIR
-    /// state; queries still running on it keep their own reference.
+    /// state, and retires its recovery objects from that end; queries still running on
+    /// it keep their own reference.
     fn expire(&mut self) {
         if self.live_previous().is_none() {
-            self.previous = None;
+            if let Some((previous, until)) = self.previous.take() {
+                self.retire(Some(previous), until);
+            }
         }
     }
 
@@ -227,10 +230,7 @@ impl Publications {
         {
             return false;
         }
-        let displaced = state.current.take();
-        let until = Instant::now() + GRACE;
-        state.retire(displaced.clone(), until);
-        state.previous = displaced.map(|p| (p, until));
+        state.previous = state.current.take().map(|p| (p, Instant::now() + GRACE));
         state.current = Some(Arc::new(publication));
         true
     }
@@ -450,10 +450,6 @@ mod tests {
                 .checked_sub(Duration::from_millis(1))
                 .unwrap();
             publications.0.write().unwrap().previous.as_mut().unwrap().1 = ended;
-            // Ending the grace now moves the retained copy's expiry with it.
-            for (_, until) in publications.0.write().unwrap().retired.values_mut() {
-                *until = (*until).min(ended + retention.others);
-            }
             assert_eq!(publications.object(&paid).is_some(), kept);
         }
     }
