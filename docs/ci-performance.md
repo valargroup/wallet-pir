@@ -49,7 +49,7 @@ Expensive fixtures are organized around the guarantee being checked:
 
 | Fast coverage | Additional full qualification coverage |
 | --- | --- |
-| One Enhance HTTP lifecycle publishes through a pending commit, reconciles it, rejects malformed queries, drains its listener, and answers from reopened durable state with a fresh wallet. Both independent 67/68-record hint oracles and damaged-file checks remain. | The same lifecycle runs on the native backend. |
+| One Enhance HTTP lifecycle publishes through a pending commit, reconciles it, rejects malformed queries, drains its listener, and retrieves adjacent old/new records in one encrypted row from reopened durable state with a fresh wallet. Both independent 67/68-record hint oracles and damaged-file checks remain. | The same lifecycle runs on the native backend. |
 | Enhance tail reuse independently builds both copies and checks complete artifacts, partial hints, a nonzero B coordinate before/after growth, and the suffix with two supported 2K units in the original 4K/8K query domains. | The original boundary-crossing 4K preparation units and the complete coordinate set. |
 | Preparation failures retain cold partial-allocation cleanup and a cached backend failure that must neither reread source rows nor replace a published view. | The combined failure on the second cached unit and the larger candidate geometry. |
 | Native cache admission and built-size bounds use one supported column instance; the batched-hint oracle retains a deployed display geometry with nonzero and padded rows. | Deployed cache/build shapes and the full history/display hint geometry and occupancy combinations. |
