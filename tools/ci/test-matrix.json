@@ -149,13 +149,13 @@
   "enhance-publisher-contracts": {
     "family": "enhance",
     "targets": [
-      "native:pir-publisher:bin:enhance-pir-server",
+      "native:enhance-publisher:bin:enhance-pir-server",
       "native:enhance-publisher:doc:enhance_publisher",
       "native:enhance-publisher:lib:enhance_publisher",
       "native:pir-publisher:test:boundary_recovery_model",
       "native:pir-publisher:test:ci_hint",
       "native:pir-publisher:test:encrypted_lifecycle",
-      "native:pir-publisher:test:publisher_cli",
+      "native:enhance-publisher:test:publisher_cli",
       "native:pir-publisher:test:packing_http",
       "native:pir-publisher:test:record_layout",
       "native:pir-publisher:test:status_routes",

@@ -35,42 +35,55 @@ pub struct Config {
     pub poll: Duration,
 }
 
-/// Reports whether the host's serving listener has stopped. Publication stops
-/// with it rather than advancing state nobody serves.
-pub type ServingStopped = Box<dyn Fn() -> bool + Send + Sync>;
-
-/// One collection and publication pass per poll, after reconciling durable
-/// publication state and inventory. Inventory failures retain the registered
-/// fleet. The host schedules passes with [`pir_pipeline::supervise`].
-pub struct Ingestion {
+/// Reconcile durable publication state and inventory, then run one collection and
+/// publication pass per poll. Inventory failures retain the registered fleet.
+pub async fn run(
     config: Config,
     coordinator: Coordinator,
     journal: EnhanceJournal,
     source: Source,
-    serving_stopped: ServingStopped,
+    task: tokio::task::JoinHandle<std::io::Result<()>>,
+) -> Result<()> {
+    run_until(
+        config,
+        coordinator,
+        journal,
+        source,
+        task,
+        pir_pipeline::service::Shutdown::default(),
+    )
+    .await
 }
 
-impl Ingestion {
-    pub fn new(
-        config: Config,
-        coordinator: Coordinator,
-        journal: EnhanceJournal,
-        source: Source,
-        serving_stopped: ServingStopped,
-    ) -> Self {
-        Self {
+pub async fn run_until(
+    config: Config,
+    coordinator: Coordinator,
+    journal: EnhanceJournal,
+    source: Source,
+    task: tokio::task::JoinHandle<std::io::Result<()>>,
+    shutdown: pir_pipeline::service::Shutdown,
+) -> Result<()> {
+    let poll = config.poll;
+    pir_pipeline::supervise(
+        &mut Ingestion {
             config,
             coordinator,
             journal,
             source,
-            serving_stopped,
-        }
-    }
+            task,
+        },
+        poll,
+        shutdown.cancelled(),
+    )
+    .await
+}
 
-    /// Interval between passes.
-    pub fn poll(&self) -> Duration {
-        self.config.poll
-    }
+struct Ingestion {
+    config: Config,
+    coordinator: Coordinator,
+    journal: EnhanceJournal,
+    source: Source,
+    task: tokio::task::JoinHandle<std::io::Result<()>>,
 }
 impl pir_pipeline::Task for Ingestion {
     type Error = Box<dyn std::error::Error + Send + Sync>;
@@ -80,7 +93,7 @@ impl pir_pipeline::Task for Ingestion {
             coordinator,
             journal,
             source,
-            serving_stopped,
+            task,
         } = self;
         if let Err(error) =
             pir_pipeline::phase(Phase::Reconcile, coordinator.reconcile(), &mut ()).await
@@ -128,13 +141,13 @@ impl pir_pipeline::Task for Ingestion {
                 .await
         }
         .await;
-        if serving_stopped() {
+        if task.is_finished() {
             return Err("HTTP server stopped".into());
         }
         result
     }
     fn failed(&mut self, error: &Self::Error) -> FailurePolicy {
-        if (self.serving_stopped)() {
+        if self.task.is_finished() {
             FailurePolicy::Stop
         } else {
             tracing::error!(%error, "ingestion/publication blocked");

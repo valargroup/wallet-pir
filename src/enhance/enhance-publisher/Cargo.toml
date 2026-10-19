@@ -2,12 +2,16 @@
 name = "enhance-publisher"
 version = "0.0.1"
 edition = "2021"
-description = "Enhance PIR publication owner: chain reading, journals, durable control state, preparation, activation and recovery; pir-publisher hosts the enhance-pir-server service"
+description = "Enhance PIR publication owner: chain reading, journals, durable control state, preparation, activation and recovery; hosts the enhance-pir-server service"
 publish = false
 
 [lib]
 name = "enhance_publisher"
 path = "src/lib.rs"
+
+[[bin]]
+name = "enhance-pir-server"
+path = "src/bin/server.rs"
 
 [features]
 qualification-tests = []
@@ -25,6 +29,7 @@ enhance-query-server = { path = "../enhance-query-server" }
 pir-control = { path = "../../shared/pir-control", features = ["admission"] }
 reinspiring = { version = "=0.1.3-rc.1", optional = true }
 axum = "0.7"
+clap = { version = "4", features = ["derive", "env"] }
 hex = "0.4"
 ipir-sp = "=0.1.0-rc.7"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
@@ -35,6 +40,7 @@ thiserror = "2"
 tokio = { version = "1", features = ["full"] }
 tokio-stream = "0.1"
 tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Node reads, Enhance extraction, fees and Status chain reads, pinned to an exact
 # wallet-libraries revision.
 zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "f48b62b80ec7d9d7fb7893401435a24b189b8ec2", default-features = false, features = ["enhance", "rpc"] }

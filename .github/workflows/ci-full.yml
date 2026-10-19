@@ -430,7 +430,7 @@ jobs:
         run: |
           umask 022
           python3 tools/ci/stage.py compile:native -- cargo build --locked --release \
-            -p status-publisher -p enhance-pir-client -p enhance-pir-load-test -p pir-publisher \
+            -p enhance-publisher -p status-publisher -p enhance-pir-client -p enhance-pir-load-test -p pir-publisher \
             --bin enhance-pir-server --bin enhance-pir-load-test --bin enhance-pir-cli --bin status-pir --bin pir-publisher \
             --features enhance-pir-client/native-reinspiring,enhance-publisher/native-reinspiring,status-publisher/native-reinspiring,status-publisher/cli,enhance-pir-load-test/native-reinspiring,pir-publisher/enhance,pir-publisher/status,pir-publisher/transparent,pir-publisher/receiver,pir-publisher/native-reinspiring
           # Own invocation so `enhance` names the query server's feature, not another package's.

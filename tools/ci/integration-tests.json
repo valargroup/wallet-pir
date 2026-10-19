@@ -1,4 +1,10 @@
 {
+  "enhance-publisher": {
+    "fast": [
+      "publisher_cli"
+    ],
+    "full": []
+  },
   "enhance-query-server": {
     "fast": [],
     "full": [
@@ -76,7 +82,6 @@
       "boundary_recovery_model",
       "ci_hint",
       "lifecycle",
-      "publisher_cli",
       "record_layout",
       "status_routes"
     ],

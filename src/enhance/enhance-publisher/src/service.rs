@@ -1,12 +1,9 @@
-//! Enhance coordinator configuration. The hosts run it: `pir-publisher` owns
-//! listeners, tasks and the `enhance-pir-server` command line.
+//! Enhance coordinator application, shared by the legacy command and unified host.
 use crate::{
-    application::{load_inventory, Source},
-    control::PlacementPolicy,
-    coordinator::Coordinator,
-    ingest::EnhanceJournal,
-    zakura::ZakuraClient,
+    application::load_inventory, control::PlacementPolicy, coordinator::Coordinator,
+    ingest::EnhanceJournal, zakura::ZakuraClient,
 };
+use pir_pipeline::service::{Http, Shutdown, Tasks};
 use serde::Deserialize;
 use std::{net::SocketAddr, path::PathBuf, time::Duration};
 type Result<T, E = Box<dyn std::error::Error + Send + Sync>> = std::result::Result<T, E>;
@@ -64,33 +61,11 @@ impl Config {
         Ok(())
     }
 }
-
-/// Durable state opened for a host: staged rebuilds are adopted and control
-/// state is open, but no listener, task or chain source exists yet. The host
-/// holds the data-directory lock for the lifetime of this value.
-pub struct Opened {
-    pub coordinator: Coordinator,
-    pub listen: SocketAddr,
-    pub artifact_listen: Option<SocketAddr>,
-    source: SourceConfig,
-}
-
-struct SourceConfig {
-    application: crate::application::Config,
-    data_dir: PathBuf,
-    zakura_rpc_url: String,
-    zakura_cookie: Option<PathBuf>,
-    fixture_records: u64,
-    fixture_append_records: u64,
-    prevout_cache_outputs: usize,
-}
-
-/// Validate the configuration, bind the data directory to one source mode,
-/// adopt or reject a staged journal rebuild and open control state. Runs before
-/// any listener so serving resumes on the adopted journal. A rejected rebuild
-/// never stops startup.
-pub fn open(config: Config) -> Result<Opened> {
+pub async fn run(config: Config, http: Http<axum::Router>, shutdown: Shutdown) -> Result<()> {
     config.validate()?;
+    let _lock = pir_pipeline::service::lock(&config.data_dir)?;
+    let mut tasks = Tasks::default();
+    let failure = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let placement_policy = PlacementPolicy {
         sealed_shards: config.sealed_shards,
     };
@@ -186,65 +161,67 @@ pub fn open(config: Config) -> Result<Opened> {
     }
     let coordinator =
         Coordinator::open_with_serving(&data_dir.join("control"), groups, routers, query_ingress)?;
+    if let Some(listen) = artifact_listen {
+        let artifacts = coordinator.artifact_router();
+        let artifact = tokio::spawn(http.serve(listen, artifacts));
+        tasks.own(&artifact);
+        let failed = failure.clone();
+        let stop = shutdown.clone();
+        let watch = tokio::spawn(async move {
+            let _ = artifact.await;
+            failed.store(true, std::sync::atomic::Ordering::SeqCst);
+            stop.request();
+        });
+        tasks.own(&watch);
+        let heartbeat = coordinator.clone();
+        let heartbeat_task = tokio::spawn(async move {
+            loop {
+                heartbeat.refresh_routers().await;
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+        });
+        tasks.own(&heartbeat_task);
+    }
     if status_config.is_some() {
         return Err("configure Status as its own process".into());
     }
-    Ok(Opened {
-        coordinator,
-        listen,
-        artifact_listen,
-        source: SourceConfig {
-            application: crate::application::Config {
-                worker_config,
-                placement_policy,
-                pool_placement,
-                pool_policy,
-                frontier_replicas,
-                capacity_policy,
-                poll: Duration::from_secs(poll_seconds),
-            },
-            data_dir,
-            zakura_rpc_url,
-            zakura_cookie,
-            fixture_records,
-            fixture_append_records,
-            prevout_cache_outputs,
+    let serving = coordinator.clone();
+    let routes = serving.router();
+    let task = tokio::spawn(http.serve(listen, routes));
+    tasks.own(&task);
+    let journal = EnhanceJournal::open(&data_dir)?;
+    let rpc = zakura_cookie
+        .map(|cookie| ZakuraClient::from_cookie_file(&zakura_rpc_url, &cookie))
+        .transpose()?;
+    let prevouts = crate::zakura::Prevouts::new(prevout_cache_outputs);
+    crate::application::run_until(
+        crate::application::Config {
+            worker_config,
+            placement_policy,
+            pool_placement,
+            pool_policy,
+            frontier_replicas,
+            capacity_policy,
+            poll: Duration::from_secs(poll_seconds),
         },
-    })
-}
-
-impl Opened {
-    /// Open the record journal and the configured chain source after serving
-    /// starts; chain catch-up then stays in the poll loop.
-    pub fn into_source(
-        self,
-    ) -> Result<(
-        Coordinator,
-        crate::application::Config,
-        EnhanceJournal,
-        Source,
-    )> {
-        let Self {
-            coordinator,
-            source,
-            ..
-        } = self;
-        let journal = EnhanceJournal::open(&source.data_dir)?;
-        let rpc = source
-            .zakura_cookie
-            .map(|cookie| ZakuraClient::from_cookie_file(&source.zakura_rpc_url, &cookie))
-            .transpose()?;
-        let prevouts = crate::zakura::Prevouts::new(source.prevout_cache_outputs);
-        let source_mode = match rpc {
-            Some(rpc) => Source::Canonical {
+        coordinator,
+        journal,
+        match rpc {
+            Some(rpc) => crate::application::Source::Canonical {
                 rpc,
                 prevouts: Box::new(prevouts),
             },
-            None => Source::Fixture {
-                records: source.fixture_records,
-                append_records: source.fixture_append_records,
+            None => crate::application::Source::Fixture {
+                records: fixture_records,
+                append_records: fixture_append_records,
             },
-        };
-        Ok((coordinator, source.application, journal, source_mode))
+        },
+        task,
+        shutdown,
+    )
+    .await?;
+    if failure.load(std::sync::atomic::Ordering::SeqCst) {
+        return Err("Enhance artifact listener stopped".into());
     }
+    Ok(())
 }

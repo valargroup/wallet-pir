@@ -191,7 +191,7 @@ pub async fn run(config: Config, shutdown: Shutdown) -> Result<()> {
         };
     }
     #[cfg(feature = "enhance")]
-    product!(enhance, crate::enhance::run);
+    product!(enhance, enhance_publisher::service::run);
     #[cfg(feature = "status")]
     product!(status, status_publisher::service::run);
     #[cfg(feature = "transparent")]
