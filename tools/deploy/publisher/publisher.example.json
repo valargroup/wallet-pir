@@ -99,7 +99,7 @@
       "poll_seconds": 10,
       "batch_size": 64,
       "concurrency": 8,
-      "near_since": null,
+      "near_since": 1790640000,
       "near_poll_seconds": 60
     }
   }

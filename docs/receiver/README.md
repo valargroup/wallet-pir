@@ -96,8 +96,8 @@ looking any up. The manifest declares every set's label and size:
 - `paid`: every receiver with a payment in the publication.
 - `<provider>/recent`: every Orchard receiver a swap provider was given within the
   window the manifest declares, as a payout or refund address, in any status.
-- `<provider>/seen`: every Orchard receiver the provider was given since its feeds
-  started, which the manifest also declares, as a payout or refund address.
+- `<provider>/seen`: every Orchard receiver the provider was given since its feeds'
+  history begins, which the manifest also declares, as a payout or refund address.
   Wallets check it before issuing an address, so two devices of one seed don't
   give the provider the same one.
 
@@ -106,9 +106,11 @@ began, so a wallet can tell how current the set is. A recent window reaches back
 from that read.
 
 The indexer publishes `near-intents/recent` (24 hours) and `near-intents/seen`
-from the NEAR Intents explorer, and adds a provider's sets only once its payout
-and refund feeds have both completed a read. Wallets use the sets they recognize
-and ignore the rest, so a new provider needs no format change.
+from the NEAR Intents explorer. It adds the recent set once the payout and refund
+feeds both have live coverage, and the seen set only once both feeds' history also
+reaches that coverage without a gap ([NEAR feed history](#near-feed-history)).
+Wallets use the sets they recognize and ignore the rest, so a new provider needs no
+format change.
 
 Sets are built with `bitcoin::bip158`, as Transparent's filters are, with P = 10
 and M = 1,533 and SipHash keys from a domain-separated SHA-256 of the salt, so a
@@ -150,7 +152,7 @@ the session ID.
 | `POST /v1/receiver/query` | One encrypted row query |
 | `GET /v1/receiver/witness/:session` | Common witness file |
 | `GET /v1/receiver/filters/:session` | Filter file |
-| `GET /v1/receiver/health` | Process identity, the served session, the indexer's report and this process's NEAR reads (operators only) |
+| `GET /v1/receiver/health` | Process identity, the served session, the indexer's report, this process's NEAR reads and capacity refusal (operators only) |
 
 A query holds `RPQ1`, the session ID, a fresh 16-byte nonce, the packing key and
 the encrypted row selection. The response echoes that 52-byte header. The
@@ -213,8 +215,10 @@ for that. Logs go to standard error, filtered by `RUST_LOG`. See [the DigitalOce
 
 With a partner key in `NEAR_INTENTS_EXPLORER`, the server reads the NEAR Intents
 explorer into `providers.sqlite` and publishes the `near-intents` recent and seen
-sets; without one, publications carry no provider sets. Health's `indexer` report,
-activated with each publication, gives each feed's last read and `payouts_missing`,
+sets. Without one, publications carry no provider sets. Serving with a key requires
+`--near-since`. Health's `indexer` report, activated with each publication, gives
+each feed's last live read (`feeds`), its history (`history`, see below), the
+publication's [capacity](#capacity) and `payouts_missing`,
 completed NEAR payouts with no indexed payment: the signal that the index missed
 one or NEAR stopped paying with the zero OVK. `payouts_uncheckable` counts those
 to an Orchard receiver first seen in the last day that NEAR reported without a
@@ -224,6 +228,39 @@ parsable transaction. Payouts to other recipients are not checked.
 Health's `near.reads` gives, for each NEAR feed, when the last read this process
 completed began, or null until one completes, so unlike the report's `feeds` it
 shows that the running process's key works.
+
+### NEAR feed history
+
+Each poll first reads both feeds live: the newest swaps from the feed's cursor back
+an hour, for swaps the explorer lists late, but never more than a day, which keeps
+the recent set fresh. A live read that cannot reach back to its cursor's hour, as
+the first does or one after an outage of over a day, restarts the feed's live
+coverage there.
+
+History comes from sweeps, which walk a feed from its newest swap down to a floor,
+30 pages a feed each poll. Each page is recorded with where the next one starts, so
+a sweep resumes after a failed request or a restart and no history is too long to
+read. The first sweep backfills to `--near-since`: set it before the first one-time
+address a supported wallet issued. An earlier `--near-since` later backfills the
+difference, and a later one never shrinks the history. After that, a reconciliation
+sweep begins an hour after the last one began and rereads the week before the
+history's end, so it records swaps the explorer listed after the live reads passed
+them or that a read skipped, such as one listed without its address. A swap listed
+more than a week after its creation is missed.
+
+A feed's history is the span its completed sweeps cover without a gap, `since` to
+`through`. The report's `history` gives it for each feed, null until the first
+sweep completes, with the sweep in progress (its floor, start, the oldest creation
+time it reached and its pages). `through` is historical completeness, apart from
+the live freshness `feeds` gives. The seen set is published only once both feeds'
+history reaches their live coverage, and declares the history's start. The probe
+fails `stale_history` when either feed's `through` is more than six hours old.
+
+The stored receivers are an append-only union. Reorgs never touch
+`providers.sqlite`, later reads and corrections only add, and the database refuses
+deleting a receiver. A new backfill need not reproduce the union, since the
+explorer can drop or correct a swap, so back the file up and restore it rather than
+rebuild it.
 
 ### Serving operator-staged publications
 
@@ -264,14 +301,47 @@ arguments on the monitor host, is a `pir-monitor` service probe with an embedded
 mainnet fixture. It checks the served anchor against independent nodes, looks up a
 pinned historical payment over live encrypted PIR, checks the filter file and, with
 `--witnesses` (set as for the indexer), the witness file against the node's
-Ironwood root, then the feed's freshness and the payout report. `answer_mismatch`
-marks wrong served data, a correctness incident; `oracle_invalid` a fixture that
-fails its pin; anything else is an availability failure. `--max-lag` (default 12)
+Ironwood root, then the feed's freshness, the payout report and the feeds' history,
+and prints the indexer's capacity. `answer_mismatch` marks wrong served data, a
+correctness incident; `oracle_invalid` a fixture that fails its pin; anything else
+is an availability failure. `--max-lag` (default 12)
 must cover the indexer's `--depth` plus about ten blocks. With
 `--await-feed-reads <seconds>`, as a deploy runs it, the probe first waits for
 `near.reads` to show both feeds read and for the served publication's
-`indexer.feeds` to hold those reads, failing as `feeds_not_read` otherwise.
+`indexer.feeds` to hold those reads and its `indexer.history` to be current, failing
+as `feeds_not_read` otherwise.
 `services/receiver-indexer/src/probe.rs` documents every check.
+
+## Capacity
+
+Past any of these limits the indexer creates no publication, and the previous one
+keeps serving and goes stale. Health's `indexer.capacity` gives each publication's
+use of each (`limits`, each `used` and `max`) and a `level`: `warning` from 70% of
+any limit, `critical` from 90%.
+
+| Limit | Maximum | Set by |
+|---|---|---|
+| `records` | 458,751 records: a table starts at half occupancy, so more would need over 65,536 rows | `MAX_ROWS` in wallet-libraries |
+| `filter_bytes` | 8 MiB | `MAX_FILTERS_BYTES` in wallet-libraries |
+| `witness_bytes` | 64 MiB | `MAX_WITNESS_BYTES` in wallet-libraries |
+| `witness_commitments` | `--max-witness-commitments` (2^24) | the indexer's unit |
+
+Health's `capacity_refusal` names the limit that stopped this process's latest
+publication, with its use and maximum, until a publication succeeds: one of the
+above, or `buckets` when every salt overflowed a bucket at the maximum row count.
+A filter file over its bound fails as malformed data instead. The probe passes
+`capacity` on whatever else it finds, with a refusal making it `critical`, and
+`pir-monitor` raises `capacity_warning` and `capacity_critical` apart from
+availability, so a capacity alert neither fails the probe nor hides a failure.
+
+At `warning`, start the change that raises the limit, so it ships before
+`critical`. The first three are wallet-libraries constants, so raising one is a
+coordinated format change of wallets and servers. For `witness_commitments`,
+measure the witness build's peak memory, then raise `--max-witness-commitments`
+with the unit's `MemoryHigh` and `MemoryMax` in `receiver-pir.service.in` through a
+reviewed deploy. At `critical` or a refusal, ship that change now: wallets accept a
+publication at most 100 blocks behind their chain, about two hours. Never drop
+records, receivers or history to fit a limit.
 
 ## Wallet use
 
@@ -291,7 +361,8 @@ the rows only to answer queries.
 ## Tests
 
 `cargo test -p receiver-store` covers publications and store restart and
-rollback, including the commitment history a witness file is built from.
+rollback, including the commitment history a witness file is built from, and the
+provider store's resumable sweeps, history and append-only receivers.
 `cargo test -p receiver-pir-server` tests the HTTP service with the canonical
 library client. `cargo test -p receiver-indexer` covers indexing with synthetic
 blocks, refusal of invalid records and witness files before storing or serving,

@@ -1,21 +1,23 @@
 //! A `pir-monitor` service probe for the receiver directory, run as `receiver-directory
 //! probe` or `receiver-probe`, and a deploy's exact check. With `--await-feed-reads` it
 //! first waits for the running process to read both NEAR feeds and serve a publication
-//! of those reads (`feeds_not_read` otherwise). It then checks the publication against
-//! independent mainnet nodes, one at a time and freshest first, looks up a pinned
-//! payment over live encrypted PIR, as Transparent's canary checks one query against a
-//! pinned row, checks the witness file (with `--witnesses`) and the filter file against
-//! the manifest, then checks the NEAR feed's freshness and the indexer's payout check,
-//! which health reports on the private network. It prints one JSON line: `passed`, on
-//! failure a `category` and `detail`, and the lookup as `phase: "live_encrypted_probe"`
-//! with `queries` and `correct`. `answer_mismatch` marks served data that is wrong,
-//! which the monitor treats as a correctness incident; `oracle_invalid` a fixture that
-//! fails its pin, including an Action whose recovered receiver differs from the
-//! fixture's pinned one; anything else, such as `oracle_unavailable` when no node that
-//! reached the publication can complete the chain checks, or `payouts_uncheckable` when
-//! the indexer's report counts a recent completed payout to an Orchard receiver that
-//! NEAR gave no parsable transaction for, is an availability failure. Every response
-//! body is bounded before it is buffered.
+//! of those reads and of both feeds' history (`feeds_not_read` otherwise). It then
+//! checks the publication against independent mainnet nodes, one at a time and
+//! freshest first, looks up a pinned payment over live encrypted PIR, as Transparent's
+//! canary checks one query against a pinned row, checks the witness file (with
+//! `--witnesses`) and the filter file against the manifest, then checks the NEAR feed's
+//! freshness, the indexer's payout check and the feeds' history (`stale_history`), which
+//! health reports on the private network. It prints one JSON line: `passed`, on
+//! failure a `category` and `detail`, the lookup as `phase: "live_encrypted_probe"`
+//! with `queries` and `correct`, and the indexer's `capacity` (see `capacity`), which
+//! the monitor alerts on separately and which never fails the probe. `answer_mismatch`
+//! marks served data that is wrong, which the monitor treats as a correctness
+//! incident; `oracle_invalid` a fixture that fails its pin, including an Action whose
+//! recovered receiver differs from the fixture's pinned one; anything else, such as
+//! `oracle_unavailable` when no node that reached the publication can complete the
+//! chain checks, or `payouts_uncheckable` when the indexer's report counts a recent
+//! completed payout to an Orchard receiver that NEAR gave no parsable transaction for,
+//! is an availability failure. Every response body is bounded before it is buffered.
 use crate::{
     near::{unix_now, Feed},
     read_limited,
@@ -41,6 +43,10 @@ const MAINNET_FIXTURE: &[u8] = include_bytes!("../fixtures/mainnet-probe.json");
 
 /// The recent set's largest age that wallets still trust (`zakura-pir-receiver`).
 const MAX_RECENT_AGE_SECS: i64 = 15 * 60;
+/// The oldest end of each NEAR feed's history (health's `indexer.history`) the probe
+/// accepts. Reconciliation sweeps begin hourly and take minutes, so an older end means
+/// sweeps are failing.
+const MAX_HISTORY_AGE_SECS: i64 = 6 * 60 * 60;
 /// Bound on the health report, a few hundred bytes.
 const MAX_HEALTH_BYTES: usize = 64 * 1024;
 /// How often `--await-feed-reads` polls health.
@@ -138,6 +144,7 @@ fn bytes<const N: usize>(hex: &str) -> Option<[u8; N]> {
 
 /// Runs the probe, prints its JSON line and returns whether every check passed.
 pub async fn run(args: Args) -> bool {
+    let health_url = args.health_url.clone();
     let mut lookup = None;
     let (passed, category, detail) = match probe(args, &mut lookup).await {
         Ok(None) => (true, None, Value::Null),
@@ -150,8 +157,46 @@ pub async fn run(args: Args) -> bool {
         output["queries"] = queries.into();
         output["correct"] = (if correct { queries } else { 0 }).into();
     }
+    output["capacity"] = capacity(&health_url).await;
     println!("{output}");
     passed
+}
+
+/// The indexer's capacity from health, whatever the other checks found, for the
+/// monitor's capacity alerts: the served publication's `limits` and `level` (see the
+/// indexer's `capacity`), the `refusal` of this process's latest publication if a limit
+/// stopped it, which makes the level `critical`, and level `unknown` with the `error`
+/// when health cannot be read.
+async fn capacity(health_url: &str) -> Value {
+    let health = async {
+        let http = reqwest::Client::builder()
+            .timeout(Duration::from_secs(10))
+            .redirect(reqwest::redirect::Policy::none())
+            .build()?;
+        let response = http.get(health_url).send().await?.error_for_status()?;
+        Result::<Value>::Ok(serde_json::from_slice(
+            &read_limited(response, MAX_HEALTH_BYTES).await?,
+        )?)
+    };
+    match health.await {
+        Ok(health) => {
+            let (capacity, refusal) = (&health["indexer"]["capacity"], &health["capacity_refusal"]);
+            let level = match refusal.is_null() {
+                true => capacity["level"].clone(),
+                false => "critical".into(),
+            };
+            json!({"level": level, "limits": capacity["limits"], "refusal": refusal})
+        }
+        Err(error) => json!({"level": "unknown", "error": error.to_string()}),
+    }
+}
+
+/// Whether health's `indexer.history` shows both NEAR feeds' history complete through
+/// `fresh` or later.
+fn history_through(history: &Value, fresh: i64) -> bool {
+    [Feed::Payouts, Feed::Refunds]
+        .iter()
+        .all(|feed| history[feed.name()]["through"].as_i64() >= Some(fresh))
 }
 
 /// The failed check, or `None` when every check passes. `lookup` records the encrypted
@@ -357,9 +402,11 @@ async fn probe(args: Args, lookup: &mut Option<(u32, bool)>) -> Result<Option<Fa
 /// feeds and then the served publication's `indexer.feeds` reach the first such times
 /// seen from the same process (health's `identity.incarnation`; a restart starts over),
 /// so the probe checks a publication of the running process's reads, not an older one,
-/// and are within [`MAX_RECENT_AGE_SECS`], so its recent set is fresh. Each request is
-/// bounded by the time left of `wait`. At the deadline it fails as `feeds_not_read`
-/// with the last reads and published feeds seen and the last request error.
+/// and are within [`MAX_RECENT_AGE_SECS`], so its recent set is fresh, and its
+/// `indexer.history` is within [`MAX_HISTORY_AGE_SECS`], as after a first backfill.
+/// Each request is bounded by the time left of `wait`. At the deadline it fails as
+/// `feeds_not_read` with the last reads, published feeds and history seen and the last
+/// request error.
 async fn await_feed_reads(
     http: &reqwest::Client,
     health_url: &str,
@@ -367,7 +414,8 @@ async fn await_feed_reads(
     poll: Duration,
 ) -> Option<Failure> {
     let deadline = tokio::time::Instant::now() + wait;
-    let (mut reads, mut published, mut error) = (Value::Null, Value::Null, None);
+    let (mut reads, mut published, mut history) = (Value::Null, Value::Null, Value::Null);
+    let mut error = None;
     // Both feeds' times in a health map, if it holds both.
     let times = |map: &Value| -> Option<Vec<i64>> {
         [Feed::Payouts, Feed::Refunds]
@@ -384,7 +432,7 @@ async fn await_feed_reads(
             return Some((
                 "feeds_not_read",
                 json!({"waited_secs": wait.as_secs(), "reads": reads,
-                    "published": published, "last_error": error}),
+                    "published": published, "history": history, "last_error": error}),
             ));
         }
         // Health is not wallet data, so it is read without `fetch`, as `indexer_report` does.
@@ -397,6 +445,7 @@ async fn await_feed_reads(
             Ok(Ok(health)) => {
                 reads = health["near"]["reads"].clone();
                 published = health["indexer"]["feeds"].clone();
+                history = health["indexer"]["history"].clone();
                 let (process, current) = (&health["identity"]["incarnation"], times(&reads));
                 target = target
                     .filter(|(p, _)| p == process)
@@ -405,10 +454,12 @@ async fn await_feed_reads(
                     (&target, current, times(&published))
                 {
                     let fresh = unix_now() - MAX_RECENT_AGE_SECS;
-                    if published
-                        .iter()
-                        .zip(target)
-                        .all(|(p, t)| p >= t && *p >= fresh)
+                    let complete = history_through(&history, unix_now() - MAX_HISTORY_AGE_SECS);
+                    if complete
+                        && published
+                            .iter()
+                            .zip(target)
+                            .all(|(p, t)| p >= t && *p >= fresh)
                     {
                         return None;
                     }
@@ -587,8 +638,8 @@ async fn check_filters(
 
 /// The indexer's payout check from health, which must report serving the probed
 /// publication `id`. Otherwise the report may describe another publication, such as
-/// one rotated in since the lookup, or another service. A missing payout outranks an
-/// uncheckable one.
+/// one rotated in since the lookup, or another service. A missing payout outranks
+/// history older than [`MAX_HISTORY_AGE_SECS`], which outranks an uncheckable payout.
 async fn indexer_report(
     http: &reqwest::Client,
     health_url: &str,
@@ -606,8 +657,11 @@ async fn indexer_report(
         )));
     }
     let count = |field: &str| health["indexer"][field].as_u64();
+    let history = &health["indexer"]["history"];
+    let complete = history_through(history, unix_now() - MAX_HISTORY_AGE_SECS);
     match (count("payouts_missing"), count("payouts_uncheckable")) {
         (None, _) | (_, None) => Ok(Some(("report_unavailable", Value::Null))),
+        (Some(0), _) if !complete => Ok(Some(("stale_history", json!({"history": history})))),
         (Some(0), Some(0)) => Ok(None),
         (Some(0), Some(uncheckable)) => Ok(Some((
             "payouts_uncheckable",
@@ -1390,14 +1444,22 @@ mod tests {
         (url, asked)
     }
 
+    /// Health's `indexer.history` with both feeds' history complete through `through`.
+    fn history(through: i64) -> Value {
+        let feed = json!({"since": 1, "through": through, "sweep": null});
+        json!({"near-payouts": feed, "near-refunds": feed})
+    }
+
     /// A health body whose `near.reads` are `reads` and whose served publication's
-    /// `indexer.feeds` are `published`, each as (payouts, refunds).
+    /// `indexer.feeds` are `published`, each as (payouts, refunds), with both feeds'
+    /// history complete now.
     fn health(
         reads: (Value, Value),
         published: (Value, Value),
     ) -> (axum::http::StatusCode, String) {
         let map = |(payouts, refunds)| json!({"near-payouts": payouts, "near-refunds": refunds});
-        let health = json!({"near": {"reads": map(reads)}, "indexer": {"feeds": map(published)}});
+        let indexer = json!({"feeds": map(published), "history": history(unix_now())});
+        let health = json!({"near": {"reads": map(reads)}, "indexer": indexer});
         (axum::http::StatusCode::OK, health.to_string())
     }
 
@@ -1432,9 +1494,11 @@ mod tests {
         let (category, detail) = gate(url, 1).await.unwrap();
         assert_eq!(category, "feeds_not_read");
         let feeds = json!({"near-payouts": t, "near-refunds": null});
+        let history = detail["history"].clone();
         assert_eq!(
             detail,
-            json!({"waited_secs": 1, "reads": feeds, "published": feeds, "last_error": null})
+            json!({"waited_secs": 1, "reads": feeds, "published": feeds, "history": history,
+                "last_error": null})
         );
         // A failed request is reported after later answers, and a body without reads
         // (an older server) never passes.
@@ -1455,6 +1519,60 @@ mod tests {
             detail["last_error"].as_str().unwrap().contains("503"),
             "{detail}"
         );
+    }
+
+    /// The feed gate also waits for the served publication to hold both feeds' history
+    /// complete within [`MAX_HISTORY_AGE_SECS`], as after a first backfill.
+    #[tokio::test]
+    async fn the_feed_gate_waits_for_the_history() {
+        use std::sync::atomic::Ordering;
+        let http = reqwest::Client::new();
+        let t = unix_now();
+        let with = move |history: Value| {
+            let (status, body) = reads(json!(t), json!(t));
+            let mut body: Value = serde_json::from_str(&body).unwrap();
+            body["indexer"]["history"] = history;
+            (status, body.to_string())
+        };
+        let stale = history(t - MAX_HISTORY_AGE_SECS - 60);
+        let (url, asked) = health_route(move |n| match n {
+            0 => with(Value::Null),
+            1 => with(stale.clone()),
+            _ => with(history(t)),
+        })
+        .await;
+        let poll = Duration::from_millis(50);
+        let gate = await_feed_reads(&http, &url, Duration::from_secs(30), poll);
+        assert_eq!(gate.await, None);
+        assert_eq!(asked.load(Ordering::SeqCst), 3);
+        let (url, _) = health_route(move |_| with(Value::Null)).await;
+        let gate = await_feed_reads(&http, &url, Duration::from_secs(1), poll);
+        assert_eq!(gate.await.unwrap().0, "feeds_not_read");
+    }
+
+    /// Capacity is passed on from health whatever the probe found: the publication's
+    /// level, `critical` when the indexer reports a refusal, and `unknown` when health
+    /// cannot be read.
+    #[tokio::test]
+    async fn capacity_is_read_from_health() {
+        let limits = json!({"records": {"used": 1, "max": 2}});
+        let indexer = json!({"capacity": {"level": "warning", "limits": limits}});
+        let origin = serve(json!({"indexer": indexer, "capacity_refusal": null})).await;
+        let read = capacity(&format!("{origin}/health")).await;
+        assert_eq!(
+            read,
+            json!({"level": "warning", "limits": limits, "refusal": null})
+        );
+        let refusal = json!({"limit": "witness_bytes", "used": 3, "max": 2});
+        let origin = serve(json!({"indexer": indexer, "capacity_refusal": refusal})).await;
+        let read = capacity(&format!("{origin}/health")).await;
+        assert_eq!(
+            (&read["level"], &read["refusal"]),
+            (&json!("critical"), &refusal)
+        );
+        let origin = serve(json!({})).await;
+        let read = capacity(&format!("{origin}/large")).await;
+        assert_eq!(read["level"], "unknown");
     }
 
     /// After both reads, the feed gate also waits for the served publication's feeds to
@@ -1599,7 +1717,8 @@ mod tests {
                     .unwrap()
             }
         };
-        let indexer = |missing: u64| json!({"payouts_missing": missing, "payouts_uncheckable": 0});
+        let fresh = history(unix_now());
+        let indexer = |missing: u64| json!({"payouts_missing": missing, "payouts_uncheckable": 0, "history": fresh});
         let current = report(json!({"serving": probed, "indexer": indexer(0)}));
         assert!(current.await.is_none());
         let origin = serve(Value::Null).await;
@@ -1623,8 +1742,26 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(failure, ("answer_mismatch", json!({"payouts_missing": 2})));
+        // History older than its bound, or missing, is stale, and a missing payout
+        // outranks it.
+        let stale = history(unix_now() - MAX_HISTORY_AGE_SECS - 60);
+        for history in [stale, Value::Null] {
+            let indexer = json!({"payouts_missing": 0, "payouts_uncheckable": 1,
+                "history": history});
+            let failure = report(json!({"serving": probed, "indexer": indexer}))
+                .await
+                .unwrap();
+            assert_eq!(failure, ("stale_history", json!({"history": history})));
+            let indexer = json!({"payouts_missing": 1, "payouts_uncheckable": 0,
+                "history": history});
+            let failure = report(json!({"serving": probed, "indexer": indexer}))
+                .await
+                .unwrap();
+            assert_eq!(failure.0, "answer_mismatch");
+        }
         // A recent payout the report could not check is an availability failure.
-        let uncheckable = json!({"payouts_missing": 0, "payouts_uncheckable": 1});
+        let uncheckable = json!({"payouts_missing": 0, "payouts_uncheckable": 1,
+            "history": history(unix_now())});
         let failure = report(json!({"serving": probed, "indexer": uncheckable}))
             .await
             .unwrap();

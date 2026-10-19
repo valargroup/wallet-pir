@@ -260,9 +260,17 @@ A Caddy change touches neither the unit nor the binary, so the baseline stays va
 
 The service publishes from memory and writes no publication files; the index keeps
 only `directory.sqlite` and `providers.sqlite`. A `publications/` directory left by
-an earlier release can be deleted. Back up `providers.sqlite` with the index:
-rebuilding it means one read of every swap since `--near-since`. Logs go to the
+an earlier release can be deleted. Back up `providers.sqlite` with the index and
+restore it rather than rebuild it: its receivers are the seen set's append-only
+union, which a new backfill from `--near-since` need not reproduce. Logs go to the
 journal through `tracing`; `RUST_LOG` in the unit sets the level.
+
+A `providers.sqlite` without feed history, a new one or one an earlier release
+wrote, is backfilled from `--near-since` at 30 pages a feed each poll, and the
+seen set waits for it ([NEAR feed history](../../../docs/receiver/README.md#near-feed-history)).
+At October 2026 volume from the unit's `--near-since` that takes about an hour, and
+the exact check's `--await-feed-reads` gate waits for it, so for that deploy raise
+it to 7200 and the check's `timeout` to 7500.
 
 ## Monitoring
 

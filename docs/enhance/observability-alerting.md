@@ -436,6 +436,9 @@ The existing Enhance canary remains unchanged. A probe's `service` is one of
 `status`, `transparent`, `receiver` or `txid`; the `txid` probe runs
 `txid-quality-canary`, one private `/v2/txid` lookup checked against a pinned
 entry hash ([Transparent deployment](../transparent/deployment.md#independent-canaries-under-v2)).
+A probe whose output line holds a `capacity` object, as the receiver's does, also
+feeds the `capacity_warning` (warning) and `capacity_critical` (critical) conditions
+from its `level`, apart from availability, so they never fail the probe.
 
 The Transparent canary refuses with `oracle_invalid` whenever the service's shard
 schema differs from its fixture's, so a schema cutover fails it on every sample

@@ -5,15 +5,19 @@ use crate::{
     verify,
 };
 use pir_pipeline::{FailurePolicy, Input};
-use receiver_directory::snapshot::{Snapshot, MAX_ROWS};
+use receiver_directory::{
+    filter::MAX_FILTERS_BYTES,
+    snapshot::{Snapshot, MAX_ROWS, SLOTS},
+};
 use receiver_pir_server::{Publication, Publications};
 use receiver_store::{Config as StoreConfig, Error, ProviderStore, Store};
 use std::{
     io::Write,
     path::{Path, PathBuf},
+    sync::{Arc, Mutex},
 };
 use tracing::{info, warn};
-use zakura_receiver_crypto::witness::WitnessCache;
+use zakura_receiver_crypto::witness::{WitnessCache, MAX_WITNESS_BYTES};
 #[cfg(test)]
 use zakura_server_chain::Network;
 use zakura_server_chain::NodeClient;
@@ -22,6 +26,65 @@ pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + S
 
 /// The provider database's file in the configured data directory.
 pub const PROVIDERS: &str = "providers.sqlite";
+
+/// Records per row a new table is sized for: half its slots, so buckets rarely crowd.
+const START_OCCUPANCY: u64 = SLOTS as u64 / 2;
+/// The most records a publication holds: more would size the table past [`MAX_ROWS`].
+const MAX_RECORDS: u64 = MAX_ROWS as u64 * START_OCCUPANCY - 1;
+/// The shares of a limit at which health's `capacity` level is `warning` and
+/// `critical`. Past a limit no publication is created, so these leave time to act, as
+/// the receiver README's capacity section describes.
+const WARNING: f64 = 0.7;
+const CRITICAL: f64 = 0.9;
+
+/// Health's `indexer.capacity` for a publication: `limits`, each a limit past which no
+/// publication is created with what the publication uses of it and its maximum, and
+/// `level`, the worst of `ok`, `warning` (from [`WARNING`] of a limit) and `critical`
+/// (from [`CRITICAL`]).
+fn capacity(limits: &[(&str, u64, u64)]) -> serde_json::Value {
+    let share = limits
+        .iter()
+        .map(|&(_, used, max)| used as f64 / max as f64)
+        .fold(0.0, f64::max);
+    let level = match share {
+        s if s >= CRITICAL => "critical",
+        s if s >= WARNING => "warning",
+        _ => "ok",
+    };
+    let limits: serde_json::Map<_, _> = limits
+        .iter()
+        .map(|&(name, used, max)| (name.into(), serde_json::json!({"used": used, "max": max})))
+        .collect();
+    serde_json::json!({"level": level, "limits": limits})
+}
+
+/// The limit that stopped this process's latest publication, for health's
+/// `capacity_refusal` (`{"limit", "used", "max"}`), null once a publication is
+/// activated. Clones share it.
+#[derive(Clone, Default)]
+pub struct Refusal(Arc<Mutex<Option<serde_json::Value>>>);
+
+impl Refusal {
+    /// Records that `limit`, at `used` of `max`, stopped publication, and returns
+    /// `error`.
+    fn refuse(
+        &self,
+        limit: &str,
+        used: u64,
+        max: u64,
+        error: &str,
+    ) -> Box<dyn std::error::Error + Send + Sync> {
+        let refusal = serde_json::json!({"limit": limit, "used": used, "max": max});
+        *self.0.lock().unwrap() = Some(refusal);
+        error.into()
+    }
+
+    /// Health's `capacity_refusal` field.
+    pub fn health(&self) -> serde_json::Map<String, serde_json::Value> {
+        let refusal = self.0.lock().unwrap().clone();
+        serde_json::Map::from_iter([("capacity_refusal".into(), refusal.into())])
+    }
+}
 
 /// Collection and publication settings, independent of CLI parsing and credentials.
 pub struct Config {
@@ -55,6 +118,14 @@ struct Active {
 pub struct State {
     active: Option<Active>,
     witness_cache: WitnessCache,
+    refusal: Refusal,
+}
+
+impl State {
+    /// The refusal record health reports; see [`Refusal`].
+    pub fn refusal(&self) -> Refusal {
+        self.refusal.clone()
+    }
 }
 
 /// Poll the product refresh operation, retaining its state across source or
@@ -372,6 +443,7 @@ impl<'a> Collected<'a> {
         let State {
             active,
             witness_cache,
+            refusal,
         } = state;
         // A publication's filters and report come from one capture of the provider store,
         // so a feed read committing meanwhile cannot make them describe different states.
@@ -391,13 +463,18 @@ impl<'a> Collected<'a> {
         }
         let started = std::time::Instant::now();
         let records = store.counts()?.0;
-        // Start at half occupancy. A crowded bucket retries the salt, then grows the table.
-        let mut rows = u32::try_from((records / 7 + 1).next_power_of_two())?.max(args.min_rows);
+        if records > MAX_RECORDS {
+            let error = "directory exceeds the maximum row count; no publication created";
+            return Err(refusal.refuse("records", records, MAX_RECORDS, error));
+        }
+        // A crowded bucket retries the salt, then grows the table.
+        let mut rows =
+            u32::try_from((records / START_OCCUPANCY + 1).next_power_of_two())?.max(args.min_rows);
         let snapshot = loop {
             if rows > MAX_ROWS {
-                return Err(
-                    "directory exceeds the maximum row count; no publication created".into(),
-                );
+                let error = "every salt overflowed a bucket at the maximum row count; \
+                    no publication created";
+                return Err(refusal.refuse("buckets", records, MAX_RECORDS, error));
             }
             match store.snapshot(rows, &capture.sets) {
                 Ok(s) => break s,
@@ -425,15 +502,21 @@ impl<'a> Collected<'a> {
                 args.max_witness_commitments,
             ) {
                 Err(Error::Capacity) => {
-                    return Err(format!(
-                        "witnesses for {} commitments exceed --max-witness-commitments or the \
-                     witness file's node limit; no publication created",
-                        snapshot.manifest.end_position
-                    )
-                    .into())
+                    let used = snapshot.manifest.end_position;
+                    let error = format!(
+                        "witnesses for {used} commitments exceed --max-witness-commitments or the \
+                     witness file's node limit; no publication created"
+                    );
+                    let max = args.max_witness_commitments;
+                    return Err(refusal.refuse("witness_commitments", used, max, &error));
                 }
                 proof => proof?,
             };
+            if proof.len() > MAX_WITNESS_BYTES {
+                let (used, max) = (proof.len() as u64, MAX_WITNESS_BYTES as u64);
+                let error = "witness file exceeds its size bound; no publication created";
+                return Err(refusal.refuse("witness_bytes", used, max, error));
+            }
             log_stage("witness_prepare", started);
             info!(witness_bytes = proof.len(), "witnesses prepared");
             Some(proof)
@@ -452,7 +535,29 @@ impl<'a> Collected<'a> {
         // Ranking read the genesis before the pass, and an endpoint can be repointed.
         rpc.check_network(genesis).await?;
         let revision = hex::encode(snapshot.manifest.revision()?);
-        let summary = serde_json::json!({"revision":revision,"start_height":snapshot.manifest.start_height,
+        let mut limits = vec![
+            ("records", records, MAX_RECORDS),
+            (
+                "filter_bytes",
+                snapshot.filters.len() as u64,
+                MAX_FILTERS_BYTES as u64,
+            ),
+        ];
+        if let Some(proof) = &witnesses {
+            let commitments = snapshot.manifest.end_position;
+            limits.push((
+                "witness_bytes",
+                proof.len() as u64,
+                MAX_WITNESS_BYTES as u64,
+            ));
+            limits.push((
+                "witness_commitments",
+                commitments,
+                args.max_witness_commitments,
+            ));
+        }
+        let capacity = capacity(&limits);
+        let summary = serde_json::json!({"revision":revision,"capacity":capacity,"start_height":snapshot.manifest.start_height,
         "end_height":snapshot.manifest.end_height,"records":snapshot.manifest.records,
         "actions":snapshot.manifest.end_position-snapshot.manifest.start_position,
         "excluded_coinbase_actions":store.counts()?.1,"rows":rows,"row_bytes":snapshot.data.len(),
@@ -480,6 +585,8 @@ impl<'a> Collected<'a> {
             active,
             inputs,
             report,
+            capacity,
+            refusal: refusal.clone(),
             refresh_started,
             revision,
             summary,
@@ -503,7 +610,10 @@ struct Prepared<'a> {
     epoch: Option<u64>,
     active: &'a mut Option<Active>,
     inputs: [u8; 32],
+    /// The feed report, which [`Active`] compares. Health reports it with `capacity`.
     report: serde_json::Value,
+    capacity: serde_json::Value,
+    refusal: Refusal,
     refresh_started: std::time::Instant,
     revision: String,
     summary: serde_json::Value,
@@ -519,6 +629,8 @@ impl Prepared<'_> {
             active,
             inputs,
             report,
+            capacity,
+            refusal,
             refresh_started,
             revision,
             summary,
@@ -545,9 +657,12 @@ impl Prepared<'_> {
             return Err("chain changed during PIR preparation; retrying".into());
         }
         let anchor = (anchor.end_height, anchor.end_hash);
-        if !serving.publish(publication.with_report(report.clone()), epoch.unwrap()) {
+        let mut published = report.clone();
+        published["capacity"] = capacity;
+        if !serving.publish(publication.with_report(published), epoch.unwrap()) {
             return Err("publication invalidated during preparation; retrying".into());
         }
+        *refusal.0.lock().unwrap() = None;
         *active = Some(Active {
             anchor,
             inputs,
@@ -1328,6 +1443,85 @@ mod tests {
         // Reads committed after the capture, during preparation.
         let latest = paused.provider().read("near-payouts").unwrap().unwrap();
         assert!(latest > until.as_i64().unwrap());
+    }
+
+    /// The level is the largest share of any limit: `warning` from 70%, `critical`
+    /// from 90%, each limit reported with its use and maximum.
+    #[test]
+    fn capacity_levels_follow_the_largest_share() {
+        let level = |used| capacity(&[("a", 1, 100), ("b", used, 1_000)])["level"].clone();
+        assert_eq!(level(699), "ok");
+        assert_eq!(level(700), "warning");
+        assert_eq!(level(899), "warning");
+        assert_eq!(level(900), "critical");
+        assert_eq!(level(1_001), "critical");
+        let limits = capacity(&[("a", 1, 100)])["limits"].clone();
+        assert_eq!(limits, json!({"a": {"used": 1, "max": 100}}));
+        assert_eq!(MAX_RECORDS, 458_751);
+    }
+
+    /// Health reports each publication's use of its limits. A limit that stops a
+    /// publication is named in the refusal while the previous one keeps serving, and
+    /// the next publication clears it.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn capacity_is_reported_and_a_refusal_names_its_limit() {
+        let mut paused = Paused::new(|_| {}).await;
+        paused.refresh().await.unwrap();
+        let capacity = paused.get("health").await["indexer"]["capacity"].clone();
+        assert_eq!(capacity["level"], "ok");
+        let records = json!({"used": 0, "max": MAX_RECORDS});
+        assert_eq!(capacity["limits"]["records"], records);
+        assert!(capacity["limits"]["filter_bytes"]["used"].as_u64().unwrap() > 0);
+        assert!(capacity["limits"]["witness_bytes"].is_null());
+        let first = paused.get("init").await;
+        let height = crate::blocks::ironwood_activation() + 1;
+        let mut record = super::common::record(0, 1);
+        record.payment.height = height;
+        record.payment.block_hash = [4; 32];
+        record.payment.position = 0;
+        verify::append(
+            &mut paused.store(),
+            &receiver_store::IndexedBlock {
+                height,
+                hash: [4; 32],
+                parent: [3; 32],
+                start_position: 0,
+                end_position: 1,
+                coinbase_actions: 0,
+                commitments: vec![record.payment.cmx],
+                payments: vec![(record.receiver, record.payment)],
+            },
+        )
+        .unwrap();
+        *paused.node.tip.lock().unwrap() = u64::from(height);
+        paused
+            .node
+            .hashes
+            .lock()
+            .unwrap()
+            .insert(u64::from(height), [4; 32]);
+        (paused.args.witnesses, paused.args.max_witness_commitments) = (true, 0);
+        let error = paused.refresh().await.unwrap_err();
+        assert!(
+            error.to_string().contains("--max-witness-commitments"),
+            "{error}"
+        );
+        let refusal = json!({"limit": "witness_commitments", "used": 1, "max": 0});
+        let health = paused.state.refusal().health();
+        assert_eq!(health["capacity_refusal"], refusal);
+        assert_eq!(paused.get("init").await, first);
+        paused.args.max_witness_commitments = 1 << 24;
+        paused.refresh().await.unwrap();
+        assert!(paused.state.refusal().health()["capacity_refusal"].is_null());
+        let capacity = paused.get("health").await["indexer"]["capacity"].clone();
+        let commitments = json!({"used": 1, "max": 1 << 24});
+        assert_eq!(capacity["limits"]["witness_commitments"], commitments);
+        assert!(
+            capacity["limits"]["witness_bytes"]["used"]
+                .as_u64()
+                .unwrap()
+                > 0
+        );
     }
 
     #[test]

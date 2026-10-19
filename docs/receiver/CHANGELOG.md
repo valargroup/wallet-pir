@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- Backfill the NEAR feeds' history from `--near-since`, now required to serve with a
+  key, in sweeps that record each page and resume after a failure or restart, and
+  reconcile the last week hourly, so swaps the explorer lists late or a read skips
+  are recorded. Live reads reach back at most a day. The seen set is published only
+  once both feeds' history reaches the live reads, and declares where it begins. The
+  provider store's receivers are an append-only union. Health's report gives each
+  feed's history apart from its live reads, and the probe fails `stale_history` when
+  it ends more than six hours ago.
+- Report each publication's use of the limits past which no publication is created
+  (records, filter bytes, witness bytes and commitments) as `indexer.capacity`, with
+  a `warning` level from 70% and `critical` from 90%, and the limit behind a refused
+  publication as `capacity_refusal`. The probe passes them on, and `pir-monitor`
+  alerts on them apart from availability.
+
 - Validate records and witness proofs before writing one-shot publication files,
   including when reading an existing database; refuse invalid output before any
   files are created.

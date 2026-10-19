@@ -71,8 +71,11 @@ pub struct Config {
     /// Maximum simultaneous raw-block RPC requests.
     #[arg(long, default_value_t = 8, value_parser = clap::value_parser!(u32).range(1..=i64::from(MAX_RECEIVER_CONCURRENCY)))]
     pub concurrency: u32,
-    /// Where the NEAR feed starts on its first read, in Unix seconds; a day ago by
-    /// default. The feed runs while serving when `NEAR_INTENTS_EXPLORER` holds a key.
+    /// Where the NEAR feeds' history starts, in Unix seconds, before the first
+    /// one-time address a supported wallet issued. Sweeps backfill the history down to
+    /// it, resuming across restarts, and a later, earlier value backfills the
+    /// difference, and a later value never shrinks the history. Required while serving
+    /// with a key: the feed runs then, when `NEAR_INTENTS_EXPLORER` holds one.
     #[arg(long)]
     pub near_since: Option<i64>,
     #[arg(long, default_value_t = 60, value_parser = clap::value_parser!(u64).range(10..))]
@@ -114,6 +117,9 @@ impl Config {
         {
             return Err("witnesses and serving need history from Ironwood activation".into());
         }
+        if self.serve && self.near_key.is_some() && self.near_since.is_none() {
+            return Err("--near-since is required to serve with a NEAR key".into());
+        }
         let private = match self.bind.ip() {
             IpAddr::V4(ip) => ip.is_loopback() || ip.is_private(),
             IpAddr::V6(ip) => ip.is_loopback() || ip.is_unique_local(),
@@ -131,6 +137,9 @@ impl Config {
             || self.concurrency == 0
             || self.concurrency > MAX_RECEIVER_CONCURRENCY
             || (self.serve && self.end_height.is_some())
+            || self
+                .near_since
+                .is_some_and(|since| since > application::unix_now())
         {
             return Err("invalid receiver source, polling, or batch settings".into());
         }
@@ -172,8 +181,12 @@ pub async fn run(
     let mut tasks = pir_pipeline::service::Tasks::default();
     let reads = Reads::default();
     let app = receiver_pir_server::router_with_health(publications.clone(), {
-        let reads = reads.clone();
-        std::sync::Arc::new(move || reads.health())
+        let (reads, refusal) = (reads.clone(), state.refusal());
+        std::sync::Arc::new(move || {
+            let mut fields = reads.health();
+            fields.extend(refusal.health());
+            fields
+        })
     });
     info!(
         address = %args.bind,
@@ -187,16 +200,13 @@ pub async fn run(
         Duration::from_secs(args.poll_seconds),
     ));
     tasks.own(&guard);
-    if let Some(key) = args.near_key.clone() {
+    if let (Some(key), Some(start)) = (args.near_key.clone(), args.near_since) {
         let path = args.data_dir.join(PROVIDERS);
-        let since = args
-            .near_since
-            .unwrap_or_else(|| application::unix_now() - crate::near::RECENT_SECS);
         let poll = Duration::from_secs(args.near_poll_seconds);
         let mut explorer = Explorer::new(key)?;
         let provider = tokio::spawn(async move {
             loop {
-                crate::near::poll(&mut explorer, &path, since, &reads).await;
+                crate::near::poll(&mut explorer, &path, start, &reads).await;
                 tokio::time::sleep(poll).await;
             }
         });

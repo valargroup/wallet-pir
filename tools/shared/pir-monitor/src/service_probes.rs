@@ -28,6 +28,9 @@ pub struct Probe {
     pub consecutive_failures: u64,
     pub consecutive_slow: u64,
     pub category: String,
+    /// The level of the last sample's `capacity`, which only the receiver probe reports:
+    /// `ok`, `warning` or `critical`, empty when unknown.
+    pub capacity: String,
 }
 pub type Shared = Arc<RwLock<BTreeMap<String, Probe>>>;
 /// Services a probe may report: Status, the v12 Transparent history, the receiver
@@ -71,10 +74,10 @@ pub fn start() -> Result<Shared> {
                 let result =
                     tokio::time::timeout(Duration::from_secs(config.timeout_seconds), run(&config))
                         .await;
-                let category = match result {
-                    Ok(Ok(c)) => c,
-                    Ok(Err(_)) => "probe_unavailable".into(),
-                    Err(_) => "deadline".into(),
+                let (category, capacity) = match result {
+                    Ok(Ok(sample)) => sample,
+                    Ok(Err(_)) => ("probe_unavailable".into(), String::new()),
+                    Err(_) => ("deadline".into(), String::new()),
                 };
                 let mut data = output.write().await;
                 let value = data.get_mut(&config.service).unwrap();
@@ -93,12 +96,15 @@ pub fn start() -> Result<Shared> {
                     0
                 };
                 value.category = category;
+                value.capacity = capacity;
             }
         });
     }
     Ok(shared)
 }
-async fn run(config: &Config) -> Result<String> {
+/// Runs one probe and returns its failure category, empty when it passed, and the
+/// level of the `capacity` it reported, empty when it reported none.
+async fn run(config: &Config) -> Result<(String, String)> {
     use tokio::io::AsyncReadExt;
     let mut child = tokio::process::Command::new(&config.command[0])
         .args(&config.command[1..])
@@ -116,7 +122,7 @@ async fn run(config: &Config) -> Result<String> {
     let (out, err) = tokio::try_join!(read(Box::new(stdout)), read(Box::new(stderr)))?;
     if out.len() > 65536 || err.len() > 65536 {
         child.kill().await?;
-        return Ok("invalid_probe_output".into());
+        return Ok(("invalid_probe_output".into(), String::new()));
     }
     let status = child.wait().await?;
     let text = String::from_utf8_lossy(&out);
@@ -124,12 +130,19 @@ async fn run(config: &Config) -> Result<String> {
         .lines()
         .rev()
         .find_map(|line| serde_json::from_str::<serde_json::Value>(line).ok());
+    let capacity = value
+        .as_ref()
+        .and_then(|v| v["capacity"]["level"].as_str())
+        .filter(|level| ["ok", "warning", "critical"].contains(level))
+        .unwrap_or_default()
+        .to_owned();
+    let category = |category: &str| Ok((category.to_owned(), capacity.clone()));
     if let Some(v) = value {
         if v["category"].as_str() == Some("answer_mismatch") {
-            return Ok("answer_mismatch".into());
+            return category("answer_mismatch");
         }
         if v["category"].as_str() == Some("oracle_invalid") {
-            return Ok("oracle_invalid".into());
+            return category("oracle_invalid");
         }
         if status.success()
             && (v["passed"].as_bool() == Some(true)
@@ -137,18 +150,17 @@ async fn run(config: &Config) -> Result<String> {
                     && v["correct"].as_u64() == v["queries"].as_u64()
                     && v["correct"].as_u64().is_some_and(|n| n > 0)))
         {
-            return Ok(String::new());
+            return category("");
         }
     }
     let err = String::from_utf8_lossy(&err);
-    Ok(if err.contains("differs from canonical block oracle") {
+    category(if err.contains("differs from canonical block oracle") {
         "answer_mismatch"
     } else if err.contains("not canonical") || err.contains("raw block hash differs") {
         "oracle_invalid"
     } else {
         "request_failed"
-    }
-    .into())
+    })
 }
 pub fn conditions(probes: &BTreeMap<String, Probe>, now: u64) -> Vec<Condition> {
     let mut result = Vec::new();
@@ -217,6 +229,35 @@ pub fn conditions(probes: &BTreeMap<String, Probe>, now: u64) -> Vec<Condition> 
                 sample,
             });
         }
+        // Capacity is known only from a fresh sample that reported it. It never fails
+        // the probe, so the other conditions stay meaningful while it fires.
+        let capacity = (fresh && !p.capacity.is_empty()).then_some(p.capacity.as_str());
+        for (name, levels, severity, threshold) in [
+            (
+                "capacity_warning",
+                &["warning", "critical"][..],
+                "warning",
+                "every publication limit below 70% of its maximum",
+            ),
+            (
+                "capacity_critical",
+                &["critical"][..],
+                "critical",
+                "every publication limit below 90% of its maximum, and no refusal",
+            ),
+        ] {
+            result.push(Condition {
+                retired: false,
+                key: format!("service_canary_{service}_{name}"),
+                resource: service.clone(),
+                severity: severity.into(),
+                firing: capacity.map(|level| levels.contains(&level)),
+                observed: format!("capacity {}", capacity.unwrap_or("unknown")),
+                threshold: threshold.into(),
+                hold_seconds: 0,
+                sample: p.sampled_at,
+            });
+        }
     }
     result
 }
@@ -266,6 +307,36 @@ mod tests {
         assert_eq!(correctness.firing, Some(true));
         assert_eq!(correctness.resource, "txid");
     }
+    /// The receiver's capacity level fires its own warning and critical conditions
+    /// whether or not the probe passed, and an unknown level changes neither.
+    #[test]
+    fn capacity_levels_fire_their_own_conditions() {
+        let firing = |capacity: &str, category: &str| {
+            let data = BTreeMap::from([(
+                "receiver".to_string(),
+                Probe {
+                    sampled_at: 100,
+                    category: category.into(),
+                    capacity: capacity.into(),
+                    ..Default::default()
+                },
+            )]);
+            let c = conditions(&data, 110);
+            let firing = |name: &str| {
+                let key = format!("service_canary_receiver_{name}");
+                c.iter().find(|c| c.key == key).unwrap().firing
+            };
+            (firing("capacity_warning"), firing("capacity_critical"))
+        };
+        assert_eq!(firing("ok", ""), (Some(false), Some(false)));
+        assert_eq!(firing("warning", ""), (Some(true), Some(false)));
+        assert_eq!(
+            firing("critical", "stale_publication"),
+            (Some(true), Some(true))
+        );
+        assert_eq!(firing("", "deadline"), (None, None));
+    }
+
     #[test]
     fn unavailable_oracle_cannot_recover_correctness_incident() {
         let data = BTreeMap::from([(

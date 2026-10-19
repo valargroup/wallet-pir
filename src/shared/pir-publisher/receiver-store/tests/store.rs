@@ -138,10 +138,11 @@ fn provider_store_keeps_latest_times_and_never_rewinds_its_cursor() {
     assert_eq!(store.read("near-payouts").unwrap(), Some(700));
 }
 
-/// Only a feed's first read sets its start. A read that followed the cursor, before
-/// or after a reopen, passes no start and never moves it.
+/// Only a read that starts a feed's live coverage sets its start. A read that followed
+/// the cursor, before or after a reopen, passes no start and never moves it. One that
+/// restarts the coverage moves it with its cursor, but a stale one cannot.
 #[test]
-fn only_a_first_read_sets_a_feed_start() {
+fn only_a_read_that_starts_coverage_sets_a_feed_start() {
     use receiver_store::ProviderStore;
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("providers.sqlite");
@@ -169,6 +170,124 @@ fn only_a_first_read_sets_a_feed_start() {
     for cursor in [300, 900] {
         store.record("full", None, &[], &[], cursor, 1_000).unwrap();
         assert_eq!(store.started("full").unwrap(), Some(500));
+    }
+    store.record("full", Some(400), &[], &[], 800, 900).unwrap();
+    assert_eq!(store.started("full").unwrap(), Some(500));
+    store
+        .record("full", Some(950), &[], &[], 1_000, 1_100)
+        .unwrap();
+    assert_eq!(store.started("full").unwrap(), Some(950));
+}
+
+/// The provider's receivers are an append-only union: later reads and sweeps without a
+/// receiver, a correction that gives a swap another address, a sweep that replaces the
+/// history and a reopen all keep it, and the database refuses deleting a receiver or
+/// changing its identity.
+#[test]
+fn provider_receivers_are_an_append_only_union() {
+    use receiver_store::ProviderStore;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("providers.sqlite");
+    let mut store = ProviderStore::open(&path).unwrap();
+    let (first, corrected) = (receiver(), other_receiver());
+    store
+        .record("near-refunds", Some(10), &[(first, false, 50)], &[], 50, 60)
+        .unwrap();
+    store.begin_sweep("near-refunds", 0, 70).unwrap();
+    // The swap's refund address, corrected.
+    let page = [(corrected, false, 50)];
+    store
+        .sweep_page("near-refunds", 70, &page, &[], Some(40), None)
+        .unwrap();
+    store
+        .record("near-refunds", None, &[], &[], 90, 100)
+        .unwrap();
+    // A sweep that leaves a gap replaces the history, but no receiver.
+    store.begin_sweep("near-refunds", 500, 600).unwrap();
+    store
+        .sweep_page("near-refunds", 600, &[], &[], None, None)
+        .unwrap();
+    assert_eq!(store.history("near-refunds").unwrap(), Some((500, 600)));
+    drop(store);
+    let store = ProviderStore::open(&path).unwrap();
+    let union = |store: &ProviderStore| {
+        let mut seen = store.sets(0).unwrap().1;
+        seen.sort();
+        seen
+    };
+    let mut expected = vec![first, corrected];
+    expected.sort();
+    assert_eq!(union(&store), expected);
+    let db = rusqlite::Connection::open(&path).unwrap();
+    for change in [
+        "DELETE FROM receivers",
+        "UPDATE receivers SET receiver=zeroblob(43)",
+        "UPDATE receivers SET payout=1",
+    ] {
+        let error = db.execute(change, []).unwrap_err().to_string();
+        assert!(error.contains("append-only"), "{change}: {error}");
+    }
+    assert_eq!(union(&store), expected);
+}
+
+/// A sweep is recorded page by page and resumes from its last page after a reopen. One
+/// that reaches into the history extends it, and a page of any other sweep, a second
+/// sweep while one runs, or a floor after the start is refused without recording.
+#[test]
+fn sweeps_resume_and_extend_the_history() {
+    use receiver_store::{ProviderStore, Sweep};
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("providers.sqlite");
+    let mut store = ProviderStore::open(&path).unwrap();
+    let feed = "near-payouts";
+    assert!(matches!(
+        store.begin_sweep(feed, 200, 100),
+        Err(Error::Malformed)
+    ));
+    let begun = store.begin_sweep(feed, 100, 1_000).unwrap();
+    assert!(matches!(
+        store.begin_sweep(feed, 0, 2_000),
+        Err(Error::Coverage)
+    ));
+    let next = ("d1".to_owned(), None);
+    store
+        .sweep_page(feed, 1_000, &[], &[], Some(700), Some(&next))
+        .unwrap();
+    let after = ("d2".to_owned(), Some("memo".to_owned()));
+    store
+        .sweep_page(feed, 1_000, &[], &[], Some(800), Some(&after))
+        .unwrap();
+    let payout = [(receiver(), true, 500)];
+    assert!(matches!(
+        store.sweep_page(feed, 999, &payout, &[], None, None),
+        Err(Error::Coverage)
+    ));
+    drop(store);
+    let mut store = ProviderStore::open(&path).unwrap();
+    let expected = Sweep {
+        after: Some(after),
+        reached: Some(700),
+        pages: 2,
+        ..begun
+    };
+    assert_eq!(store.sweep(feed).unwrap(), Some(expected));
+    assert_eq!(store.history(feed).unwrap(), None);
+    assert!(store.sets(0).unwrap().1.is_empty());
+    store
+        .sweep_page(feed, 1_000, &payout, &[], Some(90), None)
+        .unwrap();
+    assert_eq!(store.sweep(feed).unwrap(), None);
+    assert_eq!(store.history(feed).unwrap(), Some((100, 1_000)));
+    assert_eq!(store.sets(0).unwrap().1, [receiver()]);
+    // Overlapping, then adjoining at the end, then reaching earlier.
+    for ((floor, began), history) in [
+        ((500, 2_000), (100, 2_000)),
+        ((2_000, 3_000), (100, 3_000)),
+        ((50, 3_500), (50, 3_500)),
+    ] {
+        store.begin_sweep(feed, floor, began).unwrap();
+        store.sweep_page(feed, began, &[], &[], None, None).unwrap();
+        assert_eq!(store.history(feed).unwrap(), Some(history));
     }
 }
 

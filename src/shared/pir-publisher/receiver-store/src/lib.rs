@@ -404,15 +404,37 @@ impl Store {
 }
 /// Receivers a swap provider was given, for the recent and seen filters. It is kept
 /// apart from chain coverage: the provider's data is not chain data and survives rewinds.
+/// Its receivers are an append-only union: no rewind, correction, later read or restart
+/// removes one, and the database refuses deleting a receiver or changing its identity.
 pub struct ProviderStore {
     db: Connection,
+}
+
+/// Where a feed's next page starts: the deposit address and memo of the last swap read,
+/// after which the explorer continues.
+pub type Token = (String, Option<String>);
+
+/// A walk of a feed from its newest swap down to `floor`, recorded page by page so it
+/// resumes where it stopped; see [`ProviderStore::sweep_page`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Sweep {
+    /// The oldest creation time it covers.
+    pub floor: i64,
+    /// When it began, the newest creation time it covers.
+    pub began: i64,
+    /// Where its next page starts, `None` before its first.
+    pub after: Option<Token>,
+    /// The oldest creation time its pages reached.
+    pub reached: Option<i64>,
+    /// The pages it recorded.
+    pub pages: u64,
 }
 
 impl ProviderStore {
     /// Opens or creates the provider database. Earlier development schemas are not
     /// migrated: the indexer keeps this one in `providers.sqlite` and ignores the
-    /// `provider.sqlite` of earlier builds. Deleting `providers.sqlite` rebuilds it
-    /// from `--near-since`.
+    /// `provider.sqlite` of earlier builds. Deleting `providers.sqlite` loses the
+    /// receiver union, which a new read of the provider need not reproduce.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, Error> {
         let db = Connection::open(path)?;
         db.busy_timeout(std::time::Duration::from_secs(5))?;
@@ -425,51 +447,155 @@ impl ProviderStore {
                 cursor INTEGER NOT NULL, read_at INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS payouts (receiver BLOB NOT NULL CHECK(length(receiver)=43),
                 txid BLOB NOT NULL CHECK(length(txid)=32), seen_at INTEGER NOT NULL,
-                PRIMARY KEY(receiver,txid)) WITHOUT ROWID;",
+                PRIMARY KEY(receiver,txid)) WITHOUT ROWID;
+            CREATE TABLE IF NOT EXISTS history (feed TEXT PRIMARY KEY, since INTEGER NOT NULL,
+                through INTEGER NOT NULL, CHECK(since<=through));
+            CREATE TABLE IF NOT EXISTS sweeps (feed TEXT PRIMARY KEY, floor INTEGER NOT NULL,
+                began INTEGER NOT NULL, after TEXT, memo TEXT, reached INTEGER,
+                pages INTEGER NOT NULL, CHECK(floor<=began));
+            CREATE TRIGGER IF NOT EXISTS receivers_kept BEFORE DELETE ON receivers
+                BEGIN SELECT RAISE(ABORT, 'provider receivers are append-only'); END;
+            CREATE TRIGGER IF NOT EXISTS receivers_fixed BEFORE UPDATE OF receiver, payout ON receivers
+                BEGIN SELECT RAISE(ABORT, 'provider receivers are append-only'); END;",
         )?;
         Ok(Self { db })
     }
 
-    /// Records one complete read of `feed` that began at `read_at`, atomically: the
-    /// receivers from swaps it created up to `cursor`, `true` marking a payout address,
-    /// each with its swap's creation time; the completed payouts it saw, each a payout
-    /// receiver, the transaction (protocol byte order) that paid it and when the read
-    /// saw it complete; and, for the feed's first read, `initial_since`, where it
-    /// began. A receiver keeps its latest time and a payout its earliest. The cursor and
-    /// read time move as one pair and never backwards, so a stale read cannot make the
-    /// feed look fresher.
+    /// Records one complete live read of `feed` that began at `read_at`, atomically:
+    /// the receivers from swaps it created up to `cursor` and the completed payouts it
+    /// saw (see `insert`), and, when the read starts the feed's continuous live
+    /// coverage, `started`, where it began. The cursor, read time and any new start move
+    /// together and never backwards, so a stale read cannot make the feed look fresher.
     pub fn record(
         &mut self,
         feed: &str,
-        initial_since: Option<i64>,
+        started: Option<i64>,
         receivers: &[(ReceiverBytes, bool, i64)],
         completions: &[(ReceiverBytes, Hash, i64)],
         cursor: i64,
         read_at: i64,
     ) -> Result<(), Error> {
         let tx = self.db.transaction()?;
-        for (receiver, payout, seen_at) in receivers {
-            tx.execute(
-                "INSERT INTO receivers VALUES (?1,?2,?3) ON CONFLICT(receiver,payout)
-                 DO UPDATE SET seen_at=MAX(seen_at,excluded.seen_at)",
-                params![receiver.as_slice(), payout, seen_at],
-            )?;
-        }
+        insert(&tx, receivers, completions)?;
         tx.execute(
             "INSERT INTO feeds VALUES (?1,?2,?3,?4) ON CONFLICT(feed)
-             DO UPDATE SET cursor=excluded.cursor, read_at=excluded.read_at
+             DO UPDATE SET cursor=excluded.cursor, read_at=excluded.read_at,
+                started_at=COALESCE(excluded.started_at,started_at)
              WHERE excluded.cursor>cursor OR (excluded.cursor=cursor AND excluded.read_at>read_at)",
-            params![feed, initial_since, cursor, read_at],
+            params![feed, started, cursor, read_at],
         )?;
-        for (receiver, txid, seen_at) in completions {
-            tx.execute(
-                "INSERT INTO payouts VALUES (?1,?2,?3) ON CONFLICT(receiver,txid)
-                 DO UPDATE SET seen_at=MIN(seen_at,excluded.seen_at)",
-                params![receiver.as_slice(), txid.as_slice(), seen_at],
-            )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// `feed`'s sweep in progress, if any.
+    pub fn sweep(&self, feed: &str) -> Result<Option<Sweep>, Error> {
+        Ok(self
+            .db
+            .query_row(
+                "SELECT floor,began,after,memo,reached,pages FROM sweeps WHERE feed=?1",
+                [feed],
+                |r| {
+                    let (after, memo): (Option<String>, Option<String>) = (r.get(2)?, r.get(3)?);
+                    Ok(Sweep {
+                        floor: r.get(0)?,
+                        began: r.get(1)?,
+                        after: after.map(|address| (address, memo)),
+                        reached: r.get(4)?,
+                        pages: r.get(5)?,
+                    })
+                },
+            )
+            .optional()?)
+    }
+
+    /// Begins a sweep of `feed` at `began` down to `floor`, which must not follow it.
+    /// A feed has at most one sweep: beginning another while one runs is
+    /// [`Error::Coverage`].
+    pub fn begin_sweep(&mut self, feed: &str, floor: i64, began: i64) -> Result<Sweep, Error> {
+        if floor > began {
+            return Err(Error::Malformed);
+        }
+        let inserted = self.db.execute(
+            "INSERT OR IGNORE INTO sweeps VALUES (?1,?2,?3,NULL,NULL,NULL,0)",
+            params![feed, floor, began],
+        )?;
+        if inserted == 0 {
+            return Err(Error::Coverage);
+        }
+        Ok(Sweep {
+            floor,
+            began,
+            after: None,
+            reached: None,
+            pages: 0,
+        })
+    }
+
+    /// Records one page of `feed`'s sweep that began at `began`, atomically: its
+    /// receivers and completed payouts (see `insert`), the oldest creation time it
+    /// reached, and `next`, where the following page starts. A page with no `next`
+    /// ends the sweep, which extends `feed`'s history (see [`Self::history`]) and is
+    /// removed. A page of another sweep than the one in progress is [`Error::Coverage`]
+    /// and records nothing.
+    pub fn sweep_page(
+        &mut self,
+        feed: &str,
+        began: i64,
+        receivers: &[(ReceiverBytes, bool, i64)],
+        completions: &[(ReceiverBytes, Hash, i64)],
+        reached: Option<i64>,
+        next: Option<&Token>,
+    ) -> Result<(), Error> {
+        let tx = self.db.transaction()?;
+        let floor: Option<i64> = tx
+            .query_row(
+                "SELECT floor FROM sweeps WHERE feed=?1 AND began=?2",
+                params![feed, began],
+                |r| r.get(0),
+            )
+            .optional()?;
+        let Some(floor) = floor else {
+            return Err(Error::Coverage);
+        };
+        insert(&tx, receivers, completions)?;
+        match next {
+            Some((address, memo)) => {
+                tx.execute(
+                    "UPDATE sweeps SET after=?2, memo=?3, pages=pages+1,
+                        reached=MIN(COALESCE(reached,?4),COALESCE(?4,reached)) WHERE feed=?1",
+                    params![feed, address, memo, reached],
+                )?;
+            }
+            None => {
+                // A sweep that reaches into the history extends it. One that would leave
+                // a gap replaces it, so the history never claims a span no sweep read.
+                tx.execute(
+                    "INSERT INTO history VALUES (?1,?2,?3) ON CONFLICT(feed) DO UPDATE SET
+                        since=CASE WHEN excluded.since<=through AND excluded.through>=since
+                            THEN MIN(since,excluded.since) ELSE excluded.since END,
+                        through=CASE WHEN excluded.since<=through AND excluded.through>=since
+                            THEN MAX(through,excluded.through) ELSE excluded.through END",
+                    params![feed, floor, began],
+                )?;
+                tx.execute("DELETE FROM sweeps WHERE feed=?1", [feed])?;
+            }
         }
         tx.commit()?;
         Ok(())
+    }
+
+    /// The creation-time span `(since, through)` over which `feed`'s completed sweeps
+    /// read every swap the provider listed by then, without a gap, if one completed.
+    pub fn history(&self, feed: &str) -> Result<Option<(i64, i64)>, Error> {
+        Ok(self
+            .db
+            .query_row(
+                "SELECT since,through FROM history WHERE feed=?1",
+                [feed],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?)
     }
 
     /// Runs `read` in one read transaction, so every query it makes sees the same
@@ -502,7 +628,8 @@ impl ProviderStore {
         .collect()
     }
 
-    /// The creation time from which `feed` first read swaps, if it ever started.
+    /// The creation time from which `feed`'s continuous live coverage began, if it
+    /// started; see [`Self::record`].
     pub fn started(&self, feed: &str) -> Result<Option<i64>, Error> {
         self.feed(feed, "started_at")
     }
@@ -548,6 +675,32 @@ impl ProviderStore {
             read("SELECT DISTINCT receiver FROM receivers", &[])?,
         ))
     }
+}
+
+/// Inserts the receivers a provider was given, `true` marking a payout address, each
+/// with its swap's creation time, and the completed payouts a read saw, each a payout
+/// receiver, the transaction (protocol byte order) that paid it and when the read saw it
+/// complete. A receiver keeps its latest time and a payout its earliest.
+fn insert(
+    tx: &rusqlite::Transaction<'_>,
+    receivers: &[(ReceiverBytes, bool, i64)],
+    completions: &[(ReceiverBytes, Hash, i64)],
+) -> Result<(), Error> {
+    for (receiver, payout, seen_at) in receivers {
+        tx.execute(
+            "INSERT INTO receivers VALUES (?1,?2,?3) ON CONFLICT(receiver,payout)
+             DO UPDATE SET seen_at=MAX(seen_at,excluded.seen_at)",
+            params![receiver.as_slice(), payout, seen_at],
+        )?;
+    }
+    for (receiver, txid, seen_at) in completions {
+        tx.execute(
+            "INSERT INTO payouts VALUES (?1,?2,?3) ON CONFLICT(receiver,txid)
+             DO UPDATE SET seen_at=MIN(seen_at,excluded.seen_at)",
+            params![receiver.as_slice(), txid.as_slice(), seen_at],
+        )?;
+    }
+    Ok(())
 }
 
 /// The anchor hash first, so an uncrowded publication keeps its earlier salt.
