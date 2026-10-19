@@ -29,11 +29,12 @@ the operation waits until that worker reports the queue drained.
 import hashlib
 import json
 import os
+import re
 import shlex
 import time
+from pathlib import Path
 
-from wallet_pir_ops import durable
-from wallet_pir_ops.deploy import descriptors, units
+from wallet_pir_ops.deploy import units
 from wallet_pir_ops.deploy.engine import DeployError, file_sha256, mutation_fence
 from wallet_pir_ops.deploy.remote import production_lock
 from wallet_pir_ops.deploy.transaction import FINAL, Journal
@@ -52,21 +53,14 @@ COMPONENT_KEYS = {'host', 'unit', 'unit_files_sha256', 'wrapper_sha256', 'runnin
                   'environment'}
 VERIFY_SECONDS = 180
 TEST_SECONDS = 300
-# Read-only: each family's last evaluated mode, written by every evaluation.
-MODE_QUERY = ("import json,sqlite3,sys;d=sqlite3.connect('file:'+sys.argv[1]+'?mode=ro',uri=True);"
-              "print(json.dumps(dict(d.execute(\"SELECT key,value FROM metadata WHERE key LIKE 'mode%'\"))))")
-# Read-only and bounded: monitor-status bodies list every incident and can exceed the
-# helper's HTTP bound, so the host parses its own loopback response and returns only
-# these small fields. A delivery failure is reported as present or absent, never as
-# its text, which can carry the webhook URL.
-STATUS_QUERY = ("import json,sys,urllib.request\n"
-                "try:\n"
-                " d=json.load(urllib.request.urlopen(sys.argv[1],timeout=10));v=d.get('delivery') or {}\n"
-                " print(json.dumps({'progress_ok':d.get('progress_ok'),'evaluated_at':d.get('evaluated_at'),"
-                "'delivery':{'configured':v.get('configured'),'pending':v.get('pending'),"
-                "'last_success':v.get('last_success'),'failure':bool(v.get('failure'))}}))\n"
-                "except Exception as e:\n"
-                " print(json.dumps({'error':type(e).__name__}));sys.exit(1)\n")
+UNITS = {'apm': 'pir-apm.service', 'monitor': 'pir-monitor.service'}
+SERVICES = ('transparent', 'txid')
+# Settings the running process must hold for the request's paths to be its own.
+BINDINGS = {'apm': {'state_path': ('PIR_APM_STATE_PATH', None), 'listen': ('PIR_APM_LISTEN', '127.0.0.1:3002')},
+            'monitor': {'state_path': ('PIR_MONITOR_STATE_PATH', None), 'listen': ('PIR_MONITOR_LISTEN', None)}}
+SHADOW_PORT = 3092
+SHADOW_SECONDS = 120
+PROBE_SOURCE = (Path(__file__).with_name('alert_host_probe.py')).read_text()
 
 
 def require(condition, message):
@@ -75,7 +69,6 @@ def require(condition, message):
 
 
 def is_sha256(value):
-    import re
     return isinstance(value, str) and re.fullmatch(SHA256, value) is not None
 
 
@@ -100,8 +93,7 @@ def validate(request):
             continue
         require(all(is_sha256(component[k]) for k in ('unit_files_sha256', 'wrapper_sha256', 'running_sha256')),
                 '%s digests are 64 lowercase hex digits' % name)
-        require(isinstance(component['unit'], str) and descriptors.UNIT.match(component['unit']),
-                '%s.unit is a service' % name)
+        require(component['unit'] == UNITS[name], '%s.unit must be %s' % (name, UNITS[name]))
         require(isinstance(component['host'], str) and component['host'], '%s.host is an inventory host' % name)
         require(isinstance(component['state_path'], str) and component['state_path'].startswith('/'),
                 '%s.state_path is absolute' % name)
@@ -112,14 +104,15 @@ def validate(request):
     release = apm['release']
     require(isinstance(release, dict) and set(release) == {'git_sha', 'binary_sha256'}
             and is_sha256(release['binary_sha256']) and isinstance(release['git_sha'], str)
-            and len(release['git_sha']) == 40, 'apm.release is {git_sha (40 hex), binary_sha256}')
+            and re.fullmatch('[0-9a-f]{40}', release['git_sha']) is not None,
+            'apm.release is {git_sha (40 lowercase hex), binary_sha256}')
     config = apm['config']
     require(isinstance(config, dict) and set(config) == {'path', 'previous_sha256', 'alert_modes'}
             and config['path'].startswith('/') and is_sha256(config['previous_sha256']),
             'apm.config is {path, previous_sha256, alert_modes}')
     modes = config['alert_modes']
-    require(isinstance(modes, dict) and modes and all(m in MODES for m in modes.values()),
-            'apm.config.alert_modes maps service names to shadow or active')
+    require(isinstance(modes, dict) and modes and set(modes) <= set(SERVICES) and all(m in MODES for m in modes.values()),
+            'apm.config.alert_modes maps only %s to shadow or active' % list(SERVICES))
     require(monitor is None or monitor['service_alert_mode'] in MODES, 'monitor.service_alert_mode is shadow or active')
     return request
 
@@ -163,26 +156,32 @@ def monitor_tool(sha):
     return '%s/%s/pir-apm' % (MONITOR_TOOLS, sha)
 
 
+def host_probe(ex, host, *args, timeout=30):
+    """Run one `alert_host_probe` command on `host`; its small result, or None when it failed."""
+    try:
+        code, output = ex.run(host, ['/usr/bin/python3', '-c', PROBE_SOURCE, *map(str, args)], timeout)
+        reply = json.loads(output.strip().splitlines()[-1])
+    except Exception:  # an unreachable host or unreadable reply is unknown, never healthy
+        return None
+    return reply.get('result') if code == 0 and isinstance(reply, dict) and reply.get('ok') else None
+
+
 def running_modes(ex, host, state_path):
     """Each family's last evaluated mode from a service's own incident database, or None."""
-    try:
-        code, output = ex.run(host, ['/usr/bin/python3', '-c', MODE_QUERY, state_path], 30)
-        modes = json.loads(output.strip().splitlines()[-1]) if code == 0 else None
-    except Exception:  # an unreachable host or unreadable database is reported as unknown
-        modes = None
+    modes = host_probe(ex, host, 'modes', state_path)
     return modes if isinstance(modes, dict) else None
 
 
 def monitor_status(ex, host, listen):
-    """A bounded summary of the running service's `/monitor-status`, or None when unreachable or invalid."""
-    try:
-        code, output = ex.run(host, ['/usr/bin/python3', '-c', STATUS_QUERY, 'http://%s/monitor-status' % listen], 30)
-        document = json.loads(output.strip().splitlines()[-1]) if code == 0 else None
-    except Exception:  # unreachable or invalid is reported as unknown, never as healthy
-        document = None
-    if not isinstance(document, dict) or not isinstance(document.get('delivery'), dict):
-        return None
-    return document
+    """A bounded summary of the running service's `/monitor-status`, or None when unreachable, oversized or invalid."""
+    status = host_probe(ex, host, 'status', 'http://%s/monitor-status' % listen)
+    return status if isinstance(status, dict) and isinstance(status.get('delivery'), dict) else None
+
+
+def healthy(status):
+    """Progressing evaluation, working storage and configured, failure-free delivery."""
+    return (status is not None and status.get('progress_ok') is True and not status.get('storage_error')
+            and status['delivery'].get('configured') is True and status['delivery'].get('failure') is False)
 
 
 def delivery_line(label, status):
@@ -218,12 +217,27 @@ class Activation:
         component = self.request[name]
         return monitor_status(self.ex, component['host'], component['listen'])
 
-    def expected_modes(self, name, new):
-        """Family mode keys a verified process must have recorded."""
+    def expected_modes(self, name):
+        """Family mode keys and values a verified new process must have recorded."""
         if name == 'apm':
-            modes = self.request['apm']['config']['alert_modes']
-            return {'mode:quality-' + service: (mode if new else None) for service, mode in modes.items()}
-        return {'mode:service-quality': self.request['monitor']['service_alert_mode'] if new else None}
+            return {'mode:quality-' + service: mode for service, mode in self.request['apm']['config']['alert_modes'].items()}
+        return {'mode:service-quality': self.request['monitor']['service_alert_mode']}
+
+    def binding_problems(self, name, pid):
+        """The request's database, listener and configuration must be the running process's own."""
+        component = self.request[name]
+        env = host_probe(self.ex, component['host'], 'environ', pid)
+        if not isinstance(env, dict):
+            return ['%s: the running process settings are unreadable' % name]
+        problems = []
+        for field, (key, default) in BINDINGS[name].items():
+            if (env.get(key) or default) != component[field]:
+                problems.append('%s: request %s %r is not the running process %s %r'
+                                % (name, field, component[field], key, env.get(key) or default))
+        if name == 'apm' and env.get('PIR_APM_TRANSPARENT_CONFIG') != component['config']['path']:
+            problems.append('apm: request config.path is not the running PIR_APM_TRANSPARENT_CONFIG %r'
+                            % env.get('PIR_APM_TRANSPARENT_CONFIG'))
+        return problems
 
     def observed(self, name):
         """The live values a reviewed request pins, printed so the operator can compare or draft it."""
@@ -277,6 +291,7 @@ class Activation:
         if self.ex.sha256(component['host'], binary) != state['exe_sha256']:
             problems.append('%s: running executable differs from the wrapped binary %s, so rollback could not '
                             'restore it' % (name, binary))
+        problems += self.binding_problems(name, state['main_pid'])
         return state, problems
 
     def plan(self, name):
@@ -285,9 +300,15 @@ class Activation:
         state, problems = self.probe(name)
         record = {'key': name, 'host': component['host'], 'unit': component['unit'], 'phase': 'pending',
                   'previous_exe_sha256': state.get('exe_sha256'), 'expected_exe_sha256': state.get('exe_sha256'),
-                  'previous_invocation_id': state.get('invocation_id'), 'changes': []}
+                  'previous_invocation_id': state.get('invocation_id'), 'changes': [],
+                  'expected_modes': self.expected_modes(name)}
         if problems:
             return record, problems
+        # A rollback restores these, so they are read now, before any change.
+        modes = self.running_modes(name)
+        if modes is None:
+            return record, problems + ['%s: running modes are unreadable' % name]
+        record['previous_modes'] = {key: modes.get(key) for key in record['expected_modes']}
         if name == 'apm':
             changes, expected, more = self.apm_changes(state)
         else:
@@ -371,6 +392,29 @@ class Activation:
                 problems.append('apm: immutable release %s holds different bytes' % apm_binary(sha))
         return records, problems
 
+    def journal_problems(self, journal):
+        """Drift from the state a finished transaction left: its new state once committed, its previous once rolled back."""
+        committed = journal.status == 'committed'
+        problems = []
+        for record in journal.hosts:
+            key = record['key']
+            state = self.ex.probe_unit(record['host'], record['unit'])
+            exe = record['expected_exe_sha256' if committed else 'previous_exe_sha256']
+            if state['active_state'] != 'active' or state['exe_sha256'] != exe:
+                problems.append('%s: %s running %s, the transaction left %s' % (key, state['active_state'],
+                                                                              state['exe_sha256'], exe))
+            for change in record['changes']:
+                digest = change['new_sha256' if committed else 'previous_sha256']
+                if self.ex.sha256(record['host'], change['path']) != digest:
+                    problems.append('%s: %s changed since transaction %s' % (key, change['path'], journal.id))
+            problems += self.binding_problems(key, state['main_pid']) if state.get('main_pid') else []
+            modes = self.running_modes(key) or {}
+            wanted = record['expected_modes' if committed else 'previous_modes']
+            wrong = {k: modes.get(k) for k, v in wanted.items() if modes.get(k) != v}
+            if wrong:
+                problems.append('%s: running modes %s, the transaction left %s' % (key, wrong, wanted))
+        return problems
+
     def describe(self, records):
         for record in records:
             action = 'restart' if record['changes'] else 'unchanged'
@@ -434,6 +478,7 @@ class Activator:
         try:
             if any(r['key'] == 'apm' and r['expected_exe_sha256'] != r['previous_exe_sha256'] for r in records):
                 self.stage(journal, self.a.request['apm']['host'], apm_binary(sha), sha, binary)
+                self.shadow_check(journal, apm_binary(sha))
             journal.set_status('activating')
             for index, record in enumerate(journal.hosts):
                 self.apply(journal, index, new=True)
@@ -479,6 +524,29 @@ class Activator:
             raise DeployError('%s: staged binary failed its self-check (exit %d): %s' % (host, code, output[-500:]))
         self.out('%s: staged %s and it runs' % (host, path))
 
+    def shadow_check(self, journal, path):
+        """Before any live write: the staged APM evaluates the real sources as an isolated shadow process.
+
+        Its own temporary state, history and configuration copy (every mode shadow),
+        loopback port and no webhook; the probe stops and removes it within the bound.
+        """
+        apm = self.a.request['apm']
+        self.lock.verify()
+        pid = self.ex.probe_unit(apm['host'], apm['unit'])['main_pid']
+        journal.event('shadow check', host=apm['host'], binary=path, port=SHADOW_PORT)
+        result = host_probe(self.ex, apm['host'], 'shadow', pid, path, apm['config']['path'], SHADOW_PORT,
+                            SHADOW_SECONDS, timeout=SHADOW_SECONDS + 60)
+        journal.event('shadow check finished', result=result)
+        summary = (result or {}).get('summary') or {}
+        recorded = (result or {}).get('modes') or {}
+        wanted = {'mode:quality-' + service for service in apm['config']['alert_modes']}
+        if not (result and result.get('evaluated') and summary.get('quality_enabled') is True
+                and not summary.get('storage_error') and not summary.get('quality_storage_error')
+                and all(recorded.get(key) == 'shadow' for key in wanted)):
+            raise DeployError('the staged pir-apm did not evaluate the configured sources in an isolated shadow run; '
+                              'nothing live was changed: %s' % json.dumps(result, sort_keys=True))
+        self.out('%s: staged pir-apm evaluated %s in an isolated shadow run' % (apm['host'], sorted(wanted)))
+
     def apply(self, journal, index, new):
         """Write one component's files (new or previous bytes), restart it and verify it."""
         record = journal.hosts[index]
@@ -493,8 +561,10 @@ class Activator:
                 self.ex.mkdir(host, os.path.dirname(change['path']), 0o755)
                 self.ex.write(host, change['path'], text.encode(), 0o644)
         self.ex.systemctl(host, 'daemon-reload')
-        before = self.ex.probe_unit(host, record['unit']).get('invocation_id')
-        journal.event('restart issued', target=record['key'], invocation_id=before)
+        status = self.a.monitor_status(record['key'])
+        before = {'invocation_id': self.ex.probe_unit(host, record['unit']).get('invocation_id'),
+                  'evaluated_at': (status or {}).get('evaluated_at') or 0}
+        journal.event('restart issued', target=record['key'], **before)
         if new:
             journal.set_phase(index, 'restarting')
         try:
@@ -511,21 +581,36 @@ class Activator:
                                                   record['expected_exe_sha256' if new else 'previous_exe_sha256']))
 
     def verified(self, record, new, before):
+        """None once the restarted process is the expected one, bound to the request's paths, has evaluated
+        since the restart and records the expected modes; otherwise the reason it is not (yet).
+
+        A new process must also be healthy: progressing, storage working, delivery configured and
+        failing nothing. A restored process must record its previous modes; its health is reported
+        but not required, so a rollback can complete while delivery is impaired.
+        """
         state = self.ex.probe_unit(record['host'], record['unit'])
         expected = record['expected_exe_sha256' if new else 'previous_exe_sha256']
         if state['active_state'] != 'active' or state['exe_sha256'] != expected:
             return 'unit is %s running %s, expected %s' % (state['active_state'], state['exe_sha256'], expected)
-        if state.get('need_daemon_reload') or state.get('invocation_id') == before:
+        if state.get('need_daemon_reload') or state.get('invocation_id') == before['invocation_id']:
             return 'unit has not restarted with the written files'
-        if self.a.monitor_status(record['key']) is None:
-            return 'monitor-status is unreachable'
+        problems = self.a.binding_problems(record['key'], state['main_pid'])
+        if problems:
+            return '; '.join(problems)
+        status = self.a.monitor_status(record['key'])
+        if status is None:
+            return 'monitor-status is unreachable, oversized or invalid'
+        if not (status.get('evaluated_at') or 0) > before['evaluated_at']:
+            return 'the restarted process has not evaluated yet'
+        if new and not healthy(status):
+            return 'not healthy: %s' % delivery_line(record['key'], status)
         modes = self.a.running_modes(record['key'])
         if modes is None:
             return 'incident database is unreadable'
-        if new:
-            wrong = {k: modes.get(k) for k, v in self.a.expected_modes(record['key'], True).items() if modes.get(k) != v}
-            if wrong:
-                return 'running modes %s, expected %s' % (wrong, self.a.expected_modes(record['key'], True))
+        wanted = record['expected_modes'] if new else record['previous_modes']
+        wrong = {k: modes.get(k) for k, v in wanted.items() if modes.get(k) != v}
+        if wrong:
+            return 'running modes %s, expected %s' % (wrong, wanted)
         return None
 
     def wait_verified(self, record, new, before):
@@ -664,11 +749,19 @@ def run(args, executor, out, inventory, lock=None, clock=time.monotonic, sleep=t
         if action != 'plan':
             activator.check_identities()
             mutation_fence(inventory, executor)
-        records, problems = activation.assess()
-        activation.describe(records)
+        latest = Journal.load(args.state_dir, SERVICE)
+        finished = (action == 'status' and latest is not None and latest.status in ('committed', 'rolled-back')
+                    and (latest.data.get('source') or {}).get('request_sha256') == args.request_sha256)
+        if finished:
+            # After this request's transaction the reviewed pins describe the earlier state;
+            # the journal is what the live state must now match.
+            out('status against transaction %s (%s)' % (latest.id, latest.status))
+            problems = activation.journal_problems(latest)
+        else:
+            records, problems = activation.assess()
+            activation.describe(records)
         if action == 'preflight' and binary and file_sha256(binary) != request['apm']['release']['binary_sha256']:
             problems.append('--binary does not hash to apm.release.binary_sha256')
-        latest = Journal.load(args.state_dir, SERVICE)
         if latest is not None:
             out('latest transaction %s: %s' % (latest.id, latest.status))
             if latest.status not in FINAL:

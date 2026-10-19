@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path[:0] = [str(ROOT), str(ROOT / 'tools/lib'), str(ROOT / 'tools/tests/operations/deploy')]
 from fake_fleet import FakeFleet, sha256  # noqa: E402
 from wallet_pir_ops.deploy import cli, descriptors, units  # noqa: E402
-from tools.transparent.lib import alert_activation as aa  # noqa: E402
+from tools.transparent.lib import alert_activation as aa, alert_host_probe as probe  # noqa: E402
 
 OLD, NEW = b'pir-apm 5ad1ef61', b'pir-apm next'
 MONITOR_BIN = b'pir-monitor'
@@ -61,6 +61,11 @@ class WrappedFleet(FakeFleet):
         self.delivery = {}         # (host, unit) -> delivery health
         self.deliver = True        # whether the running worker drains a queued test
         self.enqueued = []
+        self.environ = {}             # (host, pid) -> the started process's environment
+        self.evaluations = {}         # (host, unit) -> evaluated_at the running process reports
+        self.progress = True          # whether running services report progress_ok
+        self.shadow_result = None     # the staged binary's isolated shadow run, or a default success
+        self.oversized = set()        # (host, unit) whose monitor-status exceeds the probe bound
         self.lost_restart = set()     # (host, unit): restart happens but its reply is lost
         self.dropped_restart = set()  # (host, unit): the request is lost before systemd sees it
 
@@ -78,13 +83,15 @@ class WrappedFleet(FakeFleet):
         state.update(active='active', pid=state['pid'] + 1000, exe=sha256(h.files[binary]),
                      invocation_id='%032x' % self.invocations)
         env = environment(config, h)
+        self.environ[(host, state['pid'])] = env
+        self.evaluations[(host, unit)] = 0
         if unit == 'pir-apm.service':
             document = json.loads(h.files[env['PIR_APM_TRANSPARENT_CONFIG']])
             modes = {'mode': env['PIR_APM_ALERT_MODE']}
             modes.update({'mode:quality-' + s['service']: s.get('alert_mode', 'shadow') for s in document['services']})
             self.modes[(host, env['PIR_APM_STATE_PATH'])] = modes
         else:
-            self.modes[(host, '/var/lib/pir-monitor/incidents.sqlite')] = {
+            self.modes[(host, env['PIR_MONITOR_STATE_PATH'])] = {
                 'mode': env['PIR_MONITOR_ALERT_MODE'], 'mode:service-quality': env['PIR_MONITOR_SERVICE_ALERT_MODE']}
 
     def systemctl(self, host, *args):
@@ -96,18 +103,30 @@ class WrappedFleet(FakeFleet):
             self.lost_restart.discard((host, args[1]))
             raise RuntimeError('ssh: connection reset after restart was sent')
 
+    def probe(self, host, command, *args):
+        """`alert_host_probe` commands as the hosts would answer them."""
+        if command == 'modes':
+            return self.modes.get((host, args[0]))
+        if command == 'environ':
+            env = self.environ.get((host, int(args[0])))
+            return None if env is None else {k: env.get(k) for k in probe.ENV_KEYS}
+        if command == 'shadow':
+            return self.shadow_result or {'evaluated': True, 'exited': None, 'summary': {
+                'evaluated_at': 1, 'quality_enabled': True, 'storage_error': False, 'quality_storage_error': False},
+                'modes': {'mode:quality-transparent': 'shadow', 'mode:quality-txid': 'shadow'}}
+        unit = self.endpoints[(host, args[0])]
+        if self.host(host).units[unit]['active'] != 'active' or (host, unit) in self.oversized:
+            return None
+        # Each observation of a running process follows at least one more evaluation.
+        self.evaluations[(host, unit)] += 5
+        return {'progress_ok': self.progress, 'evaluated_at': 1000 * self.invocations + self.evaluations[(host, unit)],
+                'storage_error': False, 'quality_enabled': True, 'delivery': {
+                    **self.delivery[(host, unit)], 'failure': bool(self.delivery[(host, unit)]['failure'])}}
+
     def run(self, host, argv, timeout):
-        if argv[:2] == [PYTHON, '-c'] and argv[2] == aa.MODE_QUERY:
-            modes = self.modes.get((host, argv[3]))
-            return (0, json.dumps(modes)) if modes is not None else (1, 'unable to open database file')
-        if argv[:2] == [PYTHON, '-c'] and argv[2] == aa.STATUS_QUERY:
-            status, body = self.http_get(host, argv[3])
-            if status != 200:
-                return 1, json.dumps({'error': 'URLError'})
-            d = json.loads(body)
-            v = d['delivery']
-            return 0, json.dumps({'progress_ok': d.get('progress_ok'), 'evaluated_at': d.get('evaluated_at'),
-                                  'delivery': {**v, 'failure': bool(v.get('failure'))}})
+        if argv[:3] == [PYTHON, '-c', aa.PROBE_SOURCE]:
+            result = self.probe(host, *argv[3:])
+            return (0, json.dumps({'ok': True, 'result': result})) if result is not None else (1, '{"ok": false}')
         if '--enqueue-test-alert' in argv:
             self.runs.append((host, list(argv)))
             unit = 'pir-apm.service' if host == 'coordinator' else 'pir-monitor.service'
@@ -136,6 +155,8 @@ class Activation(unittest.TestCase):
                          CONFIG: json.dumps(SERVICES, indent=1)})
         f.install('monitor', 'pir-monitor.service',
                   '[Service]\nUser=pir-monitor\nGroup=pir-monitor\nEnvironmentFile=/etc/pir-monitor/monitor.env\n'
+                  'Environment=PIR_MONITOR_STATE_PATH=/var/lib/pir-monitor/incidents.sqlite\n'
+                  'Environment=PIR_MONITOR_LISTEN=127.0.0.1:3003\n'
                   'Environment=PIR_MONITOR_ALERT_MODE=shadow\nExecStart=%s %s %s\n' % (PYTHON, MON_WRAPPER, MON_BIN),
                   drop_ins=MON_DROP_INS,
                   files={PYTHON: b'python', MON_WRAPPER: b'wrapper', MON_BIN: MONITOR_BIN,
@@ -340,6 +361,186 @@ class Activation(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn('apm running modes: unknown (incident database unreadable)', text)
         self.assertIn('apm delivery: unknown (monitor-status unreachable or invalid)', text)
+
+
+    def test_request_is_closed_to_other_units_services_and_revisions(self):
+        cases = {
+            'apm.unit must be pir-apm.service': lambda r: r['apm'].update(unit='pir-quality-hosts.service'),
+            'monitor.unit must be pir-monitor.service': lambda r: r['monitor'].update(unit='pir-apm.service'),
+            "maps only ['transparent', 'txid']": lambda r: r['apm']['config']['alert_modes'].update(enhance='active'),
+            'git_sha (40 lowercase hex)': lambda r: r['apm']['release'].update(git_sha='ABCDEF' * 6 + 'ABCD'),
+        }
+        for message, change in cases.items():
+            with self.subTest(message):
+                self.write_request(change)
+                code, lines = self.run_cli('deploy', '--binary', str(self.binary))
+                self.assertNotEqual(code, 0)
+                self.assertIn(message, '\n'.join(lines))
+                self.assertEqual(self.fake.mutations(), [])
+
+    def test_paths_must_be_the_running_processes_own(self):
+        self.write_request(lambda r: r['apm'].update(state_path='/var/lib/pir-apm/old-incidents.sqlite'))
+        code, lines = self.run_cli('deploy', '--binary', str(self.binary))
+        self.assertNotEqual(code, 0)
+        self.assertIn("is not the running process PIR_APM_STATE_PATH '/var/lib/pir-apm/incidents.sqlite'", '\n'.join(lines))
+        self.assertEqual(self.fake.mutations(), [])
+
+    def test_failed_isolated_shadow_run_changes_nothing_live(self):
+        before = self.files()
+        self.fake.shadow_result = {'evaluated': True, 'exited': 1, 'summary': {'quality_enabled': False}, 'modes': {}}
+        code, lines = self.run_cli('deploy', '--binary', str(self.binary))
+        self.assertNotEqual(code, 0)
+        self.assertIn('did not evaluate the configured sources in an isolated shadow run', '\n'.join(lines))
+        self.assertEqual(self.running()[0], sha256(OLD))
+        after = self.files()
+        for host in after:
+            staged = aa.apm_binary(sha256(NEW))
+            self.assertEqual({p: d for p, d in after[host].items() if p != staged}, before[host])
+        journal = json.loads(next(self.state.glob('transparent-alerts-2*.json')).read_text())
+        self.assertEqual(journal['status'], 'failed')
+
+    def test_unhealthy_or_unobservable_new_process_rolls_back_to_verified_prior_modes(self):
+        for fault in ('progress', 'oversized'):
+            with self.subTest(fault):
+                self.setUp()
+                original = self.fake.systemctl
+
+                def degrade(host, *args):
+                    result = original(host, *args)
+                    if args[0] == 'restart' and self.fake.host(host).files.get(CONFIG, b'').count(b'"active"') == 2:
+                        if fault == 'progress':
+                            self.fake.progress = False
+                        else:
+                            self.fake.oversized.add((host, args[1]))
+                    elif args[0] == 'restart':
+                        self.fake.progress = True
+                        self.fake.oversized.discard((host, args[1]))
+                    return result
+                self.fake.systemctl = degrade
+                code, lines = self.run_cli('deploy', '--binary', str(self.binary))
+                self.assertNotEqual(code, 0, lines)
+                text = '\n'.join(lines)
+                self.assertIn('not healthy' if fault == 'progress' else 'unreachable, oversized or invalid', text)
+                exe, apm, _ = self.running()
+                self.assertEqual((exe, apm['mode:quality-transparent']), (sha256(OLD), 'shadow'))
+                journal = json.loads(next(self.state.glob('transparent-alerts-2*.json')).read_text())
+                self.assertEqual(journal['status'], 'rolled-back')
+
+    def test_status_follows_the_finished_transaction_of_the_same_request(self):
+        self.assertEqual(self.run_cli('deploy', '--binary', str(self.binary))[0], 0)
+        code, lines = self.run_cli('status')
+        self.assertEqual(code, 0, lines)
+        self.assertIn('status against transaction', '\n'.join(lines))
+        self.fake.put('coordinator', CONFIG, '{}')
+        code, lines = self.run_cli('status')
+        self.assertEqual(code, 1)
+        self.assertIn('transparent-production.json changed since transaction', '\n'.join(lines))
+        self.fake.put('coordinator', CONFIG, self.fake.host('coordinator').files[CONFIG])
+        self.setUp()
+        self.assertEqual(self.run_cli('deploy', '--binary', str(self.binary))[0], 0)
+        self.assertEqual(self.run_cli('rollback')[0], 0)
+        code, lines = self.run_cli('status')
+        self.assertEqual(code, 0, lines)
+        self.assertIn('(rolled-back)', '\n'.join(lines))
+
+
+class HostProbe(unittest.TestCase):
+    """The on-host reader itself, run for real against local processes, files and HTTP."""
+
+    def run_probe(self, *args, env=None):
+        import subprocess
+        result = subprocess.run([sys.executable, '-c', aa.PROBE_SOURCE, *map(str, args)], capture_output=True,
+                                text=True, env=env, timeout=120)
+        return json.loads(result.stdout.strip().splitlines()[-1])
+
+    def serve(self, body):
+        import http.server
+        import threading
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args):
+                pass
+        server = http.server.HTTPServer(('127.0.0.1', 0), Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.shutdown)
+        return 'http://127.0.0.1:%d/monitor-status' % server.server_port
+
+    def test_status_is_bounded_whitelisted_and_redacts_failures(self):
+        large = json.dumps({'progress_ok': True, 'evaluated_at': 7, 'incidents': ['x' * 1000] * 300,
+                            'delivery': {'configured': True, 'pending': 0, 'last_success': 9,
+                                         'failure': 'error sending request for url (https://hooks.example/T0/SECRET)'}})
+        reply = self.run_probe('status', self.serve(large.encode()))
+        self.assertTrue(reply['ok'])
+        self.assertEqual(reply['result']['delivery'], {'configured': True, 'pending': 0, 'last_success': 9, 'failure': True})
+        self.assertNotIn('SECRET', json.dumps(reply))
+        oversized = b'{"pad": "' + b'x' * (probe.STATUS_LIMIT + 1) + b'"}'
+        self.assertEqual(self.run_probe('status', self.serve(oversized)), {'ok': False, 'error': 'ValueError'})
+        self.assertEqual(self.run_probe('status', self.serve(b'{"truncated": ')), {'ok': False, 'error': 'JSONDecodeError'})
+
+    def test_environ_returns_only_whitelisted_settings(self):
+        import os
+        import subprocess
+        env = {'PATH': '/usr/bin:/bin', 'PIR_APM_STATE_PATH': '/var/lib/pir-apm/incidents.sqlite',
+               'PIR_APM_SLACK_WEBHOOK_URL': 'https://hooks.example/SECRET'}
+        child = subprocess.Popen(['sleep', '30'], env=env)
+        self.addCleanup(child.kill)
+        reply = self.run_probe('environ', child.pid)
+        self.assertEqual(reply['result']['PIR_APM_STATE_PATH'], '/var/lib/pir-apm/incidents.sqlite')
+        self.assertNotIn('SECRET', json.dumps(reply))
+        self.assertEqual(set(reply['result']), set(probe.ENV_KEYS))
+        self.assertEqual(os.getpid() > 0, True)
+
+    def test_shadow_runs_an_isolated_child_without_the_webhook_and_cleans_up(self):
+        import os
+        import socket
+        import subprocess
+        directory = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__('shutil').rmtree(directory, ignore_errors=True))
+        # A stand-in pir-apm: records its environment's secrets, serves monitor-status and records shadow modes.
+        binary = directory / 'pir-apm'
+        binary.write_text('#!%s\n' % sys.executable + (
+            'import http.server, json, os, sqlite3\n'
+            'open(os.environ["LEAK_FILE"] if "LEAK_FILE" in os.environ else os.devnull, "w")\n'
+            'db = sqlite3.connect(os.environ["PIR_APM_STATE_PATH"])\n'
+            'db.execute("CREATE TABLE metadata(key TEXT PRIMARY KEY, value TEXT)")\n'
+            'config = json.load(open(os.environ["PIR_APM_TRANSPARENT_CONFIG"]))\n'
+            'db.executemany("INSERT INTO metadata VALUES(?,?)", [("mode:quality-" + s["service"], s["alert_mode"]) '
+            'for s in config["services"]]); db.commit()\n'
+            'leaked = "PIR_APM_SLACK_WEBHOOK_URL" in os.environ\n'
+            'body = json.dumps({"progress_ok": False, "evaluated_at": 5, "quality": {"enabled": not leaked}, '
+            '"delivery": {"configured": leaked}}).encode()\n'
+            'class H(http.server.BaseHTTPRequestHandler):\n'
+            '    def do_GET(self):\n'
+            '        self.send_response(200); self.end_headers(); self.wfile.write(body)\n'
+            '    def log_message(self, *a): pass\n'
+            'host, port = os.environ["PIR_APM_LISTEN"].split(":")\n'
+            'http.server.HTTPServer((host, int(port)), H).serve_forever()\n'))
+        binary.chmod(0o755)
+        config = directory / 'transparent.json'
+        config.write_text(json.dumps({'services': [{'service': 'transparent', 'alert_mode': 'active'},
+                                                   {'service': 'txid', 'alert_mode': 'active'}]}))
+        running = subprocess.Popen(['sleep', '60'], env={
+            'PATH': '/usr/bin:/bin', 'PIR_APM_SLACK_WEBHOOK_URL': 'https://hooks.example/SECRET',
+            'PIR_APM_SCRAPE_URL': 'http://127.0.0.1:8080', 'PIR_APM_SCALER_STATUS': '/nonexistent'})
+        self.addCleanup(running.kill)
+        with socket.socket() as sock:
+            sock.bind(('127.0.0.1', 0))
+            port = sock.getsockname()[1]
+        reply = self.run_probe('shadow', running.pid, binary, config, port, 30)
+        self.assertTrue(reply['ok'], reply)
+        result = reply['result']
+        self.assertTrue(result['evaluated'])
+        self.assertIs(result['summary']['quality_enabled'], True, 'the webhook must not reach the child')
+        self.assertEqual(result['modes'], {'mode:quality-transparent': 'shadow', 'mode:quality-txid': 'shadow'})
+        self.assertEqual(json.loads(config.read_text())['services'][0]['alert_mode'], 'active')
+        self.assertFalse([p for p in os.listdir(tempfile.gettempdir()) if p.startswith('pir-apm-shadow-')
+                          and (Path(tempfile.gettempdir()) / p).stat().st_uid == os.getuid()
+                          and (Path(tempfile.gettempdir()) / p / 'transparent.json').exists()])
 
 
 if __name__ == '__main__':
