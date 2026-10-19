@@ -154,7 +154,7 @@ async fn single_unit_hint_rejects_damage_and_pins_retired_file() {
     let blocks = (original.len() - 8) / per_block;
     let digest = hex::encode(sha2::Sha256::digest(&original));
     assert!(
-        enhance_query_server::artifact::revalidate_hint_file(
+        enhance_query_server::artifact::PublicationArtifact::revalidate_hint_file(
             &path,
             original.len() as u64,
             &digest,
@@ -215,7 +215,7 @@ async fn single_unit_hint_rejects_damage_and_pins_retired_file() {
         for fault in faults {
             damage(fault);
             assert!(
-                enhance_query_server::artifact::revalidate_hint_file(
+                enhance_query_server::artifact::PublicationArtifact::revalidate_hint_file(
                     &path,
                     original.len() as u64,
                     &digest,
