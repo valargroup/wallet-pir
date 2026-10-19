@@ -1,9 +1,8 @@
 # Repository automation
 
 Product Cargo packages live under `src/<product>/`. Enhance development tools
-(`enhance-pir-client`, `enhance-pir-exercise`, `enhance-pir-load-test` and the
-standalone `enhance-noise-analysis` workspace) are Cargo packages under
-`tools/enhance/`; `pir-monitor` lives under `tools/shared/pir-monitor/`.
+(`enhance-pir-client`, `enhance-pir-exercise` and `enhance-pir-load-test`)
+are Cargo packages under `tools/enhance/`; `pir-monitor` lives under `tools/shared/pir-monitor/`.
 The root tools directory contains CI, development and fleet automation. Product
 scripts, deployment resources and tests live under `tools/<product>/`. Product
 tools keep their existing Cargo package names and CLI flags.
@@ -26,7 +25,7 @@ release directories and their recorded paths are immutable.
 | `enhance/loadtest/` | Enhance encrypted-query load generation | `make load-test` |
 | `enhance/client/` | Enhance wallet-protocol CLI (`enhance-pir-cli`) | `cargo run -p enhance-pir-client --bin enhance-pir-cli -- --help` |
 | `enhance/exercise/` | Local Enhance coordinator/worker exercise | `cargo run -p enhance-pir-exercise -- --help` |
-| [noise-analysis](enhance/noise-analysis/README.md) | Standalone Enhance noise analysis | `cargo build --locked --release --manifest-path tools/enhance/noise-analysis/Cargo.toml` |
+| [Noise verification](enhance/noise-analysis/README.md) | Offline verification of retained Enhance noise results | `python3 tools/enhance/noise-analysis/verify.py CASE.json` |
 | `shared/pir-monitor/` | Independent public PIR correctness monitor | [observability](../docs/enhance/observability-alerting.md) |
 | [transparent-loadtest](transparent/loadtest/README.md) | Wallet simulations, block comparison and interactive reports | `make transparent-sim-help` |
 | [transparent-regression](transparent/fixtures/regression/README.md) | Frozen accepted-anchor correctness fixtures and parent-filter conformance | `make transparent-regression` |
