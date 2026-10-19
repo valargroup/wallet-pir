@@ -171,6 +171,33 @@ class HistoryUpgrade(Harness):
         self.assertEqual(code, 0, lines)
         self.assertEqual(set(self.running().values()), {sha256(NEW)})
 
+    def test_preflight_reports_running_alert_mode_and_delivery_not_the_observer(self):
+        self.run_cli('baseline')
+        code, lines = self.run_cli('preflight', '--binary', str(self.binary))
+        self.assertEqual(code, 0, lines)
+        text = '\n'.join(lines)
+        self.assertIn('alert_mode configured on disk (read only at APM start): unknown', text)
+        self.assertIn('transparent mode of the running APM: unknown (incident database unreadable)', text)
+        self.assertIn('notifications: APM delivery: unknown', text)
+        self.assertIn('recorded only; Slack is not notified', text)
+        # Configured active on disk, but the running APM still evaluates shadow.
+        self.fake.put('coordinator', binary_upgrade.APM_CONFIG, json.dumps({'services': [
+            {'service': 'transparent', 'kind': 'history', 'alert_mode': 'active'}]}))
+        self.fake.put('coordinator', '/usr/bin/python3', b'python')
+        summary = {'progress_ok': True, 'delivery': {'configured': True, 'pending': 0, 'last_success': 5, 'failure': False}}
+        replies = {binary_upgrade.APM_STATE: {'mode': 'active', 'mode:quality-transparent': 'shadow'},
+                   'http://127.0.0.1:3002/monitor-status': summary}
+        self.fake.product_check = lambda host, argv: (
+            (0, json.dumps({'ok': True, 'result': replies[argv[-1]]})) if argv[-1] in replies else (1, 'unexpected'))
+        code, lines = self.run_cli('status')
+        text = '\n'.join(lines)
+        self.assertIn('configured on disk (read only at APM start): active', text)
+        self.assertIn('transparent mode of the running APM: shadow', text)
+        self.assertIn('configured active differs from running shadow', text)
+        self.assertIn('webhook configured=True pending=0 last_success=5', text)
+        self.assertIn('recorded only; Slack is not notified', text)
+        self.assertNotIn('(Slack)', text)
+
     def test_successful_retry_resumes_the_requested_observer(self):
         self.run_cli('baseline')
         self.fake.systemctl('coordinator', 'stop', LOAD_UNIT)

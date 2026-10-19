@@ -93,10 +93,15 @@ class BoundaryTests(unittest.TestCase):
         worker = 'transparent-query-server'
         publisher = 'transparent-publisher'
         self.assertIn(backend, boundary.PURE)
-        publisher_dependencies = {edge['name'] for edge in packages[publisher]['dependencies']
-                                  if edge['kind'] == 'dependencies'}
+        manifest = tomllib.loads((ROOT / packages[publisher]['manifest']).read_text())
+        publisher_dependencies = {name for name, dependency in manifest['dependencies'].items()
+                                  if not isinstance(dependency, dict) or not dependency.get('optional', False)}
         self.assertIn(backend, publisher_dependencies)
         self.assertNotIn(worker, publisher_dependencies)
+        # The host's regressions opt into a worker; ordinary publisher builds do not.
+        self.assertTrue(manifest['dependencies'][worker]['optional'])
+        self.assertIn('dep:' + worker, manifest['features']['fixtures'])
+        self.assertEqual(manifest['features']['default'], [])
         for entry in (backend, worker):
             pending, reached = [entry], set()
             while pending:
@@ -207,6 +212,32 @@ class BoundaryTests(unittest.TestCase):
         self.assertEqual(boundary.resolved_violations(metadata, workspace_unified=True),
                          ['receiver-pir-server: resolves zakura-orchard'])
 
+    def test_client_fixture_unification_still_rejects_production_crypto_and_nodes(self):
+        def node(name, deps=(), features=()):
+            return {'id': name, 'features': features,
+                    'deps': [{'pkg': dep, 'dep_kinds': [{'kind': None}]} for dep in deps]}
+        metadata = {
+            'packages': [
+                {'id': 'pir', 'name': 'transparent-query-server', 'source': None},
+                {'id': 'client', 'name': 'zakura-pir-client',
+                 'source': 'git+https://github.com/zakura-core/wallet-libraries'},
+                {'id': 'orchard', 'name': 'zakura-orchard', 'source': 'registry'},
+                {'id': 'chain', 'name': 'zakura-chain', 'source': 'registry'},
+            ],
+            'resolve': {'nodes': [node('pir', ['client']),
+                                  node('client', ['orchard'], ['testing']),
+                                  node('orchard'), node('chain')]},
+        }
+        self.assertEqual(boundary.resolved_violations(metadata, workspace_unified=True), [])
+        self.assertEqual(boundary.resolved_violations(metadata),
+                         ['transparent-query-server: resolves zakura-orchard'])
+        metadata['resolve']['nodes'][1] = node('client', ['orchard', 'chain'], ['testing'])
+        self.assertEqual(boundary.resolved_violations(metadata, workspace_unified=True),
+                         ['transparent-query-server: resolves zakura-chain'])
+        metadata['resolve']['nodes'][1] = node('client', ['orchard'])
+        self.assertEqual(boundary.resolved_violations(metadata, workspace_unified=True),
+                         ['transparent-query-server: resolves zakura-orchard'])
+
     def test_default_publisher_refuses_transitive_database_dependencies(self):
         def node(name, dependencies=()):
             return {'id': name, 'deps': [{'pkg': dep, 'dep_kinds': [{'kind': None}]}
@@ -270,20 +301,20 @@ class BoundaryTests(unittest.TestCase):
         library = 'https://github.com/zakura-core/wallet-libraries.git'
         allowed = [{**self.edge('pir-control'), 'path': 'src/shared/pir-control/'},
                    {**self.edge('pir-serving'), 'path': 'src/shared/pir-serving/'},
-                   self.edge('zakura-pir-native', git=library), self.edge('axum')]
+                   self.edge('zakura-pir-protocol', git=library), self.edge('axum')]
         self.assertEqual(boundary.violations(package(*allowed), []), [])
         # The publisher, chain readers, ingestion and every tool are refused.
-        forbidden = [{**self.edge('pir-publisher'), 'path': 'src/shared/pir-publisher/server/'},
-                     {**self.edge('future-publisher'), 'path': 'src/shared/pir-publisher/future/'},
+        # An unlisted crate is not refused merely for sitting beside a publisher.
+        forbidden = [{**self.edge('pir-publisher'), 'path': 'src/pir-publisher/'},
                      self.edge('zakura-server-chain', git=library),
-                     {**self.edge('enhance-publisher'), 'path': 'src/shared/pir-publisher/enhance/'},
-                     {**self.edge('pir-pipeline'), 'path': 'src/shared/pir-publisher/pipeline/'},
+                     {**self.edge('enhance-publisher'), 'path': 'src/enhance/enhance-publisher/'},
+                     {**self.edge('pir-pipeline'), 'path': 'src/shared/pir-pipeline/'},
                      {**self.edge('enhance-pir-load-test'), 'path': 'tools/enhance/loadtest/'},
                      {**self.edge('enhance-pir-client'), 'path': 'tools/enhance/client/'},
                      {**self.edge('enhance-pir-exercise'), 'path': 'tools/enhance/exercise/'},
                      {**self.edge('pir-monitor'), 'path': 'tools/shared/pir-monitor/'},
                      {**self.edge('unlisted-tool'), 'path': 'tools/enhance/unlisted/'},
-                     {**self.edge('receiver-store'), 'path': 'src/shared/pir-publisher/receiver-store/'},
+                     {**self.edge('receiver-store'), 'path': 'src/receiver/receiver-store/'},
                      {**self.edge('transparent-shared'),
                       'path': 'src/transparent/transparent-shared/'}]
         for kind in ['dependencies', 'dev-dependencies', 'build-dependencies',
@@ -297,13 +328,13 @@ class BoundaryTests(unittest.TestCase):
                     self.assertEqual(len(problems), 1, (kind, edge['name']))
         # The publisher that composes the library may use the chain reader.
         application = [{'name': 'enhance-publisher',
-                        'manifest': 'src/shared/pir-publisher/enhance/Cargo.toml',
+                        'manifest': 'src/enhance/enhance-publisher/Cargo.toml',
                         'dependencies': [self.edge('zakura-server-chain', git=library)]}]
         self.assertEqual(boundary.violations(application, []), [])
 
     def test_status_query_server_refuses_publisher_and_chain_dependencies(self):
         for name, location in [
-            ('status-publisher', {'path': 'src/shared/pir-publisher/status/'}),
+            ('status-publisher', {'path': 'src/status/status-publisher/'}),
             ('zakura-server-chain', {'git': 'https://github.com/zakura-core/wallet-libraries.git'}),
         ]:
             for kind in ['dependencies', 'dev-dependencies', 'build-dependencies',
@@ -329,8 +360,8 @@ class BoundaryTests(unittest.TestCase):
                 {'id': 'mid', 'name': 'helper', 'source': 'registry'},
                 {'id': 'chain', 'name': 'zakura-server-chain',
                  'source': 'git+https://github.com/zakura-core/wallet-libraries'},
-                local('app', 'enhance-publisher', 'src/shared/pir-publisher/enhance'),
-                local('other', 'receiver-store', 'src/shared/pir-publisher/receiver-store'),
+                local('app', 'enhance-publisher', 'src/enhance/enhance-publisher'),
+                local('other', 'receiver-store', 'src/receiver/receiver-store'),
             ],
             'resolve': {'nodes': [
                 node('serving', [('enhance', None), ('control', None)]),
@@ -368,7 +399,7 @@ class BoundaryTests(unittest.TestCase):
                     'manifest_path': str(boundary.ROOT / folder / 'Cargo.toml')}
         packages = [local('query', 'enhance-query-server', 'src/enhance/enhance-query-server'),
                     {'id': 'mid', 'name': 'helper', 'source': 'registry'},
-                    local('publisher', 'enhance-publisher', 'src/shared/pir-publisher/enhance'),
+                    local('publisher', 'enhance-publisher', 'src/enhance/enhance-publisher'),
                     local('tool', 'enhance-pir-client', 'tools/enhance/client')]
         clean = {'packages': packages, 'resolve': {'nodes': [
             node('query', [('mid', None)]), node('mid', []), node('publisher', [('query', None)]),
@@ -389,9 +420,9 @@ class BoundaryTests(unittest.TestCase):
         for kind in ['dependencies', 'dev-dependencies', 'build-dependencies',
                      'target.cfg(unix).dependencies', 'target.cfg(unix).dev-dependencies',
                      'target.cfg(unix).build-dependencies']:
-            for name in ['receiver-store', 'zakura-server-chain', 'zakura-pir-native',
+            for name in ['receiver-store', 'zakura-server-chain', 'zakura-pir-protocol',
                          'sha2', 'rand', 'enhance-query-server', 'pir-runtime']:
-                package = {'name': 'pir-pipeline', 'manifest': 'src/shared/pir-publisher/pipeline/Cargo.toml',
+                package = {'name': 'pir-pipeline', 'manifest': 'src/shared/pir-pipeline/Cargo.toml',
                            'dependencies': [self.edge(name, kind)]}
                 self.assertTrue(boundary.violations([package], []), (kind, name))
         package['dependencies'] = [self.edge('tokio')]
@@ -1149,7 +1180,7 @@ class CacheWorkflowTests(unittest.TestCase):
             self.assertNotIn(forbidden, text)
         routine = self.workflows['ci.yml']
         self.assertNotIn('timeout-minutes:', routine)
-        self.assertIn('--check-fast-seconds 300', routine)
+        self.assertIn('--check-fast-seconds 180', routine)
         self.assertIn("if: github.event_name == 'push' && steps.affected.outputs.rust == 'true'", routine)
         self.assertEqual(self.workflows['ci-cache.yml'].count("if: github.ref == 'refs/heads/main'"), 2)
 
@@ -1238,8 +1269,10 @@ class CacheWorkflowTests(unittest.TestCase):
         self.assertNotIn('tests:native-server-lib', workflow)
         matrix = json.loads((ROOT / 'tools/ci/test-matrix.json').read_text())
         self.assertIn('reference:enhance-query-server:lib:enhance_query_server', matrix['enhance-reference']['targets'])
-        self.assertIn('reference:enhance-publisher:test:ci_hint', matrix['enhance-reference']['targets'])
-        self.assertIn('cuda:enhance-publisher:test:matvec_config', matrix['enhance-cuda-tests']['targets'])
+        self.assertIn('reference:pir-publisher:test:ci_hint', matrix['enhance-reference']['targets'])
+        self.assertIn('cuda:pir-query-server:test:operator', matrix['enhance-cuda-tests']['targets'])
+        self.assertNotIn('matvec_config', json.dumps(matrix))
+        self.assertNotIn('enhance-publisher/cuda', json.dumps(matrix))
         runner = (ROOT / 'tools/ci/test_matrix.py').read_text()
         self.assertIn('args = list(REFERENCE_LIB_FILTERS)', runner)
         self.assertIn("REFERENCE_LIB_FILTERS = ['ipir::tests',", runner)

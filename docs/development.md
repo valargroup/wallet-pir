@@ -15,7 +15,7 @@ make doctor
 make prepare-dev  # explicit, one-time fetch of pinned dependencies
 make check-fast BASE=origin/main OFFLINE=1
 make check-package PACKAGE=pir-apm TEST=dashboard FEATURES= OFFLINE=1
-make check-package PACKAGE=transparent-shard-server TEST_TARGET=wallet_sync TEST=a_choice OFFLINE=1
+make check-package PACKAGE=transparent-query-server TEST_TARGET=wallet_sync TEST=a_choice OFFLINE=1
 make check-full   # comprehensive local validation, not the default inner loop
 ```
 
@@ -33,13 +33,22 @@ Common releases and copies resolved from another source, including stale lockfil
 entries. The released frozen-client fixture retains its independent historical
 dependencies for interoperability checks.
 
+PIR primitives come from the role packages in wallet-libraries. Publishers use
+`zakura-pir-publisher`, query evaluation uses `zakura-pir-query-server`, and
+shared records use `zakura-pir-protocol`. Native preparation shared by the two
+server roles uses `zakura-pir-server-core`. Probe clients and integration tests
+use `zakura-pir-client`; the query libraries expose their local client helpers
+only with the explicit `client` feature (or in unit tests).
+
 Each `zakura-server-chain` consumer selects its product (`transparent`, `enhance`,
 `status` or `receiver`) with default features disabled. Test dependencies add
 `testing` alongside that same product; fixture support alone does not enable an
 adapter. Database readers additionally enable the existing `rocksdb-reader` feature.
 
 Fast Rust checks run every library unit test, and every binary that declares one,
-in `release-fast`, plus classified bounded integration targets. A binary with no
+in `release-fast`, plus classified bounded integration targets. The compile names
+a stable dev-dependency closure so a smaller affected set reuses the warm
+dependency graph; only affected packages run. A binary with no
 unit tests is left out of that compile; qualification still builds every binary.
 There are no named slow-unit exclusions.
 Required CLI features are enabled for binary unit targets. Ordinary cache,
@@ -175,12 +184,12 @@ results; automatic agent wake requires a verified runtime mechanism. Avoid
 foreground polling and duplicate broad local/CI checks.
 
 For Transparent PIR runtime or artifact changes, start with
-`make check-package PACKAGE=transparent-server-backend`. For HTTP handling and
-worker control, use `make check-package PACKAGE=transparent-shard-server`.
+`make check-package PACKAGE=transparent-shared`. For HTTP handling and
+worker control, use `make check-package PACKAGE=transparent-query-server`.
 These packages do not pull in the publisher's chain reader or RocksDB, including
 when compiling their tests. Publisher-to-worker shipping tests live in the
-publisher package; select them with
-`make check-package PACKAGE=transparent-filter-server TEST_TARGET=txid_shipped_runtimes`.
+tools package; select them with
+`make check-package PACKAGE=transparent-tools FEATURES=publisher-tools TEST_TARGET=txid_shipped_runtimes`.
 The existing `make transparent-txid-demo` command still exercises confirmed raw
 blocks through extraction, publication and encrypted retrieval. Add `OFFLINE=1`
 once dependencies are fetched. Finish a change with `make check-fast BASE=<sha>`
@@ -206,11 +215,11 @@ cache. `TEST_TARGET` selects a named integration executable; `TEST` filters test
 names in that executable (or unit targets when TEST_TARGET is omitted). It reports p95 only after 20 successful, unchanged-snapshot runs and keeps
 failures visible. Compare the same workload, host, flags and population before
 and after; local execution excludes Actions queue/setup. The warm CI target is
-five minutes; deployment's prepared-artifact target remains two minutes. These
+three minutes; deployment's prepared-artifact target remains two minutes. These
 are targets until measured on the updated workflow.
 
 Temporarily, CI lets PR and main validation run to completion without a
-five-minute cancellation. Pushes to main enforce that target in a final timing
+three-minute cancellation. Pushes to main enforce that target in a final timing
 check; PRs and manual runs only report timings. The check measures job start
 through validation and reporting, excluding queue time and final cleanup.
 
@@ -226,7 +235,8 @@ do not compile the publisher, node parser or database reader.
 
 ## Publisher source layout
 
-Publisher implementations and the shared lifecycle live under
-`src/shared/pir-publisher/`; query-serving crates remain in product directories.
+The publisher host lives at `src/pir-publisher` and the query-server host at
+`src/pir-query-server`. Each product publisher lives beside that product's
+query server. `src/shared` holds shared libraries, including `pir-pipeline`.
 Cargo package names and standalone commands are preserved. See the
 [unified publisher](publisher.md) for configuration and service ownership.

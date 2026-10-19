@@ -29,24 +29,37 @@ def main():
     if args.seconds <= 0 or args.min_publications < 6:
         parser.error('positive duration and at least six publications required')
     args.out.mkdir(parents=True, exist_ok=False)
-    binary = args.bin_dir.resolve() / 'enhance-pir-server'
+    query_server = args.bin_dir.resolve() / 'pir-query-server'
     exercise = args.bin_dir.resolve() / 'enhance-pir-exercise'
     manifest = {'kind': 'workload-driver-smoke', 'qualification': 'unqualified',
-                **local.provenance(args.bin_dir.resolve()), 'binary_sha256': hashlib.sha256(binary.read_bytes()).hexdigest(),
+                **local.provenance(args.bin_dir.resolve()),
+                'binary_sha256': hashlib.sha256(query_server.read_bytes()).hexdigest(),
                 'exercise_sha256': hashlib.sha256(exercise.read_bytes()).hexdigest()}
     processes, logs = [], []
     with tempfile.TemporaryDirectory(prefix='v4-exercise-') as directory:
         root = Path(directory)
         try:
             replicas = []
+            used_ports = set()
+
+            def take_port():
+                while True:
+                    candidate = local.free_port()
+                    if candidate not in used_ports:
+                        used_ports.add(candidate)
+                        return candidate
+
             for index in range(2):
-                port = local.free_port()
+                port = take_port()
                 replica = {'name': f'worker-{index}', 'url': f'http://127.0.0.1:{port}'}
                 replicas.append(replica)
+                config = root / f'worker-{index}.json'
+                local.write_worker_config(config, f'127.0.0.1:{port}', root / f'worker-{index}',
+                                          f'127.0.0.1:{take_port()}', args.sealed_shards)
                 log = (args.out / f'worker-{index}.log').open('w')
                 logs.append(log)
-                processes.append(subprocess.Popen([str(binary), 'worker', '--sealed-shards', str(args.sealed_shards), '--listen', f'127.0.0.1:{port}',
-                                                   '--data-dir', str(root / f'worker-{index}')], stdout=log, stderr=log))
+                processes.append(subprocess.Popen(
+                    [str(query_server), '--config', str(config)], stdout=log, stderr=log))
             deadline = time.monotonic() + 30
             for replica in replicas:
                 while True:

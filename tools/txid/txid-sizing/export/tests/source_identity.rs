@@ -14,7 +14,7 @@ version = "0.0.1-rc0"
 source = "git+https://example.invalid/library?rev={adapter}#{adapter}"
 dependencies = ["zakura-chain"]
 [[package]]
-name = "zakura-transparent-events"
+name = "zakura-pir-protocol"
 version = "0.0.1-rc0"
 source = "git+https://example.invalid/library?rev={adapter}#{adapter}"
 "#,
@@ -90,7 +90,7 @@ fn source_info_mode_reports_the_executing_binary_and_its_compilation_lock() {
         format!(
             "{:x}",
             Sha256::digest(include_bytes!(
-                "../../../../../src/shared/pir-publisher/transparent/src/ingest/extract.rs"
+                "../../../../../src/transparent/transparent-publisher/src/ingest/extract.rs"
             ))
         )
     );

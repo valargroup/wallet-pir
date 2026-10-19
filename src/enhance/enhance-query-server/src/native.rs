@@ -14,12 +14,15 @@
 //! client sends, and the 44-bit dithered query of `pir-native`. The width is
 //! not part of the session, the parameter identity or the envelope, so a
 //! client that sends 49 bits is unaffected by the other.
-pub use pir_native::{
-    accepted_query_bits, decode_cols, pack, params, parse_accepted, parse_with, prepare_with,
-    public_len, publish, request_len, request_len_bits, response, response_len, D,
+use reinspiring::native::*;
+#[cfg(any(test, feature = "client"))]
+pub use zakura_pir_client::native::{decode_cols, prepare_with};
+pub use zakura_pir_query_server::native::publish;
+pub use zakura_pir_query_server::native::{
+    accepted_query_bits, params, public_len, request_len, request_len_bits, response_len, D,
     DITHERED_QUERY_BITS, KEY_BYTES, MASK_BITS, Q, QUERY_BITS, Q_BITS, RESPONSE_BITS,
 };
-use reinspiring::native::*;
+pub use zakura_pir_query_server::native::{pack, parse_accepted, parse_with, response};
 pub const COLS: usize = 12288;
 pub const KEY_WORDS: usize = 2 * D;
 pub fn packing_setup() -> NativeSetup {
@@ -30,10 +33,11 @@ pub fn query_masks(shard: u64) -> Vec<Vec<u64>> {
 }
 /// Domain-separated first-dimension masks for a `rows` by `cols` database.
 pub fn public_query_masks(seed: [u8; 32], rows: usize, cols: usize) -> Vec<Vec<u64>> {
-    pir_native::P16
+    zakura_pir_query_server::native::P16
         .public_query_masks(seed, rows, cols)
         .unwrap()
 }
+#[cfg(any(test, feature = "client"))]
 pub fn prepare(shard: u64, rows: usize, target: usize) -> Result<(NativeSecret, Vec<u8>), String> {
     if rows > 32768 {
         return Err("native query shape".into());
@@ -61,9 +65,10 @@ pub fn parse_selection(
     if rows > 32768 {
         return Err("native query framing".into());
     }
-    pir_native::parse_selection(&packing_setup(), bytes, query_rows, rows)
+    zakura_pir_query_server::native::parse_selection(&packing_setup(), bytes, query_rows, rows)
 }
 /// Decode an Enhance row, truncated to its logical width.
+#[cfg(any(test, feature = "client"))]
 pub fn decode(secret: &NativeSecret, public: &[u8], body: &[u8]) -> Result<Vec<u8>, String> {
     let mut out = decode_cols(secret, public, body, COLS)?;
     out.truncate(crate::ROW_BYTES);
@@ -129,7 +134,8 @@ mod tests {
         assert_eq!(legacy.len(), request_len(rows));
         assert_eq!(legacy.len(), 27_648 + 25_088);
         let (_, dithered) =
-            pir_native::prepare_dithered(&packing_setup(), &query_masks(0), rows, 7).unwrap();
+            zakura_pir_client::native::prepare_dithered(&packing_setup(), &query_masks(0), rows, 7)
+                .unwrap();
         assert_eq!(dithered.len(), request_len_bits(rows, DITHERED_QUERY_BITS));
         assert_eq!(dithered.len(), 27_648 + 22_528);
         for body in [&legacy, &dithered] {

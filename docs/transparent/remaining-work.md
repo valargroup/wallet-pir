@@ -90,6 +90,11 @@ is correctness evidence, not a qualified operating envelope or rollout approval.
   incremental compilation/setup/teardown/tools/lint; diagnose the complete run
   with `correctness.py --record-only`, retaining full-only and frozen coverage.
 
+The small-fixture [controller update campaign](prepared-distribution.md#controller-update-campaign)
+exercises the controller-update, outage, restart and 10-consumer distribution
+cases above as correctness diagnostics; it closes none of these boxes. Its
+100-consumer step needs existing hub storage.
+
 Suitable isolated hardware and unchanged-application fixture access are named
 qualification gates when unavailable; continue correctness without upgrading the
 wallet or weakening validation. No deployment or new infrastructure is authorized.
@@ -260,22 +265,25 @@ Not planned with it: other row widths, a two-digit 8-bit key, or any change to `
 
 ## Transparent monitoring on /v2
 
-pir-apm watches the v12 history service and the one-query txid display, and
-pir-monitor probes both, every family in shadow since about 04:00 UTC on
-2026-10-13 ([evidence](../../evidence/transparent/observability-v2-2026-10-13/README.md),
-[rules](../enhance/observability-alerting.md)). v1 is not monitored.
+pir-apm watches the v12 history service and the one-query txid display, and pir-monitor probes both.
+Transparent/txid quality and external service alerts became active on 2026-10-19 at about 17:39 UTC
+([activation and rollback](deployment.md#transparent-alert-activation)). Capacity and scaling retain their
+shadow settings. v1 is not monitored.
 
-- [ ] Roll the v12 workers to a release with `transparent_shard_prepare_seconds`
-  (`8ec7eed1` or later) so the worker prepare rows and alerts have data.
-- [ ] After 24 hours of shadow, review every incident of the `quality-transparent`,
-  `quality-txid` and `transparent_capacity` families and the `transparent` and
-  `txid` probes; adjust thresholds in the alert policy, not in code.
-- [ ] Exercise one fire and recovery per family through the outbox with a
-  temporary low threshold in the policy file, then restore it.
-- [ ] Set `alert_mode` to `active` for both services, `capacity_alert_mode` to
-  `active`, and `PIR_MONITOR_SERVICE_ALERT_MODE=active`; observe 24 active hours.
-- [ ] After three days of daily peaks, check the capacity forecasts against the
-  hosts' known growth and record the first reprovisioning dates.
+- [x] The deployed workers expose `transparent_shard_prepare_seconds`; all three worker series had
+  1,440 minute samples in the reviewed shadow window.
+- [x] Review Transparent/txid quality incidents and independent probes over 24 retained hours
+  (2026-10-18 10:38 through 2026-10-19 10:37 UTC). Canonical warnings matched real one-block reorgs;
+  subsequent redeploy availability incidents recovered. No threshold changes were needed.
+- [ ] Review `transparent_capacity` candidates and promote that family separately.
+- [ ] Exercise one fire and recovery per family with a temporary policy threshold, then restore it.
+- [x] Deploy the locked alert operation and APM fix that retires the disabled scaler's stale heartbeat.
+  Only the intended three alert-mode values changed; the credential wrappers and incident history remain.
+- [x] Enable both service `alert_mode` values and `PIR_MONITOR_SERVICE_ALERT_MODE`. Verify labelled
+  firing/recovery through each real outbox and confirm both pairs in Slack.
+- [ ] Complete 24 active hours after the 2026-10-19 activation and review the retained incidents.
+- [ ] After three days of daily peaks, check capacity forecasts against known host growth and record
+  the first reprovisioning dates.
 
 ## Dithered 44-bit queries (deployed 2026-10-09)
 
@@ -1024,7 +1032,7 @@ until all of it passes and every client in use reads declarations:
 - [ ] The continuous publisher carries every earlier declaration forward on each
   republication, in rising epochs, and keeps seal parameters for every geometry any
   declaration names. Today it writes an empty `recuts`
-  (`src/transparent/transparent-ingest/src/publication.rs`); a republication
+  (`src/transparent/transparent-publisher/src/history/publication.rs`); a republication
   that dropped a declaration would strand wallets holding the revisions it named.
 - [ ] `shard-verify` checks a declaration against the previous map: identical prefix,
   unchanged boundary terminal blocks, exact tiling, declared entries equal to what was

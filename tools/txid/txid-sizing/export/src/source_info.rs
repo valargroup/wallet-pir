@@ -1,4 +1,6 @@
 //! Identity of this compiled reader, separately from any journal's ingest.
+use zakura_pir_protocol::transparent::events as transparent_events;
+
 use crate::AnyError;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -20,7 +22,7 @@ impl Executing {
     pub fn capture() -> Result<Self, AnyError> {
         let mut identity = compiled();
         identity["compiled_source_file_sha256"] = json!({
-            "extractor":hex::encode(Sha256::digest(include_bytes!("../../../../../src/shared/pir-publisher/transparent/src/ingest/extract.rs"))),
+            "extractor":hex::encode(Sha256::digest(include_bytes!("../../../../../src/transparent/transparent-publisher/src/ingest/extract.rs"))),
             "census":hex::encode(Sha256::digest(include_bytes!("census.rs"))),
         });
         // The pinned event codec's extents, as compiled into this reader.

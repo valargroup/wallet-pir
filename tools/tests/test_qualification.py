@@ -50,6 +50,14 @@ def complete_jobs(family):
 
 
 class QualificationTests(unittest.TestCase):
+    def test_skipped_reusable_publication_does_not_hide_the_executed_gate(self):
+        jobs = complete_jobs('enhance')
+        name = 'Enhance / Prepare qualified release artifacts'
+        skipped = dict(name=name, status='completed', conclusion='skipped')
+        self.assertTrue(release.service_jobs(jobs + [skipped], 'enhance'))
+        self.assertFalse(release.service_jobs(jobs + [dict(skipped, conclusion='failure')], 'enhance'))
+        self.assertFalse(release.service_jobs([j for j in jobs if j['name'] != name] + [skipped], 'enhance'))
+
     def test_cuda_publication_rechecks_archive_integrity_abi_and_clean_source(self):
         kind = 'enhance-pir-native-cuda'
         with tempfile.TemporaryDirectory() as directory:
@@ -194,7 +202,7 @@ class QualificationTests(unittest.TestCase):
         self.assertNotIn('timeout-minutes:', workflow)
         timing = workflow.split('- name: Check main feedback timing after validation', 1)[1]
         self.assertIn("if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'", timing)
-        self.assertIn('--check-fast-seconds 300', timing)
+        self.assertIn('--check-fast-seconds 180', timing)
         self.assertLess(workflow.index('- name: Run affected fast checks'), workflow.index('- name: Check main feedback timing'))
         self.assertIn("inputs.hosted && 'hosted-'", workflow)
         self.assertIn('!inputs.hosted', workflow)
@@ -210,7 +218,7 @@ class QualificationTests(unittest.TestCase):
         for path in ['Cargo.toml', 'Cargo.lock', '.cargo/config.toml', 'unknown.file']:
             self.assertTrue(q.plan(packages, ['tools/ci/fast.py', path])['packages'])
         self.assertIn('receiver-indexer', q.plan(packages, ['tools/ci/fast.py',
-                      'src/shared/pir-publisher/receiver/src/main.rs'])['packages'])
+                      'src/receiver/receiver-indexer/src/main.rs'])['packages'])
 
     def test_only_main_service_runs_from_the_repository_are_trusted(self):
         self.assertTrue(release.service_run(candidate(), SHA, REPO))
@@ -279,7 +287,7 @@ class QualificationTests(unittest.TestCase):
                 self.assertIn('/attempts/2/jobs?', api.call_args_list[0].args[0])
 
     def test_selection_uses_each_service_baseline_and_broadens_truncated_diffs(self):
-        for files in [[{'filename': 'src/shared/pir-publisher/receiver/src/main.rs'}],
+        for files in [[{'filename': 'src/receiver/receiver-indexer/src/main.rs'}],
                       [{'filename': 'Cargo.lock'}], [{'filename': 'unknown.file'}],
                       [{'filename': 'unknown.file'}] * 300]:
             with patch.object(q, 'history', return_value=[]), patch.object(q, 'baseline', return_value=BASE) as base, \

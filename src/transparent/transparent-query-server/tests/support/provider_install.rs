@@ -1,4 +1,9 @@
 //! Artifact consumer: all runtime commands run in a new extracted tree without PYTHONPATH.
+use zakura_pir_client::transparent::native::TableClientExt as _;
+
+use zakura_pir_publisher::transparent as transparent_shard;
+use zakura_pir_query_server::transparent::native as transparent_native;
+
 use super::*;
 use std::{
     path::{Path, PathBuf},

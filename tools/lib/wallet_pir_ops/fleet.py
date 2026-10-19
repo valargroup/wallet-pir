@@ -40,6 +40,8 @@ class Fleet:
         """Every reason this inventory is not a valid (complete) fleet, without contacting hosts."""
         problems = []
         inventory = self.inventory
+        managed = inventory.services.get('publisher', {}).get('managed_products', [])
+        unified_roles = {descriptors.PUBLISHER_PRODUCTS[p] for p in managed}
         names = {}
         for host in inventory.hosts:
             names.setdefault(host.lower(), []).append(host)
@@ -85,10 +87,13 @@ class Fleet:
                                     'matvec.matvec_backend = "cuda"' % target.key)
             if complete:
                 present = {t.role.name for t in targets}
-                missing = [r for r in service.order if r not in present and not service.roles[r].optional]
+                missing = [r for r in service.order if r not in present and not service.roles[r].optional
+                           and (name, r) not in unified_roles]
                 if missing:
                     problems.append('%s: required roles missing: %s' % (name, missing))
                 for role in service.roles.values():
+                    if (name, role.name) in unified_roles:
+                        continue
                     for duty in role.responsibilities:
                         holders = [t.key for t in targets if duty in t.responsibilities]
                         if len(holders) != 1:

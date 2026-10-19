@@ -7,6 +7,10 @@
 //! Published v2 entries are derived from it when read, so changing what an
 //! entry holds is a republish rather than a new ingest. Earlier v1 sidecars
 //! are read only for the oversized history events they carry.
+use zakura_pir_protocol::transparent::events as transparent_events;
+use zakura_pir_protocol::transparent::filter as transparent_filter;
+use zakura_pir_protocol::transparent::shard as transparent_shard;
+
 use super::events::EventStoreError;
 use sha2::{Digest, Sha256};
 use std::{
@@ -148,6 +152,42 @@ pub fn read_sources(
 ) -> Result<Vec<TransparentDisplayRecordV2x>, EventStoreError> {
     Ok(read_envelope(&V2X, dir, hash, TransparentDisplayRecordV2x::decode)?.0)
 }
+/// Restore metadata from already committed source sidecars when a version-2
+/// journal's fixed event records cannot encode it. No source record is inferred.
+pub fn restore_metadata(
+    dir: &Path,
+    hash: BlockHash,
+    events: &mut [(ScriptBytes, TransparentEvent)],
+) -> Result<(), EventStoreError> {
+    if !dir
+        .join(V2X_DIR)
+        .join(format!("{}.bin", hash.to_display_hex()))
+        .exists()
+    {
+        return Ok(());
+    }
+    let records = read_sources(dir, hash)?;
+    let metadata: std::collections::BTreeMap<_, _> = records
+        .iter()
+        .map(|r| (r.record.txid, r.record.metadata))
+        .collect();
+    for (_, event) in events {
+        let (id, target) = match event {
+            TransparentEvent::Receive(event) => (event.txid, &mut event.metadata),
+            TransparentEvent::Spend(event) => (event.spending_txid, &mut event.metadata),
+        };
+        if let Some(value) = metadata.get(&id) {
+            if target.is_some_and(|old| old != *value) {
+                return Err(EventStoreError::Invariant(
+                    "display/event metadata contradiction".into(),
+                ));
+            }
+            *target = Some(*value);
+        }
+    }
+    Ok(())
+}
+
 pub fn read_envelope<R>(
     envelope: &Envelope,
     dir: &Path,
@@ -486,6 +526,29 @@ mod tests {
             .unwrap();
         store.commit().unwrap();
         assert_eq!(store.events_at(1).unwrap(), Some(valid));
+    }
+
+    #[test]
+    fn version_two_append_preserves_source_metadata_without_converting_event_bytes() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            temp.path().join("meta.json"),
+            br#"{"version":2,"genesis_hash":"aa","start_height":1}"#,
+        )
+        .unwrap();
+        let record = source(vec![0x51]);
+        let expected = events(&record);
+        let hash = BlockHash::from_internal_bytes([2; 32]);
+        let mut store = EventStore::open(temp.path(), "aa", 1).unwrap();
+        store
+            .append_block_with_display(1, hash, &expected, &[record])
+            .unwrap();
+        store.commit().unwrap();
+        drop(store);
+        let store = EventStore::open_existing(temp.path()).unwrap();
+        assert_eq!(store.version(), 2);
+        assert_eq!(store.events_at(1).unwrap(), Some(expected));
+        assert_eq!(store.display_at(1).unwrap().len(), 1);
     }
 
     #[test]

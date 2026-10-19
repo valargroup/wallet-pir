@@ -1,0 +1,2 @@
+# A complete Transparent fleet, with one publisher and the existing query workers.
+include = ["services.toml", "../../transparent/deploy/services.toml", "../../txid/deploy/services.toml"]

@@ -15,35 +15,35 @@ import subprocess
 import tempfile
 import time
 
+from backend_features import NATIVE, CUDA, TRANSPARENT
 from full_packages import inventory, commands as full_commands, qualification_features
 from stage import ROOT, run, install_cancellation, inherited_fds
 
 REGISTRY = ROOT / 'tools/ci/test-matrix.json'
 EXPORT = 'tools/txid/txid-sizing/export/Cargo.toml'
-NATIVE = ['enhance-query-server/native-reinspiring', 'status-query-server/native-reinspiring',
-          'enhance-publisher/native-reinspiring', 'status-publisher/native-reinspiring',
-          'enhance-pir-client/native-reinspiring', 'enhance-pir-load-test/native-reinspiring']
-CUDA = ['enhance-query-server/cuda', 'status-query-server/cuda', 'enhance-publisher/cuda', 'status-publisher/cuda',
-        'enhance-publisher/native-reinspiring', 'enhance-pir-load-test/native-reinspiring']
 # Reference arithmetic runs the query server's protocol units and composed-runtime
 # oracles, its protocol contract tests, and the publisher's independent hint,
 # damaged-artifact and encrypted lifecycle checks.
 REFERENCE_LIB_FILTERS = ['ipir::tests', 'client::', 'protocol::', 'record::', 'record_types::',
                          'runtime::tests::unequal_units_match_monolithic_preprocessing_and_evaluation',
                          'runtime::tests::tail_domain_reuses_b_units_and_decodes_b_at_unchanged_coordinates']
-REFERENCE_TESTS = {('enhance-query-server', 'routing_contract'), ('enhance-query-server', 'v7_contract'),
-                   ('enhance-publisher', 'ci_hint'), ('enhance-publisher', 'encrypted_lifecycle')}
+REFERENCE_TESTS = {('enhance-query-server', 'routing_contract'),
+                   ('pir-publisher', 'ci_hint'), ('pir-publisher', 'encrypted_lifecycle')}
+# Real-process campaigns are compiled and listed here but run only by their
+# scripts under tools/transparent/scripts; every case must stay ignored.
+MANUAL_CAMPAIGNS = {('pir-publisher', 'controller_update_campaign'),
+                    ('pir-publisher', 'unified_http_sync_campaign')}
 
 
 def variants(groups):
     return {
-        'transparent': dict(family='transparent', packages=groups['transparent'], features=['transparent-publisher/rocksdb-reader', 'transparent-query-server/test-support', 'transparent-tools/compact-export'] + qualification_features(groups['transparent'])),
+        'transparent': dict(family='transparent', packages=[*groups['transparent'], 'pir-publisher'], features=TRANSPARENT + qualification_features([*groups['transparent'], 'pir-publisher'])),
         'export': dict(family='transparent', packages=['txid-sizing-export'], features=[], manifest=EXPORT),
-        'native': dict(family='enhance', packages=groups['enhance'], features=NATIVE + qualification_features(groups['enhance'])),
-        'reference': dict(family='enhance', packages=['enhance-query-server', 'enhance-publisher', 'status-query-server'],
-                          features=qualification_features(['enhance-query-server', 'enhance-publisher'])),
-        'cuda': dict(family='enhance', packages=['enhance-query-server', 'status-query-server', 'enhance-publisher',
-                                             'status-publisher', 'enhance-pir-load-test'], features=CUDA),
+        'native': dict(family='enhance', packages=groups['enhance'], features=NATIVE + ['pir-publisher/enhance-tests', 'pir-publisher/status-tests', 'pir-publisher/native-reinspiring'] + qualification_features(groups['enhance'])),
+        'reference': dict(family='enhance', packages=['enhance-query-server', 'status-query-server', 'pir-publisher'],
+                          features=['pir-publisher/enhance-tests'] + qualification_features(['enhance-query-server', 'status-query-server', 'pir-publisher'])),
+        'cuda': dict(family='enhance', packages=['enhance-query-server', 'status-query-server',
+                                             'status-publisher', 'enhance-pir-load-test', 'pir-query-server'], features=CUDA),
         'receiver': dict(family='receiver', packages=groups['receiver'], features=[]),
     }
 
@@ -80,6 +80,9 @@ def target_inventory(contexts, packages):
                     continue
                 kinds = []
                 if variant == 'reference':
+                    if name == 'pir-publisher' and not (
+                            kind == 'test' and (name, target['name']) in REFERENCE_TESTS):
+                        continue
                     if name.startswith('enhance-') and not (
                             kind == 'lib' and name == 'enhance-query-server'
                             or kind == 'test' and (name, target['name']) in REFERENCE_TESTS):
@@ -92,7 +95,7 @@ def target_inventory(contexts, packages):
                     kinds = ['check'] if kind == 'lib' else []
                     if (name, kind, target['name']) in {
                         ('enhance-query-server', 'lib', 'enhance_query_server'),
-                        ('enhance-publisher', 'test', 'matvec_config'),
+                        ('pir-query-server', 'test', 'operator'),
                     }:
                         kinds.append('example-test' if kind == 'example' and target.get('test') else kind)
                 else:
@@ -241,7 +244,10 @@ def test_programs(artifacts, variant, packages, env):
             [program['executable'], *args, '--ignored', '--list'],
             cwd=program['directory'], env=env, text=True, **inherited_fds(env))
         ignored = {line[:-6] for line in ignored_listing.splitlines() if line.endswith(': test')}
-        if not set(names) - ignored and program['integration']:
+        if identity in MANUAL_CAMPAIGNS:
+            if not names or set(names) - ignored:
+                raise ValueError(f'manual campaign must contain only ignored cases: {identity}')
+        elif not set(names) - ignored and program['integration']:
             raise ValueError(f'empty integration executable: {identity}')
         cases[':'.join((variant, *identity))] = dict(tests=names, ignored=sorted(ignored),
                                                    features=sorted(artifact.get('features', [])))
@@ -322,11 +328,11 @@ def baseline_commands(family):
         result += [
             ('reference', [*options, '-p', 'enhance-query-server', '--features', 'qualification-tests',
                            '--lib', '--', *REFERENCE_LIB_FILTERS]),
-            ('reference', [*options, '-p', 'enhance-query-server', '--test', 'routing_contract', '--test', 'v7_contract']),
-            ('reference', [*options, '-p', 'enhance-publisher', '--features', 'qualification-tests',
+            ('reference', [*options, '-p', 'enhance-query-server', '--test', 'routing_contract']),
+            ('reference', [*options, '-p', 'pir-publisher', '--features', 'enhance-tests,qualification-tests',
                            '--test', 'ci_hint', '--test', 'encrypted_lifecycle']),
-            ('reference', [*options, '-p', 'status-query-server', '--lib', '--tests']),
-            ('cuda', [*options, '-p', 'enhance-publisher', '--features', 'native-reinspiring,cuda', '--test', 'matvec_config']),
+            ('reference', [*options, '-p', 'status-query-server', '--features', 'qualification-tests', '--lib', '--tests']),
+            ('cuda', [*options, '-p', 'pir-query-server', '--features', 'enhance,native-reinspiring,cuda', '--test', 'operator']),
             ('cuda', [*options, '-p', 'enhance-query-server', '--features', 'native-reinspiring,cuda', '--lib',
                       'backend_load_failure_does_not_rebuild_or_replace_published_units']),
         ]
@@ -341,8 +347,8 @@ def run_baseline(family, plan, output):
     env['RUST_TEST_THREADS'] = '2' if family == 'transparent' else '1'
     if family == 'enhance':
         run(['cargo', 'check', '--locked', '-p', 'enhance-query-server', '-p', 'status-query-server',
-             '-p', 'enhance-publisher', '-p', 'enhance-pir-load-test', '--all-targets',
-             '--features', ','.join(CUDA)], env=env, stage='compile:baseline-cuda')
+             '-p', 'status-publisher', '-p', 'pir-query-server', '-p', 'enhance-pir-load-test',
+             '--all-targets', '--features', ','.join(CUDA)], env=env, stage='compile:baseline-cuda')
     for variant, options in baseline_commands(family):
         artifacts = run(['cargo', 'test', '--no-run', *options], env=env,
                         stage='compile:baseline-' + variant, collect_tests=True, test_details=True)

@@ -13,6 +13,8 @@
 //! (the fixture does not parse, or the service publishes a schema this build
 //! does not know), `placement_unknown`, `recent_below_floor`, `unavailable` and
 //! `protocol_failure`. Neither the txid, the query nor any server text is printed.
+use zakura_pir_client::transparent::txid_client as transparent_txid_client;
+
 use clap::Parser;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -178,9 +180,11 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use transparent_events::Txid;
-    use transparent_shard::txid::{Address, AddressKind, DisplayEntry, EntryOutput, Tag};
     use transparent_txid_client::{Placement, ProtocolKind};
+    use zakura_pir_protocol::transparent::events::Txid;
+    use zakura_pir_publisher::transparent::txid::{
+        Address, AddressKind, DisplayEntry, EntryOutput, Tag,
+    };
 
     const TXID_DISPLAY: &str = "00000000000000000000000000000000000000000000000000000000000000ab";
 

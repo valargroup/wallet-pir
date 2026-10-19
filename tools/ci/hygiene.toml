@@ -9,6 +9,10 @@ pattern = "tools/ci/*.json"
 reason = "CI registries consumed by the affected/full check planners."
 
 [[allow_data]]
+pattern = "tools/deploy/*/*.example.json"
+reason = "Typed host configuration examples consumed by the publisher and query-server checks."
+
+[[allow_data]]
 pattern = "tools/enhance/deploy/*.example.json"
 reason = "Public examples for the maintained deployment commands."
 
@@ -25,8 +29,8 @@ pattern = "src/enhance/enhance-query-server/tests/fixtures/*.json"
 reason = "Protocol regression inputs consumed by Rust tests."
 
 [[allow_data]]
-pattern = "src/shared/pir-publisher/enhance/tests/fixtures/*.json"
-reason = "Independent Ironwood record oracle consumed by tests."
+pattern = "src/pir-publisher/tests/fixtures/*.json"
+reason = "Independent Ironwood record oracle consumed by the host's Enhance regressions."
 
 [[allow_data]]
 pattern = "tools/enhance/fixtures/*.json"
@@ -37,11 +41,11 @@ pattern = "tools/tests/operations/fixtures/*.json"
 reason = "DigitalOcean layout contract used by operations tests."
 
 [[allow_data]]
-pattern = "src/shared/pir-publisher/receiver-store/tests/fixtures/*.json"
+pattern = "src/receiver/receiver-store/tests/fixtures/*.json"
 reason = "Receiver record and independent action oracles used by tests."
 
 [[allow_data]]
-pattern = "src/shared/pir-publisher/receiver/fixtures/*.json"
+pattern = "src/receiver/receiver-indexer/fixtures/*.json"
 reason = "Mainnet probe input used by the receiver indexer."
 
 [[allow_data]]
@@ -61,7 +65,7 @@ pattern = "tools/transparent/benchmarks/*.json"
 reason = "Maintained block-comparison scenario and fresh input sample."
 
 [[allow_data]]
-pattern = "src/shared/pir-publisher/transparent/examples/fixtures/*.json"
+pattern = "tools/transparent/examples/fixtures/*.json"
 reason = "Confirmed transaction input for the display example."
 
 [[allow_data]]
@@ -167,7 +171,3 @@ reason = "Independent canonical codec and packing input consumed by sizing tests
 [[allow_data]]
 pattern = "tools/transparent/fixtures/observation/failed-observation-20260912T003121Z.tar.gz"
 reason = "Real failed observation consumed by the mandatory audit negative control."
-
-[[allow_data]]
-pattern = "tools/deploy/publisher/publisher.example.json"
-reason = "Typed all-product publisher configuration consumed by the service and its validation tests."

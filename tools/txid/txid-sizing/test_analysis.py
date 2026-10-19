@@ -83,7 +83,7 @@ class AnalysisTests(unittest.TestCase):
 
     def test_independent_confirmed_facts_only_validate_overlap(self):
         # Existing demo oracle is a cross-check, never a population estimator.
-        fixture=json.loads((ROOT/"src/shared/pir-publisher/transparent/examples/fixtures/txid-confirmed.json").read_bytes())
+        fixture=json.loads((ROOT/"tools/transparent/examples/fixtures/txid-confirmed.json").read_bytes())
         expected={r["txid"]:r for b in fixture["blocks"] for r in b["transactions"]}
         data=json.loads((EVIDENCE/"canonical-sample.json").read_bytes())
         overlap=0

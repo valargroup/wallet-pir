@@ -17,11 +17,12 @@ BINARIES = {
     'wallet-pir-ops': [],
     # pir-apm is the Enhance/Status/Transparent dashboard and alerting sidecar;
     # it has no native variant.
-    'enhance-pir': ['enhance-pir-server', 'enhance-pir-cli', 'enhance-pir-load-test', 'pir-apm'],
+    'enhance-pir': ['enhance-pir-server', 'pir-query-server', 'enhance-pir-cli', 'enhance-pir-load-test', 'pir-apm'],
     # Same binaries built with `native-reinspiring`; they serve an incompatible
     # protocol and come from a separate target directory.
-    'enhance-pir-native': ['enhance-pir-server', 'enhance-pir-cli', 'enhance-pir-load-test'],
-    'enhance-pir-native-cuda': ['enhance-pir-server', 'enhance-pir-cli', 'enhance-pir-load-test'],
+    'enhance-pir-native': ['enhance-pir-server', 'pir-query-server', 'enhance-pir-cli', 'enhance-pir-load-test'],
+    # GPU hosts run this query server, not the publisher. The clients are diagnostics.
+    'enhance-pir-native-cuda': ['pir-query-server', 'enhance-pir-cli', 'enhance-pir-load-test'],
     'transparent-filter': ['transparent-publisher'],
     'transparent-shard': ['transparent-query-server', 'shard-assign', 'shard-prune'],
     'transparent-publisher': ['transparent-publish-controller', 'transparent-query-server', 'shard-control', 'shard-assign'],
@@ -71,6 +72,7 @@ FILES['enhance-pir-native-cuda'] = FILES['enhance-pir-native'] + [
 ON_REQUEST = ('pir-publisher', 'enhance-pir-native', 'enhance-pir-native-cuda', 'status-pir', 'wallet-pir-ops')
 # Build-time protocol identity recorded in candidate.json and re-checked on extract.
 PROTOCOLS = {
+    'pir-publisher': 'wallet-pir-publisher-v1',
     'enhance-pir': 'ironwood-enhance-pir-v7',
     'enhance-pir-native': 'ironwood-enhance-pir-v9-native-two-mask-m29',
     'enhance-pir-native-cuda': 'ironwood-enhance-pir-v9-native-two-mask-m29',
@@ -148,7 +150,10 @@ def service_jobs(jobs, family, cuda=False):
         ['Select full checks', 'Full checks complete'] if common else []) +
         ['Validate selected helper checks', *shared, *infrastructure]]
     for name in set(required):
-        matching = [job for job in jobs if job.get('name') == name]
+        # Reusable publication jobs can be skipped under the same display name
+        # as the caller's successful publisher. Require one executed gate;
+        # duplicate executed jobs, failures and missing gates still refuse.
+        matching = [job for job in jobs if job.get('name') == name and job.get('conclusion') != 'skipped']
         if (len(matching) != 1 or matching[0].get('status') != 'completed'
                 or matching[0].get('conclusion') != 'success'):
             return False

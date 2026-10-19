@@ -26,6 +26,9 @@ Transparent schema recipes run on the pinned coordinator under the same lock.
       Read-only: per-target action, drop-in handling and unit drift.
       Targets whose inventory entry names another artifact_kind (the GPU
       worker) need --extra-archive KIND=FILE and roll in their own transaction.
+      Roles that name their own binary also roll in their own transaction.
+      One archive supplies each file; the release directory is that file's sha256.
+      A host that runs two binaries receives both directories.
   preflight SERVICE (...same...) [--stage]
       Read-only unless --stage: identity on every host, baseline, drift,
       disk space and, where the release is staged, its self-check.
@@ -139,17 +142,23 @@ def transparent_cli():
 
 
 def target_binary(args, service, state_dir):
-    """`(sha256, local binary or None, source record)` from exactly one of the source flags."""
+    """`(sha256, local binary or None, source record)` from exactly one of the source flags.
+
+    The file name is the group's binary (`args.binary_name`), or the service
+    binary when the group did not name one. An archive contributes that file;
+    its sha256, not the archive's, names the release directory.
+    """
     chosen = [flag for flag in ('binary', 'archive', 'sha256') if getattr(args, flag)]
     if len(chosen) != 1:
         raise DeployError('give exactly one of --binary, --archive (with --sha) or --sha256')
+    name = getattr(args, 'binary_name', None) or service.binary
     if args.binary:
         path = Path(args.binary).resolve()
-        return file_sha256(path), path, {'binary': str(path)}
+        return file_sha256(path), path, {'binary': str(path), 'name': name}
     if args.sha256:
         if not SHA256.match(args.sha256):
             raise DeployError('--sha256 must be 64 lowercase hex digits')
-        return args.sha256, None, {'sha256': args.sha256}
+        return args.sha256, None, {'sha256': args.sha256, 'name': name}
     if not args.sha:
         raise DeployError('--archive requires --sha, the full source revision')
     kind = args.kind or (service.artifact_kinds[0] if service.artifact_kinds else None)
@@ -160,18 +169,26 @@ def target_binary(args, service, state_dir):
     destination = Path(tempfile.mkdtemp(prefix='%s-%s-' % (kind, args.sha[:12]), dir=work)) / 'bundle'
     # Verifies the revision, the checksum inventory and every file's digest.
     load_release().extract(Path(args.archive), destination, args.sha, kind)
-    path = destination / service.binary
-    return file_sha256(path), path, {'archive': str(Path(args.archive).resolve()), 'revision': args.sha, 'kind': kind}
+    path = destination / name
+    if not path.is_file():
+        raise DeployError('%s archive has no %s binary' % (kind, name))
+    return file_sha256(path), path, {'archive': str(Path(args.archive).resolve()), 'revision': args.sha,
+                                     'kind': kind, 'name': name}
 
 
 def artifact_groups(args, service, inventory):
-    """Split the selected targets by the release artifact each one runs, in rollout order.
+    """Split the selected targets into one transaction per binary, in rollout order.
 
-    A target whose inventory entry names an `artifact_kind` (a GPU worker's
-    CUDA build) cannot take the transaction's binary. It is deployed in its own
-    transaction from `--extra-archive KIND=FILE`, with the same `--sha`. Without
-    that archive the command refuses, so a regular deploy never skips such a
-    target silently; `--only` excludes it deliberately.
+    A role names its executable, or uses the service binary. Each transaction
+    stages that one file, and the release directory is the file's sha256. A
+    target whose inventory entry names an `artifact_kind` (a GPU worker's CUDA
+    build) cannot take the main archive's copy of that file. It is deployed
+    from `--extra-archive KIND=FILE`, with the same `--sha`. Without that
+    archive the command refuses, so a regular deploy never skips such a target
+    silently; `--only` excludes it deliberately.
+
+    `--binary` and `--sha256` name one file. A selection that runs two binaries
+    has to come from an archive, which contains each of them.
     Returns `[(args for that group, target keys)]`, one entry per transaction.
     """
     selected = descriptors.select(descriptors.targets(service, inventory), getattr(args, 'only', None))
@@ -186,21 +203,28 @@ def artifact_groups(args, service, inventory):
     groups = {}
     for target in selected:
         kind = target.artifact_kind if target.artifact_kind not in (None, main_kind) else None
-        groups.setdefault(kind, []).append(target.key)
-    missing = [k for k in groups if k is not None and k not in extra]
+        name = target.role.binary or service.binary
+        groups.setdefault((kind, name), []).append(target.key)
+    missing = [kind for kind, _name in groups if kind is not None and kind not in extra]
     if missing:
         raise DeployError('%s run the %s artifact: add --extra-archive %s=FILE with the same --sha, '
                           'or leave them out with --only'
-                          % ([key for k in missing for key in groups[k]], missing[0], missing[0]))
-    unused = set(extra) - set(groups)
+                          % ([key for kind, _name in groups if kind == missing[0] for key in groups[(kind, _name)]],
+                             missing[0], missing[0]))
+    unused = set(extra) - {kind for kind, _name in groups}
     if unused:
         raise DeployError('no selected target runs %s' % sorted(unused))
-    if any(k is not None for k in groups) and not args.sha:
+    if any(kind is not None for kind, _name in groups) and not args.sha:
         raise DeployError('--extra-archive requires --sha, the full source revision')
+    names = sorted({name for _kind, name in groups})
+    if len(names) > 1 and not args.archive:
+        raise DeployError('these roles run different binaries (%s); deploy from an archive so each file keeps its '
+                          'own release directory, or limit --only to one binary' % ', '.join(names))
     order = [t.key for t in selected]
     result = []
-    for kind, keys in sorted(groups.items(), key=lambda item: order.index(item[1][0])):
+    for (kind, name), keys in sorted(groups.items(), key=lambda item: order.index(item[1][0])):
         group = argparse.Namespace(**vars(args))
+        group.binary_name = name
         if kind is not None:
             group.binary, group.sha256, group.archive, group.kind = None, None, extra[kind], kind
         result.append((group, keys))
@@ -278,6 +302,8 @@ def parser():
             command.add_argument('--fleet', help='the planned inventory, if it is not yet installed')
             command.add_argument('--known-hosts', help='the planned host-key pins, if not yet installed')
     transparent_cli().register(commands)
+    from . import publisher
+    publisher.register(commands)
     for name in ('plan', 'preflight', 'deploy'):
         command = commands.add_parser(name)
         command.add_argument('service')
@@ -381,14 +407,22 @@ def main(argv=None, executor=None, out=print, package_layout=None, package_githu
             out('error: ' + message)
     try:
         from ..bundle import check_installed
-        product_command = args.command.startswith(('schema-', 'txid-display-', 'transparent-binary-', 'ops-package-'))
+        product_command = args.command.startswith(('schema-', 'txid-display-', 'transparent-binary-', 'transparent-alerts-',
+                                                   'ops-package-', 'publisher-cutover-'))
         mutation = (args.command in ('deploy', 'rollback') or getattr(args, 'stage', False)
                     or product_command and not args.command.endswith(('-plan', '-preflight', '-status', '-summary', '-recipe')))
         # A clean installed package may install a newer package revision; every
         # binary change still names the same source revision as the package.
         package_command = args.command.startswith('ops-package-')
         check_installed(mutation=mutation, revision=None if package_command else getattr(args, 'sha', None))
-        if args.command.startswith(('schema-', 'txid-display-', 'transparent-binary-')):
+        if args.command.startswith('publisher-cutover-'):
+            from . import publisher
+            request, _inventory = publisher.load_request(args.request, args.request_sha256)
+            check_installed(mutation=mutation, revision=request['release']['git_sha'])
+            result = publisher.dispatch(args, executor=executor, **options)
+            out(json.dumps(result, sort_keys=True))
+            return 0
+        if args.command.startswith(('schema-', 'txid-display-', 'transparent-binary-', 'transparent-alerts-')):
             if args.json:
                 raise DeployError('product recipes already provide their own JSON receipts; omit --json')
             return transparent_cli().dispatch(args, executor=executor, out=out, **options)
@@ -443,7 +477,9 @@ def main(argv=None, executor=None, out=print, package_layout=None, package_githu
             groups = artifact_groups(args, service, inventory)
             for group, keys in groups:
                 if len(groups) > 1:
-                    label = (group.kind or 'default artifact') if group.archive else 'given binary'
+                    label = group.binary_name
+                    if group.archive:
+                        label = '%s (%s)' % (group.binary_name, group.kind or 'archive')
                     log('== %s: %s' % (label, ', '.join(keys)))
                 deployer = Deployer(service, inventory, executor, args.state_dir, args.baseline, out=log,
                                     only=keys, **options)

@@ -55,6 +55,9 @@
 //! same bytes at the same paths on its own host, so a wallet that wants two
 //! origins still has them.
 
+use zakura_pir_protocol::transparent::filter as transparent_filter;
+use zakura_pir_protocol::transparent::shard as transparent_shard;
+
 use crate::history::assignment::{Assignment, WorkerRole, WorkerScope};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
@@ -1733,6 +1736,7 @@ mod tests {
     #[test]
     fn a_segment_with_data_past_its_selected_rows_is_refused() {
         use sha2::Digest;
+        use zakura_pir_query_server::transparent::native as transparent_native;
         let dir = tempfile::tempdir().unwrap();
         let (rows, row_bytes) = (2 * transparent_native::D as u64, 16u32);
         let mut bytes = vec![0u8; rows as usize * row_bytes as usize];

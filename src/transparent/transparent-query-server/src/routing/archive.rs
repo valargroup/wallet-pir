@@ -1,4 +1,6 @@
 //! One trusted terminal archive. No wallet destination, redirect, retry or fallback.
+use zakura_pir_protocol::transparent::shard as transparent_shard;
+
 use crate::{
     history::service::ServiceState,
     request::{json, RequestError},

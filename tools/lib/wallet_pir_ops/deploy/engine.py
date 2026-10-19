@@ -1,12 +1,12 @@
 """Plan, preflight, deploy, rollback, status and baseline capture for one service.
 
 A deploy changes one unit at a time, in descriptor order, and only where the
-running executable or the effective unit differs from the target. Each unit
-change is the managed drop-in `zz-wallet-pir-release.conf` (which clears and
-sets ExecStart, keeping the argument tail) or, for template roles, the whole
-unit rendered from its `.service.in`. Every side effect is journaled first; a
-failure restores the touched units in reverse order and checks that the
-previous executable is running again.
+running executable or the effective unit differs from the target. An
+exec-drop-in role changes the managed drop-in `zz-wallet-pir-release.conf`
+(which clears and sets ExecStart, keeping the argument tail). A template or
+role-mode role replaces its whole unit. One transaction stages one binary.
+Every side effect is journaled first; a failure restores the touched units in
+reverse order and checks that the previous executable is running again.
 """
 from dataclasses import dataclass, field
 from concurrent.futures import ThreadPoolExecutor
@@ -99,6 +99,21 @@ class Deployer:
         self.poll_seconds = poll_seconds
         self.targets = descriptors.select(descriptors.targets(service, inventory), only)
 
+    def transaction_binary(self):
+        """The one executable file this transaction stages.
+
+        A host that runs two binaries gets two release directories, each named
+        by the sha256 of the file it runs. Callers split targets first.
+        """
+        names = {target.role.binary or self.service.binary for target in self.targets}
+        if len(names) != 1:
+            raise DeployError('one transaction runs one binary, but these targets run %s'
+                              % ', '.join(sorted(names)))
+        return next(iter(names))
+
+    def release_binary(self, sha):
+        return self.service.release_binary(sha, self.transaction_binary())
+
     # ------------------------------------------------------------ inspection
 
     def check_identities(self, extra=()):
@@ -147,7 +162,7 @@ class Deployer:
         if self.ex.sha256(target.host, plan.exec_binary) != state['exe_sha256']:
             plan.refusals.append('running executable differs from ExecStart binary %s, so a rollback could not restore it'
                                  % plan.exec_binary)
-        release = self.service.release_binary(sha)
+        release = self.release_binary(sha)
         managed = '%s/%s.d/%s' % (SYSTEM, target.unit, units.MANAGED_DROP_IN)
         kept = {}
         for path, text in unit_files(state)[1:]:
@@ -253,8 +268,8 @@ class Deployer:
         path = '%s/%s' % (SYSTEM, target.unit)
         try:
             rendered = target.role.render(target.settings, self.service.release_dir(sha))
-            if units.split_exec(units.exec_start(units.effective([rendered.unit])))[1] != self.service.release_binary(sha):
-                plan.refusals.append('the new unit would not run %s' % self.service.release_binary(sha))
+            if units.split_exec(units.exec_start(units.effective([rendered.unit])))[1] != self.release_binary(sha):
+                plan.refusals.append('the new unit would not run %s' % self.release_binary(sha))
         except (units.UnitError, descriptors.DescriptorError, ValueError) as error:
             plan.refusals.append(str(error))
             return plan
@@ -282,7 +297,7 @@ class Deployer:
                                 'directory; pass --retire-historical to accept' % key)
         size = os.path.getsize(binary) if binary else 0
         for host in dict.fromkeys(p.target.host for p in plans if p.action in CHANGING):
-            if self.ex.sha256(host, self.service.release_binary(sha)) == sha:
+            if self.ex.sha256(host, self.release_binary(sha)) == sha:
                 continue
             if not binary:
                 problems.append('%s: release %s is not staged and no binary was given' % (host, sha[:12]))
@@ -460,7 +475,8 @@ class Deployer:
 
     def stage_host(self, host, sha, binary, partial):
         """Verify or upload one immutable release under the caller's lock."""
-        path = self.service.release_binary(sha)
+        name = self.transaction_binary()
+        path = self.service.release_binary(sha, name)
         self.lock.verify()
         current = self.ex.sha256(host, path)
         if current is None:
@@ -468,8 +484,8 @@ class Deployer:
                 raise DeployError('%s: release %s is not staged and no binary was given' % (host, sha[:12]))
             self.ex.mkdir(host, partial, 0o755)
             self.lock.verify()
-            self.ex.upload(host, binary, '%s/%s' % (partial, self.service.binary), 0o755)
-            if self.ex.sha256(host, '%s/%s' % (partial, self.service.binary)) != sha:
+            self.ex.upload(host, binary, '%s/%s' % (partial, name), 0o755)
+            if self.ex.sha256(host, '%s/%s' % (partial, name)) != sha:
                 raise DeployError('%s: uploaded binary does not match %s' % (host, sha))
             self.lock.verify()
             self.ex.rename(host, partial, self.service.release_dir(sha))
@@ -478,6 +494,24 @@ class Deployer:
         code, output = self.ex.run(host, [path, *self.service.self_check], SELF_CHECK_SECONDS)
         if code:
             raise DeployError('%s: staged binary failed its self-check (exit %d): %s' % (host, code, output[-500:]))
+        if self.service.name == 'enhance':
+            for target in self.targets:
+                if target.host != host or target.artifact_kind != 'enhance-pir-native-cuda':
+                    continue
+                if name != 'pir-query-server':
+                    raise DeployError('%s: CUDA check-backend runs on pir-query-server, not %s' % (host, path))
+                device = target.health_equals.get('matvec.cuda_device', 0)
+                # NVRTC may live outside ldconfig's search path. Preserve only
+                # the unit's explicit loader path, never its credentials.
+                state = self.ex.probe_unit(host, target.unit)
+                config = units.effective(text for _, text in unit_files(state))
+                library_path = config.get('Service', {}).get('Environment', {}).get('LD_LIBRARY_PATH')
+                command = (["env", "LD_LIBRARY_PATH=" + library_path] if library_path is not None else [])
+                command += [path, 'check-backend', '--matvec-backend', 'cuda', '--cuda-device', str(device)]
+                code, output = self.ex.run(host, command, SELF_CHECK_SECONDS)
+                if code:
+                    raise DeployError('%s: staged CUDA evaluator check failed (exit %d): %s'
+                                      % (host, code, output[-500:]))
         self.out('%s: staged %s and it runs' % (host, path))
 
     def activate(self, journal, index, sha):
@@ -541,7 +575,7 @@ class Deployer:
             host = record['host']
             self.lock.verify()
             staged = '%s/%s/check' % (self.service.transaction_dir(journal.id), record['unit'])
-            argv = [self.service.release_binary(sha), *record['check']]
+            argv = [self.release_binary(sha), *record['check']]
             renamed = {}
             for number, change in enumerate(record['changes']):
                 if change['op'] == 'write' and not change['path'].startswith(SYSTEM + '/'):

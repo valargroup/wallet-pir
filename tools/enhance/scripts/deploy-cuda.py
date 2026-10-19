@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Deploy a verified CI archive to the one optional native CUDA worker."""
+"""Deploy a verified CI archive to the one optional native CUDA worker.
+
+Isolated smoke starts workers from the archive's CUDA `pir-query-server` and
+the coordinator from the native publisher already installed on this runner.
+The publisher is not taken from the CUDA archive and is not rebuilt.
+"""
 import argparse
 import contextlib
 import hashlib
@@ -206,6 +211,29 @@ def repair_reviewed_fee_oracle(path, replacement, expected, held, evidence, writ
             'positions':len(old), 'fee_metadata_updates':changed}
 
 
+def installed_native_publisher():
+    """Coordinator `enhance-pir-server` on this runner.
+
+    GPU validation needs that native binary for the fixture coordinator. The
+    CUDA archive ships `pir-query-server` and the clients, not the publisher.
+    """
+    fragment = Path('/etc/systemd/system/enhance-pir-server.service')
+    try:
+        texts = [fragment.read_text()]
+    except OSError as error:
+        raise ValueError('CUDA smoke requires the installed native enhance-pir-server') from error
+    drop_in = fragment.with_name(fragment.name + '.d') / units.MANAGED_DROP_IN
+    if drop_in.is_file():
+        texts.append(drop_in.read_text())
+    try:
+        binary = Path(units.split_exec(units.exec_start(units.effective(texts)))[1])
+    except units.UnitError as error:
+        raise ValueError('CUDA smoke requires the installed native enhance-pir-server') from error
+    if binary.name != 'enhance-pir-server' or not binary.is_file():
+        raise ValueError('CUDA smoke requires the installed native enhance-pir-server')
+    return binary
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('mode', choices=['preflight', 'deploy', 'rollback'])
@@ -248,7 +276,8 @@ def main():
     release.extract(args.archive, bundle, args.sha, 'enhance-pir-native-cuda')
     for name in ['candidate.json', 'build.json', 'SHA256SUMS', 'revision']:
         shutil.copy2(bundle / name, args.evidence_dir / name)
-    digest = hashlib.sha256((bundle / 'enhance-pir-server').read_bytes()).hexdigest()
+    query_server = bundle / 'pir-query-server'
+    digest = hashlib.sha256(query_server.read_bytes()).hexdigest()
     document = json.loads(args.inventory.read_text())
     # Addresses, users and expected health come from the operator inventory;
     # ephemeral CI identity paths are supplied at runtime, never persisted there.
@@ -303,19 +332,25 @@ def main():
                 deployer, current, args.expected_current_sha256, held, args.evidence_dir)
             if not deployer.baseline_path.exists():
                 deployer.capture_baseline()
-            plans, problems = deployer.assess(digest, bundle / service.binary, retire_historical=True)
+            plans, problems = deployer.assess(digest, query_server, retire_historical=True)
             deployer.describe(plans, digest)
             if problems:
                 raise DeployError('preflight refused: ' + '; '.join(problems))
             staged = service.root + '/cuda-validation/' + digest
             held.verify()
             executor.mkdir(target.host, staged, 0o755)
-            for name in ['enhance-pir-server', 'enhance-pir-cli', 'enhance-pir-load-test', 'cuda-smoke.py']:
+            # Clients stay in the CUDA archive. The coordinator is the native
+            # publisher, staged beside them and never built with CUDA.
+            publisher = installed_native_publisher()
+            payloads = [(bundle / name, name) for name in (
+                'pir-query-server', 'enhance-pir-cli', 'enhance-pir-load-test', 'cuda-smoke.py')]
+            payloads.append((publisher, 'enhance-pir-server'))
+            for source, name in payloads:
                 held.verify()
                 path = staged + '/' + name
-                expected = hashlib.sha256((bundle / name).read_bytes()).hexdigest()
+                expected = hashlib.sha256(source.read_bytes()).hexdigest()
                 if executor.sha256(target.host, path) != expected:
-                    executor.upload(target.host, bundle / name, path, 0o755)
+                    executor.upload(target.host, source, path, 0o755)
                 if executor.sha256(target.host, path) != expected:
                     raise DeployError('staged validation payload checksum mismatch')
             user = inventory.hosts[target.host]['user']
@@ -323,6 +358,7 @@ def main():
             code, output = executor.run(target.host, ['sudo', '-n', '-u', user, '--', 'env',
                 'LD_LIBRARY_PATH=/usr/local/cuda-12.2/targets/x86_64-linux/lib',
                 'python3', staged + '/cuda-smoke.py', '--release-dir', staged,
+                '--coordinator', staged + '/enhance-pir-server',
                 '--evidence-dir', smoke_path], 360)
             result['smoke_exit_code'] = code
             result['smoke_output'] = output[-4000:]
@@ -337,7 +373,7 @@ def main():
             if code:
                 raise DeployError('isolated CUDA encrypted smoke failed')
             if args.mode == 'deploy':
-                journal = deployer.deploy(digest, bundle / service.binary,
+                journal = deployer.deploy(digest, query_server,
                     {'revision': args.sha, 'kind': 'enhance-pir-native-cuda'},
                     retire_historical=True, verify_noop=True)
                 result.update({'transaction': journal.id, 'transaction_status': journal.status})

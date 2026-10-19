@@ -18,9 +18,9 @@ class IntegrationTests(unittest.TestCase):
         registry = tests.inventory()
         for package in ['receiver-pir-server', 'transparent-query-server']:
             self.assertIn('ci_smoke', registry[package]['fast'])
-        enhance = registry['enhance-publisher']
-        self.assertIn('ci_hint', enhance['fast'])
-        self.assertIn('encrypted_lifecycle', enhance['full'])
+        host = registry['pir-publisher']
+        self.assertIn('ci_hint', host['fast'])
+        self.assertIn('encrypted_lifecycle', host['full'])
 
     def test_publisher_smoke_feedback_runs_its_encrypted_smoke_only(self):
         registry = {'enhance-publisher': {'fast': ['ci_smoke', 'layout'], 'full': []}}
@@ -55,9 +55,8 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(manifest['package']['name'], 'transparent-tools')
         for binary in ['transparent-filter-cli', 'txid-quality-canary']:
             self.assertTrue((directory / 'src/bin' / (binary + '.rs')).is_file(), binary)
-        self.assertIn('client', manifest['dependencies']['transparent-filter']['features'])
-        self.assertEqual(manifest['dependencies']['transparent-txid-client']['package'],
-                         'zakura-transparent-txid-client')
+        self.assertIn('transparent', manifest['dependencies']['zakura-pir-client']['features'])
+        self.assertNotIn('wallet', manifest['dependencies']['zakura-pir-client']['features'])
         registry = json.loads((ROOT / 'tools/ci/integration-tests.json').read_text())
         self.assertIn('service_tools', registry['transparent-tools']['full'])
 
@@ -96,6 +95,14 @@ class IntegrationTests(unittest.TestCase):
                 selected = {command[index + 1] for index, word in enumerate(command[:-1])
                             if word == '--test'}
                 self.assertFalse(selected - discovered[package])
+
+    def test_full_runs_both_tiers_and_fast_only_runs_fast(self):
+        tiers = {'fast': ['zebra', 'alpha'], 'full': ['crypto']}
+        prefix = ['--locked', '--profile', 'release-fast', '-p', 'enhance-publisher']
+        self.assertEqual(tests.cargo_args('enhance-publisher', tiers, 'fast'),
+                         prefix + ['--test', 'alpha', '--test', 'zebra'])
+        self.assertEqual(tests.cargo_args('enhance-publisher', tiers, 'full'),
+                         prefix + ['--lib', '--bins', '--test', 'alpha', '--test', 'crypto', '--test', 'zebra'])
 
     def test_fast_never_compiles_the_campaign_target(self):
         tiers = {'fast': ['smoke'], 'full': ['campaign']}

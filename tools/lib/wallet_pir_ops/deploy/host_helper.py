@@ -10,6 +10,7 @@ Standard library only, and no state between invocations: every operation is
 safe to repeat, which is what lets a rollback be re-run after an interruption.
 """
 import hashlib
+import fcntl
 import io
 import json
 import os
@@ -28,7 +29,7 @@ except NameError:
     from wallet_pir_ops import ancillary_baseline as _ANCILLARY
 
 CHUNK = 1 << 20
-SHOW = 'LoadState,ActiveState,SubState,MainPID,InvocationID,NeedDaemonReload,FragmentPath,DropInPaths'
+SHOW = 'LoadState,ActiveState,SubState,MainPID,InvocationID,NeedDaemonReload,FragmentPath,DropInPaths,UnitFileState'
 
 
 def sha256(path):
@@ -124,12 +125,54 @@ def probe_unit(unit):
         'sub_state': properties.get('SubState', ''),
         'main_pid': pid,
         'invocation_id': properties.get('InvocationID') or None,
+        'unit_file_state': properties.get('UnitFileState', ''),
         'need_daemon_reload': properties.get('NeedDaemonReload') == 'yes',
         'fragment_path': fragment,
         'fragment_text': read(fragment) if fragment else None,
         'drop_ins': [{'path': path, 'text': read(path)} for path in drop_ins],
         'exe_sha256': sha256('/proc/%d/exe' % pid) if pid else None,
     }
+
+
+def publisher_resources(paths):
+    """Read coordinator identity, headroom and managed-file metadata without opening state stores."""
+    memory = dict(line.split(':', 1) for line in Path('/proc/meminfo').read_text().splitlines())
+    disks, files = {}, {}
+    for name in paths:
+        path = Path(name)
+        if path.is_symlink():
+            raise ValueError('publisher managed path is a symlink: ' + name)
+        files[name] = None
+        if path.exists():
+            info = path.stat()
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != 0:
+                raise ValueError('publisher managed file must be a root-owned regular file: ' + name)
+            files[name] = {'mode': stat.S_IMODE(info.st_mode)}
+        parent = path.parent
+        while not parent.exists():
+            parent = parent.parent
+        info = os.statvfs(parent)
+        disks[name] = {'available': info.f_bavail * info.f_frsize, 'total': info.f_blocks * info.f_frsize}
+    return {'machine_id': Path('/etc/machine-id').read_text().strip(), 'files': files, 'disks': disks,
+            'memory_available': int(memory['MemAvailable'].split()[0]) * 1024,
+            'memory_total': int(memory['MemTotal'].split()[0]) * 1024}
+
+
+def publisher_unlocked(paths):
+    """Check existing owner locks together after stopping services; never create or remove a lock."""
+    handles = []
+    try:
+        for name in paths:
+            if not os.path.exists(name):
+                continue
+            fd = os.open(name, os.O_RDWR | os.O_NOFOLLOW)
+            handles.append(fd)
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                raise ValueError('owner lock is not a regular file: ' + name)
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    finally:
+        for fd in handles:
+            os.close(fd)
 
 
 def systemctl(args):
@@ -535,6 +578,8 @@ def remove_tree(path, owner):
 
 
 OPERATIONS = {
+    'publisher_unlocked': publisher_unlocked,
+    'publisher_resources': publisher_resources,
     'ownership_probe': ownership_probe,
     'package_observe': package_observe,
     'package_tree': package_tree,

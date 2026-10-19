@@ -10,7 +10,10 @@
 //!   revision moved on), with the client's computed bytes beside the
 //!   measured ones. Over plain HTTP the two must be equal; over HTTPS the
 //!   difference is TLS and connection setup.
-#[path = "support/bytemeter.rs"]
+use zakura_pir_publisher::transparent as transparent_shard;
+use zakura_pir_query_server::transparent::native as transparent_native;
+
+#[path = "../tests/support/bytemeter.rs"]
 mod bytemeter;
 #[path = "support/txdisplay.rs"]
 mod txdisplay;

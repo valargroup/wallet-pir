@@ -855,6 +855,7 @@ dependencies = [
  "reqwest",
  "serde_json",
  "transparent-filter",
+ "transparent-txid-client",
  "transparent-wallet",
  "zakura-pir-transparent",
 ]

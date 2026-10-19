@@ -1,0 +1,26 @@
+# Enhance packing router, rendered by tools/enhance/lib/roles.py.
+# ExecStart, the config path and ReadWritePaths are rendered. The internal
+# token is the inventory's credential file.
+[Unit]
+Description=Enhance PIR packing router
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=enhance-pir
+ExecStart=/bin/false
+Restart=on-failure
+RestartSec=3
+MemoryHigh=7G
+MemoryMax=7G
+MemorySwapMax=0
+LimitNOFILE=4096
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+Environment=RUST_LOG=info
+
+[Install]
+WantedBy=multi-user.target

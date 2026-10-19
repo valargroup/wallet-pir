@@ -12,7 +12,7 @@ pub fn modulus(rows: u64, item_bits: u64) -> u64 {
     #[cfg(feature = "native-reinspiring")]
     {
         let _ = (rows, item_bits);
-        pir_native::Q
+        zakura_pir_server_core::native::Q
     }
     #[cfg(not(feature = "native-reinspiring"))]
     {
@@ -33,9 +33,11 @@ pub fn hint(
     let cols = server.params().db_cols;
     let db = server.db();
     Ok(
-        pir_native::hint(setup, rows, cols, |col| &db[col * rows..(col + 1) * rows])?
-            .into_iter()
-            .map(|rows| CrsBlock { rows })
-            .collect(),
+        zakura_pir_server_core::native::hint(setup, rows, cols, |col| {
+            &db[col * rows..(col + 1) * rows]
+        })?
+        .into_iter()
+        .map(|rows| CrsBlock { rows })
+        .collect(),
     )
 }

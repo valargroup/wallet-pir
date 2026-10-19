@@ -31,9 +31,11 @@ MIN_FREE_DISK_BYTES = 32 * GIB
 SERVICE = 'enhance-pir-worker.service'
 USER = 'enhance-pir'
 PROTOCOL = 'ironwood-enhance-pir-v7'
-BUNDLE_FILES = {'enhance-pir-server', 'enhance-pir-cli', 'enhance-pir-load-test', 'pir-apm',
+BUNDLE_FILES = {'enhance-pir-server', 'pir-query-server', 'enhance-pir-cli', 'enhance-pir-load-test', 'pir-apm',
                 'test-local.py', 'bootstrap-worker.py', 'sample-worker.py', 'summarize-samples.py',
                 'assess-campaign.py', 'workers.example.json', 'candidate.json', 'revision', 'SHA256SUMS'}
+CONFIG_PATH = '/etc/enhance-pir/worker.json'
+DATA_DIR = '/srv/enhance-pir/worker'
 
 
 def sha256(data):
@@ -89,10 +91,10 @@ def verify_bundle(bundle, revision, manifest_sha256):
             or metadata.get('protocol_revision') != PROTOCOL or metadata.get('qualification') != 'unqualified'
             or metadata.get('source_dirty') is not False):
         raise ValueError('bootstrap requires a clean exact-revision unqualified candidate')
-    header = (bundle / 'enhance-pir-server').read_bytes()[:20]
+    header = (bundle / 'pir-query-server').read_bytes()[:20]
     if len(header) != 20 or header[:6] != b'\x7fELF\x02\x01' or int.from_bytes(header[18:20], 'little') != 62:
         raise ValueError('worker binary must be a Linux x86-64 ELF executable')
-    return {'revision': revision, 'manifest_sha256': manifest_sha256, 'binary_sha256': checksums['enhance-pir-server']}
+    return {'revision': revision, 'manifest_sha256': manifest_sha256, 'binary_sha256': checksums['pir-query-server']}
 
 
 def storage_filesystem(path=Path('/srv/enhance-pir/worker')):
@@ -147,6 +149,13 @@ def placement_policy(sealed_shards=6):
     return {'sealed_shards': sealed_shards}
 
 
+def worker_config(private_ipv4, sealed_shards):
+    """The same worker document the deploy renderer writes, for this one host."""
+    return {'management_listen': '127.0.0.1:18091', 'enhance': {'enabled': True, 'settings': {
+        'role': 'worker', 'listen': '%s:8291' % private_ipv4, 'data_dir': DATA_DIR,
+        'sealed_shards': sealed_shards, 'matvec': {'matvec_backend': 'cpu', 'cuda_device': None}}}}
+
+
 def unit(binary_sha256, private_ipv4, limits, sealed_shards=6):
     placement_policy(sealed_shards)
     if not re.fullmatch('[0-9a-f]{64}', binary_sha256) or str(ipaddress.IPv4Address(private_ipv4)) != private_ipv4:
@@ -160,7 +169,7 @@ Wants=network-online.target
 Type=simple
 User={USER}
 Group={USER}
-ExecStart=/opt/enhance-pir/releases/{binary_sha256}/enhance-pir-server worker --sealed-shards {sealed_shards} --listen {private_ipv4}:8291 --data-dir /srv/enhance-pir/worker
+ExecStart=/opt/enhance-pir/releases/{binary_sha256}/pir-query-server --config {CONFIG_PATH}
 Restart=on-failure
 RestartSec=3
 LimitNOFILE=1048576
@@ -172,7 +181,7 @@ NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
-ReadWritePaths=/srv/enhance-pir/worker
+ReadWritePaths={DATA_DIR}
 Environment=RUST_LOG=info
 
 [Install]
@@ -238,14 +247,17 @@ def install(bundle, revision, manifest_sha256, worker_name, private_ipv4, limits
     if not any(address in ipaddress.IPv4Network(cidr) for cidr in ('10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16')):
         raise ValueError('worker must bind its private VPC address')
     content = unit(identity['binary_sha256'], private_ipv4, limits, sealed_shards)
+    config = (json.dumps(worker_config(private_ipv4, sealed_shards), sort_keys=True, indent=2) + '\n').encode()
     base = root / 'srv/enhance-pir'
     unit_path = root / 'etc/systemd/system' / SERVICE
+    config_path = root / CONFIG_PATH.lstrip('/')
     receipt = base / 'bootstrap.json'
     data = base / 'worker'
-    binary = root / 'opt/enhance-pir/releases' / identity['binary_sha256'] / 'enhance-pir-server'
+    binary = root / 'opt/enhance-pir/releases' / identity['binary_sha256'] / 'pir-query-server'
     previous = None
     expected = {**identity, 'worker_name': worker_name, 'private_ipv4': private_ipv4, 'limits': limits,
-                'placement_policy': placement_policy(sealed_shards), 'unit_sha256': sha256(content), 'qualification': 'unqualified'}
+                'placement_policy': placement_policy(sealed_shards), 'unit_sha256': sha256(content),
+                'config_sha256': sha256(config), 'qualification': 'unqualified'}
     if receipt.exists():
         previous = json.loads(receipt.read_text())
         if any(previous.get(k) != v for k, v in expected.items()):
@@ -254,6 +266,8 @@ def install(bundle, revision, manifest_sha256, worker_name, private_ipv4, limits
         raise ValueError('refuse to adopt an existing service or worker state')
     if unit_path.is_symlink() or (unit_path.exists() and unit_path.read_bytes() != content):
         raise ValueError('existing service configuration differs')
+    if config_path.is_symlink() or (config_path.exists() and config_path.read_bytes() != config):
+        raise ValueError('existing worker configuration differs')
     disk_state = data / 'worker.json'
     if disk_state.exists():
         state = json.loads(disk_state.read_text())
@@ -263,7 +277,9 @@ def install(bundle, revision, manifest_sha256, worker_name, private_ipv4, limits
         # A repeat after successful bootstrap is read-only with respect to the
         # service. The coordinator may since have registered this worker; never
         # stop it if a readiness check now fails or assignment races this check.
-        if not unit_path.exists() or not binary.is_file() or binary.is_symlink() or sha256(binary.read_bytes()) != identity['binary_sha256']:
+        if (not unit_path.exists() or not config_path.is_file() or config_path.is_symlink()
+                or sha256(config_path.read_bytes()) != sha256(config)
+                or not binary.is_file() or binary.is_symlink() or sha256(binary.read_bytes()) != identity['binary_sha256']):
             raise ValueError('previously bootstrapped installation needs explicit repair')
         health = idle_health(private_ipv4)
         if health.get('placement_policy') != placement_policy(sealed_shards):
@@ -286,10 +302,12 @@ def install(bundle, revision, manifest_sha256, worker_name, private_ipv4, limits
     if binary.exists() and (binary.is_symlink() or sha256(binary.read_bytes()) != identity['binary_sha256']):
         raise ValueError('immutable installed binary differs')
     if not binary.exists():
-        payload = (bundle / 'enhance-pir-server').read_bytes()
+        payload = (bundle / 'pir-query-server').read_bytes()
         if sha256(payload) != identity['binary_sha256']:
             raise ValueError('candidate binary changed after verification')
         atomic(binary, payload, 0o755)
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    atomic(config_path, config, 0o644)
     atomic(unit_path, content, 0o644)
     started = False
     try:

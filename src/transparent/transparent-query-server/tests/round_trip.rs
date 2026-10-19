@@ -6,6 +6,13 @@
 //! the shard they were asked of, a query built for one shard is refused by
 //! another, and the parameters really are shared rather than per shard.
 
+use zakura_pir_client::transparent::native::TableClientExt as _;
+
+use zakura_pir_protocol::transparent::events as transparent_events;
+use zakura_pir_protocol::transparent::filter as transparent_filter;
+use zakura_pir_publisher::transparent as transparent_shard;
+use zakura_pir_query_server::transparent::native as transparent_native;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use std::path::Path;

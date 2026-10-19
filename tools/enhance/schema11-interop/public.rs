@@ -1,6 +1,6 @@
 //! Opt-in deployed endpoint check using a separately verified canonical anchor.
 use futures_util::StreamExt;
-use zakura_pir_enhance::{
+use zakura_pir_client::enhance::{
     transport::{Method, PendingClient, Request, ResponseBody, Transport},
     AcceptedAnchor, ClientError, ClientResourceLimits, GenerationAcceptance,
 };

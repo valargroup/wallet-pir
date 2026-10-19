@@ -1,6 +1,7 @@
 # Documentation
 
 - [Unified publisher](publisher.md): source layout, configuration, managed services and gated cutover.
+- [Query server host](query-server.md): one serving process for any compiled subset of Enhance, Status, and Transparent.
 
 - [Fleet operator guide](operations.md): architecture, configuration ownership, packaged operations, lifecycle commands and recovery.
 

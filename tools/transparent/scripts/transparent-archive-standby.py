@@ -82,7 +82,7 @@ def release_binaries(store, sha):
         digest, _, name = line.partition('  ')
         sums[name.strip().removeprefix('./')] = digest
     binaries = {}
-    for name in ('transparent-shard-server', 'shard-control'):
+    for name in ('transparent-query-server', 'shard-control'):
         if name not in sums:
             raise StandbyError(f'release {sha} lists no {name}')
         if sha256_file(directory/name) != sums[name]:
@@ -108,7 +108,7 @@ class Standby:
         self.refuse_members()
         self.check_host()
         binaries = release_binaries(self.a.release_store, self.a.release)
-        self.summary['binary_sha256'] = binaries['transparent-shard-server'][1]
+        self.summary['binary_sha256'] = binaries['transparent-query-server'][1]
         self.install(binaries)
         warm = self.already_warm(binaries)
         if warm:
@@ -150,7 +150,7 @@ class Standby:
     # -- release ---------------------------------------------------------
     def install(self, binaries):
         installed = {}
-        output = self.remote.run(self.host, 'sha256sum /usr/local/bin/transparent-shard-server '
+        output = self.remote.run(self.host, 'sha256sum /usr/local/bin/transparent-query-server '
                                             '/usr/local/bin/shard-control 2>/dev/null || true')
         for line in output.splitlines():
             digest, _, path = line.partition('  ')
@@ -163,8 +163,8 @@ class Standby:
         self.remote.copy(self.host, [path for path, _ in binaries.values()], staging + '/')
         check = ''.join(f'{digest}  {staging}/{name}\n' for name, (_, digest) in binaries.items())
         self.remote.run(self.host, f'sha256sum -c --quiet && '
-                                   f'install -m755 {staging}/transparent-shard-server /usr/local/bin/transparent-shard-server.next && '
-                                   f'mv /usr/local/bin/transparent-shard-server.next /usr/local/bin/transparent-shard-server && '
+                                   f'install -m755 {staging}/transparent-query-server /usr/local/bin/transparent-query-server.next && '
+                                   f'mv /usr/local/bin/transparent-query-server.next /usr/local/bin/transparent-query-server && '
                                    f'install -m755 {staging}/shard-control /usr/local/bin/shard-control',
                         data=check.encode())
         self.summary['installed'] = 'now'
@@ -175,7 +175,7 @@ class Standby:
         This is the condition `repartition` checks."""
         try:
             ready = self.http(f'http://{self.host}:8093/v1/ready')
-            if not ready.get('ready') or ready.get('binary_sha256') != binaries['transparent-shard-server'][1]:
+            if not ready.get('ready') or ready.get('binary_sha256') != binaries['transparent-query-server'][1]:
                 return None
             status = self.status(dict(self.fleet, known_hosts=str(self.a.known_hosts)),
                                  {'id': self.a.id, 'ssh_host': self.host})
@@ -351,7 +351,7 @@ class Standby:
         while self.clock() < deadline:
             try:
                 ready = self.http(f'http://{self.host}:8093/v1/ready')
-                if (ready.get('ready') and ready.get('binary_sha256') == binaries['transparent-shard-server'][1]
+                if (ready.get('ready') and ready.get('binary_sha256') == binaries['transparent-query-server'][1]
                         and ready.get('map_sha256') == digest):
                     status = self.status(config, member)
                     active = (status.get('active') or {}).get('map_sha256')

@@ -1,4 +1,11 @@
 //! Complete endpoint tests; original released adapter runs in a separate process.
+use zakura_pir_client::transparent::native::TableClientExt as _;
+
+use zakura_pir_protocol::transparent::events as transparent_events;
+use zakura_pir_protocol::transparent::filter as transparent_filter;
+use zakura_pir_publisher::transparent as transparent_shard;
+use zakura_pir_query_server::transparent::native as transparent_native;
+
 use super::{generated, genesis, hash_at, revision, script, FIRST};
 use std::{collections::BTreeMap, sync::Arc};
 use transparent_events::{ReceiveEvent, SpendEvent, TransparentEvent, Txid};

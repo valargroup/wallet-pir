@@ -24,6 +24,19 @@ def free_port():
         return stream.getsockname()[1]
 
 
+def write_worker_config(path, listen, data_dir, management_listen, sealed_shards=6):
+    """One Enhance worker role for pir-query-server --config."""
+    path.write_text(json.dumps({
+        'management_listen': management_listen,
+        'enhance': {'enabled': True, 'settings': {
+            'role': 'worker',
+            'listen': listen,
+            'data_dir': str(data_dir),
+            'sealed_shards': sealed_shards,
+        }},
+    }))
+
+
 def fetch(url):
     with urllib.request.urlopen(url, timeout=5) as response:
         return json.load(response)
@@ -75,11 +88,13 @@ def main():
     if args.require_publications < 0:
         parser.error('require-publications must be nonnegative')
     args.out.mkdir(parents=True, exist_ok=False)
-    binary = args.bin_dir.resolve() / 'enhance-pir-server'
+    publisher = args.bin_dir.resolve() / 'enhance-pir-server'
+    query_server = args.bin_dir.resolve() / 'pir-query-server'
     load = args.bin_dir.resolve() / 'enhance-pir-load-test'
     manifest = {'kind': 'local-smoke-not-hardware-qualification', 'platform': platform.platform(),
                 **provenance(args.bin_dir.resolve()),
-                'binaries': {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in [binary, load]},
+                'binaries': {p.name: hashlib.sha256(p.read_bytes()).hexdigest()
+                             for p in [publisher, query_server, load]},
                 'seconds_per_step': args.seconds, 'records': args.records, 'results': []}
     processes = []
     logs = []
@@ -87,21 +102,33 @@ def main():
         work = Path(work)
         try:
             replicas = []
+            used_ports = set()
+
+            def take_port():
+                while True:
+                    candidate = free_port()
+                    if candidate not in used_ports:
+                        used_ports.add(candidate)
+                        return candidate
+
             for index in range(4 if args.expand_inventory else 2):
-                port = free_port()
+                port = take_port()
                 replicas.append({'name': f'replica-{index}', 'url': f'http://127.0.0.1:{port}'})
+                config = work / f'worker-{index}.json'
+                write_worker_config(config, f'127.0.0.1:{port}', work / f'worker-{index}',
+                                    f'127.0.0.1:{take_port()}')
                 log = (args.out / f'worker-{index}.log').open('w')
                 logs.append(log)
-                processes.append(subprocess.Popen([str(binary), 'worker', '--listen', f'127.0.0.1:{port}',
-                    '--data-dir', str(work / f'worker-{index}')], stdout=log, stderr=log))
+                processes.append(subprocess.Popen([str(query_server), '--config', str(config)],
+                                                   stdout=log, stderr=log))
             config = work / 'workers.json'
             groups = [{'name': 'group-1', 'replicas': replicas[:2]}]
             config.write_text(json.dumps({'groups': groups}))
-            port = free_port()
+            port = take_port()
             origin = f'http://127.0.0.1:{port}'
             log = (args.out / 'coordinator.log').open('w')
             logs.append(log)
-            processes.append(subprocess.Popen([str(binary), 'coordinator', '--listen', f'127.0.0.1:{port}',
+            processes.append(subprocess.Popen([str(publisher), 'coordinator', '--listen', f'127.0.0.1:{port}',
                 '--data-dir', str(work / 'coordinator'), '--worker-config', str(config), '--isolated-fixture',
                 '--fixture-records', str(args.records), '--fixture-append-records', '1', '--poll-seconds', '5',
                 '--capacity-fallback-rows-per-second', '8' if args.expand_inventory else '1'], stdout=log, stderr=log))

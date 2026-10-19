@@ -257,6 +257,11 @@ impl PackingRouter {
             .route("/internal/drain", post(drain))
             .route("/internal/health", get(health))
             .route("/internal/metrics", get(metrics))
+            .route(
+                "/internal/prepare-packing",
+                post(prepare_packing)
+                    .layer(axum::extract::DefaultBodyLimit::max(256 * 1024 * 1024)),
+            )
             .layer(crate::internal_auth::Token::from_env().layer())
             .with_state(self.clone())
     }
@@ -1008,6 +1013,52 @@ async fn serve(r: PackingRouter, request: Request) -> Result<Response, Error> {
         Ok::<_, Error>(response)
     });
     task.await?
+}
+
+#[derive(Deserialize)]
+struct PrepareRows {
+    rows: u64,
+}
+
+async fn prepare_packing(
+    State(router): State<PackingRouter>,
+    axum::extract::Query(query): axum::extract::Query<PrepareRows>,
+    body: axum::body::Bytes,
+) -> Result<Vec<u8>, Error> {
+    let budget = router.packing_budget.clone();
+    let root = router.root.clone();
+    let hint = body.to_vec();
+    let rows = query.rows;
+    tokio::task::spawn_blocking(move || prepare_artifact(rows, &hint, &budget, &root))
+        .await
+        .map_err(unavailable)?
+        .map_err(unavailable)
+}
+
+fn prepare_artifact(
+    rows: u64,
+    hint: &[u8],
+    budget: &crate::packing_budget::PackingBudget,
+    root: &Path,
+) -> Result<Vec<u8>, String> {
+    let params = crate::protocol::parameters(rows)?;
+    let blocks = crate::wire::read_crs_blocks(
+        hint,
+        params.db_cols / crate::runtime::rlwe().d,
+        crate::runtime::rlwe().d,
+    )
+    .map_err(|error| error.to_string())?;
+    let packing = Packing::new(rows, &blocks, budget)?;
+    let mut prepared = Vec::new();
+    packing.write_prepared(&mut prepared)?;
+    let digest = hex::encode(Sha256::digest(&prepared));
+    let directory = root.join("artifacts");
+    let name = format!("{digest}.bin");
+    if !directory.join(&name).is_file() {
+        crate::artifact::write_atomic(&directory, &name, |file| file.write_all(&prepared))
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(prepared)
 }
 
 async fn download_prepared(

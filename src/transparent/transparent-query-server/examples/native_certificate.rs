@@ -3,7 +3,7 @@
 //! with `--query-rounding dithered` a `native-noise-two-mask-rounded-dithered-v1`
 //! report for the 44-bit dithered query.
 //!
-//! Modelled on `src/shared/pir-publisher/enhance/examples/native_certificate.rs`.
+//! Modelled on `src/enhance/enhance-publisher/examples/native_certificate.rs`.
 //! The packing weights depend only on the public hint (query masks times the
 //! segment's database) and the table's packing setup, so the tool rebuilds the
 //! hint and two-mask preprocessing from the segment bytes exactly as the server
@@ -53,6 +53,10 @@
 //! with the profile's `p_bits`, `ell`, gadget and response widths, every
 //! precision screen the analysis produces, and the byte column bound
 //! (255 per entry) as the worst-case query.
+use zakura_pir_publisher::transparent as transparent_shard;
+use zakura_pir_query_server::transparent::native as transparent_native;
+use zakura_pir_server_core::native::ProfilePublicationExt as _;
+
 use rayon::prelude::*;
 use reinspiring::noise::{gaussian_cdf_sha256, gaussian_counts, WeightNorms};
 use serde_json::{json, Value};
@@ -197,7 +201,11 @@ fn main() {
         None => unreachable!(),
     };
     let started = std::time::Instant::now();
-    let hint = native::hint(&profile.masks, profile.rows, profile.cols, |c| &columns[c]).unwrap();
+    let hint =
+        zakura_pir_server_core::native::hint(&profile.masks, profile.rows, profile.cols, |c| {
+            &columns[c]
+        })
+        .unwrap();
     let analyzed: Vec<_> = hint
         .par_iter()
         .map(|block| {

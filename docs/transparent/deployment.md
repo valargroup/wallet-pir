@@ -3401,7 +3401,7 @@ and the one-query txid display are monitored, v1 is not.
   no extra flag. It refuses with `oracle_invalid` until it has a v12 fixture.
 - **Txid display (`txid`).** `txid-quality-canary`, a binary in the service-owned
   `transparent-loadtest` package
-  (`cargo build --release -p transparent-loadtest --bin txid-quality-canary`).
+  (`cargo build --release -p transparent-tools --bin txid-quality-canary`).
   `--url` defaults to `https://transparent-pir.valargroup.dev`; the client appends
   `/v2/txid/`. `--fixture FILE` holds `{"txid": "<display hex>", "height": N,
   "entry_sha256": "<hex>"}`: copy one archive-tier sample from a
@@ -3914,6 +3914,19 @@ component. `baseline` records both components.
   until the exact-answer gate passes. The latch and incident records are never removed. Monitoring
   is not ready while the pins name a binary the workers no longer run. Display has no load
   (`load: null`); a controller transaction does not touch the load.
+- **Alert delivery is reported, not inferred.** `plan`, `preflight` and `status` print `notifications:` lines
+  for this service:
+  - the `alert_mode` configured in `/etc/pir-quality/transparent-production.json`, labelled as read only at
+    APM start;
+  - the mode the running APM last evaluated in, from its incident database;
+  - a warning when the two disagree;
+  - delivery health from APM's `monitor-status`.
+
+  Anything unreadable is `unknown`. When the running mode is not `active`, the output says that incidents
+  during the upgrade are recorded only. The continuous load (`exact-answer load:` lines) is an exact-answer
+  observer, not alert delivery. pir-apm keeps running through a worker upgrade. Once a service is active, the
+  unavailability a restart causes fires and recovers real incidents (archive warm-up takes minutes). The tool
+  sends no deployment notification of its own.
 - Supported topology only: history workers exactly `transparent-v12-archive.service` and
   `transparent-v12-recent.service` with the `transparent-v12-publish-controller.service` controller;
   display worker exactly `transparent-txid-display-worker.service` with
@@ -3926,6 +3939,151 @@ component. `baseline` records both components.
   beyond the binary refuses. Shipping stays disabled for history.
 - Tests: `tools/transparent/tests/test_binary_upgrade.py`, run by `make check-ops-deploy` through
   `tools/tests/operations/deploy/test_transparent_binary_upgrade.py`.
+
+## Transparent alert activation
+
+`transparent-alerts-{plan,preflight,deploy,status,rollback,test}` (`tools/transparent/lib/alert_activation.py`)
+is the supported way to upgrade the coordinator's running pir-apm and change only these alert modes:
+
+- the `alert_mode` of the named services (`transparent`, `txid`) in pir-apm's Transparent configuration;
+- the external pir-monitor's `PIR_MONITOR_SERVICE_ALERT_MODE`.
+
+The second setting is one family covering the Receiver, Status, Transparent and txid probes together. The
+monitor's global `PIR_MONITOR_ALERT_MODE` and pir-apm's other families are not changed.
+
+Production activated Transparent and txid quality alerts and the external service probes on
+2026-10-19 at about 17:39 UTC with source `653793f985c5b17622d581e4d616a341c2aea613`.
+Transaction `transparent-alerts-20261019T173754Z-ea059a45242d-4d2ecc` committed; subsequent status verified
+both running modes and preserved credential wrappers. The APM binary is
+`ea059a45242dd83ac60db8569a7828ce841840a0670a8f88ad1e50d2fce5c0cd`. Operations qualification
+[39293602410](https://github.com/valargroup/wallet-pir/actions/runs/39293602410), main CI, and all 154 APM
+and 5 monitor tests passed at that source. The binary came from the successful release-build job in
+[39293606439](https://github.com/valargroup/wallet-pir/actions/runs/39293606439); the unrelated Enhance
+publisher lifecycle timeout was explicitly excluded from this APM-only acceptance. Full Enhance
+qualification is not claimed.
+
+The isolated live-source check passed before activation. Final checks found ready workers, fresh canonical
+publications agreeing across origins, four successful public exact probes, no active disabled-scaler incident,
+and empty outboxes. Both labelled firing/recovery pairs reached Slack:
+[APM](https://zcashzcaloors.slack.com/archives/C0C3L7DDKC2/p1792431633161929) and
+[external monitor](https://zcashzcaloors.slack.com/archives/C0C3L7DDKC2/p1792431673654559).
+Capacity and scaling modes retain their prior shadow settings. The 24-hour active observation window
+starts at activation; the delivery tests do not complete that window or the separate policy-threshold drills.
+Rollback uses the pinned request and the committed transaction above, with the command shown below.
+
+The request (`transparent-alert-activation/1`, bound by `--request-sha256`) has two components. `apm` is
+`pir-apm.service` and `monitor` is `pir-monitor.service`; `monitor` may be `null`. Each component pins:
+
+- the host;
+- `unit_files_sha256`, the exact loaded fragment and drop-ins;
+- `wrapper_sha256`, the `credential-exec.py` digest;
+- `running_sha256`, the executable after the wrapper execs it;
+- its incident database (`state_path`) and loopback `listen`, which must equal the running process's own
+  `*_STATE_PATH` and `*_LISTEN`;
+- the `environment` label for test messages.
+
+`apm` also pins:
+
+- `release`: `git_sha` (40 lowercase hex) and `binary_sha256`;
+- `config`: `path` (which must be the running `PIR_APM_TRANSPARENT_CONFIG`), `previous_sha256`, and
+  `alert_modes`, which names only `transparent` and `txid`.
+
+`monitor` also pins `service_alert_mode`.
+
+Every host observation goes through `alert_host_probe.py`. Its source is sent to `python3 -c` on the host, and it
+prints only small whitelisted JSON fields:
+
+- the running process's settings, read from `/proc/<pid>/environ` and limited to path, listen and mode keys;
+- each family's mode from the incident database, opened read-only;
+- a summary of `monitor-status`, read with a 16 MiB bound. An oversized or invalid body is an error, never a
+  truncated parse. Delivery failures are reported as present or absent, never as text.
+
+Secrets in the environment or in error messages never leave the host. `plan`, `preflight` and `status` print the
+observed values next to the pins.
+
+What a deploy changes:
+
+- **pir-apm.** The release is staged immutably at `/opt/pir-quality/releases/<sha256>/pir-apm` and must pass
+  `--help` there. Before any live write, under the lock, it then runs as an isolated shadow process beside the
+  running one:
+  - it uses the running process's nonsecret `PIR_APM_*` settings, so it reads the real configured sources;
+  - its state, history and configuration copy are temporary, with every mode set to `shadow`;
+  - it uses loopback port 3092, has no webhook and no scaler, and runs as the unit's user;
+  - it is stopped and removed within 120 s.
+
+  It must evaluate with the Transparent configuration enabled and record `shadow` for `transparent` and `txid`.
+  Through its `/api/quality`, with the same bound, each service must also have:
+  - at least one configured source;
+  - every source sampled without error, within APM's own freshness limits (45 s, or 90 s for the independent
+    probe);
+  - every source that reports readiness ready;
+  - a publication sampled within 90 s, canonical and agreed across origins.
+
+  Only source names reach the runner, never their error text. If any of this fails, the deploy fails with nothing
+  live changed.
+
+  Only the final binary argument of `python3 <credential-exec.py> <pir-apm>` changes, through the managed
+  `zzz…-wallet-pir-release.conf` ExecStart drop-in. A deploy refuses when:
+  - any other unit setting would change;
+  - a later drop-in sets ExecStart;
+  - the unit does not run through the wrapper.
+
+  The configuration changes only the named services' `alert_mode`.
+- **pir-monitor.** A deploy writes `/etc/pir-monitor/service-alert-mode.env` and the drop-in
+  `pir-monitor.service.d/95-service-alert-mode.conf`, which adds that file as the last `EnvironmentFile` so it
+  applies over `Environment=` and `monitor.env`. Credential drop-ins, wrappers, `monitor.env` and every SQLite
+  database are left as they are.
+- **Under the production lock.** The deploy checks the schema fence, then reruns every pin and process-binding
+  check. The runner journal records each previous byte and the previous running modes before any write. Each
+  component is restarted and verified in turn:
+  - a new systemd invocation running the expected executable, still bound to the request's paths;
+  - an `evaluated_at` later than before the restart;
+  - `progress_ok`, working storage, and configured delivery with no failure;
+  - the requested running modes.
+
+  A lost restart reply is recorded as uncertain and resolved by observation. Any failure after a write restores
+  every touched component. Each restored process must have evaluated again and recorded its previous modes; its
+  delivery health is reported but not required.
+- **Rollback.** `rollback` restores a committed or interrupted transaction. It refuses when a file changed after
+  the transaction, unless given `--force` after review.
+- **Status.** With the same request, `status` checks the live state against that request's committed transaction
+  (new state) or rolled-back transaction (previous state), not against the pre-deploy pins, and reports drift.
+  Without a finished transaction, it checks the pins.
+
+`test --component apm|monitor` sends real labelled test messages:
+
+- It queues one labelled `PIR test · FIRED` / `RECOVERED` pair into that component's existing outbox. It runs the
+  checksum-qualified `pir-apm --enqueue-test-alert` through `runuser` as the unit's `User` and `Group`, so no
+  root-owned WAL or SHM file is created. The command writes the outbox and exits without starting a daemon.
+- The monitor host gets a copy of that binary at `/opt/pir-monitor/tools/<sha256>/pir-apm`.
+- The running service's own delivery worker sends the messages: pir-monitor reads `PIR_APM_SLACK_WEBHOOK_URL`
+  through its wrapper.
+- The command waits until `monitor-status` shows the queue drained with a newer `last_success`. Messages that are
+  not delivered stay queued in the durable outbox, and the command fails.
+
+Production order, from the operator's checkout of the qualified revision, with the reviewed request:
+
+```bash
+D=tools/scripts/wallet-pir-deploy.py; R=(--request activation.json --request-sha256 "$(sha256sum activation.json | cut -d' ' -f1)")
+$D --inventory "$INV" --state-dir "$STATE" transparent-alerts-plan "${R[@]}"
+$D --inventory "$INV" --state-dir "$STATE" transparent-alerts-preflight "${R[@]}" --binary pir-apm
+$D --inventory "$INV" --state-dir "$STATE" transparent-alerts-deploy "${R[@]}" --binary pir-apm
+$D --inventory "$INV" --state-dir "$STATE" transparent-alerts-test "${R[@]}" --component apm
+$D --inventory "$INV" --state-dir "$STATE" transparent-alerts-test "${R[@]}" --component monitor
+$D --inventory "$INV" --state-dir "$STATE" transparent-alerts-status "${R[@]}"
+# Back out (restores binary selection, configuration, drop-ins and processes):
+$D --inventory "$INV" --state-dir "$STATE" transparent-alerts-rollback "${R[@]}"
+```
+
+The monitor host is reached through the coordinator (`"jump": "coordinator"` in the inventory). Rolling back to
+shadow without changing the binary uses a new request with `alert_modes` and `service_alert_mode` set to
+`shadow` and `release.binary_sha256` equal to the running binary.
+
+Once a service is active, a Transparent maintenance restart pages for real: archive warm-up takes minutes and the
+public path is not uninterrupted.
+
+Tests: `tools/transparent/tests/test_alert_activation.py`, through
+`tools/tests/operations/deploy/test_transparent_alert_activation.py` in `make check-ops-deploy`.
 
 Configure the inventory's `exact_check` with the product's encrypted independent-answer probe.
 Deployment runs it after restart and rolls back on failure. After the continuous load resumes,

@@ -26,7 +26,7 @@ def inventory(gpu_kind='enhance-pir-native-cuda'):
         'services': {'enhance': {'roles': {
             'worker': [{'host': 'worker-01', 'vars': {'listen': '10.0.0.3:8091'}}, gpu],
             'packing-router': [{'host': 'router-01', 'vars': {'control_listen': '10.0.0.2:8093'}}],
-            'query-ingress': [{'host': 'coordinator'}],
+            'query-ingress': [{'host': 'coordinator', 'vars': {'control_listen': '127.0.0.1:8083'}}],
             'coordinator': [{'host': 'coordinator'}],
         }}},
     }
@@ -54,12 +54,15 @@ class ArtifactGroups(unittest.TestCase):
         groups = cli.artifact_groups(
             args(extra_archive=['enhance-pir-native-cuda=cuda.tar.gz']), self.service, inventory())
         self.assertEqual([keys for _, keys in groups], [
-            ['worker@worker-01', 'packing-router@router-01', 'query-ingress@coordinator', 'coordinator@coordinator'],
+            ['worker@worker-01', 'packing-router@router-01', 'query-ingress@coordinator'],
             ['worker@gpu-01'],
+            ['coordinator@coordinator'],
         ])
-        main, gpu = groups[0][0], groups[1][0]
-        self.assertEqual((main.archive, main.kind), ('native.tar.gz', None))
-        self.assertEqual((gpu.archive, gpu.kind, gpu.sha), ('cuda.tar.gz', 'enhance-pir-native-cuda', SHA))
+        query, gpu, coordinator = (group for group, _keys in groups)
+        self.assertEqual((query.archive, query.kind, query.binary_name), ('native.tar.gz', None, 'pir-query-server'))
+        self.assertEqual((gpu.archive, gpu.kind, gpu.sha, gpu.binary_name),
+                         ('cuda.tar.gz', 'enhance-pir-native-cuda', SHA, 'pir-query-server'))
+        self.assertEqual((coordinator.archive, coordinator.binary_name), ('native.tar.gz', 'enhance-pir-server'))
 
     def test_gpu_group_comes_first_when_only_workers_roll(self):
         groups = cli.artifact_groups(
@@ -85,10 +88,11 @@ class ArtifactGroups(unittest.TestCase):
         with self.assertRaisesRegex(DeployError, 'KIND=FILE'):
             cli.artifact_groups(args(extra_archive=['status-pir=s.tgz']), self.service, inventory())
 
-    def test_inventory_without_artifact_kinds_is_one_transaction(self):
+    def test_inventory_without_artifact_kinds_is_one_transaction_per_binary(self):
         groups = cli.artifact_groups(args(), self.service, inventory(gpu_kind=None))
-        self.assertEqual(len(groups), 1)
+        self.assertEqual([group.binary_name for group, _keys in groups], ['pir-query-server', 'enhance-pir-server'])
         self.assertIn('worker@gpu-01', groups[0][1])
+        self.assertEqual(groups[1][1], ['coordinator@coordinator'])
 
     def test_unknown_artifact_kind_is_refused(self):
         with self.assertRaisesRegex(descriptors.DescriptorError, 'artifact_kind'):

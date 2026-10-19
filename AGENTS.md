@@ -1,7 +1,10 @@
 # Wallet PIR development
 
 Cargo packages live under `src/<product>/`; packages shared by products live
-under `src/shared/`. Operations and standalone scripts live under `tools/<product>/`;
+under `src/shared/`. The publisher and query-server hosts live at
+`src/pir-publisher` and `src/pir-query-server`. Each product publisher lives
+beside that product's query server, and `src/shared` holds libraries only.
+Operations and standalone scripts live under `tools/<product>/`;
 shared automation lives under `tools/{ci,dev,scripts,lib,deploy,infra}/`. Docs and
 evidence live under `docs/<product>/` and `evidence/<product>/`.
 Preserve existing Cargo package and binary names.
@@ -23,16 +26,19 @@ Preserve existing Cargo package and binary names.
 - Fetch pinned dependencies and install the local push guard with
   `make prepare-dev`; verify prerequisites with `make doctor`.
 - Compile all CPU workspace binaries, including the Enhance CLI, for local use:
-  `cargo build --locked --workspace --bins --profile release-fast --features transparent-filter-server/rocksdb-reader`.
+  `cargo build --locked --workspace --bins --profile release-fast --features transparent-publisher/rocksdb-reader,transparent-tools/test-support,transparent-tools/compact-export`.
   Use `make build` for deploy-profile binaries (fat-LTO `release`, slower
   and more memory-intensive). Do not enable CUDA on a CPU-only devbox.
 - Inspect entrypoints without starting a fleet:
-  `cargo run --locked --profile release-fast -p enhance-publisher --bin enhance-pir-server -- --help`
+  `cargo run --locked --profile release-fast -p enhance-publisher --bin enhance-pir-server -- --help`,
+  `cargo run --locked --profile release-fast -p pir-query-server --features enhance,native-reinspiring -- --help`,
   and
   `cargo run --locked --profile release-fast -p enhance-pir-client --bin enhance-pir-cli -- --help`.
   `make run-server` and `make run-worker` also show help, using `release`.
-- To start an isolated local worker after building:
-  `target/release-fast/enhance-pir-server worker --listen 127.0.0.1:8091 --data-dir .local-pir/worker`.
+- To start an isolated local worker after building that query server, write one
+  Enhance `worker` role (loopback `management_listen`, absolute `data_dir`) and run
+  `target/release-fast/pir-query-server --config .local-pir/worker.json`.
+  `pir-query-server --config FILE --check` validates the file without opening state.
   A worker alone is not an end-to-end retrieval deployment; coordinator,
   chain inputs and role configuration are described in the product runbooks.
   Keep private/control listeners on loopback and never reuse production data
@@ -46,7 +52,7 @@ Preserve existing Cargo package and binary names.
 
 ## Iteration and validation
 
-- Temporarily let PR and main CI validation finish without a five-minute cancellation; enforce the five-minute timing check only after validation on pushes to main. Retain full service qualification separately.
+- Temporarily let PR and main CI validation finish without a three-minute cancellation; enforce the three-minute timing check only after validation on pushes to main. Retain full service qualification separately.
 - Keep every automated CPU correctness test below 30 seconds and the complete
   warm correctness run below five minutes, including incremental compilation,
   setup, teardown, tooling and lint. `make check-correctness` enforces the budget;
@@ -78,6 +84,7 @@ Preserve existing Cargo package and binary names.
 - Keep Cargo writers sequential within one target directory. For independent
   concurrent work use separate worktrees/target lanes; reuse each lane across
   edits. Do not create a new cold target per command or weaken trust boundaries.
+- Keep fast-suite fixtures small enough to finish in a few seconds; retain deployed-size parameter combinations in full qualification.
 
 ## Branches and production changes
 

@@ -65,17 +65,30 @@ class MatrixTests(unittest.TestCase):
         self.assertIn('enhance-query-server/native-reinspiring', cuda)
         self.assertIn('enhance-query-server/cuda', cuda)
         reference_features = matrix.package_features('enhance-query-server', contexts['reference'], packages)
-        self.assertEqual(reference_features, ['enhance-query-server/qualification-tests'])
-        self.assertIn('enhance-publisher/qualification-tests', contexts['reference']['features'])
+        self.assertEqual(reference_features, ['enhance-query-server/client',
+                                              'enhance-query-server/qualification-tests'])
+        self.assertIn('pir-publisher/qualification-tests', contexts['reference']['features'])
+        self.assertIn('status-query-server/qualification-tests', contexts['reference']['features'])
+        self.assertIn('status-query-server/qualification-tests', contexts['native']['features'])
         self.assertNotIn('enhance-publisher/native-reinspiring', native)
         commands = matrix.cargo_commands(registry['enhance-cuda-check']['targets'], contexts, targets, packages)
         self.assertEqual(len(commands), 1)
         command = commands[0][3]
         self.assertEqual({command[i + 1] for i, arg in enumerate(command) if arg == '-p'},
-                         {'enhance-query-server', 'status-query-server', 'enhance-publisher', 'status-publisher',
-                          'enhance-pir-load-test'})
+                         {'enhance-query-server', 'status-query-server', 'status-publisher',
+                          'enhance-pir-load-test', 'pir-query-server'})
         self.assertEqual(command[command.index('--features') + 1], ','.join(matrix.CUDA))
         self.assertTrue(all('--all-targets' in cmd[3] for cmd in commands))
+
+    def test_exporter_keeps_the_shared_extractor_fixtures_enabled(self):
+        _, contexts, _, packages, _ = self.plan
+        exporter = packages['txid-sizing-export']
+        enabled = matrix.enabled_features(exporter, contexts['export']['features'])
+        self.assertIn('fixtures', enabled)
+        fixture_dependency = next(dependency for dependency in exporter['dependencies']
+                                  if dependency['name'] == 'zakura-server-chain' and dependency['kind'] == 'dev')
+        self.assertIn('testing', fixture_dependency['features'])
+        self.assertNotIn('transparent-publisher', {dependency['name'] for dependency in exporter['dependencies']})
 
     def test_database_reader_binaries_remain_in_full_qualification(self):
         registry, contexts, targets, packages, _ = self.plan
@@ -83,8 +96,8 @@ class MatrixTests(unittest.TestCase):
         commands = matrix.cargo_commands(keys, contexts, targets, packages)
         for package, binary, feature in (
                 ('transparent-publisher', 'transparent-event-ingest', 'transparent-publisher/rocksdb-reader'),
-                ('transparent-publisher', 'shard-cutoff', 'transparent-publisher/rocksdb-reader'),
-                ('transparent-publisher', 'journal-inventory', 'transparent-publisher/rocksdb-reader'),
+                ('transparent-tools', 'shard-cutoff', 'transparent-tools/rocksdb-reader'),
+                ('transparent-tools', 'journal-inventory', 'transparent-tools/rocksdb-reader'),
                 ('transparent-tools', 'compact-export', 'transparent-tools/compact-export')):
             key = f'transparent:{package}:bin:{binary}'
             self.assertIn(key, keys)
@@ -103,17 +116,17 @@ class MatrixTests(unittest.TestCase):
                 for name, shard in registry.items() if shard['family'] == family]
 
     def test_reference_qualification_keeps_oracles_and_native_keeps_http_lifecycles(self):
-        package = self.plan[3]['enhance-publisher']
+        package = self.plan[3]['pir-publisher']
         lifecycle = {'encrypted_publication_advances_with_a_pending_commit_and_survives_restart'}
         oracles = {'single_unit_hint_matches_independent_generic_67',
                    'single_unit_hint_matches_independent_generic_68',
                    'single_unit_hint_rejects_damage_and_pins_retired_file'}
         reference = self.plan[0]['enhance-reference']['targets']
         from integration_tests import inventory
-        self.assertNotIn('encrypted_lifecycle', inventory()['enhance-publisher']['fast'])
-        self.assertIn('encrypted_lifecycle', inventory()['enhance-publisher']['full'])
-        self.assertIn('reference:enhance-publisher:test:ci_hint', reference)
-        self.assertIn('reference:enhance-publisher:test:encrypted_lifecycle', reference)
+        self.assertNotIn('encrypted_lifecycle', inventory()['pir-publisher']['fast'])
+        self.assertIn('encrypted_lifecycle', inventory()['pir-publisher']['full'])
+        self.assertIn('reference:pir-publisher:test:ci_hint', reference)
+        self.assertIn('reference:pir-publisher:test:encrypted_lifecycle', reference)
         for case in ('unequal_units_match_monolithic_preprocessing_and_evaluation',
                      'tail_domain_reuses_b_units_and_decodes_b_at_unchanged_coordinates'):
             self.assertIn('runtime::tests::' + case, matrix.REFERENCE_LIB_FILTERS)
@@ -131,7 +144,7 @@ class MatrixTests(unittest.TestCase):
             with self.subTest(variant=variant, target=target), \
                     patch.object(matrix.subprocess, 'check_output', side_effect=listing):
                 _, programs, cases = matrix.test_programs([artifact], variant, {package['name']: package}, {})
-            self.assertEqual(set(cases[f'{variant}:enhance-publisher:{target}']['tests']), expected)
+            self.assertEqual(set(cases[f'{variant}:pir-publisher:{target}']['tests']), expected)
             self.assertEqual(programs[0]['args'], [])
 
     def verify(self, receipts):
@@ -309,7 +322,8 @@ class WorkflowTests(unittest.TestCase):
         for family in ('enhance', 'transparent', 'receiver'):
             aggregate = self.job(text, family + '-test')
             self.assertIn("needs.test-shards.result == 'success'", aggregate)
-            self.assertIn('test_matrix.py verify --family ' + family, aggregate)
+            self.assertIn('uses: ./.github/actions/verify-qualification', aggregate)
+            self.assertIn('family: ' + family, aggregate)
         for job in ('release', 'release-cuda'):
             self.assertIn('!inputs.defer-release', self.job(text, job))
 
@@ -317,9 +331,11 @@ class WorkflowTests(unittest.TestCase):
         text = (ROOT / '.github/workflows/ci-full.yml').read_text()
         shards = self.job(text, 'test-shards')
         self.assertIn('name: qualification-${{ matrix.family }}-${{ github.sha }}-${{ github.run_attempt }}-${{ matrix.shard }}', shards)
-        for family in ('enhance', 'transparent', 'receiver'):
-            self.assertIn('pattern: qualification-' + family + '-${{ github.sha }}-${{ github.run_attempt }}-*',
-                          self.job(text, family + '-test'))
+        action = (ROOT / '.github/actions/verify-qualification/action.yml').read_text()
+        self.assertIn('pattern: qualification-${{ inputs.family }}-${{ github.sha }}-${{ github.run_attempt }}-*', action)
+        self.assertIn('merge-multiple: true', action)
+        self.assertIn('test_matrix.py verify --family "$FAMILY" --receipts qualification-receipts', action)
+        self.assertNotIn('continue-on-error', action)
         audit = (ROOT / '.github/workflows/ci-matrix-audit.yml').read_text()
         self.assertEqual(audit.count('name: baseline-${{ matrix.family }}-${{ github.sha }}-${{ github.run_attempt }}'), 2)
         self.assertIn('pattern: qualification-${{ matrix.family }}-${{ github.sha }}-${{ github.run_attempt }}-*', audit)

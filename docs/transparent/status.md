@@ -1,10 +1,46 @@
 # Transparent PIR status
 
-Latest retained observations are dated 2026-10-13; milestone acceptance remains separately scoped. The target remains an opt-in, recovery-only macOS beta on
+Latest retained observations are dated 2026-10-19; milestone acceptance remains separately scoped. The target remains an opt-in, recovery-only macOS beta on
 existing infrastructure. **M0, M1 and M2 are accepted; M3 is partially validated;
 M4–M6 are open.** This records observed progress, not a new live fleet health
 check. [Remaining work](remaining-work.md) is the authoritative outstanding
 checklist; [deployment](deployment.md) owns operating targets.
+
+## HTTPS controller-update campaign, 2026-10-19
+
+A local small-fixture run at `d0f41852` used the real controller, a fixed archive
+owner and two providers. It recorded 1,448 exact released391 recoveries against
+journal-derived ledgers, with zero wrong answers. It also covered supersession,
+restarts during transfer and activation, and a publisher TLS restart.
+10-consumer distribution waves completed for 8 of 10 consumers under HTTP 503
+admission refusals. The 100-consumer step was refused by the disk bound. This is
+diagnostic evidence, not qualification
+([details](prepared-distribution.md#controller-update-campaign)).
+
+## Binary redeploy from main, 2026-10-19
+
+The two v12 history workers, history controller, txid-4k8 worker and txid
+controller were upgraded from `main` revision
+`9c99d1ea13780b78f9f79145e155de3dcb263676` through the locked binary-upgrade
+tool. The [Transparent qualification run](https://github.com/valargroup/wallet-pir/actions/runs/39265990613)
+and [operations qualification run](https://github.com/valargroup/wallet-pir/actions/runs/39265995681)
+passed for that exact revision. All four deployment transactions committed;
+the five running executable digests matched the qualified artifacts. Publication
+roots, controller settings and worker resource limits were preserved.
+
+After each history transaction, both `transparent-pir.valargroup.dev` and
+`transparent-pir-v12.valargroup.dev` returned 23 exact encrypted answers against
+the pinned sealed-row fixture, with no query errors. After each txid transaction,
+three cold encrypted archive lookups through `/v2/txid` matched independently
+pinned entry digests. The continuous history checker was paused for worker
+restarts, re-pinned to the new worker executable and resumed.
+
+At the final check around 14:37 UTC, history served height 3,523,338 on both
+origins, matching the node tip; txid display served 3,523,337 with a running,
+unstalled controller. Both publication hashes matched the node's canonical
+chain. The history checker's trailing minute contained 300 exact answers at
+5 QPS, zero errors and zero missed slots. This is bounded post-upgrade serving
+evidence; it does not replace capacity, hardware or prolonged soak qualification.
 
 ## Prepared history runtimes
 

@@ -81,7 +81,7 @@ fleet_diff() {
   printf '{"workers":{},"publisher_control":false}\n' >"$DEPLOY_PLAN"
   local id host cache disk_cache memory slots extra assignment_sha unit ready installed wanted action tools_match binary helper control
   assignment_sha="$(assignment_digest)"
-  binary="$(sha256sum "$TRANSPARENT_ARTIFACT_DIR/transparent-shard-server" | cut -d' ' -f1)"
+  binary="$(sha256sum "$TRANSPARENT_ARTIFACT_DIR/transparent-query-server" | cut -d' ' -f1)"
   helper="$(sha256sum "$TRANSPARENT_ARTIFACT_DIR/shard-prune" | cut -d' ' -f1)"
   # shellcheck disable=SC2034 # consumed by wait_ready in the calling script
   EXPECTED_BINARY_SHA256="$binary"
@@ -92,7 +92,7 @@ fleet_diff() {
     slots="$(worker_field "$id" build_slots)"; [[ "$slots" != null && -n "$slots" ]] || slots=1
     installed="$(host_ssh "$host" bash -s <<'REMOTE'
 set -euo pipefail
-binary="$(sha256sum /usr/local/bin/transparent-shard-server 2>/dev/null | cut -d' ' -f1 || true)"
+binary="$(sha256sum /usr/local/bin/transparent-query-server 2>/dev/null | cut -d' ' -f1 || true)"
 helper="$(sha256sum /usr/local/bin/shard-prune 2>/dev/null | cut -d' ' -f1 || true)"
 unit="$(sed -E 's@--assignment /opt/transparent-pir/assignments/[0-9a-f]+\.json@--assignment ASSIGNMENT@g' /etc/systemd/system/transparent-shard-server.service 2>/dev/null | sha256sum | cut -d' ' -f1 || true)"
 recorded="$(cat /opt/transparent-pir/current-unit-digest 2>/dev/null || true)"

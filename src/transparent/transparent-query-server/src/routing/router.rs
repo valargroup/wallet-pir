@@ -10,6 +10,9 @@
 //! replica's bandwidth; archive shards have one owner each, and losing that
 //! owner makes its range unavailable, explicitly, until it is rebuilt.
 
+use zakura_pir_protocol::transparent::filter as transparent_filter;
+use zakura_pir_protocol::transparent::shard as transparent_shard;
+
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use transparent_filter::{ShardMap, ShardMapEntry};

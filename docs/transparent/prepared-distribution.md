@@ -197,7 +197,7 @@ has the existing connect/request deadlines and response-body budget. Transfers
 are sequential (concurrency one); successful synchronization waits five seconds
 plus up to one second of jitter, while failures back off exponentially to 120
 seconds plus jitter. The acquisition, strict preparation and checked owner publication phases compose
-`src/shared/pir-publisher/pipeline` using private borrowed tokens; no phase token is persisted.
+`src/shared/pir-pipeline` using private borrowed tokens; no phase token is persisted.
 Shared boundary waiting preserves this delay-after-pass schedule and never drops
 an in-progress activation. Every failed pass starts the next attempt with source
 reconciliation rather than retrying an uncertain activation directly.
@@ -354,10 +354,10 @@ archive availability. Promoted local revisions remain available under the
 owner's existing retained-handle policy, with unchanged revocation fences.
 
 The fixed original released-client process is in
-`src/transparent/transparent-shard-server/tests/frozen-client`. Its isolated lock and source verifier
+`src/transparent/transparent-query-server/tests/frozen-client`. Its isolated lock and source verifier
 exclude the server's newer library pin; build and execute it through the required
 repository wrapper. From the repository root, run
-`python3 src/transparent/transparent-shard-server/tests/frozen-client/run-tests.py --output .local-pir/provider-qualification-<new-id>`
+`python3 src/transparent/transparent-query-server/tests/frozen-client/run-tests.py --output .local-pir/provider-qualification-<new-id>`
 inside that wrapper. It records resolved metadata, the isolated lock digest,
 crate/source-byte checks and build preparation times separately, then executes
 each HTTP case under the existing 30-second guard. The runner enforces that fixed
@@ -387,6 +387,153 @@ ledger oracle. Library execution
 is not unchanged-application execution. The fixed Vizor build's existing-origin
 TLS and same-origin display smoke remains mandatory; no application rebuild,
 upgrade, TLS bypass, production DNS or routing change is authorized here.
+
+On a worker limited to three CPUs, both `released391_*` archive cases exceed this
+harness's 30-second guard. Neither is a client hang or a wrong answer. In
+`released391_recovers_32k_archive_pages_with_2k_recent` (58.6 s unguarded), the
+in-process 32k archive terminal spends 49 s building its native runtimes from
+tables before any client starts. The whole frozen recovery takes 5.9 s, and each
+refused corrupt recovery takes under 0.3 s. Two build slots did not change this.
+`released391_recovers_archive_and_recent_then_recent_during_archive_outage` takes
+18.4 s alone. The guard kills the whole test process at the first deadline, so this
+case is reported missing rather than timing out itself. Shipping prepared runtimes
+to that terminal, or a host with more CPU, is the remaining fix for the 30-second
+gate.
+
+## Controller update campaign
+
+`tools/transparent/scripts/https-update-campaign.py` runs the ignored
+`controller_update_campaign` test in
+`src/pir-publisher/tests/`. Run it through the repository's
+build wrapper with `--consumers 10,100`. It builds the packaged
+`transparent-query-server`, the controller built with that test, the
+isolated released391 client (with `verify-sources.py` receipts) and the
+in-process publisher tests with one profile (default `release-fast`). Each run is
+written to a new ignored `.local-pir/https-update-campaign/<utc>-<sha>/` and is
+never committed.
+
+The test follows a synthetic journal through real controller revisions. It uses
+three TLS terminators forwarding to the controller: one for each provider, so
+faults target one provider, and one for the campaign and its distribution
+consumers. A fixed archive owner serves its own copy of the initial publication's
+32k archive tier under a planned `archive-01` assignment, behind its own
+terminator. Two packaged providers run with `--archive-upstream` and separate
+state roots.
+
+Correctness comes from fresh released391 client processes recovering one wallet
+through each provider for the whole run. The wallet is paid at every height, so
+recovery spans the archive and the recent tier. The complete ledger (UTXOs,
+spends, history, unresolved) must equal the ledger read back from the committed
+journal events at the client's reported anchor. Controller tables, `active.json`
+and provider output are never the oracle. Each recovery is recorded as ok, wrong,
+refusal, timeout, unreachable or error with its latency. Any wrong ledger fails the
+campaign.
+
+The phases are:
+
+1. Bootstrap, then a check that both providers report the archive as
+   `identity-checked`.
+2. Updates under continuous recovery, then an unchanged no-update window.
+3. Supersession: both providers stall mid-transfer, provider-b is killed, and a
+   newer revision is published. The stalled map must never activate on either
+   provider.
+4. A provider-b restart while its activation anchor checks stall.
+5. Two missed revisions while provider-b is down.
+6. A source outage that stops every publisher terminator. Both providers keep
+   serving, the publisher TLS restarts on the same ports, resynchronization is
+   timed, and one more revision must converge on both providers.
+
+Providers now report the wall seconds of each changed pass as
+`synchronization.progress.stages` and keep the last change as
+`synchronization.last_change`. The stages are transfer, staging, loading,
+prewarm and activation (final source/anchor checks, CAS and collection). These
+are diagnostics, not authority.
+
+`manifest.json` records source, binary and host identity, the released-client
+provenance and, after the run, `dataset`. That is the digest of every committed
+journal file at each commit, the initial and archive map digests, the archive
+assignment and every observed revision's inventory and map digests.
+`summary.json` is computed only from `observations.jsonl` and distribution
+receipts. Fork/invalidation, replay, durable fencing, write failure and
+interrupted in-process staging stay with the in-process
+`history::controller::distribution_tests` cases, which the runner executes and
+records in `in-process.log`.
+
+### 2026-10-19 local run
+
+Source `d0f41852` (clean), release-fast, on a shared x86-64 worker with 8 visible
+CPUs, a 3-CPU cgroup quota and 31 GiB RAM. Raw run:
+`.local-pir/https-update-campaign/20261019T001951Z-d0f418525e12/` (not committed).
+The in-process tests passed 38/38. The campaign passed in 527.6 s: controller
+revisions 2→11, journal tip 13, dataset SHA256 `82cc443a…`.
+
+| Observation | Result |
+|---|---|
+| Frozen recoveries | 1,448 exact, 0 wrong, 0 refusals, 0 timeouts, 0 errors |
+| Unreachable recoveries | 418, all against provider-b while the campaign had stopped it |
+| Recovery p50 / p99, unchanged window | 386 / 441 ms (68 recoveries) |
+| Recovery p50 / p99, update windows | 461–487 / 803–900 ms |
+| Recovery p50 / p99, during 10-consumer waves | 671–741 / 1,100–1,309 ms |
+| Changed-pass stages, median (max) of 14 | transfer 3.80 (4.74) s, staging 1.95 (2.38) s, loading 2.92 (3.41) s, prewarm 2.26 (2.99) s, activation 0.05 (0.10) s |
+| Supersession | Stalled revision never activated; providers refused the withdrawn inventory with 404, then converged |
+| Publisher TLS restart | Providers resynchronized 2.1 s and 5.1 s after restart; one more revision converged on both |
+
+These recovery latencies are whole fresh-process restores on a shared host.
+They are not matched query p99 measurements.
+
+## Distribution load diagnostics
+
+`tools/transparent/loadtest/distribution.py` is the corrected PR #201 driver
+(head `1437b2a9`), ported unchanged. It runs explicit artifact waves of 10 or 100
+logical consumers against the real controller's HTTPS terminator. Each consumer
+streams one object at a time and checks the actual body length and digest. It
+then polls `current` with `If-None-Match` and requires 304 responses. Every
+status, retry, timeout and partial body is kept in per-consumer receipts. It
+verifies neither native serving nor provider activation. A shared
+`--cache-budget-bytes` ceiling refuses a wave before any artifact request when
+the candidate does not fit. Publisher admission (four artifact bodies, shared
+with canonicality checks) is measured, never tuned, by the driver. The campaign
+runs it after bootstrap and after an update, and samples controller and
+terminator CPU, RSS and character I/O.
+
+In the 2026-10-19 run, each 10-consumer wave completed for 8 of 10 consumers. The
+other two used all eight attempts on HTTP 503 admission refusals.
+
+| 10 consumers | Bootstrap | Update |
+|---|---:|---:|
+| Elapsed | 40.7 s | 39.2 s |
+| HTTP 200 / 304 / 503 | 102 / 16 / 60 | 80 / 16 / 31 |
+| Body bytes read | 1,477,881,768 | 1,477,861,144 |
+| Client body rate | 36.3 MB/s | 37.7 MB/s |
+| Controller / terminator CPU | 12.5 / 7.2 s | 12.7 / 7.0 s |
+| Controller / terminator peak RSS | 223 / 54 MB | 225 / 44 MB |
+
+During both waves the providers' own `current` polls were also refused with 503
+(6 and 8 times), and recovery latency rose as shown above. That is the shared
+admission and serving interference this diagnostic exists to expose. The
+100-consumer waves were refused by the 12 GiB guard before any artifact request:
+the candidate alone is 18,473,074,600 bytes, more than this task's 40 GiB disk
+reservation can hold beside builds and evidence. Run that step on existing hub
+hardware with enough disk.
+
+### Coverage
+
+| Gate | State |
+|---|---|
+| Real controller, two providers, separate state roots, HTTPS | Covered (small fixture) |
+| Fixed archive upstream with its own state root | Covered (small fixture) |
+| Frozen-client oracle independent of the controller | Covered (journal ledger) |
+| Publisher TLS restart and recovery, then a new revision | Covered |
+| Supersession mid-transfer; restarts during transfer and activation | Covered; fencing stays in-process |
+| Stage timings; recovery latency, refusal, error and timeout counts | Recorded |
+| Dataset identity in the manifest | Recorded |
+| 10-consumer distribution with actual bytes and 304 polling | Run; 8/10 complete under admission refusals |
+| 100-consumer distribution | **Open**: refused by the disk bound here; needs a hub run |
+| Original Vizor build 195 application | **Open** |
+| 64 GB Recent Only holdings and matched p99 ≤ 10% | **Open** |
+| Suitable isolated hardware | **Open** |
+| Release provenance (authenticated release artifacts) | **Open** |
+| Reorg, ownership-only moves and archive outage in this campaign | **Open** (covered elsewhere only as in-process or fixture cases) |
 
 ## Standalone installation from release artifacts
 

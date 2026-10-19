@@ -12,13 +12,16 @@ node package except the ratcheted allowlist. Pure PIR packages may use only the
 canonical PIR packages and the explicit receiver codec adapter from
 wallet-libraries. Their normal/build graphs
 must contain no Common or node packages. Cargo unifies features in whole-workspace
-metadata, where the indexer enables receiver cryptography: the resolved check
-therefore also resolves a fresh standalone receiver consumer with crypto disabled.
+metadata, where the indexer enables receiver cryptography and client fixtures
+enable test cryptography: fresh standalone consumers independently enforce
+production graphs without those unified features.
 
 Serving libraries (`SERVING`) serve prepared publications. No dependency of any
 kind, including target-specific ones, may reach a chain reader, an ingestion or
 application package (`INGESTION` or `APPLICATIONS`), or another product's
-package, or a tool under `tools/`. Packages live under `src/<product>/` or `src/shared/`. Their workspace graphs (including
+package, or a tool under `tools/`. Product packages live under `src/<product>/`,
+shared libraries under `src/shared/`, and the publisher and query-server hosts at
+`src/pir-publisher` and `src/pir-query-server`. Their workspace graphs (including
 their own dev-dependencies) and standalone graphs are resolved and checked too.
 
 Common and node packages are named exactly: wallet-libraries adapters are
@@ -87,8 +90,8 @@ TOOLS = 'tools/'
 # Application packages: services, operational dashboards and development tools.
 # Serving libraries compose into them, never the reverse.
 APPLICATIONS = {
-    'pir-publisher', 'enhance-publisher', 'status-publisher', 'pir-apm', 'enhance-pir-load-test', 'pir-monitor',
-    'enhance-pir-client', 'enhance-pir-exercise', 'enhance-noise-analysis', 'transparent-publisher',
+    'pir-publisher', 'enhance-publisher', 'status-publisher', 'pir-query-server', 'pir-apm', 'enhance-pir-load-test', 'pir-monitor',
+    'enhance-pir-client', 'enhance-pir-exercise', 'native-certificate', 'transparent-publisher',
     'transparent-query-server', 'transparent-tools', 'receiver-indexer', 'receiver-pir-server',
 }
 # Shared packages consumed by a subset of products. A serving library of any other
@@ -122,11 +125,9 @@ CODEC = 'zakura-receiver-crypto'
 # The canonical PIR primitive and protocol packages wallet-libraries owns. A pure
 # package may consume them; their own graphs are checked like the package's.
 CANONICAL = {
-    'zakura-filters', 'zakura-pir-native', 'zakura-transparent-native',
-    'zakura-transparent-events',
-    'zakura-transparent-filter', 'zakura-transparent-shard',
-    'zakura-transparent-txid-client', 'zakura-receiver-directory', 'zakura-receiver-pir',
-    'zakura-pir-transparent', 'zakura-pir-status',
+    'zakura-filters', 'zakura-pir-protocol', 'zakura-pir-client',
+    'zakura-pir-publisher', 'zakura-pir-query-server', 'zakura-pir-server-core',
+    'zakura-receiver-directory', 'zakura-receiver-pir',
 }
 # Retained evidence outside the active product. It is still checked for direct
 # Common and node edges; only the pure-package rules skip it.
@@ -138,8 +139,6 @@ def serving_target_problem(owner, target, name=None):
     `name` at repository path `target`, or None. Paths are directories relative to
     the root."""
     product = next((p for p in PRODUCTS if owner.startswith(p)), None)
-    if target.startswith('src/shared/pir-publisher/') and name != PIPELINE:
-        return 'publisher package'
     if name in APPLICATIONS:
         return 'application package'
     if target.startswith(TOOLS):
@@ -306,7 +305,12 @@ def resolved_violations(metadata, *, workspace_unified=False):
             target = packages[current]
             library = WALLET_LIBRARIES in (target['source'] or '')
             codec = package['name'] in RECEIVER and library and target['name'] == CODEC
-            through_codec = through_codec or codec
+            # Workspace dev-dependencies unify client fixture features into
+            # every use of the client. Standalone serving consumers below
+            # resolve without those features and receive no exemption.
+            client_fixture = (library and target['name'] == 'zakura-pir-client'
+                              and 'testing' in nodes[current].get('features', []))
+            through_codec = through_codec or codec or client_fixture
             if current != root_id:
                 if (target['name'] in NODE
                         or (library and not codec and target['name'] not in CANONICAL)

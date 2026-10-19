@@ -27,9 +27,10 @@ from fast import HELPERS, local_target
 
 FEATURES = ','.join([
     'enhance-query-server/native-reinspiring', 'status-query-server/native-reinspiring',
-    'enhance-publisher/native-reinspiring', 'status-publisher/native-reinspiring',
+    'enhance-publisher/native-reinspiring', 'status-publisher/native-reinspiring', 'status-publisher/cli',
     'enhance-pir-client/native-reinspiring', 'enhance-pir-load-test/native-reinspiring',
-    'pir-control/admission', 'transparent-publisher/rocksdb-reader', 'transparent-query-server/test-support', 'transparent-tools/compact-export',
+    'native-certificate/native-reinspiring',
+    'pir-control/admission', 'transparent-publisher/rocksdb-reader', 'transparent-tools/test-support', 'transparent-tools/compact-export',
 ])
 
 
@@ -88,10 +89,10 @@ def rust_checks(env, temporary, offline):
     # Reference checks have the same package/feature graph and are compiled
     # together. The full native workspace graph is never rebuilt without native.
     reference = run(['cargo', 'test', '--no-run', *options, '-p', 'enhance-query-server', '--lib',
-                     '--test', 'routing_contract', '--test', 'v7_contract'],
+                     '--test', 'routing_contract'],
                     env=env, stage='compile:reference', collect_tests=True, test_details=True)
-    reference += run(['cargo', 'test', '--no-run', *options, '-p', 'enhance-publisher',
-                     '--test', 'ci_hint'],
+    reference += run(['cargo', 'test', '--no-run', *options, '-p', 'pir-publisher',
+                     '--features', 'enhance-tests', '--test', 'ci_hint'],
                      env=env, stage='compile:reference', collect_tests=True, test_details=True)
     reference += run(['cargo', 'test', '--no-run', *options, '-p', 'status-query-server', '--lib', '--tests'],
                      env=env, stage='compile:reference', collect_tests=True, test_details=True)

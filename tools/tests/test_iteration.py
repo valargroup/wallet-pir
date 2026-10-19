@@ -117,12 +117,12 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(set(result['packages']), {'pir-apm', 'pir-monitor'})
         self.assertEqual(result['groups'], ['enhance'])
         self.assertEqual(result['helpers'], [])
-        result = fast.plan(self.packages, ['src/shared/pir-publisher/enhance/tests/fixtures/README.md'])
+        result = fast.plan(self.packages, ['src/enhance/enhance-publisher/tests/fixtures/README.md'])
         self.assertIn('enhance-publisher', result['packages'])
         self.assertIn('check-docs', result['helpers'])
 
     def test_receiver_packages_also_qualify_the_composed_publisher(self):
-        result = fast.plan(self.packages, ['src/shared/pir-publisher/receiver-store/src/lib.rs'])
+        result = fast.plan(self.packages, ['src/receiver/receiver-store/src/lib.rs'])
         self.assertEqual(result['groups'], ['enhance', 'receiver'])
         self.assertIn('receiver-store', full.commands('receiver', full.inventory())[0])
 
@@ -241,6 +241,21 @@ class PlannerTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'unknown helper'):
             helpers.targets(['check-docs; unsafe'])
 
+    def test_full_helpers_restore_full_fixtures_even_with_a_fast_parent(self):
+        for full in (False, True):
+            arguments = ['helpers.py', '--targets', '["check-tools"]']
+            if full:
+                arguments.append('--full')
+            with patch.dict(os.environ, {'WALLET_PIR_FAST_TESTS': '1'}), \
+                 patch.object(sys, 'argv', arguments), patch.object(helpers, 'run') as run:
+                helpers.main()
+                environment = run.call_args.kwargs['env']
+                if full:
+                    self.assertNotIn('WALLET_PIR_FAST_TESTS', environment)
+                else:
+                    self.assertEqual(environment['WALLET_PIR_FAST_TESTS'], '1')
+                self.assertEqual(os.environ['WALLET_PIR_FAST_TESTS'], '1')
+
     def test_rust_execution_can_start_while_independent_helpers_are_running(self):
         started = threading.Event()
         helper_fails = False
@@ -259,7 +274,7 @@ class PlannerTests(unittest.TestCase):
             started.set()
 
         paths = ['tools/tests/operations/deploy/test_ops_package.py',
-                 'src/shared/pir-publisher/transparent/src/lib.rs']
+                 'src/transparent/transparent-publisher/src/lib.rs']
         with patch.object(sys, 'argv', ['fast.py', '--base', 'HEAD', '--committed-only']), \
                 patch.object(fast, 'changed_paths', return_value=paths), \
                 patch('hygiene.check', return_value=0), \
@@ -350,6 +365,8 @@ class IntegrityTests(unittest.TestCase):
                 self.assertIn('name: %s-${{ github.sha }}' % kind, job)
                 self.assertIn('path: release-bundles/%s/%s.tar.gz' % (kind, kind), job)
             self.assertEqual(build[:4], ['cargo', 'build', '--locked', '--release'])
+            if family == 'enhance':
+                self.assertEqual(build[build.index('--features') + 1], 'pir-query-server/enhance')
 
     def test_workflows_invoke_only_scripts_that_exist(self):
         import re
@@ -383,6 +400,17 @@ class IntegrityTests(unittest.TestCase):
         cuda_job = workflow.split('\n  build-cuda:\n', 1)[1].split('\n  release-cuda:\n', 1)[0]
         metadata = load('release').CUDA_BUILD
         self.assertIn('    env:\n      RUSTUP_TOOLCHAIN: ' + metadata['rust'], cuda_job)
+        script = (ROOT / 'tools/ci/build-cuda.sh').read_text()
+        clients, query_server = script.split('compile:cuda --', 1)
+        self.assertNotIn('-p enhance-publisher', script)
+        self.assertNotIn('-p pir-query-server', clients)
+        self.assertIn('-p pir-query-server --bin pir-query-server', query_server)
+        self.assertIn('--features enhance,native-reinspiring,cuda', query_server)
+        native = workflow.split('compile:native --', 1)[1].split('assemble --family enhance --native', 1)[0]
+        publisher, query = native.split('compile:native-query-server --', 1)
+        self.assertNotIn('pir-query-server', publisher)
+        self.assertIn('-p pir-query-server --bin pir-query-server', query)
+        self.assertIn('--features enhance,native-reinspiring\n', query)
 
 
 if __name__ == '__main__':

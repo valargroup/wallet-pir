@@ -41,6 +41,14 @@ class Executor:
         """Raise unless the deploy identity can run a command on `host`."""
         raise NotImplementedError
 
+    def publisher_resources(self, host, paths):
+        """Read-only coordinator identity, headroom and managed-file modes."""
+        raise NotImplementedError
+
+    def publisher_unlocked(self, host, paths):
+        """Refuse held source/controller locks after joining the old owners."""
+        raise NotImplementedError
+
     def probe_unit(self, host, unit):
         """`host_helper.probe_unit`: loaded state, unit files and running executable digest."""
         raise NotImplementedError
@@ -212,6 +220,12 @@ class SSHExecutor(Executor):
 
     def write(self, host, path, data, mode):
         self.call(host, 'write', stdin=data, path=path, mode=mode)
+
+    def publisher_resources(self, host, paths):
+        return self.call(host, 'publisher_resources', paths=list(paths))
+
+    def publisher_unlocked(self, host, paths):
+        return self.call(host, 'publisher_unlocked', paths=list(paths))
 
     def upload(self, host, local_path, path, mode):
         self.call(host, 'write', stdin=Path(local_path), deadline=1800, path=path, mode=mode)

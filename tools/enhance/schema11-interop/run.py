@@ -36,7 +36,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix='schema11-interop-') as directory:
         project = Path(directory)
         dependencies = {
-            'enhance-publisher': ROOT / 'src/shared/pir-publisher/enhance',
+            'enhance-publisher': ROOT / 'src/enhance/enhance-publisher',
             'enhance-query-server': ROOT / 'src/enhance/enhance-query-server',
         }
         manifest = '[package]\nname="schema11-interop"\nversion="0.0.0"\nedition="2021"\n'
@@ -44,7 +44,7 @@ def main():
         for name, path in dependencies.items():
             manifest += f'{name} = {{ path = {json.dumps(str(path))} }}\n'
         for name, subdir, features in [
-            ('zakura-pir-enhance', 'zakura/pir-enhance', ['wallet']),
+            ('zakura-pir-client', 'zakura/pir-client', ['enhance', 'wallet']),
             ('zakura-client-backend', 'librustzcash/zcash_client_backend', ['orchard', 'test-dependencies']),
             ('zakura-client-sqlite', 'librustzcash/zcash_client_sqlite', ['orchard', 'test-dependencies']),
         ]:

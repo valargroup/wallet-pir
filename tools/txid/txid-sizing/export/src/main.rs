@@ -1,8 +1,11 @@
 //! Offline analysis only. Compile the existing canonical extractor without its
 //! service/RocksDB stack. No fee implementation is copied into this tool.
+use zakura_pir_protocol::transparent::events as transparent_events;
+use zakura_pir_publisher::transparent as transparent_shard;
+
 // The service re-exports adapter items this tool does not use.
 #[allow(dead_code, unused_imports)]
-#[path = "../../../../../src/shared/pir-publisher/transparent/src/ingest/extract.rs"]
+#[path = "../../../../../src/transparent/transparent-publisher/src/ingest/extract.rs"]
 mod extract;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};

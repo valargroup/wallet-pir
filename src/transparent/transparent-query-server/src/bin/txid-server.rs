@@ -3,17 +3,10 @@
 use clap::Parser;
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use tower_http::limit::RequestBodyLimitLayer;
 use tracing_subscriber::EnvFilter;
-use transparent_query_server::config::{ReadinessMode, ServiceConfig};
-use transparent_query_server::tx_detail::live::{DisplayLive, DisplayPublication};
-use transparent_query_server::tx_detail::service::{
-    body_limit, router, DisplayRuntime, DisplayState,
-};
+use transparent_query_server::tx_detail::process::role_from_text;
 use transparent_shared::history::shardset::DEFAULT_RETAIN_REVISIONS;
-use transparent_shared::tx_detail::set::DisplaySet;
 use transparent_shared::tx_detail::DisplayRole;
-use transparent_shared::tx_detail::{parse_role, serves};
 
 #[derive(Parser)]
 #[command(
@@ -21,6 +14,20 @@ use transparent_shared::tx_detail::{parse_role, serves};
     about = "Private retrieval from a tiered txid display publication"
 )]
 struct Cli {
+    /// Full-coverage managed synchronization from a trusted HTTPS publisher.
+    #[arg(long, requires_all = ["state_dir", "publisher_network", "publisher_genesis"], conflicts_with_all = ["publication_dir", "control_socket", "runtime_cache_dir", "loaded_only"])]
+    publisher: Option<String>,
+    #[arg(long, requires = "publisher")]
+    state_dir: Option<PathBuf>,
+    #[arg(long, requires = "publisher")]
+    publisher_network: Option<String>,
+    #[arg(long, requires = "publisher")]
+    publisher_genesis: Option<String>,
+    #[arg(long, requires = "publisher")]
+    publisher_ca: Option<PathBuf>,
+    #[arg(long, default_value_t = 64 << 30)]
+    bootstrap_max_bytes: u64,
+
     /// Loopback by default; a worker binds its private address.
     #[arg(long, default_value = "127.0.0.1:8095")]
     listen: SocketAddr,
@@ -79,8 +86,7 @@ struct Cli {
 }
 
 fn role(text: &str) -> Result<DisplayRole, String> {
-    parse_role(text)
-        .ok_or_else(|| format!("{text} is not recent-replica, archive-owner or combined"))
+    role_from_text(text)
 }
 
 #[tokio::main]
@@ -90,116 +96,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
         .init();
     let cli = Cli::parse();
-    let mut directory = cli.publication_dir.clone();
-    if let Some(record) = cli.active_record.as_ref().filter(|r| r.exists()) {
-        let active: DisplayPublication = serde_json::from_slice(&std::fs::read(record)?)?;
-        directory = Some(active.directory);
-    }
-    let config = ServiceConfig {
-        cache_bytes: cli.cache_bytes,
-        build_slots: cli.build_slots,
-        query_slots: cli.query_slots,
-        max_waiters: cli.query_waiters,
-        max_body_bytes: cli.body_bytes,
-        upload_deadline: std::time::Duration::from_secs(cli.upload_deadline_secs),
-        query_deadline: std::time::Duration::from_secs(cli.query_deadline_secs),
-        readiness: if cli.loaded_only {
-            ReadinessMode::LoadedOnly
-        } else {
-            ReadinessMode::Warm
+    transparent_query_server::tx_detail::process::run(
+        transparent_query_server::tx_detail::process::DetailProcess {
+            publisher: cli.publisher,
+            state_dir: cli.state_dir,
+            publisher_network: cli.publisher_network,
+            publisher_genesis: cli.publisher_genesis,
+            publisher_ca: cli.publisher_ca,
+            bootstrap_max_bytes: cli.bootstrap_max_bytes,
+            listen: cli.listen,
+            role: cli.role,
+            publication_dir: cli.publication_dir,
+            cache_bytes: cli.cache_bytes,
+            runtime_cache_dir: cli.runtime_cache_dir,
+            runtime_cache_max_bytes: cli.runtime_cache_max_bytes,
+            runtime_restore_slots: cli.runtime_restore_slots,
+            build_slots: cli.build_slots,
+            query_slots: cli.query_slots,
+            retain_revisions: cli.retain_revisions,
+            query_waiters: cli.query_waiters,
+            body_bytes: cli.body_bytes,
+            upload_deadline_secs: cli.upload_deadline_secs,
+            query_deadline_secs: cli.query_deadline_secs,
+            loaded_only: cli.loaded_only,
+            verify_only: cli.verify_only,
+            control_socket: cli.control_socket,
+            active_record: cli.active_record,
+            collect_root: cli.collect_root,
         },
-    };
-    let disk = cli
-        .runtime_cache_dir
-        .clone()
-        .map(|dir| {
-            let mut disk = transparent_shared::runtime::disk::DiskCache::new(
-                dir,
-                cli.runtime_cache_max_bytes
-                    .unwrap_or(cli.cache_bytes.saturating_mul(2)),
-            )?;
-            disk.restore_slots = usize::from(cli.runtime_restore_slots);
-            Ok::<_, std::io::Error>(disk)
-        })
-        .transpose()?;
-    let runtime = DisplayRuntime::new(config, disk);
-
-    // Loading verifies every revision of the role, segment digests and rows.
-    let initial = match &directory {
-        Some(dir) => {
-            let set = DisplaySet::open(dir, cli.retain_revisions, cli.role)?;
-            tracing::info!(
-                role = cli.role.as_str(),
-                map_sha256 = set.map_digest,
-                shards = set.map.shards.len(),
-                held = set.current().iter().filter(|r| r.held()).count(),
-                retained = set.revisions().len() - set.map.shards.len(),
-                start = set.map.start_height,
-                covered_through = set.map.covered_through(),
-                "loaded display publication"
-            );
-            let publication = DisplayPublication {
-                directory: dir.clone(),
-                map_sha256: set.map_digest.clone(),
-            };
-            Some((DisplayState::build(set, &runtime)?, publication))
-        }
-        None => None,
-    };
-    if cli.verify_only {
-        let Some((state, publication)) = &initial else {
-            return Err("--verify-only needs --publication-dir or an active record".into());
-        };
-        let set = state.set();
-        println!(
-            "{}",
-            serde_json::json!({
-                "verified": true,
-                "role": cli.role.as_str(),
-                "map_sha256": publication.map_sha256,
-                "shards": set.map.shards.len(),
-                "held": set
-                    .current()
-                    .iter()
-                    .filter(|r| serves(cli.role, r.manifest.sealed))
-                    .map(|r| &r.digest)
-                    .collect::<Vec<_>>(),
-                "warm_target": state.warm_target(),
-            })
-        );
-        return Ok(());
-    }
-    let prewarm = initial.as_ref().map(|(state, _)| state.spawn_prewarm());
-    let app = match cli.control_socket {
-        Some(socket) => {
-            let live = DisplayLive::new(
-                runtime,
-                cli.role,
-                cli.retain_revisions,
-                cli.active_record.expect("clap requires the record"),
-                cli.collect_root,
-                initial,
-            )?;
-            let app = live.router();
-            tokio::spawn(async move {
-                if let Err(error) = live.listen(&socket).await {
-                    tracing::error!(%error, "control socket failed");
-                    std::process::exit(1);
-                }
-            });
-            app
-        }
-        None => {
-            let Some((state, _)) = initial else {
-                return Err("serving without a control socket needs --publication-dir".into());
-            };
-            router(state)
-        }
-    }
-    .layer(RequestBodyLimitLayer::new(body_limit()));
-    let listener = tokio::net::TcpListener::bind(cli.listen).await?;
-    tracing::info!(listen = %cli.listen, role = cli.role.as_str(), "serving txid display");
-    let _prewarm = prewarm;
-    axum::serve(listener, app).await?;
-    Ok(())
+    )
+    .await
 }

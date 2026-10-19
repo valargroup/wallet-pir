@@ -20,6 +20,7 @@ TXID_DISPLAY = ('plan', 'preflight', 'deploy', 'status', 'stop', 'rollback', 're
                 'ingest-status', 'ingest-stop', 'bootstrap', 'verify', 'measure-start', 'measure-stop')
 TXID_DISPLAY_PHASES = ('stage', 'workers', 'route', 'controller')
 BINARY_UPGRADE = ('plan', 'preflight', 'baseline', 'deploy', 'status', 'rollback')
+ALERT_ACTIVATION = ('plan', 'preflight', 'deploy', 'status', 'rollback', 'test')
 
 
 def register(commands):
@@ -207,11 +208,25 @@ def register(commands):
             command.add_argument('--transaction')
             command.add_argument('--force', action='store_true')
 
+    for name in ALERT_ACTIVATION:
+        command = commands.add_parser('transparent-alerts-' + name,
+                                      help='locked pir-apm upgrade and Transparent/txid/monitor alert-mode activation')
+        command.add_argument('--request', required=True)
+        command.add_argument('--request-sha256', required=True)
+        if name in ('preflight', 'deploy', 'test'):
+            command.add_argument('--binary', help="local pir-apm binary of the request's release; omit when already staged")
+        if name == 'rollback':
+            command.add_argument('--transaction')
+            command.add_argument('--force', action='store_true')
+        if name == 'test':
+            command.add_argument('--component', choices=('apm', 'monitor'), required=True)
 
 
 def dispatch(args, executor=None, out=print, **options):
     if args.command.startswith('transparent-binary-'):
         return binary_upgrade(args, executor, out, **options)
+    if args.command.startswith('transparent-alerts-'):
+        return alert_activation(args, executor, out, **options)
     if args.command.startswith('schema-lock-'):
         module = import_module('tools.transparent.lib.activity_lock_qualification')
         if args.command == 'schema-lock-remote':
@@ -455,6 +470,21 @@ def dispatch(args, executor=None, out=print, **options):
     raise DeployError("unknown Transparent operation: " + args.command)
 
 
+def alert_activation(args, executor, out, lock=None, sleep=None, clock=None, **_options):
+    """`transparent-alerts-*`: the locked APM and monitor alert activation."""
+    from wallet_pir_ops.bundle import check_installed
+    from wallet_pir_ops.deploy.remote import SSHExecutor
+    module = import_module('tools.transparent.lib.alert_activation')
+    if not args.inventory:
+        raise DeployError('pass --inventory or set WALLET_PIR_DEPLOY_INVENTORY')
+    request = module.load_request(args.request, args.request_sha256)
+    if not args.command.endswith(('-plan', '-preflight', '-status')):
+        check_installed(mutation=True, revision=request['apm']['release']['git_sha'])
+    inventory = descriptors.load_inventory(args.inventory)
+    timing = {k: v for k, v in (('sleep', sleep), ('clock', clock)) if v is not None}
+    return module.run(args, executor or SSHExecutor(inventory), out, inventory, lock=lock, **timing)
+
+
 def binary_upgrade(args, executor, out, **options):
     """`transparent-binary-*`: the shared engine on the request's component with product refusals."""
     from wallet_pir_ops.bundle import check_installed
@@ -504,6 +534,9 @@ def binary_upgrade(args, executor, out, **options):
         result = Lifecycle(deployer).inspect(action, sha, binary, stage=getattr(args, 'stage', False))
         problems = (list(result.problems) + upgrade.problems(executor, workers)
                     + upgrade.load_problems(executor, check_pin=True))
+    if action in ('plan', 'preflight', 'status'):
+        for line in module.notification_state(executor, request['controller']['host'], request['service']):
+            out(line)
     for problem in problems:
         out('problem: ' + problem)
     if action in ('plan', 'preflight', 'deploy'):

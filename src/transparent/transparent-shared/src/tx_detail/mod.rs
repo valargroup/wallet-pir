@@ -1,5 +1,8 @@
 //! Display publications and prepared runtimes shared by the publisher and worker.
 
+use zakura_pir_protocol::transparent::shard as transparent_shard;
+
+pub mod distribution;
 pub mod prebuild;
 pub mod set;
 #[cfg(any(test, feature = "test-support"))]
@@ -33,7 +36,8 @@ pub fn runtime_key(digest: &str, table: DisplayTable, segment: u32) -> RuntimeKe
 }
 
 /// Which tiers of a display publication a worker holds.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum DisplayRole {
     /// The unsealed recent shard only.
     RecentReplica,

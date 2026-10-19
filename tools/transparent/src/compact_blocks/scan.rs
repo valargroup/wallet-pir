@@ -1,3 +1,5 @@
+use zakura_pir_protocol::transparent::events as transparent_events;
+
 use super::{
     dataset::{verify_blocks, Batch, Manifest},
     proto::CompactBlock,
@@ -5,7 +7,7 @@ use super::{
 use anyhow::{ensure, Result};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use transparent_events::{ReceiveEvent, SpendEvent, TransparentEvent, Txid};
-use zakura_pir_transparent::engine::store::{
+use zakura_pir_client::transparent::engine::store::{
     Anchor, ScriptEntry, SetIdentity, ShardCommit, StoredEvent, WalletStore,
 };
 

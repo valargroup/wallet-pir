@@ -1,0 +1,164 @@
+//! Transparent activity filter service.
+//!
+//! Runs independently of the Enhance PIR coordinator. In the production
+//! deployment it happens to sit on the same host, next to the same Zakura
+//! archive node, but it shares no state with the coordinator and can be
+//! stopped, restarted or moved without touching it.
+
+use zakura_pir_publisher::transparent as transparent_shard;
+use zakura_pir_publisher::transparent::filter as transparent_filter;
+
+use clap::Parser;
+use std::net::SocketAddr;
+use std::path::PathBuf;
+use tracing_subscriber::EnvFilter;
+use transparent_publisher::history::service::{router, Phase, ServiceState};
+use transparent_publisher::history::shard_filters::ShardFilters;
+use transparent_publisher::ingest;
+use transparent_publisher::ingest::store::FilterStore;
+
+#[derive(Parser, Clone)]
+#[command(
+    name = "transparent-publisher",
+    about = "Zcash transparent activity filter service (zcash-transparent-basic-v1)"
+)]
+struct Cli {
+    /// Loopback by default: this service has no public route.
+    #[arg(long, default_value = "127.0.0.1:8090")]
+    listen: SocketAddr,
+    #[arg(long, default_value = "http://127.0.0.1:8232")]
+    zakura_rpc_url: String,
+    /// Not needed to check a shard directory, which reads no node.
+    #[arg(long, required_unless_present = "check_shard_dir")]
+    zakura_cookie: Option<PathBuf>,
+    #[arg(long, default_value = "./transparent-filter-data")]
+    data_dir: PathBuf,
+    /// First height to publish a filter for. Defaults to Ironwood activation.
+    #[arg(long, default_value_t = transparent_filter::START_HEIGHT)]
+    start_height: u64,
+    /// Transactions retained in the previous-output cache.
+    #[arg(long, default_value_t = transparent_publisher::ingest::prevout::DEFAULT_CACHE_OUTPUTS)]
+    cache_outputs: usize,
+    #[arg(long, default_value_t = 10)]
+    poll_seconds: u64,
+    /// Blocks between durable checkpoints during backfill.
+    #[arg(long, default_value_t = 1_000)]
+    commit_every: u64,
+    /// A published shard set whose map and range filters to serve.
+    ///
+    /// Optional: per-block filters and shard filters are independent products,
+    /// and this service ingests and serves the former with or without a set.
+    /// Given one, it also answers `/v2/filters/shards` and each shard's range
+    /// filter -- the public half a wallet needs before it can decide which
+    /// shards are worth a private query. The retrieval service also serves
+    /// these bytes; this listener offers a separate public origin.
+    #[arg(long)]
+    shard_dir: Option<PathBuf>,
+    /// Open `--shard-dir`, print its identity as JSON, and exit without
+    /// serving. The filter-only deploy runs this with the staged binary
+    /// before the running service is touched, so a set this build cannot
+    /// read is caught while the old service still answers.
+    #[arg(long, requires = "shard_dir")]
+    check_shard_dir: bool,
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
+        .init();
+    let cli = Cli::parse();
+    if cli.check_shard_dir {
+        let dir = cli.shard_dir.as_ref().expect("clap requires it");
+        let filters = ShardFilters::open(dir)?;
+        let map = filters.map();
+        println!(
+            "{}",
+            serde_json::json!({
+                "shard_dir": dir,
+                "schema": transparent_shard::manifest::SCHEMA,
+                "profile": map.profile,
+                "network": map.network,
+                "genesis_hash": map.genesis_hash,
+                "shards": filters.shard_count(),
+                "start_height": map.start_height,
+                "covered_through": filters.covered_through(),
+                "map_sha256": filters.map_digest(),
+            })
+        );
+        return Ok(());
+    }
+
+    let cookie = cli
+        .zakura_cookie
+        .as_ref()
+        .ok_or("--zakura-cookie is required to serve")?;
+    let zakura = transparent_publisher::ingest::zakura::connect(&cli.zakura_rpc_url, cookie)?;
+    // Chain identity comes from the node, once, and is then pinned in the
+    // store: a store built against one chain must never be served as another.
+    let genesis_hash = zakura.block_hash_display(0).await?;
+    if genesis_hash != transparent_filter::MAINNET_GENESIS_DISPLAY {
+        tracing::warn!(
+            %genesis_hash,
+            expected = transparent_filter::MAINNET_GENESIS_DISPLAY,
+            "node is not on Zcash mainnet; the store will be pinned to this chain"
+        );
+    }
+    let store = FilterStore::open(
+        &cli.data_dir,
+        transparent_filter::PROFILE,
+        &genesis_hash,
+        cli.start_height,
+    )?;
+    tracing::info!(
+        covered_through = ?store.covered_through(),
+        filters_stored = store.filters_stored(),
+        start_height = cli.start_height,
+        "opened filter store"
+    );
+
+    let mut state = ServiceState::new(store);
+    if let Some(dir) = &cli.shard_dir {
+        // Verified against the map at load. A filter that does not match its
+        // published digest would make every wallet under-match -- skipping
+        // history it should have retrieved, which is a wrong answer rather
+        // than an error -- so this refuses to start instead.
+        let filters = ShardFilters::open(dir)?;
+        tracing::info!(
+            shards = filters.shard_count(),
+            covered_through = ?filters.covered_through(),
+            map_sha256 = %filters.map_digest(),
+            dir = %dir.display(),
+            "serving published shard filters"
+        );
+        state = state.with_shard_filters(filters);
+    }
+    let ingest_state = state.clone();
+    let ingest_cli = cli.clone();
+    tokio::spawn(async move {
+        loop {
+            if let Err(error) = ingest::run(
+                zakura.clone(),
+                ingest_state.clone(),
+                ingest_cli.cache_outputs,
+                ingest_cli.poll_seconds,
+                ingest_cli.commit_every,
+            )
+            .await
+            {
+                tracing::error!(%error, "filter ingestion stopped");
+                ingest_state
+                    .set_phase(Phase::Failed {
+                        reason: "ingestion failed; retrying; inspect local logs".to_string(),
+                    })
+                    .await;
+                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+            }
+        }
+    });
+
+    let listener = tokio::net::TcpListener::bind(cli.listen).await?;
+    tracing::info!(listen = %cli.listen, "transparent filter service started");
+    axum::serve(listener, router(state)).await?;
+    Ok(())
+}

@@ -1,29 +1,14 @@
 {
   "enhance-publisher": {
     "fast": [
-      "boundary_recovery_model",
-      "ci_hint",
-      "record_layout",
-      "schema11_cutover",
-      "status_routes"
+      "publisher_cli"
     ],
-    "full": [
-      "canonical_record",
-      "encrypted_lifecycle",
-      "enhance_wallet_native",
-      "http",
-      "matvec_config",
-      "note_recovery",
-      "packing_http",
-      "row_repair_http",
-      "rpc"
-    ]
+    "full": []
   },
   "enhance-query-server": {
     "fast": [],
     "full": [
-      "routing_contract",
-      "v7_contract"
+      "routing_contract"
     ]
   },
   "receiver-indexer": {
@@ -55,15 +40,6 @@
       "status_wallet_http"
     ]
   },
-  "transparent-publisher": {
-    "fast": [],
-    "full": [
-      "event_codec_bounds",
-      "service_round_trip",
-      "shard_filters",
-      "txid_shipped_runtimes"
-    ]
-  },
   "transparent-query-server": {
     "fast": [
       "ci_smoke"
@@ -91,13 +67,38 @@
       "parent_filters",
       "regression_runner",
       "service_tools",
-      "simulation"
+      "simulation",
+      "txid_shipped_runtimes"
     ]
+  },
+  "pir-query-server": {
+    "fast": [
+      "operator"
+    ],
+    "full": []
   },
   "pir-publisher": {
     "fast": [
-      "lifecycle"
+      "boundary_recovery_model",
+      "ci_hint",
+      "lifecycle",
+      "record_layout",
+      "status_routes"
     ],
-    "full": []
+    "full": [
+      "canonical_record",
+      "controller_update_campaign",
+      "encrypted_lifecycle",
+      "enhance_wallet_native",
+      "event_codec_bounds",
+      "http",
+      "note_recovery",
+      "packing_http",
+      "row_repair_http",
+      "rpc",
+      "service_round_trip",
+      "shard_filters",
+      "unified_http_sync_campaign"
+    ]
   }
 }

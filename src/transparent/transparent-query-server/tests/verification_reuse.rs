@@ -8,6 +8,10 @@
 //! it hashed, unmodified since. Anything else — a replaced file, an in-place
 //! write, a missing file, a restart — is verified in full.
 
+use zakura_pir_protocol::transparent::events as transparent_events;
+use zakura_pir_protocol::transparent::filter as transparent_filter;
+use zakura_pir_publisher::transparent as transparent_shard;
+
 use std::fs::{File, OpenOptions};
 use std::os::unix::fs::FileExt;
 use std::path::{Path, PathBuf};

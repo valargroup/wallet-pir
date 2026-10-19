@@ -61,8 +61,9 @@ SCOPES = {
     ('full-test', 'shared'): ('dev,release-fast', 'clippy all-features; pir-control/admission'),
     ('full-test', 'receiver'): ('dev,release-fast', 'clippy all-features'),
     ('release', 'q48'): ('release', 'enhance-pir-client'),
-    ('release-native', 'native'): ('release', 'enhance-pir-client,native-reinspiring'),
-    ('native-cuda', 'cuda'): ('release', 'enhance-pir-client,native-reinspiring,cuda'),
+    ('release', 'publisher'): ('release,release-fast', 'pir-publisher/transparent; transparent regression, history rate and txid rate acceptance tools'),
+    ('release-native', 'native'): ('release', 'enhance-pir-client,native-reinspiring,pir-query-server/enhance,native-reinspiring'),
+    ('native-cuda', 'cuda'): ('release', 'enhance-pir-client,native-reinspiring,pir-query-server/enhance,native-reinspiring,cuda'),
 }
 # Shards have private hosted targets, including their complete selection policy.
 # A policy change cannot restore an entry prepared for a different feature set.

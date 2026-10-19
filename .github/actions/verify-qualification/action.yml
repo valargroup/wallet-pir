@@ -1,0 +1,19 @@
+name: Verify qualification receipts
+description: Download this workflow attempt's family receipts and require complete executed coverage.
+inputs:
+  family:
+    description: Service family whose assigned shards must all have passed
+    required: true
+runs:
+  using: composite
+  steps:
+    - uses: actions/download-artifact@v4
+      with:
+        pattern: qualification-${{ inputs.family }}-${{ github.sha }}-${{ github.run_attempt }}-*
+        path: qualification-receipts
+        merge-multiple: true
+    - name: Verify completed family coverage
+      shell: bash
+      env:
+        FAMILY: ${{ inputs.family }}
+      run: python3 tools/ci/test_matrix.py verify --family "$FAMILY" --receipts qualification-receipts

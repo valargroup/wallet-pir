@@ -7,6 +7,10 @@
 //! worker still serves the whole set's public bytes. Readiness in warm mode
 //! waits for every assigned runtime; the pilot's loaded-only mode does not.
 
+use zakura_pir_protocol::transparent::events as transparent_events;
+use zakura_pir_protocol::transparent::filter as transparent_filter;
+use zakura_pir_publisher::transparent as transparent_shard;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use std::collections::BTreeMap;

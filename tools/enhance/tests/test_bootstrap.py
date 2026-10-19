@@ -41,7 +41,7 @@ def bundle_at(path):
     header = bytearray(20)
     header[:6] = b'\x7fELF\x02\x01'
     header[18:20] = (62).to_bytes(2, 'little')
-    (path / 'enhance-pir-server').write_bytes(header)
+    (path / 'pir-query-server').write_bytes(header)
     return checksums(path)
 
 
@@ -51,7 +51,7 @@ class BootstrapTests(unittest.TestCase):
             path = Path(temp) / 'bundle'
             digest = bundle_at(path)
             identity = module.verify_bundle(path, SHA, digest)
-            self.assertEqual(identity['binary_sha256'], module.sha256((path / 'enhance-pir-server').read_bytes()))
+            self.assertEqual(identity['binary_sha256'], module.sha256((path / 'pir-query-server').read_bytes()))
             (path / 'workers.example.json').write_text('modified')
             with self.assertRaises(ValueError):
                 module.verify_bundle(path, SHA, digest)
@@ -72,7 +72,7 @@ class BootstrapTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / 'bundle'
             bundle_at(path)
-            (path / 'enhance-pir-server').write_bytes(b'not-a-linux-binary')
+            (path / 'pir-query-server').write_bytes(b'not-a-linux-binary')
             with self.assertRaises(ValueError):
                 module.verify_bundle(path, SHA, checksums(path))
 
@@ -116,7 +116,8 @@ class BootstrapTests(unittest.TestCase):
     def test_unit_binds_only_private_origin_and_dedicated_identity(self):
         unit = module.unit('b' * 64, '10.0.0.4', LIMITS).decode()
         self.assertIn('User=enhance-pir\n', unit)
-        self.assertIn('--listen 10.0.0.4:8291 --data-dir /srv/enhance-pir/worker', unit)
+        self.assertIn('ExecStart=/opt/enhance-pir/releases/' + 'b' * 64
+                      + '/pir-query-server --config /etc/enhance-pir/worker.json\n', unit)
         self.assertIn(f'MemoryHigh={7 * module.GIB}\n', unit)
         self.assertIn('ReadWritePaths=/srv/enhance-pir/worker\n', unit)
         with self.assertRaises(ValueError):
@@ -184,7 +185,7 @@ class BootstrapTests(unittest.TestCase):
                 self.assertTrue(receipt['stop_confirmed'])
 
     def test_effective_kernel_limits_must_match_systemd(self):
-        binary = Path('/opt/enhance-pir/releases/fixture/enhance-pir-server')
+        binary = Path('/opt/enhance-pir/releases/fixture/pir-query-server')
         properties = f'MainPID=123\nControlGroup=/system.slice/{module.SERVICE}\nMemoryHigh={LIMITS["memory_high_bytes"]}\nMemoryMax={LIMITS["memory_max_bytes"]}\nMemorySwapMax={LIMITS["memory_swap_max_bytes"]}\n'
         values = {'memory.high': str(LIMITS['memory_high_bytes']), 'memory.max': str(LIMITS['memory_max_bytes']),
                   'memory.swap.max': str(LIMITS['memory_swap_max_bytes'])}
@@ -206,7 +207,7 @@ class BootstrapTests(unittest.TestCase):
             target = root / 'target/release'
             target.mkdir(parents=True)
             for name in release.BINARIES['enhance-pir']:
-                (target / name).write_bytes((fixture / 'enhance-pir-server').read_bytes())
+                (target / name).write_bytes((fixture / 'pir-query-server').read_bytes())
             with patch.object(release.subprocess, 'check_output', return_value=b''):
                 release.assemble(SHA, root / 'target', root / 'bundles', 'enhance-pir')
             release.extract(root / 'bundles/enhance-pir.tar.gz', root / 'extracted', SHA, 'enhance-pir')
@@ -220,7 +221,7 @@ class BootstrapTests(unittest.TestCase):
             path = Path(temp) / module.SERVICE
             value = module.unit('b' * 64, '10.0.0.4', LIMITS).decode()
             # Parser validation only: the target binary is not installed on CI.
-            value = value.replace('/opt/enhance-pir/releases/' + 'b' * 64 + '/enhance-pir-server', '/usr/bin/true')
+            value = value.replace('/opt/enhance-pir/releases/' + 'b' * 64 + '/pir-query-server', '/usr/bin/true')
             path.write_text(value)
             result = module.subprocess.run(['systemd-analyze', 'verify', str(path)], capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)

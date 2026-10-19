@@ -1,4 +1,7 @@
 //! Analysis-only sequential disk UTXO census, using the production extractor.
+use zakura_pir_protocol::transparent::events as transparent_events;
+use zakura_pir_publisher::transparent as transparent_shard;
+
 use super::*;
 use rusqlite::{params, Connection, OptionalExtension};
 use std::io::{self, BufRead, Write};

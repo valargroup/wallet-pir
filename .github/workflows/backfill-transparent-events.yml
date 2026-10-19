@@ -325,7 +325,7 @@ jobs:
           SHA: ${{ inputs.ref }}
         run: |
           set -euo pipefail
-          cargo build --locked --release -p transparent-publisher --bin shard-census
+          cargo build --locked --release -p transparent-tools --features publisher-tools --bin shard-census
           ARGS=()
           [[ -n "$RECENT_FROM" ]] && ARGS+=(--recent-from "$RECENT_FROM")
           [[ -n "$ARCHIVE_GEOMETRY" ]] && ARGS+=(--archive-geometry "$ARCHIVE_GEOMETRY")

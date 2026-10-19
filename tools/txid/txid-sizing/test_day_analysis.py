@@ -2,7 +2,6 @@ import copy
 import unittest
 import analyze as a
 import day_analysis as d
-import day_sample
 import survey
 
 class DaySizingTests(unittest.TestCase):
@@ -35,18 +34,6 @@ class DaySizingTests(unittest.TestCase):
         self.assertFalse(d.rpc_shielded_presence({'ironwood':{'actions':[{}], 'flags':{'enableSpends':False,'enableOutputs':False}}}))
         self.assertFalse(d.rpc_shielded_presence({'orchard':{'actions':[]},'ironwood':None}))
         self.assertTrue(d.rpc_shielded_presence({'orchard':{'actions':[{}]}}))
-
-    def test_probability_design_is_disjoint_reproducible_and_whole_range(self):
-        design=day_sample.plan(8)
-        self.assertEqual(design,day_sample.plan(8));self.assertEqual(design['strata'][0]['lo'],0)
-        self.assertEqual(design['strata'][-1]['hi_exclusive'],design['anchor_height']+1)
-        last=0;seen=set()
-        for s in design['strata']:
-            self.assertEqual(s['lo'],last);last=s['hi_exclusive']
-            self.assertEqual(s['inclusion_probability'],s['n']/s['N'])
-            self.assertEqual(len(set(s['heights'])),s['n'])
-            self.assertTrue(all(s['lo']<=h<last for h in s['heights']))
-            self.assertFalse(seen.intersection(s['heights']));seen.update(s['heights'])
 
     def test_block_cluster_ratio_and_finite_population_variance(self):
         design={'strata':[{'name':'s','N':10,'n':2}]}

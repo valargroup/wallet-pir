@@ -1,30 +1,56 @@
 # Optional CUDA matrix-vector evaluation
 
 CUDA is an opt-in build and a per-worker runtime choice. The default build and
-normal release bundles remain CPU-only. Build a CUDA-capable worker with:
+normal release bundles remain CPU-only. The CUDA worker is `pir-query-server`,
+not the publisher. GPU hosts do not run `enhance-pir-server` as the worker.
+Build it with:
 
 ```sh
-cargo build --locked --release -p enhance-publisher --bin enhance-pir-server --features cuda
-./target/release/enhance-pir-server worker \
-  --data-dir /srv/enhance-pir/worker --listen 127.0.0.1:8091 \
-  --matvec-backend cuda --cuda-device 0
+cargo build --locked --release -p pir-query-server --bin pir-query-server \
+  --features enhance,native-reinspiring,cuda
 ```
 
-The same configuration can be supplied through `ENHANCE_MATVEC_BACKEND=cuda`
-and `ENHANCE_CUDA_DEVICE=0`; explicit CLI arguments take precedence. Existing
-systemd units using an environment file can read these variables without changes
-to `ExecStart`. Custom builds are unqualified candidates; do not replace binaries
-inside a checksummed release bundle. Follow the normal exact-binary qualification
-process before using a custom CUDA build for serving capacity.
+One process, one Enhance role. The worker config names the listener, data
+directory, and matrix backend:
 
-CPU is the default even in a CUDA-capable binary. Device zero is selected when
-CUDA is requested without an ordinal. An explicit device with CPU is rejected.
-Backend options belong to the `worker` subcommand, not the coordinator.
-Startup checks the CUDA driver, NVRTC, and selected device before opening worker
-state or binding a listener. Missing feature support, missing libraries, or an
-invalid device fails explicitly, without falling back to CPU. CUDA 12 driver/
-NVRTC libraries must be available to the service user at runtime; builds and
-CPU-only CI do not require those libraries.
+```json
+{
+  "management_listen": "127.0.0.1:18080",
+  "enhance": {
+    "enabled": true,
+    "settings": {
+      "role": "worker",
+      "listen": "127.0.0.1:8091",
+      "data_dir": "/srv/enhance-pir/worker",
+      "matvec": {"matvec_backend": "cuda", "cuda_device": 0}
+    }
+  }
+}
+```
+
+```sh
+./target/release/pir-query-server --config /etc/enhance-pir/worker.json --check
+./target/release/pir-query-server --config /etc/enhance-pir/worker.json
+./target/release/pir-query-server check-backend --matvec-backend cuda --cuda-device 0
+```
+
+`check-backend` accepts `--matvec-backend cpu|cuda` and `--cuda-device N`. The
+same selection can be supplied to that command through `ENHANCE_MATVEC_BACKEND`
+and `ENHANCE_CUDA_DEVICE`; explicit flags take precedence. The running worker
+reads the backend from its config file, not from those variables. Custom builds
+are unqualified candidates; do not replace binaries inside a checksummed release
+bundle. Follow the normal exact-binary qualification process before using a
+custom CUDA build for serving capacity.
+
+CPU is the default when the worker config omits `matvec`, even in a
+CUDA-capable binary. Device zero is selected when CUDA is requested without an
+ordinal. An explicit device with CPU is rejected. Backend options belong to the
+worker role config, not the coordinator. `enhance-pir-server build-info` has no
+CUDA field. Startup checks the CUDA driver, NVRTC, and selected device before
+opening worker state or binding a listener. Missing feature support, missing
+libraries, or an invalid device fails explicitly, without falling back to CPU.
+CUDA 12 driver/NVRTC libraries must be available to the service user at runtime;
+builds and CPU-only CI do not require those libraries.
 
 ## Ownership and failure behavior
 
@@ -32,8 +58,9 @@ Each immutable unit owns its persistent GPU database and reusable scratch space.
 Retained generations sharing a unit reuse that same upload. Both fresh builds and
 verified artifact reloads use the selected backend. Artifact identities, hashes,
 protocol/schema versions, and worker placement policy do not encode the backend.
-To roll back, restart with CPU selection and remove `ENHANCE_CUDA_DEVICE`; existing
-artifacts remain usable. Backend configuration cannot change inside a running worker.
+To roll back, restart the worker with `matvec_backend` set to `cpu` and no
+`cuda_device` in its config. Existing artifacts remain usable. Backend
+configuration cannot change inside a running worker.
 
 The worker still retains its host database for preprocessing and persistence.
 Existing memory admission estimates host memory only. GPU memory is additional:
@@ -52,8 +79,9 @@ domains without making GPU availability part of the publication quorum.
 
 ## Deployment
 
-The GPU worker is part of every regular Enhance release. The deploy inventory
-lists it with `"artifact_kind": "enhance-pir-native-cuda"`, and
+The GPU worker is part of every regular Enhance release. It runs the CUDA
+`pir-query-server`; the host does not run the publisher as the worker. The
+deploy inventory lists it with `"artifact_kind": "enhance-pir-native-cuda"`, and
 `wallet-pir-deploy.py deploy enhance` takes the full-CI CUDA bundle through
 `--extra-archive`; see [deployment](deployment.md#deploy-cli).
 
@@ -90,8 +118,8 @@ in-flight evaluation is never replayed. CPU replicas remain eligible throughout.
 Ordinary correctness and configuration tests run without a GPU:
 
 ```sh
-cargo test --locked -p enhance-publisher --test matvec_config
-cargo test --locked -p enhance-publisher --features cuda --test matvec_config
+cargo test --locked -p pir-query-server --features enhance --test operator
+cargo test --locked -p pir-query-server --features enhance,cuda --test operator
 cargo test --locked -p enhance-query-server --features cuda --lib \
   backend_load_failure_does_not_rebuild_or_replace_published_units
 ```
@@ -102,21 +130,17 @@ an error, not a skipped success):
 ```sh
 cargo test --locked --profile release-fast -p enhance-query-server --features cuda \
   --lib cuda_encrypted_bootstrap_round_trip_and_cached_restart -- --ignored
-cargo test --locked --profile release-fast -p enhance-publisher --features cuda \
+cargo test --locked --profile release-fast -p pir-publisher --features enhance-tests,cuda \
   --test http cuda_distributed_round_trip_retention_failover_and_restart -- --ignored
 cargo test --locked --profile release-fast -p enhance-query-server --features cuda \
   --lib cuda_partial_preparation_failure_preserves_published_and_retries -- --ignored
 cargo test --locked --profile release-fast -p enhance-query-server --features cuda \
   --lib cuda_backend_evaluation_failure_over_http_releases_permit_and_recovers -- --ignored
-cargo run --locked --release -p enhance-publisher --features cuda --example cuda_domain
 ```
 
 The HTTP test covers encrypted requests through real coordinator/worker listeners,
-retention, failover, and restart. The domain benchmark compares CPU and GPU over
-wallet-pir's actual unit composition at 32768 rows by 12288 coefficients. It checks
-100 queries per repetition, three repetitions, one and two concurrent callers,
-and reports preparation separately from evaluation. Sample `nvidia-smi` during
-the run to record total device memory, and record CPU limits and thread count.
+retention, failover, and restart. Sample `nvidia-smi` during the run to record
+total device memory, and record CPU limits and thread count.
 
 Failure regressions also run with CPU kernels in ordinary library tests. The GPU
 variants wrap real CUDA kernels and inject preparation failure after the second
@@ -136,9 +160,10 @@ same single-permit worker. Wrong-length and unreduced queries must return HTTP
 
 Full CI on main builds `enhance-pir-native-cuda-<full-sha>` separately from the
 CPU/native bundles. Its digest-pinned Ubuntu 22.04 build uses Rust 1.97.1,
-glibc 2.35 and `x86-64-v3`, matching the older GPU host ABI. The archive includes
-native v9 server/client/load binaries, checksums, source identity, strict build
-metadata and isolated CUDA validation scripts. Successful CI establishes build
+glibc 2.35 and `x86-64-v3`, matching the older GPU host ABI. The archive's
+server binary is the CUDA `pir-query-server`, together with the native client
+and load-test binaries, checksums, source identity, strict build metadata and
+isolated CUDA validation scripts. Successful CI establishes build
 provenance; live CUDA correctness remains a deployment gate.
 
 Use **Deploy Enhance CUDA worker** with `ref` set to a full main-ancestor SHA
@@ -148,12 +173,14 @@ comes from the workflow dispatch revision, independently of the qualified servic
 artifact revision; both revisions are retained in the CI receipt.
 The workflow accepts only the optional GPU worker, takes the shared production
 lock, and preserves its state root, arguments, CUDA library path and placement.
-Preflight uploads verified validation binaries and runs fresh loopback fixture
-processes with two isolated CUDA replicas on device 0 to satisfy the reservation
-quorum. Both replicas must publish native CUDA health; their summed evaluation
-counter must increase during exact fixture queries. Each uses a separate loopback
-port and temporary state root. Preflight does not restart the production unit.
-Deployment swaps the server binary transactionally, verifies native v9/CUDA
+Preflight uploads verified validation binaries and runs `cuda-smoke.py`: two
+workers from the CUDA `pir-query-server` and the coordinator from the native
+`enhance-pir-server`, on device 0, to satisfy the reservation quorum. GPU hosts
+do not run the publisher as the worker. Both replicas must publish native CUDA
+health; their summed evaluation counter must increase during exact fixture
+queries. Each uses a separate loopback port and temporary state root. Preflight
+does not restart the production unit.
+Deployment swaps the CUDA `pir-query-server` transactionally, verifies native v9/CUDA
 health and executable identity, then runs public exact-answer queries at 1 QPS
 for 60 seconds after a paced 10-second warmup. Acceptance requires zero errors,
 GPU evaluation counter growth, router availability, and no worker restart or OOM.

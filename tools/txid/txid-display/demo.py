@@ -14,8 +14,8 @@ p=argparse.ArgumentParser(description=__doc__)
 p.add_argument('--report',default='/tmp/transparent-txid-demo.json')
 p.add_argument('--offline',action='store_true')
 args=p.parse_args()
-subprocess.run([sys.executable,str(ROOT/'src/shared/pir-publisher/transparent/examples/fixtures/verify_fixture.py')],cwd=ROOT,check=True)
-base=['cargo','run','--locked','--profile','release-fast','-p','transparent-publisher','--example','transparent-txid-demo']
+subprocess.run([sys.executable,str(ROOT/'tools/transparent/examples/fixtures/verify_fixture.py')],cwd=ROOT,check=True)
+base=['cargo','run','--locked','--profile','release-fast','-p','transparent-tools','--features','publisher-tools','--example','transparent-txid-demo']
 if args.offline:base.append('--offline')
 with local_target(ROOT):
  subprocess.run(base+['--','--report',args.report],cwd=ROOT,**inherited_fds(),check=True)

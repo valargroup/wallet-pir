@@ -99,7 +99,7 @@ fleet_prune
     def test_diff_preserves_publisher_control_and_leaves_retention_intact(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            for name in ['transparent-shard-server','shard-prune']:
+            for name in ['transparent-query-server','shard-prune']:
                 (root/name).write_text('binary')
             (root/'transparent-shard-server.service').write_text(
                 (ROOT/'tools/transparent/deploy/transparent-shard-server.service').read_text())
@@ -243,7 +243,7 @@ fleet_activate_workers
                 sha = "a"*40
                 staged = root/("tmp/transparent-pir-"+sha)
                 staged.mkdir(parents=True)
-                for name in ["transparent-shard-server", "shard-prune", "unit.rendered", "assignment.json"]:
+                for name in ["transparent-query-server", "shard-prune", "unit.rendered", "assignment.json"]:
                     (staged/name).write_text("new "+name)
                 workers = [dict(id="owner", ssh_host="owner", upstream="owner:8093", role="archive-owner", replica_group=None)]
                 assignment = Path(temp)/"assignment.json"
@@ -273,6 +273,8 @@ rollback_fleet
                     shell(code, **env)
                 for path, content in previous.items():
                     self.assertEqual((root/path.lstrip("/")).read_text(), content)
+                # The host predates the executable rename: rollback leaves only its legacy name.
+                self.assertFalse((root/"usr/local/bin/transparent-query-server").exists())
                 if action == "tools":
                     log = (root/"systemctl.log").read_text()
                     self.assertNotIn("stop", log)
