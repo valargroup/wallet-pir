@@ -46,6 +46,9 @@ class WorkspaceCacheFixture(unittest.TestCase):
                                            'std::fs::read_to_string("build.txt").unwrap()); }\n')
         shutil.copyfile(ROOT / 'rust-toolchain.toml', self.root / 'rust-toolchain.toml')
         self.git('init', '-q')
+        # Detached auto-maintenance would mutate .git under the snapshot oracles.
+        self.git('config', 'maintenance.auto', 'false')
+        self.git('config', 'gc.auto', '0')
         self.git('add', '.')
         self.git('-c', 'user.name=Oracle', '-c', 'user.email=oracle@example.invalid', 'commit', '-qm', 'fixture')
         self.target = self.area / 'target'

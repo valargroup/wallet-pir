@@ -33,6 +33,10 @@ REFERENCE_LIB_FILTERS = ['ipir::tests', 'client::', 'protocol::', 'record::', 'r
                          'runtime::tests::tail_domain_reuses_b_units_and_decodes_b_at_unchanged_coordinates']
 REFERENCE_TESTS = {('enhance-query-server', 'routing_contract'), ('enhance-query-server', 'v7_contract'),
                    ('enhance-publisher', 'ci_hint'), ('enhance-publisher', 'encrypted_lifecycle')}
+# Real-process campaigns are compiled and listed here but run only by their
+# scripts under tools/transparent/scripts; every case must stay ignored.
+MANUAL_CAMPAIGNS = {('transparent-publisher', 'controller_update_campaign'),
+                    ('transparent-publisher', 'unified_http_sync_campaign')}
 
 
 def variants(groups):
@@ -241,7 +245,10 @@ def test_programs(artifacts, variant, packages, env):
             [program['executable'], *args, '--ignored', '--list'],
             cwd=program['directory'], env=env, text=True, **inherited_fds(env))
         ignored = {line[:-6] for line in ignored_listing.splitlines() if line.endswith(': test')}
-        if not set(names) - ignored and program['integration']:
+        if identity in MANUAL_CAMPAIGNS:
+            if not names or set(names) - ignored:
+                raise ValueError(f'manual campaign must contain only ignored cases: {identity}')
+        elif not set(names) - ignored and program['integration']:
             raise ValueError(f'empty integration executable: {identity}')
         cases[':'.join((variant, *identity))] = dict(tests=names, ignored=sorted(ignored),
                                                    features=sorted(artifact.get('features', [])))
