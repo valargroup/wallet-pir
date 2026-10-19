@@ -100,7 +100,7 @@ enum Command {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+async fn main() -> pir_publisher::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
@@ -167,7 +167,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             capacity_readiness_seconds,
             capacity_burst_rows,
         } => {
-            enhance_publisher::service::run(
+            pir_publisher::enhance::run(
                 enhance_publisher::service::Config {
                     status_config,
                     packing_router_config,

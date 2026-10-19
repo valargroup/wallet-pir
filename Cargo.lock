@@ -840,7 +840,6 @@ name = "enhance-publisher"
 version = "0.0.1"
 dependencies = [
  "axum",
- "clap",
  "enhance-query-server",
  "hex",
  "ipir-sp",
@@ -857,7 +856,6 @@ dependencies = [
  "tokio-stream",
  "tower",
  "tracing",
- "tracing-subscriber",
  "zakura-pir-publisher",
  "zakura-server-chain",
 ]

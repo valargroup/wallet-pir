@@ -76,11 +76,11 @@ tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
+# The Enhance coordinator command; the unified host runs the same lifecycle.
 [[bin]]
-name = "enhance-pir-server-test"
-path = "../enhance/enhance-publisher/src/bin/server.rs"
-required-features = ["enhance-tests"]
-test = false
+name = "enhance-pir-server"
+path = "src/bin/enhance-pir-server.rs"
+required-features = ["enhance"]
 
 [[bin]]
 name = "pir-query-server-test"
@@ -106,6 +106,11 @@ tokio-stream = "0.1"
 [[test]]
 name = "lifecycle"
 path = "tests/lifecycle.rs"
+
+[[test]]
+name = "publisher_cli"
+path = "tests/publisher_cli.rs"
+required-features = ["enhance"]
 
 [[test]]
 name = "boundary_recovery_model"
