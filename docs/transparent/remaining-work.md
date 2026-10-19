@@ -277,6 +277,18 @@ pir-monitor probes both, every family in shadow since about 04:00 UTC on
   `txid` probes; adjust thresholds in the alert policy, not in code.
 - [ ] Exercise one fire and recovery per family through the outbox with a
   temporary low threshold in the policy file, then restore it.
+- [ ] A locked `wallet-pir-deploy.py` operation (plan, preflight, deploy, status, rollback;
+  journal and production lock from the shared engine) that upgrades the running pir-apm
+  binary and changes only checksum-bound nonsecret settings: the two services' `alert_mode`
+  in pir-apm's Transparent configuration, and pir-monitor's
+  `PIR_MONITOR_SERVICE_ALERT_MODE` drop-in (which also covers the Receiver and Status
+  probes; its global mode stays as it is). It must keep the effective units, the
+  credential wrapper and drop-ins and the SQLite databases. The generic `binary` role
+  refuses both units today, because their `ExecStart` runs `credential-exec.py` through
+  `python3` and the running executable is the wrapped binary, so it needs a
+  wrapper-aware plan. The upgrade also retires the stale `scaling_heartbeat` incident
+  left over from the disabled scaling family
+  ([cleanup](../enhance/observability-alerting.md)).
 - [ ] Set `alert_mode` to `active` for both services, `capacity_alert_mode` to
   `active`, and `PIR_MONITOR_SERVICE_ALERT_MODE=active`; observe 24 active hours.
 - [ ] After three days of daily peaks, check the capacity forecasts against the

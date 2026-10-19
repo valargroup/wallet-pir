@@ -61,6 +61,11 @@ PRODUCTS = {
         'load': None,
     },
 }
+# The pir-apm Transparent configuration on the controller host: each service's
+# alert_mode decides whether its incidents reach Slack (active) or are only
+# recorded (shadow). Read for reporting; never a refusal or a change.
+APM_CONFIG = '/etc/pir-quality/transparent-production.json'
+APM_SERVICE = {'transparent-history': 'transparent', 'transparent-display': 'txid'}
 REQUEST_KEYS = {'schema', 'service', 'component', 'release', 'publication', 'controller', 'workers', 'load'}
 COMPONENTS = ('workers', 'controller')
 
@@ -152,6 +157,30 @@ def validate(request):
 
 def adapter_path(adapter):
     return '/opt/transparent-publisher/v12/adapters/%s/transparent-live-fleet.py' % adapter['sha256']
+
+
+def notification_state(ex, host, product_service):
+    """Report lines saying which APM service families deliver to Slack.
+
+    A running observer or continuous load proves exact-answer coverage, not
+    alert delivery: only an `active` alert_mode queues Slack messages. An
+    unreadable or invalid configuration is reported as unknown.
+    """
+    try:
+        config = json.loads(ex.read(host, APM_CONFIG) or 'null')
+        services = {s['service']: s.get('alert_mode', 'shadow') for s in config['services']}
+        capacity = config.get('capacity_alert_mode', 'shadow')
+    except (TypeError, KeyError, ValueError) as error:
+        return ['notifications: unknown; %s on %s is unreadable (%s), so no alert delivery is proven'
+                % (APM_CONFIG, host, error)]
+    def describe(mode):
+        return {'active': 'active (Slack)', 'shadow': 'shadow (recorded only, no Slack)'}.get(mode, 'unknown %r' % mode)
+    lines = ['notifications: APM %s%s alert_mode %s' % (name, ' (this service)' if name == APM_SERVICE[product_service] else '',
+                                                        describe(mode)) for name, mode in sorted(services.items())]
+    if APM_SERVICE[product_service] not in services:
+        lines.append('notifications: APM does not monitor %s; no alert covers this upgrade' % APM_SERVICE[product_service])
+    lines.append('notifications: APM transparent capacity_alert_mode %s' % describe(capacity))
+    return lines
 
 
 def unit_digest(state):
@@ -489,7 +518,7 @@ class UpgradeDeployer(Deployer):
         self.ex.systemctl(load['host'], 'stop', unit)
         if refuse_latch and self.ex.sha256(load['host'], self.upgrade.product['load']['root'] + '/latched.json') is not None:
             raise DeployError('a critical load latch appeared while pausing load')
-        self.out('monitoring: %s stopped for the restarts' % unit)
+        self.out('exact-answer load: %s stopped for the restarts' % unit)
 
     def repin_load(self, journal):
         """Pins naming what the workers run now, written atomically; returns the pins."""
@@ -545,7 +574,7 @@ class UpgradeDeployer(Deployer):
             journal = super()._deploy(*args, **kwargs)
         except BaseException:
             if self.load_was_active is not None:
-                self.out('monitoring: %s left stopped for investigation; pins still name the restored binaries'
+                self.out('exact-answer load: %s left stopped for investigation; pins still name the restored binaries'
                          % self.upgrade.product['load']['unit'])
             raise
         if journal is not None and self.load_was_active is not None:
@@ -557,9 +586,9 @@ class UpgradeDeployer(Deployer):
                 if self.upgrade.request['load']['resume_after_upgrade']:
                     # restart starts the stopped unit; it re-reads the new pins.
                     self.ex.systemctl(host, 'restart', unit)
-                    self.out('monitoring: %s started with pins %s' % (unit, json.dumps(pins, sort_keys=True)))
+                    self.out('exact-answer load: %s started with pins %s' % (unit, json.dumps(pins, sort_keys=True)))
                 else:
-                    self.out('monitoring: %s stays stopped as requested; pins %s' % (unit, json.dumps(pins, sort_keys=True)))
+                    self.out('exact-answer load: %s stays stopped as requested; pins %s' % (unit, json.dumps(pins, sort_keys=True)))
             except BaseException as error:
                 # The worker checks passed, but monitoring is part of this rollout.
                 # Keep the lock while restoring workers and their pins. Preserve
@@ -584,5 +613,5 @@ class UpgradeDeployer(Deployer):
         super().rollback_journal(journal, force)
         if explicit and self.load_was_active is not None:
             pins = self.repin_load(journal)
-            self.out('monitoring: %s stays stopped after rollback; pins %s; start it after the exact gate'
+            self.out('exact-answer load: %s stays stopped after rollback; pins %s; start it after the exact gate'
                      % (self.upgrade.product['load']['unit'], json.dumps(pins, sort_keys=True)))
