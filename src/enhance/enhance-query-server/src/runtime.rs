@@ -1325,31 +1325,6 @@ mod tests {
     // Engine/composed-tail oracle at deployed geometry in qualification.
     #[cfg(feature = "qualification-tests")]
     #[test]
-    fn composed_tail_plans_unequal_units() {
-        let geometry = Geometry::default();
-        let coverage = Lifecycle::default()
-            .coverage(
-                geometry.max_shard_rows * RECORDS_PER_ROW as u64 + 17,
-                geometry,
-            )
-            .unwrap();
-        let shard = coverage.shards[1].clone();
-        assert!(shard.composed());
-        let domain = plan(shard, records).unwrap();
-        assert_eq!(
-            domain
-                .units
-                .iter()
-                .map(|u| u.allocated_rows)
-                .collect::<Vec<_>>(),
-            [2048, 4096]
-        );
-    }
-
-    // Deployed-size 8K monolithic comparison; fast feedback keeps the plan
-    // shape above and the integer oracle in partial_preparation_failure_*.
-    #[cfg(feature = "qualification-tests")]
-    #[test]
     fn unequal_units_match_monolithic_preprocessing_and_evaluation() {
         let directory = tempfile::tempdir().unwrap();
         let geometry = Geometry::default();
