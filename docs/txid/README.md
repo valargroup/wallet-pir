@@ -1,12 +1,11 @@
 # Transaction-detail (txid) display
 
 Txid display PIR serves transaction details for history rows. Its serving code
-lives in `src/transparent/transparent-shard-server`, and its publisher and
-controller live in `src/transparent/transparent-filter-server`. Both history and
-display use the journal and extraction code in `src/transparent/transparent-ingest`.
-Shared display verification and runtime preparation live in
-`src/transparent/transparent-server-backend`, so the publisher does not depend
-on the worker application. The existing server and controller binaries still
+lives in `src/transparent/transparent-query-server`, and its publisher and
+controller live in `src/shared/pir-publisher/transparent`, beside the extraction
+code both history and display use. The journal, shared display verification and
+runtime preparation live in `src/transparent/transparent-shared`, so the
+publisher does not depend on the worker application. The existing server and controller binaries still
 run as separate processes.
 Operations (the `txid-display` deploy driver, its fleet and observation scripts,
 unit templates, route snippet and the `transparent-display` service descriptor)

@@ -37,7 +37,7 @@ REFERENCE_TESTS = {('enhance-query-server', 'routing_contract'), ('enhance-query
 
 def variants(groups):
     return {
-        'transparent': dict(family='transparent', packages=groups['transparent'], features=['transparent-publisher/rocksdb-reader', 'transparent-query-server/test-support', 'transparent-tools/compact-export'] + qualification_features(groups['transparent'])),
+        'transparent': dict(family='transparent', packages=groups['transparent'], features=['transparent-publisher/rocksdb-reader', 'transparent-tools/test-support', 'transparent-tools/compact-export'] + qualification_features(groups['transparent'])),
         'export': dict(family='transparent', packages=['txid-sizing-export'], features=[], manifest=EXPORT),
         'native': dict(family='enhance', packages=groups['enhance'], features=NATIVE + qualification_features(groups['enhance'])),
         'reference': dict(family='enhance', packages=['enhance-query-server', 'enhance-publisher', 'status-query-server'],

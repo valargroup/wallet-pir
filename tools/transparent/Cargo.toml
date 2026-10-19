@@ -22,6 +22,10 @@ benchmarks = ["dep:prost", "dep:prost-build", "dep:flate2"]
 publisher-tools = ["dep:transparent-publisher", "dep:zakura-server-chain"]
 # Direct node-database readers; implies the publisher diagnostics.
 rocksdb-reader = ["publisher-tools", "transparent-publisher/rocksdb-reader", "zakura-server-chain/rocksdb"]
+# Reproduce the non-AVX-512 backend in the moved scaling and residency tools.
+portable-kernel = ["transparent-shared/portable-kernel", "transparent-query-server/portable-kernel"]
+# Synthetic transaction-detail publications for the inventory diagnostic.
+test-support = ["transparent-shared/test-support"]
 # Compact blocks exported from the node database for the benchmark baseline.
 compact-export = ["benchmarks", "rocksdb-reader"]
 
@@ -32,6 +36,69 @@ path = "src/measure/main.rs"
 [[bin]]
 name = "transparent-regression"
 path = "src/regression/main.rs"
+
+# Journal, publication and node-database diagnostics moved out of the publisher.
+[[bin]]
+name = "shard-census"
+path = "src/bin/shard-census.rs"
+required-features = ["publisher-tools"]
+
+[[bin]]
+name = "journal-convert-v1"
+path = "src/bin/journal-convert-v1.rs"
+
+[[bin]]
+name = "sample-redigest"
+path = "src/bin/sample-redigest.rs"
+
+[[bin]]
+name = "shard-cutoff"
+path = "src/bin/shard-cutoff.rs"
+required-features = ["rocksdb-reader"]
+
+[[bin]]
+name = "journal-inventory"
+path = "src/bin/journal-inventory.rs"
+required-features = ["rocksdb-reader"]
+
+[[bin]]
+name = "event-spotcheck"
+path = "src/bin/event-spotcheck.rs"
+required-features = ["publisher-tools"]
+
+[[bin]]
+name = "shard-verify"
+path = "src/bin/shard-verify.rs"
+
+[[bin]]
+name = "script-sample"
+path = "src/bin/script-sample.rs"
+
+[[bin]]
+name = "filter-sweep"
+path = "src/bin/filter-sweep.rs"
+
+[[bin]]
+name = "sample-oracle"
+path = "src/bin/sample-oracle.rs"
+
+# Serving experiments and the display inventory, moved out of the query server.
+[[bin]]
+name = "shard-scaling"
+path = "src/bin/shard-scaling.rs"
+
+[[bin]]
+name = "shard-residency"
+path = "src/bin/shard-residency.rs"
+
+[[bin]]
+name = "txid-inventory"
+path = "src/bin/txid-inventory.rs"
+required-features = ["test-support"]
+
+[[bin]]
+name = "parent-evaluation-server"
+path = "src/bin/parent-evaluation-server.rs"
 
 [[bin]]
 name = "hierarchical-filter-eval"
@@ -76,6 +143,16 @@ path = "examples/activity-reopen.rs"
 name = "sample_recovery"
 path = "examples/sample_recovery.rs"
 
+[[example]]
+name = "transparent-txid-demo"
+path = "examples/transparent-txid-demo.rs"
+required-features = ["publisher-tools"]
+
+[[test]]
+name = "txid_shipped_runtimes"
+path = "tests/txid_shipped_runtimes.rs"
+required-features = ["publisher-tools"]
+
 [[test]]
 name = "regression_runner"
 path = "tests/regression_runner.rs"
@@ -109,21 +186,26 @@ transparent-query-server = { path = "../../src/transparent/transparent-query-ser
 transparent-shared = { path = "../../src/transparent/transparent-shared" }
 anyhow = "1"
 axum = "0.7"
+chrono = { version = "0.4", default-features = false, features = ["std", "serde", "clock"] }
 clap = { version = "4", features = ["derive"] }
 flate2 = { version = "1", optional = true }
 futures-util = "0.3"
 hdrhistogram = "7"
 hex = "0.4"
 humantime = "2"
+ipir-sp = "=0.1.0-rc.7"
+libc = "0.2"
 prost = { version = "0.13", optional = true }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
 sysinfo = "0.36"
+tempfile = "3"
 tokio = { version = "1", features = ["full"] }
 tokio-util = { version = "0.7", features = ["io"] }
 transparent-events = { package = "zakura-transparent-events", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "b7fffbbc98d75af5ebc9c9d9da92ca19e9f0fdbd" }
+transparent-native = { package = "zakura-transparent-native", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "b7fffbbc98d75af5ebc9c9d9da92ca19e9f0fdbd" }
 transparent-filter = { package = "zakura-transparent-filter", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "b7fffbbc98d75af5ebc9c9d9da92ca19e9f0fdbd", features = ["client"] }
 transparent-shard = { package = "zakura-transparent-shard", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "b7fffbbc98d75af5ebc9c9d9da92ca19e9f0fdbd" }
 transparent-txid-client = { package = "zakura-transparent-txid-client", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "b7fffbbc98d75af5ebc9c9d9da92ca19e9f0fdbd" }
@@ -135,4 +217,6 @@ prost-build = { version = "0.13", optional = true }
 sha2 = "0.10"
 
 [dev-dependencies]
-tempfile = "3"
+tower = { version = "0.5", features = ["util"] }
+transparent-shared = { path = "../../src/transparent/transparent-shared", features = ["test-support"] }
+transparent-txid-client = { package = "zakura-transparent-txid-client", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "b7fffbbc98d75af5ebc9c9d9da92ca19e9f0fdbd", features = ["testing"] }

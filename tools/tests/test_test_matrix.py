@@ -83,8 +83,8 @@ class MatrixTests(unittest.TestCase):
         commands = matrix.cargo_commands(keys, contexts, targets, packages)
         for package, binary, feature in (
                 ('transparent-publisher', 'transparent-event-ingest', 'transparent-publisher/rocksdb-reader'),
-                ('transparent-publisher', 'shard-cutoff', 'transparent-publisher/rocksdb-reader'),
-                ('transparent-publisher', 'journal-inventory', 'transparent-publisher/rocksdb-reader'),
+                ('transparent-tools', 'shard-cutoff', 'transparent-tools/rocksdb-reader'),
+                ('transparent-tools', 'journal-inventory', 'transparent-tools/rocksdb-reader'),
                 ('transparent-tools', 'compact-export', 'transparent-tools/compact-export')):
             key = f'transparent:{package}:bin:{binary}'
             self.assertIn(key, keys)

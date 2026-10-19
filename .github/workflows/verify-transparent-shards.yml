@@ -99,7 +99,7 @@ jobs:
           set -euo pipefail
           NICE=(nice -n 19)
           if command -v ionice >/dev/null; then NICE+=(ionice -c3); fi
-          "${NICE[@]}" cargo build --locked --release -p transparent-publisher --bin shard-verify
+          "${NICE[@]}" cargo build --locked --release -p transparent-tools --bin shard-verify
           mkdir -p verify
           ARGS=(--shard-dir "$SHARD_DIR" --seed "$SEED" --source-sha "$SHA" --out verify/verify.json)
           # The publication record, when the set carries one, supplies the

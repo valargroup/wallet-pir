@@ -15,7 +15,7 @@ make doctor
 make prepare-dev  # explicit, one-time fetch of pinned dependencies
 make check-fast BASE=origin/main OFFLINE=1
 make check-package PACKAGE=pir-apm TEST=dashboard FEATURES= OFFLINE=1
-make check-package PACKAGE=transparent-shard-server TEST_TARGET=wallet_sync TEST=a_choice OFFLINE=1
+make check-package PACKAGE=transparent-query-server TEST_TARGET=wallet_sync TEST=a_choice OFFLINE=1
 make check-full   # comprehensive local validation, not the default inner loop
 ```
 
@@ -173,12 +173,12 @@ results; automatic agent wake requires a verified runtime mechanism. Avoid
 foreground polling and duplicate broad local/CI checks.
 
 For Transparent PIR runtime or artifact changes, start with
-`make check-package PACKAGE=transparent-server-backend`. For HTTP handling and
-worker control, use `make check-package PACKAGE=transparent-shard-server`.
+`make check-package PACKAGE=transparent-shared`. For HTTP handling and
+worker control, use `make check-package PACKAGE=transparent-query-server`.
 These packages do not pull in the publisher's chain reader or RocksDB, including
 when compiling their tests. Publisher-to-worker shipping tests live in the
-publisher package; select them with
-`make check-package PACKAGE=transparent-filter-server TEST_TARGET=txid_shipped_runtimes`.
+tools package; select them with
+`make check-package PACKAGE=transparent-tools FEATURES=publisher-tools TEST_TARGET=txid_shipped_runtimes`.
 The existing `make transparent-txid-demo` command still exercises confirmed raw
 blocks through extraction, publication and encrypted retrieval. Add `OFFLINE=1`
 once dependencies are fetched. Finish a change with `make check-fast BASE=<sha>`
