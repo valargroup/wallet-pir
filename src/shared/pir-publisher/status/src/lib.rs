@@ -9,6 +9,7 @@ use status_query_server as status;
 use status_query_server::*;
 
 pub mod authority;
+#[cfg(any(test, feature = "cli"))]
 pub mod cli;
 pub mod publisher;
 pub mod source;
