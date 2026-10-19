@@ -346,7 +346,7 @@ check-tools:
 	python3 tools/ci/workflow_paths.py
 	python3 tools/ci/scaler_tests.py
 	python3 tools/ci/full_packages.py
-	python3 tools/ci/enhance_tests.py
+	python3 tools/ci/integration_tests.py --package enhance-publisher
 	python3 -m unittest discover -s tools/transparent/filters -p 'test_*.py'
 	python3 -m unittest discover -s tools/transparent/parent-filters -p 'test_*.py'
 	python3 tools/ci/python_tests.py tools/tests --jobs 2 --isolate-ci-output

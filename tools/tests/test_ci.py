@@ -93,10 +93,15 @@ class BoundaryTests(unittest.TestCase):
         worker = 'transparent-query-server'
         publisher = 'transparent-publisher'
         self.assertIn(backend, boundary.PURE)
-        publisher_dependencies = {edge['name'] for edge in packages[publisher]['dependencies']
-                                  if edge['kind'] == 'dependencies'}
+        manifest = tomllib.loads((ROOT / packages[publisher]['manifest']).read_text())
+        publisher_dependencies = {name for name, dependency in manifest['dependencies'].items()
+                                  if not isinstance(dependency, dict) or not dependency.get('optional', False)}
         self.assertIn(backend, publisher_dependencies)
         self.assertNotIn(worker, publisher_dependencies)
+        # The host's regressions opt into a worker; ordinary publisher builds do not.
+        self.assertTrue(manifest['dependencies'][worker]['optional'])
+        self.assertIn('dep:' + worker, manifest['features']['fixtures'])
+        self.assertEqual(manifest['features']['default'], [])
         for entry in (backend, worker):
             pending, reached = [entry], set()
             while pending:

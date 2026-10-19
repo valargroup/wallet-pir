@@ -140,15 +140,10 @@ async fn extracted_path_preserves_wallet_answers_and_pool_replication() {
     ]
     .iter()
     .any(|key| std::env::var_os(key).is_some());
-    extracted_path(true, qualification).await;
+    extracted_path(qualification).await;
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn optional_pool_replica_can_leave_and_rejoin_without_rebuilding_packing() {
-    extracted_path(false, false).await;
-}
-
-async fn extracted_path(wallet: bool, qualification: bool) {
+async fn extracted_path(qualification: bool) {
     let root = tempfile::tempdir().unwrap();
     let mut tasks = Vec::new();
     let mut replicas = Vec::new();
@@ -324,232 +319,24 @@ async fn extracted_path(wallet: bool, qualification: bool) {
     }
     assert!(counts[..2].iter().all(|c| c.load(Ordering::SeqCst) > 0));
     let http = reqwest::Client::new();
-    if wallet || qualification {
-        #[cfg(feature = "native-reinspiring")]
-        dithered_queries_take_the_public_path(&mut client, &http, &public, records).await;
-        let health: serde_json::Value = http
-            .get(format!("{packing_control}/internal/health"))
-            .send()
-            .await
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
-        assert_eq!(health["resident_objects"], 1);
-        let artifacts = std::fs::read_dir(
-            root.path()
-                .join("coordinator")
-                .join(enhance_query_server::prepared_packing::DIRECTORY),
-        )
-        .unwrap()
-        .filter_map(Result::ok)
-        .filter(|e| e.path().extension().is_some_and(|e| e == "bin"))
-        .collect::<Vec<_>>();
-        assert_eq!(
-            artifacts.len(),
-            1,
-            "one prepared artifact per material identity"
-        );
-
-        let timing = http
-            .get(format!("{packing_control}/internal/metrics"))
-            .send()
-            .await
-            .unwrap()
-            .text()
-            .await
-            .unwrap();
-        for stage in ["worker", "packing", "total"] {
-            let prefix =
-                format!("enhance_query_stage_duration_seconds_count{{stage=\"{stage}\"}} ");
-            let count: u64 = timing
-                .lines()
-                .find_map(|line| line.strip_prefix(&prefix))
-                .expect("stage histogram")
-                .parse()
-                .unwrap();
-            assert!(count > 0, "missing successful {stage} samples");
-        }
-
-        // Explicit rejection spills once; ambiguous failure never touches another worker.
-        let session = client.session(0).await.unwrap();
-        for mode in [1, 2] {
-            for m in &modes[..2] {
-                m.store(mode, Ordering::SeqCst);
-            }
-            let before: usize = counts.iter().map(|c| c.load(Ordering::SeqCst)).sum();
-            let (query, _) = session.prepare_position(0).unwrap();
-            let response = http
-                .post(format!("{public}/v1/enhance/query"))
-                .body(query.body().to_vec())
-                .send()
-                .await
-                .unwrap();
-            assert_eq!(
-                response.status(),
-                if mode == 1 {
-                    axum::http::StatusCode::TOO_MANY_REQUESTS
-                } else {
-                    axum::http::StatusCode::SERVICE_UNAVAILABLE
-                }
-            );
-            let after: usize = counts.iter().map(|c| c.load(Ordering::SeqCst)).sum();
-            assert_eq!(after - before, if mode == 1 { 2 } else { 1 });
-        }
-        for m in &modes {
-            m.store(0, Ordering::SeqCst);
-        }
-    }
-    if !wallet || qualification {
-        let mut expanded = groups.clone();
-        expanded.push(Group {
-            placement_policy: Default::default(),
-            id: "single-worker".into(),
-            sequence: 1,
-            replicas: vec![replicas[2].clone()],
-        });
-        coordinator.reconcile_inventory(expanded).await.unwrap();
-        coordinator.enable_pool(3).unwrap();
-        journal
-            .append_block(3428144, "02".repeat(32), &Vec::<Vec<u8>>::new())
-            .unwrap();
-        // Routing-only publication must reuse packing material despite extra evaluation replica.
-        coordinator
-            .publish(&journal, 3428144, "02".repeat(32))
-            .await
-            .unwrap();
-        let mut client = EnhancePirClient::connect(&public).await.unwrap();
-        for position in [0, 33, 66] {
-            assert_eq!(
-                client
-                    .query_position_with_timing(position)
-                    .await
-                    .unwrap()
-                    .0
-                    .as_ref(),
-                record(position)
-            );
-        }
-        assert!(counts[2].load(Ordering::SeqCst) > 0);
-        let health: serde_json::Value = http
-            .get(format!("{packing_control}/internal/health"))
-            .send()
-            .await
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
-        assert_eq!(health["resident_objects"], 1);
-        let health: serde_json::Value = http
-            .get(format!("{control_origin}/v1/health"))
-            .send()
-            .await
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
-        assert_eq!(
-            health["pool"]["placements"]["0"].as_array().unwrap().len(),
-            3
-        );
-        coordinator
-            .configure_pool(
-                2,
-                enhance_publisher::pool::Policy {
-                    domain_replication: Default::default(),
-                    optional_mirrors: [("worker-2".into(), "worker-1".into())].into(),
-                    domain_optional_workers: Default::default(),
-                },
-            )
-            .unwrap();
-        journal
-            .append_block(3428145, "03".repeat(32), &Vec::<Vec<u8>>::new())
-            .unwrap();
-        coordinator
-            .publish(&journal, 3428145, "03".repeat(32))
-            .await
-            .unwrap();
-        // The optional worker can disappear without blocking publication or answers.
-        modes[2].store(3, Ordering::SeqCst);
-        wait_preferred(&http, &packing_control, &replicas[2].url, false).await;
-        let mut client = EnhancePirClient::connect(&public).await.unwrap();
-        assert_eq!(
-            client
-                .query_position_with_timing(33)
-                .await
-                .unwrap()
-                .0
-                .as_ref(),
-            record(33)
-        );
-        journal
-            .append_block(3428146, "04".repeat(32), &Vec::<Vec<u8>>::new())
-            .unwrap();
-        coordinator
-            .publish(&journal, 3428146, "04".repeat(32))
-            .await
-            .unwrap();
-        let health: serde_json::Value = http
-            .get(format!("{control_origin}/v1/health"))
-            .send()
-            .await
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
-        assert_eq!(
-            health["pool"]["placements"]["0"].as_array().unwrap().len(),
-            2
-        );
-        let mut client = EnhancePirClient::connect(&public).await.unwrap();
-        assert_eq!(
-            client
-                .query_position_with_timing(33)
-                .await
-                .unwrap()
-                .0
-                .as_ref(),
-            record(33)
-        );
-        modes[2].store(0, Ordering::SeqCst);
-        journal
-            .append_block(3428147, "05".repeat(32), &Vec::<Vec<u8>>::new())
-            .unwrap();
-        coordinator
-            .publish(&journal, 3428147, "05".repeat(32))
-            .await
-            .unwrap();
-        wait_preferred(&http, &packing_control, &replicas[2].url, true).await;
-        let gpu_queries_before = counts[2].load(Ordering::SeqCst);
-        let mut client = EnhancePirClient::connect(&public).await.unwrap();
-        assert_eq!(
-            client
-                .query_position_with_timing(33)
-                .await
-                .unwrap()
-                .0
-                .as_ref(),
-            record(33)
-        );
-        assert!(counts[2].load(Ordering::SeqCst) > gpu_queries_before);
-        assert_eq!(
-            http.post(format!("{control_origin}/v1/enhance/query"))
-                .body(vec![0; 116])
-                .send()
-                .await
-                .unwrap()
-                .status(),
-            axum::http::StatusCode::SERVICE_UNAVAILABLE
-        );
-    }
-    let publications: u64 = if wallet || qualification {
-        std::env::var("QUALIFY_PUBLICATIONS")
-            .ok()
-            .map(|s| s.parse().unwrap())
-            .unwrap_or(1)
-    } else {
-        0
+    let checks = PackingChecks {
+        http: &http,
+        public: &public,
+        packing_control: &packing_control,
+        control_origin: &control_origin,
+        counts: &counts,
+        modes: &modes,
     };
+    checks
+        .wallet_answers_and_retries(&mut client, root.path(), records)
+        .await;
+    checks
+        .optional_replica_departure_and_rejoin(&coordinator, &mut journal, &groups, &replicas)
+        .await;
+    let publications: u64 = std::env::var("QUALIFY_PUBLICATIONS")
+        .ok()
+        .map(|s| s.parse().unwrap())
+        .unwrap_or(1);
     let steady = std::env::var("QUALIFY_STEADY").is_ok();
     let lanes: u64 = std::env::var("QUALIFY_QUERY_LANES")
         .ok()
@@ -842,6 +629,273 @@ async fn extracted_path(wallet: bool, qualification: bool) {
     println!("QUALIFICATION_COMPLETE records={records} publications={publications} watchdog={} restart={} revocation=passed", qualification, std::env::var("QUALIFY_RESTART_FILE").is_ok());
     for task in tasks {
         task.abort();
+    }
+}
+
+/// HTTP endpoints and worker fault controls shared by the sequential checks.
+struct PackingChecks<'a> {
+    http: &'a reqwest::Client,
+    public: &'a str,
+    packing_control: &'a str,
+    control_origin: &'a str,
+    counts: &'a [Arc<AtomicUsize>],
+    modes: &'a [Arc<AtomicUsize>],
+}
+
+impl PackingChecks<'_> {
+    async fn wallet_answers_and_retries(
+        &self,
+        client: &mut EnhancePirClient,
+        root: &std::path::Path,
+        _records: u64,
+    ) {
+        let Self {
+            http,
+            public,
+            packing_control,
+            counts,
+            modes,
+            ..
+        } = *self;
+        #[cfg(feature = "native-reinspiring")]
+        dithered_queries_take_the_public_path(client, http, public, _records).await;
+        let health: serde_json::Value = http
+            .get(format!("{packing_control}/internal/health"))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(health["resident_objects"], 1);
+        let artifacts = std::fs::read_dir(
+            root.join("coordinator")
+                .join(enhance_query_server::prepared_packing::DIRECTORY),
+        )
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter(|e| e.path().extension().is_some_and(|e| e == "bin"))
+        .collect::<Vec<_>>();
+        assert_eq!(
+            artifacts.len(),
+            1,
+            "one prepared artifact per material identity"
+        );
+
+        let timing = http
+            .get(format!("{packing_control}/internal/metrics"))
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap();
+        for stage in ["worker", "packing", "total"] {
+            let prefix =
+                format!("enhance_query_stage_duration_seconds_count{{stage=\"{stage}\"}} ");
+            let count: u64 = timing
+                .lines()
+                .find_map(|line| line.strip_prefix(&prefix))
+                .expect("stage histogram")
+                .parse()
+                .unwrap();
+            assert!(count > 0, "missing successful {stage} samples");
+        }
+
+        // Explicit rejection spills once; ambiguous failure never touches another worker.
+        let session = client.session(0).await.unwrap();
+        for mode in [1, 2] {
+            for m in &modes[..2] {
+                m.store(mode, Ordering::SeqCst);
+            }
+            let before: usize = counts.iter().map(|c| c.load(Ordering::SeqCst)).sum();
+            let (query, _) = session.prepare_position(0).unwrap();
+            let response = http
+                .post(format!("{public}/v1/enhance/query"))
+                .body(query.body().to_vec())
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(
+                response.status(),
+                if mode == 1 {
+                    axum::http::StatusCode::TOO_MANY_REQUESTS
+                } else {
+                    axum::http::StatusCode::SERVICE_UNAVAILABLE
+                }
+            );
+            let after: usize = counts.iter().map(|c| c.load(Ordering::SeqCst)).sum();
+            assert_eq!(after - before, if mode == 1 { 2 } else { 1 });
+        }
+        for m in modes {
+            m.store(0, Ordering::SeqCst);
+        }
+    }
+
+    async fn optional_replica_departure_and_rejoin(
+        &self,
+        coordinator: &Coordinator,
+        journal: &mut RecordJournal,
+        groups: &[Group],
+        replicas: &[Replica],
+    ) {
+        let Self {
+            http,
+            public,
+            packing_control,
+            control_origin,
+            counts,
+            modes,
+        } = *self;
+        let mut expanded = groups.to_vec();
+        expanded.push(Group {
+            placement_policy: Default::default(),
+            id: "single-worker".into(),
+            sequence: 1,
+            replicas: vec![replicas[2].clone()],
+        });
+        coordinator.reconcile_inventory(expanded).await.unwrap();
+        coordinator.enable_pool(3).unwrap();
+        journal
+            .append_block(3428144, "02".repeat(32), &Vec::<Vec<u8>>::new())
+            .unwrap();
+        // Routing-only publication must reuse packing material despite extra evaluation replica.
+        coordinator
+            .publish(journal, 3428144, "02".repeat(32))
+            .await
+            .unwrap();
+        let mut client = EnhancePirClient::connect(public).await.unwrap();
+        for position in [0, 33, 66] {
+            assert_eq!(
+                client
+                    .query_position_with_timing(position)
+                    .await
+                    .unwrap()
+                    .0
+                    .as_ref(),
+                record(position)
+            );
+        }
+        assert!(counts[2].load(Ordering::SeqCst) > 0);
+        let health: serde_json::Value = http
+            .get(format!("{packing_control}/internal/health"))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(health["resident_objects"], 1);
+        let health: serde_json::Value = http
+            .get(format!("{control_origin}/v1/health"))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(
+            health["pool"]["placements"]["0"].as_array().unwrap().len(),
+            3
+        );
+        coordinator
+            .configure_pool(
+                2,
+                enhance_publisher::pool::Policy {
+                    domain_replication: Default::default(),
+                    optional_mirrors: [("worker-2".into(), "worker-1".into())].into(),
+                    domain_optional_workers: Default::default(),
+                },
+            )
+            .unwrap();
+        journal
+            .append_block(3428145, "03".repeat(32), &Vec::<Vec<u8>>::new())
+            .unwrap();
+        coordinator
+            .publish(journal, 3428145, "03".repeat(32))
+            .await
+            .unwrap();
+        // The optional worker can disappear without blocking publication or answers.
+        modes[2].store(3, Ordering::SeqCst);
+        wait_preferred(http, packing_control, &replicas[2].url, false).await;
+        let mut client = EnhancePirClient::connect(public).await.unwrap();
+        assert_eq!(
+            client
+                .query_position_with_timing(33)
+                .await
+                .unwrap()
+                .0
+                .as_ref(),
+            record(33)
+        );
+        journal
+            .append_block(3428146, "04".repeat(32), &Vec::<Vec<u8>>::new())
+            .unwrap();
+        coordinator
+            .publish(journal, 3428146, "04".repeat(32))
+            .await
+            .unwrap();
+        let health: serde_json::Value = http
+            .get(format!("{control_origin}/v1/health"))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(
+            health["pool"]["placements"]["0"].as_array().unwrap().len(),
+            2
+        );
+        let mut client = EnhancePirClient::connect(public).await.unwrap();
+        assert_eq!(
+            client
+                .query_position_with_timing(33)
+                .await
+                .unwrap()
+                .0
+                .as_ref(),
+            record(33)
+        );
+        modes[2].store(0, Ordering::SeqCst);
+        journal
+            .append_block(3428147, "05".repeat(32), &Vec::<Vec<u8>>::new())
+            .unwrap();
+        coordinator
+            .publish(journal, 3428147, "05".repeat(32))
+            .await
+            .unwrap();
+        wait_preferred(http, packing_control, &replicas[2].url, true).await;
+        let gpu_queries_before = counts[2].load(Ordering::SeqCst);
+        let mut client = EnhancePirClient::connect(public).await.unwrap();
+        assert_eq!(
+            client
+                .query_position_with_timing(33)
+                .await
+                .unwrap()
+                .0
+                .as_ref(),
+            record(33)
+        );
+        assert!(counts[2].load(Ordering::SeqCst) > gpu_queries_before);
+        assert_eq!(
+            http.post(format!("{control_origin}/v1/enhance/query"))
+                .body(vec![0; 116])
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            axum::http::StatusCode::SERVICE_UNAVAILABLE
+        );
+        let health: serde_json::Value = http
+            .get(format!("{packing_control}/internal/health"))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(health["resident_objects"], 1);
     }
 }
 

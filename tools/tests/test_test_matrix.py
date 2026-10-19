@@ -65,8 +65,9 @@ class MatrixTests(unittest.TestCase):
         self.assertIn('enhance-query-server/native-reinspiring', cuda)
         self.assertIn('enhance-query-server/cuda', cuda)
         reference_features = matrix.package_features('enhance-query-server', contexts['reference'], packages)
-        self.assertEqual(reference_features, ['enhance-query-server/qualification-tests'])
-        self.assertIn('enhance-publisher/qualification-tests', contexts['reference']['features'])
+        self.assertEqual(reference_features, ['enhance-query-server/client',
+                                              'enhance-query-server/qualification-tests'])
+        self.assertIn('pir-publisher/qualification-tests', contexts['reference']['features'])
         self.assertIn('status-query-server/qualification-tests', contexts['reference']['features'])
         self.assertIn('status-query-server/qualification-tests', contexts['native']['features'])
         self.assertNotIn('enhance-publisher/native-reinspiring', native)
@@ -78,6 +79,16 @@ class MatrixTests(unittest.TestCase):
                           'enhance-pir-load-test'})
         self.assertEqual(command[command.index('--features') + 1], ','.join(matrix.CUDA))
         self.assertTrue(all('--all-targets' in cmd[3] for cmd in commands))
+
+    def test_exporter_keeps_the_shared_extractor_fixtures_enabled(self):
+        _, contexts, _, packages, _ = self.plan
+        exporter = packages['txid-sizing-export']
+        enabled = matrix.enabled_features(exporter, contexts['export']['features'])
+        self.assertIn('fixtures', enabled)
+        fixture_dependency = next(dependency for dependency in exporter['dependencies']
+                                  if dependency['name'] == 'zakura-server-chain' and dependency['kind'] == 'dev')
+        self.assertIn('testing', fixture_dependency['features'])
+        self.assertNotIn('transparent-publisher', {dependency['name'] for dependency in exporter['dependencies']})
 
     def test_database_reader_binaries_remain_in_full_qualification(self):
         registry, contexts, targets, packages, _ = self.plan
@@ -311,7 +322,8 @@ class WorkflowTests(unittest.TestCase):
         for family in ('enhance', 'transparent', 'receiver'):
             aggregate = self.job(text, family + '-test')
             self.assertIn("needs.test-shards.result == 'success'", aggregate)
-            self.assertIn('test_matrix.py verify --family ' + family, aggregate)
+            self.assertIn('uses: ./.github/actions/verify-qualification', aggregate)
+            self.assertIn('family: ' + family, aggregate)
         for job in ('release', 'release-cuda'):
             self.assertIn('!inputs.defer-release', self.job(text, job))
 
@@ -319,9 +331,11 @@ class WorkflowTests(unittest.TestCase):
         text = (ROOT / '.github/workflows/ci-full.yml').read_text()
         shards = self.job(text, 'test-shards')
         self.assertIn('name: qualification-${{ matrix.family }}-${{ github.sha }}-${{ github.run_attempt }}-${{ matrix.shard }}', shards)
-        for family in ('enhance', 'transparent', 'receiver'):
-            self.assertIn('pattern: qualification-' + family + '-${{ github.sha }}-${{ github.run_attempt }}-*',
-                          self.job(text, family + '-test'))
+        action = (ROOT / '.github/actions/verify-qualification/action.yml').read_text()
+        self.assertIn('pattern: qualification-${{ inputs.family }}-${{ github.sha }}-${{ github.run_attempt }}-*', action)
+        self.assertIn('merge-multiple: true', action)
+        self.assertIn('test_matrix.py verify --family "$FAMILY" --receipts qualification-receipts', action)
+        self.assertNotIn('continue-on-error', action)
         audit = (ROOT / '.github/workflows/ci-matrix-audit.yml').read_text()
         self.assertEqual(audit.count('name: baseline-${{ matrix.family }}-${{ github.sha }}-${{ github.run_attempt }}'), 2)
         self.assertIn('pattern: qualification-${{ matrix.family }}-${{ github.sha }}-${{ github.run_attempt }}-*', audit)
