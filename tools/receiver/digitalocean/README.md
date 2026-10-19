@@ -266,8 +266,9 @@ union, which a new backfill from `--near-since` need not reproduce. Logs go to t
 journal through `tracing`; `RUST_LOG` in the unit sets the level.
 
 A `providers.sqlite` without feed history, a new one or one an earlier release
-wrote, is backfilled from `--near-since` at 30 pages a feed each poll, and the
-seen set waits for it ([NEAR feed history](../../../docs/receiver/README.md#near-feed-history)).
+wrote, is backfilled from `--near-since` by a full pass at 30 pages a feed each
+poll, and the seen set waits for it
+([NEAR feed history](../../../docs/receiver/README.md#near-feed-history)).
 At October 2026 volume from the unit's `--near-since` that takes about an hour, and
 the exact check's `--await-feed-reads` gate waits for it, so for that deploy raise
 it to 7200 and the check's `timeout` to 7500.

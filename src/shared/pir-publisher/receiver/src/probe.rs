@@ -44,9 +44,12 @@ const MAINNET_FIXTURE: &[u8] = include_bytes!("../fixtures/mainnet-probe.json");
 /// The recent set's largest age that wallets still trust (`zakura-pir-receiver`).
 const MAX_RECENT_AGE_SECS: i64 = 15 * 60;
 /// The oldest end of each NEAR feed's history (health's `indexer.history`) the probe
-/// accepts. Reconciliation sweeps begin hourly and take minutes, so an older end means
-/// sweeps are failing.
+/// accepts. Recent passes begin hourly and take minutes, so an older end means sweeps
+/// are failing.
 const MAX_HISTORY_AGE_SECS: i64 = 6 * 60 * 60;
+/// The oldest start of each NEAR feed's last full pass (`indexer.history.<feed>.full`)
+/// the probe accepts. Full passes begin daily, and a long history takes hours to read.
+const MAX_FULL_AGE_SECS: i64 = 3 * 24 * 60 * 60;
 /// Bound on the health report, a few hundred bytes.
 const MAX_HEALTH_BYTES: usize = 64 * 1024;
 /// How often `--await-feed-reads` polls health.
@@ -191,12 +194,15 @@ async fn capacity(health_url: &str) -> Value {
     }
 }
 
-/// Whether health's `indexer.history` shows both NEAR feeds' history complete through
-/// `fresh` or later.
-fn history_through(history: &Value, fresh: i64) -> bool {
-    [Feed::Payouts, Feed::Refunds]
-        .iter()
-        .all(|feed| history[feed.name()]["through"].as_i64() >= Some(fresh))
+/// Whether health's `indexer.history` shows both NEAR feeds' history ending within
+/// [`MAX_HISTORY_AGE_SECS`] and fully reread within [`MAX_FULL_AGE_SECS`].
+fn history_current(history: &Value) -> bool {
+    let now = unix_now();
+    [Feed::Payouts, Feed::Refunds].iter().all(|feed| {
+        let feed = &history[feed.name()];
+        feed["through"].as_i64() >= Some(now - MAX_HISTORY_AGE_SECS)
+            && feed["full"].as_i64() >= Some(now - MAX_FULL_AGE_SECS)
+    })
 }
 
 /// The failed check, or `None` when every check passes. `lookup` records the encrypted
@@ -403,7 +409,7 @@ async fn probe(args: Args, lookup: &mut Option<(u32, bool)>) -> Result<Option<Fa
 /// seen from the same process (health's `identity.incarnation`; a restart starts over),
 /// so the probe checks a publication of the running process's reads, not an older one,
 /// and are within [`MAX_RECENT_AGE_SECS`], so its recent set is fresh, and its
-/// `indexer.history` is within [`MAX_HISTORY_AGE_SECS`], as after a first backfill.
+/// `indexer.history` is current (see [`history_current`]), as after a first backfill.
 /// Each request is bounded by the time left of `wait`. At the deadline it fails as
 /// `feeds_not_read` with the last reads, published feeds and history seen and the last
 /// request error.
@@ -454,7 +460,7 @@ async fn await_feed_reads(
                     (&target, current, times(&published))
                 {
                     let fresh = unix_now() - MAX_RECENT_AGE_SECS;
-                    let complete = history_through(&history, unix_now() - MAX_HISTORY_AGE_SECS);
+                    let complete = history_current(&history);
                     if complete
                         && published
                             .iter()
@@ -639,7 +645,8 @@ async fn check_filters(
 /// The indexer's payout check from health, which must report serving the probed
 /// publication `id`. Otherwise the report may describe another publication, such as
 /// one rotated in since the lookup, or another service. A missing payout outranks
-/// history older than [`MAX_HISTORY_AGE_SECS`], which outranks an uncheckable payout.
+/// history that is not current (see [`history_current`]), which outranks an
+/// uncheckable payout.
 async fn indexer_report(
     http: &reqwest::Client,
     health_url: &str,
@@ -658,7 +665,7 @@ async fn indexer_report(
     }
     let count = |field: &str| health["indexer"][field].as_u64();
     let history = &health["indexer"]["history"];
-    let complete = history_through(history, unix_now() - MAX_HISTORY_AGE_SECS);
+    let complete = history_current(history);
     match (count("payouts_missing"), count("payouts_uncheckable")) {
         (None, _) | (_, None) => Ok(Some(("report_unavailable", Value::Null))),
         (Some(0), _) if !complete => Ok(Some(("stale_history", json!({"history": history})))),
@@ -1444,9 +1451,11 @@ mod tests {
         (url, asked)
     }
 
-    /// Health's `indexer.history` with both feeds' history complete through `through`.
+    /// Health's `indexer.history` with both feeds' history complete through `through`
+    /// and last fully reread then.
     fn history(through: i64) -> Value {
-        let feed = json!({"since": 1, "through": through, "sweep": null});
+        let feed = json!({"since": 1, "through": through, "full": through,
+            "sweeps": {"recent": null, "full": null}});
         json!({"near-payouts": feed, "near-refunds": feed})
     }
 
@@ -1742,10 +1751,12 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(failure, ("answer_mismatch", json!({"payouts_missing": 2})));
-        // History older than its bound, or missing, is stale, and a missing payout
-        // outranks it.
+        // History older than its bound, one not fully reread within its bound, or none
+        // is stale, and a missing payout outranks it.
         let stale = history(unix_now() - MAX_HISTORY_AGE_SECS - 60);
-        for history in [stale, Value::Null] {
+        let mut unread = history(unix_now());
+        unread["near-refunds"]["full"] = json!(unix_now() - MAX_FULL_AGE_SECS - 60);
+        for history in [stale, unread, Value::Null] {
             let indexer = json!({"payouts_missing": 0, "payouts_uncheckable": 1,
                 "history": history});
             let failure = report(json!({"serving": probed, "indexer": indexer}))

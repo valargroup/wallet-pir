@@ -414,6 +414,35 @@ pub struct ProviderStore {
 /// after which the explorer continues.
 pub type Token = (String, Option<String>);
 
+/// A feed's two kinds of sweep, each with at most one in progress.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Pass {
+    /// Rereads the recent end of the history, often.
+    Recent,
+    /// Reads the whole history from its start, less often, and backfills it.
+    Full,
+}
+
+impl Pass {
+    /// The pass's name in the store and in reports.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Recent => "recent",
+            Self::Full => "full",
+        }
+    }
+}
+
+/// The creation-time span over which a feed's completed sweeps read every swap the
+/// provider listed by then, without a gap; see [`ProviderStore::history`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct History {
+    pub since: i64,
+    pub through: i64,
+    /// When the last sweep that read the whole span from `since` began.
+    pub full: i64,
+}
+
 /// A walk of a feed from its newest swap down to `floor`, recorded page by page so it
 /// resumes where it stopped; see [`ProviderStore::sweep_page`].
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -449,10 +478,11 @@ impl ProviderStore {
                 txid BLOB NOT NULL CHECK(length(txid)=32), seen_at INTEGER NOT NULL,
                 PRIMARY KEY(receiver,txid)) WITHOUT ROWID;
             CREATE TABLE IF NOT EXISTS history (feed TEXT PRIMARY KEY, since INTEGER NOT NULL,
-                through INTEGER NOT NULL, CHECK(since<=through));
-            CREATE TABLE IF NOT EXISTS sweeps (feed TEXT PRIMARY KEY, floor INTEGER NOT NULL,
-                began INTEGER NOT NULL, after TEXT, memo TEXT, reached INTEGER,
-                pages INTEGER NOT NULL, CHECK(floor<=began));
+                through INTEGER NOT NULL, full INTEGER NOT NULL, CHECK(since<=through));
+            CREATE TABLE IF NOT EXISTS sweeps (feed TEXT NOT NULL, pass TEXT NOT NULL,
+                floor INTEGER NOT NULL, began INTEGER NOT NULL, after TEXT, memo TEXT,
+                reached INTEGER, pages INTEGER NOT NULL, PRIMARY KEY(feed,pass),
+                CHECK(floor<=began));
             CREATE TRIGGER IF NOT EXISTS receivers_kept BEFORE DELETE ON receivers
                 BEGIN SELECT RAISE(ABORT, 'provider receivers are append-only'); END;
             CREATE TRIGGER IF NOT EXISTS receivers_fixed BEFORE UPDATE OF receiver, payout ON receivers
@@ -488,13 +518,13 @@ impl ProviderStore {
         Ok(())
     }
 
-    /// `feed`'s sweep in progress, if any.
-    pub fn sweep(&self, feed: &str) -> Result<Option<Sweep>, Error> {
+    /// `feed`'s `pass` in progress, if any.
+    pub fn sweep(&self, feed: &str, pass: Pass) -> Result<Option<Sweep>, Error> {
         Ok(self
             .db
             .query_row(
-                "SELECT floor,began,after,memo,reached,pages FROM sweeps WHERE feed=?1",
-                [feed],
+                "SELECT floor,began,after,memo,reached,pages FROM sweeps WHERE feed=?1 AND pass=?2",
+                params![feed, pass.name()],
                 |r| {
                     let (after, memo): (Option<String>, Option<String>) = (r.get(2)?, r.get(3)?);
                     Ok(Sweep {
@@ -509,16 +539,21 @@ impl ProviderStore {
             .optional()?)
     }
 
-    /// Begins a sweep of `feed` at `began` down to `floor`, which must not follow it.
-    /// A feed has at most one sweep: beginning another while one runs is
-    /// [`Error::Coverage`].
-    pub fn begin_sweep(&mut self, feed: &str, floor: i64, began: i64) -> Result<Sweep, Error> {
+    /// Begins `feed`'s `pass` at `began` down to `floor`, which must not follow it.
+    /// Beginning a pass while one of the same kind runs is [`Error::Coverage`].
+    pub fn begin_sweep(
+        &mut self,
+        feed: &str,
+        pass: Pass,
+        floor: i64,
+        began: i64,
+    ) -> Result<Sweep, Error> {
         if floor > began {
             return Err(Error::Malformed);
         }
         let inserted = self.db.execute(
-            "INSERT OR IGNORE INTO sweeps VALUES (?1,?2,?3,NULL,NULL,NULL,0)",
-            params![feed, floor, began],
+            "INSERT OR IGNORE INTO sweeps VALUES (?1,?2,?3,?4,NULL,NULL,NULL,0)",
+            params![feed, pass.name(), floor, began],
         )?;
         if inserted == 0 {
             return Err(Error::Coverage);
@@ -532,15 +567,17 @@ impl ProviderStore {
         })
     }
 
-    /// Records one page of `feed`'s sweep that began at `began`, atomically: its
+    /// Records one page of `feed`'s `pass` that began at `began`, atomically: its
     /// receivers and completed payouts (see `insert`), the oldest creation time it
     /// reached, and `next`, where the following page starts. A page with no `next`
     /// ends the sweep, which extends `feed`'s history (see [`Self::history`]) and is
     /// removed. A page of another sweep than the one in progress is [`Error::Coverage`]
     /// and records nothing.
+    #[allow(clippy::too_many_arguments)]
     pub fn sweep_page(
         &mut self,
         feed: &str,
+        pass: Pass,
         began: i64,
         receivers: &[(ReceiverBytes, bool, i64)],
         completions: &[(ReceiverBytes, Hash, i64)],
@@ -550,8 +587,8 @@ impl ProviderStore {
         let tx = self.db.transaction()?;
         let floor: Option<i64> = tx
             .query_row(
-                "SELECT floor FROM sweeps WHERE feed=?1 AND began=?2",
-                params![feed, began],
+                "SELECT floor FROM sweeps WHERE feed=?1 AND pass=?2 AND began=?3",
+                params![feed, pass.name(), began],
                 |r| r.get(0),
             )
             .optional()?;
@@ -562,38 +599,52 @@ impl ProviderStore {
         match next {
             Some((address, memo)) => {
                 tx.execute(
-                    "UPDATE sweeps SET after=?2, memo=?3, pages=pages+1,
-                        reached=MIN(COALESCE(reached,?4),COALESCE(?4,reached)) WHERE feed=?1",
-                    params![feed, address, memo, reached],
+                    "UPDATE sweeps SET after=?3, memo=?4, pages=pages+1,
+                        reached=MIN(COALESCE(reached,?5),COALESCE(?5,reached))
+                     WHERE feed=?1 AND pass=?2",
+                    params![feed, pass.name(), address, memo, reached],
                 )?;
             }
             None => {
-                // A sweep that reaches into the history extends it. One that would leave
-                // a gap replaces it, so the history never claims a span no sweep read.
+                // A sweep that reaches into the history extends it, and one from its
+                // start reads all of it. One that would leave a gap replaces it, so the
+                // history never claims a span no sweep read.
                 tx.execute(
-                    "INSERT INTO history VALUES (?1,?2,?3) ON CONFLICT(feed) DO UPDATE SET
+                    "INSERT INTO history VALUES (?1,?2,?3,?3) ON CONFLICT(feed) DO UPDATE SET
                         since=CASE WHEN excluded.since<=through AND excluded.through>=since
                             THEN MIN(since,excluded.since) ELSE excluded.since END,
                         through=CASE WHEN excluded.since<=through AND excluded.through>=since
-                            THEN MAX(through,excluded.through) ELSE excluded.through END",
+                            THEN MAX(through,excluded.through) ELSE excluded.through END,
+                        full=CASE WHEN excluded.since<=since OR excluded.since>through
+                                OR excluded.through<since
+                            THEN excluded.through ELSE full END",
                     params![feed, floor, began],
                 )?;
-                tx.execute("DELETE FROM sweeps WHERE feed=?1", [feed])?;
+                tx.execute(
+                    "DELETE FROM sweeps WHERE feed=?1 AND pass=?2",
+                    params![feed, pass.name()],
+                )?;
             }
         }
         tx.commit()?;
         Ok(())
     }
 
-    /// The creation-time span `(since, through)` over which `feed`'s completed sweeps
-    /// read every swap the provider listed by then, without a gap, if one completed.
-    pub fn history(&self, feed: &str) -> Result<Option<(i64, i64)>, Error> {
+    /// `feed`'s history, if a sweep completed: the span its completed sweeps cover
+    /// without a gap, and when the last one that read all of it began.
+    pub fn history(&self, feed: &str) -> Result<Option<History>, Error> {
         Ok(self
             .db
             .query_row(
-                "SELECT since,through FROM history WHERE feed=?1",
+                "SELECT since,through,full FROM history WHERE feed=?1",
                 [feed],
-                |r| Ok((r.get(0)?, r.get(1)?)),
+                |r| {
+                    Ok(History {
+                        since: r.get(0)?,
+                        through: r.get(1)?,
+                        full: r.get(2)?,
+                    })
+                },
             )
             .optional()?)
     }

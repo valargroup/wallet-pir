@@ -238,23 +238,32 @@ the first does or one after an outage of over a day, restarts the feed's live
 coverage there.
 
 History comes from sweeps, which walk a feed from its newest swap down to a floor,
-30 pages a feed each poll. Each page is recorded with where the next one starts, so
-a sweep resumes after a failed request or a restart and no history is too long to
-read. The first sweep backfills to `--near-since`: set it before the first one-time
-address a supported wallet issued. An earlier `--near-since` later backfills the
-difference, and a later one never shrinks the history. After that, a reconciliation
-sweep begins an hour after the last one began and rereads the week before the
-history's end, so it records swaps the explorer listed after the live reads passed
-them or that a read skipped, such as one listed without its address. A swap listed
-more than a week after its creation is missed.
+30 pages a feed each poll between two passes, the recent one first. Each page is
+recorded with where the next one starts, so a sweep resumes after a failed request
+or a restart and no history is too long to read.
+
+- The full pass reads down to the history's start. The first backfills to
+  `--near-since`: set it before the first one-time address a supported wallet
+  issued. An earlier `--near-since` later backfills the difference, and a later
+  one never shrinks the history. After that a full pass begins a day after the
+  last one began, so a swap the explorer lists or corrects however long after its
+  creation is recorded within about a day plus the pass's own length, which grows
+  with the history (about an hour for a month at October 2026 volume).
+- The recent pass begins an hour after the history's end and rereads the week
+  before it, so a swap the explorer listed after the live reads passed it, or that
+  a read skipped, such as one listed without its address, is recorded within about
+  an hour when it is less than a week old.
 
 A feed's history is the span its completed sweeps cover without a gap, `since` to
-`through`. The report's `history` gives it for each feed, null until the first
-sweep completes, with the sweep in progress (its floor, start, the oldest creation
-time it reached and its pages). `through` is historical completeness, apart from
-the live freshness `feeds` gives. The seen set is published only once both feeds'
-history reaches their live coverage, and declares the history's start. The probe
-fails `stale_history` when either feed's `through` is more than six hours old.
+`through`, and `full` is when the last full pass began. Every swap created in that
+span that the explorer listed, in its current form, within a week of its creation or
+before `full` is recorded. The report's `history` gives these for each feed, null
+until the first sweep completes, with each pass in progress (`sweeps`: its floor,
+start, the oldest creation time it reached and its pages). They are historical
+completeness, apart from the live freshness `feeds` gives. The seen set is published
+only once both feeds' history reaches their live coverage, and declares the
+history's start. The probe fails `stale_history` when either feed's `through` is
+more than six hours old or its `full` more than three days.
 
 The stored receivers are an append-only union. Reorgs never touch
 `providers.sqlite`, later reads and corrections only add, and the database refuses

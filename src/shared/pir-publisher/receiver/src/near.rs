@@ -9,15 +9,16 @@
 //! from a cursor and keep the recent set fresh, reaching back at most a day. History
 //! sweeps ([`Explorer::sweep`]) walk the feed from its newest swap down to a floor a few
 //! pages a poll, recording each page, so they resume after a failure or restart however
-//! long the history is. The first backfills to `--near-since`, and later ones reconcile
-//! the last week, so swaps listed late or skipped by a read are recorded. The seen set is
-//! published only once that history reaches the live reads without a gap.
+//! long the history is. A full pass backfills to `--near-since` and rereads the whole
+//! history daily, and an hourly recent pass rereads the last week, so swaps listed late,
+//! corrected or skipped by a read are recorded. The seen set is published only once that
+//! history reaches the live reads without a gap.
 use receiver_directory::{
     filter::{RECENT, SEEN},
     snapshot::ProviderSet,
     ReceiverBytes,
 };
-use receiver_store::{ProviderStore, Store, Token};
+use receiver_store::{Pass, ProviderStore, Store, Token};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::{
@@ -50,14 +51,16 @@ const OVERLAP_SECS: i64 = 3600;
 /// live read reaches back at most [`RECENT_SECS`], far inside it. History comes from
 /// sweeps, which are not bounded by it.
 const MAX_PAGES: usize = 500;
-/// Pages one poll reads of each feed's sweep, about three minutes at the request
+/// Pages one poll reads of each feed's sweeps, about three minutes at the request
 /// interval, so live reads keep the recent set within wallets' 15-minute freshness.
 const SWEEP_PAGES: usize = 30;
-/// How long after a sweep began the next reconciliation sweep begins.
+/// How long after the history's end the next recent pass begins.
 const RECONCILE_INTERVAL_SECS: i64 = 60 * 60;
-/// How far a reconciliation sweep reaches back before the history's end. A swap the
-/// explorer lists later than this after its creation is missed.
+/// How far a recent pass reaches back before the history's end. A swap the explorer
+/// lists or corrects later than this after its creation waits for the full pass.
 const RECONCILE_LOOKBACK_SECS: i64 = 7 * 24 * 60 * 60;
+/// How long after the last full pass began the next one begins.
+const FULL_INTERVAL_SECS: i64 = 24 * 60 * 60;
 /// The provider name in the directory's filter set labels.
 pub const PROVIDER: &str = "near-intents";
 /// How far back the recent set reaches from the feeds' last complete read.
@@ -117,7 +120,8 @@ fn sets_in(store: &ProviderStore) -> Result<Vec<ProviderSet>> {
         until_unix,
         receivers: recent,
     }];
-    let history = common(store.history(payouts)?, store.history(refunds)?);
+    let history = |feed| -> Result<_> { Ok(store.history(feed)?.map(|h| (h.since, h.through))) };
+    let history = common(history(payouts)?, history(refunds)?);
     if let Some((history_since, _)) =
         history.filter(|&(since, through)| through >= since_unix && since <= until_unix)
     {
@@ -187,15 +191,20 @@ pub fn capture(store: &ProviderStore, anchor_time: i64) -> Result<Capture> {
         let (mut feeds, mut history) = (serde_json::Map::new(), serde_json::Map::new());
         for feed in [Feed::Payouts, Feed::Refunds].map(Feed::name) {
             feeds.insert(feed.into(), store.read(feed)?.into());
-            let (span, sweep) = (store.history(feed)?, store.sweep(feed)?);
-            let sweep = sweep.map(|s| {
-                serde_json::json!({"floor": s.floor, "began": s.began,
-                    "reached": s.reached, "pages": s.pages})
-            });
+            let mut sweeps = serde_json::Map::new();
+            for pass in [Pass::Recent, Pass::Full] {
+                let sweep = store.sweep(feed, pass)?.map(|s| {
+                    serde_json::json!({"floor": s.floor, "began": s.began,
+                        "reached": s.reached, "pages": s.pages})
+                });
+                sweeps.insert(pass.name().into(), sweep.into());
+            }
+            let span = store.history(feed)?;
             history.insert(
                 feed.into(),
-                serde_json::json!({"since": span.map(|s| s.0), "through": span.map(|s| s.1),
-                    "sweep": sweep}),
+                serde_json::json!({"since": span.map(|h| h.since),
+                    "through": span.map(|h| h.through), "full": span.map(|h| h.full),
+                    "sweeps": sweeps}),
             );
         }
         // Those first seen by the earlier bound are a subset of those seen by the later.
@@ -219,9 +228,10 @@ pub fn capture(store: &ProviderStore, anchor_time: i64) -> Result<Capture> {
 impl Capture {
     /// The feed's health for monitoring. `feeds` gives when each feed's last complete live
     /// read began, its freshness. `history` gives each feed's completeness apart from
-    /// that: the span its completed sweeps cover, `since` to `through`, null until the
-    /// first completes, and the sweep in progress with its floor, start, the oldest
-    /// creation time it reached and its pages. The rest counts how many payouts first
+    /// that: the span its completed sweeps cover, `since` to `through`, and when the last
+    /// full pass began (`full`), all null until the first sweep completes, and each pass
+    /// in progress (`sweeps`) with its floor, start, the oldest creation time it reached
+    /// and its pages. The rest counts how many payouts first
     /// seen complete more than an hour before the terminal block's time, however long
     /// ago, have no payment to their receiver in the transaction NEAR reported in
     /// `index` (`payouts_missing`), out of all of them (`payouts_checked`). A missing
@@ -446,37 +456,63 @@ impl Explorer {
         Ok(found.len())
     }
 
-    /// Advances `feed`'s history sweep by up to `SWEEP_PAGES` pages of swaps in every
-    /// status, recording each page as it is read (see [`ProviderStore::sweep_page`]), so
-    /// a failure or restart resumes after the last recorded page and no bound on one
-    /// read limits the history. With none in progress it begins one from the explorer's
-    /// newest swap: down to `start` while the history does not reach back to it, as on
-    /// the first backfill or after `--near-since` moves earlier, and otherwise, once
-    /// `RECONCILE_INTERVAL_SECS` have passed since the last one began, down to
-    /// `RECONCILE_LOOKBACK_SECS` before the history's end, so swaps listed late or
-    /// skipped by a read are recorded. Returns the pages it read.
+    /// Advances `feed`'s history sweeps by up to `SWEEP_PAGES` pages of swaps in every
+    /// status between them, the recent pass first, recording each page as it is read
+    /// (see [`ProviderStore::sweep_page`]), so a failure or restart resumes after the
+    /// last recorded page and no bound on one read limits the history. A pass not in
+    /// progress begins from the explorer's newest swap when it is due. The full pass
+    /// reads down to the history's start, or to `start` while the history does not
+    /// reach back to it, as on the first backfill or after `--near-since` moves
+    /// earlier, and is due then and `FULL_INTERVAL_SECS` after the last full pass
+    /// began, so a swap corrected however long after its creation is recorded. The
+    /// recent pass reads down to `RECONCILE_LOOKBACK_SECS` before the history's end and
+    /// is due `RECONCILE_INTERVAL_SECS` after the history's end, so swaps listed late
+    /// or skipped by a read are recorded soon. Returns the pages it read.
     pub async fn sweep(
         &mut self,
         store: &mut ProviderStore,
         feed: Feed,
         start: i64,
     ) -> Result<usize> {
+        let mut pages = 0;
+        for pass in [Pass::Recent, Pass::Full] {
+            pages += self
+                .pass(store, feed, pass, start, self.sweep_pages - pages)
+                .await?;
+        }
+        Ok(pages)
+    }
+
+    /// Advances `feed`'s `pass` by up to `budget` pages, beginning it if it is due; see
+    /// [`Self::sweep`]. Returns the pages it read.
+    async fn pass(
+        &mut self,
+        store: &mut ProviderStore,
+        feed: Feed,
+        pass: Pass,
+        start: i64,
+        budget: usize,
+    ) -> Result<usize> {
         let name = feed.name();
-        let sweep = match store.sweep(name)? {
+        let sweep = match store.sweep(name, pass)? {
             Some(sweep) => sweep,
+            None if budget == 0 => return Ok(0),
             None => {
                 let now = unix_now();
-                let floor = match store.history(name)? {
-                    Some((since, _)) if start < since => start,
-                    Some((_, through)) if now < through + RECONCILE_INTERVAL_SECS => return Ok(0),
-                    Some((since, through)) => (through - RECONCILE_LOOKBACK_SECS).max(since),
-                    None => start,
+                let floor = match (pass, store.history(name)?) {
+                    (Pass::Full, None) => start,
+                    (Pass::Full, Some(h)) if start < h.since => start,
+                    (Pass::Full, Some(h)) if now >= h.full + FULL_INTERVAL_SECS => h.since,
+                    (Pass::Recent, Some(h)) if now >= h.through + RECONCILE_INTERVAL_SECS => {
+                        (h.through - RECONCILE_LOOKBACK_SECS).max(h.since)
+                    }
+                    _ => return Ok(0),
                 };
-                store.begin_sweep(name, floor, now)?
+                store.begin_sweep(name, pass, floor, now)?
             }
         };
         let mut after = sweep.after;
-        for pages in 1..=self.sweep_pages {
+        for pages in 1..=budget {
             let swaps = self.page(feed, STATUSES, after.as_ref()).await?;
             let seen_at = unix_now();
             let (mut found, mut completed, mut reached) = (Vec::new(), Vec::new(), None);
@@ -494,6 +530,7 @@ impl Explorer {
                 .collect();
             store.sweep_page(
                 name,
+                pass,
                 sweep.began,
                 &found,
                 &completed,
@@ -505,7 +542,7 @@ impl Explorer {
                 None => return Ok(pages),
             }
         }
-        Ok(self.sweep_pages)
+        Ok(budget)
     }
 
     /// Pages `feed`'s swaps in `statuses`, newest first, passing `each` every swap with
@@ -677,10 +714,17 @@ mod tests {
         assert!(orchard_receiver("check-alice.near").is_none());
     }
 
-    /// Records a completed sweep of `feed` from `floor` to `began` that found nothing.
-    fn swept(store: &mut ProviderStore, feed: &str, floor: i64, began: i64) {
-        store.begin_sweep(feed, floor, began).unwrap();
-        store.sweep_page(feed, began, &[], &[], None, None).unwrap();
+    /// Records a completed `pass` of `feed` from `floor` to `began` that found nothing.
+    fn swept(store: &mut ProviderStore, feed: &str, pass: Pass, floor: i64, began: i64) {
+        store.begin_sweep(feed, pass, floor, began).unwrap();
+        store
+            .sweep_page(feed, pass, began, &[], &[], None, None)
+            .unwrap();
+    }
+
+    /// `feed`'s history span, `since` to `through`, if any.
+    fn span(store: &ProviderStore, feed: &str) -> Option<(i64, i64)> {
+        store.history(feed).unwrap().map(|h| (h.since, h.through))
     }
 
     /// The recent set needs both feeds' live coverage and reaches back from the older
@@ -722,12 +766,12 @@ mod tests {
         // Without both feeds' history, and with a refund history that ends before the
         // live coverage begins, only the recent set is published.
         assert_eq!(labels(&store), ["near-intents/recent"]);
-        swept(&mut store, payouts, 500, 2_500);
+        swept(&mut store, payouts, Pass::Full, 500, 2_500);
         assert_eq!(labels(&store), ["near-intents/recent"]);
-        swept(&mut store, refunds, 800, 1_500);
+        swept(&mut store, refunds, Pass::Full, 800, 1_500);
         assert_eq!(labels(&store), ["near-intents/recent"]);
         // A sweep that reaches into the refund history closes the gap.
-        swept(&mut store, refunds, 1_400, 3_000);
+        swept(&mut store, refunds, Pass::Recent, 1_400, 3_000);
         let sets = provider_sets(&store).unwrap();
         let labels: Vec<_> = sets.iter().map(|set| set.label.as_str()).collect();
         assert_eq!(labels, ["near-intents/recent", "near-intents/seen"]);
@@ -1187,6 +1231,7 @@ mod tests {
                 Router,
             };
             use std::collections::HashMap;
+            /// Answers one request as [`Listing`] describes.
             async fn page(
                 State(listing): State<Listing>,
                 Query(query): Query<HashMap<String, String>>,
@@ -1280,17 +1325,18 @@ mod tests {
         let mut explorer = listing.explorer().await;
         explorer.sweep_pages = 1;
         assert_eq!(explorer.sweep(&mut store, feed, start).await.unwrap(), 1);
-        let sweep = store.sweep(name).unwrap().unwrap();
+        let sweep = store.sweep(name, Pass::Full).unwrap().unwrap();
         assert_eq!(
             (sweep.floor, sweep.pages, sweep.after.clone()),
             (start, 1, Some(("d999".to_owned(), None)))
         );
         assert_eq!(sweep.reached, Some(now - 60 * 999));
         assert_eq!(store.history(name).unwrap(), None);
+        assert_eq!(store.sweep(name, Pass::Recent).unwrap(), None);
         assert_eq!(store.sets(0).unwrap().1, [one]);
         listing.failing.store(true, Ordering::SeqCst);
         assert!(explorer.sweep(&mut store, feed, start).await.is_err());
-        assert_eq!(store.sweep(name).unwrap(), Some(sweep.clone()));
+        assert_eq!(store.sweep(name, Pass::Full).unwrap(), Some(sweep.clone()));
         listing.failing.store(false, Ordering::SeqCst);
         drop((store, explorer));
 
@@ -1300,67 +1346,80 @@ mod tests {
         let asked = listing.asked.lock().unwrap().clone();
         let d = |i: usize| Some(format!("d{i}"));
         assert_eq!(asked, [None, d(999), d(999), d(1999)]);
-        assert_eq!(store.sweep(name).unwrap(), None);
+        assert_eq!(store.sweep(name, Pass::Full).unwrap(), None);
         let history = (start, sweep.began);
-        assert_eq!(store.history(name).unwrap(), Some(history));
+        assert_eq!(span(&store, name), Some(history));
         assert_eq!(
             sorted(store.sets(0).unwrap().1),
             sorted(vec![one, two, three])
         );
-        // Complete history waits for the reconciliation interval, whatever the start.
+        // Complete history waits for the next pass, whatever the start.
         assert_eq!(explorer.sweep(&mut store, feed, start).await.unwrap(), 0);
         assert_eq!(
             explorer.sweep(&mut store, feed, start + 600).await.unwrap(),
             0
         );
-        assert_eq!(store.history(name).unwrap(), Some(history));
+        assert_eq!(span(&store, name), Some(history));
         let earlier = start - 3_600;
         assert_eq!(explorer.sweep(&mut store, feed, earlier).await.unwrap(), 3);
-        let (since, through) = store.history(name).unwrap().unwrap();
+        let (since, through) = span(&store, name).unwrap();
         assert_eq!(since, earlier);
         assert!(through >= now);
     }
 
     /// A swap the explorer lists only after the live reads passed it, beyond their
     /// hour of overlap, and one a live read skipped because its address was missing
-    /// then, are recorded by the next reconciliation sweep, which reaches back a week
-    /// before the history's end. A swap listed later than that is not.
+    /// then, are recorded by the next recent pass, which reaches back a week before the
+    /// history's end. A swap corrected ten days after its creation is beyond that, and
+    /// the next daily full pass records it.
     #[tokio::test]
-    async fn reconciliation_records_swaps_listed_late_or_skipped() {
+    async fn reconciliation_records_swaps_listed_late_or_corrected() {
         let (feed, now) = (Feed::Refunds, unix_now());
         let name = feed.name();
         let listing = Listing::default();
         listing.list(listed(Some(1), now - 600, "a"));
         listing.list(listed(None, now - 5 * 3600, "skipped"));
+        let old = now - 10 * RECENT_SECS;
+        listing.list(listed(None, old, "old"));
         let dir = tempfile::tempdir().unwrap();
         let mut store = ProviderStore::open(dir.path().join("providers.sqlite")).unwrap();
         let mut explorer = listing.explorer().await;
+        explorer.sweep_pages = 1;
         explorer.sync(&mut store, feed).await.unwrap();
-        // History complete through two hours ago, so reconciliation is due.
-        let through = now - 2 * 3600;
-        swept(&mut store, name, now - 30 * RECENT_SECS, through);
-        // Three days late, the skipped swap's address filled in, and too late.
+        // A full pass over a day ago and a recent pass two hours ago, so both are due.
+        let (since, full) = (now - 30 * RECENT_SECS, now - RECENT_SECS - 600);
+        swept(&mut store, name, Pass::Full, since, full);
+        swept(&mut store, name, Pass::Recent, full - 3600, now - 2 * 3600);
+        // The two skipped swaps' addresses filled in, and a swap listed three days late.
+        {
+            let mut swaps = listing.swaps.lock().unwrap();
+            swaps[1] = listed(Some(3), now - 5 * 3600, "skipped");
+            swaps[2] = listed(Some(4), old, "old");
+        }
         listing.list(listed(Some(2), now - 3 * RECENT_SECS, "late"));
-        listing.swaps.lock().unwrap()[1] = listed(Some(3), now - 5 * 3600, "skipped");
-        let too_late = through - RECONCILE_LOOKBACK_SECS - 3600;
-        listing.list(listed(Some(4), too_late, "too late"));
         explorer.sync(&mut store, feed).await.unwrap();
         assert_eq!(store.sets(0).unwrap().1, [receiver(1)]);
-        assert_eq!(explorer.sweep(&mut store, feed, now).await.unwrap(), 1);
-        let expected = sorted(vec![receiver(1), receiver(2), receiver(3)]);
-        assert_eq!(sorted(store.sets(0).unwrap().1), expected);
-        let (since, reconciled) = store.history(name).unwrap().unwrap();
-        assert_eq!(since, now - 30 * RECENT_SECS);
-        assert!(reconciled >= now);
-        // The next one waits for the interval.
-        assert_eq!(explorer.sweep(&mut store, feed, now).await.unwrap(), 0);
+        assert_eq!(explorer.sweep(&mut store, feed, since).await.unwrap(), 1);
+        let recent = sorted(vec![receiver(1), receiver(2), receiver(3)]);
+        assert_eq!(sorted(store.sets(0).unwrap().1), recent);
+        let history = store.history(name).unwrap().unwrap();
+        assert_eq!((history.since, history.full), (since, full));
+        assert!(history.through >= now);
+        // The full pass was due too, but the recent pass used this poll's page.
+        assert_eq!(explorer.sweep(&mut store, feed, since).await.unwrap(), 1);
+        let all = sorted(vec![receiver(1), receiver(2), receiver(3), receiver(4)]);
+        assert_eq!(sorted(store.sets(0).unwrap().1), all);
+        let history = store.history(name).unwrap().unwrap();
+        assert_eq!(history.since, since);
+        assert!(history.full >= now);
+        assert_eq!(explorer.sweep(&mut store, feed, since).await.unwrap(), 0);
     }
 
     /// After a long outage, a live read of either feed reaches back only a day, its
     /// payout completion rescan included, so it succeeds however many pages the outage
     /// holds, beyond its page bound, and restarts the feed's live coverage, which the
-    /// history then no longer reaches. The reconciliation sweep reads those pages over
-    /// several polls and closes the gap.
+    /// history then no longer reaches. The recent pass reads those pages over several
+    /// polls and closes the gap.
     #[tokio::test]
     async fn the_sweep_reads_an_outage_beyond_the_live_page_bound() {
         let now = unix_now();
@@ -1385,14 +1444,14 @@ mod tests {
             store
                 .record(name, Some(start), &[], &[], outage, outage)
                 .unwrap();
-            swept(&mut store, name, start, outage);
+            swept(&mut store, name, Pass::Full, start, outage);
             explorer.sync(&mut store, feed).await.unwrap();
             let started = store.started(name).unwrap().unwrap();
             assert!(started >= now - RECENT_SECS);
-            assert!(store.history(name).unwrap().unwrap().1 < started);
+            assert!(span(&store, name).unwrap().1 < started);
             assert_eq!(store.sets(0).unwrap().1, [receiver(1)]);
             let mut polls = 0;
-            while store.history(name).unwrap().unwrap().1 < started {
+            while span(&store, name).unwrap().1 < started {
                 assert_eq!(explorer.sweep(&mut store, feed, start).await.unwrap(), 1);
                 polls += 1;
             }
@@ -1419,22 +1478,29 @@ mod tests {
                 .unwrap();
         }
         let history = |store: &ProviderStore| report(store, &index, now)["history"].clone();
-        let none = serde_json::json!({"since": null, "through": null, "sweep": null});
+        let idle = serde_json::json!({"recent": null, "full": null});
+        let none = serde_json::json!({"since": null, "through": null, "full": null,
+            "sweeps": idle});
         assert_eq!(report(&store, &index, now)["feeds"][payouts], now - 10);
         assert_eq!(history(&store)[payouts], none);
-        store.begin_sweep(payouts, 500, now - 5).unwrap();
-        let next = ("d".to_owned(), Some("m".to_owned()));
         store
-            .sweep_page(payouts, now - 5, &[], &[], Some(9_000), Some(&next))
+            .begin_sweep(payouts, Pass::Full, 500, now - 5)
+            .unwrap();
+        let next = ("d".to_owned(), Some("m".to_owned()));
+        let (pass, reached) = (Pass::Full, Some(9_000));
+        store
+            .sweep_page(payouts, pass, now - 5, &[], &[], reached, Some(&next))
             .unwrap();
         let sweep = serde_json::json!({"floor": 500, "began": now - 5, "reached": 9_000,
             "pages": 1});
-        let progress = serde_json::json!({"since": null, "through": null, "sweep": sweep});
+        let progress = serde_json::json!({"since": null, "through": null, "full": null,
+            "sweeps": {"recent": null, "full": sweep}});
         assert_eq!(history(&store)[payouts], progress);
         store
-            .sweep_page(payouts, now - 5, &[], &[], Some(400), None)
+            .sweep_page(payouts, pass, now - 5, &[], &[], Some(400), None)
             .unwrap();
-        let complete = serde_json::json!({"since": 500, "through": now - 5, "sweep": null});
+        let complete = serde_json::json!({"since": 500, "through": now - 5, "full": now - 5,
+            "sweeps": idle});
         assert_eq!(history(&store)[payouts], complete);
         assert_eq!(history(&store)[refunds], none);
         drop(store);
