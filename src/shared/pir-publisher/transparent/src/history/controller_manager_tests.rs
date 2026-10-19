@@ -397,6 +397,7 @@ async fn get(origin: &str, path: &str) -> reqwest::Response {
         .await
         .unwrap()
 }
+#[cfg(feature = "qualification-tests")]
 fn artifact_requests(tls: &Tls) -> usize {
     std::fs::read_to_string(tls.control.with_extension("requests"))
         .unwrap()

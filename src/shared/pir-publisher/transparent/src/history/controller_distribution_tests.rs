@@ -190,6 +190,9 @@ fn prepare_recent(directory: &Path, set: &ShardSet) {
 
 struct CanonicalRpc {
     client: NodeClient,
+    // Qualification campaigns mutate the served tip. Fast cases leave it at
+    // the publication hash, so this field has no reader in that build.
+    #[cfg_attr(not(feature = "qualification-tests"), allow(dead_code))]
     hash: Arc<RwLock<Option<String>>>,
     genesis: Arc<RwLock<String>>,
     available: Arc<AtomicBool>,
