@@ -31,8 +31,13 @@ def digest(path):
 def build(arguments, log):
     result = subprocess.run(["cargo", *arguments, "--locked", "--offline", "--profile", "release-fast",
                              "--message-format=json"], cwd=ROOT, stdout=subprocess.PIPE,
-                            stderr=log, text=True, check=True)
+                            stderr=log, text=True)
     messages = [json.loads(line) for line in result.stdout.splitlines() if line.startswith("{")]
+    for item in messages:
+        if item.get("reason") == "compiler-message":
+            log.write(item["message"].get("rendered", ""))
+    log.flush()
+    result.check_returncode()
     return {item["target"]["name"]: Path(item["executable"])
             for item in messages if item.get("reason") == "compiler-artifact" and item.get("executable")}
 

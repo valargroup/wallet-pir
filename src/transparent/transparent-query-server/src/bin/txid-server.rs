@@ -1,3 +1,4 @@
+use std::future::IntoFuture;
 //! Private retrieval from a tiered, bucketed txid display publication.
 
 use clap::Parser;
@@ -147,8 +148,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             return Ok(());
         }
         let app = manager.router();
-        let _manager = tokio::spawn(manager.run());
-        axum::serve(tokio::net::TcpListener::bind(cli.listen).await?, app).await?;
+        let mut synchronization = tokio::spawn(manager.run());
+        let listener = tokio::net::TcpListener::bind(cli.listen).await?;
+        tokio::select! {
+            result = axum::serve(listener, app).into_future() => {
+                synchronization.abort();
+                result?;
+            }
+            result = &mut synchronization => {
+                return Err(format!("display synchronization stopped: {result:?}").into());
+            }
+        }
         return Ok(());
     }
     let mut directory = cli.publication_dir.clone();
