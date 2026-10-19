@@ -339,13 +339,12 @@ def runtime_resolved_violations(metadata, name):
 def runtime_graph_violations():
     """Resolve each runtime-free core with every feature it defines, and each shared
     foundation with its defaults, alone; report transport they reach and pending
-    exceptions that are no longer needed. The explicit CUDA backend feature is left
-    to cuda_boundary, as in the offline CPU graph: its GPU crates are not fetched
-    there, and it adds no transport."""
+    exceptions that are no longer needed. CUDA-enabled cores are included: `main`
+    fetches the locked graph first."""
     features = {p['name']: p['features'] for p in manifests() if not p['preserved']}
     problems = []
     for name in sorted(RUNTIME_FREE | set(HOST_FEATURES)):
-        selected = [] if name in HOST_FEATURES else [f for f in features[name] if f != 'cuda']
+        selected = [] if name in HOST_FEATURES else features[name]
         reached = runtime_resolved_violations(standalone_metadata({name}, {name: selected}), name)
         if name in RUNTIME_PENDING:
             if not reached:
@@ -502,7 +501,7 @@ def standalone_metadata(names, features=None):
     Seed from the committed lockfile and source overrides so dependencies retain
     the workspace's pinned identities. The
     temporary consumer adds only its own root; it cannot modify repository files.
-    Dependencies have already been fetched by the locked workspace metadata check.
+    Dependencies have already been fetched by `cargo fetch --locked` in `main`.
     """
     folders = {p['name']: p['manifest'].rsplit('/', 1)[0]
                for p in manifests() if not p['preserved']}
@@ -581,6 +580,12 @@ def main(argv=None):
             ['cargo', 'metadata', '--locked', '--format-version', '1',
              *(['--offline'] if args.offline else [])], cwd=ROOT))
         problems += cpu_graph_violations(metadata)
+        # Standalone consumers resolve offline from the committed lockfile. Fetch
+        # every locked package first, so optional graphs (all-feature cores,
+        # including CUDA) resolve the same identities; --offline relies on a
+        # prior `make prepare-dev`.
+        if not args.offline:
+            subprocess.check_call(['cargo', 'fetch', '--locked', '--quiet'], cwd=ROOT)
         from backend_features import cpu_features
         features = cpu_features([p['name'] for p in metadata['packages'] if p['source'] is None])
         cpu_metadata = json.loads(subprocess.check_output(
