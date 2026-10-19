@@ -69,11 +69,11 @@ an automatic rollback.
 cargo check --locked -p enhance-publisher -p enhance-pir-load-test \
   --features native-reinspiring,cuda
 QUALIFY_PUBLICATIONS=1 QUALIFY_QUERY_LANES=2 QUALIFY_QUERIES_PER_LANE=3 \
-  cargo test --locked -p enhance-publisher --features native-reinspiring \
+  cargo test --locked --profile release-fast -p pir-publisher --features enhance-tests,native-reinspiring \
   --test packing_http
 cargo test --locked -p status-query-server --features native-reinspiring --test status_wallet
 cargo test --locked -p enhance-query-server --features native-reinspiring --lib native
-cargo test --locked -p enhance-publisher --test packing_http
+cargo test --locked --profile release-fast -p pir-publisher --features enhance-tests --test packing_http
 ```
 
 CI runs the native distributed HTTP fixture separately from the legacy suite,
