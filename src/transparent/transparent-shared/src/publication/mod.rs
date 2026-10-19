@@ -107,7 +107,7 @@ pub struct Artifact {
     pub bytes: u64,
     pub kind: Kind,
 }
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Inventory {
     pub schema: String,
