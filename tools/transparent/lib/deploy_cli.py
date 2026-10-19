@@ -504,6 +504,9 @@ def binary_upgrade(args, executor, out, **options):
         result = Lifecycle(deployer).inspect(action, sha, binary, stage=getattr(args, 'stage', False))
         problems = (list(result.problems) + upgrade.problems(executor, workers)
                     + upgrade.load_problems(executor, check_pin=True))
+    if action in ('plan', 'preflight', 'status'):
+        for line in module.notification_state(executor, request['controller']['host'], request['service']):
+            out(line)
     for problem in problems:
         out('problem: ' + problem)
     if action in ('plan', 'preflight', 'deploy'):
