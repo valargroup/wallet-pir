@@ -5,8 +5,9 @@ One Droplet, `receiver-pir-poc-01`, runs `receiver-pir.service`, which starts
 polls every 10 seconds and publishes two blocks below the tip. The service listens
 on the Droplet's private address, `10.70.0.11:18380`, and nothing listens on its
 public interface. Caddy terminates public TLS for `receiver-pir.valargroup.dev` and
-proxies only the wallet routes (`init`, `public`, `query`, `witness` and `filters`
-under `/v1/receiver/`). `/v1/receiver/health` and `/metrics` stay off
+proxies only the wallet routes (`init`, `public`, `query`, `witness`, `filters`
+and the immutable recovery objects `catalog`, `bucket-index`, `bucket`, `paid` and
+`seen` under `/v1/receiver/`). `/v1/receiver/health` and `/metrics` stay off
 the edge, as Transparent keeps its operator routes: the PIR monitor's probe reads
 health over the private network. `/metrics` is private and nothing collects it
 yet; collection belongs in pir-apm when something consumes it.
@@ -259,9 +260,14 @@ flock -n /run/lock/wallet-pir-production.lock tools/receiver/digitalocean/caddy.
 A Caddy change touches neither the unit nor the binary, so the baseline stays valid.
 
 The service publishes from memory and writes no publication files; the index keeps
-only `directory.sqlite` and `providers.sqlite`. A `publications/` directory left by
-an earlier release can be deleted. Back up `providers.sqlite` with the index:
-rebuilding it means one read of every swap since `--near-since`. Logs go to the
+only `directory.sqlite`, `providers.sqlite` and `recovery.sqlite`. A
+`publications/` directory left by an earlier release can be deleted. Back up
+`providers.sqlite` with the index: rebuilding it means one read of every swap since
+`--near-since`. Never delete `recovery.sqlite`, and carry it to a replacement host:
+it holds the payment-history epoch and the seen union that published recovery
+objects must never lose. Without it, run `receiver-directory recovery adopt` with
+the live catalog head and seen set before starting the service there (see
+[the receiver README](../../../docs/receiver/README.md#recovery-objects)). Logs go to the
 journal through `tracing`; `RUST_LOG` in the unit sets the level.
 
 ## Monitoring

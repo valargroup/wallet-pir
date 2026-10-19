@@ -8,6 +8,7 @@ extern crate self as receiver_pir_server;
 #[path = "../tests/common/prepared.rs"]
 mod prepared;
 pub mod publication;
+pub mod recovery;
 use axum::{
     body::Bytes,
     extract::{Path, Request, State},
@@ -18,7 +19,9 @@ use axum::{
 };
 use pir_control::admission::{client_key, read_body, BodyError, ClientSlots, Queue};
 pub use publication::{Publication, Publications};
+use receiver_directory::Hash;
 use receiver_pir::{query_bytes, Error, HEADER_BYTES, MAGIC, MAX_ROWS};
+pub use recovery::{Object, Recovery};
 use std::{sync::Arc, time::Duration};
 
 // Preserve the historical bounded categories for unmatched product-shaped
@@ -59,6 +62,11 @@ fn receiver_endpoint(route: &str) -> Option<&'static str> {
         "witness" => "receiver_witness",
         "filters" => "receiver_filters",
         "health" => "receiver_health",
+        "catalog" => "receiver_catalog",
+        "bucket-index" => "receiver_bucket_index",
+        "bucket" => "receiver_bucket",
+        "paid" => "receiver_paid",
+        "seen" => "receiver_seen",
         _ => return None,
     })
 }
@@ -97,14 +105,22 @@ struct Service {
 }
 
 /// The receiver categories `pir_observability` reports.
-const ENDPOINTS: [&str; 6] = [
+const ENDPOINTS: [&str; 11] = [
     "receiver_init",
     "receiver_public",
     "receiver_query",
     "receiver_witness",
     "receiver_filters",
     "receiver_health",
+    "receiver_catalog",
+    "receiver_bucket_index",
+    "receiver_bucket",
+    "receiver_paid",
+    "receiver_seen",
 ];
+
+/// How caches may keep a recovery object: forever, since its route names its digest.
+const IMMUTABLE: &str = "public, max-age=31536000, immutable";
 
 /// Serve the current publication while the owner prepares, validates and rotates
 /// revisions, with the admission and refusals of `docs/serving-contract.md`.
@@ -176,6 +192,32 @@ fn router(service: Service) -> Router {
                 },
             ),
         )
+        .route(
+            "/v1/receiver/:kind/:digest",
+            get(
+                |State(s): State<Service>, Path((kind, digest)): Path<(String, String)>| async move {
+                    let object = digest_of(&digest).and_then(|d| match kind.as_str() {
+                        "catalog" => Some(Object::Catalog(d)),
+                        "bucket-index" => Some(Object::BucketIndex(d)),
+                        "paid" => Some(Object::Paid(d)),
+                        "seen" => Some(Object::Seen(d)),
+                        _ => None,
+                    });
+                    recovery_object(&s, object)
+                },
+            ),
+        )
+        .route(
+            "/v1/receiver/bucket/:start/:digest",
+            get(
+                |State(s): State<Service>,
+                 Path((start, digest)): Path<(String, String)>| async move {
+                    let start = start.parse::<u32>().ok().filter(|h| h.to_string() == start);
+                    let object = start.zip(digest_of(&digest)).map(|(h, d)| Object::Bucket(h, d));
+                    recovery_object(&s, object)
+                },
+            ),
+        )
         .layer(axum::middleware::map_response(no_store_errors))
         .layer(axum::middleware::from_fn_with_state(metrics, observe))
         .with_state(service)
@@ -238,6 +280,28 @@ fn material(s: &Service, id: &str, material: Material) -> Response {
             Some(bytes) => binary(bytes.clone()),
             None => StatusCode::SERVICE_UNAVAILABLE.into_response(),
         },
+    }
+}
+
+/// The digest `hex` names in canonical lowercase, so each object has one route.
+fn digest_of(hex: &str) -> Option<Hash> {
+    let digest: Hash = hex::decode(hex).ok()?.try_into().ok()?;
+    (hex::encode(digest) == hex).then_some(digest)
+}
+
+/// Serves `object` immutably while a live publication names it; otherwise, or for a
+/// malformed route, 404.
+fn recovery_object(s: &Service, object: Option<Object>) -> Response {
+    match object.and_then(|object| s.publications.object(&object)) {
+        Some(bytes) => (
+            [
+                (header::CONTENT_TYPE, "application/octet-stream"),
+                (header::CACHE_CONTROL, IMMUTABLE),
+            ],
+            bytes,
+        )
+            .into_response(),
+        None => StatusCode::NOT_FOUND.into_response(),
     }
 }
 

@@ -45,6 +45,10 @@ pattern = "src/receiver/receiver-indexer/fixtures/*.json"
 reason = "Mainnet probe input used by the receiver indexer."
 
 [[allow_data]]
+pattern = "src/shared/pir-publisher/receiver/tests/fixtures/recovery-vectors.json"
+reason = "wallet-libraries' pinned recovery object vectors, checked against the indexer's buckets."
+
+[[allow_data]]
 pattern = "evidence/transparent/transparent-native/testdata/*.json"
 reason = "Frozen independent prewarm-hint known-answer oracle."
 

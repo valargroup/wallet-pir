@@ -1,4 +1,5 @@
 //! Immutable prepared publications and atomic, reorg-fenced serving state.
+use crate::recovery::{Object, Recovery};
 use axum::{body::Bytes, http::StatusCode};
 use receiver_directory::{snapshot::Manifest, Hash};
 use receiver_pir::server::Server;
@@ -7,13 +8,15 @@ use std::{
     time::{Duration, Instant},
 };
 
-/// One revision prepared for serving, with its optional common witness file and the
-/// owner's report on the index it was built from.
+/// One revision prepared for serving, with its optional common witness file, the
+/// recovery objects its manifest commits to and the owner's report on the index it
+/// was built from.
 pub struct Publication {
     pub(crate) server: Server,
     pub(crate) witnesses: Option<Bytes>,
     pub(crate) id: Hash,
     pub(crate) report: Option<serde_json::Value>,
+    pub(crate) recovery: Option<Recovery>,
 }
 
 impl Publication {
@@ -28,7 +31,19 @@ impl Publication {
             server,
             witnesses: witnesses.map(Into::into),
             report: None,
+            recovery: None,
         }
+    }
+
+    /// Attaches the recovery objects, which activate and retire with this publication,
+    /// so a served manifest's catalog is always served too. A catalog the manifest
+    /// does not commit to is [`receiver_directory::Error::Malformed`].
+    pub fn with_recovery(mut self, recovery: Recovery) -> Result<Self, receiver_directory::Error> {
+        if recovery.catalog() != self.manifest().catalog_sha256 {
+            return Err(receiver_directory::Error::Malformed);
+        }
+        self.recovery = Some(recovery);
+        Ok(self)
     }
 
     /// Attaches the owner's report, such as feed freshness, which health serves with
@@ -201,6 +216,15 @@ impl Publications {
         }
         state.revoke();
         true
+    }
+
+    /// The encoding of `object`, if a revision that accepts new requests names it.
+    /// Objects are immutable, so any such revision may answer.
+    pub(crate) fn object(&self, object: &Object) -> Option<Bytes> {
+        self.expire();
+        let state = self.0.read().unwrap();
+        let found = state.live().find_map(|p| p.recovery.as_ref()?.get(object));
+        found
     }
 
     /// The publication `id` names, or the current one for `None`, with the current

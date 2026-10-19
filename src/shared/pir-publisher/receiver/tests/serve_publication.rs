@@ -81,6 +81,7 @@ fn publication(offset: u32, hash: Hash) -> (Snapshot, Vec<u8>) {
     manifest.end_hash = hash;
     manifest.start_position = 0;
     manifest.end_position = 8;
+    manifest.catalog_sha256 = common::catalog(mainnet()).head.digest().unwrap();
     let records: Vec<_> = [0u8, 5]
         .into_iter()
         .enumerate()
@@ -106,7 +107,8 @@ fn publication(offset: u32, hash: Hash) -> (Snapshot, Vec<u8>) {
 }
 
 /// Stages `snapshot` as a complete publication directory, in the indexer's file
-/// layout, and returns the directory and revision.
+/// layout with the recovery objects of [`common::catalog`] on mainnet, and returns the
+/// directory and revision.
 fn stage(
     root: &Path,
     name: &str,
@@ -125,6 +127,15 @@ fn stage(
     std::fs::write(dir.join(format!("{revision}.filters")), &snapshot.filters).unwrap();
     if let Some(witness) = witness {
         std::fs::write(dir.join(format!("{revision}.witness")), witness).unwrap();
+    }
+    let c = common::catalog(mainnet());
+    let recovery =
+        receiver_pir_server::Recovery::new(&c.head, &c.index, &c.buckets, &c.paid, &c.seen)
+            .unwrap();
+    for (object, bytes) in recovery.objects() {
+        let path = dir.join("recovery").join(object.path());
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, bytes).unwrap();
     }
     (dir, revision)
 }
@@ -376,6 +387,7 @@ enum StagedCase {
     Noncanonical,
     Witness,
     Rows,
+    Recovery,
     Relative,
     Rotation,
     LatestRecord,
@@ -415,6 +427,11 @@ async fn a_corrupt_witness_keeps_the_valid_publication_serving() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn corrupt_rows_keep_the_valid_publication_serving() {
     check_staged_publication(StagedCase::Rows).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_missing_recovery_object_keeps_the_valid_publication_serving() {
+    check_staged_publication(StagedCase::Recovery).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -469,6 +486,29 @@ async fn check_staged_publication(case: StagedCase) {
             })
             .collect();
         assert_eq!(found, expected, "the exact payments over encrypted PIR");
+        // The catalog the manifest commits to, and every object it names, are served
+        // immutably to the wallet client.
+        let http = Http(world.client.clone());
+        let manifest = DirectoryClient::fetch_manifest(&world.origin, &http)
+            .await
+            .unwrap();
+        let head = DirectoryClient::fetch_catalog(&world.origin, &http, &manifest)
+            .await
+            .unwrap();
+        let index = DirectoryClient::fetch_bucket_index(&world.origin, &http, &head)
+            .await
+            .unwrap();
+        let bucket = DirectoryClient::fetch_bucket(&world.origin, &http, &head, &index, 0)
+            .await
+            .unwrap();
+        assert_eq!(bucket.count(), 0);
+        let paid = DirectoryClient::fetch_paid(&world.origin, &http, &head)
+            .await
+            .unwrap();
+        assert_eq!(paid.matches(&[common::receiver()]), [true]);
+        DirectoryClient::fetch_seen(&world.origin, &http, &head)
+            .await
+            .unwrap();
 
         return;
     }
@@ -544,6 +584,11 @@ async fn check_staged_publication(case: StagedCase) {
         let last = bad_witness.len() - 1;
         bad_witness[last] ^= 1;
         let (witness_dir, witness_rev) = stage(&root, "witness", &b, Some(&bad_witness));
+        // A recovery object missing.
+        let (recovery_dir, recovery_rev) = stage(&root, "no-seen", &b, Some(&b_witness));
+        let seen = common::catalog(mainnet()).head.seen;
+        std::fs::remove_file(recovery_dir.join(format!("recovery/seen/{}", hex::encode(seen))))
+            .unwrap();
         // A same-length corrupt rows file.
         let (rows_dir, rows_rev) = stage(&root, "rows", &b, Some(&b_witness));
         let rows_path = rows_dir.join(format!("{rows_rev}.rows"));
@@ -581,6 +626,11 @@ async fn check_staged_publication(case: StagedCase) {
                 StagedCase::Rows,
                 (rows_dir, rows_rev),
                 refuse("corrupt rows", "invalid_source", "publication"),
+            ),
+            (
+                StagedCase::Recovery,
+                (recovery_dir, recovery_rev),
+                refuse("missing recovery object", "invalid_source", "recovery"),
             ),
         ] {
             if case != variant {

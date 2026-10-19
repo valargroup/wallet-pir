@@ -77,6 +77,12 @@ pub struct Config {
     pub near_since: Option<i64>,
     #[arg(long, default_value_t = 60, value_parser = clap::value_parser!(u64).range(10..))]
     pub near_poll_seconds: u64,
+    /// Closed 48-block buckets each publication's recovery catalog retains; older
+    /// history is in its cumulative paid set. The default is 30 days at 75-second
+    /// spacing.
+    #[arg(long, default_value_t = crate::recovery::RETAINED_BUCKETS, value_parser = clap::value_parser!(u32).range(1..=i64::from(receiver_directory::catalog::MAX_INDEX_BUCKETS)))]
+    #[serde(default = "default_retained_buckets")]
+    pub retained_buckets: u32,
     /// The partner key `NEAR_INTENTS_EXPLORER` holds, if any. Without one, publications
     /// carry no provider sets, whatever an earlier run left in `providers.sqlite`.
     #[serde(skip)]
@@ -97,8 +103,14 @@ impl From<&Config> for application::Config {
             batch_size: args.batch_size,
             concurrency: args.concurrency,
             providers_enabled: args.near_key.is_some(),
+            retained_buckets: args.retained_buckets,
         }
     }
+}
+
+/// See [`Config::retained_buckets`].
+fn default_retained_buckets() -> u32 {
+    crate::recovery::RETAINED_BUCKETS
 }
 
 impl Config {
@@ -130,6 +142,8 @@ impl Config {
             || self.batch_size > MAX_RECEIVER_BATCH_BLOCKS
             || self.concurrency == 0
             || self.concurrency > MAX_RECEIVER_CONCURRENCY
+            || self.retained_buckets == 0
+            || self.retained_buckets > receiver_directory::catalog::MAX_INDEX_BUCKETS
             || (self.serve && self.end_height.is_some())
         {
             return Err("invalid receiver source, polling, or batch settings".into());

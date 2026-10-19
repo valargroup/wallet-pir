@@ -1,5 +1,6 @@
 //! The receiver indexer's durable stores: atomic contiguous coverage with explicit
-//! rewind (empty blocks are retained too), and the provider feeds' `ProviderStore`.
+//! rewind (empty blocks are retained too), the provider feeds' `ProviderStore`, and
+//! the recovery directory's [`recovery::RecoveryStore`].
 //!
 //! Records, placement and publications are wallet-libraries'
 //! `zakura-receiver-directory`; this crate only persists them.
@@ -11,6 +12,8 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::path::Path;
+
+pub mod recovery;
 
 /// Why directory data, coverage or the database was rejected: the directory's own
 /// errors, unchanged, and the database's.
@@ -398,6 +401,19 @@ impl Store {
                 |r| r.get(0),
             )?,
         ))
+    }
+
+    /// The height and receiver of every stored payment at or below `end`, by height.
+    pub fn paid(&self, end: u32) -> Result<Vec<(u32, ReceiverBytes)>, Error> {
+        let mut query = self
+            .db
+            .prepare("SELECT height,receiver FROM payments WHERE height<=?1 ORDER BY height")?;
+        let rows = query.query_map([end], |r| Ok((r.get(0)?, r.get::<_, Vec<u8>>(1)?)))?;
+        rows.map(|row| {
+            let (height, receiver) = row?;
+            Ok((height, receiver.try_into().map_err(|_| Error::Malformed)?))
+        })
+        .collect()
     }
 
     /// Whether the index holds a payment to `receiver` in transaction `txid`.

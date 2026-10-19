@@ -1,8 +1,11 @@
 //! Fixtures shared by the receiver services' tests, included with `#[path]`.
 #![allow(dead_code)]
 use receiver_directory::{
+    catalog::{BucketIndex, CatalogHead},
+    paid::{PaidSet, Span},
+    seen::SeenSet,
     snapshot::{Manifest, PROFILE},
-    Payment, RawRecord, ReceiverBytes,
+    Hash, Payment, RawRecord, ReceiverBytes,
 };
 
 /// The Orchard receiver that the Action in `fixtures/zero-ovk-action.json` pays,
@@ -74,4 +77,45 @@ pub fn seeded_receiver(seed: u8) -> ReceiverBytes {
         .unwrap()
         .try_into()
         .unwrap()
+}
+
+/// A recovery catalog head on the network with `genesis` and the objects it names: one
+/// empty bucket `(0, 48]`, a cumulative set over the same span paying [`receiver`],
+/// and a seen set holding it.
+pub struct Catalog {
+    pub head: CatalogHead,
+    pub index: BucketIndex,
+    pub buckets: Vec<PaidSet>,
+    pub paid: PaidSet,
+    pub seen: SeenSet,
+}
+
+/// See [`Catalog`].
+pub fn catalog(genesis: Hash) -> Catalog {
+    let span = Span {
+        start: 0,
+        start_hash: genesis,
+        end: 48,
+        end_hash: [48; 32],
+    };
+    let buckets = vec![PaidSet::build(genesis, 0, span, []).unwrap()];
+    let index = BucketIndex::new(genesis, vec![(0, buckets[0].digest())]).unwrap();
+    let paid = PaidSet::build(genesis, 0, span, &[receiver()]).unwrap();
+    let seen = SeenSet::new(genesis, 10).union(&[receiver()]);
+    let head = CatalogHead {
+        genesis,
+        epoch: 0,
+        oldest_start: 0,
+        latest_end: 48,
+        paid: paid.digest(),
+        seen: seen.digest().unwrap(),
+        index: index.digest(),
+    };
+    Catalog {
+        head,
+        index,
+        buckets,
+        paid,
+        seen,
+    }
 }

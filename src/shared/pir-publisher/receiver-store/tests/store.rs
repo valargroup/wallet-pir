@@ -255,7 +255,10 @@ fn durable_coverage_atomic_failure_and_reorg() {
         commitments: vec![],
     };
     store.append(&empty).unwrap();
-    assert_eq!(store.snapshot(8, &[], [0; 32]).unwrap().manifest.end_height, 100);
+    assert_eq!(
+        store.snapshot(8, &[], [0; 32]).unwrap().manifest.end_height,
+        100
+    );
     let mut r = record(0, 1);
     r.payment.position = 202;
     let mut block = IndexedBlock {
@@ -499,7 +502,12 @@ fn crowded_buckets_retry_the_salt_before_growing() {
     }
     // A rebuild of the same coverage picks the same salt.
     assert_eq!(
-        store.snapshot(2, &[], [0; 32]).unwrap().manifest.revision().unwrap(),
+        store
+            .snapshot(2, &[], [0; 32])
+            .unwrap()
+            .manifest
+            .revision()
+            .unwrap(),
         first.manifest.revision().unwrap()
     );
 }
@@ -672,7 +680,10 @@ fn a_history_beyond_the_slots_is_a_capacity_failure() {
             commitments: vec![[6; 32]; n as usize],
         })
         .unwrap();
-    assert!(matches!(store.snapshot(1, &[], [0; 32]), Err(Error::Capacity)));
+    assert!(matches!(
+        store.snapshot(1, &[], [0; 32]),
+        Err(Error::Capacity)
+    ));
     assert_eq!(
         store.snapshot(4, &[], [0; 32]).unwrap().manifest.records,
         u64::from(n)

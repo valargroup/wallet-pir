@@ -6,8 +6,8 @@ use crate::{
 };
 use pir_pipeline::{FailurePolicy, Input};
 use receiver_directory::snapshot::{Snapshot, MAX_ROWS};
-use receiver_pir_server::{Publication, Publications};
-use receiver_store::{Config as StoreConfig, Error, ProviderStore, Store};
+use receiver_pir_server::{Publication, Publications, Recovery};
+use receiver_store::{recovery::RecoveryStore, Config as StoreConfig, Error, ProviderStore, Store};
 use std::{
     io::Write,
     path::{Path, PathBuf},
@@ -36,6 +36,8 @@ pub struct Config {
     pub concurrency: u32,
     /// Without an enabled feed, ignore even persisted provider sets.
     pub providers_enabled: bool,
+    /// Buckets each publication's recovery catalog retains; see [`crate::recovery`].
+    pub retained_buckets: u32,
 }
 
 use crate::verify::prepare as prepare_snapshot;
@@ -390,6 +392,16 @@ impl<'a> Collected<'a> {
             }
         }
         let started = std::time::Instant::now();
+        let (head, recovery) = crate::recovery::build(
+            store,
+            &mut RecoveryStore::open(args.data_dir.join(crate::recovery::RECOVERY), genesis)?,
+            genesis,
+            args.start_height,
+            args.retained_buckets,
+            &capture.sets,
+        )?;
+        log_stage("recovery", started);
+        let started = std::time::Instant::now();
         let records = store.counts()?.0;
         // Start at half occupancy. A crowded bucket retries the salt, then grows the table.
         let mut rows = u32::try_from((records / 7 + 1).next_power_of_two())?.max(args.min_rows);
@@ -399,7 +411,7 @@ impl<'a> Collected<'a> {
                     "directory exceeds the maximum row count; no publication created".into(),
                 );
             }
-            match store.snapshot(rows, &capture.sets, [0; 32]) {
+            match store.snapshot(rows, &capture.sets, recovery.catalog()) {
                 Ok(s) => break s,
                 Err(Error::Capacity) => rows *= 2,
                 Err(e) => return Err(e.into()),
@@ -457,18 +469,23 @@ impl<'a> Collected<'a> {
         "actions":snapshot.manifest.end_position-snapshot.manifest.start_position,
         "excluded_coinbase_actions":store.counts()?.1,"rows":rows,"row_bytes":snapshot.data.len(),
         "filter_bytes":snapshot.filters.len(),"filter_sets":snapshot.manifest.filters.iter()
-            .map(|set| (set.label.clone(), set.count)).collect::<std::collections::BTreeMap<_, _>>()});
+            .map(|set| (set.label.clone(), set.count)).collect::<std::collections::BTreeMap<_, _>>(),
+        "recovery":{"epoch":head.epoch,"oldest_start":head.oldest_start,"latest_end":head.latest_end}});
         let candidate = if serving.is_some() {
             let started = std::time::Instant::now();
-            let publication =
-                tokio::task::spawn_blocking(move || prepare_snapshot(snapshot, witnesses))
-                    .await??;
+            let publication = tokio::task::spawn_blocking(move || {
+                prepare_snapshot(snapshot, witnesses)?
+                    .with_recovery(recovery)
+                    .map_err(receiver_pir::Error::Directory)
+            })
+            .await??;
             log_stage("pir_prepare", started);
             Candidate::Serving(publication)
         } else {
             Candidate::Files {
                 snapshot,
                 witnesses,
+                recovery,
             }
         };
         Ok(Input::Work(Prepared {
@@ -492,6 +509,7 @@ enum Candidate {
     Files {
         snapshot: Snapshot,
         witnesses: Option<Vec<u8>>,
+        recovery: Recovery,
     },
 }
 
@@ -527,9 +545,15 @@ impl Prepared<'_> {
             Candidate::Files {
                 snapshot,
                 witnesses,
+                recovery,
             } => {
                 let started = std::time::Instant::now();
-                write_publication(&args.data_dir.join("publications"), &snapshot, witnesses)?;
+                write_publication(
+                    &args.data_dir.join("publications"),
+                    &snapshot,
+                    witnesses,
+                    &recovery,
+                )?;
                 log_stage("directory_write", started);
                 println!("{summary}");
                 return Ok(());
@@ -574,16 +598,38 @@ fn log_stage(stage: &str, started: std::time::Instant) {
     );
 }
 
-/// Durably write a revision's row and filter files and any witness file, then its
-/// manifest. A manifest over [`receiver_pir::MAX_MANIFEST_BYTES`], which clients read
-/// no more of, or invalid records or witnesses, writes nothing.
-fn write_publication(root: &Path, snapshot: &Snapshot, witnesses: Option<Vec<u8>>) -> Result<()> {
+/// Durably write a revision's recovery objects, its row and filter files and any
+/// witness file, then its manifest, so a staged manifest's objects are always
+/// present. Each recovery object is written at `recovery/<route>` (see
+/// [`receiver_pir_server::Object::path`]), shared by every revision naming it. A
+/// manifest over [`receiver_pir::MAX_MANIFEST_BYTES`], which clients read no more of,
+/// invalid records or witnesses, or a catalog the manifest does not commit to, writes
+/// nothing.
+fn write_publication(
+    root: &Path,
+    snapshot: &Snapshot,
+    witnesses: Option<Vec<u8>>,
+    recovery: &Recovery,
+) -> Result<()> {
     verify::check_publication(snapshot, witnesses.as_deref())?;
     let manifest = serde_json::to_vec_pretty(&snapshot.manifest)?;
     if manifest.len() > receiver_pir::MAX_MANIFEST_BYTES {
         return Err("publication manifest exceeds its size bound; nothing written".into());
     }
-    std::fs::create_dir_all(root)?;
+    if recovery.catalog() != snapshot.manifest.catalog_sha256 {
+        return Err("the catalog is not the manifest's; nothing written".into());
+    }
+    std::fs::create_dir_all(root.join("recovery/bucket"))?;
+    for (object, bytes) in recovery.objects() {
+        let path = root.join("recovery").join(object.path());
+        let parent = path.parent().expect("an object's directory");
+        std::fs::create_dir_all(parent)?;
+        write_revision_file(parent, path.file_name().unwrap().to_str().unwrap(), bytes)?;
+        std::fs::File::open(parent)?.sync_all()?;
+    }
+    for directory in ["recovery/bucket", "recovery"] {
+        std::fs::File::open(root.join(directory))?.sync_all()?;
+    }
     let revision = hex::encode(snapshot.manifest.revision()?);
     write_revision_file(root, &format!("{revision}.rows"), &snapshot.data)?;
     write_revision_file(root, &format!("{revision}.filters"), &snapshot.filters)?;
@@ -822,6 +868,7 @@ mod tests {
                 batch_size: crate::blocks::MAX_RECEIVER_BATCH_BLOCKS,
                 concurrency: 8,
                 providers_enabled: true,
+                retained_buckets: crate::recovery::RETAINED_BUCKETS,
             };
             let publications = Publications::default();
             let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -895,6 +942,40 @@ mod tests {
         paused.state = State::default();
         paused.refresh().await.unwrap();
         assert_eq!(paused.get("init").await, first);
+    }
+
+    /// A served manifest's recovery catalog is served with it, immutably, and a
+    /// restart publishes the same catalog from the durable recovery state.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_publication_serves_the_catalog_it_commits_to() {
+        let mut paused = Paused::new(|_| {}).await;
+        paused.refresh().await.unwrap();
+        let catalog = paused.get("init").await["directory"]["catalog_sha256"].clone();
+        let digest: Vec<u8> = serde_json::from_value(catalog.clone()).unwrap();
+        let url = format!(
+            "{}/v1/receiver/catalog/{}",
+            paused.origin,
+            hex::encode(&digest)
+        );
+        let response = reqwest::get(&url).await.unwrap();
+        assert!(response.status().is_success());
+        assert_eq!(
+            response.headers()["cache-control"],
+            "public, max-age=31536000, immutable"
+        );
+        let head =
+            receiver_directory::catalog::CatalogHead::decode(&response.bytes().await.unwrap())
+                .unwrap();
+        // The index ends before the first bucket closes: no bucket, and a cumulative
+        // set ending at the start boundary.
+        assert_eq!(head.oldest_start, head.latest_end);
+        paused.state = State::default();
+        paused.publications.revoke();
+        paused.refresh().await.unwrap();
+        assert_eq!(
+            paused.get("init").await["directory"]["catalog_sha256"],
+            catalog
+        );
     }
 
     /// Revocation and durable rewind precede collection: a source that cannot supply
@@ -1351,14 +1432,34 @@ mod tests {
         ));
     }
 
-    /// One-shot output validates persisted records and proofs before creating files.
+    /// The objects of [`super::common::catalog`] on `manifest`'s network, which
+    /// `manifest` is changed to commit to.
+    fn recovery(manifest: &mut receiver_directory::snapshot::Manifest) -> Recovery {
+        let c = super::common::catalog(manifest.genesis);
+        manifest.catalog_sha256 = c.head.digest().unwrap();
+        Recovery::new(&c.head, &c.index, &c.buckets, &c.paid, &c.seen).unwrap()
+    }
+
+    /// One-shot output validates persisted records and proofs before creating files,
+    /// and writes the recovery objects at their routes before the manifest.
     #[test]
     fn one_shot_output_refuses_invalid_records_and_proofs_before_writing() {
         let mut manifest = super::common::manifest(receiver_pir::MIN_ROWS);
         manifest.end_position = 300;
+        let recovery = recovery(&mut manifest);
         let valid = Snapshot::build(manifest.clone(), &[super::common::record(0, 1)], &[]).unwrap();
         let dir = tempfile::tempdir().unwrap();
-        write_publication(&dir.path().join("valid"), &valid, None).unwrap();
+        write_publication(&dir.path().join("valid"), &valid, None, &recovery).unwrap();
+        for (object, bytes) in recovery.objects() {
+            let path = dir.path().join("valid/recovery").join(object.path());
+            assert_eq!(std::fs::read(path).unwrap(), &bytes[..]);
+        }
+        // A catalog the manifest does not commit to writes nothing.
+        let root = dir.path().join("other-catalog");
+        let other = super::common::manifest(receiver_pir::MIN_ROWS);
+        let other = Snapshot::build(other, &[], &[]).unwrap();
+        assert!(write_publication(&root, &other, None, &recovery).is_err());
+        assert!(!root.exists());
         for field in 0..4 {
             let mut record = super::common::record(0, 1);
             match field {
@@ -1370,13 +1471,13 @@ mod tests {
             let snapshot = Snapshot::build(manifest.clone(), &[record], &[]).unwrap();
             let root = dir.path().join(format!("invalid-{field}"));
             assert!(
-                write_publication(&root, &snapshot, None).is_err(),
+                write_publication(&root, &snapshot, None, &recovery).is_err(),
                 "field {field}"
             );
             assert!(!root.exists());
         }
         let root = dir.path().join("invalid-proof");
-        assert!(write_publication(&root, &valid, Some(vec![0; 152])).is_err());
+        assert!(write_publication(&root, &valid, Some(vec![0; 152]), &recovery).is_err());
         assert!(!root.exists());
     }
 
@@ -1392,11 +1493,12 @@ mod tests {
                 receivers: Vec::new(),
             })
             .collect();
-        let manifest = super::common::manifest(receiver_pir::MIN_ROWS);
+        let mut manifest = super::common::manifest(receiver_pir::MIN_ROWS);
+        let recovery = recovery(&mut manifest);
         let snapshot = Snapshot::build(manifest, &[], &provider).unwrap();
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("publications");
-        assert!(write_publication(&root, &snapshot, None).is_err());
+        assert!(write_publication(&root, &snapshot, None, &recovery).is_err());
         assert!(!root.exists());
     }
 }

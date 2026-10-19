@@ -15,6 +15,10 @@ async fn main() -> Result<()> {
         let args = receiver_indexer::serve_publication::Args::parse_from(std::env::args().skip(1));
         return receiver_indexer::serve_publication::main(args).await;
     }
+    if std::env::args().nth(1).as_deref() == Some("recovery") {
+        let args = receiver_indexer::recovery::Args::parse_from(std::env::args().skip(1));
+        return receiver_indexer::recovery::run(args);
+    }
     if std::env::args().nth(1).as_deref() == Some("probe") {
         let args = receiver_indexer::probe::Args::parse_from(std::env::args().skip(1));
         std::process::exit(if receiver_indexer::probe::run(args).await {

@@ -74,7 +74,8 @@ than the table has slots, caught before placement; a supplied manifest claiming
 more records than its slots is malformed. The manifest (profile
 `ironwood-zero-ovk-receiver-v1`) binds the network, inclusive block coverage,
 boundary hashes, tree positions, geometry, salt, record count, the filter sets
-and the SHA-256 of the rows and of the filter file. The immutable revision is a
+the SHA-256 of the rows and of the filter file, and the
+digest of the recovery catalog head (see [Recovery objects](#recovery-objects)). The immutable revision is a
 domain-separated SHA-256 of every field at fixed width, as Enhance and Status
 hash their manifests, and a manifest with a field this version does not know is
 refused.
@@ -120,6 +121,46 @@ padding before matching. Every wallet downloads the same file, so testing it
 reveals nothing. The publisher is trusted for the sets' completeness, as for the
 rows.
 
+## Recovery objects
+
+Each publication's manifest also commits, by `catalog_sha256`, to a recovery
+catalog in the formats of wallet-libraries' `receiver_directory::{paid, seen,
+catalog}`, so a wallet can find payments to keys it never issued itself without a
+lookup per key. `receiver_indexer::recovery` builds it from the same index view as
+the rows:
+
+- Paid buckets: one for every closed, aligned 48-block interval `(start, end]`
+  from the first multiple of 48 at or above the index's start boundary, holding
+  every receiver paid in it, deduplicated within it. Empty buckets are published
+  too. Each binds the hashes of its boundary blocks and the payment-history epoch.
+- The cumulative paid set over `(0, end]`, `end` being the latest closed bucket's
+  end (the start boundary before one closes). The index holds every payment from
+  Ironwood activation, before which there are none.
+- The seen set: fixed 32-bit values of every receiver the provider seen sets have
+  ever held, with the feeds' start and last complete read as `since_unix` and
+  `until_unix`. It is the durable union of every value ever published: a feed
+  correction, a rebuilt index or provider store, a reorg or a restart never
+  removes one.
+- The bucket index of the latest `--retained-buckets` buckets (default 720, 30
+  days at 75-second spacing) and the catalog head naming the epoch, the retained
+  interval and every object's digest.
+
+`recovery.sqlite`, beside the index, holds what must outlive it: the epoch, the
+seen union and each published interval's boundary hashes and membership digest.
+Before a publication is prepared, an interval whose boundary hashes match the
+recorded ones but whose members differ is a correction to published history, and
+the epoch increments, however old the interval. A reorg changes boundary hashes
+instead, so the buckets above the fork are rebuilt under the same epoch. The
+database refuses lowering the epoch or recording a seen set that lacks a recorded
+value. `receiver-directory recovery --data-dir <dir> bump-epoch` increments the
+epoch for a correction the indexer cannot detect, and `recovery adopt --catalog
+<file> --seen <file>` takes over the live epoch and seen set on a replacement host
+from the objects as served. Both hold the data directory's lock, so they run only
+while the service is stopped.
+
+A seen set over its format's 4,194,304 values stops publication with an error
+naming that limit; the served publication stays.
+
 ## Witnesses
 
 The `IWPROOF1` witness file has a 152-byte header binding the genesis, revision,
@@ -150,6 +191,11 @@ the session ID.
 | `POST /v1/receiver/query` | One encrypted row query |
 | `GET /v1/receiver/witness/:session` | Common witness file |
 | `GET /v1/receiver/filters/:session` | Filter file |
+| `GET /v1/receiver/catalog/:digest` | Catalog head the manifest commits to |
+| `GET /v1/receiver/bucket-index/:digest` | Bucket index |
+| `GET /v1/receiver/bucket/:start/:digest` | Paid bucket starting at `start` |
+| `GET /v1/receiver/paid/:digest` | Cumulative paid set |
+| `GET /v1/receiver/seen/:digest` | Seen set |
 | `GET /v1/receiver/health` | Process identity, the served session, the indexer's report and this process's NEAR reads (operators only) |
 
 A query holds `RPQ1`, the session ID, a fresh 16-byte nonce, the packing key and
@@ -157,9 +203,15 @@ the encrypted row selection. The response echoes that 52-byte header. The
 receiver and page never appear in a route or header. A session not being served,
 whether unknown, revoked or expired, returns 410, a query longer than its
 session's 413 and a shorter or otherwise malformed one 400; the length is
-checked before the query waits for evaluation. Every response on these routes,
-refusals included, is `Cache-Control: no-store`, since a revoked session ID
-serves again if the same publication is republished. A query revoked while it is
+checked before the query waits for evaluation. Every response on the session
+routes, refusals included, is `Cache-Control: no-store`, since a revoked session ID
+serves again if the same publication is republished. A recovery object's route
+names its digest, so its content never changes: it is served `public,
+max-age=31536000, immutable` for a CDN to keep, while a publication that accepts
+requests (the current one, or its predecessor in its grace) names it. The objects
+activate atomically with their manifest, so `/v1/receiver/init` never names a
+catalog that is not served. An unknown or non-canonical route (an uppercase
+digest, a padded start) is a `no-store` 404. A query revoked while it is
 evaluated is 410; a response already being sent completes, and wallets
 revalidate their anchor. Queries are admitted with the primitives Enhance uses
 (`pir_control::admission`): two in flight per client, then a wait of up to 2
@@ -235,14 +287,16 @@ private), `state_dir`, `rpc_urls`, and `cookie` or `"no_auth": true`, with the
 optional `poll_seconds`, `witnesses` and `min_rows` of the indexer. The record
 is `{"directory": "/abs/path", "revision": "<64 hex>"}`: stage the complete
 directory a one-shot run writes (`<revision>.json`, `.rows`, `.filters`,
-`.witness`), then replace the record atomically (write beside it, rename over
+`.witness`, and the recovery objects at their routes under `recovery/`, written
+before the manifest), then replace the record atomically (write beside it, rename over
 it). It is a private local control input; there is no update route.
 
 Each record is verified in full before it can serve: the manifest must digest
 to the expected revision, be mainnet, start at Ironwood activation and hold at
-least `min_rows`, and the rows, filters and witnesses must be the ones it
-commits to, which the server library re-validates record by record while
-preparing PIR. Its anchor must then be canonical on the freshest node. Updates
+least `min_rows`, and the rows, filters, witnesses and recovery catalog must be
+the ones it commits to, which the server library re-validates record by record
+while preparing PIR. Every object the catalog names is read within its format's
+size bound and checked against the catalog head. Its anchor must then be canonical on the freshest node. Updates
 are serial: a newer record supersedes one still preparing, a record that does
 not verify is refused while the last valid publication keeps serving, and the
 publication rules above (epochs, monotonic coverage, the predecessor's
@@ -293,8 +347,10 @@ the rows only to answer queries.
 `cargo test -p receiver-store` covers publications and store restart and
 rollback, including the commitment history a witness file is built from.
 `cargo test -p receiver-pir-server` tests the HTTP service with the canonical
-library client. `cargo test -p receiver-indexer` covers indexing with synthetic
-blocks, refusal of invalid records and witness files before storing or serving,
+library client, including the recovery objects and their cache headers.
+`cargo test -p receiver-indexer` covers the recovery objects against the
+library's pinned vectors, through reorgs, restarts, corrections and rebuilds,
+indexing with synthetic blocks, refusal of invalid records and witness files before storing or serving,
 witness files fetched over HTTP and checked with the library, serving from
 memory and the probe's encrypted lookup.
 

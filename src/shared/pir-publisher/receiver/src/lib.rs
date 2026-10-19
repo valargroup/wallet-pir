@@ -8,6 +8,7 @@ pub mod blocks;
 pub mod canonical;
 pub mod near;
 pub mod probe;
+pub mod recovery;
 pub mod serve_publication;
 pub mod verify;
 

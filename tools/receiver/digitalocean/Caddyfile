@@ -9,7 +9,9 @@ receiver-pir.valargroup.dev {
 	# deliberately not here, as Transparent keeps its operator routes off the edge:
 	# health reports the indexer's NEAR feed and payout check. The PIR monitor reads
 	# health over the private network, where the firewall opens 18380 to it alone.
-	@wallet path /v1/receiver/init /v1/receiver/query /v1/receiver/public/* /v1/receiver/witness/* /v1/receiver/filters/*
+	# The recovery objects are addressed by digest and served `immutable`, so a CDN
+	# may cache them; the service's own Cache-Control passes through unchanged.
+	@wallet path /v1/receiver/init /v1/receiver/query /v1/receiver/public/* /v1/receiver/witness/* /v1/receiver/filters/* /v1/receiver/catalog/* /v1/receiver/bucket-index/* /v1/receiver/bucket/* /v1/receiver/paid/* /v1/receiver/seen/*
 	handle @wallet {
 		reverse_proxy 10.70.0.11:18380
 	}

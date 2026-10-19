@@ -2,8 +2,9 @@
 //! publications an operator stages, without indexing.
 //!
 //! The operator stages a complete publication directory, in the files a one-shot
-//! indexer run writes (`<revision>.json`, `.rows`, `.filters` and optionally
-//! `.witness`), and then atomically replaces a small record naming it:
+//! indexer run writes (`<revision>.json`, `.rows`, `.filters`, optionally `.witness`,
+//! and the recovery objects under `recovery/`), and then atomically replaces a small
+//! record naming it:
 //! `{"directory": "/abs/path", "revision": "<hex>"}`. The record is a private, local
 //! control input: there is no update route. This mode opens no index database,
 //! ingests no blocks and reads no partner key.
@@ -11,7 +12,9 @@
 //! Each record is loaded and verified in full before it can be served: the manifest
 //! must digest to the expected revision, cover history from Ironwood activation on
 //! mainnet, and commit to the row, filter and witness files beside it, which the
-//! Receiver server library re-validates record by record while preparing PIR. Its
+//! Receiver server library re-validates record by record while preparing PIR, and to
+//! the recovery catalog whose objects are read and checked against it. They activate
+//! with the publication, so a served manifest's catalog is always served. Its
 //! anchor must then be canonical on the freshest node. Throughout, an independent
 //! guard checks every served anchor and revokes on a confirmed reorg, as the
 //! indexer's serving mode does. [`Publications`] owns epochs, monotonic coverage and
@@ -28,10 +31,13 @@
 use crate::canonical::{freshest, is_canonical};
 use receiver_directory::Hash;
 use receiver_directory::{
+    catalog::{BucketIndex, CatalogHead, MAX_CATALOG_BYTES, MAX_INDEX_BYTES},
     filter::MAX_FILTERS_BYTES,
+    paid::{PaidSet, MAX_BUCKET_BYTES, MAX_PAID_BYTES},
+    seen::{SeenSet, MAX_SEEN_BYTES},
     snapshot::{Manifest, Snapshot, ROW_BYTES},
 };
-use receiver_pir_server::{Publication, Publications};
+use receiver_pir_server::{Object, Publication, Publications, Recovery};
 use serde::{Deserialize, Serialize};
 use std::{
     io::{Read, Write},
@@ -319,6 +325,8 @@ pub fn load(
         Err(e) => return Err(invalid(format!("witness: {e}"))),
     };
     let anchor = (manifest.end_height, manifest.end_hash);
+    let recovery = load_recovery(&record.directory, &manifest)
+        .map_err(|e| invalid(format!("recovery: {e}")))?;
     let publication = crate::verify::prepare(
         Snapshot {
             manifest,
@@ -327,7 +335,9 @@ pub fn load(
         },
         witnesses,
     )
-    .map_err(|e| invalid(format!("publication/witness: {e}")))?;
+    .map_err(|e| invalid(format!("publication/witness: {e}")))?
+    .with_recovery(recovery)
+    .map_err(|e| invalid(format!("recovery: {e}")))?;
     let report = serde_json::json!({
         "mode": "serve-publication",
         "directory": record.directory,
@@ -338,6 +348,33 @@ pub fn load(
         anchor,
         publication: publication.with_report(report),
     })
+}
+
+/// Reads the recovery objects `manifest`'s catalog head names from `directory`'s
+/// `recovery/` (see [`Object::path`]), each within its format's size bound, and checks
+/// them against the head with [`Recovery::new`].
+fn load_recovery(directory: &Path, manifest: &Manifest) -> Result<Recovery> {
+    let read = |object: Object, limit: usize| {
+        read_bounded(
+            &directory.join("recovery").join(object.path()),
+            limit as u64,
+        )
+    };
+    let head = CatalogHead::decode(&read(
+        Object::Catalog(manifest.catalog_sha256),
+        MAX_CATALOG_BYTES,
+    )?)?;
+    let index = BucketIndex::decode(&read(Object::BucketIndex(head.index), MAX_INDEX_BYTES)?)?;
+    let buckets = index
+        .iter()
+        .map(|(start, digest)| {
+            let bytes = read(Object::Bucket(start, digest), MAX_BUCKET_BYTES)?;
+            Ok(PaidSet::decode(&bytes)?)
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let paid = PaidSet::decode(&read(Object::Paid(head.paid), MAX_PAID_BYTES)?)?;
+    let seen = SeenSet::decode(&read(Object::Seen(head.seen), MAX_SEEN_BYTES)?)?;
+    Ok(Recovery::new(&head, &index, &buckets, &paid, &seen)?)
 }
 
 /// Reads at most `limit` bytes of `path`, refusing a longer file.

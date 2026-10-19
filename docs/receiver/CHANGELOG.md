@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Publish recovery objects with every publication, committed by the manifest's
+  `catalog_sha256`: closed 48-block paid buckets, a cumulative paid set, the
+  monotone seen set, a bucket index and the catalog head, in wallet-libraries'
+  formats, served from immutable, CDN-cacheable `/v1/receiver/{catalog,
+  bucket-index, bucket/<start>, paid, seen}/<digest>` routes, staged under
+  `recovery/` by one-shot runs and read by `serve-publication`. `recovery.sqlite`
+  keeps the payment-history epoch, which a detected correction of published
+  history increments, and the seen union across restarts, rebuilds and reorgs;
+  `receiver-directory recovery` bumps the epoch or adopts the live state on a new
+  host. `--retained-buckets` sets the catalog's retention (720 by default).
+
 - Validate records and witness proofs before writing one-shot publication files,
   including when reading an existing database; refuse invalid output before any
   files are created.
