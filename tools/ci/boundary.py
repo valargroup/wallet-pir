@@ -339,13 +339,12 @@ def runtime_resolved_violations(metadata, name):
 def runtime_graph_violations():
     """Resolve each runtime-free core with every feature it defines, and each shared
     foundation with its defaults, alone; report transport they reach and pending
-    exceptions that are no longer needed. The explicit CUDA backend feature is left
-    to cuda_boundary, as in the offline CPU graph: its GPU crates are not fetched
-    there, and it adds no transport."""
+    exceptions that are no longer needed. CUDA-enabled cores are included: `main`
+    fetches the locked graph first."""
     features = {p['name']: p['features'] for p in manifests() if not p['preserved']}
     problems = []
     for name in sorted(RUNTIME_FREE | set(HOST_FEATURES)):
-        selected = [] if name in HOST_FEATURES else [f for f in features[name] if f != 'cuda']
+        selected = [] if name in HOST_FEATURES else features[name]
         reached = runtime_resolved_violations(standalone_metadata({name}, {name: selected}), name)
         if name in RUNTIME_PENDING:
             if not reached:
