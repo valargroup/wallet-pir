@@ -90,6 +90,11 @@ is correctness evidence, not a qualified operating envelope or rollout approval.
   incremental compilation/setup/teardown/tools/lint; diagnose the complete run
   with `correctness.py --record-only`, retaining full-only and frozen coverage.
 
+The small-fixture [controller update campaign](prepared-distribution.md#controller-update-campaign)
+exercises the controller-update, outage, restart and 10-consumer distribution
+cases above as correctness diagnostics; it closes none of these boxes. Its
+100-consumer step needs existing hub storage.
+
 Suitable isolated hardware and unchanged-application fixture access are named
 qualification gates when unavailable; continue correctness without upgrading the
 wallet or weakening validation. No deployment or new infrastructure is authorized.
