@@ -1,7 +1,7 @@
-use std::future::IntoFuture;
 //! Private retrieval from a tiered, bucketed txid display publication.
 
 use clap::Parser;
+use std::future::IntoFuture;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use tower_http::limit::RequestBodyLimitLayer;
