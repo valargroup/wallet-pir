@@ -566,12 +566,9 @@ async fn batched_anchor_checks_bind_the_snapshot_and_fail_closed() {
     assert_eq!(response.status(), StatusCode::OK);
     let batch: AnchorBatch = response.json().await.unwrap();
     let answers = batch.answers(&request, &current.genesis_hash).unwrap();
-    assert_eq!(answers[&anchors[0]], true);
-    assert_eq!(
-        answers[&anchors[1]], false,
-        "a same-network mismatch is negative"
-    );
-    assert_eq!(answers[&anchors[2]], true);
+    assert!(answers[&anchors[0]]);
+    assert!(!answers[&anchors[1]], "a same-network mismatch is negative");
+    assert!(answers[&anchors[2]]);
 
     // Requests are POST-only, bounded and well formed.
     assert_eq!(
