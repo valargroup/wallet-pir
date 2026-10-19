@@ -103,7 +103,11 @@ def rust_checks(env, temporary, offline):
             program['args'] = ['ipir::tests', 'client::', 'protocol::', 'record::', 'record_types::']
     path = temporary / 'reference.json'
     path.write_text(json.dumps(reference_plan))
-    run(['python3', 'tools/ci/unit_tests.py', str(path), '--jobs=1', '--budget'], env=env, stage='tests:reference')
+    reference_fixtures = temporary / 'reference-fixtures'
+    reference_fixtures.mkdir()
+    reference_env = dict(env, WALLET_PIR_TEST_RUNTIME_CACHE=str(reference_fixtures))
+    run(['python3', 'tools/ci/unit_tests.py', str(path), '--jobs=1', '--budget'],
+        env=reference_env, stage='tests:reference')
     # Doctests are not executable artifacts in Cargo's no-run output.
     run(['cargo', 'test', '--workspace', '--doc', *options, '--features', FEATURES], env=env, stage='doctests')
     export_manifest = 'tools/txid/txid-sizing/export/Cargo.toml'

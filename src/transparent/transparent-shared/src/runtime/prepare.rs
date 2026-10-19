@@ -318,7 +318,11 @@ mod tests {
         // linked either.
         let foreign = publication(dir.path(), "foreign");
         let other = ("cd".repeat(32), shared.table, 0);
-        prepare_segment(&foreign, &[], &other, &shared, &source, "pages".into()).unwrap();
+        let runtime = first.load(&key, &shared, source.sha256()).unwrap();
+        foreign
+            .write(&other, &shared, source.sha256(), &runtime)
+            .unwrap();
+        drop(runtime);
         fs::rename(
             foreign.path(&other, &shared, source.sha256()),
             foreign.path(&key, &shared, source.sha256()),

@@ -830,7 +830,7 @@ mod tests {
                 })
                 .collect::<Vec<_>>()
         } else {
-            vec![(&transparent_shard::display::TXID_2K8, Table::TxDirectory)]
+            vec![(&super::super::tests::NATIVE_INSTANCE, Table::TxDirectory)]
         };
         for (geometry, table) in shapes {
             let dir = tempfile::tempdir().unwrap();
@@ -1230,7 +1230,22 @@ mod shipped_tests {
         } else {
             &super::super::tests::NATIVE_INSTANCE
         };
-        let shared = Arc::new(SharedParams::build_display(geometry, table).unwrap());
+        let shared = if cfg!(feature = "qualification-tests") {
+            Arc::new(SharedParams::build_display(geometry, table).unwrap())
+        } else {
+            static SHARED: std::sync::LazyLock<Arc<SharedParams>> =
+                std::sync::LazyLock::new(|| {
+                    Arc::new(
+                        SharedParams::build_display(
+                            &super::super::tests::NATIVE_INSTANCE,
+                            Table::TxDirectory,
+                        )
+                        .unwrap(),
+                    )
+                });
+            assert_eq!(table, Table::TxDirectory);
+            SHARED.clone()
+        };
         let profile = &shared.profile;
         let mut rows = vec![0u8; profile.rows * profile.row_bytes];
         for (i, byte) in rows[..filled * profile.row_bytes].iter_mut().enumerate() {
@@ -1265,7 +1280,13 @@ mod shipped_tests {
     /// filled page table. It is never written to the worker's disk cache.
     #[tokio::test(flavor = "multi_thread")]
     async fn a_shipped_runtime_is_the_locally_built_runtime() {
-        for (table, filled) in [(Table::TxDirectory, 2_048), (Table::TxDirectory, 700)] {
+        let filled_rows: &[usize] = if cfg!(feature = "qualification-tests") {
+            &[2_048, 700]
+        } else {
+            &[700]
+        };
+        for &filled in filled_rows {
+            let table = Table::TxDirectory;
             let dir = tempfile::tempdir().unwrap();
             let s = segment(dir.path(), table, filled, 1);
             let local = TableRuntime::build(&s.shared, &s.rows).unwrap();
@@ -1488,7 +1509,22 @@ mod shipped_tests {
     fn history_segment(dir: &Path, table: Table, filled: usize, seed: usize) -> Segment {
         use transparent_shard::layout::DECOUPLED_2K_8K;
         let (geometry, table) = super::super::tests::fixture_shape(&DECOUPLED_2K_8K, table);
-        let shared = Arc::new(SharedParams::build(geometry, table).unwrap());
+        let shared = if cfg!(feature = "qualification-tests") {
+            Arc::new(SharedParams::build(geometry, table).unwrap())
+        } else {
+            static SHARED: std::sync::LazyLock<Arc<SharedParams>> =
+                std::sync::LazyLock::new(|| {
+                    Arc::new(
+                        SharedParams::build(
+                            &super::super::tests::NATIVE_INSTANCE,
+                            Table::TxDirectory,
+                        )
+                        .unwrap(),
+                    )
+                });
+            assert_eq!(table, Table::TxDirectory);
+            SHARED.clone()
+        };
         let profile = &shared.profile;
         let mut rows = vec![0u8; profile.rows * profile.row_bytes];
         for (i, byte) in rows[..filled * profile.row_bytes].iter_mut().enumerate() {
