@@ -93,8 +93,7 @@ impl ArchiveStore {
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         retire(&tx, now)?;
         tx.execute(
-            "UPDATE archive_state SET active=NULL,
-                staged=CASE WHEN staged=?1 THEN NULL ELSE staged END WHERE active=?1",
+            "UPDATE archive_state SET active=NULL,staged=NULL WHERE active=?1",
             [head.digest()?.as_slice()],
         )?;
         tx.commit()?;

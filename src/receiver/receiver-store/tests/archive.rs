@@ -274,7 +274,13 @@ fn guard_revocation_fences_pending_activation() {
     let mut store = ArchiveStore::open(&path, config()).unwrap();
     let first = store.stage(blocks(256, false, false), None, 0).unwrap();
     store.activate(&first, 0).unwrap();
-    let delayed = store.stage(blocks(256, false, false), None, 1).unwrap();
+    // A pending extension and a refreshed seen object can both change the head digest.
+    let seen = SeenSet::new(config().genesis, 0).unwrap();
+    let reference = store.record_seen(&seen).unwrap();
+    let delayed = store
+        .stage(blocks(257, false, false), Some(reference), 1)
+        .unwrap();
+    assert_ne!(first.digest().unwrap(), delayed.digest().unwrap());
     store.revoke_if_head(&first, 2).unwrap();
     assert!(store.activate(&delayed, 3).is_err());
     assert!(store.head().unwrap().is_none());
