@@ -100,6 +100,14 @@ class WrappedFleet(FakeFleet):
         if argv[:2] == [PYTHON, '-c'] and argv[2] == aa.MODE_QUERY:
             modes = self.modes.get((host, argv[3]))
             return (0, json.dumps(modes)) if modes is not None else (1, 'unable to open database file')
+        if argv[:2] == [PYTHON, '-c'] and argv[2] == aa.STATUS_QUERY:
+            status, body = self.http_get(host, argv[3])
+            if status != 200:
+                return 1, json.dumps({'error': 'URLError'})
+            d = json.loads(body)
+            v = d['delivery']
+            return 0, json.dumps({'progress_ok': d.get('progress_ok'), 'evaluated_at': d.get('evaluated_at'),
+                                  'delivery': {**v, 'failure': bool(v.get('failure'))}})
         if '--enqueue-test-alert' in argv:
             self.runs.append((host, list(argv)))
             unit = 'pir-apm.service' if host == 'coordinator' else 'pir-monitor.service'
@@ -122,12 +130,12 @@ class Activation(unittest.TestCase):
         self.binary.write_bytes(NEW)
         f = self.fake = WrappedFleet()
         f.install('coordinator', 'pir-apm.service',
-                  '[Service]\nUser=pir-apm\nExecStart=/usr/local/bin/pir-apm\nEnvironment=PIR_APM_LISTEN=127.0.0.1:3002\n',
+                  '[Service]\nUser=pir-apm\nGroup=pir-apm\nExecStart=/usr/local/bin/pir-apm\nEnvironment=PIR_APM_LISTEN=127.0.0.1:3002\n',
                   drop_ins=APM_DROP_INS,
                   files={PYTHON: b'python', APM_WRAPPER: b'wrapper', APM_OLD: OLD,
                          CONFIG: json.dumps(SERVICES, indent=1)})
         f.install('monitor', 'pir-monitor.service',
-                  '[Service]\nUser=pir-monitor\nEnvironmentFile=/etc/pir-monitor/monitor.env\n'
+                  '[Service]\nUser=pir-monitor\nGroup=pir-monitor\nEnvironmentFile=/etc/pir-monitor/monitor.env\n'
                   'Environment=PIR_MONITOR_ALERT_MODE=shadow\nExecStart=%s %s %s\n' % (PYTHON, MON_WRAPPER, MON_BIN),
                   drop_ins=MON_DROP_INS,
                   files={PYTHON: b'python', MON_WRAPPER: b'wrapper', MON_BIN: MONITOR_BIN,
@@ -312,7 +320,7 @@ class Activation(unittest.TestCase):
             code, lines = self.run_cli('test', '--component', component, '--binary', str(self.binary))
             self.assertEqual(code, 0, lines)
             argv = self.fake.enqueued[-1][1]
-            self.assertEqual(argv[:4], ['/usr/sbin/runuser', '-u', user, '--'])
+            self.assertEqual(argv[:6], ['/usr/sbin/runuser', '-u', user, '-g', user, '--'])
             self.assertIn('PIR_APM_STATE_PATH=' + state, argv)
             self.assertEqual(self.fake.sha256(host, argv[-2]), sha256(NEW))
         self.assertEqual(self.fake.host('monitor').files[aa.monitor_tool(sha256(NEW))], NEW)

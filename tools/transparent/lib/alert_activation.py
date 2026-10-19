@@ -55,6 +55,18 @@ TEST_SECONDS = 300
 # Read-only: each family's last evaluated mode, written by every evaluation.
 MODE_QUERY = ("import json,sqlite3,sys;d=sqlite3.connect('file:'+sys.argv[1]+'?mode=ro',uri=True);"
               "print(json.dumps(dict(d.execute(\"SELECT key,value FROM metadata WHERE key LIKE 'mode%'\"))))")
+# Read-only and bounded: monitor-status bodies list every incident and can exceed the
+# helper's HTTP bound, so the host parses its own loopback response and returns only
+# these small fields. A delivery failure is reported as present or absent, never as
+# its text, which can carry the webhook URL.
+STATUS_QUERY = ("import json,sys,urllib.request\n"
+                "try:\n"
+                " d=json.load(urllib.request.urlopen(sys.argv[1],timeout=10));v=d.get('delivery') or {}\n"
+                " print(json.dumps({'progress_ok':d.get('progress_ok'),'evaluated_at':d.get('evaluated_at'),"
+                "'delivery':{'configured':v.get('configured'),'pending':v.get('pending'),"
+                "'last_success':v.get('last_success'),'failure':bool(v.get('failure'))}}))\n"
+                "except Exception as e:\n"
+                " print(json.dumps({'error':type(e).__name__}));sys.exit(1)\n")
 
 
 def require(condition, message):
@@ -162,13 +174,15 @@ def running_modes(ex, host, state_path):
 
 
 def monitor_status(ex, host, listen):
-    """The running service's `/monitor-status` body, or None when unreachable or invalid."""
+    """A bounded summary of the running service's `/monitor-status`, or None when unreachable or invalid."""
     try:
-        status, body = ex.http_get(host, 'http://%s/monitor-status' % listen)
-        document = json.loads(body) if status == 200 else None
+        code, output = ex.run(host, ['/usr/bin/python3', '-c', STATUS_QUERY, 'http://%s/monitor-status' % listen], 30)
+        document = json.loads(output.strip().splitlines()[-1]) if code == 0 else None
     except Exception:  # unreachable or invalid is reported as unknown, never as healthy
         document = None
-    return document if isinstance(document, dict) else None
+    if not isinstance(document, dict) or not isinstance(document.get('delivery'), dict):
+        return None
+    return document
 
 
 def delivery_line(label, status):
@@ -599,8 +613,14 @@ class Activator:
             before = self.a.monitor_status(name)
             if before is None or not (before.get('delivery') or {}).get('configured'):
                 raise DeployError('%s delivery is not configured or monitor-status is unreachable; nothing was queued' % name)
-            user = units.effective(unit_texts(state)).get('Service', {}).get('User')
-            argv = (['/usr/sbin/runuser', '-u', user, '--'] if user else []) + [
+            # As the daemon's own user and group: a root-opened database could leave
+            # root-owned WAL/SHM files the running worker cannot write.
+            service = units.effective(unit_texts(state)).get('Service', {})
+            if service.get('DynamicUser', 'no') not in ('no', 'false', '0'):
+                raise DeployError('%s uses DynamicUser; its database owner cannot be assumed' % component['unit'])
+            user, group = service.get('User'), service.get('Group')
+            identity = ['-u', user] + (['-g', group] if group else []) if user else []
+            argv = (['/usr/sbin/runuser'] + identity + ['--'] if identity else []) + [
                 '/usr/bin/env', 'PIR_APM_STATE_PATH=' + component['state_path'],
                 'PIR_APM_ENVIRONMENT=' + component['environment'], tool, '--enqueue-test-alert']
             self.lock.verify()
