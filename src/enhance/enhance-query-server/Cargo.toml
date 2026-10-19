@@ -12,17 +12,17 @@ publish = false
 qualification-tests = []
 default = []
 native-reinspiring = ["pir-serving/native-reinspiring", "dep:zakura-pir-query-server", "dep:reinspiring", "dep:rand_chacha", "ipir-sp/native-reinspiring"]
-cuda = ["ipir-sp/cuda", "dep:simplepir-kernel"]
+cuda = ["dep:pir-cuda", "pir-cuda/cuda"]
 
 client = ["dep:zakura-pir-client"]
 [dependencies]
+pir-cuda = { path = "../../shared/pir-cuda", optional = true }
 pir-observability = { path = "../../shared/pir-observability" }
 pir-control = { path = "../../shared/pir-control", features = ["admission"] }
 pir-runtime = { path = "../../shared/pir-runtime" }
 pir-serving = { path = "../../shared/pir-serving" }
 reinspiring = { version = "=0.1.3-rc.1", optional = true }
 rand_chacha = { version = "0.3", optional = true }
-simplepir-kernel = { version = "=0.1.0-rc.4", optional = true, features = ["cuda"] }
 axum = "0.7"
 base64 = "0.22"
 clap = { version = "4", features = ["derive", "env"] }

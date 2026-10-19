@@ -430,8 +430,7 @@ impl Generation {
             // second database copy and preserves a kernel-construction error.
             let mut reader = bytes;
             let db = build_from_le_u16(&mut reader, bytes.len() / 2, |values| {
-                IPIRServer::try_from_profile_with_backend(&local, values, false, true, backend)
-                    .map(PreparedDatabase::new)
+                crate::backend::server(&local, values, backend).map(PreparedDatabase::new)
             })
             .map_err(|_| Error::Unavailable)?
             .map_err(|_| Error::Unavailable)?;

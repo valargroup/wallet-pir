@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 import subprocess
 import tomllib
-from backend_features import NATIVE, TRANSPARENT
+from backend_features import NATIVE, TRANSPARENT, cpu_features
 from fast import ROOT, workspace_packages
 from stage import run
 
@@ -43,8 +43,9 @@ def qualification_features(names):
 def commands(group, groups, lint=False, compile_only=False):
     names = groups[group]
     if lint:
-        return [['cargo', 'clippy', '--locked', '--all-targets', '--all-features',
-                 *[arg for name in names for arg in ('-p', name)], '--', '-D', 'warnings']]
+        return [['cargo', 'clippy', '--locked', '--all-targets',
+                 *[arg for name in names for arg in ('-p', name)],
+                 '--features', ','.join(cpu_features(names)), '--', '-D', 'warnings']]
     runner = ['cargo', 'test', '--no-run'] if compile_only else ['bash', 'tools/ci/full-test.sh']
     features = {
         'enhance': NATIVE + [
@@ -72,11 +73,15 @@ def commands(group, groups, lint=False, compile_only=False):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--group', choices=['shared', 'enhance', 'transparent', 'receiver'])
+    parser.add_argument('--group', choices=['shared', 'enhance', 'transparent', 'receiver', 'all'])
     parser.add_argument('--lint', action='store_true')
     parser.add_argument('--compile-only', action='store_true')
     args = parser.parse_args()
+    if args.group == 'all' and not args.lint:
+        parser.error('--group all requires --lint')
     groups = inventory()
+    if args.group == 'all':
+        groups['all'] = [name for names in groups.values() for name in names]
     print('Full workspace package classification is complete', flush=True)
     if args.group:
         for command in commands(args.group, groups, args.lint, args.compile_only):

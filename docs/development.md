@@ -172,8 +172,17 @@ shared across lanes; `OFFLINE=1` avoids downloads but does not eliminate every
 registry-cache lock. GitHub Actions keeps its own target/cache lanes; see
 [Cargo cache identity and reuse](ci-performance.md#cargo-cache-identity-and-reuse).
 Trusted CI release-native and q48 targets are separate lanes.
-CUDA caches are separate by the Ubuntu 22.04 ABI, pinned compiler and CPU flags.
+CUDA checks have their own cache lane. CUDA release caches are additionally
+separate by the Ubuntu 22.04 ABI, pinned compiler and CPU flags.
 Caches cannot cross from PR code into trusted release users.
+
+CPU lint enumerates every non-CUDA feature instead of enabling `--all-features`.
+The optional `pir-cuda` library owns CUDA dependencies, and boundary checks reject
+other features that enable CUDA indirectly. CUDA has a separate affected-change
+selector and workflow; ordinary full and nightly CPU checks do not imply CUDA.
+Explicit qualification uses `ci-qualify.yml` with `include-cuda=true`. A revision
+without CUDA qualification has no deployable CUDA artifact. See
+[CUDA validation](enhance/cuda_workers.md#validation) for triggers and commands.
 
 Use the installed `misc-create-pr` skill to publish and monitor requested PRs,
 and `roman-dev-ux` for slow-command observations and detached local checks.

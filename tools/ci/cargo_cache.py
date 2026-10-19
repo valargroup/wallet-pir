@@ -54,15 +54,16 @@ PREFIX = 'v1-wallet-pir'
 # unknown pairs fail so that a new job chooses its partition explicitly.
 SCOPES = {
     ('fast', 'affected'): ('release-fast', 'selected packages with classified features'),
-    ('full-lint', 'transparent'): ('dev', 'clippy all-targets all-features'),
-    ('full-lint', 'enhance'): ('dev', 'clippy all-targets all-features'),
+    ('full-lint', 'transparent'): ('dev', 'clippy all-targets CPU features'),
+    ('full-lint', 'enhance'): ('dev', 'clippy all-targets CPU features'),
     ('full-test', 'transparent'): ('release-fast', 'workspace consumers; transparent-publisher/rocksdb-reader, transparent-tools/compact-export'),
-    ('full-test', 'enhance'): ('release-fast', 'enhance-pir-client; native-reinspiring; cuda checks'),
-    ('full-test', 'shared'): ('dev,release-fast', 'clippy all-features; pir-control/admission'),
-    ('full-test', 'receiver'): ('dev,release-fast', 'clippy all-features'),
+    ('full-test', 'enhance'): ('release-fast', 'enhance-pir-client; native-reinspiring; CPU checks'),
+    ('full-test', 'shared'): ('dev,release-fast', 'clippy CPU features; pir-control/admission'),
+    ('full-test', 'receiver'): ('dev,release-fast', 'clippy CPU features'),
     ('release', 'q48'): ('release', 'enhance-pir-client'),
     ('release', 'publisher'): ('release,release-fast', 'pir-publisher/transparent; transparent regression, history rate and txid rate acceptance tools'),
     ('release-native', 'native'): ('release', 'enhance-pir-client,native-reinspiring,pir-query-server/enhance,native-reinspiring'),
+    ('cuda-test', 'cuda'): ('dev,release-fast', 'explicit CUDA checks, lint and driver-free tests'),
     ('native-cuda', 'cuda'): ('release', 'enhance-pir-client,native-reinspiring,pir-query-server/enhance,native-reinspiring,cuda'),
 }
 # Shards have private hosted targets, including their complete selection policy.
@@ -71,7 +72,7 @@ for shard_name, shard in json.loads((ROOT / 'tools/ci/test-matrix.json').read_te
     SCOPES['full-test', shard_name] = (
         'dev,release-fast', json.dumps(shard, sort_keys=True) + ':' +
         hashlib.sha256((ROOT / 'tools/ci/test_matrix.py').read_bytes()).hexdigest())
-SCOPES['full-lint', 'receiver'] = ('dev', 'clippy all-targets all-features')
+SCOPES['full-lint', 'receiver'] = ('dev', 'clippy all-targets CPU features')
 
 
 def workspace_lane(lane):

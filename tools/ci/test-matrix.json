@@ -205,7 +205,8 @@
       "cuda:enhance-query-server:check:enhance_query_server",
       "cuda:pir-query-server:check:pir_query_server",
       "cuda:status-publisher:check:status_publisher",
-      "cuda:status-query-server:check:status_query_server"
+      "cuda:status-query-server:check:status_query_server",
+      "cuda:pir-cuda:check:pir_cuda"
     ]
   },
   "enhance-cuda-tests": {

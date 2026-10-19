@@ -9,6 +9,9 @@ on:
       family:
         type: string
         required: true
+      include-cuda:
+        type: boolean
+        default: false
       defer-release:
         type: boolean
         default: false
@@ -19,6 +22,10 @@ on:
     - cron: '17 4 * * *'
   workflow_dispatch:
     inputs:
+      include-cuda:
+        description: Explicitly include CUDA checks
+        type: boolean
+        default: false
       publisher-only:
         description: Build and check a Transparent publisher candidate from this exact ref, without deploying
         type: boolean
@@ -120,6 +127,12 @@ jobs:
         if: always()
         continue-on-error: true
         run: umask 022 && python3 tools/ci/cargo_cache.py report
+
+  cuda:
+    name: CUDA
+    needs: select
+    if: inputs.include-cuda && needs.select.outputs.enhance == 'true'
+    uses: ./.github/workflows/ci-cuda.yml
 
   transparent-lint:
     needs: select
@@ -351,12 +364,13 @@ jobs:
   complete:
     name: Full checks complete
     if: always() && needs.select.result == 'success'
-    needs: [select, transparent-lint, transparent-test, enhance-lint, enhance-test, shared-test, receiver-test, validate-ops, validate-enhance-infra, validate-transparent-elastic-infra]
+    needs: [select, cuda, transparent-lint, transparent-test, enhance-lint, enhance-test, shared-test, receiver-test, validate-ops, validate-enhance-infra, validate-transparent-elastic-infra]
     runs-on: ubuntu-24.04
     steps:
       - name: Verify selected checks completed
         env:
           RESULTS: ${{ toJSON(needs) }}
+          INCLUDE_CUDA: ${{ inputs.include-cuda }}
         run: |
           umask 022
           python3 - <<'PYCHECK'
@@ -369,6 +383,9 @@ jobs:
                     'receiver-test': 'receiver',
                     'validate-ops': 'ops', 'validate-enhance-infra': 'enhance_infra',
                     'validate-transparent-elastic-infra': 'transparent_infra'}
+          expected_cuda = 'success' if os.environ['INCLUDE_CUDA'] == 'true' and results['select']['outputs']['enhance'] == 'true' else 'skipped'
+          if results['cuda']['result'] != expected_cuda:
+              raise SystemExit('CUDA checks did not complete as selected')
           for job, group in groups.items():
               expected = 'success' if results['select']['outputs'][group] == 'true' else 'skipped'
               if results[job]['result'] != expected:
@@ -448,8 +465,8 @@ jobs:
 
   build-cuda:
     name: Build candidate native CUDA artifact (Ubuntu 22.04)
-    if: ${{ !cancelled() && needs.select.result == 'success' && (needs.validate-ops.result == 'success' || needs.validate-ops.result == 'skipped') && inputs.family == 'enhance' && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
-    needs: [select, validate-ops]
+    if: ${{ !cancelled() && needs.select.result == 'success' && (needs.validate-ops.result == 'success' || needs.validate-ops.result == 'skipped') && inputs.include-cuda && needs.cuda.result == 'success' && inputs.family == 'enhance' && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+    needs: [select, validate-ops, cuda]
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     env:

@@ -55,8 +55,8 @@ impl MatvecConfig {
     }
 
     #[cfg(feature = "cuda")]
-    fn cuda_kernel(self) -> Result<simplepir_kernel::cuda::CudaKernel, KernelError> {
-        simplepir_kernel::cuda::CudaKernel::new(self.cuda_device.unwrap_or(0))
+    fn cuda_kernel(self) -> Result<Box<dyn pir_cuda::FirstDimKernel<u16>>, KernelError> {
+        pir_cuda::kernel(self.cuda_device.unwrap_or(0))
     }
 
     pub(crate) fn server(
@@ -89,7 +89,7 @@ impl MatvecConfig {
                         coefficients,
                         transposed,
                         true,
-                        Box::new(self.cuda_kernel()?),
+                        self.cuda_kernel()?,
                     )
                 }
                 #[cfg(not(feature = "cuda"))]

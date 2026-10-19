@@ -41,7 +41,7 @@ prepare-dev:
 
 check-full: check-hygiene check-ops check-docs check-reports check-tools
 	cargo fmt --all --check
-	cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+	python3 tools/ci/full_packages.py --group all --lint
 	tools/ci/full-test.sh --locked --workspace --profile release-fast --features enhance-publisher/qualification-tests,enhance-query-server/qualification-tests,transparent-publisher/qualification-tests,transparent-shared/qualification-tests,transparent-publisher/rocksdb-reader,transparent-tools/test-support,transparent-tools/compact-export
 
 # The deploy scripts' jq programs, compiled and run against payloads the server

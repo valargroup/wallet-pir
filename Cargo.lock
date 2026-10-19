@@ -878,6 +878,7 @@ dependencies = [
  "libc",
  "memmap2",
  "pir-control",
+ "pir-cuda",
  "pir-observability",
  "pir-runtime",
  "pir-serving",
@@ -2107,6 +2108,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "pir-cuda"
+version = "0.1.0"
+dependencies = [
+ "ipir-sp",
+ "simplepir-kernel",
+]
+
+[[package]]
 name = "pir-monitor"
 version = "0.1.0"
 dependencies = [
@@ -3108,6 +3117,7 @@ dependencies = [
  "ipir-sp",
  "libc",
  "pir-control",
+ "pir-cuda",
  "pir-runtime",
  "pir-serving",
  "prometheus",

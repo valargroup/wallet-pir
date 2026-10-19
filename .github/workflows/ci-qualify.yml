@@ -3,6 +3,10 @@ name: Qualify services
 on:
   workflow_dispatch:
     inputs:
+      include-cuda:
+        description: Qualify CUDA and produce its artifact at this exact revision
+        type: boolean
+        default: false
       family:
         description: Service to qualify at this exact main revision
         type: choice
@@ -31,6 +35,7 @@ jobs:
       receiver: ${{ steps.affected.outputs.receiver }}
       transparent: ${{ steps.affected.outputs.transparent }}
       enhance: ${{ steps.affected.outputs.enhance }}
+      cuda: ${{ steps.affected.outputs.cuda }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -40,7 +45,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           FAMILY: ${{ inputs.family || 'affected' }}
-        run: python3 tools/ci/qualification.py select --sha "$GITHUB_SHA" --family "$FAMILY"
+          INCLUDE_CUDA: ${{ inputs.include-cuda }}
+        run: |
+          args=()
+          [[ "$INCLUDE_CUDA" != true ]] || args+=(--include-cuda)
+          python3 tools/ci/qualification.py select --sha "$GITHUB_SHA" --family "$FAMILY" "${args[@]}"
 
   common:
     name: Common
@@ -94,6 +103,7 @@ jobs:
     uses: ./.github/workflows/ci-full.yml
     with:
       family: enhance
+      include-cuda: ${{ needs.select.outputs.cuda == 'true' }}
       service-only: true
       defer-release: true
 
@@ -152,7 +162,7 @@ jobs:
   publish-cuda:
     name: Enhance / Prepare native CUDA release artifact (Ubuntu 22.04)
     needs: [select, common, shared, enhance]
-    if: ${{ !cancelled() && needs.select.outputs.enhance == 'true' && needs.common.result == 'success' && needs.shared.result == 'success' && needs.enhance.result == 'success' }}
+    if: ${{ !cancelled() && needs.select.outputs.cuda == 'true' && needs.common.result == 'success' && needs.shared.result == 'success' && needs.enhance.result == 'success' }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
