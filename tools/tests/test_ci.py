@@ -152,6 +152,42 @@ class BoundaryTests(unittest.TestCase):
                 self.assertEqual(len(boundary.violations(packages, [])), 1, (kind, name))
                 self.assertEqual(boundary.violations(packages, [f'svc -> {name}']), [])
 
+    def test_runtime_free_cores_declare_no_transport_edge_of_any_kind(self):
+        core = next(iter(sorted(boundary.RUNTIME_FREE - boundary.RUNTIME_PENDING)))
+        for kind in ['dependencies', 'dev-dependencies', 'build-dependencies',
+                     'target.cfg(unix).dependencies']:
+            for name in ['tokio', 'axum', 'reqwest']:
+                edge = {**self.edge(name, kind), 'optional': True}
+                packages = [{'name': core, 'manifest': 'core/Cargo.toml', 'dependencies': [edge]}]
+                self.assertEqual(len(boundary.violations(packages, [])), 1, (kind, name))
+        pending = next(iter(sorted(boundary.RUNTIME_PENDING)))
+        packages = [{'name': pending, 'manifest': 'p/Cargo.toml', 'dependencies': [self.edge('tokio')]}]
+        self.assertEqual(boundary.violations(packages, []), [])
+
+    def test_shared_foundations_offer_transport_only_as_optional_host_features(self):
+        for foundation in boundary.HOST_FEATURES:
+            required = [{'name': foundation, 'manifest': 'f/Cargo.toml',
+                         'dependencies': [self.edge('axum')]}]
+            self.assertEqual(len(boundary.violations(required, [])), 1, foundation)
+            optional = [{'name': foundation, 'manifest': 'f/Cargo.toml', 'dependencies': [
+                {**self.edge('axum'), 'optional': True}, self.edge('tokio', 'dev-dependencies')]}]
+            self.assertEqual(boundary.violations(optional, []), [], foundation)
+
+    def test_runtime_closure_follows_only_production_edges(self):
+        metadata = {
+            'packages': [{'id': 'core', 'name': 'core', 'source': None},
+                         {'id': 'lib', 'name': 'lib', 'source': 'registry+x'},
+                         {'id': 'tokio', 'name': 'tokio', 'source': 'registry+x'},
+                         {'id': 'axum', 'name': 'axum', 'source': 'registry+x'}],
+            'resolve': {'nodes': [
+                {'id': 'core', 'deps': [
+                    {'pkg': 'lib', 'dep_kinds': [{'kind': None}]},
+                    {'pkg': 'axum', 'dep_kinds': [{'kind': 'dev'}]}]},
+                {'id': 'lib', 'deps': [{'pkg': 'tokio', 'dep_kinds': [{'kind': 'build'}]}]},
+                {'id': 'tokio', 'deps': []}, {'id': 'axum', 'deps': []}]},
+        }
+        self.assertEqual(boundary.runtime_resolved_violations(metadata, 'core'), ['tokio'])
+
     def test_preserved_evidence_workspaces_are_checked_for_direct_edges(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -278,7 +314,8 @@ class BoundaryTests(unittest.TestCase):
     def test_offline_mode_reaches_workspace_metadata_and_helper_targets(self):
         metadata = {'packages': [], 'resolve': {'nodes': []}}
         with patch.object(boundary.subprocess, 'check_output', return_value=json.dumps(metadata)), \
-             patch.object(boundary, 'standalone_metadata', return_value=metadata):
+             patch.object(boundary, 'standalone_metadata', return_value=metadata), \
+             patch.object(boundary, 'runtime_graph_violations', return_value=[]):
             self.assertEqual(boundary.main(['--resolved', '--offline']), 0)
             self.assertIn('--offline', boundary.subprocess.check_output.call_args.args[0])
         commands = subprocess.check_output(['make', '-n', 'check-tools', 'OFFLINE=1'],

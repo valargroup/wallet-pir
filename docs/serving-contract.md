@@ -172,6 +172,8 @@ buffered bytes. Enhance uses the fenced body; Receiver retains query admission a
 its publication, and Transparent retains prepared handles and query memory.
 
 `pir-observability::ObservedBody` counts polled frames through product callbacks.
+Its counters and rendering are runtime-independent; the Axum middleware and
+`ObservedBody` are the optional host-only `http` feature.
 Enhance keeps its existing metric families and starts processing time after upload;
 Transparent and Receiver retain their handler-duration and cancellation accounting.
 Their adapters classify paths into fixed labels before calling shared observation;

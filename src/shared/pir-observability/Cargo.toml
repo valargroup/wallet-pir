@@ -6,10 +6,15 @@ description = "Metrics and tracing helpers shared by the PIR services"
 license = "MIT"
 repository = "https://github.com/valargroup/wallet-pir"
 
+[features]
+# Host-only Axum middleware and streamed-body observation; see `src/http.rs`.
+http = ["dep:axum", "dep:http-body"]
+
 [dependencies]
-axum = "0.7"
-http-body = "1"
+axum = { version = "0.7", optional = true }
+http-body = { version = "1", optional = true }
 
 [dev-dependencies]
+pir-observability = { path = ".", features = ["http"] }
 tokio = { version = "1", features = ["full"] }
 tower = { version = "0.5", features = ["util"] }
