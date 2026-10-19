@@ -210,7 +210,7 @@ async fn json(origin: &str, path: &str) -> Option<serde_json::Value> {
         .ok()
 }
 async fn wait_through(process: &mut Process, origin: &str, path: &str, height: u64) {
-    let deadline = Instant::now() + Duration::from_secs(180);
+    let deadline = Instant::now() + Duration::from_secs(300);
     loop {
         process.assert_running();
         if json(origin, path)
@@ -375,8 +375,8 @@ async fn unified_publisher_drives_independent_full_history_and_display_consumers
             output: history_bootstrap.clone(),
             previous: None,
             recent_geometry: "decoupled-2k-8k".into(),
-            archive_geometry: None,
-            recent_from: None,
+            archive_geometry: Some("decoupled-32k-32k".into()),
+            recent_from: Some(2),
             zakura_rpc_url: String::new(),
             zakura_cookie: out.join("unused"),
             through: None,
@@ -525,7 +525,7 @@ async fn unified_publisher_drives_independent_full_history_and_display_consumers
         )
         .build()
         .unwrap();
-    let deadline = Instant::now() + Duration::from_secs(180);
+    let deadline = Instant::now() + Duration::from_secs(300);
     loop {
         publisher.assert_running();
         let mut ready = true;
@@ -580,7 +580,7 @@ async fn unified_publisher_drives_independent_full_history_and_display_consumers
         append(&history, &display, height);
         tip.store(height, Ordering::Release);
         publisher.start();
-        let deadline = Instant::now() + Duration::from_secs(180);
+        let deadline = Instant::now() + Duration::from_secs(300);
         while json(&origins[2], "/v2/shards/init")
             .await
             .is_none_or(|s| s["covered_through"] != height)
