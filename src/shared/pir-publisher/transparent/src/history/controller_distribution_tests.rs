@@ -783,7 +783,7 @@ mod manager_tests;
 #[tokio::test(flavor = "multi_thread")]
 async fn full_history_http_holdings_include_archive_runtimes() {
     let root = tempfile::tempdir().unwrap();
-    let (directory, set) = publication(root.path());
+    let (directory, set) = publication_fixture(root.path(), 2, true);
     let prepared =
         transparent_shared::runtime::prebuild::prepare_publication(&set, &directory, &[], &|| {
             false
