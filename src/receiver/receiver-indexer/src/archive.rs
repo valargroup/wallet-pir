@@ -257,6 +257,16 @@ pub fn router(location: Location) -> Router {
             location,
             slots: Arc::new(Semaphore::new(2)),
         })
+        .layer(axum::middleware::map_response(no_store))
+}
+
+/// Refusals are transient too: cached 410/503 responses must not survive recovery.
+async fn no_store(mut response: Response) -> Response {
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        axum::http::HeaderValue::from_static("no-store"),
+    );
+    response
 }
 
 /// Refuses malformed path identities before scheduling database work.
@@ -331,13 +341,9 @@ mod tests {
         );
         let app = router(location.clone());
         let task = tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
-        assert_eq!(
-            reqwest::get(format!("{origin}/head"))
-                .await
-                .unwrap()
-                .status(),
-            StatusCode::GONE
-        );
+        let unavailable = reqwest::get(format!("{origin}/head")).await.unwrap();
+        assert_eq!(unavailable.status(), StatusCode::GONE);
+        assert_eq!(unavailable.headers()[header::CACHE_CONTROL], "no-store");
         let seen = SeenSet::new([1; 32], 0).union([&[7; 43]]);
         let reference = archive.record_seen(&seen).unwrap();
         let head = archive
@@ -385,6 +391,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(missing.status(), StatusCode::GONE);
+        assert_eq!(missing.headers()[header::CACHE_CONTROL], "no-store");
         assert_eq!(missing.bytes().await.unwrap().len(), 0);
         archive.revoke(1).unwrap();
         assert_eq!(
