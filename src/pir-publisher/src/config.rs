@@ -169,14 +169,11 @@ impl Config {
         if let Some(c) = active(&self.status)? {
             c.validate()?;
             layout.listener("status", c.publisher.private_listen)?;
-            if let Some(addr) = c.public_listen {
-                layout.listener("status", addr)?;
-            }
             layout.root("status", &c.publisher.state_dir)?;
             layout.probe(
                 "status",
                 c.publisher.private_listen,
-                "/v1/status/init",
+                "/control/active",
                 "status",
             );
         }
@@ -243,7 +240,7 @@ mod tests {
         .unwrap();
         let layout = config.validate().unwrap();
         assert_eq!(layout.probes.len(), 5);
-        assert_eq!(layout.listeners.len(), 8);
+        assert_eq!(layout.listeners.len(), 7);
     }
     #[cfg(feature = "receiver")]
     #[test]

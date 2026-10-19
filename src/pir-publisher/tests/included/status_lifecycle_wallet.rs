@@ -1,11 +1,12 @@
 //! Status wallet lifecycle. Compiled into status-publisher with `fixtures`
 //! and native packing, where it can drive the private publication task.
 use super::*;
+use pir_query_server::status::Service;
 #[allow(dead_code)]
 mod transport {
     include!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../status-query-server/tests/support/status_http.rs"
+        "/../../pir-query-server/tests/support/status_http.rs"
     ));
 }
 use transport::Loopback;
@@ -56,16 +57,10 @@ async fn shared_status_lifecycle_collects_publishes_and_advances_over_real_roles
         window_blocks: 1,
         worker_origin: worker_origin.clone(),
         router_origin: router_origin.clone(),
-        query_router_origin: None,
         private_listen: listener.local_addr().unwrap(),
-        public_enabled: true,
     })
     .unwrap();
-    let app = publisher.routes().merge(
-        Router::new()
-            .route("/artifact/:id", get(artifact))
-            .with_state(publisher.clone()),
-    );
+    let app = publisher.private_routes();
     let publisher_task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     let worker = Service::open(
         Role::Worker,
@@ -125,8 +120,9 @@ async fn shared_status_lifecycle_collects_publishes_and_advances_over_real_roles
         .await
         .unwrap();
     assert!(root.path().join("source/source.bin").exists());
+    // Wallets reach the router role; the publisher has no wallet routes.
     let transport = Loopback {
-        origin: publisher_origin,
+        origin: router_origin,
         http: reqwest::Client::new(),
         corrupt_answer: AtomicBool::new(false),
     };

@@ -655,8 +655,9 @@ class ReleaseTests(unittest.TestCase):
                 release.extract(root / 'bundles-enhance-pir-native' / 'enhance-pir-native.tar.gz', root / 'cross', revision, 'enhance-pir')
             # The Status bundle carries the unit templates its deploy renders, and no candidate claim.
             self.assertEqual(sorted(p.name for p in (root / 'status-pir').iterdir()),
-                             ['SHA256SUMS', 'revision',
-                              'status-pir', 'status-router.service.in', 'status-worker.service.in'])
+                             ['SHA256SUMS', 'pir-query-server', 'revision',
+                              'status-pir', 'status-router.example.json', 'status-router.service.in',
+                              'status-worker.example.json', 'status-worker.service.in'])
             self.assertTrue((root / 'status-pir' / 'status-pir').stat().st_mode & 0o111)
             with self.assertRaises(ValueError):
                 release.extract(root / 'bundles-status-pir' / 'status-pir.tar.gz', root / 'cross-status', revision, 'enhance-pir-native')

@@ -31,9 +31,9 @@ BINARIES = {
     'transparent-txid-display': ['transparent-txid-server', 'txid-control', 'txid-inventory',
                                  'txid-display-controller', 'transparent-event-ingest',
                                  'txid-quality-canary'],
-    # Status roles and controller, from the native target like
-    # `enhance-pir-native`; tools/scripts/wallet-pir-deploy.py renders its units.
-    'status-pir': ['status-pir'],
+    # Status publisher and the query server its roles run, from the native target
+    # like `enhance-pir-native`; tools/scripts/wallet-pir-deploy.py renders its units.
+    'status-pir': ['status-pir', 'pir-query-server'],
     # The receiver directory's indexer and server, which
     # tools/scripts/wallet-pir-deploy.py deploys and whose `probe` is the deploy's
     # exact check, and the standalone probe pir-monitor runs.
@@ -56,7 +56,8 @@ FILES = {
                                  'tools/txid/deploy/txid-display-routes.caddy.in',
                                  'tools/txid/scripts/txid-display-fleet.py',
                                  'tools/txid/scripts/txid-display-observe.py'],
-    'status-pir': ['tools/status/deploy/status-worker.service.in', 'tools/status/deploy/status-router.service.in'],
+    'status-pir': ['tools/status/deploy/status-worker.service.in', 'tools/status/deploy/status-router.service.in',
+                   'tools/status/deploy/status-worker.example.json', 'tools/status/deploy/status-router.example.json'],
     'receiver-pir': ['tools/receiver/digitalocean/receiver-pir.service.in', 'tools/receiver/digitalocean/Caddyfile',
                      'tools/receiver/digitalocean/cloud-init.yaml'],
 }

@@ -348,10 +348,11 @@ fn merge_roles(
     }
     // Keep real HTTP outcomes separate from admitted-work timing. Never derive
     // error rates from admission completions or count both router and worker.
+    // The router serves every wallet route; the publisher serves none.
     let mut http_operations = serde_json::Map::new();
     let mut http_instances = serde_json::Map::new();
     for (endpoint, source, operation) in [
-        ("init", &coordinator, "init"),
+        ("init", &router, "init"),
         ("query", &router, "router_query"),
     ] {
         if source["http_observation_version"].as_u64() == Some(1)
@@ -369,7 +370,6 @@ fn merge_roles(
     let mut admission = serde_json::Map::new();
     let mut resources = serde_json::Map::new();
     for (role, sample, key) in [
-        ("coordinator", &coordinator, "query"),
         ("router", &router, "router_query"),
         ("worker", &worker, "worker_evaluate"),
     ] {
@@ -443,7 +443,7 @@ pub async fn monitor(
                     fetch(&client, router_url),
                     fetch(&client, worker_url)
                 );
-                let manifest_url = url.replace("/internal/status-apm", "/v1/status/init");
+                let manifest_url = url.replace("/internal/status-apm", "/control/active");
                 let manifest = fetch(&client, &manifest_url).await.ok().filter(|v| {
                     [
                         "generation",
@@ -686,23 +686,34 @@ mod tests {
     }
     #[test]
     fn merge_keeps_http_errors_separate_from_admission_and_old_roles_unknown() {
-        let source = |key: &str| serde_json::json!({"operations":{key:{"arrivals":20,"successes":18,"failures":2,"server_errors":1,"buckets":[20,0,0,0,0,0,0,0,0,0,0,0]}},"admission":{},"http_observation_version":1,"http_instance":key});
+        let counts = serde_json::json!({"arrivals":20,"successes":18,"failures":2,"server_errors":1,"buckets":[20,0,0,0,0,0,0,0,0,0,0,0]});
+        let source = |keys: &[&str], instance: &str| {
+            let operations: serde_json::Map<_, _> = keys
+                .iter()
+                .map(|k| (k.to_string(), counts.clone()))
+                .collect();
+            serde_json::json!({"operations":operations,"admission":{},"http_observation_version":1,"http_instance":instance})
+        };
+        let publisher = serde_json::json!({"operations":{},"admission":{}});
         let merged = merge_roles(
-            source("init"),
-            source("router_query"),
-            source("worker_evaluate"),
+            publisher.clone(),
+            source(&["init", "router_query"], "router"),
+            source(&["worker_evaluate"], "worker"),
             None,
         )
         .unwrap();
         assert_eq!(merged["http_operations"]["query"]["server_errors"], 1);
         assert_eq!(merged["http_operations"]["init"]["successes"], 18);
-        assert_eq!(merged["http_instances"]["query"], "router_query");
-        let mut old = source("router_query");
+        assert_eq!(merged["http_instances"]["query"], "router");
+        assert_eq!(merged["http_instances"]["init"], "router");
+        let mut old = source(&["init", "router_query"], "router");
         old.as_object_mut()
             .unwrap()
             .remove("http_observation_version");
-        let merged = merge_roles(source("init"), old, source("worker_evaluate"), None).unwrap();
+        let merged =
+            merge_roles(publisher, old, source(&["worker_evaluate"], "worker"), None).unwrap();
         assert!(merged["http_operations"]["query"].is_null());
+        assert!(merged["http_operations"]["init"].is_null());
     }
     #[test]
     fn live_roles_preserve_latency_boundaries_and_readiness() {
@@ -719,9 +730,9 @@ mod tests {
         )
         .unwrap();
         assert_eq!(merged["generation"], 123);
-        assert_eq!(merged["operations"]["query"]["buckets"][8], 100);
+        assert!(merged["operations"]["query"].is_null());
         assert_eq!(merged["operations"]["router_query"]["buckets"][5], 100);
-        assert!(merged["operations"]["query"]["failures"].is_null());
+        assert!(merged["operations"]["router_query"]["failures"].is_null());
         let view = View {
             configured: true,
             topology: "Enhance host → CPU router + worker".into(),

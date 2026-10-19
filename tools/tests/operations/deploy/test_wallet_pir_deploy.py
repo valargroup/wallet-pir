@@ -61,9 +61,10 @@ TOKEN = '/etc/enhance-pir/internal-token.env'
 ENHANCE = [('worker-01', 'enhance-pir-worker.service'), ('worker-02', 'enhance-pir-worker.service'),
            ('router-01', 'enhance-pir-packing-router.service'), ('coordinator', 'enhance-pir-query-ingress.service')]
 SERVING_SELECTORS = ('worker', 'packing-router', 'query-ingress')
-NETWORK = 'ab' * 32
 STATUS_OLD = b'status-pir built from c5a6486'
 STATUS_NEW = b'status-pir built from a later revision'
+STATUS_QUERY_OLD = b'pir-query-server built from c5a6486'
+STATUS_QUERY_NEW = b'pir-query-server built from a later revision'
 STATUS_LEGACY = '/opt/wallet-pir/releases/c5a6486/native'
 RECEIVER_TEMPLATE = ROOT / 'tools/receiver/digitalocean/receiver-pir.service.in'
 RECEIVER_OLD = b'receiver-directory built from c7f6d296'
@@ -114,7 +115,6 @@ INVENTORY = {
             'exact_check': {'host': 'coordinator', 'argv': ['/usr/local/bin/exact', '{release_dir}', '{transaction}']},
         },
         'status': {
-            'template_vars': {'NETWORK': NETWORK},
             'roles': {'worker': [{'host': 'status-01'}], 'router': [{'host': 'status-01'}]},
             'exact_check': {'host': 'coordinator', 'argv': ['/usr/local/bin/exact', '{release_dir}']},
         },
@@ -158,6 +158,8 @@ class Fleet(unittest.TestCase):
         self.binary.write_bytes(NEW)
         self.status_binary = self.dir / 'status-pir'
         self.status_binary.write_bytes(STATUS_NEW)
+        self.status_query_binary = self.dir / 'pir-query-server'
+        self.status_query_binary.write_bytes(STATUS_QUERY_NEW)
         self.receiver_binary = self.dir / 'receiver-directory'
         self.receiver_binary.write_bytes(RECEIVER_NEW)
 
@@ -183,17 +185,22 @@ class Fleet(unittest.TestCase):
         self.fake.log.clear()
         return deployer
 
-    def status_fleet(self, live_edits=None):
-        """Status units as rendered from the templates, then edited like the live drift."""
+    def status_fleet(self, live_edits=None, only=('worker', 'router')):
+        """Status units as rendered from the templates, then edited like the live drift.
+
+        Worker and router run pir-query-server; publication belongs to the unified publisher.
+        """
         service = SERVICES['status']
         placements = [('status-01', 'worker'), ('status-01', 'router')]
         for host, role in placements:
-            text = units.render(service.roles[role].template.read_text(), {'RELEASE': STATUS_LEGACY, 'NETWORK': NETWORK})
+            text = units.render(service.roles[role].template.read_text(), {'RELEASE': STATUS_LEGACY})
             for old, new in (live_edits or {}).get(role, []):
                 self.assertIn(old, text)
                 text = text.replace(old, new)
-            self.fake.install(host, service.roles[role].unit, text, (), {STATUS_LEGACY + '/status-pir': STATUS_OLD})
-        deployer = self.deployer('status')
+            files = ({STATUS_LEGACY + '/status-pir': STATUS_OLD} if role == 'controller'
+                     else {STATUS_LEGACY + '/pir-query-server': STATUS_QUERY_OLD})
+            self.fake.install(host, service.roles[role].unit, text, (), files)
+        deployer = self.deployer('status', only=list(only))
         deployer.capture_baseline()
         self.fake.log.clear()
         return deployer
@@ -728,23 +735,23 @@ class StatusTests(Fleet):
     def test_template_drift_from_the_live_unit_is_refused(self):
         deployer = self.status_fleet(self.LIVE)
         with self.assertRaisesRegex(DeployError, 'allow-unit-drift'):
-            deployer.deploy(sha256(STATUS_NEW), self.status_binary)
+            deployer.deploy(sha256(STATUS_QUERY_NEW), self.status_query_binary)
         self.assertIn("Service.MemoryMax: '6G' -> '12G'", '\n'.join(self.lines))
         self.assertEqual(self.fake.log, [])
 
     def test_running_binary_with_reconciled_templates_is_a_noop(self):
         deployer = self.status_fleet()
-        self.assertIsNone(deployer.deploy(sha256(STATUS_OLD)))
+        self.assertIsNone(deployer.deploy(sha256(STATUS_QUERY_OLD)))
         self.assertEqual(self.fake.log, [])
 
     def test_running_binary_with_drift_still_restarts_and_rolls_back_by_restart(self):
         deployer = self.status_fleet(self.LIVE)
         # The restart moves the unit to the release layout, so the bytes must be supplied.
         with self.assertRaisesRegex(DeployError, 'not staged and no binary'):
-            deployer.deploy(sha256(STATUS_OLD), allow_drift=True)
-        running = self.dir / 'running-status-pir'
-        running.write_bytes(STATUS_OLD)
-        journal = deployer.deploy(sha256(STATUS_OLD), running, allow_drift=True)
+            deployer.deploy(sha256(STATUS_QUERY_OLD), allow_drift=True)
+        running = self.dir / 'running-pir-query-server'
+        running.write_bytes(STATUS_QUERY_OLD)
+        journal = deployer.deploy(sha256(STATUS_QUERY_OLD), running, allow_drift=True)
         self.assertEqual([r['action'] for r in journal.hosts], ['restart', 'restart'])
         self.fake.log.clear()
         deployer.rollback()
@@ -753,45 +760,40 @@ class StatusTests(Fleet):
 
     def test_accepted_drift_renders_the_whole_unit_from_the_template(self):
         deployer = self.status_fleet(self.LIVE)
-        sha = sha256(STATUS_NEW)
-        journal = deployer.deploy(sha, self.status_binary, allow_drift=True)
+        sha = sha256(STATUS_QUERY_NEW)
+        journal = deployer.deploy(sha, self.status_query_binary, allow_drift=True)
         self.assertEqual(journal.status, 'committed')
         expected = units.render((STATUS_DEPLOY / 'status-worker.service.in').read_text(),
-                                {'RELEASE': '/opt/status-pir/releases/' + sha, 'NETWORK': NETWORK})
+                                {'RELEASE': '/opt/status-pir/releases/' + sha})
         self.assertEqual(self.fake.host('status-01').files['/etc/systemd/system/status-worker.service'].decode(), expected)
+        self.assertIn('/opt/status-pir/releases/%s/pir-query-server --config /etc/status-pir/worker.json' % sha, expected)
         self.assertEqual(self.restarts(), [('status-01', 'status-worker.service'), ('status-01', 'status-router.service')])
         deployer.rollback()
         text = self.fake.host('status-01').files['/etc/systemd/system/status-worker.service'].decode()
         self.assertIn('MemoryMax=6G', text)
         self.assertIn(STATUS_LEGACY, text)
 
-    def test_template_values_cannot_add_unit_lines_or_path_segments(self):
-        deployer = self.status_fleet()
-        sha = sha256(STATUS_NEW)
-        document = json.loads(self.inventory_path.read_text())
-        for value in ['ab\nExecStartPre=/bin/sh -c id', 'ab cd', '../ab', 'ab/cd', 'a=b', '"ab"', '']:
-            with self.subTest(value=value):
-                document['services']['status']['template_vars']['NETWORK'] = value
-                self.inventory_path.write_text(json.dumps(document))
-                inventory = descriptors.load_inventory(self.inventory_path)
-                with self.assertRaisesRegex(descriptors.DescriptorError, 'template_vars.NETWORK'):
-                    descriptors.template_values(SERVICES['status'], inventory, sha)
-                deployer.inventory = inventory
-                with self.assertRaisesRegex(DeployError, 'refused before any change'):
-                    deployer.deploy(sha, self.status_binary, allow_drift=True)
-                self.assertEqual(self.fake.log, [])
-        self.assertEqual(descriptors.template_values(SERVICES['status'], self.inventory, sha)['NETWORK'], NETWORK)
-
     def test_set_property_drop_in_counts_as_live_configuration(self):
         self.status_fleet()
         self.fake.edit('status-01', '/etc/systemd/system.control/status-worker.service.d/50-MemoryMax.conf',
                        '[Service]\nMemoryMax=6G\n')
-        deployer = self.deployer('status')
+        deployer = self.deployer('status', only=['worker', 'router'])
         deployer.capture_baseline()
-        plans, problems = deployer.assess(sha256(STATUS_NEW), self.status_binary)
+        plans, problems = deployer.assess(sha256(STATUS_QUERY_NEW), self.status_query_binary)
         # The drop-in stays and still applies over the rendered unit: no drift.
         self.assertEqual(plans[0].drift, [])
         self.assertEqual(problems, [])
+
+    def test_roles_and_controller_deploy_as_separate_transactions(self):
+        self.status_fleet()
+        with self.assertRaisesRegex(DeployError, 'one transaction runs one binary'):
+            self.deployer('status').deploy(sha256(STATUS_NEW), self.status_binary)
+        self.fake.log.clear()
+        deployer = self.deployer('status', only=['controller'])
+        deployer.capture_baseline()
+        journal = deployer.deploy(sha256(STATUS_NEW), self.status_binary)
+        self.assertEqual(journal.status, 'committed')
+        self.assertEqual(self.restarts(), [('coordinator', 'status-controller-qualification.service')])
 
 
 class ReceiverTests(Fleet):
@@ -918,6 +920,23 @@ class ReceiverTests(Fleet):
         self.assertEqual(deployer.deploy(sha, self.receiver_binary).status, 'committed')
         self.assertEqual(seen, [('receiver-01', 120, True, 'verifying', sha)])
 
+    def test_template_values_cannot_add_unit_lines_or_path_segments(self):
+        deployer = self.receiver_fleet()
+        sha = sha256(RECEIVER_NEW)
+        document = json.loads(self.inventory_path.read_text())
+        for value in ['ab\nExecStartPre=/bin/sh -c id', 'ab cd', '../ab', 'ab/cd', 'a=b', '"ab"', '']:
+            with self.subTest(value=value):
+                document['services']['receiver']['template_vars']['NEAR_KEY'] = value
+                self.inventory_path.write_text(json.dumps(document))
+                inventory = descriptors.load_inventory(self.inventory_path)
+                with self.assertRaisesRegex(descriptors.DescriptorError, 'template_vars.NEAR_KEY'):
+                    descriptors.template_values(SERVICES['receiver'], inventory, sha)
+                deployer.inventory = inventory
+                with self.assertRaisesRegex(DeployError, 'refused before any change'):
+                    deployer.deploy(sha, self.receiver_binary, allow_drift=True)
+                self.assertEqual(self.fake.log, [])
+        self.assertEqual(descriptors.template_values(SERVICES['receiver'], self.inventory, sha)['NEAR_KEY'], NEAR_KEY)
+
     def rotated(self, key):
         """A receiver deployer whose inventory names NEAR key file `key`, as a rotation sets it."""
         document = json.loads(self.inventory_path.read_text())
@@ -1043,8 +1062,8 @@ class UnitTests(unittest.TestCase):
         self.assertLess('zz-cleanup-71be21f.conf', units.MANAGED_DROP_IN)
 
     def test_render_refuses_unset_placeholders(self):
-        with self.assertRaisesRegex(units.UnitError, '@NETWORK@'):
-            units.render((STATUS_DEPLOY / 'status-worker.service.in').read_text(), {'RELEASE': '/opt/status-pir/releases/x'})
+        with self.assertRaisesRegex(units.UnitError, '@NEAR_KEY@'):
+            units.render(RECEIVER_TEMPLATE.read_text(), {'RELEASE': '/opt/receiver-pir/releases/x'})
 
     def test_repository_descriptors_and_example_inventory_load(self):
         SERVICES = descriptors.load_descriptors(ROOT / 'tools/deploy/services.toml')

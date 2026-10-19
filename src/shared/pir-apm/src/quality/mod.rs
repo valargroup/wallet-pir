@@ -450,7 +450,7 @@ pub fn start(dashboard: SharedDashboard, config: &Config) -> Result<()> {
         });
     }
     for (id, url, operation) in [
-        ("status-init", &config.status_apm_url, "init"),
+        ("status-init", &config.status_router_url, "init"),
         ("status-query", &config.status_router_url, "router_query"),
     ] {
         if let Some(url) = url {

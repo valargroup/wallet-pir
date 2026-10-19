@@ -1,42 +1,25 @@
-//! Status PIR serving: generations, the distributed controller and workers.
+//! Status PIR serving core: generations, the authority that decides which one a
+//! request may use, the private role protocol and aggregate telemetry.
 //!
-//! This library serves prepared generations. Chain observation (`source`),
-//! publication (`publisher`) and the CLI live in `status-publisher`; this
-//! library must not depend on chain readers or that application.
-/// Status admission queues; the application's publisher uses the coordinator queue.
-pub mod admission;
+//! This library is runtime-free. `pir-query-server` owns the role listeners,
+//! admission and outbound HTTP; chain observation, publication and the CLI live
+//! in `status-publisher`. Neither may be reached from here.
 pub mod artifact;
 mod backend;
 mod controller;
 pub mod distributed;
 pub mod fixture;
-mod fixture_serving;
 mod generation;
-/// HTTP handlers shared by the serving roles and the application's publisher.
-pub mod http;
 pub mod index;
 pub mod protocol;
 pub mod telemetry;
+use crate::protocol::*;
 pub use controller::Controller;
 pub use generation::{Generation, Preparation};
-pub use http::shared_bytes;
-// Most of these imports serve `distributed` and `publisher`, which reach them
-// through `use super::*`.
-use crate::protocol::*;
-use axum::{
-    body::Bytes,
-    extract::{DefaultBodyLimit, Path, State},
-    http::StatusCode,
-    routing::{get, post},
-    Json, Router,
-};
-use http::{bounded, evaluate, query, serving_http_client, HttpState};
-use ipir_sp::{server::MatvecBackend, ProductionSimplePirParams};
-use sha2::{Digest, Sha256};
+use ipir_sp::ProductionSimplePirParams;
 use std::{
-    sync::atomic::Ordering,
-    sync::{Arc, OnceLock},
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    sync::OnceLock,
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 pub fn now_ms() -> u64 {

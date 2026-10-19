@@ -1,0 +1,15 @@
+{
+  "management_listen": "127.0.0.1:18482",
+  "status": {
+    "enabled": true,
+    "settings": {
+      "role": "router",
+      "network_hex": "<canonical network genesis hash, hex>",
+      "state_dir": "/var/lib/status-pir-router-native",
+      "listen": "127.0.0.1:8482",
+      "query_listen": "127.0.0.1:8484",
+      "artifact_origin": "http://127.0.0.1:8481",
+      "worker_origin": "http://127.0.0.1:8481"
+    }
+  }
+}

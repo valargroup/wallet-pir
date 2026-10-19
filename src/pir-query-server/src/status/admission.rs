@@ -1,7 +1,7 @@
 //! Bounded, cancellation-safe admission. CPU jobs own their execution permit.
-use super::telemetry;
 use axum::http::StatusCode;
 use pir_control::admission::{Queue, Refusal};
+use status_query_server::telemetry;
 use std::time::{Duration, Instant};
 use tokio::sync::OwnedSemaphorePermit;
 
@@ -14,9 +14,6 @@ impl Admission {
     /// 250 ms queue turned each pause into a burst of 429s (2026-09-27 soak).
     pub(super) fn production() -> Self {
         Self::new(4, 32, Duration::from_secs(1))
-    }
-    pub fn coordinator() -> Self {
-        Self::new(16, 8, Duration::from_millis(250))
     }
     fn new(executing: usize, waiting: usize, wait: Duration) -> Self {
         // A free permit is taken without queueing; a waiting slot is held only

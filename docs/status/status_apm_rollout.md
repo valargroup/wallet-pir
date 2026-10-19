@@ -21,7 +21,8 @@ expose these private listeners. No new credentials were created for this change.
 The old synthetic monitoring tunnel on port 8384 was retired with the P4000 host.
 
 The APM scraper fetches all three role samples every five seconds. Publication
-metadata comes from the coordinator's `/v1/status/init` manifest. Failure of any
+metadata comes from the publisher's private `/control/active` manifest; init and
+query outcomes come from the router, the only process that serves wallets. Failure of any
 role scrape marks the aggregate unavailable/stale and preserves the previous
 sample. Failure to obtain a valid manifest is shown as publication unavailable,
 separately from monitoring reachability. Observation age uses the 20-second gate.
@@ -37,7 +38,7 @@ The existing systemd override and credential-loading wrapper are retained.
 - **Worker admitted processing:** worker execution after admission.
 - **Router packing:** final packing operation only.
 
-The private diagnostic coordinator-forwarding path is excluded from the dashboard's query table and charts. Clients are intended to query the router directly.
+The publisher has no wallet routes, so every query the dashboard counts reached the router.
 
 Percentiles are five-minute histogram upper bounds, not exact percentiles.
 Admission wait, upload before admission, client preparation and decoding are

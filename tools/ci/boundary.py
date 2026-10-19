@@ -146,7 +146,7 @@ RUNTIME_FREE = {
 }
 # Temporary exceptions; remove each as its product's transport moves to the hosts.
 RUNTIME_PENDING = {
-    'enhance-publisher', 'enhance-query-server', 'status-publisher', 'status-query-server',
+    'enhance-publisher', 'enhance-query-server', 'status-publisher',
     'transparent-publisher', 'transparent-query-server', 'transparent-shared',
     'receiver-indexer', 'receiver-pir-server',
 }

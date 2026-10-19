@@ -370,7 +370,8 @@ def history():
 
 def status_worker():
     r = Rehearsal('status-external-worker')
-    binary = r.binary('status-pir')
+    binary = r.binary('pir-query-server')
+    publisher = r.binary('status-pir')
     sha = sha256(binary)
     port = free_port()
     listen = '127.0.0.1:%d' % port
@@ -391,7 +392,7 @@ def status_worker():
         if phase == 'publication-after-restart':
             r.executor.systemctl('local', 'restart', 'status-pir-worker.service')
             r.wait('second restart', lambda: r.health('http://%s/control/identity' % listen))
-        validation = r.run(binary, 'validate-distributed', '--entries', '32',
+        validation = r.run(publisher, 'validate-distributed', '--entries', '32',
                            '--state-dir', r.work / phase, '--existing-worker', 'http://%s' % listen,
                            '--artifact-listen', '127.0.0.1:%d' % artifact_port,
                            '--request-timeout-seconds', '120', timeout=1800, check=False)

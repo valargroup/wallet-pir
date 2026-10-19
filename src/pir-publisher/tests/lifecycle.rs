@@ -130,8 +130,6 @@ async fn product_startup_failure_is_visible_without_stopping_management() {
     }
     value["status"]["settings"]["publisher"]["state_dir"] = json!(temp.path().join("state"));
     value["status"]["settings"]["publisher"]["private_listen"] = json!(port().to_string());
-    value["status"]["settings"]["publisher"]["public_enabled"] = json!(false);
-    value["status"]["settings"]["public_listen"] = Value::Null;
     value["status"]["settings"]["cookie"] = json!(temp.path().join("absent-cookie"));
     let stop = Shutdown::default();
     let task = tokio::spawn(run(serde_json::from_value(value).unwrap(), stop.clone()));

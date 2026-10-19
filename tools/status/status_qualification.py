@@ -2,8 +2,8 @@
 """Fail-closed assessment of a Status PIR production qualification capture.
 
 Inputs are JSONL emitted by an independent live-source load campaign. Missing
-evidence is a failed gate. The current synthetic `status-pir probe` deliberately
-cannot pass this assessment.
+evidence is a failed gate. Synthetic fixture validation deliberately cannot
+pass this assessment.
 """
 
 import argparse

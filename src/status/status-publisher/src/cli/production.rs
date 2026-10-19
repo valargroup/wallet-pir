@@ -1,4 +1,4 @@
-//! Status role diagnostics and the live encrypted probe used by monitoring.
+//! Live encrypted probes used by monitoring. Publication runs on pir-publisher.
 use super::{require, AnyError};
 use crate::{status, zakura::ZakuraClient};
 use serde_json::json;
@@ -7,12 +7,6 @@ use std::{
     path::PathBuf,
     time::{Duration, Instant},
 };
-
-pub use status::distributed::RoleConfig;
-
-pub async fn role(config: RoleConfig) -> Result<(), AnyError> {
-    status::distributed::serve_role(config).await
-}
 
 pub async fn probe_live(
     origin: String,

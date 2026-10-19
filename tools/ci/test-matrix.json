@@ -161,7 +161,6 @@
       "native:pir-e2e-tests:test:status_routes",
       "native:status-publisher:bin:status-pir",
       "native:status-query-server:test:status_wallet",
-      "native:status-query-server:test:status_wallet_http",
       "native:native-certificate:bin:native_certificate",
       "native:pir-publisher:lib:pir_publisher",
       "native:pir-publisher:doc:pir_publisher",

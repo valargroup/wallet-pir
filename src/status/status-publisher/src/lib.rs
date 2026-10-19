@@ -1,10 +1,9 @@
 //! Status PIR ingestion, publication and the `status-pir` application.
 //!
 //! Ingestion checkpoints source observations independently of publication.
-//! Prepared datasets are served by `status-query-server`; Enhance can embed
-//! this publisher without depending on the standalone command-line executable.
+//! Prepared datasets are served by `pir-query-server` roles; this package never
+//! faces wallets.
 
-use pir_control::admission;
 #[cfg(feature = "cli")]
 use status_query_server as status;
 use status_query_server::*;

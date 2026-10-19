@@ -15,47 +15,44 @@ The standalone production controller command has been removed. Follow the
 to adopt an existing standalone controller. Rollback uses its captured old
 executable and unit; current source does not rebuild that historical entrypoint.
 
-When the Status controller config sets `public_enabled`, the unified settings require
-`public_listen` with a loopback address and serves the public `/v1/status/init`,
-`/v1/status/session/:id` and `/v1/status/query` routes only there; the private
-listener keeps telemetry and candidate transfer. `public_enabled` without
-`public_listen`, or that address without `public_enabled`, is refused. Public
-admission still depends on the publisher's live-publication health flag, so an
-unpublished or fenced controller answers 503 on the public listener. The
-forwarded query route also caps each client (first `X-Forwarded-For` address,
-else `X-Real-IP`) at two concurrent requests and answers 429 beyond that. Set `status.settings.public_listen` to `127.0.0.1:8489`. The
-intended HTTPS ingress wiring is:
+The publisher never faces wallets. Its private listener serves candidate
+transfer (`/artifact/:id`), `/control/active` (the active manifest, 503 until a
+healthy, unfenced and fresh publication exists) and telemetry. Worker and router
+run as `pir-query-server` roles, each from an operator-installed
+`/etc/status-pir/<role>.json` (`tools/status/deploy/status-worker.example.json`
+and `status-router.example.json` show them). The router's `query_listen` carries
+the wallet routes `/v1/status/init`, `/v1/status/session/:id` and
+`/v1/status/query` and nothing else; its control listener never carries them.
+The router answers 503 until the controller has fenced and activated it, and
+stops serving when the controller's heartbeat lapses. The query route admits
+four executing and 32 waiting requests per router and caps each client (first
+`X-Forwarded-For` address, else `X-Real-IP`) at two concurrent requests,
+answering 429 beyond that.
 
-```
-pir-publisher --config /etc/wallet-pir/publisher.json
-```
+The intended HTTPS ingress sends `/v1/status/*` to the router's query listener,
+which the coordinator reaches through the `status-query-tunnel` forward
+(local 8492):
 
 ```
 handle /v1/status/* {
-    reverse_proxy 127.0.0.1:8489
+    reverse_proxy 127.0.0.1:8492
 }
 ```
 
-Enabling `public_enabled` is a deployment decision gated by
-`status_qualification.md`; this section documents the wiring, not a live
-configuration.
+Enabling that route is a deployment decision gated by `status_qualification.md`;
+this section documents the wiring, not a live configuration.
 
 | Endpoint | Owner | Reachability |
 | --- | --- | --- |
-| Coordinator `127.0.0.1:8480` | Private Status routes and immutable candidate transfer | Coordinator loopback |
-| Coordinator `127.0.0.1:8489` | Public `/v1/status/*` when `public_enabled` (`public_listen`) | Coordinator loopback; Caddy `handle /v1/status/*` |
+| Coordinator `127.0.0.1:8480` | Publisher: candidate transfer, `/control/active`, telemetry | Coordinator loopback |
 | Status host `127.0.0.1:8481` | CPU evaluation worker and private control | Loopback; coordinator SSH forward |
-| Status host `127.0.0.1:8482` | CPU packing router private control, public material, telemetry | Loopback; coordinator SSH forward (`status-control-tunnel`, local 8482) |
-| Status host `127.0.0.1:8484` | CPU packing router query route only (`/v1/status/query`, `--query-listen`) | Loopback; coordinator SSH forward (`status-query-tunnel`, local 8492) |
+| Status host `127.0.0.1:8482` | CPU packing router private control and telemetry | Loopback; coordinator SSH forward (`status-control-tunnel`, local 8482) |
+| Status host `127.0.0.1:8484` | CPU packing router wallet routes (`/v1/status/*`, `query_listen`) | Loopback; coordinator SSH forward (`status-query-tunnel`, local 8492) |
 | Status host `127.0.0.1:8495` | Reverse forward to coordinator artifacts | Status host loopback |
+| Status host `127.0.0.1:18481`, `18482` | Each role process's own `/health` and `/ready` (`management_listen`) | Status host loopback |
 
-The router's `--query-listen` splits the forwarded query route from its control
-listener. Both listeners must be loopback; the control listener never carries
-`/v1/status/query`, and the query listener carries nothing else. Without
-`--query-listen` the router serves one merged loopback listener as before. The
-controller's `query_router_origin` (`http://127.0.0.1:8492`) reaches the query
-listener through `status-query-tunnel.service`; `router_origin` keeps the
-control path on 8482.
+Both router listeners must be loopback. The controller's `router_origin` keeps
+the control path on 8482.
 
 `status-control-tunnel.service` uses a dedicated forwarding-only account, pinned
 host key, and explicit permitted destinations/listen address. Its service key is
@@ -63,16 +60,16 @@ stored in the production `/status-pir/control` folder of the `spendability-pir
 deploy` Infisical project as `STATUS_CONTROL_SSH_PRIVATE_KEY`. The installed copy
 is root-only under `/etc/status-pir-control/`. It is separate from the APM key.
 The service-unit templates are under `tools/status/deploy/` and substitute a
-checksummed release directory (`@RELEASE@`), the canonical network genesis hash
-(`@NETWORK@`) and, for the two tunnels, the Status host's private VPC address
-(`@STATUS_HOST@`).
+checksummed release directory (`@RELEASE@`) and, for the two tunnels, the Status
+host's private VPC address (`@STATUS_HOST@`). The canonical network genesis hash
+is in each role's config file.
 
 The Status host is the Terraform `status-pir-01` droplet (`status.tf`, enabled by
 `status_host_count`). Worker and router run CPU-only, as the dedicated
 `status-pir` user, from a binary built without the `cuda` feature. Its cloud-init
 installs the forwarding-only `status-control` key with explicit `permitopen`
 (8481, 8482, 8484) and `permitlisten` (8495) restrictions. The CUDA worker
-remains an optional build (`--features cuda`, `--cuda`) and is not deployed.
+remains an optional build (`--features cuda`, `"cuda": true`) and is not deployed.
 
 ### Supervised control sessions
 
@@ -112,22 +109,29 @@ and rollback are described in
 [the Enhance deployment guide](../enhance/deployment.md#deploy-cli).
 
 For the Status worker and router the tool renders the whole unit from its
-`.service.in` template, with `@RELEASE@` set to `/opt/status-pir/releases/<sha256>` and
-`@NETWORK@` taken from the inventory. The rollout order is worker, router, then
-the coordinator's controller, whose binary alone is swapped. The tunnels are not managed.
+`.service.in` template, with `@RELEASE@` set to `/opt/status-pir/releases/<sha256>`
+of the release's `pir-query-server`. The units read the operator-installed role
+configs; the tool neither writes nor checks them. Roles and controller run
+different binaries, so they deploy as separate transactions: worker and router
+first, then the coordinator's controller, whose `status-pir` binary alone is
+swapped. The tunnels are not managed.
 [services.toml](../../tools/status/deploy/services.toml) records each role's `/control/health`
 or `/internal/health` readiness check. The `status-pir` release kind in
-`tools/ci/release.py` bundles the binary with these templates. It is assembled
-from the `native-reinspiring` target directory; full CI uploads it as the
+`tools/ci/release.py` bundles `status-pir` and `pir-query-server` (built with
+`status`) with these templates and example configs. It is assembled from the
+`native-reinspiring` target directory; full CI uploads it as the
 `status-pir-<sha>` artifact.
+
+Cutting over from the earlier `status-pir role` units needs, before the first
+role deploy, each role's `/etc/status-pir/<role>.json` installed from the
+examples with the live network hash, and the controller's config without the
+removed `public_enabled` and `query_router_origin` fields.
 
 The tool compares each rendered unit's effective configuration with the live
 one and refuses any difference beyond the binary unless `--allow-unit-drift` is
 given. On 2026-09-30 the live worker and router units matched their templates
 (`MemoryMax=12G` and 3G, `STATUS_PREPARATION_THREADS=6`), and a preflight with
-the running binary planned no restart. The controller is not rendered: its
-arguments (`controller-native.json`, `public_listen`) live in drop-ins from
-earlier rollouts, so it is an `exec-drop-in` role like the Enhance units.
+the running binary planned no restart. Publication is managed by the unified publisher deployment.
 
 ## Publication and recovery
 
@@ -189,10 +193,11 @@ wallet-library pins must move together to avoid distinct Rust types from two
 copies of the Status crate. Its release-ready feature gate remains disabled.
 
 `status-pir validate-distributed --entries 1572864 --state-dir <fresh-dir>` (add `--cuda` on a GPU host)
-starts real worker/router child processes and verifies encrypted fixture answers
-and remote fencing. It does not use a live source.
+starts real `pir-query-server` worker/router child processes (`--query-server`
+names the binary; by default the one beside `status-pir`) and verifies encrypted
+fixture answers and remote fencing. It does not use a live source.
 
-`status-pir probe-live-load --origin http://127.0.0.1:8480 --cookie
+`status-pir probe-live-load --origin http://127.0.0.1:8492 --cookie
 /root/.cache/zakura/.cookie --seconds 60 --report-dir <new-dir>` offers 20 complete
 lookups per second, including initialization and bounded session retries. It
 checks mined answers against canonical node blocks and writes arrival evidence.

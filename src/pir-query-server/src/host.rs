@@ -202,7 +202,7 @@ pub async fn run(config: Config, shutdown: Shutdown) -> Result<()> {
             "status",
             async move {
                 tokio::select! {
-                    result = status_query_server::distributed::serve_role_on(role, listen, query) => result,
+                    result = crate::status::serve_role_on(role, listen, query) => result,
                     _ = stopped(local, process) => Ok(()),
                 }
             },

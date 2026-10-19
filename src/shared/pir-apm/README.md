@@ -67,20 +67,22 @@ shows init/query APM, topology, and availability; detailed counters, host resour
 breakdowns live on the node pages. Expanded detail sections survive refresh.
 
 The overview also has Enhance and Status APM tabs (`?pane=enhance` and
-`?pane=status`) above one deployment diagram. Status is an isolated synthetic service on one GPU host with colocated coordinator, router, and worker listeners.
-The diagram labels its connection to the production coordinator as planned.
-The Status service exports aggregate JSON at `/internal/status-apm` and
-Prometheus metrics at `/internal/metrics` on a separate loopback listener.
-Set `PIR_APM_STATUS_URL` to the APM host's private forwarding endpoint, for
-example `http://127.0.0.1:8384/internal/status-apm`, and optionally set
-`PIR_APM_STATUS_TOPOLOGY` to a human-readable placement description. APM
-scrapes it every five seconds with a four-second timeout. A Status scrape
-failure leaves Enhance monitoring independent and marks retained Status values
-stale. No txid or request ID is exported.
-Status Query counts at its coordinator ingress. Router processing spans request
-decode, worker RPC, and final packing; Worker evaluation measures matrix-vector
-work; Router packing measures the final packing operation. Stage percentiles
-are independent. The Status server cannot report decrypted transaction states.
+`?pane=status`) above one deployment diagram. Status runs a publisher on the
+coordinator and separate router and worker processes; only the router serves
+wallets. Each exports aggregate JSON at `/internal/status-apm` and Prometheus
+metrics at `/internal/metrics` on its private loopback listener.
+`PIR_APM_STATUS_URL` names the publisher's endpoint, and
+`PIR_APM_STATUS_ROUTER_URL` and `PIR_APM_STATUS_WORKER_URL` the forwarded role
+endpoints; `PIR_APM_STATUS_TOPOLOGY` is an optional human-readable placement
+description. APM scrapes them every five seconds with a four-second timeout and
+reads the active manifest from the publisher's `/control/active`. A Status
+scrape failure leaves Enhance monitoring independent and marks retained Status
+values stale. No txid or request ID is exported.
+Status init and query count at the router's wallet routes. Router processing
+spans request decode, worker RPC, and final packing; Worker evaluation measures
+matrix-vector work; Router packing measures the final packing operation. Stage
+percentiles are independent. The Status server cannot report decrypted
+transaction states.
 The deployed service layout, tunnel key location, checks, and rollback are in
 [the Status APM runbook](../../../docs/status/status_apm_rollout.md).
 
