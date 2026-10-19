@@ -70,6 +70,7 @@ impl Manager {
             floor.digests.extend(revoked);
             persist(&config.directory.join("revocation-floor.json"), &floor)?;
         }
+        let lock = Arc::new(lock);
         let live = DisplayLive::new(
             DisplayRuntime::new_required(service),
             DisplayRole::Combined,
@@ -77,27 +78,31 @@ impl Manager {
             config.directory.join("active.json"),
             Vec::new(),
             None,
-        )?;
+        )?
+        .retain_directory_owner(lock.clone());
         Ok(Self {
             config,
             source,
             live,
             current: None,
             floor,
-            _lock: Arc::new(lock),
+            _lock: lock,
             synchronization: Arc::new(RwLock::new(serde_json::json!({"state":"not-polled"}))),
         })
     }
     pub fn router(&self) -> axum::Router {
         let sync = self.synchronization.clone();
-        self.live.router().route(
-            "/v1/provider-status",
-            axum::routing::get(move || {
-                let sync = sync.clone();
-                async move { axum::Json(sync.read().unwrap().clone()) }
-            }),
-        )
+        let live = self.live.clone();
+        self.live.router().route("/v1/provider-status", axum::routing::get(move || {
+            let sync=sync.clone(); let live=live.clone(); async move {
+                let status=live.command(DisplayCommand::Status).await.unwrap_or_default();
+                axum::Json(serde_json::json!({"synchronization":sync.read().unwrap().clone(),
+                    "verified_publication":status["active"],"runtime_readiness":{"warm":status["warm"]},
+                    "revoked_revisions":status["revoked_revisions"]}))
+            }
+        }))
     }
+
     fn revoke(&mut self, current: &Current, digests: BTreeSet<String>) -> Result<(), Error> {
         self.floor.revision = self.floor.revision.max(current.revision);
         self.floor.digests.extend(digests.iter().cloned());
@@ -166,6 +171,7 @@ impl Manager {
     }
     pub async fn poll_once(&mut self) -> Result<serde_json::Value, Error> {
         self.source.reset_budget();
+        *self.synchronization.write().unwrap() = serde_json::json!({"state":"synchronizing"});
         self.live.command(DisplayCommand::Collect).await?;
         let result = self.update().await;
         match &result {

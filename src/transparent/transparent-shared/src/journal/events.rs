@@ -1007,7 +1007,11 @@ mod tests {
         let mut writer = EventStore::open(dir.path(), GENESIS, START).unwrap();
         assert_eq!(writer.events_at(START).unwrap().unwrap(), vec![old.clone()]);
         writer
-            .append_block(START + 1, hash(START + 1), &[receive(200, 2)])
+            .append_block(
+                START + 1,
+                hash(START + 1),
+                &[receive((START + 1) as u32, 2)],
+            )
             .unwrap();
         writer.commit().unwrap();
         drop(writer);
@@ -1023,7 +1027,7 @@ mod tests {
         assert_eq!(reader.events_at(START).unwrap().unwrap(), vec![old]);
         assert_eq!(
             reader.events_at(START + 1).unwrap().unwrap(),
-            vec![receive(200, 2)]
+            vec![receive((START + 1) as u32, 2)]
         );
         let (mut snapshot, offset) = reader.snapshot_suffix(START, dir.path()).unwrap();
         let entry = reader.block_at(START).unwrap();
@@ -1214,6 +1218,11 @@ pub fn read_event_record_version(
     end: u64,
     version: u16,
 ) -> Result<Option<Vec<(ScriptBytes, TransparentEvent)>>, EventStoreError> {
+    if !matches!(version, 2 | STORE_VERSION) {
+        return Err(EventStoreError::Invariant(
+            "unsupported journal snapshot version".into(),
+        ));
+    }
     if end > file.metadata()?.len() || end < entry.offset {
         return Err(EventStoreError::Invariant(
             "invalid committed block extent".into(),

@@ -122,6 +122,7 @@ struct Staged {
 }
 
 struct Inner {
+    _directory_owner: Option<Arc<std::fs::File>>,
     runtime: Arc<DisplayRuntime>,
     role: DisplayRole,
     retain: usize,
@@ -265,6 +266,7 @@ impl DisplayLive {
             state.release_pins(Some(&invalid));
         }
         Ok(Self(Arc::new(Inner {
+            _directory_owner: None,
             runtime,
             role,
             retain,
@@ -286,6 +288,13 @@ impl DisplayLive {
         })))
     }
 
+    /// Retain the managed root through routers, admitted requests and blocking activation.
+    pub(crate) fn retain_directory_owner(mut self, owner: Arc<std::fs::File>) -> Self {
+        Arc::get_mut(&mut self.0)
+            .expect("new serving owner is exclusively held")
+            ._directory_owner = Some(owner);
+        self
+    }
     /// Exact anchors of active and retained revisions, for live publisher checks.
     pub(crate) fn anchors(&self) -> Vec<(String, u64, String)> {
         let active = self.0.active.read().unwrap();

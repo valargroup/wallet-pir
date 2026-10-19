@@ -6,6 +6,7 @@
       "export:txid-sizing-export:test:codec_bounds",
       "export:txid-sizing-export:test:executing_identity",
       "export:txid-sizing-export:test:source_identity",
+      "transparent:transparent-publisher:test:unified_http_sync_campaign",
       "transparent:transparent-query-server:bin:shard-assign",
       "transparent:transparent-query-server:bin:shard-control",
       "transparent:transparent-query-server:bin:shard-prune",

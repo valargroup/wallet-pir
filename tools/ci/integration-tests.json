@@ -61,7 +61,8 @@
       "controller_update_campaign",
       "event_codec_bounds",
       "service_round_trip",
-      "shard_filters"
+      "shard_filters",
+      "unified_http_sync_campaign"
     ]
   },
   "transparent-query-server": {

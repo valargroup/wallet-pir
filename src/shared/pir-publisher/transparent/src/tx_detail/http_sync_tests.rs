@@ -110,6 +110,9 @@ async fn full_display_consumers_follow_https_and_restart_without_building() {
         .text()
         .await
         .unwrap();
+    assert!(metrics
+        .lines()
+        .any(|line| line.starts_with("transparent_shard_builds_total ")));
     assert!(
         !metrics
             .lines()
