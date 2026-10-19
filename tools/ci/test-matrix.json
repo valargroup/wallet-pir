@@ -148,7 +148,6 @@
     "targets": [
       "native:enhance-publisher:bin:enhance-pir-server",
       "native:enhance-publisher:doc:enhance_publisher",
-      "native:enhance-publisher:example:native_certificate",
       "native:enhance-publisher:lib:enhance_publisher",
       "native:enhance-publisher:test:boundary_recovery_model",
       "native:enhance-publisher:test:ci_hint",
@@ -161,10 +160,14 @@
       "native:status-publisher:bin:status-pir",
       "native:status-query-server:test:status_wallet",
       "native:status-query-server:test:status_wallet_http",
+      "native:native-certificate:bin:native_certificate",
       "native:pir-publisher:lib:pir_publisher",
       "native:pir-publisher:doc:pir_publisher",
       "native:pir-publisher:bin:pir-publisher",
-      "native:pir-publisher:test:lifecycle"
+      "native:pir-publisher:test:lifecycle",
+      "native:pir-query-server:bin:pir-query-server",
+      "native:pir-query-server:doc:pir_query_server",
+      "native:pir-query-server:lib:pir_query_server"
     ]
   },
   "enhance-http": {

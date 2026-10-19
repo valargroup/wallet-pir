@@ -49,6 +49,7 @@ def commands(group, groups, lint=False, compile_only=False):
         'enhance': ['enhance-query-server/native-reinspiring', 'status-query-server/native-reinspiring',
                     'enhance-publisher/native-reinspiring', 'status-publisher/native-reinspiring', 'status-publisher/cli',
                     'enhance-pir-client/native-reinspiring', 'enhance-pir-load-test/native-reinspiring',
+                    'native-certificate/native-reinspiring',
                     'pir-publisher/enhance', 'pir-publisher/status', 'pir-publisher/transparent',
                     'pir-publisher/receiver', 'pir-publisher/native-reinspiring',
                     'pir-query-server/enhance', 'pir-query-server/status', 'pir-query-server/transparent',

@@ -266,8 +266,10 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3,
         raise ValueError(f'fast test executables mismatch: missing_units={sorted(expected_units-actual_units)}, '
                          f'missing_integrations={sorted(expected_integrations-actual_integrations)}, '
                          f'extra_integrations={sorted(actual_integrations-expected_integrations)}')
+    # The affected package may have no fast tests. The stable feature roots were
+    # still compiled above; there is nothing further to execute.
     if not programs:
-        raise ValueError('Cargo reported no fast test executables')
+        return
     for name, discovered in discovered_units.items():
         stale = set(slow.get(name, {})) - discovered
         if stale:
