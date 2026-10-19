@@ -63,6 +63,9 @@ Preserve existing Cargo package and binary names.
   checks. This includes committed, staged, unstaged and untracked changes.
   `make check-package PACKAGE=<name> TEST=<filter> FEATURES=<features>` selects
   a package. Omit optional variables when unused. `OFFLINE=1` uses fetched deps.
+- `make check-ops-deploy` is a local development target for the in-memory deploy
+  suite. CI and routine validation do not run it; run it only when editing
+  `tools/tests/operations/deploy`.
 - `make doctor` checks local prerequisites; `NETWORK=1` also checks authenticated
   access. Run `make prepare-dev` once when pinned dependencies need fetching.
 - When a PR is requested, publish the reviewable change before long validation;
