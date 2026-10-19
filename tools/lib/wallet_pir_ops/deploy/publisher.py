@@ -23,6 +23,9 @@ from .remote import production_lock
 from .transaction import new_id
 
 SCHEMA = 'transparent-publisher-cutover/1'
+EXPANDED_SCHEMA = 'publisher-cutover/2'
+EXPANDED_PRODUCTS = ['enhance', 'status', 'transparent_history', 'transaction_details']
+ADOPTED = ('enhance-pir-coordinator.service', 'status-controller-qualification.service')
 PRODUCTS = ['transparent_history', 'transaction_details']
 OLD = ('transparent-v12-publish-controller.service', 'transparent-txid-display-k8-controller.service')
 UNIT = 'pir-publisher.service'
@@ -54,7 +57,7 @@ def load_request(path, expected):
     request = json.loads(data)
     require(isinstance(request, dict) and set(request) == {'schema', 'host', 'machine_id', 'release', 'configuration', 'inventory', 'checks'},
             'publisher request has unknown or missing fields')
-    require(request['schema'] == SCHEMA, 'unsupported publisher cutover schema')
+    require(request['schema'] in (SCHEMA, EXPANDED_SCHEMA), 'unsupported publisher cutover schema')
     require(isinstance(request['host'], str) and re.fullmatch('[A-Za-z0-9_.-]+', request['host']), 'invalid host')
     require(isinstance(request['machine_id'], str) and re.fullmatch('[a-f0-9]{32}', request['machine_id']), 'invalid machine id')
     version = request['release']
@@ -63,17 +66,20 @@ def load_request(path, expected):
             and re.fullmatch('[a-f0-9]{40}', version['git_sha']) and re.fullmatch('[a-f0-9]{64}', version['binary_sha256']),
             'release requires full source and executable digests')
     require(type(version['binary_bytes']) is int and version['binary_bytes'] > 0, 'invalid executable size')
+    products = EXPANDED_PRODUCTS if request['schema'] == EXPANDED_SCHEMA else PRODUCTS
     config = request['configuration']
-    require(isinstance(config, dict) and set(config) == {'management_listen', *PRODUCTS} and config['management_listen'] == '127.0.0.1:18080',
-            'this cutover enables only Transparent, with loopback management on 18080')
-    for name in PRODUCTS:
+    require(isinstance(config, dict) and set(config) == {'management_listen', *products} and config['management_listen'] == '127.0.0.1:18080',
+            'cutover products must match the schema, with loopback management on 18080')
+    for name in products:
         product = config[name]
         require(isinstance(product, dict) and set(product) == {'enabled', 'settings'} and product['enabled'] is True
                 and isinstance(product['settings'], dict),
-                'both Transparent products must be enabled')
+                'every cutover product must be enabled')
+        if name not in PRODUCTS:
+            continue
         require(product['settings'].get('http_only') is False, 'autonomous HTTP publishing is out of scope')
     checks = request['checks']
-    require(isinstance(checks, dict) and set(checks) == set(PRODUCTS), 'each product needs an independent exact check')
+    require(isinstance(checks, dict) and set(checks) == set(products), 'each product needs an independent exact check')
     for check in checks.values():
         require(isinstance(check, dict) and set(check) == {'host', 'argv', 'timeout'} and isinstance(check['argv'], list) and check['argv']
                 and all(isinstance(a, str) and a for a in check['argv'])
@@ -85,11 +91,12 @@ def load_request(path, expected):
     require(inventory.lock == {'type': 'remote', 'host': request['host']}, 'cutover requires the coordinator production lock')
     require(all(c['host'] in inventory.hosts for c in checks.values()), 'probe host missing from inventory')
     publisher = inventory.services.get('publisher', {})
-    require(publisher.get('managed_products') == PRODUCTS, 'managed products differ from configuration')
+    require(publisher.get('managed_products') == products, 'managed products differ from configuration')
     require(publisher.get('roles', {}).get('server') == [{'host': request['host'], 'vars': {'management_listen': '127.0.0.1:18080'}}],
             'publisher must run once on the pinned coordinator')
-    require(not Fleet(inventory, descriptors.load_descriptors(REGISTRY)).problems(complete=True),
-            'candidate Transparent inventory is incomplete or has conflicting owners')
+    registry = ROOT / 'tools/deploy/publisher/all-services.toml' if request['schema'] == EXPANDED_SCHEMA else REGISTRY
+    problems = Fleet(inventory, descriptors.load_descriptors(registry)).problems(complete=True)
+    require(not problems, 'candidate inventory is incomplete or has conflicting owners: ' + '; '.join(problems))
     return request, inventory
 
 
@@ -128,6 +135,8 @@ class Cutover:
     def __init__(self, request, inventory, executor, state_dir, *, clock=time.monotonic, sleep=time.sleep):
         self.request, self.inventory, self.ex = request, inventory, executor
         self.host = request['host']
+        self.expanded = request['schema'] == EXPANDED_SCHEMA
+        self.old = (*OLD, *ADOPTED) if self.expanded else OLD
         self.state_dir = Path(state_dir) / 'publisher-cutover'
         self.clock, self.sleep = clock, sleep
         self.lock = None
@@ -142,11 +151,14 @@ class Cutover:
         paths = [CONFIG, INVENTORY, SAMPLER, UNIT_PATH, LOAD_DROP, ROOT_DIR + '/latest.json',
                  history['data_dir'] + '/writer.lock', history['publication_root'] + '/controller.lock',
                  display['journal'] + '/writer.lock', display['root'] + '/controller.lock']
+        if self.expanded:
+            from .publisher_products import inputs, locks
+            paths += [*inputs(config), *locks(config)]
         result = self.ex.publisher_resources(self.host, paths)
         require(result['machine_id'] == self.request['machine_id'], 'coordinator machine identity differs')
         require(result['memory_available'] >= result['memory_total'] * .2, 'less than 20 percent available memory')
-        # The configured limit is a combined ceiling, not twelve GiB of reserved RSS.
-        require(result['memory_total'] >= 24 * (1 << 30), 'coordinator is too small for the combined 12 GiB budget')
+        minimum = 50 if self.expanded else 24
+        require(result['memory_total'] >= minimum * (1 << 30), 'coordinator is too small for the combined publisher budget')
         for disk in result['disks'].values():
             require(disk['available'] - extra_bytes >= disk['total'] * .2, 'staging would leave less than 20 percent disk headroom')
         return result
@@ -158,14 +170,14 @@ class Cutover:
         identifier = json.loads(pointer)['id']
         require(re.fullmatch('publisher-[A-Za-z0-9-]+', identifier), 'invalid publisher transaction pointer')
         value = json.loads(self.read(ROOT_DIR + '/transactions/' + identifier + '/journal.json'))
-        require(value['id'] == identifier and value['schema'] == SCHEMA, 'invalid publisher transaction journal')
+        require(value['id'] == identifier and value['schema'] in (SCHEMA, EXPANDED_SCHEMA), 'invalid publisher transaction journal')
         return value
 
     def capture(self):
         previous = self.latest()
         require(previous is None or previous['phase'] in FINAL, 'unfinished publisher cutover; reconcile or rollback first')
         resource = self.resources(self.request['release']['binary_bytes'])
-        states = {name: stable_unit(self.ex.probe_unit(self.host, name)) for name in (*OLD, UNIT, LOAD)}
+        states = {name: stable_unit(self.ex.probe_unit(self.host, name)) for name in (*self.old, UNIT, LOAD)}
         for state in states.values():
             require(not state['need_daemon_reload'], 'unit changed without daemon-reload')
         unified = states[UNIT]
@@ -173,12 +185,18 @@ class Cutover:
             require(all(states[name]['active_state'] == 'inactive' and not states[name]['main_pid'] for name in OLD),
                     'standalone and unified publishers both own state')
             require(not unified['drop_ins'], 'unexpected publisher drop-ins; reconcile before changing ownership')
-            require(self.request['configuration'] == json.loads(self.read(CONFIG)),
-                    'publisher updates must preserve the installed product settings')
+            installed = json.loads(self.read(CONFIG))
+            if self.expanded:
+                from .publisher_products import verify_adoption
+                verify_adoption(self, states, installed)
+            else:
+                require(self.request['configuration'] == installed,
+                        'publisher updates must preserve the installed product settings')
         else:
+            require(not self.expanded, 'expanded cutover requires the existing Transparent publisher')
             require(unified['load_state'] == 'not-found', 'publisher exists but is not running; reconcile it first')
             require(all(states[name]['active_state'] == 'active' for name in OLD), 'both predecessor controllers must be running')
-        for name in (*OLD, LOAD):
+        for name in (*self.old, LOAD):
             state = states[name]
             require(state['load_state'] == 'loaded' and state['fragment_text'], 'missing captured unit: ' + name)
         executables = {}
@@ -226,10 +244,19 @@ class Cutover:
             SAMPLER: json.dumps(sampler, indent=2) + '\n',
             LOAD_DROP: '[Service]\nExecStart=\nExecStart=' + load_command + '\n',
         }
+        if self.expanded:
+            from .publisher_products import render, inputs, monitoring
+            desired[UNIT_PATH] = render(config, binary, states)
+            monitoring(sampler, self.old)
+            desired[SAMPLER] = json.dumps(sampler, indent=2) + '\n'
+            # Pin inputs without reinstalling them or changing their permissions.
+            for path in inputs(config):
+                require(self.read(path) is not None, 'missing adopted configuration: ' + path)
         before = {path: {'text': self.read(path), 'mode': (resource['files'][path] or {}).get('mode', 0o600)} for path in desired}
         return {'request_sha256': durable.digest(self.request), 'before': before, 'units': states,
                 'desired': desired, 'binary': binary, 'executables': executables,
-                'previous_transaction': previous and previous['id']}
+                'previous_transaction': previous and previous['id'],
+                'inputs': {path: sha(self.read(path)) for path in inputs(config)} if self.expanded else {}}
 
     def plan(self):
         plan = self.capture()
@@ -262,9 +289,12 @@ class Cutover:
     def unlocked(self):
         config = self.request['configuration']
         history, display = (config[name]['settings'] for name in PRODUCTS)
-        self.ex.publisher_unlocked(self.host, [history['data_dir'] + '/writer.lock',
-            history['publication_root'] + '/controller.lock', display['journal'] + '/writer.lock',
-            display['root'] + '/controller.lock'])
+        paths = [history['data_dir'] + '/writer.lock', history['publication_root'] + '/controller.lock',
+                 display['journal'] + '/writer.lock', display['root'] + '/controller.lock']
+        if self.expanded:
+            from .publisher_products import locks
+            paths += locks(config)
+        self.ex.publisher_unlocked(self.host, paths)
 
     def write(self, path, text, mode=0o600):
         self.ex.mkdir(self.host, str(Path(path).parent), 0o755)
@@ -308,7 +338,7 @@ class Cutover:
             plan = self.capture()
             require(durable.digest(plan) == expected_plan, 'publisher plan is stale; review a fresh plan')
             identifier = new_id('publisher', self.request['release']['binary_sha256'])
-            journal = {'schema': SCHEMA, 'id': identifier, 'phase': 'staging', 'request': self.request,
+            journal = {'schema': self.request['schema'], 'id': identifier, 'phase': 'staging', 'request': self.request,
                        'plan': plan, 'completed': [], 'intent': None}
             self.save(journal)
             self.ex.write(self.host, ROOT_DIR + '/latest.json', durable.canonical({'id': identifier}), 0o600)
@@ -320,11 +350,11 @@ class Cutover:
             self.resources()
             self.save(journal, 'installing')
             self.effect(journal, 'pause continuous load', lambda: self.stop(LOAD))
-            for name in (*OLD, UNIT):
+            for name in (*self.old, UNIT):
                 if plan['units'][name]['load_state'] != 'not-found':
                     self.effect(journal, 'stop ' + name, lambda name=name: self.stop(name))
             self.unlocked()
-            for name in OLD:
+            for name in self.old:
                 self.effect(journal, 'disable ' + name, lambda name=name: self.ex.systemctl(self.host, 'disable', name))
             for path, text in plan['desired'].items():
                 mode = 0o644 if path.startswith('/etc/systemd/') else 0o600
@@ -336,6 +366,25 @@ class Cutover:
             self.ready(True)
             self.exact(journal)
             self.effect(journal, 'resume continuous load', lambda: self.ex.systemctl(self.host, 'start', LOAD))
+            self.save(journal, 'committed')
+            return journal
+
+    def restart(self):
+        """Exercise cooperative shutdown without changing the retained rollback baseline."""
+        with production_lock(self.inventory, self.ex) as self.lock:
+            journal = self.latest()
+            require(journal is not None and journal['request'] == self.request and journal['phase'] == 'committed',
+                    'restart requires this committed publisher transaction')
+            for path, text in journal['plan']['desired'].items():
+                require(self.read(path) == text, 'managed file changed before restart: ' + path)
+            self.save(journal, 'restarting')
+            self.effect(journal, 'restart pause load', lambda: self.stop(LOAD))
+            self.effect(journal, 'restart stop publisher', lambda: self.stop(UNIT))
+            self.unlocked()
+            self.effect(journal, 'restart start publisher', lambda: self.ex.systemctl(self.host, 'start', UNIT))
+            self.ready(True)
+            self.exact(journal)
+            self.effect(journal, 'restart resume load', lambda: self.ex.systemctl(self.host, 'start', LOAD))
             self.save(journal, 'committed')
             return journal
 
@@ -361,12 +410,12 @@ class Cutover:
                 require(self.ex.sha256(self.host, path) == digest, 'rollback executable changed: ' + path)
             for path, desired in plan['desired'].items():
                 require(self.read(path) in (plan['before'][path]['text'], desired), 'managed file changed outside transaction: ' + path)
-            for name in OLD:
+            for name in self.old:
                 observed = stable_unit(self.ex.probe_unit(self.host, name))
                 require(all(observed[key] == plan['units'][name][key] for key in ('fragment_text', 'drop_ins')),
                         'predecessor service configuration changed: ' + name)
             self.save(journal, 'restoring')
-            for name in (LOAD, UNIT, *OLD):
+            for name in (LOAD, UNIT, *self.old):
                 if self.ex.probe_unit(self.host, name)['load_state'] != 'not-found':
                     self.effect(journal, 'restore stop ' + name, lambda name=name: self.stop(name))
             self.unlocked()
@@ -380,7 +429,7 @@ class Cutover:
                         self.write(path, previous['text'], previous['mode'])
                 self.effect(journal, 'restore ' + path, restore)
             self.effect(journal, 'restore reload', lambda: self.ex.systemctl(self.host, 'daemon-reload'))
-            for name in (*OLD, UNIT):
+            for name in (*self.old, UNIT):
                 before = plan['units'][name]
                 if before['load_state'] == 'not-found':
                     continue
@@ -397,7 +446,7 @@ class Cutover:
 
 
 def register(commands):
-    for operation in ('plan', 'preflight', 'deploy', 'status', 'reconcile', 'rollback'):
+    for operation in ('plan', 'preflight', 'deploy', 'status', 'reconcile', 'rollback', 'restart'):
         command = commands.add_parser('publisher-cutover-' + operation, allow_abbrev=False)
         command.add_argument('--request', required=True)
         command.add_argument('--request-sha256', required=True)
@@ -415,9 +464,11 @@ def dispatch(args, executor=None, **_options):
     operation = args.command.removeprefix('publisher-cutover-')
     if operation in ('rollback', 'reconcile'):
         return target.rollback()
+    if operation == 'restart':
+        return target.restart()
     if operation == 'status':
         return {'transaction': target.latest(), 'units': {name: stable_unit(executor.probe_unit(request['host'], name))
-                for name in (*OLD, UNIT, LOAD)}}
+                for name in (*target.old, UNIT, LOAD)}}
     if operation == 'plan':
         return target.plan()
     with tempfile.TemporaryDirectory(prefix='publisher-artifact-') as directory:

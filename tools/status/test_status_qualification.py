@@ -63,6 +63,19 @@ class QualificationTests(unittest.TestCase):
         del self.summary["latency_basis"]
         self.assertFalse(self.assess()["passed"])
 
+    def test_native_protocol_requires_explicit_selection_and_retains_safety_gates(self):
+        self.summary["protocol"] = "status-pir-v3-native-two-mask-m29"
+        self.assertFalse(self.assess()["passed"])
+        def native():
+            return qualification.assess(self.summary, self.requests, self.publications, self.resources,
+                                        expected_protocol="status-pir-v3-native-two-mask-m29")
+        self.assertTrue(native()["passed"])
+        self.requests[0]["observation_age_ms"] = 20001
+        self.assertFalse(native()["passed"])
+        self.requests[0]["observation_age_ms"] = 0
+        self.summary["columns"] *= 2
+        self.assertFalse(native()["passed"])
+
     def test_complete_live_capture_passes(self):
         self.assertTrue(self.assess()["passed"])
 

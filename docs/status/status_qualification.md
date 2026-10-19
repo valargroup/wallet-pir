@@ -71,6 +71,12 @@ python3 tools/status/status_qualification.py \
   --publications publications.jsonl --resources resources.jsonl
 ```
 
+For a deployed native controller, explicitly pass
+`--protocol status-pir-v3-native-two-mask-m29`. The same geometry, six-hour
+arrival coverage, independent source/publication oracle, freshness and resource
+gates apply. The default remains compact v2; native results do not establish
+compact-v2 wallet compatibility or qualify a wallet without a native client.
+
 The assessor exits nonzero for missing evidence, any failed or skipped arrival,
 stale answer, publication taking more than twenty seconds, incorrect publication,
 one-second p99 breach, OOM, or swap use. It also requires both block and
