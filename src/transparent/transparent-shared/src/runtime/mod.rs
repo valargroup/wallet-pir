@@ -48,9 +48,6 @@
 //! the accounting for a runtime a request is still evaluating against would
 //! free budget that is not free.
 
-#[cfg(test)]
-use zakura_pir_client::transparent::native::TableClientExt as _;
-
 use zakura_pir_protocol::transparent::shard as transparent_shard;
 use zakura_pir_query_server::transparent::native as transparent_native;
 
@@ -80,7 +77,6 @@ use transparent_shard::layout::Geometry;
 use zakura_pir_client::native::ProfileClientExt as _;
 use zakura_pir_query_server::native::ProfileQueryExt as _;
 use zakura_pir_query_server::transparent::native::TableQueryExt as _;
-use zakura_pir_server_core::batched_hint;
 use zakura_pir_server_core::native::ProfilePublicationExt as _;
 
 const _: () = assert!(transparent_shard::manifest::QUERY_ROW_QUANTUM as usize == native::D);
@@ -388,30 +384,6 @@ impl Iterator for RowCoefficients<'_> {
     }
 }
 
-/// Geometries whose runtime hint skips trailing zero blocks and is computed
-/// by [`native::batched_hint`]: the recent tails and the display tables, whose
-/// recent shard is rebuilt at every block. Every other geometry, the history
-/// archives included, keeps the reference product over every block.
-const BATCHED_HINT_GEOMETRIES: [&Geometry; 3] = [
-    &transparent_shard::layout::DECOUPLED_2K_8K,
-    &transparent_shard::display::TXID_2K8,
-    &transparent_shard::display::TXID_4K8,
-];
-
-fn uses_batched_hint(geometry: &Geometry) -> bool {
-    BATCHED_HINT_GEOMETRIES.contains(&geometry)
-}
-
-/// Leading `D`-row blocks of a `table_rows`-row plaintext that hold any
-/// nonzero byte, and at least one.
-fn used_blocks(rows: &[u8], row_bytes: usize, table_rows: usize) -> usize {
-    let last = rows
-        .iter()
-        .rposition(|byte| *byte != 0)
-        .map_or(0, |at| at / row_bytes);
-    (last / native::D + 1).min(table_rows / native::D)
-}
-
 /// A uniformly random row among the leading rows that hold any nonzero
 /// byte, or row 0 of an empty table. Random per call, so a fault is not
 /// hidden behind a row the publisher could predict.
@@ -566,28 +538,12 @@ impl TableRuntime {
         // database, exactly lifted.
         let padded = server.db_rows_padded();
         let db = server.db();
-        let hint = if uses_batched_hint(shared.geometry) {
-            // Zero rows add nothing to `masks * database`, so trailing blocks
-            // of them are left out of the product. A growing tail's page table
-            // fills from its first row and is mostly empty for much of its
-            // life; the hint, and every byte published from it, is the same.
-            // The batched hint computes the reference's exact integers several
-            // times faster.
-            let used = used_blocks(rows, profile.row_bytes, profile.rows);
-            batched_hint::hint(
-                &profile.masks[..used],
-                used * native::D,
-                profile.cols,
-                |col| &db[col * padded..col * padded + used * native::D],
-            )?
-        } else {
-            zakura_pir_server_core::native::hint(
-                &profile.masks,
-                profile.rows,
-                profile.cols,
-                |col| &db[col * padded..col * padded + profile.rows],
-            )?
-        };
+        let hint = zakura_pir_server_core::native::hint(
+            &profile.masks,
+            profile.rows,
+            profile.cols,
+            |col| &db[col * padded..col * padded + profile.rows],
+        )?;
         tracing::debug!(
             geometry = shared.geometry.name,
             table = shared.table.as_str(),
@@ -608,26 +564,16 @@ impl TableRuntime {
         Self::assemble(profile.native, Database::Wide(server), preprocessed)
     }
 
-    /// [`Self::build`] for an 8-bit table: the hint over the column-major
-    /// bytes, leaving out trailing all-zero row blocks where the geometry
-    /// allows, then the bytes rearranged for the byte kernel.
+    /// [`Self::build`] for an 8-bit table: the reference hint over every
+    /// column-major row, then the bytes rearranged for the byte kernel.
     fn build_bytes(shared: &SharedParams, rows: &[u8]) -> Result<Self, String> {
         let profile = &shared.profile;
         let row_count = profile.rows;
         let mut db = column_major_bytes(rows, row_count, profile.row_bytes);
-        let hint = if uses_batched_hint(shared.geometry) {
-            let used = used_blocks(rows, profile.row_bytes, row_count);
-            batched_hint::hint(
-                &profile.masks[..used],
-                used * native::D,
-                profile.cols,
-                |col| &db[col * row_count..col * row_count + used * native::D],
-            )?
-        } else {
+        let hint =
             zakura_pir_server_core::native::hint(&profile.masks, row_count, profile.cols, |col| {
                 &db[col * row_count..(col + 1) * row_count]
-            })?
-        };
+            })?;
         let preprocessed = zakura_pir_server_core::native::preprocess(&profile.setup, &hint)?;
         drop(hint);
         interleave(&mut db, row_count);
@@ -1521,13 +1467,6 @@ pub(crate) mod tests {
             page_row_bytes: 2_048,
             ..TXID_2K8
         };
-    const TWO_NATIVE_BLOCKS: transparent_shard::layout::Geometry =
-        transparent_shard::layout::Geometry {
-            name: "test-native-two-blocks",
-            directory_rows: 4_096,
-            page_rows: 4_096,
-            ..NATIVE_INSTANCE
-        };
 
     /// The masks a table's rows publish, from the whole-table hint over the
     /// columns the profile encodes (single bytes for an 8-bit table, u16
@@ -1979,182 +1918,6 @@ pub(crate) mod tests {
             rebuilt,
             TableRuntime::build(&shared, &rows).unwrap().public_params
         );
-    }
-
-    /// Leaving trailing zero blocks out of the hint publishes exactly the
-    /// masks the whole-table product does: an empty table, content ending
-    /// on either side of a block boundary, and content in the last row.
-    fn check_zero_tail(input: impl FnOnce(&native::TableProfile) -> (usize, usize)) {
-        // A two-block native component covers both sides of the boundary.
-        // The independent 16-bit oracle above and HTTP retain history rows.
-        let (geometry, table) = if cfg!(feature = "qualification-tests") {
-            (&DECOUPLED_2K_8K, Table::Pages)
-        } else {
-            (&TWO_NATIVE_BLOCKS, Table::TxDirectory)
-        };
-        let shared = SharedParams::build(geometry, table).unwrap();
-        let profile = &shared.profile;
-        let (filled, expected_blocks) = input(profile);
-        let mut rows = vec![0u8; profile.rows * profile.row_bytes];
-        for (i, byte) in rows[..filled].iter_mut().enumerate() {
-            *byte = (i.wrapping_mul(2_654_435_761) >> 7) as u8 | 1;
-        }
-        assert_eq!(
-            used_blocks(&rows, profile.row_bytes, profile.rows),
-            expected_blocks
-        );
-        assert_eq!(
-            TableRuntime::build(&shared, &rows).unwrap().public_params,
-            reference_masks(profile, &rows),
-            "{filled} leading bytes"
-        );
-    }
-
-    #[cfg(feature = "qualification-tests")]
-    #[test]
-    fn trailing_zero_blocks_leave_the_published_masks_unchanged() {
-        check_zero_tail(|_| (0, 1));
-    }
-    #[cfg(feature = "qualification-tests")]
-    #[test]
-    fn trailing_zero_masks_match_with_one_nonzero_byte() {
-        check_zero_tail(|_| (1, 1));
-    }
-    #[cfg(feature = "qualification-tests")]
-    #[test]
-    fn trailing_zero_masks_match_at_the_block_boundary() {
-        check_zero_tail(|profile| (native::D * profile.row_bytes, 1));
-    }
-    #[cfg(feature = "qualification-tests")]
-    #[test]
-    fn trailing_zero_masks_match_past_the_block_boundary() {
-        check_zero_tail(|profile| (native::D * profile.row_bytes + 1, 2));
-    }
-    #[test]
-    fn trailing_zero_masks_match_with_content_in_the_last_row() {
-        check_zero_tail(|profile| (profile.rows * profile.row_bytes, profile.rows / native::D));
-    }
-
-    /// The batched hint changes nothing a client or the disk cache sees. At
-    /// the deployed history and display geometries, for a full directory and
-    /// a partly filled page table, the runtime publishes the masks of one
-    /// prepared from the reference hint over every block, answers byte for
-    /// byte as it does, and decodes to the selected row.
-    #[test]
-    fn the_batched_hint_runtime_is_the_reference_runtime() {
-        for (geometry, table, filled) in [
-            #[cfg(feature = "qualification-tests")]
-            (&DECOUPLED_2K_8K, Table::Directory, 2_048),
-            #[cfg(feature = "qualification-tests")]
-            (&DECOUPLED_2K_8K, Table::Pages, 5_000),
-            #[cfg(feature = "qualification-tests")]
-            (&TXID_2K8, Table::TxDirectory, 2_048),
-            (&TXID_2K8, Table::TxDirectory, 700),
-        ] {
-            let shared = SharedParams::build(geometry, table).unwrap();
-            let profile = &shared.profile;
-            let mut rows = vec![0u8; profile.rows * profile.row_bytes];
-            for (i, byte) in rows[..filled * profile.row_bytes].iter_mut().enumerate() {
-                *byte = (i.wrapping_mul(2_654_435_761) >> 9) as u8;
-            }
-            let fast = TableRuntime::build(&shared, &rows).unwrap();
-            let reference = if shared.transport.is_some() {
-                let server = database_server(
-                    &shared,
-                    (0..profile.rows * profile.cols).map(|i| {
-                        native::row_coefficient(
-                            &rows,
-                            profile.row_bytes,
-                            i / profile.cols,
-                            i % profile.cols,
-                        )
-                    }),
-                    false,
-                );
-                let (padded, db) = (server.db_rows_padded(), server.db());
-                let hint = zakura_pir_server_core::native::hint(
-                    &profile.masks,
-                    profile.rows,
-                    profile.cols,
-                    |c| &db[c * padded..c * padded + profile.rows],
-                )
-                .unwrap();
-                let preprocessed =
-                    zakura_pir_server_core::native::preprocess(&profile.setup, &hint).unwrap();
-                TableRuntime::assemble(profile.native, Database::Wide(server), preprocessed)
-                    .unwrap()
-            } else {
-                let mut db = column_major_bytes(&rows, profile.rows, profile.row_bytes);
-                let hint = zakura_pir_server_core::native::hint(
-                    &profile.masks,
-                    profile.rows,
-                    profile.cols,
-                    |c| &db[c * profile.rows..(c + 1) * profile.rows],
-                )
-                .unwrap();
-                let preprocessed =
-                    zakura_pir_server_core::native::preprocess(&profile.setup, &hint).unwrap();
-                interleave(&mut db, profile.rows);
-                TableRuntime::assemble(profile.native, Database::Bytes(db), preprocessed).unwrap()
-            };
-            assert_eq!(fast.public_params, reference.public_params);
-            assert_eq!(fast.public_params_epoch, reference.public_params_epoch);
-            let binding = [7u8; 8];
-            for selected in [0, filled - 1, profile.rows - 1] {
-                let (secret, upload) = profile.prepare(selected).unwrap();
-                let mut body = binding.to_vec();
-                body.extend(upload);
-                let answer = fast.evaluate(&shared, binding, &body).unwrap();
-                assert_eq!(answer, reference.evaluate(&shared, binding, &body).unwrap());
-                let row = profile
-                    .decode(&secret, &fast.public_params, &answer[16..])
-                    .unwrap();
-                let at = selected * profile.row_bytes;
-                assert_eq!(
-                    row,
-                    &rows[at..at + profile.row_bytes],
-                    "{} {table:?} row {selected}",
-                    geometry.name
-                );
-            }
-        }
-    }
-
-    /// Only the recent history geometry and the display geometries take the
-    /// batched hint, and their deployed masks are within its capacity, so it
-    /// never silently falls back there. The archive geometry, and any history
-    /// geometry added later, keep the reference product over every block.
-    #[test]
-    fn the_batched_hint_is_dispatched_for_recent_geometries_only() {
-        use transparent_shard::display::DISPLAY_PROFILES;
-        use transparent_shard::layout::{DECOUPLED_32K_32K, PROFILES};
-        for geometry in PROFILES {
-            assert_eq!(
-                uses_batched_hint(geometry),
-                geometry.name == DECOUPLED_2K_8K.name,
-                "{}",
-                geometry.name
-            );
-        }
-        assert!(!uses_batched_hint(&DECOUPLED_32K_32K));
-        assert!(uses_batched_hint(&DECOUPLED_2K_8K));
-        assert!(DISPLAY_PROFILES.iter().all(uses_batched_hint));
-        for geometry in BATCHED_HINT_GEOMETRIES {
-            let tables = if DISPLAY_PROFILES.contains(geometry) {
-                vec![Table::TxDirectory]
-            } else {
-                vec![Table::Directory, Table::Pages]
-            };
-            for table in tables {
-                let shared = SharedParams::build(geometry, table).unwrap();
-                assert_eq!(
-                    batched_hint::path(&shared.profile.masks).unwrap(),
-                    batched_hint::Path::Batched,
-                    "{} {table:?}",
-                    geometry.name
-                );
-            }
-        }
     }
 
     /// Every registry geometry must have parameters and a reservation that

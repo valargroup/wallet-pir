@@ -15,7 +15,6 @@
       "transparent:transparent-query-server:bin:txid-control",
       "transparent:transparent-query-server:doc:transparent_query_server",
       "transparent:transparent-query-server:example:display_fixture",
-      "transparent:transparent-query-server:example:hint_bench",
       "transparent:transparent-query-server:example:history_fixture",
       "transparent:transparent-query-server:example:native_certificate",
       "transparent:transparent-query-server:example:quality-canary",

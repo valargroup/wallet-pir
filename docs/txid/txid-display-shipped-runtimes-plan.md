@@ -71,8 +71,10 @@ Background and measurements:
   - recent-01: DO-Regular 2.0 GHz, 4 vCPU. The worker unit has a drop-in,
     `zz-latency.conf`: new binary, `CPUQuota=200%`, `CPUWeight=50`, 2 build threads.
 - **Measured build cost** of one `txid-2k` table, on roman-dev-2 at 1 thread:
-  preprocessing 2.2 s, hint 0.15 s (batched), encode 0.02 s. On recent-01 the whole
-  per-block prepare is about 12 CPU-seconds.
+  preprocessing 2.2 s, hint 0.15 s with the retired column-batched proof of concept,
+  encode 0.02 s. These are historical measurements; the current reference hint
+  path needs separate measurement. On recent-01 the captured whole per-block
+  prepare was about 12 CPU-seconds.
 
 ## Design
 
@@ -126,8 +128,7 @@ Background and measurements:
 ## Tests (focused; `release-fast`)
 
 - A shipped runtime loaded on the worker equals a locally built one: same published
-  masks and epoch, byte-identical answers to fixed queries, correct decoded rows. Model
-  it on `the_batched_hint_runtime_is_the_reference_runtime` (`runtime.rs`). Cover
+  masks and epoch, byte-identical answers to fixed queries, correct decoded rows. Use `a_shipped_runtime_is_the_locally_built_runtime` in the runtime disk tests. Cover
   `txid-2k` directory (full) and pages (partly filled).
 - These shipped files are ignored and trigger a local build, with a counted fallback:
   - truncated or corrupted file;
