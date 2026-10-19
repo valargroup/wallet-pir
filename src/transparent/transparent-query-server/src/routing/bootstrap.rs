@@ -622,14 +622,13 @@ pub(crate) async fn stage_holdings(
                     generated_at: "not-serving".into(),
                 },
             )?;
-            let options = LoadOptions {
+            LoadOptions {
                 scope: LoadScope::Assigned {
                     assignment: Arc::new(assignment),
                     worker_id: "provider".into(),
                 },
                 ..LoadOptions::whole(0)
-            };
-            options
+            }
         };
         if let LoadScope::Assigned { assignment, .. } = &options.scope {
             crate::control::persist(&stage.join("assignment.json"), assignment.as_ref())?;
