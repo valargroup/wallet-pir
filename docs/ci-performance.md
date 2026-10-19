@@ -218,16 +218,23 @@ selected helper, shared and infrastructure check. Helpers run on hosted runners
 to reserve the fast queue for main. Operations archives
 assemble on hosted runners without Rust. Full tests and lint run on separate
 Ubuntu 24.04 hosted runners; CPU release builds use the dedicated build runner.
-CPU and Ubuntu 22.04 CUDA candidate builds start alongside family testing;
+CPU candidate builds start alongside family testing. Ubuntu 22.04 CUDA
+candidates are built only for CUDA-selected qualification, after its dedicated
+driver-free CUDA checks pass;
 candidate archives are uploaded under
 an ineligible name and re-verified before qualified publication. Each family
 publishes immediately after its required checks pass. Failure in another family
-cannot authorize or prevent that publication. CPU artifacts do not wait for CUDA.
+cannot authorize or prevent that publication. CPU artifacts do not wait for the
+CUDA release build, but selected CUDA checks remain required.
 CUDA candidates use an ineligible artifact
 name until Enhance qualification and candidate compilation both pass; publication
 rechecks archive contents, ABI metadata and clean source provenance.
 
-Only **CI / Fast checks** validates automatically on main pushes and PRs.
+**CI / Fast checks** validates automatically on main pushes and PRs. A separate
+CUDA job runs only when CUDA code, integration contracts or dependencies are
+affected. Generic full/nightly runs stay CPU-only; manual qualification exposes
+an `include-cuda` opt-in. Missing CUDA qualification means no CUDA artifact for
+that revision.
 Dependency cache priming runs independently on relevant main changes.
 Both PR and main feedback target three minutes from job start through final
 cleanup; report queueing separately. Validation finishes before main's final

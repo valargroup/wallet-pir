@@ -201,7 +201,10 @@ which is enough for a no-op check or an already staged release.
   as the worker. Its inventory entry names `"artifact_kind":
   "enhance-pir-native-cuda"`, and every plan, preflight or deploy that selects it
   needs `--extra-archive enhance-pir-native-cuda=<bundle>` with the same `--sha`;
-  without it the command refuses rather than skipping the GPU. The GPU then rolls
+  without it the command refuses rather than skipping the GPU. CPU-only
+  qualification omits that artifact: request `include-cuda=true` when qualifying
+  the exact revision before selecting the GPU for deployment. See
+  [CUDA deployment](cuda_workers.md#deployment). The GPU then rolls
   in its own transaction, in rollout order, with its own exact-answer check. Leave
   it out deliberately with `--only`. The GPU is the packing router's preferred
   worker, so a release is not complete until it runs too.

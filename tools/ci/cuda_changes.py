@@ -33,6 +33,7 @@ CONTRACTS = (
 TOOLS = {
     'tools/ci/cuda_changes.py', 'tools/tests/test_cuda_changes.py',
     'tools/ci/cuda_boundary.py', 'tools/tests/test_verify_cuda_build.py',
+    'tools/ci/feedback_base.py', 'tools/tests/test_feedback_base.py',
     'tools/ci/backend_features.py', 'tools/ci/test_matrix.py',
     'tools/ci/build-cuda.sh',
     'tools/ci/verify_cuda_build.py', 'tools/ci/qualification.py',

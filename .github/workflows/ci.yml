@@ -114,6 +114,7 @@ jobs:
         env:
           BASE: ${{ inputs.comparison-base || github.event.pull_request.base.sha || github.event.before }}
           INCLUDE_CUDA: ${{ inputs.include-cuda }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           if [[ "$INCLUDE_CUDA" == true ]]; then
@@ -121,6 +122,7 @@ jobs:
           elif [[ "$GITHUB_EVENT_NAME" == workflow_dispatch && -z "$BASE" ]]; then
             echo 'cuda=false' >> "$GITHUB_OUTPUT"
           else
+            BASE=$(python3 tools/ci/feedback_base.py --cuda)
             if [[ -n "$BASE" && "$BASE" != 0000000000000000000000000000000000000000 ]]; then
               [[ "$BASE" =~ ^[0-9a-f]{40}$ ]]
               git fetch --no-tags --depth=1 origin "$BASE"

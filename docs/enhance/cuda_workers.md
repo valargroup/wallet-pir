@@ -134,6 +134,9 @@ contracts, CUDA tests and build logic, or changes to the backend's locked
 dependency graph. Renames and deletions count. Unrelated products, documentation,
 workspace membership and unrelated lockfile entries do not select CUDA. An
 unavailable comparison requires CUDA checks rather than silently dropping them.
+Main compares against successful CI, so a later unrelated push cannot discard
+CUDA changes from a canceled run. CPU-only cache preparation does not advance
+that comparison.
 The selector prints its reasons before any CUDA job starts. Hosted CUDA checks
 use dynamic loading and install no NVIDIA driver or toolkit.
 

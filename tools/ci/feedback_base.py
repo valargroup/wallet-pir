@@ -50,7 +50,7 @@ def prepared_base(repo, head, previous):
     return sha
 
 
-def comparison(event, base, repo, head=''):
+def comparison(event, base, repo, head='', *, use_prepared=True):
     if event != 'push':
         return base
     runs = api(f'repos/{repo}/actions/workflows/ci.yml/runs?branch=main&event=push&status=success&per_page=1',
@@ -62,7 +62,7 @@ def comparison(event, base, repo, head=''):
         if (run['conclusion'] != 'success' or run['event'] != 'push' or run['head_branch'] != 'main'
                 or not re.fullmatch('[0-9a-f]{40}', sha)):
             raise ValueError('invalid successful-main comparison')
-    return prepared_base(repo, head, sha) if re.fullmatch('[0-9a-f]{40}', head) else sha
+    return prepared_base(repo, head, sha) if use_prepared and re.fullmatch('[0-9a-f]{40}', head) else sha
 
 
 def preparation_comparison(base, repo, head):
@@ -78,10 +78,15 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--prepare', action='store_true',
                         help='use an explicit comparison or successful main history for cache preparation')
+    parser.add_argument('--cuda', action='store_true',
+                        help='retain canceled main changes; CPU cache preparation cannot establish CUDA coverage')
     args = parser.parse_args(argv)
     inputs = (os.environ.get('BASE', ''), os.environ['GITHUB_REPOSITORY'], os.environ.get('GITHUB_SHA', ''))
-    base = (preparation_comparison(*inputs) if args.prepare
-            else comparison(os.environ['GITHUB_EVENT_NAME'], *inputs))
+    if args.cuda:
+        base = comparison(os.environ['GITHUB_EVENT_NAME'], *inputs, use_prepared=False)
+    else:
+        base = (preparation_comparison(*inputs) if args.prepare
+                else comparison(os.environ['GITHUB_EVENT_NAME'], *inputs))
     with open(os.environ['GITHUB_ENV'], 'a') as out:
         out.write('FAST_BASE=' + base + '\n')
     print(base)
