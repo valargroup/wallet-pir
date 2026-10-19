@@ -100,7 +100,8 @@
       "batch_size": 64,
       "concurrency": 8,
       "near_since": 1790640000,
-      "near_poll_seconds": 60
+      "near_poll_seconds": 60,
+      "near_sweep_pages": 30
     }
   }
 }

@@ -459,6 +459,8 @@ pub struct History {
     pub through: i64,
     /// When the last sweep that read the whole span from `since` began.
     pub full: i64,
+    /// How long that sweep took, from its start to its last page.
+    pub full_secs: i64,
 }
 
 /// A walk of a feed from its newest swap down to `floor`, recorded page by page so it
@@ -496,7 +498,8 @@ impl ProviderStore {
                 txid BLOB NOT NULL CHECK(length(txid)=32), seen_at INTEGER NOT NULL,
                 PRIMARY KEY(receiver,txid)) WITHOUT ROWID;
             CREATE TABLE IF NOT EXISTS history (feed TEXT PRIMARY KEY, since INTEGER NOT NULL,
-                through INTEGER NOT NULL, full INTEGER NOT NULL, CHECK(since<=through));
+                through INTEGER NOT NULL, full INTEGER NOT NULL, full_secs INTEGER NOT NULL,
+                CHECK(since<=through));
             CREATE TABLE IF NOT EXISTS sweeps (feed TEXT NOT NULL, pass TEXT NOT NULL,
                 floor INTEGER NOT NULL, began INTEGER NOT NULL, after TEXT, memo TEXT,
                 reached INTEGER, pages INTEGER NOT NULL, PRIMARY KEY(feed,pass),
@@ -585,11 +588,11 @@ impl ProviderStore {
         })
     }
 
-    /// Records one page of `feed`'s `pass` that began at `began`, atomically: its
-    /// receivers and completed payouts (see `insert`), the oldest creation time it
-    /// reached, and `next`, where the following page starts. A page with no `next`
-    /// ends the sweep, which extends `feed`'s history (see [`Self::history`]) and is
-    /// removed. A page of another sweep than the one in progress is [`Error::Coverage`]
+    /// Records one page of `feed`'s `pass` that began at `began`, read at `read_at`,
+    /// atomically: its receivers and completed payouts (see `insert`), the oldest
+    /// creation time it reached, and `next`, where the following page starts. A page
+    /// with no `next` ends the sweep, which extends `feed`'s history (see
+    /// [`Self::history`]) and is removed. A page of another sweep than the one in progress is [`Error::Coverage`]
     /// and records nothing.
     #[allow(clippy::too_many_arguments)]
     pub fn sweep_page(
@@ -601,6 +604,7 @@ impl ProviderStore {
         completions: &[(ReceiverBytes, Hash, i64)],
         reached: Option<i64>,
         next: Option<&Token>,
+        read_at: i64,
     ) -> Result<(), Error> {
         let tx = self.db.transaction()?;
         let floor: Option<i64> = tx
@@ -629,7 +633,7 @@ impl ProviderStore {
                 // the sweeps finish. One that would leave a gap replaces it, so the
                 // history never claims a span no sweep read.
                 tx.execute(
-                    "INSERT INTO history VALUES (?1,?2,?3,?3) ON CONFLICT(feed) DO UPDATE SET
+                    "INSERT INTO history VALUES (?1,?2,?3,?3,?4) ON CONFLICT(feed) DO UPDATE SET
                         since=CASE WHEN excluded.since<=through AND excluded.through>=since
                             THEN MIN(since,excluded.since) ELSE excluded.since END,
                         through=CASE WHEN excluded.since<=through AND excluded.through>=since
@@ -637,8 +641,12 @@ impl ProviderStore {
                         full=CASE WHEN excluded.since<since OR excluded.since>through
                                 OR excluded.through<since THEN excluded.through
                             WHEN excluded.since=since THEN MAX(full,excluded.through)
-                            ELSE full END",
-                    params![feed, floor, began],
+                            ELSE full END,
+                        full_secs=CASE WHEN excluded.since<since OR excluded.since>through
+                                OR excluded.through<since
+                                OR (excluded.since=since AND excluded.through>full)
+                            THEN excluded.full_secs ELSE full_secs END",
+                    params![feed, floor, began, read_at - began],
                 )?;
                 tx.execute(
                     "DELETE FROM sweeps WHERE feed=?1 AND pass=?2",
@@ -651,18 +659,20 @@ impl ProviderStore {
     }
 
     /// `feed`'s history, if a sweep completed: the span its completed sweeps cover
-    /// without a gap, and when the last one that read all of it began.
+    /// without a gap, and when the last one that read all of it began and how long it
+    /// took.
     pub fn history(&self, feed: &str) -> Result<Option<History>, Error> {
         Ok(self
             .db
             .query_row(
-                "SELECT since,through,full FROM history WHERE feed=?1",
+                "SELECT since,through,full,full_secs FROM history WHERE feed=?1",
                 [feed],
                 |r| {
                     Ok(History {
                         since: r.get(0)?,
                         through: r.get(1)?,
                         full: r.get(2)?,
+                        full_secs: r.get(3)?,
                     })
                 },
             )

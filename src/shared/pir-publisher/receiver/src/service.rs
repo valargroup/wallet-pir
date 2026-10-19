@@ -80,11 +80,24 @@ pub struct Config {
     pub near_since: Option<i64>,
     #[arg(long, default_value_t = 60, value_parser = clap::value_parser!(u64).range(10..))]
     pub near_poll_seconds: u64,
+    /// History pages each poll reads of each NEAR feed, shared by its two sweep passes.
+    /// Each page takes 5.5 seconds of the explorer's request limit, so every page added
+    /// delays the next live read by 11 seconds; at most 60 keeps the recent set within
+    /// wallets' 15 minutes. Raise it when the full pass duration in health's capacity
+    /// nears its limit.
+    #[arg(long, default_value_t = crate::near::SWEEP_PAGES as u64, value_parser = clap::value_parser!(u64).range(2..=60))]
+    #[serde(default = "default_sweep_pages")]
+    pub near_sweep_pages: u64,
     /// The partner key `NEAR_INTENTS_EXPLORER` holds, if any. Without one, publications
     /// carry no provider sets, whatever an earlier run left in `providers.sqlite`.
     #[serde(skip)]
     #[arg(skip)]
     pub near_key: Option<String>,
+}
+
+/// The serialized configuration's default `near_sweep_pages`.
+fn default_sweep_pages() -> u64 {
+    crate::near::SWEEP_PAGES as u64
 }
 
 impl From<&Config> for application::Config {
@@ -131,6 +144,7 @@ impl Config {
             || self.cookie.is_some() == self.no_auth
             || self.poll_seconds == 0
             || self.near_poll_seconds < 10
+            || !(2..=60).contains(&self.near_sweep_pages)
             || self.depth > 50
             || self.batch_size == 0
             || self.batch_size > MAX_RECEIVER_BATCH_BLOCKS
@@ -203,7 +217,7 @@ pub async fn run(
     if let (Some(key), Some(start)) = (args.near_key.clone(), args.near_since) {
         let path = args.data_dir.join(PROVIDERS);
         let poll = Duration::from_secs(args.near_poll_seconds);
-        let mut explorer = Explorer::new(key)?;
+        let mut explorer = Explorer::new(key, args.near_sweep_pages as usize)?;
         let provider = tokio::spawn(async move {
             loop {
                 crate::near::poll(&mut explorer, &path, start, &reads).await;

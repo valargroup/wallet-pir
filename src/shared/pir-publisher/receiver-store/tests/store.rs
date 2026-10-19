@@ -198,13 +198,13 @@ fn provider_receivers_are_an_append_only_union() {
     // The swap's refund address, corrected.
     let page = [(corrected, false, 50)];
     store
-        .sweep_page(feed, Pass::Full, 70, &page, &[], Some(40), None)
+        .sweep_page(feed, Pass::Full, 70, &page, &[], Some(40), None, 80)
         .unwrap();
     store.record(feed, None, &[], &[], 90, 100).unwrap();
     // A sweep that leaves a gap replaces the history, but no receiver.
     store.begin_sweep(feed, Pass::Recent, 500, 600).unwrap();
     store
-        .sweep_page(feed, Pass::Recent, 600, &[], &[], None, None)
+        .sweep_page(feed, Pass::Recent, 600, &[], &[], None, None, 610)
         .unwrap();
     let history = store.history(feed).unwrap().unwrap();
     assert_eq!((history.since, history.through), (500, 600));
@@ -253,16 +253,16 @@ fn sweeps_resume_and_extend_the_history() {
     ));
     let next = ("d1".to_owned(), None);
     store
-        .sweep_page(feed, full, 1_000, &[], &[], Some(700), Some(&next))
+        .sweep_page(feed, full, 1_000, &[], &[], Some(700), Some(&next), 1_010)
         .unwrap();
     let after = ("d2".to_owned(), Some("memo".to_owned()));
     store
-        .sweep_page(feed, full, 1_000, &[], &[], Some(800), Some(&after))
+        .sweep_page(feed, full, 1_000, &[], &[], Some(800), Some(&after), 1_010)
         .unwrap();
     let payout = [(receiver(), true, 500)];
     for (pass, began) in [(full, 999), (Pass::Recent, 1_000)] {
         assert!(matches!(
-            store.sweep_page(feed, pass, began, &payout, &[], None, None),
+            store.sweep_page(feed, pass, began, &payout, &[], None, None, began + 10),
             Err(Error::Coverage)
         ));
     }
@@ -279,14 +279,16 @@ fn sweeps_resume_and_extend_the_history() {
     assert_eq!(store.history(feed).unwrap(), None);
     assert!(store.sets(0).unwrap().1.is_empty());
     store
-        .sweep_page(feed, full, 1_000, &payout, &[], Some(90), None)
+        .sweep_page(feed, full, 1_000, &payout, &[], Some(90), None, 1_010)
         .unwrap();
     assert_eq!(store.sweep(feed, full).unwrap(), None);
+    // Every sweep here takes ten seconds.
     let history = |since, through, full| {
         Some(History {
             since,
             through,
             full,
+            full_secs: 10,
         })
     };
     assert_eq!(store.history(feed).unwrap(), history(100, 1_000, 1_000));
@@ -301,12 +303,12 @@ fn sweeps_resume_and_extend_the_history() {
     ] {
         store.begin_sweep(feed, Pass::Recent, floor, began).unwrap();
         store
-            .sweep_page(feed, Pass::Recent, began, &[], &[], None, None)
+            .sweep_page(feed, Pass::Recent, began, &[], &[], None, None, began + 10)
             .unwrap();
         assert_eq!(store.history(feed).unwrap(), expected);
     }
     store
-        .sweep_page(feed, full, 2_500, &[], &[], None, None)
+        .sweep_page(feed, full, 2_500, &[], &[], None, None, 2_510)
         .unwrap();
     assert_eq!(store.history(feed).unwrap(), history(50, 3_500, 3_500)); // On a history shorter than a week a recent pass reads from its start too. Two
                                                                          // such passes finishing out of order keep the later start.
@@ -314,7 +316,7 @@ fn sweeps_resume_and_extend_the_history() {
     store.begin_sweep(feed, Pass::Recent, 50, 4_500).unwrap();
     for (pass, began) in [(Pass::Recent, 4_500), (full, 4_000)] {
         store
-            .sweep_page(feed, pass, began, &[], &[], None, None)
+            .sweep_page(feed, pass, began, &[], &[], None, None, began + 10)
             .unwrap();
         assert_eq!(store.history(feed).unwrap(), history(50, 4_500, 4_500));
     }

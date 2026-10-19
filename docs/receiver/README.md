@@ -238,7 +238,7 @@ the first does or one after an outage of over a day, restarts the feed's live
 coverage there.
 
 History comes from sweeps, which walk a feed from its newest swap down to a floor,
-30 pages a feed each poll between two passes. Each pass that is running gets at
+`--near-sweep-pages` (default 30) pages a feed each poll between two passes. Each pass that is running gets at
 least half of them and any the other leaves, so neither starves the other. Each page
 is recorded with where the next one starts, so a sweep resumes after a failed request
 or a restart and no history is too long to read.
@@ -256,7 +256,7 @@ or a restart and no history is too long to read.
   an hour when it is less than a week old.
 
 A feed's history is the span its completed sweeps cover without a gap, `since` to
-`through`, and `full` is when the last full pass began. Every swap created in that
+`through`, `full` is when the last full pass began and `full_secs` how long it took. Every swap created in that
 span that the explorer listed, in its current form, within a week of its creation or
 before `full` is recorded. The report's `history` gives these for each feed, null
 until the first sweep completes, with each pass in progress (`sweeps`: its floor,
@@ -264,7 +264,8 @@ start, the oldest creation time it reached and its pages). They are historical
 completeness, apart from the live freshness `feeds` gives. The seen set is published
 only once both feeds' history reaches their live coverage, and declares the
 history's start. The probe fails `stale_history` when either feed's `through` is
-more than six hours old or its `full` more than three days.
+more than six hours old, or its `full` older than twice `full_secs` plus a day, and
+never for a `full` under three days old: a long history's pass is slow but healthy.
 
 The stored receivers are an append-only union. Reorgs never touch
 `providers.sqlite`, later reads and corrections only add, and the database refuses
@@ -335,6 +336,7 @@ any limit, `critical` from 90%.
 | `filter_bytes` | 8 MiB | `MAX_FILTERS_BYTES` in wallet-libraries |
 | `witness_bytes` | 64 MiB | `MAX_WITNESS_BYTES` in wallet-libraries |
 | `witness_commitments` | `--max-witness-commitments` (2^24) | the indexer's unit |
+| `full_pass_secs` | 2 days for the longer feed's last full pass, or the running one's so far | `--near-sweep-pages` and the explorer's request limit |
 
 Placement hashes each record to a row, and a salt fails when any row gets more than
 its 14 slots, so the largest table fills well before its sizing ceiling of 458,751
@@ -354,11 +356,16 @@ apart from availability, so a capacity alert neither fails the probe nor hides a
 failure.
 
 At `warning`, start the change that raises the limit, so it ships before
-`critical`. The first three are wallet-libraries constants, so raising one is a
-coordinated format change of wallets and servers. For `witness_commitments`,
-measure the witness build's peak memory, then raise `--max-witness-commitments`
-with the unit's `MemoryHigh` and `MemoryMax` in `receiver-pir.service.in` through a
-reviewed deploy. At `critical` or a refusal, ship that change now: wallets accept a
+`critical`. For `full_pass_secs`, a correction older than a week waits up to about
+twice the duration: raise `--near-sweep-pages` in `receiver-pir.service.in` through
+a reviewed deploy. Each page adds 11 seconds to every poll, so at most 60 keeps the
+recent set fresh. At the default each feed reads about 260 pages an hour, and the
+explorer's one request per 5.5 seconds caps both feeds together at about 15,700 a
+day, so beyond that ask NEAR for a higher rate. The records, filter and witness
+byte limits are wallet-libraries constants, so raising one is a coordinated format
+change of wallets and servers. For `witness_commitments`, measure the witness
+build's peak memory, then raise `--max-witness-commitments` with the unit's
+`MemoryHigh` and `MemoryMax` in `receiver-pir.service.in` through a reviewed deploy. At `critical` or a refusal, ship that change now: wallets accept a
 publication at most 100 blocks behind their chain, about two hours. Never drop
 records, receivers or history to fit a limit.
 

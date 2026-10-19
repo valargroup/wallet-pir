@@ -47,9 +47,11 @@ const MAX_RECENT_AGE_SECS: i64 = 15 * 60;
 /// accepts. Recent passes begin hourly and take minutes, so an older end means sweeps
 /// are failing.
 const MAX_HISTORY_AGE_SECS: i64 = 6 * 60 * 60;
-/// The oldest start of each NEAR feed's last full pass (`indexer.history.<feed>.full`)
-/// the probe accepts. Full passes begin daily, and a long history takes hours to read.
-const MAX_FULL_AGE_SECS: i64 = 3 * 24 * 60 * 60;
+/// The age of each NEAR feed's last full pass start (`indexer.history.<feed>.full`)
+/// the probe always accepts. Full passes begin daily.
+const MIN_FULL_AGE_SECS: i64 = 3 * 24 * 60 * 60;
+/// Slack beyond twice the last full pass's duration before its start counts as stale.
+const FULL_AGE_MARGIN_SECS: i64 = 24 * 60 * 60;
 /// Bound on the health report, a few hundred bytes.
 const MAX_HEALTH_BYTES: usize = 64 * 1024;
 /// How often `--await-feed-reads` polls health.
@@ -195,13 +197,19 @@ async fn capacity(health_url: &str) -> Value {
 }
 
 /// Whether health's `indexer.history` shows both NEAR feeds' history ending within
-/// [`MAX_HISTORY_AGE_SECS`] and fully reread within [`MAX_FULL_AGE_SECS`].
+/// [`MAX_HISTORY_AGE_SECS`] and their last full pass started recently enough for its
+/// own pace. A pass of a long history takes long, and the next one completes about two
+/// durations after the last one started, so the start may be twice the last pass's
+/// duration (`full_secs`) plus [`FULL_AGE_MARGIN_SECS`] old, and always
+/// [`MIN_FULL_AGE_SECS`].
 fn history_current(history: &Value) -> bool {
     let now = unix_now();
     [Feed::Payouts, Feed::Refunds].iter().all(|feed| {
         let feed = &history[feed.name()];
+        let took = feed["full_secs"].as_i64().unwrap_or(0);
+        let allowed = (2 * took + FULL_AGE_MARGIN_SECS).max(MIN_FULL_AGE_SECS);
         feed["through"].as_i64() >= Some(now - MAX_HISTORY_AGE_SECS)
-            && feed["full"].as_i64() >= Some(now - MAX_FULL_AGE_SECS)
+            && feed["full"].as_i64() >= Some(now - allowed)
     })
 }
 
@@ -1452,9 +1460,9 @@ mod tests {
     }
 
     /// Health's `indexer.history` with both feeds' history complete through `through`
-    /// and last fully reread then.
+    /// and last fully reread then, in an hour.
     fn history(through: i64) -> Value {
-        let feed = json!({"since": 1, "through": through, "full": through,
+        let feed = json!({"since": 1, "through": through, "full": through, "full_secs": 3600,
             "sweeps": {"recent": null, "full": null}});
         json!({"near-payouts": feed, "near-refunds": feed})
     }
@@ -1755,7 +1763,7 @@ mod tests {
         // is stale, and a missing payout outranks it.
         let stale = history(unix_now() - MAX_HISTORY_AGE_SECS - 60);
         let mut unread = history(unix_now());
-        unread["near-refunds"]["full"] = json!(unix_now() - MAX_FULL_AGE_SECS - 60);
+        unread["near-refunds"]["full"] = json!(unix_now() - MIN_FULL_AGE_SECS - 60);
         for history in [stale, unread, Value::Null] {
             let indexer = json!({"payouts_missing": 0, "payouts_uncheckable": 1,
                 "history": history});
@@ -1780,6 +1788,26 @@ mod tests {
             failure,
             ("payouts_uncheckable", json!({"payouts_uncheckable": 1}))
         );
+    }
+
+    /// A full pass's start may age with the pass's own duration: on a long history
+    /// whose last full pass took 49 hours, a start 90 hours old is current and one 130
+    /// hours old is not, while on a short history the start may still be three days old.
+    #[test]
+    fn full_pass_staleness_follows_its_duration() {
+        let (now, hour) = (unix_now(), 3600);
+        let with = |full_age: i64, full_secs: i64| {
+            let mut history = history(now);
+            for feed in ["near-payouts", "near-refunds"] {
+                history[feed]["full"] = json!(now - full_age * hour);
+                history[feed]["full_secs"] = json!(full_secs * hour);
+            }
+            history_current(&history)
+        };
+        assert!(with(90, 49));
+        assert!(!with(130, 49));
+        assert!(with(71, 1));
+        assert!(!with(73, 1));
     }
 
     /// The fixture's pinned receiver is checked against recovery before any request:

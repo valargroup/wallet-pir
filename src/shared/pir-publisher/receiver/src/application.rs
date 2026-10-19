@@ -461,6 +461,7 @@ impl<'a> Collected<'a> {
         let anchor_time = rpc.block_time(tip.hash).await?.min(unix_now());
         let capture = crate::near::capture(provider_store, anchor_time)?;
         let inputs = crate::near::digest(&capture.sets);
+        let full_pass_secs = capture.full_pass_secs;
         let report = capture.report(store)?;
         if let (Some(serving), Some(active)) = (serving, active.as_ref()) {
             if active.anchor == (tip.height, tip.hash)
@@ -558,6 +559,9 @@ impl<'a> Collected<'a> {
                 MAX_FILTERS_BYTES as u64,
             ),
         ];
+        if let Some(secs) = full_pass_secs {
+            limits.push(("full_pass_secs", secs, crate::near::MAX_FULL_PASS_SECS));
+        }
         if let Some(proof) = &witnesses {
             let commitments = snapshot.manifest.end_position;
             limits.push((
@@ -1573,6 +1577,30 @@ mod tests {
         assert_eq!(level(PLACEABLE_RECORDS * 7 / 10), "warning");
     }
 
+    /// The full pass duration is a capacity limit like the others: a pass of a long
+    /// history that took 49 hours is critical against its two-day limit.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_long_full_pass_is_reported_as_capacity() {
+        use receiver_store::Pass;
+        let mut paused = Paused::new(|_| {}).await;
+        let mut provider = paused.provider();
+        let hour = 3600;
+        for feed in [crate::near::Feed::Payouts, crate::near::Feed::Refunds] {
+            let (feed, began) = (feed.name(), NOW - 60 * hour);
+            provider.begin_sweep(feed, Pass::Full, 0, began).unwrap();
+            let end = NOW - 11 * hour;
+            provider
+                .sweep_page(feed, Pass::Full, began, &[], &[], None, None, end)
+                .unwrap();
+        }
+        paused.refresh().await.unwrap();
+        let capacity = paused.get("health").await["indexer"]["capacity"].clone();
+        let used = 49 * hour as u64;
+        let limit = json!({"used": used, "max": crate::near::MAX_FULL_PASS_SECS});
+        assert_eq!(capacity["limits"]["full_pass_secs"], limit);
+        assert_eq!(capacity["level"], "critical");
+    }
+
     /// A history that completes publishes the seen set beside the recent one, and when
     /// the two no longer fit the filter file's size bound the refusal names the filter
     /// limit while the previous publication keeps serving.
@@ -1615,7 +1643,16 @@ mod tests {
                 .begin_sweep(feed.name(), Pass::Full, NOW - 1_000, NOW - 5)
                 .unwrap();
             provider
-                .sweep_page(feed.name(), Pass::Full, NOW - 5, &[], &[], None, None)
+                .sweep_page(
+                    feed.name(),
+                    Pass::Full,
+                    NOW - 5,
+                    &[],
+                    &[],
+                    None,
+                    None,
+                    NOW - 5,
+                )
                 .unwrap();
         }
         let error = paused.refresh().await.unwrap_err();

@@ -10,11 +10,13 @@
   published only once both feeds' history reaches the live reads, and declares where
   it begins. The provider store's receivers are an append-only union. Health's report
   gives each feed's history apart from its live reads, and the probe fails
-  `stale_history` when it ends more than six hours ago or was last fully reread more
-  than three days ago.
+  `stale_history` when it ends more than six hours ago or its last full pass began
+  more than twice that pass's duration plus a day ago, and at least three days ago.
+  `--near-sweep-pages` sets the pages each poll's sweeps read, shared between the
+  passes so neither starves.
 - Report each publication's use of the limits past which no publication is created
   (records against the 240,000 the largest table places reliably, filter bytes,
-  witness bytes and commitments) as `indexer.capacity`, with a `warning` level from
+  witness bytes and commitments, and the NEAR full pass duration against two days) as `indexer.capacity`, with a `warning` level from
   70% and `critical` from 90%, and the limit behind a refused publication, an
   oversized filter or witness file included, as `capacity_refusal`. The probe passes
   them on, and `pir-monitor` alerts on them apart from availability.
