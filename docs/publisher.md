@@ -132,6 +132,9 @@ update preserves a valid predecessor. Restart reuses verified completed files
 but still requires fresh HTTPS authority; cached bytes alone cannot start a
 wallet listener. `/v1/provider-status` is private operational status, separate
 from wallet routes. Synchronization runs independently of wallet requests.
+A withdrawal observed during preparation fences affected active and retained
+views immediately, even when the incoming candidate has different revision
+identities.
 
 Journal reuse is independent of distribution state. Existing version-2 journals
 retain fixed 87-byte records when appended; version-3 journals retain their

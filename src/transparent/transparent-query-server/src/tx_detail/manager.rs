@@ -361,8 +361,12 @@ impl Manager {
                 .ok_or("missing display current")?;
             let (latest, storage) = latest;
             if latest != *current || !latest.eligible() {
-                let revoked: BTreeSet<String> = anchors
+                // Negative authority also fences the predecessor and retained
+                // views: the candidate may contain entirely different digests.
+                let revoked: BTreeSet<String> = live
+                    .anchors()
                     .iter()
+                    .chain(anchors.iter())
                     .filter(|(_, h, _)| {
                         latest.invalidated_from.is_some_and(|from| *h >= from) || !latest.eligible()
                     })

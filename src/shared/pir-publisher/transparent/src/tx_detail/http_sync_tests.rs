@@ -1,9 +1,5 @@
 //! Real HTTPS full-coverage display synchronization and durable recovery.
-use super::{
-    distribution::Distribution,
-    fixture,
-    publisher::{bootstrap, write_candidate},
-};
+use super::{distribution::Distribution, fixture, publisher::bootstrap};
 use crate::history::controller::distribution_tests::tls_router;
 use std::{
     path::Path,
@@ -12,6 +8,7 @@ use std::{
         Arc,
     },
 };
+use tower::ServiceExt;
 use transparent_query_server::{
     config::ServiceConfig, routing::bootstrap::Config, tx_detail::manager::Manager,
 };
@@ -42,10 +39,14 @@ fn manager(root: &Path, origin: &str, cert: reqwest::Certificate) -> Manager {
 async fn full_display_consumers_follow_https_and_restart_without_building() {
     let scratch = tempfile::tempdir().unwrap();
     let journal = scratch.path().join("journal");
-    fixture::write_journal(&journal, 0, 16, 0);
+    fixture::write_journal(&journal, 0, 8, 0);
     let store = EventStore::open_existing(&journal).unwrap();
     let root = scratch.path().join("publisher");
-    let bootstrap = bootstrap(&store, &root, &fixture::layout(&store, 1, 16), 16).unwrap();
+    let initial = bootstrap(&store, &root, &fixture::layout(&store, 1, 16), 7).unwrap();
+    assert!(
+        !initial.seals.is_empty(),
+        "the fixture must include archive holdings"
+    );
     let canonical = Arc::new(AtomicBool::new(true));
     let state = canonical.clone();
     let node = axum::Router::new().route(
@@ -76,7 +77,7 @@ async fn full_display_consumers_follow_https_and_restart_without_building() {
     let rpc = crate::ingest::zakura::connect(format!("http://{address}"), cookie).unwrap();
     let distribution = Distribution::new(&root, rpc).unwrap();
     distribution
-        .finalize(bootstrap.candidate.clone(), vec![])
+        .finalize(initial.candidate.clone(), vec![])
         .await
         .unwrap();
     let tls_root = scratch.path().join("tls");
@@ -125,9 +126,15 @@ async fn full_display_consumers_follow_https_and_restart_without_building() {
             .unwrap();
     });
     let mut wallet = display_world::Wallet::at(&origin);
-    for height in [1, 8, 16] {
-        wallet.found(&fixture::chain_records(0, height)[0], height);
+    let mut old_query = None;
+    for height in [1, 4, 7] {
+        let (_, transcript) = wallet.found(&fixture::chain_records(0, height)[0], height);
+        old_query = transcript
+            .into_iter()
+            .find(|request| request.path.contains("/recent/") && request.path.contains("/query/"))
+            .or(old_query);
     }
+    let old_query = old_query.expect("the wallet queried the serving recent revision");
     let metrics = reqwest::get(format!("{origin}/metrics"))
         .await
         .unwrap()
@@ -152,10 +159,38 @@ async fn full_display_consumers_follow_https_and_restart_without_building() {
     assert!(restarted.ready().await);
     // The budget includes live metadata and attestations, not cached runtime bodies.
     assert!(result["downloaded_bytes"].as_u64().unwrap() < 1 << 20);
-    // A new pointer to the same immutable map is still reconciled, without runtime bodies.
-    let (same, _) = write_candidate(&root, &bootstrap.map).unwrap();
+    // The serving recent revision must differ from the incoming candidate:
+    // withdrawing only the candidate must not leave its predecessor answerable.
+    let next = bootstrap(
+        &store,
+        &scratch.path().join("next"),
+        &fixture::layout(&store, 1, 16),
+        8,
+    )
+    .unwrap();
+    let old = initial.map.shards.last().unwrap();
+    assert_ne!(
+        old.manifest_digest,
+        next.map.shards.last().unwrap().manifest_digest
+    );
+    let old_request = || {
+        axum::http::Request::builder()
+            .method(axum::http::Method::POST)
+            .uri(&old_query.path)
+            .body(axum::body::Body::from(old_query.body.clone()))
+            .unwrap()
+    };
+    assert_eq!(
+        second
+            .router()
+            .oneshot(old_request())
+            .await
+            .unwrap()
+            .status(),
+        axum::http::StatusCode::OK
+    );
     distribution
-        .finalize(same, vec![bootstrap.candidate.clone()])
+        .finalize(next.candidate.clone(), vec![initial.candidate.clone()])
         .await
         .unwrap();
     // Change authority after staging but before the checked activation commits.
@@ -164,24 +199,39 @@ async fn full_display_consumers_follow_https_and_restart_without_building() {
         let result = second.poll_once().await;
         (second, result)
     });
-    tokio::time::timeout(std::time::Duration::from_secs(5), async {
-        while !tls.control.with_extension("entered").exists() {
+    // A different map performs real native preparation before this check;
+    // the former same-map case skipped that work.
+    tokio::time::timeout(std::time::Duration::from_secs(20), async {
+        while !tls.control.with_extension("entered").exists() && !checking.is_finished() {
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
     })
     .await
     .unwrap();
+    if !tls.control.with_extension("entered").exists() {
+        let (_, result) = checking.await.unwrap();
+        panic!("synchronization ended before the activation check: {result:?}");
+    }
     distribution.withdraw(0).unwrap();
     std::fs::write(&tls.control, "").unwrap();
     let (mut second, result) = checking.await.unwrap();
     assert!(result.is_err(), "a withdrawn candidate must not activate");
+    assert_eq!(
+        second
+            .router()
+            .oneshot(old_request())
+            .await
+            .unwrap()
+            .status(),
+        axum::http::StatusCode::CONFLICT,
+        "a withdrawn predecessor must stop answering immediately"
+    );
     assert!(
         !second.ready().await,
         "withdrawal must fence the previous view too"
     );
-    let (canonical_again, _) = write_candidate(&root, &bootstrap.map).unwrap();
     distribution
-        .finalize(canonical_again, vec![bootstrap.candidate.clone()])
+        .finalize(next.candidate.clone(), vec![initial.candidate.clone()])
         .await
         .unwrap();
     second.poll_once().await.unwrap();
