@@ -335,17 +335,19 @@ async fn display_lookup(origin: &str, journal: &Path, height: u64, ledger: &Ledg
         serde_json::json!({"origin":origin,"height":height,"txid":record.txid.to_display_hex()}),
     );
 }
-async fn no_builds(origins: &[String]) {
-    for origin in origins {
+async fn no_builds(origins: &[String], out: &Path) {
+    for (index, origin) in origins.iter().enumerate() {
         let text = reqwest::get(format!("{origin}/metrics"))
             .await
             .unwrap()
             .text()
             .await
             .unwrap();
+        std::fs::write(out.join(format!("consumer-{index}-metrics.txt")), &text).unwrap();
         let value = text
             .lines()
-            .find_map(|line| line.strip_prefix("transparent_shard_builds_total "))
+            .find(|line| line.starts_with("transparent_shard_builds_total"))
+            .and_then(|line| line.split_whitespace().last())
             .expect("runtime build counter is required");
         assert_eq!(value, "0", "query servers may not build native runtimes");
     }
@@ -613,7 +615,7 @@ async fn unified_publisher_drives_independent_full_history_and_display_consumers
         )
         .await;
     }
-    no_builds(&origins).await;
+    no_builds(&origins, &out).await;
     publisher.stop().await;
     for i in [0, 2] {
         recovery(&frozen, &origins[i], &history, &ledger).await;
@@ -647,7 +649,7 @@ async fn unified_publisher_drives_independent_full_history_and_display_consumers
         )
         .await;
     }
-    no_builds(&origins).await;
+    no_builds(&origins, &out).await;
     canonical.store(false, Ordering::Release);
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {

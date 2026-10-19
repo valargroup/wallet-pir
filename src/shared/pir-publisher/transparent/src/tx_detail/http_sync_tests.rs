@@ -129,16 +129,17 @@ async fn full_display_consumers_follow_https_and_restart_without_building() {
         .text()
         .await
         .unwrap();
-    assert!(metrics
+    let builds = metrics
         .lines()
-        .any(|line| line.starts_with("transparent_shard_builds_total ")));
-    assert!(
-        !metrics
-            .lines()
-            .any(|l| l.starts_with("transparent_shard_builds_total") && !l.ends_with(" 0")),
+        .find(|line| line.starts_with("transparent_shard_builds_total"))
+        .and_then(|line| line.split_whitespace().last())
+        .expect("runtime build counter is required");
+    assert_eq!(
+        builds, "0",
         "managed servers must not construct PIR runtimes"
     );
     query_task.abort();
+    let _ = query_task.await;
     drop(first);
     let mut restarted = manager(&first_root, &tls.origin, tls.cert.clone());
     let result = restarted.poll_once().await.unwrap();
