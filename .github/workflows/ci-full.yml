@@ -558,15 +558,16 @@ jobs:
           "$CARGO_TARGET_DIR/release/pir-publisher" --config "$RUNNER_TEMP/publisher-transparent.json" --check
           cargo test --locked --release -p pir-publisher --features transparent --lib
       - name: Build independent acceptance tools
-        run: >-
-          cargo build --locked --profile release-fast -p transparent-tools
-          --bin transparent-regression --bin regression-export --bin txid-quality-canary
+        run: |
+          cargo build --locked --profile release-fast -p transparent-tools --bin transparent-regression --bin regression-export --bin txid-quality-canary
+          cargo build --locked --profile release-fast -p transparent-query-server --example rate-query --example txid-rate
       - name: Package the exact source candidate
         run: |
           python3 tools/ci/release.py assemble --kind pir-publisher --sha "$GITHUB_SHA" --output .local-pir/publisher-candidate
           python3 tools/scripts/wallet-pir-bundle.py assemble --sha "$GITHUB_SHA" --archive .local-pir/publisher-candidate/wallet-pir-ops.tar.gz
           cp "$CARGO_TARGET_DIR/release-fast/transparent-regression" "$CARGO_TARGET_DIR/release-fast/regression-export" "$CARGO_TARGET_DIR/release-fast/txid-quality-canary" .local-pir/publisher-candidate/
-          sha256sum .local-pir/publisher-candidate/*.tar.gz .local-pir/publisher-candidate/transparent-regression .local-pir/publisher-candidate/regression-export .local-pir/publisher-candidate/txid-quality-canary > .local-pir/publisher-candidate/SHA256SUMS
+          cp "$CARGO_TARGET_DIR/release-fast/examples/rate-query" "$CARGO_TARGET_DIR/release-fast/examples/txid-rate" .local-pir/publisher-candidate/
+          sha256sum .local-pir/publisher-candidate/rate-query .local-pir/publisher-candidate/txid-rate .local-pir/publisher-candidate/*.tar.gz .local-pir/publisher-candidate/transparent-regression .local-pir/publisher-candidate/regression-export .local-pir/publisher-candidate/txid-quality-canary > .local-pir/publisher-candidate/SHA256SUMS
       - uses: actions/upload-artifact@v4
         with:
           name: transparent-publisher-candidate-${{ github.sha }}

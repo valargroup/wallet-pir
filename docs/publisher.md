@@ -283,3 +283,9 @@ progress, the deployed wallet regression suite with SQLite reopen/recovery,
 recent/archive and absent display checks, a graceful restart, rollback and
 recutover, and the existing bounded load gate. A configuration check, management
 readiness or a passing CI run alone does not establish that acceptance.
+
+The focused `CI full` dispatch with `publisher-only: true` also packages the
+current `rate-query` and `txid-rate` reference clients. Use those pinned clients
+with the independently exported fixtures for bounded live checks, including
+recent/archive found records and absent display controls. A legacy client that
+rejects the fixture before querying provides no deployment correctness evidence.
