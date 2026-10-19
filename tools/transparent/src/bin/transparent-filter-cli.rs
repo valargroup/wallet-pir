@@ -200,7 +200,7 @@ fn run() -> Result<(), String> {
                         "filter": hex::encode(filter.as_slice()),
                         "filter_hash": hex::encode(filter_hash(filter.as_slice()).0),
                         "bytes": filter.len(),
-                        "elements": transparent_filter::element_count(&elements),
+                        "elements": zakura_pir_publisher::transparent::filter::element_count(&elements),
                     })
                 )
                 .map_err(|e| e.to_string())?;
