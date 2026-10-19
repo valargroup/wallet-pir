@@ -312,7 +312,7 @@ mod tests {
             check_publication(snapshot, Some(&cached)).unwrap();
             cached
         };
-        let first = store.snapshot(8, &[]).unwrap();
+        let first = store.snapshot(8, &[], [0; 32]).unwrap();
         let expected = check(&store, &mut cache, &first);
         let len = first.manifest.end_position;
         assert!(matches!(
@@ -324,7 +324,7 @@ mod tests {
         block.commitments = vec![[3; 32], [4; 32]];
         block.payments.clear();
         append(&mut store, &block).unwrap();
-        let second = store.snapshot(8, &[]).unwrap();
+        let second = store.snapshot(8, &[], [0; 32]).unwrap();
         check(&store, &mut cache, &second);
         store.rewind(100, [3; 32]).unwrap();
         assert_eq!(check(&store, &mut cache, &first), expected);
@@ -333,7 +333,7 @@ mod tests {
         block.hash = [5; 32];
         block.commitments[0] = [9; 32];
         append(&mut store, &block).unwrap();
-        let replacement = store.snapshot(8, &[]).unwrap();
+        let replacement = store.snapshot(8, &[], [0; 32]).unwrap();
         let proof = check(&store, &mut cache, &replacement);
         // The replaced block's proof does not prove the replacement publication.
         assert!(check_publication(&second, Some(&proof)).is_err());

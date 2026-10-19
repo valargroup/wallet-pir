@@ -45,15 +45,15 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Node reads, Enhance extraction, fees and Status chain reads, pinned to an exact
 # wallet-libraries revision.
-zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "a2f87e6f235dc16840be1dd7fc88e6dd06f0a268", default-features = false, features = ["enhance"] }
+zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "3c57bbb2b9c6a92eba8da48846d88d555646125d", default-features = false, features = ["enhance"] }
 
-zakura-pir-publisher = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "a2f87e6f235dc16840be1dd7fc88e6dd06f0a268", default-features = false, features = ["enhance"], optional = true }
+zakura-pir-publisher = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "3c57bbb2b9c6a92eba8da48846d88d555646125d", default-features = false, features = ["enhance"], optional = true }
 
 [dev-dependencies]
-zakura-pir-publisher = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "a2f87e6f235dc16840be1dd7fc88e6dd06f0a268", default-features = false }
+zakura-pir-publisher = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "3c57bbb2b9c6a92eba8da48846d88d555646125d", default-features = false }
 # Independent Status client for the real HTTP runtime regression.
 enhance-publisher = { path = ".", features = ["fault-injection"] }
-zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "a2f87e6f235dc16840be1dd7fc88e6dd06f0a268", default-features = false, features = ["enhance", "testing"] }
+zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "3c57bbb2b9c6a92eba8da48846d88d555646125d", default-features = false, features = ["enhance", "testing"] }
 # Independent wallet Enhance client, which is native-only, and the synthetic
 # Ironwood output fixture that authenticates PIR-returned records.
 tempfile = "3"
@@ -66,7 +66,7 @@ rayon = "1"
 tokio-stream = "0.1"
 tower = { version = "0.5", features = ["util"] }
 
-zakura-pir-client = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "a2f87e6f235dc16840be1dd7fc88e6dd06f0a268", default-features = false, features = ["status", "enhance", "testing"] }
+zakura-pir-client = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "3c57bbb2b9c6a92eba8da48846d88d555646125d", default-features = false, features = ["status", "enhance", "testing"] }
 
 [[example]]
 name = "cuda_domain"

@@ -320,8 +320,14 @@ impl Store {
     /// anchor, so the result is deterministic; [`Error::Capacity`] means every salt
     /// overflowed at `rows`, or the history has more payments than `rows` has slots,
     /// found without loading more records than that. `provider` holds the swap provider
-    /// filter sets (see [`ProviderStore::sets`]).
-    pub fn snapshot(&mut self, rows: u32, provider: &[ProviderSet]) -> Result<Snapshot, Error> {
+    /// filter sets (see [`ProviderStore::sets`]), and `catalog` the digest of the
+    /// recovery catalog head the manifest commits to.
+    pub fn snapshot(
+        &mut self,
+        rows: u32,
+        provider: &[ProviderSet],
+        catalog: Hash,
+    ) -> Result<Snapshot, Error> {
         let capacity = snapshot::capacity(rows)?;
         let tx = self.db.transaction()?;
         let anchor = tip(&tx, &self.config)?;
@@ -371,6 +377,7 @@ impl Store {
                 data_sha256: [0; 32],
                 filters: Vec::new(),
                 filters_sha256: [0; 32],
+                catalog_sha256: catalog,
             };
             match Snapshot::build(manifest, &records, provider) {
                 Err(receiver_directory::Error::Capacity) => continue,

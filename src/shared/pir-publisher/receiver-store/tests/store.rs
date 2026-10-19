@@ -243,7 +243,7 @@ fn durable_coverage_atomic_failure_and_reorg() {
         start_position: 200,
     };
     let mut store = Store::open(&path, config.clone()).unwrap();
-    assert!(store.snapshot(8, &[]).is_err());
+    assert!(store.snapshot(8, &[], [0; 32]).is_err());
     let empty = IndexedBlock {
         height: 100,
         hash: [10; 32],
@@ -255,7 +255,7 @@ fn durable_coverage_atomic_failure_and_reorg() {
         commitments: vec![],
     };
     store.append(&empty).unwrap();
-    assert_eq!(store.snapshot(8, &[]).unwrap().manifest.end_height, 100);
+    assert_eq!(store.snapshot(8, &[], [0; 32]).unwrap().manifest.end_height, 100);
     let mut r = record(0, 1);
     r.payment.position = 202;
     let mut block = IndexedBlock {
@@ -274,7 +274,7 @@ fn durable_coverage_atomic_failure_and_reorg() {
     let mut store = Store::open(&path, config.clone()).unwrap();
     assert_eq!(store.tip().unwrap().position, 204);
     assert_eq!(store.counts().unwrap(), (1, 2));
-    let old = store.snapshot(8, &[]).unwrap();
+    let old = store.snapshot(8, &[], [0; 32]).unwrap();
     assert_eq!(
         lookup_row(&old.manifest, &r.receiver, 0, row(&old, &r.receiver, 0))
             .unwrap()
@@ -302,7 +302,7 @@ fn durable_coverage_atomic_failure_and_reorg() {
     block.coinbase_actions = 0;
     block.payments[0].1.block_hash = block.hash;
     store.append(&block).unwrap();
-    let new = store.snapshot(8, &[]).unwrap();
+    let new = store.snapshot(8, &[], [0; 32]).unwrap();
     assert_ne!(
         old.manifest.revision().unwrap(),
         new.manifest.revision().unwrap()
@@ -312,7 +312,7 @@ fn durable_coverage_atomic_failure_and_reorg() {
     wrong.genesis = [99; 32];
     assert!(Store::open(&path, wrong).is_err());
     store.rewind(99, config.start_parent).unwrap();
-    assert!(store.snapshot(8, &[]).is_err());
+    assert!(store.snapshot(8, &[], [0; 32]).is_err());
 }
 
 /// A payment in the coinbase's leading positions or in transaction zero is refused.
@@ -439,7 +439,7 @@ fn store_positions_end_within_the_tree() {
             ..crossing
         })
         .unwrap();
-    let manifest = store.snapshot(8, &[]).unwrap().manifest;
+    let manifest = store.snapshot(8, &[], [0; 32]).unwrap().manifest;
     assert_eq!(manifest.end_position, TREE_SIZE);
 }
 
@@ -485,7 +485,7 @@ fn crowded_buckets_retry_the_salt_before_growing() {
             commitments: vec![[6; 32]; 20],
         })
         .unwrap();
-    let first = store.snapshot(2, &[]).unwrap();
+    let first = store.snapshot(2, &[], [0; 32]).unwrap();
     assert_ne!(first.manifest.salt, hash);
     assert_eq!(first.manifest.records, 20);
     for page in 0..20 {
@@ -499,7 +499,7 @@ fn crowded_buckets_retry_the_salt_before_growing() {
     }
     // A rebuild of the same coverage picks the same salt.
     assert_eq!(
-        store.snapshot(2, &[]).unwrap().manifest.revision().unwrap(),
+        store.snapshot(2, &[], [0; 32]).unwrap().manifest.revision().unwrap(),
         first.manifest.revision().unwrap()
     );
 }
@@ -535,7 +535,7 @@ fn store_witness_inputs_follow_rewinds_reopen_and_replacement_blocks() {
         commitments: vec![[1; 32], [2; 32], payment.cmx],
     };
     store.append(&block).unwrap();
-    let first = store.snapshot(8, &[]).unwrap();
+    let first = store.snapshot(8, &[], [0; 32]).unwrap();
     let expected = WitnessInputs {
         commitments: vec![[1; 32], [2; 32], payment.cmx],
         positions: [2].into_iter().collect(),
@@ -557,7 +557,7 @@ fn store_witness_inputs_follow_rewinds_reopen_and_replacement_blocks() {
     block.commitments = vec![[3; 32], [4; 32]];
     block.payments.clear();
     store.append(&block).unwrap();
-    let second = store.snapshot(8, &[]).unwrap();
+    let second = store.snapshot(8, &[], [0; 32]).unwrap();
     let mut longer = expected.clone();
     longer.commitments.extend([[3; 32], [4; 32]]);
     assert_eq!(
@@ -580,7 +580,7 @@ fn store_witness_inputs_follow_rewinds_reopen_and_replacement_blocks() {
     block.hash = [5; 32];
     block.commitments[0] = [9; 32];
     store.append(&block).unwrap();
-    let replacement = store.snapshot(8, &[]).unwrap();
+    let replacement = store.snapshot(8, &[], [0; 32]).unwrap();
     let mut replaced = expected.clone();
     replaced.commitments.extend([[9; 32], [4; 32]]);
     assert_eq!(
@@ -622,14 +622,14 @@ fn store_witness_inputs_cover_empty_indexed_blocks() {
     store.append(&block).unwrap();
     (block.height, block.hash, block.parent) = (101, [4; 32], [3; 32]);
     store.append(&block).unwrap();
-    let empty = store.snapshot(8, &[]).unwrap().manifest;
+    let empty = store.snapshot(8, &[], [0; 32]).unwrap().manifest;
     assert_eq!((empty.records, empty.end_position), (0, 0));
     let inputs = store.witness_inputs(&empty, TREE_SIZE).unwrap();
     assert!(inputs.commitments.is_empty() && inputs.positions.is_empty());
     (block.height, block.hash, block.parent) = (102, [5; 32], [4; 32]);
     (block.end_position, block.commitments) = (1, vec![[1; 32]]);
     store.append(&block).unwrap();
-    let one = store.snapshot(8, &[]).unwrap().manifest;
+    let one = store.snapshot(8, &[], [0; 32]).unwrap().manifest;
     assert_eq!(
         store.witness_inputs(&one, TREE_SIZE).unwrap().commitments,
         [[1; 32]]
@@ -672,9 +672,9 @@ fn a_history_beyond_the_slots_is_a_capacity_failure() {
             commitments: vec![[6; 32]; n as usize],
         })
         .unwrap();
-    assert!(matches!(store.snapshot(1, &[]), Err(Error::Capacity)));
+    assert!(matches!(store.snapshot(1, &[], [0; 32]), Err(Error::Capacity)));
     assert_eq!(
-        store.snapshot(4, &[]).unwrap().manifest.records,
+        store.snapshot(4, &[], [0; 32]).unwrap().manifest.records,
         u64::from(n)
     );
 }

@@ -399,7 +399,7 @@ impl<'a> Collected<'a> {
                     "directory exceeds the maximum row count; no publication created".into(),
                 );
             }
-            match store.snapshot(rows, &capture.sets) {
+            match store.snapshot(rows, &capture.sets, [0; 32]) {
                 Ok(s) => break s,
                 Err(Error::Capacity) => rows *= 2,
                 Err(e) => return Err(e.into()),

@@ -6,8 +6,8 @@ license = "MIT"
 description = "Receiver PIR serving with immutable publications and atomic session revocation"
 
 [dependencies]
-receiver-pir = { package = "zakura-receiver-pir", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "a2f87e6f235dc16840be1dd7fc88e6dd06f0a268", features = ["server"] }
-receiver-directory = { package = "zakura-receiver-directory", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "a2f87e6f235dc16840be1dd7fc88e6dd06f0a268" }
+receiver-pir = { package = "zakura-receiver-pir", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "3c57bbb2b9c6a92eba8da48846d88d555646125d", features = ["server"] }
+receiver-directory = { package = "zakura-receiver-directory", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "3c57bbb2b9c6a92eba8da48846d88d555646125d" }
 axum = "0.7"
 hex = "0.4"
 pir-control = { path = "../../shared/pir-control", features = ["admission"] }

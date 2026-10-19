@@ -64,10 +64,10 @@ transparent-shared = { path = "../../../transparent/transparent-shared", feature
 # reader, pinned to an exact wallet-libraries revision. The reader opens the
 # node's RocksDB directly: before deploying it, verify that the zakura-state
 # revision wallet-libraries pins matches the running node's database format.
-zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "a2f87e6f235dc16840be1dd7fc88e6dd06f0a268", default-features = false, features = ["transparent"] }
+zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "3c57bbb2b9c6a92eba8da48846d88d555646125d", default-features = false, features = ["transparent"] }
 
-zakura-pir-protocol = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "a2f87e6f235dc16840be1dd7fc88e6dd06f0a268", default-features = false, features = ["transparent"] }
-zakura-pir-publisher = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "a2f87e6f235dc16840be1dd7fc88e6dd06f0a268", default-features = false, features = ["transparent"] }
+zakura-pir-protocol = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "3c57bbb2b9c6a92eba8da48846d88d555646125d", default-features = false, features = ["transparent"] }
+zakura-pir-publisher = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "3c57bbb2b9c6a92eba8da48846d88d555646125d", default-features = false, features = ["transparent"] }
 
 [dev-dependencies]
 transparent-query-server = { path = "../../../transparent/transparent-query-server" }
@@ -77,5 +77,5 @@ reqwest = { version = "0.12", default-features = false, features = ["blocking", 
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
 # Raw synthetic blocks for the extraction tests.
-zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "a2f87e6f235dc16840be1dd7fc88e6dd06f0a268", default-features = false, features = ["transparent", "testing"] }
-zakura-pir-client = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "a2f87e6f235dc16840be1dd7fc88e6dd06f0a268", default-features = false, features = ["transparent", "testing"] }
+zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "3c57bbb2b9c6a92eba8da48846d88d555646125d", default-features = false, features = ["transparent", "testing"] }
+zakura-pir-client = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "3c57bbb2b9c6a92eba8da48846d88d555646125d", default-features = false, features = ["transparent", "testing"] }
