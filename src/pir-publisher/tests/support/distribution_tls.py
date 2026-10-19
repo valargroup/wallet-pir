@@ -74,6 +74,29 @@ class Handler(http.server.BaseHTTPRequestHandler):
             Path(control + ".entered").touch()
             while Path(control).read_text().strip() == "pause-artifact":
                 time.sleep(0.01)
+        if fault in {"runtime", "unsafe-path", "missing-runtime"} and self.path.endswith("/anchors/check"):
+            # The forged current names a forged inventory; answer batches as a
+            # publisher of that inventory would, from the real canonicality checks.
+            connection = http.client.HTTPConnection(upstream, timeout=10)
+            prefix = "/provider/v1/"
+            connection.request("GET", prefix + "current")
+            real = json.loads(connection.getresponse().read())["inventory_sha256"]
+            request = json.loads(body)
+            forged = request["inventory_sha256"]
+            request["inventory_sha256"] = real
+            connection.request("POST", self.path, body=json.dumps(request).encode(), headers={"content-type": "application/json"})
+            response = connection.getresponse()
+            payload = response.read()
+            connection.close()
+            if response.status == 200:
+                answer = json.loads(payload)
+                answer["inventory_sha256"] = forged
+                payload = json.dumps(answer, separators=(",", ":")).encode()
+            self.send_response(response.status)
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+            return
         if fault in {"runtime", "unsafe-path", "missing-runtime"} and (
             self.path.endswith("/current") or "/inventories/" in self.path
         ):
