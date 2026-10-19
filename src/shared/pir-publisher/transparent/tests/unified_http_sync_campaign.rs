@@ -389,11 +389,7 @@ async fn unified_publisher_drives_independent_full_history_and_display_consumers
         },
         &store,
         hash(0),
-        &|geometry| {
-            let mut policy = DecoupledPolicy::for_geometry(geometry);
-            policy.scripts.target = 2;
-            policy
-        },
+        &DecoupledPolicy::for_geometry,
     )
     .unwrap();
     drop(store);
