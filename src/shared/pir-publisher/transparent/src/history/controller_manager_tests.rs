@@ -524,6 +524,9 @@ impl CheckedAnswer {
     }
 }
 
+/// Reusing immutable transfers through a failed update rebuilds the same
+/// publication the lifecycle and interrupted-activation cases already serve.
+#[cfg(feature = "qualification-tests")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn manager_reuses_immutable_transfers_and_serves_through_failed_update() {
     let root = tempfile::tempdir().unwrap();

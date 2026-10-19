@@ -820,6 +820,9 @@ mod tests {
         assert!(unit_rows(shard, &short, &mut records).is_err());
     }
 
+    /// Partial, misaligned and Status layouts are extra properties of the
+    /// same 67-record runtime the bootstrap round trip already prepares.
+    #[cfg(feature = "qualification-tests")]
     #[test]
     fn hint_artifact_excludes_partial_misaligned_and_status_layouts() {
         let dir = tempfile::tempdir().unwrap();
@@ -1079,6 +1082,9 @@ mod tests {
         partial_preparation_failure(MatvecConfig::default(), false);
     }
 
+    /// The cached retry is checked against the same direct column sums as
+    /// the cold retry, so fast keeps that one case.
+    #[cfg(feature = "qualification-tests")]
     #[test]
     fn cached_partial_preparation_failure_preserves_published_and_retries() {
         partial_preparation_failure(MatvecConfig::default(), true);

@@ -70,8 +70,10 @@ behind that feature; fast feedback keeps a single case for each property.
 Ordinary
 unequal-unit checks use a supported 8K composed tail and independently assemble
 the whole table, including its zero-filled gap. Cold and cached preparation
-failures are separate cases; their retry answers are checked against direct
-raw-row column sums. The same contracts run in both configurations; full integration campaigns and
+failures stay separate only when their retries match different direct raw-row
+column sums. Fast keeps the cold retry; qualification repeats the cached retry
+against those same sums, and repeats hint-layout, shipped-load and failed-update
+campaigns that rebuild a runtime already covered by a fast case. The same contracts run in both configurations; full integration campaigns and
 released-client checks remain classified separately. Fast builds reject this
 feature if it leaks into their actual executable artifacts. Use
 `make check-package PACKAGE=<name> FEATURES=qualification-tests TEST=<filter>`

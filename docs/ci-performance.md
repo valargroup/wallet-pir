@@ -156,7 +156,8 @@ Ordinary cache, identity, preparation-failure, publication, TLS fault and recove
 assertions all run in fast feedback. The non-default `qualification-tests` feature
 restores their original larger geometry combinations and longer histories for
 full qualification, including repeated campaigns that rebuild one runtime to
-assert an additional property. Binary unit tests run as well as library targets. Affected
+assert an additional property. The cached preparation retry checks the same
+direct column sums as the cold retry, so fast keeps the cold case. Binary unit tests run as well as library targets. Affected
 packages also run integrations classified as `fast` in
 [`tools/ci/integration-tests.json`](../tools/ci/integration-tests.json). Complete
 correctness includes independent reference oracles, doctests and CPU lint. Larger
