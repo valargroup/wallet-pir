@@ -654,6 +654,29 @@ async fn unified_publisher_drives_independent_full_history_and_display_consumers
         consumers[i].child = None;
     }
     publisher.start();
+    let deadline = Instant::now() + Duration::from_secs(300);
+    loop {
+        publisher.assert_running();
+        let mut ready = true;
+        for (origin, prefix) in [
+            (&history_origin, "/provider/v1/current"),
+            (&display_origin, "/provider/txid/v1/current"),
+        ] {
+            ready &= https
+                .get(format!("{origin}{prefix}"))
+                .send()
+                .await
+                .is_ok_and(|r| r.status().is_success());
+        }
+        if ready {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "restarted publisher did not restore authority"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
     for i in [0, 1] {
         consumers[i].start();
         wait_through(
