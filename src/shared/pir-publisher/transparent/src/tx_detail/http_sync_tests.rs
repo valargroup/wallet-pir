@@ -17,8 +17,7 @@ use transparent_query_server::{
 };
 use transparent_shared::journal::events::EventStore;
 
-#[path = "../../../../../transparent/transparent-query-server/tests/support/display_world.rs"]
-mod display_world;
+use super::display_world;
 
 fn manager(root: &Path, origin: &str, cert: reqwest::Certificate) -> Manager {
     Manager::new(
