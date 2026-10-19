@@ -22,13 +22,14 @@
 //! reports how often the first seed fits beside the Poisson model's figure.
 //!
 //! Nothing is read but the map, and nothing is written but stdout.
-use zakura_pir_protocol::transparent::shard as transparent_shard;
+use zakura_pir_publisher::transparent as transparent_shard;
 
 use rayon::prelude::*;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::time::Instant;
-use transparent_shard::display::{place_bucket, Placement, MAX_PLACEMENT_SEEDS, TXID_2K8};
+use transparent_shard::display::tables::Placement;
+use transparent_shard::display::{place_bucket, MAX_PLACEMENT_SEEDS, TXID_2K8};
 use transparent_shard::txid::{slots_per_row, Tag};
 
 type Error = Box<dyn std::error::Error + Send + Sync>;

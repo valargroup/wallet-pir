@@ -55,6 +55,7 @@
 //! (255 per entry) as the worst-case query.
 use zakura_pir_publisher::transparent as transparent_shard;
 use zakura_pir_query_server::transparent::native as transparent_native;
+use zakura_pir_server_core::native::ProfilePublicationExt as _;
 
 use rayon::prelude::*;
 use reinspiring::noise::{gaussian_cdf_sha256, gaussian_counts, WeightNorms};
