@@ -1,0 +1,88 @@
+//! HTTPS transfer and sequential polling shared by PIR publication consumers.
+//!
+//! Products own schemas, replay protection, durable authority, preparation and
+//! activation. A successful transfer or poll confers no permission to serve.
+mod transport;
+pub use transport::{HttpsSource, Response};
+
+use std::{
+    future::Future,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
+
+pub type Error = Box<dyn std::error::Error + Send + Sync>;
+
+/// One complete product operation, including its final authority checks.
+/// Observation callbacks describe progress only and must not change authority.
+pub trait SyncTask: Send {
+    type Report: Send;
+    type Error: Send;
+
+    fn synchronize(&mut self) -> impl Future<Output = Result<Self::Report, Self::Error>> + Send;
+    fn started(&mut self) {}
+    fn finished(
+        &mut self,
+        _result: &Result<Self::Report, Self::Error>,
+        _completed: SystemTime,
+        _elapsed: Duration,
+    ) {
+    }
+    /// Continuous-loop logging; one-shot callers retain their existing logging.
+    fn report(&self, _result: &Result<Self::Report, Self::Error>) {}
+}
+
+/// Owns one adapter and runs complete, non-overlapping synchronization passes.
+/// Dropping the outer future retains the product's existing cancellation rules;
+/// this manager never races a pass against a timer or retries part of a pass.
+pub struct SyncManager<T> {
+    task: T,
+}
+impl<T> SyncManager<T> {
+    pub fn new(task: T) -> Self {
+        Self { task }
+    }
+    pub fn task(&self) -> &T {
+        &self.task
+    }
+    pub fn task_mut(&mut self) -> &mut T {
+        &mut self.task
+    }
+}
+impl<T: SyncTask> SyncManager<T> {
+    pub async fn poll_once(&mut self) -> Result<T::Report, T::Error> {
+        let started = tokio::time::Instant::now();
+        self.task.started();
+        let result = self.task.synchronize().await;
+        self.task
+            .finished(&result, SystemTime::now(), started.elapsed());
+        result
+    }
+    pub async fn run(mut self) {
+        let mut failures = 0u32;
+        loop {
+            let result = self.poll_once().await;
+            self.task.report(&result);
+            failures = if result.is_ok() {
+                0
+            } else {
+                failures.saturating_add(1)
+            };
+            let jitter = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_or(0, |d| u64::from(d.subsec_nanos()) % 1000);
+            pir_pipeline::wait(
+                tokio::time::Instant::now() + delay(failures, jitter),
+                std::future::pending(),
+                std::future::pending(),
+            )
+            .await;
+        }
+    }
+}
+fn delay(failures: u32, jitter_ms: u64) -> Duration {
+    let seconds = 5u64.saturating_mul(1u64 << failures.min(5)).min(120);
+    Duration::from_millis(seconds * 1000 + jitter_ms % 1000)
+}
+
+#[cfg(test)]
+mod tests;

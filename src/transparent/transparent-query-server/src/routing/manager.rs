@@ -11,8 +11,12 @@ use crate::{
     routing::bootstrap::{self, Config, Source},
 };
 use pir_pipeline::Input;
-use std::{collections::BTreeSet, path::Path, time::Duration};
-use transparent_shared::publication::{Current, Error};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::Path,
+    time::Duration,
+};
+use transparent_shared::publication::{self, Current, Error, Inventory};
 use transparent_shared::{
     history::{
         assignment::Assignment,
@@ -21,7 +25,43 @@ use transparent_shared::{
     runtime::disk::ShippedRuntimes,
 };
 
+/// Transparent publication policy hosted by the shared synchronization loop.
 pub struct Manager {
+    sync: pir_sync_manager::SyncManager<HistorySync>,
+}
+impl Manager {
+    pub fn new(config: Config, service: ServiceConfig) -> Result<Self, Error> {
+        Ok(Self {
+            sync: pir_sync_manager::SyncManager::new(HistorySync::new(config, service)?),
+        })
+    }
+    /// Hold and verify every shard locally, including archive runtimes.
+    pub fn with_full_holdings(mut self) -> Self {
+        self.sync.task_mut().full = true;
+        self
+    }
+    pub fn with_archive(
+        mut self,
+        archive: std::sync::Arc<crate::routing::archive::Archive>,
+    ) -> Self {
+        self.sync.task_mut().archive = Some(archive);
+        self
+    }
+    pub fn live(&self) -> Option<LiveService> {
+        self.sync.task().live()
+    }
+    pub fn router(&self) -> Result<axum::Router, Error> {
+        self.sync.task().router()
+    }
+    pub async fn poll_once(&mut self) -> Result<Progress, Error> {
+        self.sync.poll_once().await
+    }
+    pub async fn run(self) {
+        self.sync.run().await;
+    }
+}
+
+struct HistorySync {
     config: Config,
     full: bool,
     service: ServiceConfig,
@@ -59,7 +99,7 @@ pub struct Stages {
     /// Final source/anchor checks, the predecessor CAS and collection.
     pub activation_seconds: f64,
 }
-impl Manager {
+impl HistorySync {
     pub fn new(mut config: Config, mut service: ServiceConfig) -> Result<Self, Error> {
         let source = Source::new(&config)?;
         std::fs::create_dir_all(&config.directory)?;
@@ -108,18 +148,6 @@ impl Manager {
             )),
         })
     }
-    /// Hold and verify every shard locally, including archive runtimes.
-    pub fn with_full_holdings(mut self) -> Self {
-        self.full = true;
-        self
-    }
-    pub fn with_archive(
-        mut self,
-        archive: std::sync::Arc<crate::routing::archive::Archive>,
-    ) -> Self {
-        self.archive = Some(archive);
-        self
-    }
     pub fn live(&self) -> Option<LiveService> {
         self.live.clone()
     }
@@ -142,31 +170,6 @@ impl Manager {
             }),
         ))
     }
-    pub async fn poll_once(&mut self) -> Result<Progress, Error> {
-        self.synchronization.write().unwrap()["in_progress"] = true.into();
-        let result = self.reconcile().await;
-        let at = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.as_secs());
-        let mut sync = self.synchronization.write().unwrap();
-        // The last activated change survives later unchanged or refused polls.
-        let last_change = match &result {
-            Ok(progress) if !progress.unchanged => {
-                serde_json::json!({"completed_unix":at,"progress":progress})
-            }
-            _ => sync["last_change"].clone(),
-        };
-        *sync = match &result {
-            Ok(progress) => {
-                serde_json::json!({"in_progress":false,"completed_unix":at,"state":"synchronized","progress":progress})
-            }
-            Err(error) => {
-                serde_json::json!({"in_progress":false,"completed_unix":at,"state":"refused","error":error.to_string()})
-            }
-        };
-        sync["last_change"] = last_change;
-        result
-    }
     async fn reconcile(&mut self) -> Result<Progress, Error> {
         let input = pir_pipeline::acquire(self.acquire(), &mut ()).await?;
         match pir_pipeline::advance(input, Acquired::prepare, Prepared::publish, &mut ()).await? {
@@ -178,7 +181,7 @@ impl Manager {
                     .as_ref()
                     .expect("conditional poll has an active snapshot")
                     .revision,
-                downloaded_bytes: self.source.downloaded,
+                downloaded_bytes: self.source.downloaded(),
                 downloaded_files: 0,
                 stages: None,
             }),
@@ -202,12 +205,16 @@ impl Manager {
         let Some(current) = current else {
             return Ok(Input::Unchanged);
         };
+        let mut recovered = false;
         if self.live.is_none() && self.config.directory.join("active.json").exists() {
             // A failed update does not discard the complete predecessor across
             // restart. Recovery still requires a fresh source snapshot and exact
             // retained anchors; loading this record alone never opens a listener.
             match self.recover(&current).await {
-                Ok(live) => self.live = Some(live),
+                Ok(live) => {
+                    self.live = Some(live);
+                    recovered = true;
+                }
                 Err(error) => tracing::warn!(%error, "saved publication not eligible for recovery"),
             }
         }
@@ -224,6 +231,20 @@ impl Manager {
         }
         if !current.eligible() {
             return Err("publisher current publication is withdrawn or noncanonical".into());
+        }
+        if recovered {
+            // The freshly checked predecessor already serves this exact snapshot:
+            // restaging would only load and warm the same files a second time.
+            match self.recovered_is_current(&current).await {
+                Ok(true) => {
+                    self.current = Some(current);
+                    return Ok(Input::Unchanged);
+                }
+                Ok(false) => {}
+                Err(error) => {
+                    tracing::warn!(%error, "recovered publication not confirmed current; updating")
+                }
+            }
         }
         Ok(Input::Work(Acquired {
             owner: self,
@@ -324,39 +345,124 @@ impl Manager {
         .await?;
         Ok(live)
     }
-    /// One sequential transfer at a time; bounded attempts, jitter and capped
-    /// exponential backoff. An outage leaves the valid owner/router untouched.
-    pub async fn run(mut self) {
-        let mut failures = 0u32;
-        loop {
-            match self.poll_once().await {
-                Ok(progress) => {
-                    failures = 0;
-                    tracing::info!(?progress, "publication synchronized");
-                }
-                Err(error) => {
-                    failures = failures.saturating_add(1);
-                    tracing::warn!(%error, "publication synchronization refused");
-                }
-            }
-            let base = 5u64.saturating_mul(1u64 << failures.min(5)).min(120);
-            let jitter = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |d| u64::from(d.subsec_nanos()) % 1000);
-            pir_pipeline::wait(
-                tokio::time::Instant::now() + Duration::from_millis(base * 1000 + jitter),
-                std::future::pending(),
-                std::future::pending(),
+    /// Whether the recovered predecessor is exactly the fresh `current`: its
+    /// persisted verified inventory, map, holdings and runtime configuration
+    /// must all equal what a new pass would stage. A matching map alone is not
+    /// enough, and an absent or damaged record only means another update.
+    /// Saved files never grant authority: recovery already rechecked the fresh
+    /// snapshot and every retained anchor before this runs.
+    async fn recovered_is_current(&mut self, current: &Current) -> Result<bool, Error> {
+        let publication: Publication =
+            serde_json::from_slice(&std::fs::read(self.config.directory.join("active.json"))?)?;
+        let directory = std::fs::canonicalize(&publication.directory)?;
+        let runtimes = publication
+            .runtimes
+            .as_deref()
+            .map(std::fs::canonicalize)
+            .transpose()?;
+        if runtimes.as_ref() != Some(&directory) {
+            return Ok(false);
+        }
+        let Some(saved) = std::fs::read(directory.join("verified-inventory.json"))
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<Inventory>(&bytes).ok())
+        else {
+            return Ok(false);
+        };
+        if saved.map_sha256 != publication.map_sha256 {
+            return Ok(false);
+        }
+        let raw = self
+            .source
+            .small(
+                &format!("inventories/{}", current.inventory_sha256),
+                16 << 20,
             )
-            .await;
+            .await?;
+        if publication::digest(&raw) != current.inventory_sha256 {
+            return Err("inventory digest mismatch".into());
+        }
+        let fresh: Inventory = serde_json::from_slice(&raw)?;
+        fresh.validate(&self.config.network, &self.config.genesis_hash)?;
+        if fresh != saved {
+            return Ok(false);
+        }
+        let map: transparent_filter::ShardMap =
+            serde_json::from_slice(&std::fs::read(directory.join("shards.json"))?)?;
+        fresh.validate_map(&map)?;
+        let end = map.shards.last().ok_or("empty publication")?;
+        if current.anchor_height != end.end_height || current.anchor_hash != end.terminal_block_hash
+        {
+            return Ok(false);
+        }
+        // A revoked exact digest needs the full update's anchor restoration.
+        let floor = combined_floor(&self.config.directory, &mut self.revocations)?;
+        if map
+            .shards
+            .iter()
+            .any(|shard| floor.digests.contains(&shard.manifest_digest))
+        {
+            return Ok(false);
+        }
+        let expected = bootstrap::holdings(&self.config, &map, &fresh, self.full)?;
+        Ok(match (&expected.scope, &publication.assignment) {
+            (LoadScope::Whole, None) => true,
+            (LoadScope::Assigned { assignment, .. }, Some(path)) => {
+                Assignment::load(path)? == **assignment
+            }
+            _ => false,
+        })
+    }
+}
+impl pir_sync_manager::SyncTask for HistorySync {
+    type Report = Progress;
+    type Error = Error;
+    fn started(&mut self) {
+        self.synchronization.write().unwrap()["in_progress"] = true.into();
+    }
+    async fn synchronize(&mut self) -> Result<Progress, Error> {
+        self.reconcile().await
+    }
+    fn finished(
+        &mut self,
+        result: &Result<Progress, Error>,
+        completed: std::time::SystemTime,
+        _elapsed: Duration,
+    ) {
+        let at = completed
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs());
+        let mut sync = self.synchronization.write().unwrap();
+        // The last activated change survives later unchanged or refused polls.
+        let last_change = match result {
+            Ok(progress) if !progress.unchanged => {
+                serde_json::json!({"completed_unix":at,"progress":progress})
+            }
+            _ => sync["last_change"].clone(),
+        };
+        *sync = match result {
+            Ok(progress) => {
+                serde_json::json!({"in_progress":false,"completed_unix":at,"state":"synchronized","progress":progress})
+            }
+            Err(error) => {
+                serde_json::json!({"in_progress":false,"completed_unix":at,"state":"refused","error":error.to_string()})
+            }
+        };
+        sync["last_change"] = last_change;
+    }
+    fn report(&self, result: &Result<Progress, Error>) {
+        match result {
+            Ok(progress) => tracing::info!(?progress, "publication synchronized"),
+            Err(error) => tracing::warn!(%error, "publication synchronization refused"),
         }
     }
 }
+
 /// Authenticated, replay-ordered source work. Safety evidence is applied before
 /// returning it, including predecessor recovery. Neither this token nor staged
 /// files grant authority. The borrow keeps one source budget and one owner/pass.
 struct Acquired<'a> {
-    owner: &'a mut Manager,
+    owner: &'a mut HistorySync,
     current: Current,
 }
 
@@ -494,24 +600,31 @@ impl Prepared<'_> {
                     // revisions, before permitting a newer recovery to clear them.
                     let map: transparent_filter::ShardMap =
                         serde_json::from_slice(&std::fs::read(&map_path)?)?;
-                    let mut keep = BTreeSet::new();
-                    for shard in &map.shards {
-                        if !source
-                            .anchor(&latest, shard.end_height, &shard.terminal_block_hash)
-                            .await?
-                        {
-                            revoke_digests(
-                                root,
-                                &checked_live,
-                                &latest,
-                                BTreeSet::from([shard.manifest_digest.clone()]),
-                                revocations,
-                            )
-                            .await?;
-                            return Err("candidate anchor is noncanonical".into());
-                        }
-                        keep.insert(shard.manifest_digest.clone());
+                    let anchors = map.shards.iter().map(|shard| {
+                        (
+                            shard.end_height,
+                            shard.terminal_block_hash.clone(),
+                            shard.manifest_digest.clone(),
+                        )
+                    });
+                    if !fresh_anchors(
+                        source,
+                        root,
+                        &checked_live,
+                        &latest,
+                        anchors,
+                        true,
+                        revocations,
+                    )
+                    .await?
+                    {
+                        return Err("candidate anchor is noncanonical".into());
                     }
+                    let keep: BTreeSet<String> = map
+                        .shards
+                        .iter()
+                        .map(|shard| shard.manifest_digest.clone())
+                        .collect();
                     if latest.revision > combined_floor(root, revocations)?.revision {
                         checked_live.restore_verified(&keep)?;
                         let mut intent = combined_floor(root, revocations)?;
@@ -546,7 +659,7 @@ impl Prepared<'_> {
         Ok(Progress {
             unchanged: false,
             revision: current.revision,
-            downloaded_bytes: owner.source.downloaded,
+            downloaded_bytes: owner.source.downloaded(),
             downloaded_files: staged.downloaded_files,
             stages: Some(stages),
         })
@@ -700,28 +813,66 @@ async fn apply_snapshot(
     }
     // Revalidate all retained anchors after missed revisions, rather than infer
     // their validity from the publisher's most recent invalidation range.
+    let mut anchors = Vec::with_capacity(revisions.len());
     for revision in revisions {
-        let height = revision["end_height"]
-            .as_u64()
-            .ok_or("invalid owner anchor")?;
-        let hash = revision["terminal_block_hash"]
-            .as_str()
-            .ok_or("invalid owner hash")?;
-        if !source.anchor(current, height, hash).await? {
-            revoke_digests(
-                root,
-                live,
-                current,
-                BTreeSet::from([revision["digest"]
-                    .as_str()
-                    .ok_or("owner missing digest")?
-                    .into()]),
-                memory,
-            )
-            .await?;
+        anchors.push((
+            revision["end_height"]
+                .as_u64()
+                .ok_or("invalid owner anchor")?,
+            revision["terminal_block_hash"]
+                .as_str()
+                .ok_or("invalid owner hash")?
+                .to_string(),
+            revision["digest"]
+                .as_str()
+                .ok_or("owner missing digest")?
+                .to_string(),
+        ));
+    }
+    fresh_anchors(source, root, live, current, anchors, false, memory).await?;
+    Ok(())
+}
+
+/// Fresh canonicality of exact `(height, hash, digest)` anchors in bounded
+/// batches, each pair asked once. Authenticated negatives from each completed
+/// batch are revoked before any later batch is requested, so neither a later
+/// failure nor a persistence error can discard them. A transport, outage or
+/// identity failure answers for no anchor of its batch. Returns whether every
+/// checked anchor was canonical; `stop` ends after the first negative batch.
+async fn fresh_anchors(
+    source: &mut Source,
+    root: &Path,
+    live: &LiveService,
+    current: &Current,
+    anchors: impl IntoIterator<Item = (u64, String, String)>,
+    stop: bool,
+    memory: &mut Revocations,
+) -> Result<bool, Error> {
+    let mut digests: BTreeMap<publication::AnchorPair, BTreeSet<String>> = BTreeMap::new();
+    for (height, hash, digest) in anchors {
+        digests
+            .entry(publication::AnchorPair { height, hash })
+            .or_default()
+            .insert(digest);
+    }
+    let pairs: Vec<_> = digests.keys().cloned().collect();
+    let mut canonical = true;
+    for batch in pairs.chunks(publication::MAX_ANCHOR_BATCH) {
+        let answers = source.anchors(current, batch).await?;
+        let negative: BTreeSet<String> = batch
+            .iter()
+            .filter(|pair| !answers[*pair])
+            .flat_map(|pair| digests[pair].iter().cloned())
+            .collect();
+        if !negative.is_empty() {
+            canonical = false;
+            revoke_digests(root, live, current, negative, memory).await?;
+            if stop {
+                break;
+            }
         }
     }
-    Ok(())
+    Ok(canonical)
 }
 
 /// Every live poll boundary applies authenticated positive evidence even if a

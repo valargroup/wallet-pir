@@ -249,3 +249,13 @@ The publisher host lives at `src/pir-publisher` and the query-server host at
 query server. `src/shared` holds shared libraries, including `pir-pipeline`.
 Cargo package names and standalone commands are preserved. See the
 [unified publisher](publisher.md) for configuration and service ownership.
+
+## Shared HTTPS synchronization
+
+`pir-sync-manager` is the internal transport and polling library under
+`src/shared/`. Transparent history and transaction-detail consumers supply its
+product adapters. The library accounts all consumed response bytes against one
+attempt budget and schedules complete passes sequentially with bounded backoff.
+It does not interpret publications or grant serving authority. Product code
+retains schemas, replay records, directory locks, validation, preparation and
+activation. Other PIR products do not use it yet.

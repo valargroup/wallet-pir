@@ -112,6 +112,10 @@ SHARED_SCOPES = {
 # Lifecycle code has no product, chain, wallet or cryptographic dependency.
 # The direct surface is deliberately smaller than tokio's feature-unified utility
 # graph. Every kind of edge counts, including optional and target-specific edges.
+# Synchronization is transport and scheduling, never a product or PIR engine.
+SYNC_MANAGER = 'pir-sync-manager'
+SYNC_DIRECT = {'bytes', 'pir-pipeline', 'reqwest', 'tokio',
+               'tempfile', 'rustls', 'tokio-rustls'}
 PIPELINE = 'pir-pipeline'
 PIPELINE_DIRECT = {'tokio'}
 # These chain-free serving foundations also must not import the lifecycle.
@@ -257,6 +261,14 @@ def violations(packages, allowed):
             reason = runtime_edge_problem(package, dependency)
             if reason:
                 problems.append(f"{package['manifest']}: {reason}")
+            if package['name'] == SYNC_MANAGER:
+                local_pipeline = (name == PIPELINE and not dependency['git'] and
+                                  dependency.get('path') == 'src/shared/pir-pipeline/')
+                registry_utility = (name in SYNC_DIRECT - {PIPELINE} and
+                                    not dependency.get('path') and not dependency['git'])
+                if not (local_pipeline or registry_utility):
+                    problems.append(f"{package['manifest']}: sync manager has a "
+                                    f"{dependency['kind']} outside its utility boundary: {name}")
             if package['name'] == PIPELINE and (
                     name not in PIPELINE_DIRECT or dependency.get('path')
                     or dependency['git']):
@@ -356,6 +368,23 @@ def resolved_violations(metadata, *, workspace_unified=False):
     nodes = {n['id']: n for n in metadata['resolve']['nodes']}
     problems = set()
     for root_id, package in packages.items():
+        if package['name'] == SYNC_MANAGER and package['source'] is None:
+            seen, queue = set(), [root_id]
+            while queue:
+                current = queue.pop()
+                if current in seen:
+                    continue
+                seen.add(current)
+                target = packages[current]
+                if current != root_id and (
+                        (target['source'] is None and target['name'] != PIPELINE)
+                        or target['name'] in COMMON | NODE | CANONICAL
+                        or target['name'] in {'ipir-sp', 'inspiring', 'reinspiring',
+                                              'simplepir-kernel', 'valar-spiral-rs'}
+                        or (target['source'] is not None and
+                            not target['source'].startswith('registry'))):
+                    problems.add(f"{SYNC_MANAGER}: resolves outside its utility boundary: {target['name']}")
+                queue.extend(dep['pkg'] for dep in nodes[current]['deps'])
         if package['name'] == PIPELINE and package['source'] is None:
             seen, queue = set(), [root_id]
             while queue:
@@ -564,7 +593,7 @@ def main(argv=None):
         for name in ('enhance-query-server', 'status-query-server', 'pir-query-server'):
             problems += cpu_graph_violations(standalone_metadata({name}))
         problems += database_reader_violations(standalone_metadata(set(DATABASE_FREE)))
-        for name in sorted(SERVING | PIPELINE_FOUNDATIONS | {PIPELINE}):
+        for name in sorted(SERVING | PIPELINE_FOUNDATIONS | {PIPELINE, SYNC_MANAGER}):
             problems += resolved_violations(standalone_metadata({name}))
         problems += runtime_graph_violations()
     for problem in problems:
