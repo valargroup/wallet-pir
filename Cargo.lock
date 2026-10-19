@@ -891,14 +891,12 @@ dependencies = [
  "prometheus",
  "rand 0.8.5",
  "rand_chacha 0.3.1",
- "rayon",
  "reinspiring",
  "reqwest",
  "serde",
  "serde_json",
  "sha2",
  "simplepir-kernel",
- "status-query-server",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
@@ -907,7 +905,6 @@ dependencies = [
  "tracing",
  "zakura-pir-client",
  "zakura-pir-query-server",
- "zakura-pir-server-core",
 ]
 
 [[package]]
@@ -1903,6 +1900,20 @@ name = "multimap"
 version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d87ecb2933e8aeadb3e3a02b828fed80a7528047e68b4f424523a0981a3a084"
+
+[[package]]
+name = "native-certificate"
+version = "0.0.1"
+dependencies = [
+ "enhance-query-server",
+ "ipir-sp",
+ "rayon",
+ "reinspiring",
+ "serde_json",
+ "sha2",
+ "status-query-server",
+ "zakura-pir-server-core",
+]
 
 [[package]]
 name = "nom"
