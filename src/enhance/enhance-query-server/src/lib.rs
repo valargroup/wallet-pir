@@ -43,7 +43,6 @@ pub mod packing_router;
 pub mod query_ingress;
 mod query_serving;
 mod serving_fence;
-pub mod shutdown;
 
 mod http_metrics;
 

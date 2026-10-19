@@ -176,11 +176,7 @@ pub async fn run(config: Config, shutdown: Shutdown) -> Result<()> {
         state.phases.lock().unwrap().insert("enhance", "running");
         spawn(
             "enhance",
-            enhance_query_server::service::run_serving(
-                role,
-                bound,
-                stopped(stop.clone(), shutdown.clone()),
-            ),
+            crate::enhance::run_serving(role, bound, stopped(stop.clone(), shutdown.clone())),
             stop,
             &mut group,
             &mut owners,
