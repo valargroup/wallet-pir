@@ -48,7 +48,7 @@ class Lifecycle:
         d.describe(plans, sha)
         if operation == 'preflight':
             for host in dict.fromkeys(p.target.host for p in plans if p.action in CHANGING):
-                path = d.service.release_binary(sha)
+                path = d.release_binary(sha)
                 if d.ex.sha256(host, path) != sha:
                     d.out('%s: release not staged yet; deploy uploads it' % host)
                     continue
@@ -68,7 +68,7 @@ class Lifecycle:
                     continue
                 pending = [c['path'] for c in plan.changes
                            if c['op'] == 'write' and not c['path'].startswith('/etc/systemd/')]
-                release = d.service.release_binary(sha)
+                release = d.release_binary(sha)
                 if pending or d.ex.sha256(plan.target.host, release) != sha:
                     d.out('%s: product check runs at deploy, against staged configuration' % plan.target.key)
                     continue

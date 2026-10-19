@@ -30,12 +30,15 @@ Preserve existing Cargo package and binary names.
   Use `make build` for deploy-profile binaries (fat-LTO `release`, slower
   and more memory-intensive). Do not enable CUDA on a CPU-only devbox.
 - Inspect entrypoints without starting a fleet:
-  `cargo run --locked --profile release-fast -p enhance-publisher --bin enhance-pir-server -- --help`
+  `cargo run --locked --profile release-fast -p enhance-publisher --bin enhance-pir-server -- --help`,
+  `cargo run --locked --profile release-fast -p pir-query-server --features enhance,native-reinspiring -- --help`,
   and
   `cargo run --locked --profile release-fast -p enhance-pir-client --bin enhance-pir-cli -- --help`.
   `make run-server` and `make run-worker` also show help, using `release`.
-- To start an isolated local worker after building:
-  `target/release-fast/enhance-pir-server worker --listen 127.0.0.1:8091 --data-dir .local-pir/worker`.
+- To start an isolated local worker after building that query server, write one
+  Enhance `worker` role (loopback `management_listen`, absolute `data_dir`) and run
+  `target/release-fast/pir-query-server --config .local-pir/worker.json`.
+  `pir-query-server --config FILE --check` validates the file without opening state.
   A worker alone is not an end-to-end retrieval deployment; coordinator,
   chain inputs and role configuration are described in the product runbooks.
   Keep private/control listeners on loopback and never reuse production data

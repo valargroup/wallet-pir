@@ -1,9 +1,9 @@
 {
   "enhance-publisher": {
-    "fast": [],
-    "full": [
-      "matvec_config"
-    ]
+    "fast": [
+      "publisher_cli"
+    ],
+    "full": []
   },
   "enhance-query-server": {
     "fast": [],
@@ -70,6 +70,12 @@
       "simulation",
       "txid_shipped_runtimes"
     ]
+  },
+  "pir-query-server": {
+    "fast": [
+      "operator"
+    ],
+    "full": []
   },
   "pir-publisher": {
     "fast": [

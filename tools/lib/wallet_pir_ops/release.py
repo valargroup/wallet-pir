@@ -17,11 +17,12 @@ BINARIES = {
     'wallet-pir-ops': [],
     # pir-apm is the Enhance/Status/Transparent dashboard and alerting sidecar;
     # it has no native variant.
-    'enhance-pir': ['enhance-pir-server', 'enhance-pir-cli', 'enhance-pir-load-test', 'pir-apm'],
+    'enhance-pir': ['enhance-pir-server', 'pir-query-server', 'enhance-pir-cli', 'enhance-pir-load-test', 'pir-apm'],
     # Same binaries built with `native-reinspiring`; they serve an incompatible
     # protocol and come from a separate target directory.
-    'enhance-pir-native': ['enhance-pir-server', 'enhance-pir-cli', 'enhance-pir-load-test'],
-    'enhance-pir-native-cuda': ['enhance-pir-server', 'enhance-pir-cli', 'enhance-pir-load-test'],
+    'enhance-pir-native': ['enhance-pir-server', 'pir-query-server', 'enhance-pir-cli', 'enhance-pir-load-test'],
+    # GPU hosts run this query server, not the publisher. The clients are diagnostics.
+    'enhance-pir-native-cuda': ['pir-query-server', 'enhance-pir-cli', 'enhance-pir-load-test'],
     'transparent-filter': ['transparent-publisher'],
     'transparent-shard': ['transparent-query-server', 'shard-assign', 'shard-prune'],
     'transparent-publisher': ['transparent-publish-controller', 'transparent-query-server', 'shard-control', 'shard-assign'],

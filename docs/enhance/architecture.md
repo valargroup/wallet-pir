@@ -515,8 +515,11 @@ ingestion, publishers, applications, tools or another product's packages.
 `src/enhance/enhance-publisher` owns chain reading (`zakura`), the Enhance and
 record journals (`ingest`), the durable control store, publication, preparation
 orchestration (`serving_control`), activation, recovery, retention and artifact
-collection, pool and capacity planning, publication telemetry, rebuilds and the
-`enhance-pir-server` command line. Status publication is its own process. The
+collection, pool and capacity planning, publication telemetry and rebuilds.
+Its `enhance-pir-server` commands are `coordinator`, `rebuild-journal`,
+`prepare-packing-artifacts`, `restore-legacy-placement`, and `build-info`
+(`build-info` has no CUDA field). Worker, query ingress, and packing router
+processes are `pir-query-server --config`, one Enhance role each. Status publication is its own process. The
 Enhance `coordinator::Coordinator` is the composition API and composes the `QueryGateway`.
 Dependencies run only from publisher to query server. The gateway reads publisher
 state through the read-only `PublisherStatus` trait, which the publisher

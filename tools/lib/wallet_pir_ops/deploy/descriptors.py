@@ -80,6 +80,10 @@ class Role:
     # `module:Class`: the engine asks it before changing, checking, restarting
     # or restoring an instance (see `wallet_pir_ops.deploy.engine.Deployer`).
     guard: str = None
+    # Executable file name in the release directory. None uses the service binary.
+    # A deploy runs one transaction per binary, and the release directory is
+    # named by the sha256 of that file.
+    binary: str = None
 
     def render(self, settings, release):
         """The product adapter's `RenderedRole` for one instance."""
@@ -116,8 +120,9 @@ class Service:
     def release_dir(self, sha):
         return '%s/releases/%s' % (self.root, sha)
 
-    def release_binary(self, sha):
-        return '%s/%s' % (self.release_dir(sha), self.binary)
+    def release_binary(self, sha, name=None):
+        """`/opt/<svc>/releases/<sha256>/<file>`. `name` defaults to the service binary."""
+        return '%s/%s' % (self.release_dir(sha), name or self.binary)
 
     def transaction_dir(self, transaction):
         return '%s/transactions/%s' % (self.root, transaction)
@@ -207,10 +212,13 @@ def load_descriptors(path, _parents=()):
             guard = spec.get('guard')
             require(guard is None or (mode == 'role' and shared_lifecycle and GUARD.match(guard)),
                     '%s.%s: guard names a rendered shared-lifecycle role\'s module:Class' % (name, role_name))
+            binary = spec.get('binary')
+            require(binary is None or (isinstance(binary, str) and PLAIN_NAME.match(binary)),
+                    '%s.%s: binary must be a plain file name' % (name, role_name))
             roles[role_name] = Role(role_name, spec['unit'], mode, spec['health'], template, ready,
                                     spec.get('ready_url'), int(spec.get('ready_timeout', 180)),
                                     tuple(spec.get('adoptable_drop_ins', ())), owns_unit or mode == 'role',
-                                    tuple(duties), renderer, optional, shared_lifecycle, guard)
+                                    tuple(duties), renderer, optional, shared_lifecycle, guard, binary)
         order = tuple(raw.get('order', ()))
         require(order and sorted(order) == sorted(roles), '%s: order must list every role once' % name)
         require(PLAIN_PATH.match(raw.get('root', '')), '%s: root must be a plain absolute path' % name)

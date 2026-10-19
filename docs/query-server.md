@@ -19,11 +19,22 @@ cargo build --locked --profile release-fast -p pir-query-server \
   --features enhance,status,transparent,native-reinspiring
 pir-query-server --config /etc/wallet-pir/query-server.json --check
 pir-query-server --config /etc/wallet-pir/query-server.json
+pir-query-server check-backend [--matvec-backend cpu|cuda] [--cuda-device N]
+pir-query-server repair-rows --data-dir DIR --source-rows DIR
 ```
 
-The existing product commands (`enhance-pir-server` worker, query ingress, and
-packing router; `status-pir`; `transparent-query-server`;
-`transparent-txid-server`) call the same startup functions.
+A process includes at most one Enhance role. `enhance-pir-server` does not start a
+worker, query ingress, or packing router. Those roles are only
+`pir-query-server --config FILE`. `enhance-pir-server` keeps `coordinator`,
+`rebuild-journal`, `prepare-packing-artifacts`, `restore-legacy-placement`, and
+`build-info`. `build-info` reports native reinspiring and the source revision;
+it has no CUDA field.
+
+`check-backend` validates the selected evaluator, and for CUDA the driver,
+without opening worker state. `repair-rows` repairs journal-referenced rows
+from a peer row archive while the worker is stopped. `status-pir`,
+`transparent-query-server`, and `transparent-txid-server` remain their own
+commands.
 
 ## Configuration
 
@@ -33,8 +44,14 @@ configuration, not a production inventory. Sections are `enhance`, `status`,
 `settings`. An omitted or disabled section starts nothing.
 
 Enhance settings name one role: `worker`, `query-ingress`, or `packing-router`.
-Status settings name `worker` or `router`. Those roles stay separate processes.
-History and transaction details keep their existing settings.
+A worker needs `listen`, an absolute `data_dir`, and optional `sealed_shards`
+(default 6) and `matvec` (`matvec_backend` `cpu` or `cuda`, and `cuda_device`
+only for CUDA). Query ingress needs `data_dir`, `listen`, `control_listen`,
+and optional `requests` (default 16) and `uploads` (default 256). A packing
+router needs `data_dir`, `artifact_origin`, `listen`, `control_listen`, and
+optional `max_objects` (default 6) and `requests` (default 4). Status settings
+name `worker` or `router`. Those roles stay separate processes. History and
+transaction details keep their existing settings.
 
 Listeners need distinct fixed loopback or private addresses. State directories
 are absolute and must not overlap. `--check` validates the file and does not

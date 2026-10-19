@@ -57,9 +57,13 @@ OLD_SHA = sha256(OLD)
 NEW = b'enhance-pir-server built from a later revision'
 NEW_SHA = sha256(NEW)
 LEGACY = '/opt/enhance-pir/releases/cleanup-71be21f-ba576af27d7f/enhance-pir-server'
+TOKEN = '/etc/enhance-pir/internal-token.env'
+# One Enhance transaction runs one binary. These four share pir-query-server.
+# The coordinator stays enhance-pir-server and is deployed on its own.
 ENHANCE = [('worker-01', 'enhance-pir-worker.service'), ('worker-02', 'enhance-pir-worker.service'),
-           ('router-01', 'enhance-pir-packing-router.service'), ('coordinator', 'enhance-pir-query-ingress.service'),
-           ('coordinator', 'enhance-pir-server.service')]
+           ('router-01', 'enhance-pir-packing-router.service'), ('coordinator', 'enhance-pir-query-ingress.service')]
+COORDINATOR = ('coordinator', 'enhance-pir-server.service')
+SERVING_SELECTORS = ('worker', 'packing-router', 'query-ingress')
 NETWORK = 'ab' * 32
 STATUS_OLD = b'status-pir built from c5a6486'
 STATUS_NEW = b'status-pir built from a later revision'
@@ -85,6 +89,11 @@ def probe_argv(sha):
     """The receiver's exact check as it runs for release `sha`."""
     return [argument.replace('{release_dir}', receiver_release(sha)) for argument in RECEIVER_PROBE]
 
+def worker_settings(listen):
+    return {'listen': listen, 'data_dir': '/srv/enhance-pir/worker', 'sealed_shards': 6,
+            'matvec_backend': 'cpu', 'credentials': [TOKEN]}
+
+
 INVENTORY = {
     'lock': {'type': 'remote', 'host': 'coordinator'},
     'ssh': {'mode': 'config'},
@@ -92,10 +101,18 @@ INVENTORY = {
     'services': {
         'enhance': {
             'roles': {
-                'worker': [{'host': 'worker-01', 'vars': {'listen': '10.0.0.15:8091'}},
-                           {'host': 'worker-02', 'vars': {'listen': '10.0.0.16:8091'}}],
-                'packing-router': [{'host': 'router-01', 'vars': {'control_listen': '10.0.0.14:8093'}}],
-                'query-ingress': [{'host': 'coordinator'}],
+                'worker': [{'host': 'worker-01', 'vars': {'listen': '10.0.0.15:8091'},
+                            'settings': worker_settings('10.0.0.15:8091')},
+                           {'host': 'worker-02', 'vars': {'listen': '10.0.0.16:8091'},
+                            'settings': worker_settings('10.0.0.16:8091')}],
+                'packing-router': [{'host': 'router-01', 'vars': {'control_listen': '10.0.0.14:8093'},
+                                    'settings': {'listen': '10.0.0.14:8092', 'control_listen': '10.0.0.14:8093',
+                                                 'data_dir': '/srv/enhance-pir-router',
+                                                 'artifact_origin': 'http://10.0.0.10:8080',
+                                                 'credentials': [TOKEN]}}],
+                'query-ingress': [{'host': 'coordinator', 'vars': {'control_listen': '127.0.0.1:8083'},
+                                   'settings': {'listen': '127.0.0.1:8082', 'control_listen': '127.0.0.1:8083',
+                                                'data_dir': '/srv/enhance-pir-ingress', 'credentials': [TOKEN]}}],
                 'coordinator': [{'host': 'coordinator'}],
             },
             'exact_check': {'host': 'coordinator', 'argv': ['/usr/local/bin/exact', '{release_dir}', '{transaction}']},
@@ -165,15 +182,27 @@ class Fleet(unittest.TestCase):
         return deployer
 
     def enhance_fleet(self):
-        for host, unit in ENHANCE:
-            fragment = (DEPLOY / unit).read_text()
-            drop_ins = [(dropin(unit, 'zz-cleanup-71be21f.conf'), cleanup_drop_in(fragment))]
-            if unit in ('enhance-pir-worker.service', 'enhance-pir-server.service'):
-                # The v7 override also carries non-ExecStart settings.
-                drop_ins.append((dropin(unit, '90-v7.conf'), cleanup_drop_in(fragment) + 'ReadWritePaths=/srv/enhance-pir-v7\n'))
-            environment = {path: '' for path in units.effective([fragment])['Service'].get('EnvironmentFile', [])}
-            self.fake.install(host, unit, fragment, drop_ins, {LEGACY: OLD, **environment})
-        deployer = self.deployer()
+        """Serving roles already run the rendered pir-query-server unit. The coordinator keeps its drop-ins."""
+        service = SERVICES['enhance']
+        release = '/opt/enhance-pir/releases/' + OLD_SHA
+        for target in descriptors.targets(service, self.inventory):
+            if target.role.name == 'coordinator':
+                fragment = (DEPLOY / target.unit).read_text()
+                kept = cleanup_drop_in(fragment)
+                drop_ins = [(dropin(target.unit, 'zz-cleanup-71be21f.conf'), kept),
+                            (dropin(target.unit, '90-v7.conf'), kept + 'ReadWritePaths=/srv/enhance-pir-v7\n')]
+                self.fake.install(target.host, target.unit, fragment, drop_ins, {LEGACY: OLD})
+                continue
+            rendered = target.role.render(target.settings, release)
+            files = {release + '/pir-query-server': OLD, TOKEN: 'ENHANCE_INTERNAL_TOKEN=test\n', **rendered.files}
+            self.fake.install(target.host, target.unit, rendered.unit, (), files)
+        deployer = self.deployer(only=list(SERVING_SELECTORS))
+        deployer.capture_baseline()
+        self.fake.log.clear()
+        return deployer
+
+    def coordinator_deployer(self):
+        deployer = self.deployer(only=['coordinator'])
         deployer.capture_baseline()
         self.fake.log.clear()
         return deployer
@@ -279,7 +308,7 @@ class DeployTests(Fleet):
             deployer.deploy(NEW_SHA, self.binary)
         self.assertEqual(self.restarts(), [])
         self.assertEqual(self.running('worker-01', 'enhance-pir-worker.service'), OLD_SHA)
-        self.assertIn(('worker-01', [deployer.service.release_binary(NEW_SHA), 'check-backend',
+        self.assertIn(('worker-01', [deployer.release_binary(NEW_SHA), 'check-backend',
                                    '--matvec-backend', 'cuda', '--cuda-device', '2']), self.fake.runs)
 
     def test_cuda_evaluator_is_checked_before_activation(self):
@@ -288,7 +317,7 @@ class DeployTests(Fleet):
                             artifact_kind='enhance-pir-native-cuda')]
         journal = deployer.deploy(NEW_SHA, self.binary)
         self.assertEqual(journal.status, 'committed')
-        self.assertIn(('worker-01', [deployer.service.release_binary(NEW_SHA), 'check-backend',
+        self.assertIn(('worker-01', [deployer.release_binary(NEW_SHA), 'check-backend',
                                    '--matvec-backend', 'cuda', '--cuda-device', '0']), self.fake.runs)
 
     def test_cuda_probe_preserves_only_the_units_explicit_library_path(self):
@@ -300,8 +329,8 @@ class DeployTests(Fleet):
             b'\n[Service]\nEnvironment=LD_LIBRARY_PATH=/opt/cuda/lib PRIVATE_TOKEN=fixture-only\n')
         self.fake.systemctl('worker-01', 'daemon-reload')
         deployer.capture_baseline()
-        deployer.deploy(NEW_SHA, self.binary)
-        command = ['env', 'LD_LIBRARY_PATH=/opt/cuda/lib', deployer.service.release_binary(NEW_SHA),
+        deployer.deploy(NEW_SHA, self.binary, allow_drift=True)
+        command = ['env', 'LD_LIBRARY_PATH=/opt/cuda/lib', deployer.release_binary(NEW_SHA),
                    'check-backend', '--matvec-backend', 'cuda', '--cuda-device', '0']
         self.assertIn(('worker-01', command), self.fake.runs)
         self.assertFalse(any('PRIVATE_TOKEN' in argument for _, argv in self.fake.runs for argument in argv))
@@ -318,7 +347,8 @@ class DeployTests(Fleet):
         for host, unit in ENHANCE:
             self.assertEqual(self.running(host, unit), NEW_SHA if unit == 'enhance-pir-worker.service' else OLD_SHA)
         # The refreshed baseline still records the targets left out.
-        self.assertEqual(len(json.loads(deployer.baseline_path.read_text())['targets']), len(ENHANCE))
+        recorded = json.loads(self.deployer().baseline_path.read_text())['targets']
+        self.assertCountEqual(recorded, [t.key for t in self.deployer().targets])
         self.assertEqual(self.deployer().baseline_problems(self.deployer().probe(), required=True), [])
         with self.assertRaisesRegex(Exception, 'no target matches'):
             self.deployer(only=['worker@nowhere'])
@@ -331,44 +361,70 @@ class DeployTests(Fleet):
         self.assertFalse((self.state / 'latest-enhance.json').exists())
         self.assertIn('no-op', self.lines[-1])
 
-    def test_deploy_restarts_in_role_order_and_installs_the_managed_drop_in(self):
+    def test_deploy_restarts_in_role_order_and_replaces_the_serving_unit(self):
         deployer = self.enhance_fleet()
         journal = deployer.deploy(NEW_SHA, self.binary, retire_historical=True)
         self.assertEqual(journal.status, 'committed')
         self.assertEqual(self.restarts(), ENHANCE)
-        release = '/opt/enhance-pir/releases/%s/enhance-pir-server' % NEW_SHA
+        release = '/opt/enhance-pir/releases/%s/pir-query-server' % NEW_SHA
+        configs = {'enhance-pir-worker.service': '/etc/enhance-pir/worker.json',
+                   'enhance-pir-packing-router.service': '/etc/enhance-pir/packing-router.json',
+                   'enhance-pir-query-ingress.service': '/etc/enhance-pir/query-ingress.json'}
         for host, unit in ENHANCE:
             self.assertEqual(self.running(host, unit), NEW_SHA)
-            files = self.fake.host(host).files
-            managed = files[dropin(unit, units.MANAGED_DROP_IN)].decode()
-            self.assertIn('ExecStart=\nExecStart=' + release + ' ', managed)
-            # The argument tail, including environment references, is preserved.
-            self.assertEqual(units.split_exec(managed.splitlines()[-1][len('ExecStart='):])[2],
-                             units.split_exec(units.exec_start(units.effective([(DEPLOY / unit).read_text()])))[2])
-            # The ExecStart-only historical drop-in is retired, never deleted.
-            self.assertNotIn(dropin(unit, 'zz-cleanup-71be21f.conf'), files)
-            retired = '/opt/enhance-pir/transactions/%s/%s/retired/zz-cleanup-71be21f.conf' % (journal.id, unit)
-            self.assertEqual(files[retired].decode(), cleanup_drop_in((DEPLOY / unit).read_text()))
-        # The v7 drop-in with other settings stays; its ExecStart is overridden.
-        self.assertIn(dropin('enhance-pir-worker.service', '90-v7.conf'), self.fake.host('worker-01').files)
-        # One upload per host, into an immutable release directory.
+            text = self.fake.read(host, '/etc/systemd/system/' + unit)
+            prefix, binary, tail = units.split_exec(units.exec_start(units.effective([text])))
+            self.assertEqual((prefix, binary, tail), ('', release, '--config ' + configs[unit]))
+            self.assertIn('User=enhance-pir', text)
+            self.assertIn('EnvironmentFile=' + TOKEN, text)
+            self.assertIn('ReadWritePaths=', text)
+            self.assertNotIn(dropin(unit, units.MANAGED_DROP_IN), self.fake.host(host).files)
+        worker = self.fake.read('worker-01', '/etc/systemd/system/enhance-pir-worker.service')
+        self.assertIn('MemoryMax=7680M', worker)
+        self.assertIn('MemoryHigh=7G', worker)
+        router = self.fake.read('router-01', '/etc/systemd/system/enhance-pir-packing-router.service')
+        self.assertIn('MemoryMax=7G', router)
+        ingress = self.fake.read('coordinator', '/etc/systemd/system/enhance-pir-query-ingress.service')
+        self.assertIn('MemoryMax=256M', ingress)
+        # One upload per host, into an immutable release directory named by the file.
         uploads = [(host, detail) for host, op, detail in self.fake.log if op == 'upload']
         self.assertCountEqual([host for host, _ in uploads], ['worker-01', 'worker-02', 'router-01', 'coordinator'])
         self.assertTrue(all(self.fake.host(host).files[release] == NEW for host, _ in uploads))
         self.assertIn(('coordinator', ['/usr/local/bin/exact', '/opt/enhance-pir/releases/' + NEW_SHA, journal.id]),
                       self.fake.runs)
+        self.assertEqual(self.running(*COORDINATOR), OLD_SHA)
         # The baseline now describes the committed state, so a repeat is a no-op.
         self.fake.log.clear()
         self.assertIsNone(deployer.deploy(NEW_SHA, self.binary))
         self.assertEqual(self.fake.log, [])
 
+    def test_coordinator_keeps_its_flags_in_a_managed_drop_in(self):
+        self.enhance_fleet()
+        deployer = self.coordinator_deployer()
+        journal = deployer.deploy(NEW_SHA, self.binary, retire_historical=True)
+        host, unit = COORDINATOR
+        self.assertEqual(self.running(host, unit), NEW_SHA)
+        release = '/opt/enhance-pir/releases/%s/enhance-pir-server' % NEW_SHA
+        managed = self.fake.read(host, dropin(unit, units.MANAGED_DROP_IN))
+        prefix, binary, tail = units.split_exec(managed.splitlines()[-1][len('ExecStart='):])
+        self.assertEqual((prefix, binary), ('', release))
+        self.assertIn('--worker-config /etc/enhance-pir/workers.json', tail)
+        self.assertIn('coordinator', tail)
+        self.assertEqual(tail, units.split_exec(units.exec_start(units.effective([(DEPLOY / unit).read_text()])))[2])
+        self.assertNotIn(dropin(unit, 'zz-cleanup-71be21f.conf'), self.fake.host(host).files)
+        retired = '/opt/enhance-pir/transactions/%s/%s/retired/zz-cleanup-71be21f.conf' % (journal.id, unit)
+        self.assertEqual(self.fake.read(host, retired), cleanup_drop_in((DEPLOY / unit).read_text()))
+        # The v7 drop-in also sets ReadWritePaths, so it stays and its ExecStart is overridden.
+        self.assertIn(dropin(unit, '90-v7.conf'), self.fake.host(host).files)
+
     def test_historical_drop_ins_are_superseded_unless_retirement_is_asked_for(self):
-        deployer = self.enhance_fleet()
+        self.enhance_fleet()
+        deployer = self.coordinator_deployer()
         self.assertEqual(deployer.deploy(NEW_SHA, self.binary).status, 'committed')
-        for host, unit in ENHANCE:
-            self.assertEqual(self.running(host, unit), NEW_SHA)
-            # Left in place; the managed drop-in sorts after it and wins.
-            self.assertIn(dropin(unit, 'zz-cleanup-71be21f.conf'), self.fake.host(host).files)
+        host, unit = COORDINATOR
+        self.assertEqual(self.running(host, unit), NEW_SHA)
+        # Left in place; the managed drop-in sorts after it and wins.
+        self.assertIn(dropin(unit, 'zz-cleanup-71be21f.conf'), self.fake.host(host).files)
 
     def test_failure_rolls_back_only_touched_targets_in_reverse(self):
         deployer = self.enhance_fleet()
@@ -379,50 +435,70 @@ class DeployTests(Fleet):
         self.assertEqual(self.restarts(), touched + list(reversed(touched)))
         for host, unit in ENHANCE:
             self.assertEqual(self.running(host, unit), OLD_SHA)
-            files = self.fake.host(host).files
-            self.assertNotIn(dropin(unit, units.MANAGED_DROP_IN), files)
-            self.assertEqual(files[dropin(unit, 'zz-cleanup-71be21f.conf')].decode(),
-                             cleanup_drop_in((DEPLOY / unit).read_text()))
-        # The coordinator only received the staged release; its units were never touched.
+            self.assertNotIn(dropin(unit, units.MANAGED_DROP_IN), self.fake.host(host).files)
+        previous = '/opt/enhance-pir/releases/' + OLD_SHA
+        for target in deployer.targets:
+            rendered = target.role.render(target.settings, previous)
+            self.assertEqual(self.fake.read(target.host, '/etc/systemd/system/' + target.unit), rendered.unit)
+        # Ingress shares the coordinator host. It was staged and not restarted, and the coordinator unit was not in this transaction.
         self.assertEqual({op for _, op, _ in self.fake.mutations('coordinator')}, {'mkdir', 'upload', 'rename'})
+        self.assertEqual(self.running(*COORDINATOR), OLD_SHA)
         journal = Journal.load(self.state, 'enhance')
         self.assertEqual(journal.status, 'rolled-back')
-        self.assertEqual([r['phase'] for r in journal.hosts], ['restored'] * 3 + ['pending'] * 2)
+        self.assertEqual([r['phase'] for r in journal.hosts], ['restored'] * 3 + ['pending'])
         # Nothing new is known, so the baseline still matches and allows a later deploy.
         self.assertEqual(deployer.baseline_problems(deployer.probe(), required=True), [])
 
+    def test_role_mode_refuses_a_drop_in_the_rendered_unit_does_not_own(self):
+        cases = [
+            ('90-v7.conf', '[Service]\nExecStart=\nExecStart=/bin/old worker\nReadWritePaths=/srv/old\n',
+             'cannot be superseded'),
+            ('50-local.conf', '[Service]\nExecStart=\nExecStart=/bin/old worker\n', 'overrides ExecStart'),
+            ('50-memory.conf', '[Service]\nMemoryHigh=6G\n', 'owns its whole unit'),
+        ]
+        for name, text, message in cases:
+            with self.subTest(drop_in=name):
+                self.setUp()
+                self.enhance_fleet()
+                unit = 'enhance-pir-worker.service'
+                self.fake.edit('worker-01', dropin(unit, name), text)
+                deployer = self.deployer(only=['worker@worker-01'])
+                deployer.capture_baseline()
+                self.fake.log.clear()
+                with self.assertRaisesRegex(DeployError, message):
+                    deployer.deploy(NEW_SHA, self.binary, retire_historical=True)
+                self.assertEqual(self.fake.log, [])
+
     def test_only_an_exec_start_drop_in_sorting_after_the_managed_one_is_refused(self):
         self.enhance_fleet()
-        unit = 'enhance-pir-worker.service'
-        self.fake.edit('worker-02', dropin(unit, '50-local.conf'), '[Service]\nExecStart=\nExecStart=%s worker\n' % LEGACY)
-        deployer = self.deployer()
-        deployer.capture_baseline()
-        self.fake.log.clear()
+        host, unit = COORDINATOR
+        self.fake.edit(host, dropin(unit, '50-local.conf'), '[Service]\nExecStart=\nExecStart=%s coordinator\n' % LEGACY)
+        deployer = self.coordinator_deployer()
         # An earlier ExecStart layer is superseded: it stays and the managed drop-in wins.
         self.assertEqual(deployer.deploy(NEW_SHA, self.binary, retire_historical=True).status, 'committed')
-        self.assertIn(dropin(unit, '50-local.conf'), self.fake.host('worker-02').files)
-        self.assertEqual(self.running('worker-02', unit), NEW_SHA)
+        self.assertIn(dropin(unit, '50-local.conf'), self.fake.host(host).files)
+        self.assertEqual(self.running(host, unit), NEW_SHA)
         deployer.rollback()
         # One sorting after the managed drop-in would still win, so it is refused.
         late = 'z' * 40 + '-local.conf'
-        self.fake.edit('worker-02', dropin(unit, late), '[Service]\nExecStart=\nExecStart=%s worker\n' % LEGACY)
+        self.fake.edit(host, dropin(unit, late), '[Service]\nExecStart=\nExecStart=%s coordinator\n' % LEGACY)
         deployer.capture_baseline()
         self.fake.log.clear()
         with self.assertRaisesRegex(DeployError, 'unmanaged drop-in .*-local.conf overrides ExecStart'):
             deployer.deploy(NEW_SHA, self.binary, retire_historical=True)
         self.assertEqual(self.fake.log, [])
-        del self.fake.host('worker-02').files[dropin(unit, late)]
-        # A drop-in that does not touch ExecStart is part of the unit, not a refusal.
-        self.fake.edit('worker-02', dropin(unit, '50-local.conf'), '[Service]\nMemoryHigh=6G\n')
+        del self.fake.host(host).files[dropin(unit, late)]
+        # A drop-in that does not touch ExecStart is part of an exec-drop-in unit, not a refusal.
+        self.fake.edit(host, dropin(unit, '50-local.conf'), '[Service]\nMemoryHigh=6G\n')
         deployer.capture_baseline()
         self.assertEqual(deployer.deploy(NEW_SHA, self.binary, retire_historical=True).status, 'committed')
-        self.assertIn(dropin(unit, '50-local.conf'), self.fake.host('worker-02').files)
+        self.assertIn(dropin(unit, '50-local.conf'), self.fake.host(host).files)
 
     def test_baseline_is_required_and_live_changes_since_it_are_refused(self):
         deployer = self.enhance_fleet()
         unit = 'enhance-pir-worker.service'
-        self.fake.edit('worker-01', '/etc/systemd/system/' + unit,
-                       (DEPLOY / unit).read_text().replace('RestartSec=3', 'RestartSec=4'))
+        path = '/etc/systemd/system/' + unit
+        self.fake.edit('worker-01', path, self.fake.read('worker-01', path).replace('RestartSec=3', 'RestartSec=4'))
         with self.assertRaisesRegex(DeployError, 'unit files changed since the baseline'):
             deployer.deploy(NEW_SHA, self.binary, retire_historical=True)
         deployer.baseline_path.unlink()
@@ -601,8 +677,10 @@ class RollbackTests(Fleet):
                     self.fake.put('worker-01', change['path'], change['new'])
                     self.fake._reload('worker-01')
                 elif changed == 'reload':
-                    fragment = '/etc/systemd/system/' + record['unit']
-                    self.fake.put('worker-01', fragment, self.fake.read('worker-01', fragment) + '\n# reload required\n')
+                    # The unit file is the journaled change. An unreloaded drop-in
+                    # makes the loaded unit stale without a third version of that file.
+                    self.fake.put('worker-01', dropin(record['unit'], '60-unloaded.conf'),
+                                  '[Service]\n# reload required\n')
                 elif changed == 'inactive':
                     state['active'] = 'inactive'
                 elif changed == 'executable':
@@ -659,7 +737,8 @@ class RollbackTests(Fleet):
         deployer = self.enhance_fleet()
         deployer.deploy(NEW_SHA, self.binary, retire_historical=True)
         unit = 'enhance-pir-worker.service'
-        self.fake.edit('worker-02', dropin(unit, units.MANAGED_DROP_IN), '[Service]\nExecStart=\nExecStart=/bin/other\n')
+        self.fake.edit('worker-02', '/etc/systemd/system/' + unit,
+                       self.fake.read('worker-02', '/etc/systemd/system/' + unit) + '\n# changed after the transaction\n')
         self.fake.log.clear()
         with self.assertRaisesRegex(DeployError, 'changed since the transaction'):
             deployer.rollback()
@@ -1026,8 +1105,14 @@ class UnitTests(unittest.TestCase):
                          ('worker', 'external-worker', 'packing-router', 'query-ingress', 'coordinator'))
         self.assertEqual(SERVICES['status'].order, ('worker', 'external-worker', 'router', 'controller'))
         self.assertEqual(SERVICES['receiver'].order, ('server', 'serve-publication'))
-        # External workers are optional additions, rendered whole by their product.
-        self.assertTrue(all(r.optional == (r.mode == 'role') for s in SERVICES.values() for r in s.roles.values()))
+        # Optional roles are rendered whole. Required Enhance serving roles are role mode too.
+        self.assertTrue(all(not role.optional or role.mode == 'role'
+                            for service in SERVICES.values() for role in service.roles.values()))
+        enhance = SERVICES['enhance']
+        self.assertEqual({name for name, role in enhance.roles.items() if role.binary == 'pir-query-server'},
+                         {'worker', 'external-worker', 'packing-router', 'query-ingress'})
+        self.assertIsNone(enhance.roles['coordinator'].binary)
+        self.assertEqual(enhance.roles['coordinator'].mode, 'exec-drop-in')
         self.assertEqual(SERVICES['receiver'].artifact_kinds, ('receiver-pir',))
         self.assertIn('receiver-directory', cli.load_release().BINARIES['receiver-pir'])
         (server,) = descriptors.targets(SERVICES['receiver'], inventory)
@@ -1162,24 +1247,30 @@ class CommandLineTests(Fleet):
         return cli.main(['--inventory', str(self.inventory_path), '--state-dir', str(self.state), *argv],
                         executor=self.fake, out=self.lines.append, sleep=self.clock.sleep, clock=self.clock)
 
+    def serving_cli(self, *argv):
+        selected = [item for role in SERVING_SELECTORS for item in ('--only', role)]
+        return self.run_cli(*argv, *selected)
+
     def test_plan_is_read_only_and_preflight_needs_a_baseline(self):
         self.enhance_fleet()
         self.deployer()  # registers health endpoints
         (self.state / 'baselines/enhance.json').unlink()
-        self.assertEqual(self.run_cli('plan', 'enhance', '--binary', str(self.binary)), 0)
+        self.assertEqual(self.run_cli('plan', 'enhance', '--binary', str(self.binary)), 1)
+        self.assertTrue(any('different binaries' in line for line in self.lines))
+        self.assertEqual(self.serving_cli('plan', 'enhance', '--binary', str(self.binary)), 0)
         self.assertIn('worker@worker-01 enhance-pir-worker.service: restart', self.lines)
-        self.assertEqual(self.run_cli('preflight', 'enhance', '--binary', str(self.binary), '--retire-historical'), 1)
+        self.assertEqual(self.serving_cli('preflight', 'enhance', '--binary', str(self.binary), '--retire-historical'), 1)
         self.assertTrue(any('run capture-baseline' in line for line in self.lines))
-        self.assertEqual(self.run_cli('capture-baseline', 'enhance'), 0)
-        self.assertEqual(self.run_cli('preflight', 'enhance', '--binary', str(self.binary), '--retire-historical'), 0)
+        self.assertEqual(self.serving_cli('capture-baseline', 'enhance'), 0)
+        self.assertEqual(self.serving_cli('preflight', 'enhance', '--binary', str(self.binary), '--retire-historical'), 0)
         self.assertEqual(self.fake.log, [])
 
     def test_deploy_status_and_rollback_commands(self):
         self.enhance_fleet()
         self.deployer()
-        self.assertEqual(self.run_cli('deploy', 'enhance', '--sha256', NEW_SHA, '--retire-historical'), 1)
+        self.assertEqual(self.serving_cli('deploy', 'enhance', '--sha256', NEW_SHA, '--retire-historical'), 1)
         self.assertTrue(any('not staged and no binary' in line for line in self.lines))
-        self.assertEqual(self.run_cli('deploy', 'enhance', '--binary', str(self.binary), '--retire-historical'), 0)
+        self.assertEqual(self.serving_cli('deploy', 'enhance', '--binary', str(self.binary), '--retire-historical'), 0)
         self.assertEqual(self.run_cli('status', 'enhance'), 0)
         self.assertIn('committed', self.lines[0])
         self.assertEqual(self.run_cli('rollback', 'enhance'), 0)

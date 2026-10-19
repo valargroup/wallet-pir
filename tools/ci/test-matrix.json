@@ -155,7 +155,7 @@
       "native:pir-publisher:test:boundary_recovery_model",
       "native:pir-publisher:test:ci_hint",
       "native:pir-publisher:test:encrypted_lifecycle",
-      "native:enhance-publisher:test:matvec_config",
+      "native:enhance-publisher:test:publisher_cli",
       "native:pir-publisher:test:packing_http",
       "native:pir-publisher:test:record_layout",
       "native:pir-publisher:test:status_routes",
@@ -202,8 +202,8 @@
     "family": "enhance",
     "targets": [
       "cuda:enhance-pir-load-test:check:all",
-      "cuda:enhance-publisher:check:enhance_publisher",
       "cuda:enhance-query-server:check:enhance_query_server",
+      "cuda:pir-query-server:check:pir_query_server",
       "cuda:status-publisher:check:status_publisher",
       "cuda:status-query-server:check:status_query_server"
     ]
@@ -211,7 +211,7 @@
   "enhance-cuda-tests": {
     "family": "enhance",
     "targets": [
-      "cuda:enhance-publisher:test:matvec_config",
+      "cuda:pir-query-server:test:operator",
       "cuda:enhance-query-server:lib:enhance_query_server"
     ]
   },

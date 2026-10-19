@@ -365,6 +365,8 @@ class IntegrityTests(unittest.TestCase):
                 self.assertIn('name: %s-${{ github.sha }}' % kind, job)
                 self.assertIn('path: release-bundles/%s/%s.tar.gz' % (kind, kind), job)
             self.assertEqual(build[:4], ['cargo', 'build', '--locked', '--release'])
+            if family == 'enhance':
+                self.assertEqual(build[build.index('--features') + 1], 'pir-query-server/enhance')
 
     def test_workflows_invoke_only_scripts_that_exist(self):
         import re
@@ -398,6 +400,17 @@ class IntegrityTests(unittest.TestCase):
         cuda_job = workflow.split('\n  build-cuda:\n', 1)[1].split('\n  release-cuda:\n', 1)[0]
         metadata = load('release').CUDA_BUILD
         self.assertIn('    env:\n      RUSTUP_TOOLCHAIN: ' + metadata['rust'], cuda_job)
+        script = (ROOT / 'tools/ci/build-cuda.sh').read_text()
+        clients, query_server = script.split('compile:cuda --', 1)
+        self.assertNotIn('-p enhance-publisher', script)
+        self.assertNotIn('-p pir-query-server', clients)
+        self.assertIn('-p pir-query-server --bin pir-query-server', query_server)
+        self.assertIn('--features enhance,native-reinspiring,cuda', query_server)
+        native = workflow.split('compile:native --', 1)[1].split('assemble --family enhance --native', 1)[0]
+        publisher, query = native.split('compile:native-query-server --', 1)
+        self.assertNotIn('pir-query-server', publisher)
+        self.assertIn('-p pir-query-server --bin pir-query-server', query)
+        self.assertIn('--features enhance,native-reinspiring\n', query)
 
 
 if __name__ == '__main__':

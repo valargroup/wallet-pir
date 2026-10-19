@@ -4,6 +4,12 @@ version = "0.1.0"
 edition = "2021"
 publish = false
 description = "Configurable host for Wallet PIR query servers"
+autotests = false
+
+[[test]]
+name = "operator"
+path = "tests/operator.rs"
+required-features = ["enhance"]
 
 [features]
 default = []

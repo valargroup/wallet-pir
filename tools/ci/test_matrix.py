@@ -42,8 +42,8 @@ def variants(groups):
         'native': dict(family='enhance', packages=groups['enhance'], features=NATIVE + ['pir-publisher/enhance-tests', 'pir-publisher/status-tests', 'pir-publisher/native-reinspiring'] + qualification_features(groups['enhance'])),
         'reference': dict(family='enhance', packages=['enhance-query-server', 'status-query-server', 'pir-publisher'],
                           features=['pir-publisher/enhance-tests'] + qualification_features(['enhance-query-server', 'status-query-server', 'pir-publisher'])),
-        'cuda': dict(family='enhance', packages=['enhance-query-server', 'status-query-server', 'enhance-publisher',
-                                             'status-publisher', 'enhance-pir-load-test'], features=CUDA),
+        'cuda': dict(family='enhance', packages=['enhance-query-server', 'status-query-server',
+                                             'status-publisher', 'enhance-pir-load-test', 'pir-query-server'], features=CUDA),
         'receiver': dict(family='receiver', packages=groups['receiver'], features=[]),
     }
 
@@ -95,7 +95,7 @@ def target_inventory(contexts, packages):
                     kinds = ['check'] if kind == 'lib' else []
                     if (name, kind, target['name']) in {
                         ('enhance-query-server', 'lib', 'enhance_query_server'),
-                        ('enhance-publisher', 'test', 'matvec_config'),
+                        ('pir-query-server', 'test', 'operator'),
                     }:
                         kinds.append('example-test' if kind == 'example' and target.get('test') else kind)
                 else:
@@ -332,7 +332,7 @@ def baseline_commands(family):
             ('reference', [*options, '-p', 'pir-publisher', '--features', 'enhance-tests,qualification-tests',
                            '--test', 'ci_hint', '--test', 'encrypted_lifecycle']),
             ('reference', [*options, '-p', 'status-query-server', '--features', 'qualification-tests', '--lib', '--tests']),
-            ('cuda', [*options, '-p', 'enhance-publisher', '--features', 'native-reinspiring,cuda', '--test', 'matvec_config']),
+            ('cuda', [*options, '-p', 'pir-query-server', '--features', 'enhance,native-reinspiring,cuda', '--test', 'operator']),
             ('cuda', [*options, '-p', 'enhance-query-server', '--features', 'native-reinspiring,cuda', '--lib',
                       'backend_load_failure_does_not_rebuild_or_replace_published_units']),
         ]
@@ -347,8 +347,8 @@ def run_baseline(family, plan, output):
     env['RUST_TEST_THREADS'] = '2' if family == 'transparent' else '1'
     if family == 'enhance':
         run(['cargo', 'check', '--locked', '-p', 'enhance-query-server', '-p', 'status-query-server',
-             '-p', 'enhance-publisher', '-p', 'enhance-pir-load-test', '--all-targets',
-             '--features', ','.join(CUDA)], env=env, stage='compile:baseline-cuda')
+             '-p', 'status-publisher', '-p', 'pir-query-server', '-p', 'enhance-pir-load-test',
+             '--all-targets', '--features', ','.join(CUDA)], env=env, stage='compile:baseline-cuda')
     for variant, options in baseline_commands(family):
         artifacts = run(['cargo', 'test', '--no-run', *options], env=env,
                         stage='compile:baseline-' + variant, collect_tests=True, test_details=True)

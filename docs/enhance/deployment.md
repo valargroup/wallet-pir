@@ -13,9 +13,17 @@ three hosts. Its focused workload was stopped early at the operator's request;
 the memory observation is promising but not a completed qualification.
 
 The binaries are `enhance-pir-server` (package `enhance-publisher`),
+`pir-query-server` (package `pir-query-server`),
 `enhance-pir-cli` (`enhance-pir-client`), `enhance-pir-load-test` and the local
-`enhance-pir-exercise`. Server subcommands are `coordinator`, `worker`,
-`repair-rows` and `rebuild-journal`. Protocol v7 retains schema-11 records and q48, but changes
+`enhance-pir-exercise`. `enhance-pir-server` commands are `coordinator`,
+`rebuild-journal`, `prepare-packing-artifacts`, `restore-legacy-placement`, and
+`build-info`. `build-info` reports native reinspiring and the source revision
+and has no CUDA field. Each Enhance serving role (`worker`, `query-ingress`,
+`packing-router`) is its own `pir-query-server --config FILE` process.
+`pir-query-server check-backend [--matvec-backend cpu|cuda] [--cuda-device N]`
+checks the evaluator without opening worker state.
+`pir-query-server repair-rows --data-dir DIR --source-rows DIR` is the offline
+row repair. Protocol v7 retains schema-11 records and q48, but changes
 routing, session identity and framing. v6 clients and serving state are incompatible.
 Use fresh controller, worker, hint and cache directories. A schema-11 canonical
 journal may be copied while stopped and validated; older-width journals must be
@@ -87,10 +95,10 @@ the coordinator activates it and a packing router lists it.
 
 ### Query ingress uploads
 
-The ingress (`query-ingress`, loopback 8082) now buffers each complete request
+The ingress role (`query-ingress`, loopback 8082) buffers each complete request
 body (at most 512 KiB, 30-second deadline) before it takes one of its
-`--requests` forwarding permits (default 16) and forwards the buffered body to a
-packing router. Buffering is bounded by `--uploads` (default 256 concurrent
+`requests` forwarding permits (default 16) and forwards the buffered body to a
+packing router. Buffering is bounded by `uploads` (default 256 concurrent
 bodies) and by four concurrent uploads per client, identified by the first
 `X-Forwarded-For` address, else `X-Real-IP`, else the socket peer. Either limit
 answers HTTP 429 `overloaded` without charging a forwarding permit. Caddy must
@@ -103,14 +111,18 @@ replica is retried on its peer. The public Caddy query route disables upstream
 keepalive so overload responses are not lost on stale local connections. Check
 the `enhance_query_*` metrics and public 429/502 counts after rollout.
 
-The service examples are [coordinator](../../tools/enhance/deploy/enhance-pir-server.service)
-and [worker](../../tools/enhance/deploy/enhance-pir-worker.service). Point
-`/opt/enhance-pir/current` to the verified release on each host, create the
-non-root worker account and its private data directory, and provide the worker
-listen address and sealed-shard policy in `/etc/enhance-pir/worker.env`.
-The default policy is six sealed shards; seven requires separate hardware
-qualification. Keep existing Terraform resource addresses, droplet names, and
-tags when reconciling infrastructure.
+The coordinator example is
+[enhance-pir-server.service](../../tools/enhance/deploy/enhance-pir-server.service):
+`enhance-pir-server coordinator`. A worker, query ingress, or packing router is
+a separate `pir-query-server --config` process, one Enhance role in that file.
+The role file carries the listen address, absolute data directory, sealed-shard
+count, and, for a worker, the matrix backend. `ENHANCE_INTERNAL_TOKEN`, when
+used, stays in the unit environment file and never on the command line. Point
+`/opt/enhance-pir/current` to the verified release on each host and create the
+non-root worker account and its private data directory. The default sealed-shard
+count is six; seven requires separate hardware qualification. Keep existing
+Terraform resource addresses, droplet names, and tags when reconciling
+infrastructure.
 
 ## Cutover checks
 
@@ -163,20 +175,27 @@ which is enough for a no-op check or an already staged release.
 - `capture-baseline` records each unit's running executable digest and complete
   unit text. `preflight` and `deploy` refuse if anything changed since, and
   `deploy` refreshes the baseline after it commits or rolls back.
-- The binary is installed as `/opt/enhance-pir/releases/<sha256>/enhance-pir-server`
-  and must pass `--help` on each host before any unit changes.
+- The coordinator binary is installed as
+  `/opt/enhance-pir/releases/<sha256>/enhance-pir-server` and must pass `--help`
+  on each host before any unit changes. A serving role installs
+  `pir-query-server` the same way and starts with `--config`. The release
+  directory is named by the sha256 of the file that host runs.
 - Each unit gets one managed drop-in whose name (32 `z`s, then
   `-wallet-pir-release.conf`) sorts after the drop-ins the manual rollouts
   stacked. It clears `ExecStart` and sets it to the release binary with the live
-  argument tail. Earlier drop-ins that set `ExecStart` stay in place and are
+  argument tail. A serving role does not keep an `enhance-pir-server` `worker`,
+  `query-ingress`, or `packing-router` tail: its `ExecStart` is
+  `{release}/pir-query-server --config /etc/enhance-pir/<role>.json`.
+  Earlier drop-ins that set `ExecStart` stay in place and are
   shadowed; one that would sort after the managed drop-in is refused. With
   `--retire-historical`, the ExecStart-only `zz-cleanup-*.conf` drop-ins are
   instead moved into the host's transaction directory.
 - `--only ROLE[@HOST]` (repeatable) limits a plan, preflight or deploy to those
   targets, so the replicated workers can roll while single-instance roles keep
   running.
-- The GPU worker runs the `enhance-pir-native-cuda` build, a different binary
-  from the CPU roles. Its inventory entry names `"artifact_kind":
+- The GPU worker runs the CUDA `pir-query-server` from the
+  `enhance-pir-native-cuda` build. That host does not run `enhance-pir-server`
+  as the worker. Its inventory entry names `"artifact_kind":
   "enhance-pir-native-cuda"`, and every plan, preflight or deploy that selects it
   needs `--extra-archive enhance-pir-native-cuda=<bundle>` with the same `--sha`;
   without it the command refuses rather than skipping the GPU. The GPU then rolls
@@ -197,12 +216,12 @@ which is enough for a no-op check or an already staged release.
   skipped, so deploying the running binary is a no-op.
 - Every host must accept the deploy identity before anything changes. Mutating
   commands hold `/run/lock/wallet-pir-production.lock` on the coordinator.
-- CUDA builds must match Cargo's compiler feature report and the packaged
-  executable's `build-info` output before ABI metadata is written. Staging a
-  GPU worker also runs `check-backend --matvec-backend cuda` on that host,
-  using its configured device, before restarting the working service. This
-  checks compiled support and driver initialization without opening worker state;
-  publication readiness and encrypted answers remain separate activation checks.
+- `enhance-pir-server build-info` has no CUDA field. Staging a GPU worker runs
+  `pir-query-server check-backend --matvec-backend cuda --cuda-device N` on
+  that host, using its configured device, before restarting the working service.
+  This checks compiled support and driver initialization without opening worker
+  state; publication readiness and encrypted answers remain separate activation
+  checks.
 - After each restart the tool requires the unit to be active, `/proc/<MainPID>/exe`
   to have the release digest, and the role's health endpoint to report ready
   (and the same `binary_sha256`, when the endpoint reports one). After all roles

@@ -24,8 +24,11 @@ def paths(value):
 
 class WorkerRoles(unittest.TestCase):
     def test_every_product_registers_one_rendered_optional_worker(self):
-        rendered = {(s, r.name) for s, service in REGISTRY.items() for r in service.roles.values() if r.mode == 'role'}
+        rendered = {(s, r.name) for s, service in REGISTRY.items()
+                    for r in service.roles.values() if r.mode == 'role' and r.optional}
         self.assertEqual(rendered, set(SETTINGS))
+        serving = {r.name for r in REGISTRY['enhance'].roles.values() if r.mode == 'role' and not r.optional}
+        self.assertEqual(serving, {'worker', 'packing-router', 'query-ingress'})
         for service, role in SETTINGS:
             self.assertTrue(REGISTRY[service].roles[role].optional)
             self.assertTrue(REGISTRY[service].roles[role].owns_unit)
@@ -36,8 +39,11 @@ class WorkerRoles(unittest.TestCase):
                 spec = REGISTRY[service]
                 result = spec.roles[role].render(settings, RELEASE)
                 effective = units.effective([result.unit])['Service']
-                binary = units.split_exec(units.exec_start(units.effective([result.unit])))[1]
-                self.assertEqual(binary, '%s/%s' % (RELEASE, spec.binary))
+                command = units.exec_start(units.effective([result.unit]))
+                binary = units.split_exec(command)[1]
+                self.assertEqual(binary, '%s/%s' % (RELEASE, spec.roles[role].binary or spec.binary))
+                if service == 'enhance':
+                    self.assertIn('--config /etc/enhance-pir/%s.json' % role, command)
                 writable = paths(effective.get('ReadWritePaths', ''))
                 readonly = paths(effective.get('ReadOnlyPaths', ''))
                 self.assertEqual(list(result.directories), writable)

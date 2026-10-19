@@ -17,7 +17,6 @@ path = "src/bin/server.rs"
 qualification-tests = []
 default = []
 native-reinspiring = ["enhance-query-server/native-reinspiring", "dep:zakura-pir-publisher", "dep:reinspiring", "ipir-sp/native-reinspiring"]
-cuda = ["enhance-query-server/cuda", "ipir-sp/cuda"]
 # Exposes the journal's injected I/O failure to the host's Enhance regressions.
 fault-injection = []
 # Widens private helpers for those regressions. Production builds leave it off.
