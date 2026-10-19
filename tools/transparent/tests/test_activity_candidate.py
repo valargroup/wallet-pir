@@ -73,6 +73,10 @@ class Fixture(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory(); self.addCleanup(tmp.cleanup)
         self.root = Path(tmp.name).resolve()
+        # These retained candidates predate the query-server binary rename.
+        # Exercise their pinned archive inventory with today's integrity checks.
+        release_inventory = patch.dict(RELEASE.BINARIES, C.CI_KINDS)
+        release_inventory.start(); self.addCleanup(release_inventory.stop)
         self.data = {name: elf(name) for name in C.ARTIFACTS}
         pins = {name: hashlib.sha256(data).hexdigest() for name, data in self.data.items()}
         self.result = {'source_sha':C.SOURCE_SHA, 'status':'passed', 'build_exit':0, 'profile':'release',
