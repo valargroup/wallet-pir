@@ -197,11 +197,13 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3,
         return
     # Product fixture modules compile only when the host enables them. One
     # feature set builds the wallet client and chain fixtures for every product.
-    features.update({
-        'pir-publisher/enhance-tests',
-        'pir-publisher/status-tests',
-        'pir-publisher/transparent-tests',
-    })
+    # A compile set that does not include the host leaves its feature list alone.
+    if 'pir-publisher' in compile_packages:
+        features.update({
+            'pir-publisher/enhance-tests',
+            'pir-publisher/status-tests',
+            'pir-publisher/transparent-tests',
+        })
     features.update(additional_features)
     command = ['cargo', 'test', '--locked', '--profile', 'release-fast', '--no-run', *options]
     for name in sorted(compile_packages):
