@@ -9,6 +9,7 @@ use zakura_pir_publisher::transparent::filter as transparent_filter;
 
 pub mod blocks;
 pub mod extract;
+pub mod journal_export;
 pub mod prevout;
 pub mod snapshot;
 #[cfg(feature = "rocksdb-reader")]

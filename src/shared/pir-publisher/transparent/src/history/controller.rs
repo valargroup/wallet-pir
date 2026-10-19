@@ -282,7 +282,9 @@ pub async fn run_managed(
     };
     let rpc = crate::ingest::zakura::connect(&config.rpc_url, &config.rpc_cookie)?;
     let existing = EventStore::open_existing(&config.data_dir)?;
-    if existing.start_height() != 0 || existing.genesis_hash() != rpc.block_hash_display(0).await? {
+    if (!config.follow_journal && existing.start_height() != 0)
+        || existing.genesis_hash() != rpc.block_hash_display(0).await?
+    {
         return Err("journal identity does not match genesis RPC history".into());
     }
     std::fs::create_dir_all(config.snapshot_dir())?;
@@ -309,6 +311,16 @@ pub async fn run_managed(
     };
     if public.filters.map().genesis_hash != store.lock().await.genesis_hash() {
         return Err("publication genesis does not match the journal".into());
+    }
+    if config.follow_journal {
+        let journal = store.lock().await;
+        let start = journal.start_height();
+        let parent = if start == 0 {
+            BlockHash::from_internal_bytes([0; 32]).to_display_hex()
+        } else {
+            rpc.block_hash_display(start - 1).await?
+        };
+        validate_followed_publication(&journal, public.filters.map(), &parent)?;
     }
     let authority = Authority(Arc::new(Inner {
         cycle_duration: Default::default(),
@@ -427,6 +439,35 @@ pub async fn run_managed(
         )
         .await;
     }
+}
+
+/// A bounded follower must retain the real lower boundary and parent anchor;
+/// otherwise a valid endpoint alone could authorize an unrelated journal slice.
+fn validate_followed_publication(
+    journal: &EventStore,
+    map: &transparent_filter::ShardMap,
+    parent: &str,
+) -> Result<(), BoxError> {
+    let first = map
+        .shards
+        .first()
+        .ok_or("followed publication has no shards")?;
+    let last = map
+        .shards
+        .last()
+        .ok_or("followed publication has no endpoint")?;
+    if map.start_height != journal.start_height()
+        || first.start_height != journal.start_height()
+        || first.parent_block_hash != parent
+        || journal
+            .block_at(last.end_height)
+            .is_none_or(|block| block.block_hash.to_display_hex() != last.terminal_block_hash)
+    {
+        return Err(
+            "followed publication range or anchors differ from the journal and chain".into(),
+        );
+    }
+    Ok(())
 }
 
 // Independent from publication: backpressure or slow fleet preparation cannot
@@ -879,10 +920,15 @@ async fn prepare_history(
             directory_choice: config.directory_choice,
             range_profile: config.range_profile.clone(),
         };
-        tokio::task::spawn_blocking(move || {
-            publication::publish(&options, &snapshot, BlockHash::from_internal_bytes([0; 32]))
-        })
-        .await??;
+        let parent = if snapshot.start_height() == 0 {
+            BlockHash::from_internal_bytes([0; 32])
+        } else {
+            BlockHash::from_display_hex(
+                &rpc.block_hash_display(snapshot.start_height() - 1).await?,
+            )?
+        };
+        tokio::task::spawn_blocking(move || publication::publish(&options, &snapshot, parent))
+            .await??;
     }
     let mut candidate = read_public(directory.clone(), Vec::new())?;
     authority.0.status.write().unwrap()["candidate_height"] = height.into();

@@ -15,6 +15,10 @@ name = "shard-publish"
 path = "src/bin/shard-publish.rs"
 
 [[bin]]
+name = "transparent-journal-export"
+path = "src/bin/journal-export.rs"
+
+[[bin]]
 name = "transparent-event-ingest"
 required-features = ["rocksdb-reader"]
 path = "src/bin/event-ingest.rs"

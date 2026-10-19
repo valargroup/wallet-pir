@@ -400,6 +400,68 @@ case is reported missing rather than timing out itself. Shipping prepared runtim
 to that terminal, or a host with more CPU, is the remaining fix for the 30-second
 gate.
 
+## Fixed-range rsync and HTTPS bootstrap comparison
+
+`transparent-journal-export --source <journal> --destination <new-directory>
+--start-height <first> --end-height <last>` copies an inclusive committed range
+without taking the source writer's lock or changing its data. Original heights,
+codec, events and available display sidecars are retained. `--require-sidecars`
+refuses an absent sidecar when the source promises one per block; otherwise the
+export reports source absence explicitly. A failed copy retains `incomplete/`
+and exposes no destination metadata. The command verifies decoded history and
+checks the source endpoint before accepting the result.
+
+For remote extraction, `tools/transparent/scripts/journal-range-stream.py` runs
+with the source host's Python and writes only a tar stream to stdout. Accept it
+only after a successful SSH exit and matching `capture.json` anchors, then run
+the native exporter on the received journal. `--gzip` compresses this setup copy;
+it does not change either measured synchronization method.
+
+Nonzero-start journals are supported by the managed history publisher only in
+`follow_journal` mode. Its initial map must match the copied coverage and real
+chain parent. Keep the copy immutable and use separate publication/snapshot
+directories; no chain backfill is needed. Prepare the publication and all native
+runtimes before timing. Chain canonicality still requires the configured RPC.
+
+Build the `history_sync_consumer` example in `transparent-query-server` using
+`release-fast`. It uses the production full-holdings HTTPS manager or the
+production whole-set loader over rsync-staged files, with identical warm-service
+budgets and required runtimes. Both refuse readiness when any runtime was built
+locally. This measures initial bootstrap; rsync startup uses the initial serving
+activation rather than an already-running fleet's update transaction.
+
+The `prepare_history` example in `transparent-publisher` prepares all native
+runtimes offline and writes a verified `prepared-inventory.json`. Pass the
+publication directory and its existing `--recent-from` boundary. This remains
+setup work, outside the measured synchronization interval.
+
+`tools/transparent/scripts/history-sync-compare.py --help` describes the paired
+runner and its query-host receiver. Install the same consumer executable,
+receiver and independently pinned frozen client on an isolated query host. Run
+`compare` on the isolated publisher host. The runner verifies that rsync and
+HTTPS offer identical files, alternates method order, and checks journal-derived
+early/middle/late history through the frozen client. `oracle.json` excludes
+scripts with spends that cannot be resolved inside the copied interval. Empty
+balances are valid; empty history is not sufficient proof.
+
+The primary `sync_seconds` excludes orchestration-only SSH preflights and adds
+rsync transfer time to query-host startup/query verification. Retain the separate
+overall duration, native stage timings and raw transfer counters. HTTPS body
+bytes and rsync protocol bytes have different framing and must be labelled.
+`--interruptions` additionally stops each transfer around half progress and
+restarts against the retained files. HTTPS restarts retain their durable source
+records. Keep the raw rsync progress and restart statistics: a killed transfer
+may not produce a protocol-byte total, which is reported as unknown. Host-wide
+non-loopback byte counters include SSH control and require isolation. Publisher
+process sampling accepts `--publisher-pid` and `--tls-pid`; RSS peaks are process
+lifetime peaks, with preparation potentially included. The fixed-publication
+results do not establish update, concurrent-consumer or production-capacity
+qualification.
+
+Successful runs retain their receipts and remove their disposable query data
+after stopping the consumer, so repeated pairs do not accumulate full copies.
+Failed runs retain their data for diagnosis.
+
 ## Controller update campaign
 
 `tools/transparent/scripts/https-update-campaign.py` runs the ignored

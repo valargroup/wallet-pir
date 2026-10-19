@@ -43,6 +43,30 @@ fn authority(directory: &Path, distribution: Option<Finalized>, rpc: NodeClient)
 fn publication(root: &Path) -> (PathBuf, ShardSet) {
     publication_fixture(root, 2, !cfg!(feature = "qualification-tests"))
 }
+
+#[test]
+fn bounded_follower_refuses_a_different_range_parent_or_terminal_hash() {
+    let root = tempfile::tempdir().unwrap();
+    let (_, set) = publication(root.path());
+    let source = root.path().join("journal");
+    let copy = root.path().join("bounded-journal");
+    crate::ingest::journal_export::export(&source, &copy, 1, 2, false).unwrap();
+    let journal = EventStore::open_existing(copy).unwrap();
+    let original = EventStore::open_existing(source).unwrap();
+    let parent = original.block_at(0).unwrap().block_hash.to_display_hex();
+    let mut map = set.map.clone();
+    map.start_height = 1;
+    map.shards[0].start_height = 1;
+    map.shards[0].parent_block_hash = parent.clone();
+    validate_followed_publication(&journal, &map, &parent).unwrap();
+    assert!(validate_followed_publication(&journal, &map, &"ff".repeat(32)).is_err());
+    let mut wrong = map.clone();
+    wrong.start_height = 0;
+    assert!(validate_followed_publication(&journal, &wrong, &parent).is_err());
+    let mut wrong = map;
+    wrong.shards.last_mut().unwrap().terminal_block_hash = "ff".repeat(32);
+    assert!(validate_followed_publication(&journal, &wrong, &parent).is_err());
+}
 #[cfg(feature = "qualification-tests")]
 fn publication_through(root: &Path, through: u64) -> (PathBuf, ShardSet) {
     publication_fixture(root, through, false)
