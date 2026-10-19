@@ -208,7 +208,7 @@ class Deployer:
                 if state['fragment_path'] != path:
                     plan.refusals.append('template roles replace %s, but systemd loads %s' % (path, state['fragment_path']))
                 if role.mode == 'role':
-                    rendered = role.render(target.settings, self.service.release_dir(sha))
+                    rendered = role.render(target.settings, self.service.release_dir(sha), target.unit)
                     fragment = rendered.unit
                     plan.directories, plan.check = rendered.directories, rendered.check
                     plan.changes += self.file_changes(plan, rendered.files, fresh=False)
@@ -267,7 +267,7 @@ class Deployer:
         target = plan.target
         path = '%s/%s' % (SYSTEM, target.unit)
         try:
-            rendered = target.role.render(target.settings, self.service.release_dir(sha))
+            rendered = target.role.render(target.settings, self.service.release_dir(sha), target.unit)
             if units.split_exec(units.exec_start(units.effective([rendered.unit])))[1] != self.release_binary(sha):
                 plan.refusals.append('the new unit would not run %s' % self.release_binary(sha))
         except (units.UnitError, descriptors.DescriptorError, ValueError) as error:
