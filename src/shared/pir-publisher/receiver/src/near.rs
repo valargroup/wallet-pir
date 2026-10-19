@@ -402,8 +402,9 @@ impl Explorer {
     /// receiver in `store`, with when the read began, and each completed payout to one
     /// with its reported transactions, dated when both scans finished so a long read
     /// cannot use up its grace. A payout read that found a cursor also rescans
-    /// successful swaps created up to [`RECENT_SECS`] before it, for their completions
-    /// only. Both scans are recorded in one transaction once both finish (see
+    /// successful swaps created up to [`RECENT_SECS`] before it, but again never more
+    /// than that before the read began, for their completions only. Older completions
+    /// are the sweeps'. Both scans are recorded in one transaction once both finish (see
     /// [`ProviderStore::record`]), so a failed or over-long scan records nothing. A read
     /// that cannot reach back to its cursor's overlap, such as the feed's first or one
     /// after a long outage, starts the feed's live coverage where it began. Older swaps
@@ -428,7 +429,8 @@ impl Explorer {
         })
         .await?;
         if let (Feed::Payouts, Some(cursor)) = (feed, cursor) {
-            self.scan(feed, SUCCESS, cursor - RECENT_SECS, read_at, |swap, _| {
+            let floor = (cursor - RECENT_SECS).max(reach);
+            self.scan(feed, SUCCESS, floor, read_at, |swap, _| {
                 if let Some(receiver) = swap.recipient.as_deref().and_then(orchard_receiver) {
                     completions(swap, receiver, &mut completed);
                 }
@@ -922,10 +924,10 @@ mod tests {
     }
 
     /// A payout read that follows a cursor also rescans successful swaps back a day
-    /// before that cursor, however long ago it was, for their completions only: swaps
-    /// older than the overlap that have since succeeded are recorded, without their
-    /// receivers, and one older than the day is not. If the rescan fails, neither scan
-    /// records anything. A cursor older than a day restarts the live coverage.
+    /// before that cursor, but never more than a day before the read, for their
+    /// completions only: swaps older than the overlap that have since succeeded are
+    /// recorded, without their receivers, and one older than the day is not. If the
+    /// rescan fails, neither scan records anything.
     #[tokio::test]
     async fn a_payout_read_rescans_successes_a_day_before_its_cursor() {
         use axum::{
@@ -986,9 +988,9 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs() as i64;
-        // Three days of downtime follow the first read.
-        let since = now - 3 * RECENT_SECS;
-        let cursor = since + 100;
+        // Two hours pass after the first read.
+        let cursor = now - 2 * 3600;
+        let since = cursor - 3600;
         let first = [(receiver(1), true, cursor)];
         store
             .record(feed.name(), Some(since), &first, &[], cursor, cursor)
@@ -1006,7 +1008,7 @@ mod tests {
         let successes = json!([
             swap(1, cursor, SUCCESS),
             swap(3, cursor - 2 * OVERLAP_SECS, SUCCESS),
-            swap(4, cursor - RECENT_SECS - 1, SUCCESS),
+            swap(4, now - RECENT_SECS - 60, SUCCESS),
         ]);
         serve(json!([swap(2, now - 600, SUCCESS)]), Some(successes));
         assert_eq!(explorer.sync(&mut store, feed).await.unwrap(), 1);
@@ -1022,7 +1024,7 @@ mod tests {
         expected.sort();
         assert_eq!(seen, expected);
         assert_eq!(store.cursor(feed.name()).unwrap(), Some(now - 600));
-        assert!(store.started(feed.name()).unwrap() >= Some(now - RECENT_SECS));
+        assert_eq!(store.started(feed.name()).unwrap(), Some(since));
     }
 
     /// A record missing its address is skipped, a future date is capped at the read's
@@ -1354,14 +1356,14 @@ mod tests {
         assert_eq!(explorer.sweep(&mut store, feed, now).await.unwrap(), 0);
     }
 
-    /// After a long outage, a live read reaches back only a day, so it succeeds however
-    /// many pages the outage holds, beyond its page bound, and restarts the feed's live
-    /// coverage, which the history then no longer reaches. The reconciliation sweep reads
-    /// those pages over several polls and closes the gap.
+    /// After a long outage, a live read of either feed reaches back only a day, its
+    /// payout completion rescan included, so it succeeds however many pages the outage
+    /// holds, beyond its page bound, and restarts the feed's live coverage, which the
+    /// history then no longer reaches. The reconciliation sweep reads those pages over
+    /// several polls and closes the gap.
     #[tokio::test]
     async fn the_sweep_reads_an_outage_beyond_the_live_page_bound() {
-        let (feed, now) = (Feed::Refunds, unix_now());
-        let name = feed.name();
+        let now = unix_now();
         let listing = Listing::default();
         listing.list(listed(Some(1), now - 60, "recent"));
         let old = Receiver::from_bytes(receiver(2))
@@ -1369,36 +1371,35 @@ mod tests {
             .to_unified_address(Network::Main);
         for i in 0..3 * PAGE {
             let created = now - 2 * RECENT_SECS - 100 * i as i64;
-            listing
-                .swaps
-                .lock()
-                .unwrap()
-                .push(serde_json::json!({"refundTo": old,
-                "createdAtTimestamp": created, "depositAddress": format!("d{i}")}));
+            let swap = serde_json::json!({"recipient": old, "refundTo": old,
+                "createdAtTimestamp": created, "depositAddress": format!("d{i}")});
+            listing.swaps.lock().unwrap().push(swap);
         }
-        let dir = tempfile::tempdir().unwrap();
-        let mut store = ProviderStore::open(dir.path().join("providers.sqlite")).unwrap();
-        let outage = now - 10 * RECENT_SECS;
-        store
-            .record(name, Some(now - 40 * RECENT_SECS), &[], &[], outage, outage)
-            .unwrap();
-        swept(&mut store, name, now - 40 * RECENT_SECS, outage);
         let mut explorer = listing.explorer().await;
         (explorer.max_pages, explorer.sweep_pages) = (2, 1);
-        explorer.sync(&mut store, feed).await.unwrap();
-        let started = store.started(name).unwrap().unwrap();
-        assert!(started >= now - RECENT_SECS);
-        assert!(store.history(name).unwrap().unwrap().1 < started);
-        assert_eq!(store.sets(0).unwrap().1, [receiver(1)]);
-        let mut polls = 0;
-        while store.history(name).unwrap().unwrap().1 < started {
-            let start = now - 40 * RECENT_SECS;
-            assert_eq!(explorer.sweep(&mut store, feed, start).await.unwrap(), 1);
-            polls += 1;
+        for feed in [Feed::Payouts, Feed::Refunds] {
+            let name = feed.name();
+            let dir = tempfile::tempdir().unwrap();
+            let mut store = ProviderStore::open(dir.path().join("providers.sqlite")).unwrap();
+            let (start, outage) = (now - 40 * RECENT_SECS, now - 10 * RECENT_SECS);
+            store
+                .record(name, Some(start), &[], &[], outage, outage)
+                .unwrap();
+            swept(&mut store, name, start, outage);
+            explorer.sync(&mut store, feed).await.unwrap();
+            let started = store.started(name).unwrap().unwrap();
+            assert!(started >= now - RECENT_SECS);
+            assert!(store.history(name).unwrap().unwrap().1 < started);
+            assert_eq!(store.sets(0).unwrap().1, [receiver(1)]);
+            let mut polls = 0;
+            while store.history(name).unwrap().unwrap().1 < started {
+                assert_eq!(explorer.sweep(&mut store, feed, start).await.unwrap(), 1);
+                polls += 1;
+            }
+            assert_eq!(polls, 4, "{name}");
+            let expected = sorted(vec![receiver(1), receiver(2)]);
+            assert_eq!(sorted(store.sets(0).unwrap().1), expected);
         }
-        assert_eq!(polls, 4);
-        let expected = sorted(vec![receiver(1), receiver(2)]);
-        assert_eq!(sorted(store.sets(0).unwrap().1), expected);
     }
 
     /// The report gives each feed's freshness and its history apart: a live read with
