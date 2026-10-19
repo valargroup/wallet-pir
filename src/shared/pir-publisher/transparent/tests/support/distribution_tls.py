@@ -70,9 +70,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.path.endswith("/current") or "/inventories/" in self.path
         ):
             connection = http.client.HTTPConnection(upstream, timeout=10)
-            connection.request("GET", "/provider/v1/current")
+            prefix = "/provider/txid/v1/" if self.path.startswith("/provider/txid/") else "/provider/v1/"
+            connection.request("GET", prefix + "current")
             current = json.loads(connection.getresponse().read())
-            connection.request("GET", "/provider/v1/inventories/" + current["inventory_sha256"])
+            connection.request("GET", prefix + "inventories/" + current["inventory_sha256"])
             inventory = json.loads(connection.getresponse().read())
             connection.close()
             if fault == "runtime":

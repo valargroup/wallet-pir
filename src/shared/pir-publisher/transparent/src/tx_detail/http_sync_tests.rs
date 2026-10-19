@@ -83,6 +83,25 @@ async fn full_display_consumers_follow_https_and_restart_without_building() {
     let tls_root = scratch.path().join("tls");
     std::fs::create_dir(&tls_root).unwrap();
     let tls = tls_router(&tls_root, distribution.router()).await;
+    for fault in [
+        "redirect",
+        "missing",
+        "corrupt",
+        "truncated",
+        "malformed-current",
+        "runtime",
+        "unsafe-path",
+    ] {
+        std::fs::write(&tls.control, fault).unwrap();
+        let mut refused = manager(
+            &scratch.path().join(format!("refused-{fault}")),
+            &tls.origin,
+            tls.cert.clone(),
+        );
+        assert!(refused.poll_once().await.is_err(), "accepted {fault}");
+        assert!(!refused.ready().await, "served {fault}");
+    }
+    std::fs::write(&tls.control, "").unwrap();
     let first_root = scratch.path().join("first");
     let mut first = manager(&first_root, &tls.origin, tls.cert.clone());
     let mut second = manager(
