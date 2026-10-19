@@ -779,6 +779,30 @@ mod tests {
         assert_eq!(blind.build(2, &[]).0.epoch, 0);
     }
 
+    /// A destination that published another fork than the imported database moves
+    /// above both epochs, so a correction the live fork later gets cannot publish under
+    /// the epoch the destination's stale records were published at.
+    #[test]
+    fn importing_over_another_fork_moves_past_both_epochs() {
+        let mut source = Index::new();
+        source.extend(270, 1, |h| (h == 250).then_some(1));
+        source.extend(300, 2, |_| None);
+        assert_eq!(source.build(10, &[]).0.epoch, 0);
+        let mut stale = Index::new();
+        stale.extend(300, 1, |h| (h == 250).then_some(1));
+        assert_eq!(stale.build(10, &[]).0.epoch, 0);
+        stale
+            .recovery()
+            .import(source.dir.path().join(RECOVERY))
+            .unwrap();
+        assert_eq!(stale.recovery().epoch().unwrap(), 1);
+        // The destination follows the live fork, with a correction below the reorg.
+        stale.store.rewind(249, block_hash(249, 1)).unwrap();
+        stale.extend(270, 1, |h| (h == 250).then_some(2));
+        stale.extend(300, 2, |_| None);
+        assert!(stale.build(10, &[]).0.epoch >= 1);
+    }
+
     /// Without the old database, adoption publishes above the live epoch at once, and
     /// later corrections compare against the new host's own first publication.
     #[test]

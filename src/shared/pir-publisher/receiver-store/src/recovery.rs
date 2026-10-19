@@ -180,8 +180,11 @@ impl RecoveryStore {
     /// Takes over another host's recovery database at `path`, on the same network:
     /// merges its seen union (see [`merge_seen`]), raises the epoch to its own, and
     /// takes the segments this database lacks as the baseline [`Self::commit`] compares
-    /// later publications with. A segment both hold with the same boundary hashes but
-    /// other records increments the epoch. Any refusal changes nothing.
+    /// later publications with. A segment both hold that differs in any way, even only
+    /// in its boundary hashes, as when the two hosts published different forks, keeps
+    /// this database's record and increments the epoch above both, since a later
+    /// correction to either fork cannot be compared with the other's published records.
+    /// Any refusal changes nothing.
     pub fn import(&mut self, path: impl AsRef<Path>) -> Result<(), Error> {
         let other = Self::open(path, self.genesis)?;
         let tx = self.db.transaction()?;
@@ -207,9 +210,7 @@ impl RecoveryStore {
                         blocks: recorded_blocks(&other.db, start)?,
                     },
                 )?,
-                Some(ours) => {
-                    corrected |= (ours.0, ours.1) == (theirs.0, theirs.1) && ours != theirs
-                }
+                Some(ours) => corrected |= ours != theirs,
             }
         }
         raise_epoch(&tx, other.epoch()?)?;
