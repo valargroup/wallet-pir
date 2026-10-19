@@ -8,6 +8,9 @@
 //! seal ranges always lie inside it too, so archive builds never touch the
 //! journal either.
 
+use zakura_pir_publisher::transparent as transparent_shard;
+use zakura_pir_publisher::transparent::filter as transparent_filter;
+
 use crate::history::publication::{BoxError, Journal};
 use std::ops::RangeInclusive;
 use std::sync::Arc;

@@ -1,5 +1,7 @@
 //! Admission for allocations outside the runtime cache. Reservations remain
 //! owned by blocking work after its HTTP/control caller is cancelled.
+use zakura_pir_protocol::transparent::shard as transparent_shard;
+
 use std::sync::{Arc, Mutex};
 
 #[derive(Default)]

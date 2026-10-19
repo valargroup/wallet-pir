@@ -20,6 +20,8 @@
 //! growing document tens of thousands of times during backfill; the fixed-width
 //! binary checkpoint follows `spend.rs` in the sibling server instead.
 
+use zakura_pir_publisher::transparent::filter as transparent_filter;
+
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};

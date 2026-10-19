@@ -1,5 +1,9 @@
 //! Offline census of immutable, checkpoint-referenced display sidecars.
 //! No RPC, parents, UTXO reconstruction, service dependency or journal writes.
+use zakura_pir_protocol::transparent::events as transparent_events;
+use zakura_pir_protocol::transparent::filter as transparent_filter;
+use zakura_pir_publisher::transparent as transparent_shard;
+
 use super::{display_journal, events::EventStore, AnyError};
 use crate::historical_v1::{candidate_rows, CODEC};
 use rusqlite::{params, Connection};

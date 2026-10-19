@@ -2,6 +2,10 @@
 //! journal, planning a bootstrap start, benching recent shards and writing
 //! synthetic journals. None of them serve or publish to workers.
 
+use zakura_pir_protocol::transparent::events as transparent_events;
+use zakura_pir_publisher::transparent as transparent_shard;
+use zakura_pir_publisher::transparent::filter as transparent_filter;
+
 use super::publisher::{read_map, verify_dir, ActiveRecord, DisplayRoot, SealRecord, ShardSpec};
 use crate::history::publication::{BoxError, Journal};
 use serde_json::{json, Value};

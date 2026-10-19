@@ -8,6 +8,8 @@
 //!
 //! Read only: nothing is written but standard output.
 
+use zakura_pir_publisher::transparent::filter as transparent_filter;
+
 use clap::Parser;
 use std::collections::BTreeSet;
 use std::path::PathBuf;

@@ -6,7 +6,7 @@ use std::{
     path::PathBuf,
     time::{Duration, Instant},
 };
-use zakura_pir_transparent::engine::{
+use zakura_pir_client::transparent::engine::{
     client::Table,
     transport::{BoxError, Overloaded, StaleRevision},
 };

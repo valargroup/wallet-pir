@@ -33,6 +33,13 @@ Common releases and copies resolved from another source, including stale lockfil
 entries. The released frozen-client fixture retains its independent historical
 dependencies for interoperability checks.
 
+PIR primitives come from the role packages in wallet-libraries. Publishers use
+`zakura-pir-publisher`, query evaluation uses `zakura-pir-query-server`, and
+shared records use `zakura-pir-protocol`. Native preparation shared by the two
+server roles uses `zakura-pir-server-core`. Probe clients and integration tests
+use `zakura-pir-client`; the query libraries expose their local client helpers
+only with the explicit `client` feature (or in unit tests).
+
 Each `zakura-server-chain` consumer selects its product (`transparent`, `enhance`,
 `status` or `receiver`) with default features disabled. Test dependencies add
 `testing` alongside that same product; fixture support alone does not enable an

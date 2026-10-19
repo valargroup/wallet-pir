@@ -5,6 +5,8 @@
 //! back one block at a time until the stored hash agrees with the node, which
 //! is what makes a reorg a rollback rather than a silently divergent history.
 
+use zakura_pir_publisher::transparent::filter as transparent_filter;
+
 pub mod blocks;
 pub mod extract;
 pub mod prevout;

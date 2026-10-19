@@ -12,6 +12,7 @@
 
 use pir_control::admission;
 pub mod artifact;
+#[cfg(any(test, feature = "client"))]
 pub mod client;
 pub mod gateway;
 pub mod internal_auth;

@@ -1,6 +1,10 @@
 //! A copied journal suffix that publication builds read while ingest keeps
 //! appending to the journal itself.
 
+use zakura_pir_protocol::transparent::events as transparent_events;
+use zakura_pir_publisher::transparent as transparent_shard;
+use zakura_pir_publisher::transparent::filter as transparent_filter;
+
 use crate::history::publication::{BoxError, Journal};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

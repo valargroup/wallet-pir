@@ -25,6 +25,10 @@
 //! visible: a shard sealed over a partial block would be missing spends whose
 //! receives it contains, and it would be sealed immutably that way.
 
+use zakura_pir_protocol::transparent::events as transparent_events;
+use zakura_pir_protocol::transparent::filter as transparent_filter;
+use zakura_pir_protocol::transparent::shard as transparent_shard;
+
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};

@@ -11,7 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 enhance-publisher = { path = "../../../src/shared/pir-publisher/enhance" }
-enhance-query-server = { path = "../../../src/enhance/enhance-query-server" }
+enhance-query-server = { path = "../../../src/enhance/enhance-query-server" , features = ["client"] }
 axum = "0.7"
 clap = { version = "4", features = ["derive"] }
 hdrhistogram = "7"

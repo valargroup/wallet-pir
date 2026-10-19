@@ -14,7 +14,7 @@ version = "0.0.1-rc0"
 source = "git+https://example.invalid/library?rev={adapter}#{adapter}"
 dependencies = ["zakura-chain"]
 [[package]]
-name = "zakura-transparent-events"
+name = "zakura-pir-protocol"
 version = "0.0.1-rc0"
 source = "git+https://example.invalid/library?rev={adapter}#{adapter}"
 "#,

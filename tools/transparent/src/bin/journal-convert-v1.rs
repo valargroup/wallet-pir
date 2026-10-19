@@ -18,6 +18,9 @@
 //! after every file, the checkpoint and finally `meta.json` are durable, so an
 //! interrupted run leaves nothing that opens as a journal.
 
+use zakura_pir_protocol::transparent::events as transparent_events;
+use zakura_pir_publisher::transparent::filter as transparent_filter;
+
 use clap::Parser;
 use std::fs::{File, OpenOptions};
 use std::io::{BufReader, BufWriter, Read, Write};

@@ -13,6 +13,8 @@
 //! so a recent sample that has since sealed is counted as archive traffic.
 //! Cold samples use a fresh client (no cached map, manifest or setup, new
 //! connections) and are tagged. Output is JSONL on stdout.
+use zakura_pir_publisher::transparent as transparent_shard;
+
 #[path = "support/txdisplay.rs"]
 mod txdisplay;
 

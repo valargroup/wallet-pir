@@ -1,5 +1,9 @@
 //! A direct `--journal-census` attributes its output to the image that ran,
 //! however that image's pathname changes while it runs.
+use zakura_pir_protocol::transparent::events as transparent_events;
+use zakura_pir_protocol::transparent::filter as transparent_filter;
+use zakura_pir_publisher::transparent as transparent_shard;
+
 #[allow(dead_code)]
 #[path = "../../../../../src/transparent/transparent-shared/src/journal/display_journal.rs"]
 mod display_journal;

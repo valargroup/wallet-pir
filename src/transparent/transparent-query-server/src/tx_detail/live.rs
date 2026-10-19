@@ -17,6 +17,8 @@
 //! reaches a sealed revision is refused and changes nothing; sealed shards
 //! are never rewritten.
 
+use zakura_pir_protocol::transparent::shard as transparent_shard;
+
 use super::service::{self, json, DisplayRuntime, DisplayState};
 use crate::control::persist;
 use crate::preparation::{PreparationOutcome, PreparingGuard, Refusal};

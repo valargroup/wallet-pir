@@ -1,5 +1,7 @@
 //! Continuous, chain-checked publication. Ingest owns the journal; builders use
 //! copied suffix snapshots and activation is delegated to the private fleet tool.
+use zakura_pir_publisher::transparent::filter as transparent_filter;
+
 use crate::history::publication::{self, BoxError, Journal, PublishOptions};
 use crate::history::shard_filters::ShardFilters;
 use crate::ingest::blocks::build_fetched_block_events;

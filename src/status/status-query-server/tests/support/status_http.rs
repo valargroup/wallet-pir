@@ -1,5 +1,5 @@
 use std::sync::atomic::{AtomicBool, Ordering};
-use zakura_pir_status::{self as wallet, transport::Transport};
+use zakura_pir_client::status::{self as wallet, transport::Transport};
 
 pub struct Listening {
     pub origin: String,

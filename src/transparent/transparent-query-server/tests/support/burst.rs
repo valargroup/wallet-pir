@@ -1,4 +1,6 @@
 //! Isolated worker-stage benchmark. It never contacts or mutates a fleet.
+use zakura_pir_publisher::transparent as transparent_shard;
+
 use super::*;
 use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant};
@@ -6,7 +8,7 @@ use transparent_query_server::history::live::{Command, LiveService, Publication}
 use transparent_query_server::history::service::ReadinessMode;
 use transparent_shard::layout::DECOUPLED_2K_8K;
 use transparent_shared::history::shardset::LoadOptions;
-use zakura_pir_transparent::engine::transport::{Overloaded, StaleRevision};
+use zakura_pir_client::transparent::engine::transport::{Overloaded, StaleRevision};
 
 /// Drain optional writes outside the query/visibility window while retaining
 /// memory sampling. Holding metrics does not pin a retired ServiceState/runtime.
@@ -206,9 +208,9 @@ async fn publication_burst_under_exact_load() {
                 let mut count = 0;
                 while !stop.load(Ordering::Acquire) {
                     let table = if count % 2 == 0 {
-                        zakura_pir_transparent::engine::client::Table::Directory
+                        zakura_pir_client::transparent::engine::client::Table::Directory
                     } else {
-                        zakura_pir_transparent::engine::client::Table::Pages(0)
+                        zakura_pir_client::transparent::engine::client::Table::Pages(0)
                     };
                     let started = clock.elapsed().as_secs_f64();
                     let result =
@@ -431,7 +433,7 @@ fn external_query_clients() {
             let elapsed = || std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs_f64() - config["epoch"].as_f64().unwrap();
             let mut count = 0;
             while !directory.join("stop").exists() && Instant::now() < deadline {
-                let table = if count % 2 == 0 { zakura_pir_transparent::engine::client::Table::Directory } else { zakura_pir_transparent::engine::client::Table::Pages(0) };
+                let table = if count % 2 == 0 { zakura_pir_client::transparent::engine::client::Table::Directory } else { zakura_pir_client::transparent::engine::client::Table::Pages(0) };
                 let started = elapsed();
                 let result = super::burst_query::once_nonempty(config["url"].as_str().unwrap(), std::path::Path::new(config["root"].as_str().unwrap()), config["shard"].as_u64().unwrap() as usize, table);
                 let mut record = serde_json::json!({"client":client,"started_seconds":started,"finished_seconds":elapsed()});

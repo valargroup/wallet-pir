@@ -1,5 +1,7 @@
 //! Autonomous recent-worker synchronization. The private root has one owner;
 //! completed bytes are reusable inputs, never saved serving authority.
+use zakura_pir_protocol::transparent::filter as transparent_filter;
+
 use crate::{
     control::persist,
     history::{

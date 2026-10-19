@@ -14,6 +14,9 @@
 //! by every worker in `/v1/ready`, so a deploy can assert that every host is
 //! running the assignment it meant to ship.
 
+use zakura_pir_protocol::transparent::filter as transparent_filter;
+use zakura_pir_protocol::transparent::shard as transparent_shard;
+
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};

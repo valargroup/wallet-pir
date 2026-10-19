@@ -1,4 +1,6 @@
 //! One-shot shard publication; continuous operation uses the same builder.
+use zakura_pir_publisher::transparent::filter as transparent_filter;
+
 use clap::Parser;
 use transparent_filter::BlockHash;
 use transparent_publisher::history::publication::{publish, BoxError, PublishOptions};

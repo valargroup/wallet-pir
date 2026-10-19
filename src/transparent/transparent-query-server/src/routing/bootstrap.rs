@@ -2,6 +2,8 @@
 //! authority. This entry point intentionally cannot start a wallet listener:
 //! fresh publisher canonicality attestation is checked around verification.
 //! Continuous reconciliation/activation belongs to the manager.
+use zakura_pir_protocol::transparent::filter as transparent_filter;
+
 use crate::{
     history::service::{ReadinessMode, ServiceConfig, ServiceState},
     routing::router::{plan, RosterEntry},

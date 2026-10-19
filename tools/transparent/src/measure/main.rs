@@ -18,6 +18,10 @@
 //! labelled as such in the output rather than presented as a measurement of
 //! this range.
 
+use zakura_pir_client::transparent::filter as transparent_filter;
+use zakura_pir_protocol::transparent::events as transparent_events;
+use zakura_pir_publisher::transparent as transparent_shard;
+
 mod workload;
 
 /// One block's indexed events, as the journal holds them.
@@ -33,10 +37,12 @@ use transparent_shard::manifest::ShardManifest;
 use transparent_shared::history::shardset::{ShardSet, DEFAULT_RETAIN_REVISIONS};
 use transparent_shared::journal::events::EventStore;
 use workload::{ScriptCensus, Workload};
-use zakura_pir_transparent::engine::client::Table;
-use zakura_pir_transparent::engine::ledger::Ledger;
-use zakura_pir_transparent::engine::sync::{sync, GeometryParams, ServiceGeometry};
-use zakura_pir_transparent::engine::transport::{refusal, BoxError, FilterSource, ShardTransport};
+use zakura_pir_client::transparent::engine::client::Table;
+use zakura_pir_client::transparent::engine::ledger::Ledger;
+use zakura_pir_client::transparent::engine::sync::{sync, GeometryParams, ServiceGeometry};
+use zakura_pir_client::transparent::engine::transport::{
+    refusal, BoxError, FilterSource, ShardTransport,
+};
 
 /// Incremental transparent bytes a shielded-scanning wallet downloads, measured
 /// over 1,152 blocks in the mainnet study.
@@ -297,8 +303,8 @@ struct TableShare {
     query_download: u64,
 }
 
-impl From<zakura_pir_transparent::engine::TableCharges> for TableShare {
-    fn from(charges: zakura_pir_transparent::engine::TableCharges) -> Self {
+impl From<zakura_pir_client::transparent::engine::TableCharges> for TableShare {
+    fn from(charges: zakura_pir_client::transparent::engine::TableCharges) -> Self {
         Self {
             segments_opened: charges.segments_opened,
             queries: charges.queries,
@@ -455,8 +461,8 @@ async fn main() -> Result<(), BoxError> {
                 &mut transport,
                 &scripts,
                 birthday,
-                &zakura_pir_transparent::engine::StaticChain::from_map(&map),
-                &zakura_pir_transparent::engine::Anchor {
+                &zakura_pir_client::transparent::engine::StaticChain::from_map(&map),
+                &zakura_pir_client::transparent::engine::Anchor {
                     height: map.shards.last().unwrap().end_height,
                     hash: map.shards.last().unwrap().terminal_block_hash.clone(),
                 },

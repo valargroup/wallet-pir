@@ -6,6 +6,9 @@
 //! the binding names the bucket. Everything that bounds work is shared: the
 //! runtime cache, admission, work-memory reservations and their status codes.
 
+use zakura_pir_protocol::transparent::shard as transparent_shard;
+use zakura_pir_query_server::transparent::native as transparent_native;
+
 use crate::admission::{Admission, AdmissionConfig, Admitted};
 use crate::config::{ReadinessMode, ServiceConfig};
 pub(crate) use crate::request::json;

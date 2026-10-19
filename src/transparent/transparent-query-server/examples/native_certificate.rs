@@ -53,6 +53,9 @@
 //! with the profile's `p_bits`, `ell`, gadget and response widths, every
 //! precision screen the analysis produces, and the byte column bound
 //! (255 per entry) as the worst-case query.
+use zakura_pir_publisher::transparent as transparent_shard;
+use zakura_pir_query_server::transparent::native as transparent_native;
+
 use rayon::prelude::*;
 use reinspiring::noise::{gaussian_cdf_sha256, gaussian_counts, WeightNorms};
 use serde_json::{json, Value};
@@ -197,7 +200,11 @@ fn main() {
         None => unreachable!(),
     };
     let started = std::time::Instant::now();
-    let hint = native::hint(&profile.masks, profile.rows, profile.cols, |c| &columns[c]).unwrap();
+    let hint =
+        zakura_pir_server_core::native::hint(&profile.masks, profile.rows, profile.cols, |c| {
+            &columns[c]
+        })
+        .unwrap();
     let analyzed: Vec<_> = hint
         .par_iter()
         .map(|block| {

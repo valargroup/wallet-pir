@@ -1,4 +1,7 @@
 //! Shared exact HTTP query probe for the operator soak and isolated burst test.
+use zakura_pir_protocol::transparent::filter as transparent_filter;
+use zakura_pir_publisher::transparent as transparent_shard;
+
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::{
@@ -6,7 +9,7 @@ use std::{
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
-use zakura_pir_transparent::engine::{
+use zakura_pir_client::transparent::engine::{
     client::{Table, TableClient},
     http::{HttpFilterSource, HttpOptions, HttpShardTransport},
     transport::{BoxError, FilterSource, ShardTransport},

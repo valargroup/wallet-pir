@@ -4,6 +4,8 @@
 //! This exercises the same client code a wallet uses, so a change that made the
 //! service and the client disagree fails here rather than in production.
 
+use zakura_pir_publisher::transparent::filter as transparent_filter;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use tower::ServiceExt;

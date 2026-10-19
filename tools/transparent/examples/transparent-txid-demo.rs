@@ -3,6 +3,13 @@
 //! recent-replica worker behind an edge, and the wallet's own client, checked
 //! against entries an independent Python parser derived from the raw blocks
 //! and their parent transactions (`fixtures/verify_fixture.py`).
+use zakura_pir_client::transparent::native as transparent_native;
+use zakura_pir_client::transparent::native::TableClientExt as _;
+use zakura_pir_client::transparent::txid_client as transparent_txid_client;
+use zakura_pir_protocol::transparent::events as transparent_events;
+use zakura_pir_publisher::transparent as transparent_shard;
+use zakura_pir_publisher::transparent::filter as transparent_filter;
+
 use axum::{
     body::Body,
     extract::{Request, State},

@@ -32,6 +32,8 @@
 //! as untouched pages that do not count toward RSS until something writes them,
 //! which would flatter the plaintext side of the measurement.
 
+use zakura_pir_protocol::transparent::shard as transparent_shard;
+
 use clap::Parser;
 use transparent_shard::layout::{by_name as geometry_by_name, Geometry};
 use transparent_shared::history::shardset::Table;

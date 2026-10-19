@@ -1,4 +1,8 @@
 //! Real producer → TLS termination → strict production-loader bootstrap.
+use zakura_pir_protocol::transparent::events as transparent_events;
+use zakura_pir_publisher::transparent as transparent_shard;
+use zakura_pir_publisher::transparent::filter as transparent_filter;
+
 use super::*;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use transparent_events::TransparentEvent;

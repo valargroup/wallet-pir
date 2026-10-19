@@ -9,8 +9,8 @@
 //!
 //! By default, for each table it builds the column-major database the runtime
 //! scans, over the leading row blocks that hold any nonzero byte as the runtime
-//! does. It then alternates the reference `pir_native::hint` with the batched
-//! `transparent_native::batched_hint::hint`, requires every hint to be equal,
+//! does. It then alternates the reference `zakura_pir_server_core::native::hint` with the batched
+//! `transparent_zakura_pir_server_core::batched_hint::hint`, requires every hint to be equal,
 //! and requires the masks published from the reference hint to equal those of
 //! a full `TableRuntime::build`.
 //!
@@ -22,6 +22,9 @@
 //! A display geometry's one table is `txdirectory`; `txdirectory=synthetic:N`
 //! builds a one-bucket display table of `N` synthetic entries in place of a
 //! file, as the publisher would lay them out.
+use zakura_pir_publisher::transparent as transparent_shard;
+use zakura_pir_query_server::transparent::native as transparent_native;
+
 use serde_json::json;
 use std::time::Instant;
 use transparent_native::{self as native, D};
@@ -134,12 +137,15 @@ fn main() -> Result<(), String> {
         let mut reference = None;
         for _ in 0..repeats {
             let started = Instant::now();
-            let r = build_pool()
-                .install(|| native::hint(masks, rows, profile.cols, |c| &columns[c]))?;
+            let r = build_pool().install(|| {
+                zakura_pir_server_core::native::hint(masks, rows, profile.cols, |c| &columns[c])
+            })?;
             reference_s.push(started.elapsed().as_secs_f64());
             let started = Instant::now();
             let b = build_pool().install(|| {
-                native::batched_hint::hint(masks, rows, profile.cols, |c| &columns[c])
+                zakura_pir_server_core::batched_hint::hint(masks, rows, profile.cols, |c| {
+                    &columns[c]
+                })
             })?;
             batched_s.push(started.elapsed().as_secs_f64());
             if r != b {
@@ -147,8 +153,11 @@ fn main() -> Result<(), String> {
             }
             reference = Some(r);
         }
-        let published = native::publish(&build_pool().install(|| {
-            native::preprocess(&profile.setup, &reference.expect("at least one repeat"))
+        let published = zakura_pir_server_core::native::publish(&build_pool().install(|| {
+            zakura_pir_server_core::native::preprocess(
+                &profile.setup,
+                &reference.expect("at least one repeat"),
+            )
         })?)?;
         let mut runtime_sha256 = String::new();
         for _ in 0..repeats {

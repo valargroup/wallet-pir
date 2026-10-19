@@ -3,6 +3,10 @@
 //! hand rather than through the publisher.
 #![allow(dead_code)]
 
+use zakura_pir_protocol::transparent::events as transparent_events;
+use zakura_pir_protocol::transparent::filter as transparent_filter;
+use zakura_pir_publisher::transparent as transparent_shard;
+
 use std::path::Path;
 use transparent_events::TransparentEvent;
 use transparent_filter::{filter_hash, BlockHash, ScriptBytes, ShardMapEntry};
