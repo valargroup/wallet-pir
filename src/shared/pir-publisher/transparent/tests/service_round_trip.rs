@@ -10,9 +10,10 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use tower::ServiceExt;
 use transparent_filter::{
-    build_filter, check_batch, ChainMap, FilterBatch, FilterLimits, RangeRequest, ScriptBytes,
+    build_filter, FilterBatch, FilterLimits, ScriptBytes,
 };
 use transparent_filter::{BlockHash, FilterServiceInfo};
+use zakura_pir_client::transparent::filter::{check_batch, ChainMap, RangeRequest};
 use transparent_publisher::history::service::{router, Phase, ServiceState};
 use transparent_publisher::ingest::store::FilterStore;
 
