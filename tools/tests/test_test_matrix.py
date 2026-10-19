@@ -102,25 +102,28 @@ class MatrixTests(unittest.TestCase):
 
     def test_reference_qualification_keeps_oracles_and_native_keeps_http_lifecycles(self):
         package = self.plan[3]['enhance-publisher']
-        artifact = dict(package_id=package['id'], target=dict(name='ci_smoke', kind=['test']),
-                        executable='/not-executed', features=['qualification-tests'])
         lifecycle = {'encrypted_publication_advances_with_a_pending_commit_and_survives_restart'}
         oracles = {'single_unit_hint_matches_independent_generic_67',
                    'single_unit_hint_matches_independent_generic_68',
                    'single_unit_hint_rejects_damage_and_pins_retired_file'}
+        reference = self.plan[0]['enhance-reference']['targets']
+        self.assertIn('reference:enhance-publisher:test:ci_hint', reference)
+        self.assertNotIn('reference:enhance-publisher:test:ci_smoke', reference)
+        for variant, target, expected in [('reference', 'ci_hint', oracles),
+                                          ('native', 'ci_hint', oracles),
+                                          ('native', 'ci_smoke', lifecycle)]:
+            artifact = dict(package_id=package['id'], target=dict(name=target, kind=['test']),
+                            executable='/not-executed', features=['qualification-tests'])
 
-        def listing(command, **_):
-            names = set() if '--ignored' in command else lifecycle | oracles
-            excluded = {command[index + 1] for index, arg in enumerate(command) if arg == '--skip'}
-            return ''.join(f'{name}: test\n' for name in sorted(names - excluded))
+            def listing(command, **_):
+                names = set() if '--ignored' in command else expected
+                return ''.join(f'{name}: test\n' for name in sorted(names))
 
-        for variant in ('reference', 'native'):
-            with self.subTest(variant=variant), patch.object(matrix.subprocess, 'check_output', side_effect=listing):
+            with self.subTest(variant=variant, target=target), \
+                    patch.object(matrix.subprocess, 'check_output', side_effect=listing):
                 _, programs, cases = matrix.test_programs([artifact], variant, {package['name']: package}, {})
-            actual = set(cases[f'{variant}:enhance-publisher:ci_smoke']['tests'])
-            self.assertEqual(actual, oracles if variant == 'reference' else lifecycle | oracles)
-            if variant == 'native':
-                self.assertEqual(programs[0]['args'], [])
+            self.assertEqual(set(cases[f'{variant}:enhance-publisher:{target}']['tests']), expected)
+            self.assertEqual(programs[0]['args'], [])
 
     def verify(self, receipts):
         with tempfile.TemporaryDirectory() as directory:
