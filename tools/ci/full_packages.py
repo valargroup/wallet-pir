@@ -50,7 +50,7 @@ def commands(group, groups, lint=False, compile_only=False):
                     'enhance-publisher/native-reinspiring', 'status-publisher/native-reinspiring',
                     'enhance-pir-client/native-reinspiring', 'enhance-pir-load-test/native-reinspiring'],
         'shared': ['pir-control/admission'],
-        'transparent': ['transparent-publisher/rocksdb-reader', 'transparent-query-server/test-support', 'transparent-tools/compact-export'],
+        'transparent': ['transparent-publisher/rocksdb-reader', 'transparent-tools/test-support', 'transparent-tools/compact-export'],
     }.get(group, []) + qualification_features(names)
     result = [[*runner, '--locked', '--profile', 'release-fast',
                *[arg for name in names for arg in ('-p', name)],

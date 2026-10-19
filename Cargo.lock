@@ -3537,6 +3537,7 @@ dependencies = [
  "hdrhistogram",
  "hex",
  "humantime",
+ "ipir-sp",
  "libc",
  "prost",
  "prost-build",

@@ -14,7 +14,7 @@ TRANSPARENT_LOAD_STEP_DURATION ?= 10m
 TRANSPARENT_LOAD_JSON ?= .local-pir/runs/transparent/load-report.json
 
 build:
-	cargo build --release --workspace --bins --features transparent-publisher/rocksdb-reader,transparent-query-server/test-support,transparent-tools/compact-export
+	cargo build --release --workspace --bins --features transparent-publisher/rocksdb-reader,transparent-tools/test-support,transparent-tools/compact-export
 
 check: check-full
 
@@ -42,7 +42,7 @@ prepare-dev:
 check-full: check-hygiene check-ops check-docs check-reports check-tools
 	cargo fmt --all --check
 	cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
-	tools/ci/full-test.sh --locked --workspace --profile release-fast --features enhance-query-server/qualification-tests,transparent-publisher/qualification-tests,transparent-shared/qualification-tests,transparent-publisher/rocksdb-reader,transparent-query-server/test-support,transparent-tools/compact-export
+	tools/ci/full-test.sh --locked --workspace --profile release-fast --features enhance-query-server/qualification-tests,transparent-publisher/qualification-tests,transparent-shared/qualification-tests,transparent-publisher/rocksdb-reader,transparent-tools/test-support,transparent-tools/compact-export
 
 # The deploy scripts' jq programs, compiled and run against payloads the server
 # serializes. Part of `check` because both of the bugs it exists to catch got
@@ -155,7 +155,7 @@ check-docs:
 	tools/check-doc-links.sh
 
 test:
-	tools/ci/full-test.sh --locked --workspace --profile release-fast --features enhance-query-server/qualification-tests,transparent-publisher/qualification-tests,transparent-shared/qualification-tests,transparent-publisher/rocksdb-reader,transparent-query-server/test-support,transparent-tools/compact-export
+	tools/ci/full-test.sh --locked --workspace --profile release-fast --features enhance-query-server/qualification-tests,transparent-publisher/qualification-tests,transparent-shared/qualification-tests,transparent-publisher/rocksdb-reader,transparent-tools/test-support,transparent-tools/compact-export
 
 run-server:
 	cargo run --release -p enhance-publisher --bin enhance-pir-server -- --help
