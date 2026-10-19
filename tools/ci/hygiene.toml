@@ -29,8 +29,8 @@ pattern = "src/enhance/enhance-query-server/tests/fixtures/*.json"
 reason = "Protocol regression inputs consumed by Rust tests."
 
 [[allow_data]]
-pattern = "src/enhance/enhance-publisher/tests/fixtures/*.json"
-reason = "Independent Ironwood record oracle consumed by tests."
+pattern = "src/pir-publisher/tests/fixtures/*.json"
+reason = "Independent Ironwood record oracle consumed by the host's Enhance regressions."
 
 [[allow_data]]
 pattern = "tools/enhance/fixtures/*.json"
