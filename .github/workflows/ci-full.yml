@@ -18,6 +18,11 @@ on:
   schedule:
     - cron: '17 4 * * *'
   workflow_dispatch:
+    inputs:
+      publisher-only:
+        description: Build and check a Transparent publisher candidate from this exact ref, without deploying
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -41,6 +46,7 @@ defaults:
 jobs:
   select:
     name: Select full checks
+    if: ${{ !inputs.publisher-only }}
     runs-on: ubuntu-24.04
     outputs:
       test_matrix: ${{ steps.matrix.outputs.matrix }}
@@ -409,7 +415,7 @@ jobs:
           python3 tools/ci/stage.py compile:native -- cargo build --locked --release \
             -p enhance-publisher -p status-publisher -p enhance-pir-client -p enhance-pir-load-test -p pir-publisher \
             --bin enhance-pir-server --bin enhance-pir-load-test --bin enhance-pir-cli --bin status-pir --bin pir-publisher \
-            --features enhance-pir-client/native-reinspiring,enhance-publisher/native-reinspiring,status-publisher/native-reinspiring,status-publisher/cli,enhance-pir-load-test/native-reinspiring
+            --features enhance-pir-client/native-reinspiring,enhance-publisher/native-reinspiring,status-publisher/native-reinspiring,status-publisher/cli,enhance-pir-load-test/native-reinspiring,pir-publisher/enhance,pir-publisher/status,pir-publisher/transparent,pir-publisher/receiver,pir-publisher/native-reinspiring
           python3 tools/ci/qualification.py assemble --family enhance --native --sha "$GITHUB_SHA"
       - name: Report Cargo cache reuse
         if: always() && inputs.family != 'ops'
@@ -528,3 +534,42 @@ jobs:
         with:
           family: enhance
           cuda: 'true'
+
+  publisher-candidate:
+    name: Transparent publisher candidate
+    if: github.event_name == 'workflow_dispatch' && inputs.publisher-only
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/rust-setup
+        with:
+          lane: release
+          scope: publisher
+      - name: Check the cutover operations
+        run: python3 -B tools/ci/python_tests.py tools/tests/operations/deploy --jobs 2 --split-module test_ops_package
+      - name: Build the Transparent publisher
+        run: cargo build --locked --release -p pir-publisher --features transparent
+      - name: Check both compiled product configurations
+        run: |
+          jq '{management_listen, transparent_history, transaction_details}' tools/deploy/publisher/publisher.example.json > "$RUNNER_TEMP/publisher-transparent.json"
+          "$CARGO_TARGET_DIR/release/pir-publisher" --config "$RUNNER_TEMP/publisher-transparent.json" --check
+          cargo test --locked --release -p pir-publisher --features transparent --lib
+      - name: Build independent acceptance tools
+        run: >-
+          cargo build --locked --profile release-fast -p transparent-tools
+          --bin transparent-regression --bin regression-export --bin txid-quality-canary
+      - name: Package the exact source candidate
+        run: |
+          python3 tools/ci/release.py assemble --kind pir-publisher --sha "$GITHUB_SHA" --output .local-pir/publisher-candidate
+          python3 tools/scripts/wallet-pir-bundle.py assemble --sha "$GITHUB_SHA" --archive .local-pir/publisher-candidate/wallet-pir-ops.tar.gz
+          cp "$CARGO_TARGET_DIR/release-fast/transparent-regression" "$CARGO_TARGET_DIR/release-fast/regression-export" "$CARGO_TARGET_DIR/release-fast/txid-quality-canary" .local-pir/publisher-candidate/
+          sha256sum .local-pir/publisher-candidate/*.tar.gz .local-pir/publisher-candidate/transparent-regression .local-pir/publisher-candidate/regression-export .local-pir/publisher-candidate/txid-quality-canary > .local-pir/publisher-candidate/SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: transparent-publisher-candidate-${{ github.sha }}
+          path: .local-pir/publisher-candidate/
+          if-no-files-found: error
+          retention-days: 14
