@@ -215,11 +215,11 @@ cache. `TEST_TARGET` selects a named integration executable; `TEST` filters test
 names in that executable (or unit targets when TEST_TARGET is omitted). It reports p95 only after 20 successful, unchanged-snapshot runs and keeps
 failures visible. Compare the same workload, host, flags and population before
 and after; local execution excludes Actions queue/setup. The warm CI target is
-five minutes; deployment's prepared-artifact target remains two minutes. These
+three minutes; deployment's prepared-artifact target remains two minutes. These
 are targets until measured on the updated workflow.
 
 Temporarily, CI lets PR and main validation run to completion without a
-five-minute cancellation. Pushes to main enforce that target in a final timing
+three-minute cancellation. Pushes to main enforce that target in a final timing
 check; PRs and manual runs only report timings. The check measures job start
 through validation and reporting, excluding queue time and final cleanup.
 
