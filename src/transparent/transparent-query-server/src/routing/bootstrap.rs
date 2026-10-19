@@ -585,51 +585,7 @@ pub(crate) async fn stage_holdings(
         if publication::digest(&serde_json::to_vec(&map)?) != inventory.map_sha256 {
             return Err("downloaded map has another publication identity".into());
         }
-        // Reuse the production assignment planner, with an explicitly inert
-        // archive row for cost/accounting only. Nothing here qualifies routes.
-        let options = if full {
-            LoadOptions::whole(0)
-        } else {
-            let mut roster = vec![RosterEntry {
-                id: "provider".into(),
-                role: WorkerRole::RecentReplica,
-                replica_group: Some("recent".into()),
-                ssh_host: String::new(),
-                upstream: "127.0.0.1:0".into(),
-                cache_bytes: config.cache_bytes,
-                archive_range: None,
-            }];
-            if inventory.recent_from_shard > 0 {
-                roster.push(RosterEntry {
-                    id: "archive-metadata-only".into(),
-                    role: WorkerRole::ArchiveOwner,
-                    replica_group: None,
-                    ssh_host: String::new(),
-                    upstream: "unconfigured.invalid:0".into(),
-                    cache_bytes: u64::MAX,
-                    archive_range: None,
-                });
-            }
-            let assignment = plan(
-                &map,
-                &inventory.map_sha256,
-                &roster,
-                inventory.recent_from_shard,
-                0.15,
-                GeneratedBy {
-                    tool: "HTTPS bootstrap verifier".into(),
-                    source_sha: None,
-                    generated_at: "not-serving".into(),
-                },
-            )?;
-            LoadOptions {
-                scope: LoadScope::Assigned {
-                    assignment: Arc::new(assignment),
-                    worker_id: "provider".into(),
-                },
-                ..LoadOptions::whole(0)
-            }
-        };
+        let options = holdings(config, &map, &inventory, full)?;
         if let LoadScope::Assigned { assignment, .. } = &options.scope {
             crate::control::persist(&stage.join("assignment.json"), assignment.as_ref())?;
         }
@@ -650,6 +606,60 @@ pub(crate) async fn stage_holdings(
         let _ = std::fs::remove_dir_all(&stage);
     }
     result
+}
+
+/// Holdings selected for this provider by the production assignment planner,
+/// with an explicitly inert archive row for cost/accounting only. Nothing here
+/// qualifies routes. Deterministic for one map, inventory and configuration.
+pub(crate) fn holdings(
+    config: &Config,
+    map: &transparent_filter::ShardMap,
+    inventory: &Inventory,
+    full: bool,
+) -> Result<LoadOptions, Error> {
+    Ok(if full {
+        LoadOptions::whole(0)
+    } else {
+        let mut roster = vec![RosterEntry {
+            id: "provider".into(),
+            role: WorkerRole::RecentReplica,
+            replica_group: Some("recent".into()),
+            ssh_host: String::new(),
+            upstream: "127.0.0.1:0".into(),
+            cache_bytes: config.cache_bytes,
+            archive_range: None,
+        }];
+        if inventory.recent_from_shard > 0 {
+            roster.push(RosterEntry {
+                id: "archive-metadata-only".into(),
+                role: WorkerRole::ArchiveOwner,
+                replica_group: None,
+                ssh_host: String::new(),
+                upstream: "unconfigured.invalid:0".into(),
+                cache_bytes: u64::MAX,
+                archive_range: None,
+            });
+        }
+        let assignment = plan(
+            map,
+            &inventory.map_sha256,
+            &roster,
+            inventory.recent_from_shard,
+            0.15,
+            GeneratedBy {
+                tool: "HTTPS bootstrap verifier".into(),
+                source_sha: None,
+                generated_at: "not-serving".into(),
+            },
+        )?;
+        LoadOptions {
+            scope: LoadScope::Assigned {
+                assignment: Arc::new(assignment),
+                worker_id: "provider".into(),
+            },
+            ..LoadOptions::whole(0)
+        }
+    })
 }
 
 // Persist child entries before their parents and before the owner's active
