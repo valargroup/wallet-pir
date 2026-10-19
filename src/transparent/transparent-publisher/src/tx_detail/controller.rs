@@ -1794,5 +1794,6 @@ pub fn status_router(status: Arc<RwLock<Value>>, metrics: Arc<Metrics>) -> axum:
         .route("/metrics", get(rendered))
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "fixtures"))]
+#[path = "../../../../pir-publisher/tests/included/tx_detail_controller_tests.rs"]
 mod tests;

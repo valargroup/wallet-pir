@@ -664,7 +664,7 @@ async fn wave(
     let mut child = tokio::process::Command::new("python3")
         .arg(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../../tools/transparent/loadtest/distribution.py"
+            "/../../tools/transparent/loadtest/distribution.py"
         ))
         .args(["--publisher", &campaign.publisher, "--ca"])
         .arg(out.join("work/ca.pem"))
@@ -822,7 +822,7 @@ async fn archive(
     let mut tls = tokio::process::Command::new("python3")
         .arg(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../transparent-query-server/tests/support/provider_tls.py"
+            "/../transparent/transparent-query-server/tests/support/provider_tls.py"
         ))
         .arg(addr.to_string())
         .arg(root.join("ca.pem"))
@@ -958,7 +958,7 @@ async fn controller_updates_reach_independent_https_providers_under_queries() {
     std::fs::write(out.join("controller-config.json"), config.to_string()).unwrap();
     let controller_log = std::fs::File::create(out.join("controller.log")).unwrap();
     let mut controller =
-        tokio::process::Command::new(env!("CARGO_BIN_EXE_transparent-publish-controller"))
+        tokio::process::Command::new(env!("CARGO_BIN_EXE_transparent-publish-controller-test"))
             .arg("--config")
             .arg(out.join("controller-config.json"))
             .kill_on_drop(true)

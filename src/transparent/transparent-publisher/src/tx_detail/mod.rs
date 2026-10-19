@@ -43,11 +43,12 @@ pub(crate) mod fixture;
 
 pub mod service;
 
-#[cfg(all(test, feature = "qualification-tests"))]
+#[cfg(all(test, feature = "qualification-tests", feature = "fixtures"))]
+#[path = "../../../../pir-publisher/tests/included/http_sync_tests.rs"]
 mod http_sync_tests;
 
 // The serving tests' independent wallet transport, mounted once for both
 // qualification harnesses below this module.
-#[cfg(all(test, feature = "qualification-tests"))]
+#[cfg(all(test, feature = "qualification-tests", feature = "fixtures"))]
 #[path = "../../../transparent-query-server/tests/support/display_world.rs"]
 pub(crate) mod display_world;

@@ -52,11 +52,15 @@ def commands(group, groups, lint=False, compile_only=False):
                     'native-certificate/native-reinspiring',
                     'pir-publisher/enhance', 'pir-publisher/status', 'pir-publisher/transparent',
                     'pir-publisher/receiver', 'pir-publisher/native-reinspiring',
+                    'pir-publisher/enhance-tests', 'pir-publisher/status-tests',
                     'pir-query-server/enhance', 'pir-query-server/status', 'pir-query-server/transparent',
                     'pir-query-server/native-reinspiring'],
         'shared': ['pir-control/admission'],
-        'transparent': ['transparent-publisher/rocksdb-reader', 'transparent-tools/test-support', 'transparent-tools/compact-export'],
-    }.get(group, []) + qualification_features(names)
+        'transparent': ['transparent-publisher/rocksdb-reader', 'transparent-tools/test-support', 'transparent-tools/compact-export',
+                        'pir-publisher/transparent-tests'],
+    }.get(group, []) + qualification_features([*names, *(['pir-publisher'] if group == 'transparent' else [])])
+    if group == 'transparent':
+        names = [*names, 'pir-publisher']
     result = [[*runner, '--locked', '--profile', 'release-fast',
                *[arg for name in names for arg in ('-p', name)],
                *(['--features', ','.join(features)] if features else [])]]

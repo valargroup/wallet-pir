@@ -404,9 +404,9 @@ gate.
 
 `tools/transparent/scripts/https-update-campaign.py` runs the ignored
 `controller_update_campaign` test in
-`src/transparent/transparent-publisher/tests/`. Run it through the repository's
+`src/pir-publisher/tests/`. Run it through the repository's
 build wrapper with `--consumers 10,100`. It builds the packaged
-`transparent-query-server`, the real `transparent-publish-controller`, the
+`transparent-query-server`, the controller built with that test, the
 isolated released391 client (with `verify-sources.py` receipts) and the
 in-process publisher tests with one profile (default `release-fast`). Each run is
 written to a new ignored `.local-pir/https-update-campaign/<utc>-<sha>/` and is

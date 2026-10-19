@@ -381,7 +381,7 @@ impl RecordJournal {
     }
 
     /// Fails the next persistence step named `stage`, for callers' recovery tests.
-    #[cfg(feature = "fault-injection")]
+    #[cfg(any(test, feature = "fault-injection"))]
     pub fn fail_after(&mut self, stage: &'static str) {
         self.fail_after = Some(stage);
     }

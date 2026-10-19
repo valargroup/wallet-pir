@@ -64,7 +64,8 @@ def main():
             binaries = build(["build", "-p", "pir-publisher", "-p", "transparent-query-server",
                               "--features", "pir-publisher/transparent",
                               "--bin", "pir-publisher", "--bin", "transparent-query-server", "--bin", "transparent-txid-server"], log)
-            tests = build(["test", "-p", "transparent-publisher", "--test", TEST, "--no-run"], log)
+            tests = build(["test", "-p", "pir-publisher", "--features", "transparent-tests",
+                            "--test", TEST, "--no-run"], log)
             client = build(["build", "--manifest-path", str(FROZEN / "Cargo.toml")], log)["frozen-provider-client"]
         binaries[TEST] = tests[TEST]
         binaries["frozen-provider-client"] = client

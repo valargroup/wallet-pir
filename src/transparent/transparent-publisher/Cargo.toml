@@ -37,6 +37,19 @@ default = []
 rocksdb-reader = ["zakura-server-chain/rocksdb"]
 # Keep large test campaigns explicit; production behavior is unchanged.
 qualification-tests = []
+# Chain fixtures, the wallet client and the query server for host regressions.
+fixtures = [
+    "zakura-server-chain/testing",
+    "dep:zakura-pir-client",
+    "zakura-pir-client/transparent",
+    "zakura-pir-client/testing",
+    "transparent-shared/test-support",
+    "dep:transparent-query-server",
+    "dep:base64",
+    "dep:libc",
+    "dep:tower",
+    "reqwest/blocking",
+]
 
 [dependencies]
 pir-pipeline = { path = "../../shared/pir-pipeline" }
@@ -48,7 +61,6 @@ axum = "0.7"
 chrono = { version = "0.4", default-features = false, features = ["std", "serde", "clock"] }
 clap = { version = "4", features = ["derive"] }
 hex = "0.4"
-libc = "0.2"
 prometheus = { version = "0.13", default-features = false, features = ["process"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
@@ -59,7 +71,7 @@ tokio = { version = "1", features = ["full"] }
 tokio-util = { version = "0.7", features = ["io"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-transparent-shared = { path = "../transparent-shared", features = ["test-support"] }
+transparent-shared = { path = "../transparent-shared" }
 # Node reads, transparent extraction, compact blocks and the RocksDB state
 # reader, pinned to an exact wallet-libraries revision. The reader opens the
 # node's RocksDB directly: before deploying it, verify that the zakura-state
@@ -68,14 +80,10 @@ zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.g
 
 zakura-pir-protocol = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "a2f87e6f235dc16840be1dd7fc88e6dd06f0a268", default-features = false, features = ["transparent"] }
 zakura-pir-publisher = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "a2f87e6f235dc16840be1dd7fc88e6dd06f0a268", default-features = false, features = ["transparent"] }
-
-[dev-dependencies]
-transparent-query-server = { path = "../transparent-query-server" }
-base64 = "0.22"
-sysinfo = "0.36"
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "json"] }
-tempfile = "3"
-tower = { version = "0.5", features = ["util"] }
-# Raw synthetic blocks for the extraction tests.
-zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "a2f87e6f235dc16840be1dd7fc88e6dd06f0a268", default-features = false, features = ["transparent", "testing"] }
-zakura-pir-client = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "a2f87e6f235dc16840be1dd7fc88e6dd06f0a268", default-features = false, features = ["transparent", "testing"] }
+# Query server, wallet client and small helpers for the host's Transparent
+# regressions. Production builds leave them off.
+base64 = { version = "0.22", optional = true }
+libc = { version = "0.2", optional = true }
+tower = { version = "0.5", features = ["util"], optional = true }
+transparent-query-server = { path = "../transparent-query-server", optional = true }
+zakura-pir-client = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "a2f87e6f235dc16840be1dd7fc88e6dd06f0a268", default-features = false, optional = true }

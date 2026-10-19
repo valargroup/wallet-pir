@@ -119,12 +119,13 @@ def main():
     provider = executable(cargo_artifacts(args.profile, [
         "build", "-p", "transparent-query-server", "--bin", "transparent-query-server"]),
         "transparent-query-server")
-    built = cargo_artifacts(args.profile, ["test", "-p", "transparent-publisher", "--test", TEST, "--no-run"])
+    built = cargo_artifacts(args.profile, [
+        "test", "-p", "pir-publisher", "--features", "transparent-tests", "--test", TEST, "--no-run"])
     test = executable(built, TEST)
     controller = next(a["executable"] for a in built
-                      if a.get("target", {}).get("name") == "transparent-publish-controller")
+                      if a.get("target", {}).get("name") == "transparent-publish-controller-test")
     library = executable(cargo_artifacts(args.profile, [
-        "test", "-p", "transparent-publisher", "--lib", "--features", "qualification-tests",
+        "test", "-p", "transparent-publisher", "--lib", "--features", "fixtures,qualification-tests",
         "--no-run"]), "transparent_publisher")
     client = executable(cargo_artifacts(args.profile, ["build"], CLIENT / "Cargo.toml"),
                         "frozen-provider-client")

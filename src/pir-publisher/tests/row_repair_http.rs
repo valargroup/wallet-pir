@@ -152,7 +152,7 @@ async fn lost_worker_rows_repair_restores_current_and_retained_http_queries() {
         record(99)
     );
     for expected_restored in [2, 0] {
-        let output = std::process::Command::new(env!("CARGO_BIN_EXE_enhance-pir-server"))
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_enhance-pir-server-test"))
             .arg("repair-rows")
             .arg("--data-dir")
             .arg(&worker_root)
