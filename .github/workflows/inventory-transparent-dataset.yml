@@ -109,7 +109,7 @@ jobs:
           set -euo pipefail
           NICE=(nice -n 19)
           if command -v ionice >/dev/null; then NICE+=(ionice -c3); fi
-          "${NICE[@]}" cargo build --locked --release -p transparent-publisher --features rocksdb-reader \
+          "${NICE[@]}" cargo build --locked --release -p transparent-tools --features rocksdb-reader \
             --bin journal-inventory --bin shard-cutoff --bin event-spotcheck
           DATA="${DATA_DIR_INPUT:-$DATA_DIR}"
           mkdir -p inventory

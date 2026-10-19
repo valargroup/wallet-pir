@@ -15,10 +15,6 @@ name = "shard-publish"
 path = "src/bin/shard-publish.rs"
 
 [[bin]]
-name = "shard-census"
-path = "src/bin/shard-census.rs"
-
-[[bin]]
 name = "transparent-event-ingest"
 required-features = ["rocksdb-reader"]
 path = "src/bin/event-ingest.rs"
@@ -28,46 +24,8 @@ name = "transparent-publisher"
 path = "src/bin/server.rs"
 
 [[bin]]
-name = "journal-convert-v1"
-path = "src/bin/journal-convert-v1.rs"
-
-[[bin]]
-name = "sample-redigest"
-path = "src/bin/sample-redigest.rs"
-
-[[bin]]
-name = "shard-cutoff"
-required-features = ["rocksdb-reader"]
-path = "src/bin/shard-cutoff.rs"
-
-[[bin]]
-name = "journal-inventory"
-required-features = ["rocksdb-reader"]
-path = "src/bin/journal-inventory.rs"
-
-[[bin]]
-name = "event-spotcheck"
-path = "src/bin/event-spotcheck.rs"
-
-[[bin]]
-name = "shard-verify"
-path = "src/bin/shard-verify.rs"
-
-[[bin]]
-name = "script-sample"
-path = "src/bin/script-sample.rs"
-
-[[bin]]
-name = "filter-sweep"
-path = "src/bin/filter-sweep.rs"
-
-[[bin]]
 name = "txid-display-controller"
 path = "src/bin/txid-display-controller.rs"
-
-[[bin]]
-name = "sample-oracle"
-path = "src/bin/sample-oracle.rs"
 
 [[bin]]
 name = "transparent-publish-controller"

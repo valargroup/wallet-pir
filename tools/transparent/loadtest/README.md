@@ -332,7 +332,7 @@ receives expected events or performs address-specific requests.
 
 Build the tools with `cargo build --release -p transparent-tools --features
 compact-export --bin compact-export --bin transparent-block-server --bin transparent-loadtest`
-and `cargo build --release -p transparent-publisher --bin sample-oracle`.
+and `cargo build --release -p transparent-tools --bin sample-oracle`.
 `protoc` is required to compile the pinned protobuf schema. Export the full dataset
 on the archive host, outside measured time:
 
