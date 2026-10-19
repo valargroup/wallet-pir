@@ -48,7 +48,11 @@ def commands(group, groups, lint=False, compile_only=False):
     features = {
         'enhance': ['enhance-query-server/native-reinspiring', 'status-query-server/native-reinspiring',
                     'enhance-publisher/native-reinspiring', 'status-publisher/native-reinspiring', 'status-publisher/cli',
-                    'enhance-pir-client/native-reinspiring', 'enhance-pir-load-test/native-reinspiring'],
+                    'enhance-pir-client/native-reinspiring', 'enhance-pir-load-test/native-reinspiring',
+                    'pir-publisher/enhance', 'pir-publisher/status', 'pir-publisher/transparent',
+                    'pir-publisher/receiver', 'pir-publisher/native-reinspiring',
+                    'pir-query-server/enhance', 'pir-query-server/status', 'pir-query-server/transparent',
+                    'pir-query-server/native-reinspiring'],
         'shared': ['pir-control/admission'],
         'transparent': ['transparent-publisher/rocksdb-reader', 'transparent-tools/test-support', 'transparent-tools/compact-export'],
     }.get(group, []) + qualification_features(names)

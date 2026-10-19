@@ -1,0 +1,39 @@
+{
+  "management_listen": "127.0.0.1:18081",
+  "enhance": {
+    "enabled": true,
+    "settings": {
+      "role": "worker",
+      "listen": "127.0.0.1:8091",
+      "data_dir": "/srv/pir-query-server/enhance",
+      "sealed_shards": 6
+    }
+  },
+  "status": {
+    "enabled": true,
+    "settings": {
+      "role": "worker",
+      "network_hex": "0101010101010101010101010101010101010101010101010101010101010101",
+      "state_dir": "/srv/pir-query-server/status",
+      "listen": "127.0.0.1:8481",
+      "artifact_origin": "http://127.0.0.1:8480",
+      "worker_origin": "http://127.0.0.1:8481"
+    }
+  },
+  "transparent_history": {
+    "enabled": true,
+    "settings": {
+      "listen": "127.0.0.1:8092",
+      "shard_dir": "/srv/pir-query-server/history"
+    }
+  },
+  "transaction_details": {
+    "enabled": true,
+    "settings": {
+      "listen": "127.0.0.1:8095",
+      "role": "combined",
+      "publication_dir": "/srv/pir-query-server/txid",
+      "state_dir": "/srv/pir-query-server/txid-state"
+    }
+  }
+}

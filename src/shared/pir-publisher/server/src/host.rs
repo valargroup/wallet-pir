@@ -1,5 +1,12 @@
+#[cfg(any(
+    feature = "enhance",
+    feature = "status",
+    feature = "transparent",
+    feature = "receiver"
+))]
+use crate::config::active;
 use crate::{
-    config::{active, Config, Probe},
+    config::{Config, Probe},
     Result,
 };
 use axum::{extract::State, http::StatusCode, routing::get, Json, Router};
@@ -93,6 +100,15 @@ fn http(listeners: Arc<Mutex<BTreeMap<SocketAddr, TcpListener>>>, stop: Shutdown
         }
     })
 }
+#[cfg_attr(
+    not(any(
+        feature = "enhance",
+        feature = "status",
+        feature = "transparent",
+        feature = "receiver"
+    )),
+    allow(dead_code)
+)]
 fn spawn<F>(
     name: &'static str,
     future: F,
@@ -146,8 +162,14 @@ pub async fn run(config: Config, shutdown: Shutdown) -> Result<()> {
     );
     let mut tasks = Tasks::default();
     tasks.own(&management);
-    let mut group = JoinSet::new();
-    let mut owners = HashMap::new();
+    let mut group: JoinSet<(&'static str, Result<()>)> = JoinSet::new();
+    let mut owners: HashMap<Id, (&'static str, Shutdown)> = HashMap::new();
+    #[cfg(any(
+        feature = "enhance",
+        feature = "status",
+        feature = "transparent",
+        feature = "receiver"
+    ))]
     macro_rules! product {
         ($field:ident, $run:path) => {
             if let Some(settings) = active(&config.$field)? {
@@ -168,16 +190,21 @@ pub async fn run(config: Config, shutdown: Shutdown) -> Result<()> {
             }
         };
     }
+    #[cfg(feature = "enhance")]
     product!(enhance, enhance_publisher::service::run);
+    #[cfg(feature = "status")]
     product!(status, status_publisher::service::run);
+    #[cfg(feature = "transparent")]
     product!(
         transparent_history,
         transparent_publisher::history::controller::run_managed
     );
+    #[cfg(feature = "transparent")]
     product!(
         transaction_details,
         transparent_publisher::tx_detail::service::run
     );
+    #[cfg(feature = "receiver")]
     product!(receiver, receiver_indexer::service::run_isolated);
     let mut fatal = None;
     loop {

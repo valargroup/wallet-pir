@@ -12,42 +12,10 @@ use std::{
 };
 use tokio::net::TcpListener;
 
-pub struct RoleConfig {
-    pub role: status::distributed::Role,
-    pub network_hex: String,
-    pub state_dir: PathBuf,
-    pub listen: SocketAddr,
-    pub query_listen: Option<SocketAddr>,
-    pub artifact_origin: String,
-    pub worker_origin: String,
-    pub cuda: bool,
-}
+pub use status::distributed::RoleConfig;
 
 pub async fn role(config: RoleConfig) -> Result<(), AnyError> {
-    let RoleConfig {
-        role,
-        network_hex,
-        state_dir,
-        listen,
-        query_listen,
-        artifact_origin,
-        worker_origin,
-        cuda,
-    } = config;
-    let network: Hash = hex::decode(network_hex)?
-        .try_into()
-        .map_err(|_| "network must be 32 bytes")?;
-    status::distributed::Service::open(
-        role,
-        network,
-        state_dir,
-        artifact_origin,
-        worker_origin,
-        cuda,
-    )?
-    .serve(listen, query_listen)
-    .await?;
-    Ok(())
+    status::distributed::serve_role(config).await
 }
 
 pub async fn serve_distributed(

@@ -14,11 +14,19 @@ Publisher packages live under `src/shared/pir-publisher/`: `server` is the new
 package names. `receiver-store` holds the indexer's SQLite stores. History and
 transaction details remain separate modes of `transparent-publisher`.
 
-Query servers remain under their product directories. Serving libraries must
+Query serving is the separate [query-server host](query-server.md). Product
+query libraries remain under their product directories. Serving libraries must
 not depend on publisher packages, even though the latter now live under
 `shared`. Shared protocol, verification and runtime libraries remain outside the
 publisher subtree. The pipeline depends only on Tokio: its HTTP adapter is
 generic over a product's router, and the application supplies the actual server.
+
+`pir-publisher` compiles a product only when that product's Cargo feature is
+enabled: `enhance`, `status`, `transparent`, or `receiver`. `transparent`
+compiles both history and transaction-detail publishing. `native-reinspiring`
+selects native packing for Enhance and Status and does nothing unless that
+product feature is also enabled. The publisher host has no CUDA feature. A
+configuration section for a product that was not compiled is rejected.
 
 This layout changes no wallet protocol, record codec, publication identity,
 journal, database or runtime-cache format. Existing standalone commands remain
@@ -30,7 +38,8 @@ wallet-libraries revisions.
 Build the native CPU application used by the deployed protocols:
 
 ```sh
-cargo build --locked --profile release-fast -p pir-publisher --features native-reinspiring
+cargo build --locked --profile release-fast -p pir-publisher \
+  --features enhance,status,transparent,receiver,native-reinspiring
 pir-publisher --config /etc/wallet-pir/publisher.json --check
 pir-publisher --config /etc/wallet-pir/publisher.json
 ```
@@ -134,7 +143,10 @@ wallet listener. `/v1/provider-status` is private operational status, separate
 from wallet routes. Synchronization runs independently of wallet requests.
 A withdrawal observed during preparation fences affected active and retained
 views immediately, even when the incoming candidate has different revision
-identities. A display publisher restarted after a recent reorg leaves its saved
+identities. Every authority recheck also validates the exact anchors of active
+and retained views before rejecting a superseded candidate. This fences orphaned
+answers when a consumer skips a withdrawal and sees the recovered canonical
+publication directly; a still-canonical predecessor remains available. A display publisher restarted after a recent reorg leaves its saved
 noncanonical view unpublished while normal journal reconciliation rebuilds it;
 invalid material, a different chain identity or RPC failures still refuse startup.
 

@@ -2,6 +2,7 @@
 //! the filter service's HTTP surface.
 
 pub mod controller;
+pub mod distribution;
 pub mod metrics;
 pub mod publication;
 pub mod service;

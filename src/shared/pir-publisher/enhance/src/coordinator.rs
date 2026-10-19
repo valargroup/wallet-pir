@@ -136,7 +136,7 @@ impl Coordinator {
         }
     }
 
-    /// Backfill retained public packing state while holding the sole controller lock.
+    /// Confirm retained sessions already have router-prepared packing artifacts.
     pub fn backfill_prepared(root: &FsPath) -> Result<(), String> {
         let store = Store::open(root)?;
         if store.state().operation.is_some() {

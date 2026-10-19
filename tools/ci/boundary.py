@@ -88,8 +88,8 @@ TOOLS = 'tools/'
 # Application packages: services, operational dashboards and development tools.
 # Serving libraries compose into them, never the reverse.
 APPLICATIONS = {
-    'pir-publisher', 'enhance-publisher', 'status-publisher', 'pir-apm', 'enhance-pir-load-test', 'pir-monitor',
-    'enhance-pir-client', 'enhance-pir-exercise', 'enhance-noise-analysis', 'transparent-publisher',
+    'pir-publisher', 'enhance-publisher', 'status-publisher', 'pir-query-server', 'pir-apm', 'enhance-pir-load-test', 'pir-monitor',
+    'enhance-pir-client', 'enhance-pir-exercise', 'enhance-noise-analysis', 'native-certificate', 'transparent-publisher',
     'transparent-query-server', 'transparent-tools', 'receiver-indexer', 'receiver-pir-server',
 }
 # Shared packages consumed by a subset of products. A serving library of any other

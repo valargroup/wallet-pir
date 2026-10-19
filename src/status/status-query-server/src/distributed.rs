@@ -19,6 +19,62 @@ pub enum Role {
     Router,
 }
 
+/// One private Status role. The publisher calls this; it does not construct the role.
+#[derive(Clone, Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RoleConfig {
+    pub role: Role,
+    pub network_hex: String,
+    pub state_dir: PathBuf,
+    pub listen: SocketAddr,
+    #[serde(default)]
+    pub query_listen: Option<SocketAddr>,
+    pub artifact_origin: String,
+    pub worker_origin: String,
+    #[serde(default)]
+    pub cuda: bool,
+}
+
+pub async fn serve_role(config: RoleConfig) -> Result<(), Failure> {
+    let listen = tokio::net::TcpListener::bind(config.listen).await?;
+    let query = match config.query_listen {
+        Some(addr) => Some(tokio::net::TcpListener::bind(addr).await?),
+        None => None,
+    };
+    serve_role_on(config, listen, query).await
+}
+
+pub async fn serve_role_on(
+    config: RoleConfig,
+    listen: tokio::net::TcpListener,
+    query_listen: Option<tokio::net::TcpListener>,
+) -> Result<(), Failure> {
+    let RoleConfig {
+        role,
+        network_hex,
+        state_dir,
+        listen: _,
+        query_listen: _,
+        artifact_origin,
+        worker_origin,
+        cuda,
+    } = config;
+    let network: Hash = hex::decode(network_hex)?
+        .try_into()
+        .map_err(|_| "network must be 32 bytes")?;
+    Service::open(
+        role,
+        network,
+        state_dir,
+        artifact_origin,
+        worker_origin,
+        cuda,
+    )?
+    .serve_listeners(listen, query_listen)
+    .await?;
+    Ok(())
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Binding {
@@ -311,19 +367,39 @@ impl Service {
         if !listen.ip().is_loopback() || query_listen.is_some_and(|q| !q.ip().is_loopback()) {
             return Err("Status role listener must be loopback".into());
         }
-        let Some(query_listen) = query_listen else {
-            axum::serve(tokio::net::TcpListener::bind(listen).await?, self.routes()).await?;
+        let listener = tokio::net::TcpListener::bind(listen).await?;
+        let query = match query_listen {
+            Some(addr) => Some(tokio::net::TcpListener::bind(addr).await?),
+            None => None,
+        };
+        self.serve_listeners(listener, query).await
+    }
+    pub async fn serve_listeners(
+        self,
+        listen: tokio::net::TcpListener,
+        query_listen: Option<tokio::net::TcpListener>,
+    ) -> Result<(), Failure> {
+        let listen_addr = listen.local_addr()?;
+        let query_addr = query_listen
+            .as_ref()
+            .map(|listener| listener.local_addr())
+            .transpose()?;
+        if !listen_addr.ip().is_loopback()
+            || query_addr.is_some_and(|addr| !addr.ip().is_loopback())
+        {
+            return Err("Status role listener must be loopback".into());
+        }
+        let Some(queries) = query_listen else {
+            axum::serve(listen, self.routes()).await?;
             return Ok(());
         };
         if self.role != Role::Router {
             return Err("--query-listen applies only to the router role".into());
         }
-        if query_listen == listen {
+        if query_addr == Some(listen_addr) {
             return Err("Status query listener must differ from the control listener".into());
         }
-        let control = tokio::net::TcpListener::bind(listen).await?;
-        let queries = tokio::net::TcpListener::bind(query_listen).await?;
-        let control = axum::serve(control, self.control_routes());
+        let control = axum::serve(listen, self.control_routes());
         let queries = axum::serve(queries, self.query_routes());
         tokio::select! {
             result = control => result?,

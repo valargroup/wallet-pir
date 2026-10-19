@@ -26,7 +26,7 @@ struct Inner {
 impl Distribution {
     pub fn new(root: &Path, rpc: NodeClient) -> Result<Self, BoxError> {
         // Reserve a durable process boundary before exposing any publication.
-        crate::history::controller::advance_distribution_revision(root)?;
+        crate::history::distribution::advance_distribution_revision(root)?;
         Ok(Self(Arc::new(Inner {
             root: root.to_path_buf(),
             rpc,
@@ -41,7 +41,7 @@ impl Distribution {
         let mut active = self.0.active.write().unwrap();
         let current = Current {
             schema: SCHEMA.into(),
-            revision: crate::history::controller::advance_distribution_revision(&self.0.root)?,
+            revision: crate::history::distribution::advance_distribution_revision(&self.0.root)?,
             recovery_epoch: 0,
             inventory_sha256: finalized.sha256.clone(),
             network: finalized.inventory.network.clone(),
@@ -67,7 +67,7 @@ impl Distribution {
                 Some(current.invalidated_from.map_or(from, |old| old.min(from)));
             // Keep the same revision negative if reserving the next revision fails.
             current.revision =
-                crate::history::controller::advance_distribution_revision(&self.0.root)?;
+                crate::history::distribution::advance_distribution_revision(&self.0.root)?;
             write_atomic(
                 &self.0.root.join("http-current.json"),
                 &serde_json::to_vec(current)?,

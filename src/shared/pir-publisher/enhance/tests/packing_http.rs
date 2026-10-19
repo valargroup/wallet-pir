@@ -681,9 +681,10 @@ async fn extracted_path(wallet: bool, qualification: bool) {
                 );
                 if std::env::var("QUALIFY_ROUTER_CONTROL").is_ok() {
                     assert!(
-                        text.lines()
-                            .any(|s| s == "enhance_packing_preparations_total 0"),
-                        "router performed preprocessing"
+                        text.lines().any(|line| line
+                            .starts_with("enhance_packing_preparations_total ")
+                            && line != "enhance_packing_preparations_total 0"),
+                        "packing router prepares the artifact"
                     );
                 }
                 last_window = current;

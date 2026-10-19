@@ -1,6 +1,13 @@
 //! Real loopback listeners exercise the host without chain or worker fixtures.
 use pir_pipeline::service::Shutdown;
-use pir_publisher::{config::Config, run};
+#[cfg(all(
+    feature = "enhance",
+    feature = "status",
+    feature = "transparent",
+    feature = "receiver"
+))]
+use pir_publisher::config::Config;
+use pir_publisher::run;
 use serde_json::{json, Value};
 use std::{net::SocketAddr, time::Duration};
 fn port() -> SocketAddr {
@@ -9,12 +16,24 @@ fn port() -> SocketAddr {
         .local_addr()
         .unwrap()
 }
+#[cfg(all(
+    feature = "enhance",
+    feature = "status",
+    feature = "transparent",
+    feature = "receiver"
+))]
 fn example() -> Value {
     serde_json::from_str(include_str!(
         "../../../../../tools/deploy/publisher/publisher.example.json"
     ))
     .unwrap()
 }
+#[cfg(all(
+    feature = "enhance",
+    feature = "status",
+    feature = "transparent",
+    feature = "receiver"
+))]
 #[test]
 fn every_mode_is_independently_configurable() {
     for enabled in [
@@ -38,6 +57,12 @@ fn every_mode_is_independently_configurable() {
         assert_eq!(config.validate().unwrap().probes.len(), 1, "{enabled}");
     }
 }
+#[cfg(all(
+    feature = "enhance",
+    feature = "status",
+    feature = "transparent",
+    feature = "receiver"
+))]
 #[tokio::test]
 async fn bind_failure_cannot_start_a_publisher_or_create_its_state() {
     let temp = tempfile::tempdir().unwrap();
@@ -67,6 +92,12 @@ async fn report(url: &str) -> Value {
     }
     panic!("management listener did not start");
 }
+#[cfg(all(
+    feature = "enhance",
+    feature = "status",
+    feature = "transparent",
+    feature = "receiver"
+))]
 #[tokio::test]
 async fn disabled_products_start_no_work_and_shutdown_releases_the_listener() {
     let address = port();
@@ -88,6 +119,30 @@ async fn disabled_products_start_no_work_and_shutdown_releases_the_listener() {
     tokio::task::yield_now().await;
     let _rebound = tokio::net::TcpListener::bind(address).await.unwrap();
 }
+#[tokio::test]
+async fn management_alone_becomes_ready_and_releases_its_listener() {
+    let address = port();
+    let stop = Shutdown::default();
+    let config = serde_json::from_value(json!({"management_listen": address.to_string()})).unwrap();
+    let task = tokio::spawn(run(config, stop.clone()));
+    let value = report(&format!("http://{address}/ready")).await;
+    assert_eq!(value["ready"], true);
+    assert_eq!(value["products"], json!({}));
+    stop.request();
+    tokio::time::timeout(Duration::from_secs(3), task)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    tokio::task::yield_now().await;
+    let _rebound = tokio::net::TcpListener::bind(address).await.unwrap();
+}
+#[cfg(all(
+    feature = "enhance",
+    feature = "status",
+    feature = "transparent",
+    feature = "receiver"
+))]
 #[tokio::test]
 async fn product_startup_failure_is_visible_without_stopping_management() {
     let temp = tempfile::tempdir().unwrap();

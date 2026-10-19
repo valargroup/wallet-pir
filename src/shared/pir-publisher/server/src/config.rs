@@ -27,10 +27,15 @@ impl<T> Product<T> {
 #[serde(deny_unknown_fields)]
 pub struct Config {
     pub management_listen: SocketAddr,
+    #[cfg(feature = "enhance")]
     pub enhance: Option<Product<enhance_publisher::service::Config>>,
+    #[cfg(feature = "status")]
     pub status: Option<Product<status_publisher::service::Config>>,
+    #[cfg(feature = "transparent")]
     pub transparent_history: Option<Product<transparent_publisher::history::controller::Config>>,
+    #[cfg(feature = "transparent")]
     pub transaction_details: Option<Product<transparent_publisher::tx_detail::service::Config>>,
+    #[cfg(feature = "receiver")]
     pub receiver: Option<Product<receiver_indexer::service::Config>>,
 }
 #[derive(Default)]
@@ -73,6 +78,15 @@ impl Layout {
         self.listeners.insert(addr, owner);
         Ok(())
     }
+    #[cfg_attr(
+        not(any(
+            feature = "enhance",
+            feature = "status",
+            feature = "transparent",
+            feature = "receiver"
+        )),
+        allow(dead_code)
+    )]
     fn root(&mut self, owner: &'static str, root: &Path) -> Result<()> {
         if !root.is_absolute() {
             return Err("publisher state paths must be absolute".into());
@@ -86,6 +100,12 @@ impl Layout {
         self.roots.push((owner, path));
         Ok(())
     }
+    #[cfg(any(
+        feature = "enhance",
+        feature = "status",
+        feature = "transparent",
+        feature = "receiver"
+    ))]
     fn probe(
         &mut self,
         name: &'static str,
@@ -100,6 +120,15 @@ impl Layout {
         });
     }
 }
+#[cfg_attr(
+    not(any(
+        feature = "enhance",
+        feature = "status",
+        feature = "transparent",
+        feature = "receiver"
+    )),
+    allow(dead_code)
+)]
 fn normalize(path: &Path) -> Result<PathBuf> {
     let mut result = PathBuf::new();
     for component in path.components() {
@@ -126,6 +155,7 @@ impl Config {
             return Err("management listener must be loopback".into());
         }
         layout.listener("management", self.management_listen)?;
+        #[cfg(feature = "enhance")]
         if let Some(c) = active(&self.enhance)? {
             c.validate()?;
             if c.status_config.is_some() {
@@ -138,6 +168,7 @@ impl Config {
             layout.root("enhance", &c.data_dir)?;
             layout.probe("enhance", c.listen, "/ready", "status");
         }
+        #[cfg(feature = "status")]
         if let Some(c) = active(&self.status)? {
             c.validate()?;
             layout.listener("status", c.publisher.private_listen)?;
@@ -152,6 +183,7 @@ impl Config {
                 "status",
             );
         }
+        #[cfg(feature = "transparent")]
         if let Some(c) = active(&self.transparent_history)? {
             c.validate()?;
             if c.distribute_prepared && !c.ship_runtimes {
@@ -170,6 +202,7 @@ impl Config {
                 layout.probe("transparent_history", c.listen, "/v2/shards/init", "status");
             }
         }
+        #[cfg(feature = "transparent")]
         if let Some(c) = active(&self.transaction_details)? {
             c.validate()?;
             layout.listener("transaction_details", c.status_listen)?;
@@ -182,6 +215,7 @@ impl Config {
                 "display",
             );
         }
+        #[cfg(feature = "receiver")]
         if let Some(c) = active(&self.receiver)? {
             c.validate()?;
             if !c.serve {
@@ -198,6 +232,12 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(all(
+        feature = "enhance",
+        feature = "status",
+        feature = "transparent",
+        feature = "receiver"
+    ))]
     #[test]
     fn all_product_example_keeps_independent_modes() {
         let config: Config = serde_json::from_str(include_str!(
@@ -208,6 +248,7 @@ mod tests {
         assert_eq!(layout.probes.len(), 5);
         assert_eq!(layout.listeners.len(), 8);
     }
+    #[cfg(feature = "receiver")]
     #[test]
     fn disabled_products_need_no_settings_or_files() {
         let config: Config = serde_json::from_value(serde_json::json!({"management_listen":"127.0.0.1:18080", "receiver":{"enabled":false}})).unwrap();
@@ -245,5 +286,15 @@ mod tests {
             r#"{"management_listen":"127.0.0.1:18080","typo":true}"#
         )
         .is_err());
+    }
+    #[cfg(not(feature = "transparent"))]
+    #[test]
+    fn transparent_sections_require_the_compiled_product() {
+        for section in ["transparent_history", "transaction_details"] {
+            let raw = format!(
+                r#"{{"management_listen":"127.0.0.1:18080","{section}":{{"enabled":false}}}}"#
+            );
+            assert!(serde_json::from_str::<Config>(&raw).is_err(), "{section}");
+        }
     }
 }
