@@ -659,6 +659,88 @@ mod tests {
     }
 
     #[test]
+    fn unequal_shards_match_monolithic_hints_and_answers() {
+        // One column block and three row blocks are sufficient to exercise
+        // unequal shards, a nonzero setup offset, and zero-padded source rows.
+        // The deployed six-column Engine/composed-tail oracle runs separately
+        // with qualification-tests.
+        let layout = DatabaseLayout {
+            record_bytes: 4096,
+            records_per_row: 1,
+            shard_rows: 6144,
+            pir_profile: ipir_sp::SimplePirProfile::P16Q48,
+        };
+        let (rlwe, params) = shard_parameters(&layout).unwrap();
+        assert_eq!(params.instances, 1);
+        assert_eq!(params.db_rows, 6144);
+        let mut rows = vec![0; layout.shard_bytes()];
+        for (index, row) in rows
+            .chunks_exact_mut(layout.row_bytes())
+            .take(4097)
+            .enumerate()
+        {
+            for (column, word) in row.chunks_exact_mut(2).enumerate() {
+                let value = ((index * 17 + column * 31 + 1) % 65536) as u16;
+                word.copy_from_slice(&value.to_le_bytes());
+            }
+        }
+        let seed = DatabaseId::Enhance.setup_seed_bytes();
+        #[cfg(feature = "native-reinspiring")]
+        let setup = crate::native::public_query_masks(seed, params.db_rows, params.db_cols);
+        #[cfg(not(feature = "native-reinspiring"))]
+        let setup = ipir_sp::IPIRClient::from_profile(
+            params.num_items,
+            params.item_size_bits,
+            layout.pir_profile,
+        )
+        .unwrap()
+        .generate_public_query_setup_simplepir_from_seed(seed)
+        .polys()
+        .to_vec();
+        let monolithic =
+            PreparedShard::build(&layout, 0, 0, "whole".into(), &rows, &rlwe, &setup).unwrap();
+        let shards: Vec<_> = [(0, 2048), (2048, 4096)]
+            .into_iter()
+            .map(|(start, count)| {
+                PreparedShard::build(
+                    &DatabaseLayout {
+                        shard_rows: count,
+                        ..layout
+                    },
+                    0,
+                    start,
+                    "part".into(),
+                    &rows[start * layout.row_bytes()..(start + count) * layout.row_bytes()],
+                    &rlwe,
+                    &setup,
+                )
+                .unwrap()
+            })
+            .collect();
+        let mut hint = shards[0].crs_blocks().to_vec();
+        add_crs_blocks_assign_mod(&mut hint, shards[1].crs_blocks(), &rlwe).unwrap();
+        assert_eq!(hint, monolithic.crs_blocks());
+        let modulus = crate::runtime::modulus();
+        for target in [0, 2047, 2048, 4096, 4097, 6143] {
+            let mut query = vec![0; params.db_rows];
+            query[target] = modulus - 1;
+            let mut combined = vec![0; params.db_cols];
+            for shard in &shards {
+                let runtime = shard.runtime();
+                let start = runtime.query_row_start;
+                let end = start + runtime.server.params().db_rows;
+                let answer = runtime.evaluate(&rlwe, &query[start..end]).unwrap();
+                add_intermediate_assign_mod(&mut combined, &answer, modulus).unwrap();
+            }
+            assert_eq!(
+                combined,
+                monolithic.runtime().evaluate(&rlwe, &query).unwrap(),
+                "query row {target}"
+            );
+        }
+    }
+
+    #[test]
     fn shard_combiners_reject_malformed_contributions() {
         let (rlwe, _) = shard_parameters(&crate::types::ENHANCE_LAYOUT).unwrap();
         assert!(add_intermediate_assign_mod(&mut [0; 8], &[0; 7], rlwe.q).is_err());

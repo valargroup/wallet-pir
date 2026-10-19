@@ -1321,6 +1321,9 @@ mod tests {
         assert_eq!(faults.live_bytes.load(SeqCst), 0);
     }
 
+    // The fast algebra oracle in ipir uses one column block. Keep the full
+    // Engine/composed-tail oracle at deployed geometry in qualification.
+    #[cfg(feature = "qualification-tests")]
     #[test]
     fn unequal_units_match_monolithic_preprocessing_and_evaluation() {
         let directory = tempfile::tempdir().unwrap();
