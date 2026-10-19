@@ -66,6 +66,7 @@ def ready(unit, map_sha256):
 
 class Harness(unittest.TestCase):
     service = None
+    descriptors = ()
 
     def tearDown(self):
         self.dir.cleanup()
@@ -75,7 +76,7 @@ class Harness(unittest.TestCase):
 
         def sleep(seconds):
             now[0] += seconds
-        code = cli.main(['--inventory', str(self.inventory), '--state-dir', str(self.state), 'transparent-binary-' + action,
+        code = cli.main([*self.descriptors, '--inventory', str(self.inventory), '--state-dir', str(self.state), 'transparent-binary-' + action,
                          '--request', str(self.request), '--request-sha256',
                          digest or hashlib.sha256(self.request.read_bytes()).hexdigest(), *extra],
                         executor=self.fake, out=lines.append, sleep=sleep, clock=lambda: now[0],
@@ -691,6 +692,191 @@ class DisplayUpgrade(Harness):
         self.assertEqual(self.fake.probe_unit('gpu', DISPLAY_WORKER)['exe_sha256'], sha256(OLD))
         self.assertEqual(self.run_cli('rollback')[0], 0)
         self.assertEqual(self.fake.probe_unit('coordinator', DISPLAY_CONTROLLER)['exe_sha256'], sha256(CTRL_OLD))
+
+
+PUBLISHER, PUBLISHER_CONFIG = binary_upgrade.PUBLISHER_UNIT, binary_upgrade.PUBLISHER_CONFIG
+PUBLISHER_BIN = '/opt/pir-publisher/releases/%s/pir-publisher' % ('cd' * 32)
+HISTORY_LISTEN, DISPLAY_LISTEN = '10.142.0.3:8096', '127.0.0.1:8098'
+
+
+class UnifiedOwner:
+    """The live topology after `publisher-cutover-*`: pir-publisher.service owns both products' controller duties.
+
+    The standalone controllers are stopped and disabled, the inventory names no
+    product controller role, and the workers of both products keep their units.
+    """
+    descriptors = ('--descriptors', str(ROOT / 'tools/deploy/publisher/transparent-services.toml'))
+
+    def adopt(self, standalone, status_url):
+        shape = self.fake.health_shapes[('coordinator', standalone)]
+        self.fake.systemctl('coordinator', 'stop', standalone)
+        self.fake.systemctl('coordinator', 'disable', standalone)
+        self.configuration = {
+            'management_listen': '127.0.0.1:18080',
+            'transparent_history': {'enabled': True, 'settings': {
+                **CONFIG, 'listen': HISTORY_LISTEN, 'ship_runtimes': False, 'distribute_prepared': False}},
+            'transaction_details': {'enabled': True, 'settings': {
+                'root': DISPLAY_ROOT, 'journal': '/srv/txid-display-genesis/journal-v3', 'status_listen': DISPLAY_LISTEN,
+                'ship_runtimes': False, 'trust_sealed': False}}}
+        self.fake.install('coordinator', PUBLISHER, '[Service]\nExecStart=%s --config %s\nTimeoutStopSec=infinity\n'
+                          % (PUBLISHER_BIN, PUBLISHER_CONFIG),
+                          files={PUBLISHER_BIN: b'pir-publisher', PUBLISHER_CONFIG: json.dumps(self.configuration)})
+        self.fake.endpoints[('coordinator', status_url)] = PUBLISHER
+        self.fake.health_shapes[('coordinator', PUBLISHER)] = shape
+        self.fake.endpoints[('coordinator', 'http://127.0.0.1:18080/ready')] = PUBLISHER
+        self.write_inventory()
+        self.write_request()
+
+    def write_inventory(self, change=lambda document: None):
+        history = [{'host': 'v12', 'unit': u, 'vars': {'listen': l}} for u, l in WORKERS.items()]
+        display = [{'host': 'gpu', 'unit': DISPLAY_WORKER, 'vars': {'listen': '10.142.0.20:8094'}}]
+        document = {
+            'lock': {'type': 'remote', 'host': 'coordinator'}, 'ssh': {'mode': 'config'},
+            'hosts': {'v12': {}, 'gpu': {}, 'coordinator': {}},
+            'services': {'transparent-history': {'roles': {'worker': history}},
+                         'transparent-display': {'roles': {'worker': display}},
+                         'publisher': {'roles': {'server': [{'host': 'coordinator',
+                                                             'vars': {'management_listen': '127.0.0.1:18080'}}]},
+                                       'managed_products': ['transparent_history', 'transaction_details'],
+                                       'exact_check': {'host': 'coordinator', 'argv': ['/bin/check-both']}}}}
+        change(document)
+        self.inventory.write_text(json.dumps(document))
+
+    def base_request(self, component):
+        request = self.standalone_request(component)
+        files = {path: digest for path, digest in request['controller']['files'].items()
+                 if path != CONFIG_PATH}
+        request['controller'] = {'host': 'coordinator',
+                                 'unit_sha256': binary_upgrade.unit_digest(self.fake.probe_unit('coordinator', PUBLISHER)),
+                                 'files': {**files, PUBLISHER_CONFIG: self.fake.sha256('coordinator', PUBLISHER_CONFIG)}}
+        return request
+
+    def publisher_untouched(self):
+        self.assertFalse([m for m in self.fake.mutations('coordinator') if m[1] == 'systemctl' and PUBLISHER in m[2]],
+                         'a worker transaction never restarts the unified publisher')
+        self.assertEqual(self.fake.probe_unit('coordinator', PUBLISHER)['active_state'], 'active')
+
+    def refuses(self, *, change_request=None, message=None):
+        if change_request:
+            self.write_request(change_request)
+        code, lines = self.run_cli('preflight', '--binary', str(self.binary))
+        self.assertEqual(code, 1, lines)
+        if message:
+            self.assertTrue(any(message in line for line in lines), lines)
+        self.assertEqual(self.run_cli('deploy', '--binary', str(self.binary), '--skip-exact-check')[0], 1)
+
+    def controller_component_directs_to_publisher_lifecycle(self):
+        self.write_request(component='controller')
+        for action, extra in (('preflight', ()), ('deploy', ('--skip-exact-check',))):
+            code, lines = self.run_cli(action, '--binary', str(self.controller_binary), *extra)
+            self.assertEqual(code, 1, lines)
+            self.assertTrue(any('publisher-cutover-*' in line for line in lines), lines)
+        self.assertEqual(self.fake.probe_unit('coordinator', PUBLISHER)['exe_sha256'], sha256(b'pir-publisher'))
+        self.publisher_untouched()
+
+
+class UnifiedHistoryUpgrade(UnifiedOwner, Harness):
+    # The standalone fleet's setup and helpers, without its standalone-only tests.
+    standalone_request = HistoryUpgrade.base_request
+    running, pins, load_active = HistoryUpgrade.running, HistoryUpgrade.pins, HistoryUpgrade.load_active
+
+    def setUp(self):
+        HistoryUpgrade.setUp(self)
+        self.adopt(CONTROLLER, 'http://%s/v1/status' % HISTORY_LISTEN)
+        self.fake.log.clear()
+
+    def test_unified_worker_upgrade_keeps_publisher_load_and_rollback(self):
+        self.assertEqual(self.run_cli('baseline')[0], 0)
+        code, lines = self.run_cli('preflight', '--binary', str(self.binary))
+        self.assertEqual(code, 0, lines)
+        code, lines = self.run_cli('deploy', '--binary', str(self.binary), '--skip-exact-check')
+        self.assertEqual(code, 0, lines)
+        self.assertEqual(set(self.running().values()), {sha256(NEW)})
+        self.assertEqual(self.pins(), {i: sha256(NEW) for i in IDS.values()})
+        self.assertTrue(self.load_active())
+        self.publisher_untouched()
+        self.assertEqual(self.run_cli('rollback')[0], 0)
+        self.assertEqual(set(self.running().values()), {sha256(OLD)})
+        self.assertEqual(self.pins(), {i: sha256(OLD) for i in IDS.values()})
+        self.publisher_untouched()
+
+    def test_unified_controller_upgrade_belongs_to_the_publisher_lifecycle(self):
+        self.run_cli('baseline')
+        self.controller_component_directs_to_publisher_lifecycle()
+
+    def test_unified_ambiguous_owner_or_drift_refuses_before_any_change(self):
+        self.run_cli('baseline')
+        published = self.fake.read('coordinator', PUBLISHER_CONFIG)
+        drift = {
+            'follow_journal': lambda c: c['transparent_history']['settings'].update(follow_journal=True),
+            'source': lambda c: c['transparent_history']['settings'].update(source_sha='ff27d649'),
+            'disabled': lambda c: c['transparent_history'].update(enabled=False),
+        }
+        for name, change in drift.items():
+            with self.subTest(name):
+                configuration = json.loads(published)
+                change(configuration)
+                self.fake.put('coordinator', PUBLISHER_CONFIG, json.dumps(configuration))
+                self.write_request()  # Pinning the drifted bytes does not make them acceptable.
+                self.refuses()
+                self.fake.put('coordinator', PUBLISHER_CONFIG, published)
+        self.write_request()
+        with self.subTest('unpinned configuration'):
+            self.fake.put('coordinator', PUBLISHER_CONFIG, published + ' ')
+            self.refuses(message='differs from its pinned digest')
+            self.fake.put('coordinator', PUBLISHER_CONFIG, published)
+        with self.subTest('standalone controller running beside the publisher'):
+            self.fake.systemctl('coordinator', 'restart', CONTROLLER)
+            self.refuses(message='beside ' + PUBLISHER)
+            self.fake.systemctl('coordinator', 'stop', CONTROLLER)
+        with self.subTest('both owners in the inventory'):
+            self.write_inventory(lambda d: d['services']['transparent-history']['roles'].update(controller=[
+                {'host': 'coordinator', 'unit': CONTROLLER, 'vars': {'listen': HISTORY_LISTEN}}]))
+            self.refuses()
+        with self.subTest('owner on another host'):
+            self.write_inventory(lambda d: d['services']['publisher']['roles']['server'][0].update(host='v12'))
+            self.refuses()
+        self.write_inventory()
+        with self.subTest('registry without the publisher'):
+            self.descriptors = ()
+            self.refuses()
+        self.assertEqual(set(self.running().values()), {sha256(OLD)})
+        self.publisher_untouched()
+
+
+class UnifiedDisplayUpgrade(UnifiedOwner, Harness):
+    standalone_request = DisplayUpgrade.base_request
+    install_controller = DisplayUpgrade.install_controller
+
+    def setUp(self):
+        DisplayUpgrade.setUp(self)
+        self.adopt(DISPLAY_CONTROLLER, 'http://%s/v1/status' % DISPLAY_LISTEN)
+        self.fake.log.clear()
+
+    def test_unified_worker_upgrade_keeps_publisher_and_rolls_back(self):
+        self.assertEqual(self.run_cli('baseline')[0], 0)
+        code, lines = self.run_cli('deploy', '--binary', str(self.binary), '--skip-exact-check')
+        self.assertEqual(code, 0, lines)
+        self.assertEqual(self.fake.probe_unit('gpu', DISPLAY_WORKER)['exe_sha256'], sha256(NEW))
+        self.publisher_untouched()
+        self.assertEqual(self.run_cli('rollback')[0], 0)
+        self.assertEqual(self.fake.probe_unit('gpu', DISPLAY_WORKER)['exe_sha256'], sha256(OLD))
+        self.publisher_untouched()
+
+    def test_unified_controller_upgrade_belongs_to_the_publisher_lifecycle(self):
+        self.run_cli('baseline')
+        self.controller_component_directs_to_publisher_lifecycle()
+
+    def test_unified_display_root_and_layout_refuse(self):
+        self.run_cli('baseline')
+        self.refuses(change_request=lambda r: r['publication'].update(root='/srv/other/root'),
+                     message='publisher display root')
+        self.write_request()
+        self.fake.put('coordinator', DISPLAY_ROOT + '/display-root.json', '{"geometry":"txid-2k8"}')
+        self.write_request()
+        self.refuses(message='txid-4k8')
+        self.assertEqual(self.fake.probe_unit('gpu', DISPLAY_WORKER)['exe_sha256'], sha256(OLD))
+        self.publisher_untouched()
 
 
 if __name__ == '__main__':

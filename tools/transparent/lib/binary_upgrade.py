@@ -10,6 +10,12 @@ plus each worker's ready identity, and it must be identical before, after each
 restart and after rollback. Staging, journals, rollback and the production lock
 are the shared engine's; this module adds only the product refusals. Anything
 outside the supported topology refuses rather than being adapted.
+
+When the inventory's unified publisher manages the product, `pir-publisher.service`
+is the controller authority: its product settings in the installed publisher
+configuration replace the standalone controller's, and the product's own status
+listener reports authority. Only worker transactions run here then; the
+publisher's executable changes through `publisher-cutover-*`.
 """
 import dataclasses
 import hashlib
@@ -33,6 +39,10 @@ PRODUCTS = {
         'worker_warm_seconds': 1800,
         'controller': 'transparent-v12-publish-controller.service',
         'config': '/opt/transparent-publisher/v12/controller.json',
+        # The product's section of the unified publisher configuration and the
+        # setting naming its status listener.
+        'publisher_product': 'transparent_history',
+        'status_listen': 'listen',
         # Values the controller configuration must hold; a single journal
         # writer (follow_journal false) and no shipped runtimes.
         'config_equals': {'follow_journal': False, 'data_dir': '/srv/transparent-activity/full-v3/journal',
@@ -55,6 +65,8 @@ PRODUCTS = {
         # Run mode takes no --geometry: root/display-root.json pins txid-4k8,
         # so the request pins that file's digest under controller.files.
         'controller_root_file': 'display-root.json',
+        'publisher_product': 'transaction_details',
+        'status_listen': 'status_listen',
         'publication_keys': ('root',),
         'ready_keys': ('role',),
         'roles': ('combined',),
@@ -70,6 +82,9 @@ APM_LISTEN = '127.0.0.1:3002'
 APM_SERVICE = {'transparent-history': 'transparent', 'transparent-display': 'txid'}
 REQUEST_KEYS = {'schema', 'service', 'component', 'release', 'publication', 'controller', 'workers', 'load'}
 COMPONENTS = ('workers', 'controller')
+# The unified owner, as installed by `publisher-cutover-*`.
+PUBLISHER_UNIT = 'pir-publisher.service'
+PUBLISHER_CONFIG = '/etc/wallet-pir/publisher.json'
 
 
 def problem_if(condition, message, problems):
@@ -120,7 +135,9 @@ def validate(request):
     require(isinstance(files, dict) and files and all(p.startswith('/') and SHA256.match(d or '') for p, d in files.items()),
             'controller.files maps absolute paths to sha256')
     if 'config' in product:
-        require(product['config'] in files, 'controller.files must pin ' + product['config'])
+        # Which file holds the settings depends on the owner; controller_problems checks it.
+        require(product['config'] in files or PUBLISHER_CONFIG in files,
+                'controller.files must pin %s or %s' % (product['config'], PUBLISHER_CONFIG))
     workers = request['workers']
     require(isinstance(workers, dict) and workers, 'workers maps target keys to pinned state')
     for key, pinned in workers.items():
@@ -202,12 +219,32 @@ def unit_digest(state):
 class Upgrade:
     """The product refusals for one pinned request; every method only reads."""
 
-    def __init__(self, request, service, inventory):
+    def __init__(self, request, service, inventory, publisher=None):
         self.request = request
         self.product = PRODUCTS[request['service']]
         self.service = service
         self.inventory = inventory
+        # The unified publisher's descriptor, when the registry defines one.
+        self.publisher = publisher
+        self.unified = False
         self.digest = durable.digest(request)
+
+    def unified_owner(self, controllers):
+        """The single pir-publisher server managing this product, None when none does, or refusal."""
+        spec = self.inventory.services.get('publisher')
+        if spec is None or self.product['publisher_product'] not in (spec.get('managed_products') or []):
+            return None
+        if controllers:
+            raise DeployError('unsupported topology: %s and a standalone controller both own %s'
+                              % (PUBLISHER_UNIT, self.request['service']))
+        if self.publisher is None:
+            raise DeployError('the inventory names a unified publisher; pass --descriptors '
+                              'tools/deploy/publisher/transparent-services.toml')
+        servers = descriptors.targets(self.publisher, self.inventory)
+        if [(t.host, t.unit) for t in servers] != [(self.request['controller']['host'], PUBLISHER_UNIT)]:
+            raise DeployError('unsupported topology: the unified owner must be %s on %s'
+                              % (PUBLISHER_UNIT, self.request['controller']['host']))
+        return servers[0]
 
     def worker_targets(self):
         """Exactly the supported worker set, or refusal."""
@@ -223,11 +260,16 @@ class Upgrade:
             raise DeployError('request pins workers %s but the inventory has %s'
                               % (sorted(self.request['workers']), sorted(t.key for t in workers)))
         controllers = [t for t in everything if t.role.name == 'controller']
-        if [(t.host, t.unit) for t in controllers] != [(self.request['controller']['host'], self.product['controller'])]:
+        owner = self.unified_owner(controllers)
+        if owner is not None:
+            # The product's status listener is read from the installed configuration.
+            self.unified, self.controller, self.controller_url = True, owner, None
+        elif [(t.host, t.unit) for t in controllers] != [(self.request['controller']['host'], self.product['controller'])]:
             raise DeployError('unsupported topology: controller must be %s on %s'
                               % (self.product['controller'], self.request['controller']['host']))
-        self.controller = controllers[0]
-        self.controller_url = self.controller.url(self.controller.role.health)
+        else:
+            self.controller = controllers[0]
+            self.controller_url = self.controller.url(self.controller.role.health)
         workers = [dataclasses.replace(t, role=dataclasses.replace(t.role, ready_timeout=self.product['worker_warm_seconds']))
                    for t in workers]
         self.workers = workers
@@ -238,6 +280,9 @@ class Upgrade:
         workers = self.worker_targets()
         if self.request['component'] == 'workers':
             return workers, self.service
+        if self.unified:
+            raise DeployError('%s owns the %s controller; change its executable with publisher-cutover-* '
+                              '(docs/publisher.md), not transparent-binary-*' % (PUBLISHER_UNIT, self.request['service']))
         state = ex.probe_unit(self.controller.host, self.controller.unit)
         try:
             binary = units.split_exec(units.exec_start(units.effective(
@@ -249,13 +294,41 @@ class Upgrade:
             raise DeployError('controller runs %s, the worker executable; refusing to select it as the controller' % binary)
         return [self.controller], dataclasses.replace(self.service, root=self.service.root + '/controller', binary=name)
 
+    def settings_path(self):
+        return PUBLISHER_CONFIG if self.unified else self.product.get('config')
+
+    def controller_settings(self, ex):
+        """The controller's product settings: the standalone file, or the enabled product's publisher section."""
+        text = ex.read(self.request['controller']['host'], self.settings_path())
+        document = json.loads(text) if text else {}
+        if not self.unified:
+            return document
+        section = document.get(self.product['publisher_product']) if isinstance(document, dict) else None
+        if not isinstance(section, dict) or section.get('enabled') is not True or not isinstance(section.get('settings'), dict):
+            raise ValueError('%s does not enable %s' % (PUBLISHER_CONFIG, self.product['publisher_product']))
+        return section['settings']
+
+    def status_url(self, ex):
+        if self.controller_url is not None:
+            return self.controller_url
+        return 'http://%s/v1/status' % self.controller_settings(ex)[self.product['status_listen']]
+
     def controller_problems(self, ex, *, check_authority=True):
         problems = []
         controller = self.request['controller']
         host = controller['host']
-        state = ex.probe_unit(host, self.product['controller'])
+        state = ex.probe_unit(host, self.controller.unit)
         problem_if(check_authority and state['active_state'] != 'active', 'controller is %s' % state['active_state'], problems)
         problem_if(unit_digest(state) != controller['unit_sha256'], 'controller unit changed from the pinned bytes', problems)
+        if self.unified:
+            problem_if(PUBLISHER_CONFIG not in controller['files'], 'controller.files must pin ' + PUBLISHER_CONFIG, problems)
+            standalone = ex.probe_unit(host, self.product['controller'])
+            problem_if(standalone['active_state'] not in ('inactive', 'failed') or standalone['main_pid'],
+                       'standalone %s is %s beside %s' % (self.product['controller'], standalone['active_state'],
+                                                          PUBLISHER_UNIT), problems)
+        elif 'config' in self.product:
+            problem_if(self.product['config'] not in controller['files'],
+                       'controller.files must pin ' + self.product['config'], problems)
         files = dict(controller['files'])
         adapter = self.request.get('staging_adapter')
         if adapter and ex.sha256(host, self.product['config']) == hashlib.sha256(adapter['configuration'].encode()).hexdigest():
@@ -263,9 +336,11 @@ class Upgrade:
             files[adapter_path(adapter)] = adapter['sha256']
         for path, digest in sorted(files.items()):
             problem_if(ex.sha256(host, path) != digest, 'controller file %s differs from its pinned digest' % path, problems)
+        try:
+            config = self.controller_settings(ex) if self.settings_path() else {}
+        except ValueError as error:
+            return problems + ['controller settings: %s' % error]
         if 'config' in self.product:
-            text = ex.read(host, self.product['config'])
-            config = json.loads(text) if text else {}
             for key, value in self.product['config_equals'].items():
                 problem_if(config.get(key) != value, 'controller %s is %r, expected %r' % (key, config.get(key), value), problems)
             for key, value in self.product['config_absent_or'].items():
@@ -275,12 +350,16 @@ class Upgrade:
             for key in ('fleet_config', 'fleet_command'):
                 problem_if(config.get(key) not in files, 'controller %s is not a pinned file' % key, problems)
         else:
-            words = units.split_exec(units.exec_start(units.effective(
-                [state['fragment_text'] or ''] + [d['text'] for d in state['drop_ins']])))[2].split()
             root = self.request['publication']['root']
-            problem_if('--geometry' in words, 'controller passes --geometry, which run mode does not take', problems)
-            problem_if(not any(words[i:i + 2] == ['--root', root] for i in range(len(words))),
-                       'controller does not run --root %s' % root, problems)
+            if self.unified:
+                problem_if(config.get('root') != root, 'publisher display root is %r, request pins %r'
+                           % (config.get('root'), root), problems)
+            else:
+                words = units.split_exec(units.exec_start(units.effective(
+                    [state['fragment_text'] or ''] + [d['text'] for d in state['drop_ins']])))[2].split()
+                problem_if('--geometry' in words, 'controller passes --geometry, which run mode does not take', problems)
+                problem_if(not any(words[i:i + 2] == ['--root', root] for i in range(len(words))),
+                           'controller does not run --root %s' % root, problems)
             layout_path = '%s/%s' % (root, self.product['controller_root_file'])
             problem_if(layout_path not in controller['files'],
                        'controller.files must pin %s' % layout_path, problems)
@@ -316,7 +395,11 @@ class Upgrade:
     def authority_problems(self, ex):
         """The controller's current map and its health; the map advances during a rollout."""
         controller = self.request['controller']
-        status, body = ex.http_get(controller['host'], self.controller_url)
+        try:
+            url = self.status_url(ex)
+        except (KeyError, TypeError, ValueError) as error:
+            return None, ['controller status listener is unknown: %s' % error]
+        status, body = ex.http_get(controller['host'], url)
         try:
             document = json.loads(body) if status == 200 else None
         except ValueError:
@@ -377,7 +460,7 @@ class Upgrade:
         from tools.transparent.lib import activity_schema_routing as routing
         host, map_sha256 = self.request['controller']['host'], document.get('map_sha256')
         try:
-            config = json.loads(ex.read(host, self.product['config']) or 'null')
+            config = self.controller_settings(ex)
             fleet = json.loads(ex.read(host, config['fleet_config']) or 'null')
             path = '%s/%s.assignment.json' % (fleet['state_dir'], map_sha256)
             assignment = json.loads(ex.read(host, path) or 'null')

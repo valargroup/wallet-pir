@@ -500,16 +500,18 @@ def binary_upgrade(args, executor, out, **options):
     if action in ('deploy', 'rollback') or getattr(args, 'stage', False):
         # Every binary change names the installed operations package's revision.
         check_installed(mutation=True, revision=release['git_sha'])
-    service = descriptors.load_descriptors(args.descriptors)[request['service']]
+    services = descriptors.load_descriptors(args.descriptors)
     inventory = descriptors.load_inventory(args.inventory)
     executor = executor or SSHExecutor(inventory)
-    upgrade = module.Upgrade(request, service, inventory)
+    upgrade = module.Upgrade(request, services[request['service']], inventory, services.get('publisher'))
     targets, component = upgrade.component(executor)
     deployer = module.UpgradeDeployer(upgrade, action, component, inventory, executor, args.state_dir, args.baseline,
                                       out=out, **options)
     deployer.staging_adapter = getattr(args, 'staging_adapter', None)
-    # The baseline records both components, so either transaction is covered.
-    deployer.targets = upgrade.workers + [upgrade.controller] if action == 'baseline' else targets
+    # The baseline records both components, so either transaction is covered;
+    # a unified publisher is not a component of this transaction.
+    both = upgrade.workers + ([] if upgrade.unified else [upgrade.controller])
+    deployer.targets = both if action == 'baseline' else targets
     workers = upgrade.workers
     sha, binary = release['binary_sha256'], getattr(args, 'binary', None)
     if binary and file_sha256(Path(binary).resolve()) != sha:

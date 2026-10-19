@@ -3898,6 +3898,15 @@ component. `baseline` records both components.
 - History refuses unless the controller holds `follow_journal: false`, the full-v3 journal, the
   full-v12 publication root and no `ship_runtimes`. Display refuses unless its controller runs
   `--root <root>` without `--geometry`.
+- **Unified owner.** When the inventory's `publisher.managed_products` names the product, the one
+  `pir-publisher.service` server on `controller.host` is the controller authority; pass
+  `--descriptors tools/deploy/publisher/transparent-services.toml`. The request pins that unit and
+  `/etc/wallet-pir/publisher.json`; the enabled product section holds the settings checked above
+  (display: `root` instead of `--root`), and its `listen` (history) or `status_listen` (display)
+  serves the product's `/v1/status`. Only `workers` transactions run, never restarting the
+  publisher, and `baseline` records only the workers; a `controller` request refuses and the
+  publisher executable changes through `publisher-cutover-*` ([publisher](../publisher.md)). A
+  standalone controller still running or still in the inventory beside it refuses.
 - Worker readiness uses the existing product warmup budgets: 1,800 seconds for history
   (`upgrade-transparent-fleet.py`) and 7,200 seconds for the 4k8 Display request. Full warm
   readiness remains required; the generic binary engine's 180-second default is insufficient
