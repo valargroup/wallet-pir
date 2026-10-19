@@ -148,7 +148,10 @@ def service_jobs(jobs, family, cuda=False):
         ['Select full checks', 'Full checks complete'] if common else []) +
         ['Validate selected helper checks', *shared, *infrastructure]]
     for name in set(required):
-        matching = [job for job in jobs if job.get('name') == name]
+        # Reusable publication jobs can be skipped under the same display name
+        # as the caller's successful publisher. Require one executed gate;
+        # duplicate executed jobs, failures and missing gates still refuse.
+        matching = [job for job in jobs if job.get('name') == name and job.get('conclusion') != 'skipped']
         if (len(matching) != 1 or matching[0].get('status') != 'completed'
                 or matching[0].get('conclusion') != 'success'):
             return False

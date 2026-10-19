@@ -50,6 +50,14 @@ def complete_jobs(family):
 
 
 class QualificationTests(unittest.TestCase):
+    def test_skipped_reusable_publication_does_not_hide_the_executed_gate(self):
+        jobs = complete_jobs('enhance')
+        name = 'Enhance / Prepare qualified release artifacts'
+        skipped = dict(name=name, status='completed', conclusion='skipped')
+        self.assertTrue(release.service_jobs(jobs + [skipped], 'enhance'))
+        self.assertFalse(release.service_jobs(jobs + [dict(skipped, conclusion='failure')], 'enhance'))
+        self.assertFalse(release.service_jobs([j for j in jobs if j['name'] != name] + [skipped], 'enhance'))
+
     def test_cuda_publication_rechecks_archive_integrity_abi_and_clean_source(self):
         kind = 'enhance-pir-native-cuda'
         with tempfile.TemporaryDirectory() as directory:
