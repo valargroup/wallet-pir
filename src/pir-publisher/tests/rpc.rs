@@ -149,7 +149,7 @@ fn start(root: &Path, address: &str, rpc: &str) -> Process {
         .open(root.join("coordinator.log"))
         .unwrap();
     Process(
-        Command::new(env!("CARGO_BIN_EXE_enhance-pir-server"))
+        Command::new(env!("CARGO_BIN_EXE_enhance-pir-server-test"))
             .args([
                 "coordinator",
                 "--listen",

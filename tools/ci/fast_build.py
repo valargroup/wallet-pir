@@ -32,9 +32,10 @@ def publisher_runs_alone(name, kinds):
 
 
 # Dev-dependencies activate only for roots named in one Cargo command. These
-# packages define the fast closure (chain `testing`, reqwest `blocking`, and
-# the publisher product features). A smaller affected set still compiles them
-# so the warm cache is reused; only affected packages are executed.
+# packages define the fast closure. The host test features compile the wallet
+# client and chain fixtures once for Enhance, Status and Transparent. A smaller
+# affected set still compiles them so the warm cache is reused; only affected
+# packages are executed.
 FAST_FEATURE_ROOTS = frozenset({
     'enhance-pir-client',
     'enhance-pir-exercise',
@@ -194,6 +195,13 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3,
         package_bins.append((skipped_bin, included_bins))
     if not kinds and not integration_names:
         return
+    # Product fixture modules compile only when the host enables them. One
+    # feature set builds the wallet client and chain fixtures for every product.
+    features.update({
+        'pir-publisher/enhance-tests',
+        'pir-publisher/status-tests',
+        'pir-publisher/transparent-tests',
+    })
     features.update(additional_features)
     command = ['cargo', 'test', '--locked', '--profile', 'release-fast', '--no-run', *options]
     for name in sorted(compile_packages):

@@ -32,7 +32,7 @@ impl Drop for Process {
 }
 
 fn binary() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_enhance-pir-server"))
+    Command::new(env!("CARGO_BIN_EXE_enhance-pir-server-test"))
 }
 
 fn log(root: &Path) -> std::fs::File {

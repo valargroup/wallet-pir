@@ -121,10 +121,10 @@ class CorrectnessSelectionTests(unittest.TestCase):
             additional_features=correctness.FEATURES.split(','), environment=environment,
             case_log=environment['WALLET_PIR_CASE_LOG'], enforce_budget=True)
         self.assertFalse(any('--workspace' in command and '--no-run' in command for command in calls))
-        self.assertTrue(any('-p' in command and 'enhance-publisher' in command and 'ci_hint' in command
+        self.assertTrue(any('-p' in command and 'pir-publisher' in command and 'ci_hint' in command
                             for command in calls))
         self.assertTrue(any('enhance-query-server' in command and 'routing_contract' in command
-                            and 'v7_contract' in command for command in calls))
+                            for command in calls))
         self.assertTrue(any('status-query-server' in command and '--tests' in command for command in calls))
         self.assertTrue(any('--doc' in command and '--workspace' in command for command in calls))
         self.assertTrue(any('--manifest-path' in command and

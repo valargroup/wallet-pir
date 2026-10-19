@@ -5,12 +5,12 @@
 //! this publisher without depending on the standalone command-line executable.
 
 use pir_control::admission;
-#[cfg(any(test, feature = "cli"))]
+#[cfg(feature = "cli")]
 use status_query_server as status;
 use status_query_server::*;
 
 pub mod authority;
-#[cfg(any(test, feature = "cli"))]
+#[cfg(feature = "cli")]
 pub mod cli;
 pub mod publisher;
 pub mod source;

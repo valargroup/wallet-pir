@@ -332,7 +332,7 @@ pub(crate) async fn tls_router(root: &Path, router: Router) -> Tls {
     let mut child = tokio::process::Command::new("python3")
         .arg(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/tests/support/distribution_tls.py"
+            "/../../pir-publisher/tests/support/distribution_tls.py"
         ))
         .arg(address.to_string())
         .arg(&cert)

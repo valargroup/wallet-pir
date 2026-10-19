@@ -18,8 +18,10 @@ qualification-tests = []
 default = []
 native-reinspiring = ["enhance-query-server/native-reinspiring", "dep:zakura-pir-publisher", "dep:reinspiring", "ipir-sp/native-reinspiring"]
 cuda = ["enhance-query-server/cuda", "ipir-sp/cuda"]
-# Exposes the journal's injected I/O failure to the ingest integration tests.
+# Exposes the journal's injected I/O failure to the host's Enhance regressions.
 fault-injection = []
+# Widens private helpers for those regressions. Production builds leave it off.
+fixtures = []
 
 [dependencies]
 pir-pipeline = { path = "../../shared/pir-pipeline" }
@@ -47,28 +49,5 @@ zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.g
 zakura-pir-publisher = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "a2f87e6f235dc16840be1dd7fc88e6dd06f0a268", default-features = false, features = ["enhance"], optional = true }
 
 [dev-dependencies]
-zakura-pir-publisher = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "a2f87e6f235dc16840be1dd7fc88e6dd06f0a268", default-features = false }
-# Independent Status client for the real HTTP runtime regression.
-enhance-publisher = { path = ".", features = ["fault-injection"] }
-zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "a2f87e6f235dc16840be1dd7fc88e6dd06f0a268", default-features = false, features = ["enhance", "testing"] }
-# Independent wallet Enhance client, which is native-only, and the synthetic
-# Ironwood output fixture that authenticates PIR-returned records.
 tempfile = "3"
-libc = "0.2"
-# The native packing HTTP test decodes public parameters.
-base64 = "0.22"
-# Used only by integration tests and examples.
-inspiring = "=0.1.0-rc.3"
-rayon = "1"
-tokio-stream = "0.1"
 tower = { version = "0.5", features = ["util"] }
-
-zakura-pir-client = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "a2f87e6f235dc16840be1dd7fc88e6dd06f0a268", default-features = false, features = ["status", "enhance", "testing"] }
-
-[dev-dependencies.enhance-query-server]
-path = "../enhance-query-server"
-features = ["client"]
-
-[dev-dependencies.status-query-server]
-path = "../../status/status-query-server"
-features = ["client"]

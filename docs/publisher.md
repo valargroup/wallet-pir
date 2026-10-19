@@ -15,7 +15,9 @@ beside that product's query server: `src/enhance/enhance-publisher`,
 `src/shared/pir-pipeline` is the shared lifecycle library, and `src/shared`
 otherwise holds shared libraries only. `src/receiver/receiver-store` holds the
 indexer's SQLite stores. History and transaction details remain separate modes
-of `transparent-publisher`.
+of `transparent-publisher`. Enhance, Status, and Transparent wallet-client and
+chain-fixture regressions run with the host, not as a second copy of that stack
+on each product crate.
 
 Query serving is the separate [query-server host](query-server.md) at
 `src/pir-query-server`. Product query libraries remain under their product

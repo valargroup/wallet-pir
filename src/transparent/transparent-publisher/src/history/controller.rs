@@ -3,7 +3,7 @@
 use zakura_pir_publisher::transparent::filter as transparent_filter;
 
 pub(crate) use crate::history::distribution::advance_distribution_revision;
-#[cfg(test)]
+#[cfg(all(test, feature = "fixtures"))]
 pub(crate) use crate::history::distribution::advance_distribution_revision_with_sync;
 use crate::history::publication::{self, BoxError, Journal, PublishOptions};
 use crate::history::shard_filters::ShardFilters;
@@ -1677,7 +1677,7 @@ fn collect_candidates(config: &Config, authority: &Authority) -> Result<(), BoxE
     Ok(())
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "fixtures"))]
 mod tests {
 
     #[test]
@@ -2530,6 +2530,6 @@ print(json.dumps({'ok':True,'upstreams':[],'workers':{},'retained_publication':b
     }
 }
 
-#[cfg(test)]
-#[path = "controller_distribution_tests.rs"]
+#[cfg(all(test, feature = "fixtures"))]
+#[path = "../../../../pir-publisher/tests/included/controller_distribution_tests.rs"]
 pub(crate) mod distribution_tests;

@@ -241,7 +241,7 @@ pub fn extract_elements(
     Ok(elements)
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "fixtures"))]
 pub(crate) mod testing {
     use super::*;
     use std::collections::HashMap;
@@ -277,7 +277,7 @@ pub(crate) mod testing {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "fixtures"))]
 mod tests {
     use super::testing::{block_of, MapPreviousOutputs};
     use super::*;

@@ -88,6 +88,7 @@ pub(crate) fn chain_sources(tag: u8, height: u64) -> Vec<TransparentDisplayRecor
 }
 
 /// The published entries of [`chain_sources`].
+#[cfg(any(feature = "fixtures", feature = "qualification-tests"))]
 pub(crate) fn chain_records(tag: u8, height: u64) -> Vec<DisplayRecord> {
     chain_sources(tag, height)
         .iter()

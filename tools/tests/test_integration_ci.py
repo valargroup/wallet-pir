@@ -18,9 +18,9 @@ class IntegrationTests(unittest.TestCase):
         registry = tests.inventory()
         for package in ['receiver-pir-server', 'transparent-query-server']:
             self.assertIn('ci_smoke', registry[package]['fast'])
-        enhance = registry['enhance-publisher']
-        self.assertIn('ci_hint', enhance['fast'])
-        self.assertIn('encrypted_lifecycle', enhance['full'])
+        host = registry['pir-publisher']
+        self.assertIn('ci_hint', host['fast'])
+        self.assertIn('encrypted_lifecycle', host['full'])
 
     def test_publisher_smoke_feedback_runs_its_encrypted_smoke_only(self):
         registry = {'enhance-publisher': {'fast': ['ci_smoke', 'layout'], 'full': []}}

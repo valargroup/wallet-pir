@@ -59,7 +59,7 @@ def build_commands(profile):
         ['cargo', 'test', '--locked', '--profile', profile,
          '-p', 'transparent-tools', '--features', 'benchmarks', '--tests'],
         ['cargo', 'test', '--locked', '--profile', profile,
-         '-p', 'transparent-publisher', '--lib', 'ingest::extract::'],
+         '-p', 'transparent-publisher', '--features', 'fixtures', '--lib', 'ingest::extract::'],
         ['cargo', 'test', '--locked', '--profile', profile,
          '-p', 'transparent-shared', '--lib', 'journal::events::'],
         ['cargo', 'test', '--locked', '--profile', profile,

@@ -32,21 +32,21 @@ CUDA = ['enhance-query-server/cuda', 'status-query-server/cuda', 'enhance-publis
 REFERENCE_LIB_FILTERS = ['ipir::tests', 'client::', 'protocol::', 'record::', 'record_types::',
                          'runtime::tests::unequal_units_match_monolithic_preprocessing_and_evaluation',
                          'runtime::tests::tail_domain_reuses_b_units_and_decodes_b_at_unchanged_coordinates']
-REFERENCE_TESTS = {('enhance-query-server', 'routing_contract'), ('enhance-query-server', 'v7_contract'),
-                   ('enhance-publisher', 'ci_hint'), ('enhance-publisher', 'encrypted_lifecycle')}
+REFERENCE_TESTS = {('enhance-query-server', 'routing_contract'),
+                   ('pir-publisher', 'ci_hint'), ('pir-publisher', 'encrypted_lifecycle')}
 # Real-process campaigns are compiled and listed here but run only by their
 # scripts under tools/transparent/scripts; every case must stay ignored.
-MANUAL_CAMPAIGNS = {('transparent-publisher', 'controller_update_campaign'),
-                    ('transparent-publisher', 'unified_http_sync_campaign')}
+MANUAL_CAMPAIGNS = {('pir-publisher', 'controller_update_campaign'),
+                    ('pir-publisher', 'unified_http_sync_campaign')}
 
 
 def variants(groups):
     return {
-        'transparent': dict(family='transparent', packages=groups['transparent'], features=['transparent-publisher/rocksdb-reader', 'transparent-tools/test-support', 'transparent-tools/compact-export'] + qualification_features(groups['transparent'])),
+        'transparent': dict(family='transparent', packages=[*groups['transparent'], 'pir-publisher'], features=['transparent-publisher/rocksdb-reader', 'transparent-tools/test-support', 'transparent-tools/compact-export', 'pir-publisher/transparent-tests'] + qualification_features([*groups['transparent'], 'pir-publisher'])),
         'export': dict(family='transparent', packages=['txid-sizing-export'], features=[], manifest=EXPORT),
-        'native': dict(family='enhance', packages=groups['enhance'], features=NATIVE + qualification_features(groups['enhance'])),
-        'reference': dict(family='enhance', packages=['enhance-query-server', 'enhance-publisher', 'status-query-server'],
-                          features=qualification_features(['enhance-query-server', 'enhance-publisher', 'status-query-server'])),
+        'native': dict(family='enhance', packages=groups['enhance'], features=NATIVE + ['pir-publisher/enhance-tests', 'pir-publisher/status-tests', 'pir-publisher/native-reinspiring'] + qualification_features(groups['enhance'])),
+        'reference': dict(family='enhance', packages=['enhance-query-server', 'status-query-server', 'pir-publisher'],
+                          features=['pir-publisher/enhance-tests'] + qualification_features(['enhance-query-server', 'status-query-server', 'pir-publisher'])),
         'cuda': dict(family='enhance', packages=['enhance-query-server', 'status-query-server', 'enhance-publisher',
                                              'status-publisher', 'enhance-pir-load-test'], features=CUDA),
         'receiver': dict(family='receiver', packages=groups['receiver'], features=[]),
@@ -85,6 +85,9 @@ def target_inventory(contexts, packages):
                     continue
                 kinds = []
                 if variant == 'reference':
+                    if name == 'pir-publisher' and not (
+                            kind == 'test' and (name, target['name']) in REFERENCE_TESTS):
+                        continue
                     if name.startswith('enhance-') and not (
                             kind == 'lib' and name == 'enhance-query-server'
                             or kind == 'test' and (name, target['name']) in REFERENCE_TESTS):
@@ -330,8 +333,8 @@ def baseline_commands(family):
         result += [
             ('reference', [*options, '-p', 'enhance-query-server', '--features', 'qualification-tests',
                            '--lib', '--', *REFERENCE_LIB_FILTERS]),
-            ('reference', [*options, '-p', 'enhance-query-server', '--test', 'routing_contract', '--test', 'v7_contract']),
-            ('reference', [*options, '-p', 'enhance-publisher', '--features', 'qualification-tests',
+            ('reference', [*options, '-p', 'enhance-query-server', '--test', 'routing_contract']),
+            ('reference', [*options, '-p', 'pir-publisher', '--features', 'enhance-tests,qualification-tests',
                            '--test', 'ci_hint', '--test', 'encrypted_lifecycle']),
             ('reference', [*options, '-p', 'status-query-server', '--features', 'qualification-tests', '--lib', '--tests']),
             ('cuda', [*options, '-p', 'enhance-publisher', '--features', 'native-reinspiring,cuda', '--test', 'matvec_config']),

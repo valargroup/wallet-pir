@@ -89,10 +89,10 @@ def rust_checks(env, temporary, offline):
     # Reference checks have the same package/feature graph and are compiled
     # together. The full native workspace graph is never rebuilt without native.
     reference = run(['cargo', 'test', '--no-run', *options, '-p', 'enhance-query-server', '--lib',
-                     '--test', 'routing_contract', '--test', 'v7_contract'],
+                     '--test', 'routing_contract'],
                     env=env, stage='compile:reference', collect_tests=True, test_details=True)
-    reference += run(['cargo', 'test', '--no-run', *options, '-p', 'enhance-publisher',
-                     '--test', 'ci_hint'],
+    reference += run(['cargo', 'test', '--no-run', *options, '-p', 'pir-publisher',
+                     '--features', 'enhance-tests', '--test', 'ci_hint'],
                      env=env, stage='compile:reference', collect_tests=True, test_details=True)
     reference += run(['cargo', 'test', '--no-run', *options, '-p', 'status-query-server', '--lib', '--tests'],
                      env=env, stage='compile:reference', collect_tests=True, test_details=True)

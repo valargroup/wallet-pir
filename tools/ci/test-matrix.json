@@ -6,7 +6,7 @@
       "export:txid-sizing-export:test:codec_bounds",
       "export:txid-sizing-export:test:executing_identity",
       "export:txid-sizing-export:test:source_identity",
-      "transparent:transparent-publisher:test:unified_http_sync_campaign",
+      "transparent:pir-publisher:test:unified_http_sync_campaign",
       "transparent:transparent-query-server:bin:shard-assign",
       "transparent:transparent-query-server:bin:shard-control",
       "transparent:transparent-query-server:bin:shard-prune",
@@ -61,10 +61,14 @@
       "transparent:transparent-publisher:doc:transparent_publisher",
       "transparent:transparent-publisher:example:publication_bench",
       "transparent:transparent-publisher:lib:transparent_publisher",
-      "transparent:transparent-publisher:test:controller_update_campaign",
-      "transparent:transparent-publisher:test:event_codec_bounds",
-      "transparent:transparent-publisher:test:service_round_trip",
-      "transparent:transparent-publisher:test:shard_filters",
+      "transparent:pir-publisher:bin:pir-publisher",
+      "transparent:pir-publisher:doc:pir_publisher",
+      "transparent:pir-publisher:lib:pir_publisher",
+      "transparent:pir-publisher:test:controller_update_campaign",
+      "transparent:pir-publisher:test:lifecycle",
+      "transparent:pir-publisher:test:event_codec_bounds",
+      "transparent:pir-publisher:test:service_round_trip",
+      "transparent:pir-publisher:test:shard_filters",
       "transparent:transparent-tools:bin:compact-export",
       "transparent:transparent-tools:bin:event-spotcheck",
       "transparent:transparent-tools:bin:filter-sweep",
@@ -125,7 +129,6 @@
       "native:enhance-pir-exercise:bin:enhance-pir-exercise",
       "native:enhance-pir-load-test:bin:enhance-pir-load-test",
       "native:enhance-query-server:test:routing_contract",
-      "native:enhance-query-server:test:v7_contract",
       "native:pir-apm:bin:pir-apm",
       "native:pir-apm:doc:pir_apm",
       "native:pir-apm:lib:pir_apm",
@@ -149,14 +152,13 @@
       "native:enhance-publisher:bin:enhance-pir-server",
       "native:enhance-publisher:doc:enhance_publisher",
       "native:enhance-publisher:lib:enhance_publisher",
-      "native:enhance-publisher:test:boundary_recovery_model",
-      "native:enhance-publisher:test:ci_hint",
-      "native:enhance-publisher:test:encrypted_lifecycle",
+      "native:pir-publisher:test:boundary_recovery_model",
+      "native:pir-publisher:test:ci_hint",
+      "native:pir-publisher:test:encrypted_lifecycle",
       "native:enhance-publisher:test:matvec_config",
-      "native:enhance-publisher:test:packing_http",
-      "native:enhance-publisher:test:record_layout",
-      "native:enhance-publisher:test:schema11_cutover",
-      "native:enhance-publisher:test:status_routes",
+      "native:pir-publisher:test:packing_http",
+      "native:pir-publisher:test:record_layout",
+      "native:pir-publisher:test:status_routes",
       "native:status-publisher:bin:status-pir",
       "native:status-query-server:test:status_wallet",
       "native:status-query-server:test:status_wallet_http",
@@ -173,27 +175,26 @@
   "enhance-http": {
     "family": "enhance",
     "targets": [
-      "native:enhance-publisher:test:http"
+      "native:pir-publisher:test:http"
     ]
   },
   "enhance-recovery": {
     "family": "enhance",
     "targets": [
-      "native:enhance-publisher:test:canonical_record",
-      "native:enhance-publisher:test:enhance_wallet_native",
-      "native:enhance-publisher:test:note_recovery",
-      "native:enhance-publisher:test:row_repair_http",
-      "native:enhance-publisher:test:rpc"
+      "native:pir-publisher:test:canonical_record",
+      "native:pir-publisher:test:enhance_wallet_native",
+      "native:pir-publisher:test:note_recovery",
+      "native:pir-publisher:test:row_repair_http",
+      "native:pir-publisher:test:rpc"
     ]
   },
   "enhance-reference": {
     "family": "enhance",
     "targets": [
-      "reference:enhance-publisher:test:ci_hint",
-      "reference:enhance-publisher:test:encrypted_lifecycle",
+      "reference:pir-publisher:test:ci_hint",
+      "reference:pir-publisher:test:encrypted_lifecycle",
       "reference:enhance-query-server:lib:enhance_query_server",
       "reference:enhance-query-server:test:routing_contract",
-      "reference:enhance-query-server:test:v7_contract",
       "reference:status-query-server:lib:status_query_server"
     ]
   },

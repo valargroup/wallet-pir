@@ -105,17 +105,17 @@ class MatrixTests(unittest.TestCase):
                 for name, shard in registry.items() if shard['family'] == family]
 
     def test_reference_qualification_keeps_oracles_and_native_keeps_http_lifecycles(self):
-        package = self.plan[3]['enhance-publisher']
+        package = self.plan[3]['pir-publisher']
         lifecycle = {'encrypted_publication_advances_with_a_pending_commit_and_survives_restart'}
         oracles = {'single_unit_hint_matches_independent_generic_67',
                    'single_unit_hint_matches_independent_generic_68',
                    'single_unit_hint_rejects_damage_and_pins_retired_file'}
         reference = self.plan[0]['enhance-reference']['targets']
         from integration_tests import inventory
-        self.assertNotIn('encrypted_lifecycle', inventory()['enhance-publisher']['fast'])
-        self.assertIn('encrypted_lifecycle', inventory()['enhance-publisher']['full'])
-        self.assertIn('reference:enhance-publisher:test:ci_hint', reference)
-        self.assertIn('reference:enhance-publisher:test:encrypted_lifecycle', reference)
+        self.assertNotIn('encrypted_lifecycle', inventory()['pir-publisher']['fast'])
+        self.assertIn('encrypted_lifecycle', inventory()['pir-publisher']['full'])
+        self.assertIn('reference:pir-publisher:test:ci_hint', reference)
+        self.assertIn('reference:pir-publisher:test:encrypted_lifecycle', reference)
         for case in ('unequal_units_match_monolithic_preprocessing_and_evaluation',
                      'tail_domain_reuses_b_units_and_decodes_b_at_unchanged_coordinates'):
             self.assertIn('runtime::tests::' + case, matrix.REFERENCE_LIB_FILTERS)
@@ -133,7 +133,7 @@ class MatrixTests(unittest.TestCase):
             with self.subTest(variant=variant, target=target), \
                     patch.object(matrix.subprocess, 'check_output', side_effect=listing):
                 _, programs, cases = matrix.test_programs([artifact], variant, {package['name']: package}, {})
-            self.assertEqual(set(cases[f'{variant}:enhance-publisher:{target}']['tests']), expected)
+            self.assertEqual(set(cases[f'{variant}:pir-publisher:{target}']['tests']), expected)
             self.assertEqual(programs[0]['args'], [])
 
     def verify(self, receipts):
