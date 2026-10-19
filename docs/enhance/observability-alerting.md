@@ -335,7 +335,13 @@ retired and is not monitored:
   the coordinator's current map. Operator probes keep `/v1/health`, `/v1/ready`
   and `/v1/status` on the private listeners.
 - `alert_mode` (`shadow` or `active`, default `shadow`) is the service family's
-  rollout mode. `capacity_alert_mode` is the capacity family's.
+  rollout mode. `capacity_alert_mode` is the capacity family's. APM reads this
+  file only at start, so the file can disagree with the running process. Each
+  family records the mode it last evaluated in as `mode:quality-<service>` in
+  the incident database's `metadata` table; that is the running mode. Change
+  modes in production only through `transparent-alerts-*`
+  ([deployment](../transparent/deployment.md#transparent-alert-activation)),
+  which edits only `alert_mode`, restarts APM and verifies the running mode.
 - History: `publisher_url` (its `/metrics`), optional `status_url` (default:
   the publisher's origin plus `/v1/status`), `roster` (reread every 15 s; roles
   `archive-owner` and `recent-replica`), optional `router_metrics_url`,

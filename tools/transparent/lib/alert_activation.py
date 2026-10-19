@@ -211,6 +211,22 @@ class Activation:
             return {'mode:quality-' + service: (mode if new else None) for service, mode in modes.items()}
         return {'mode:service-quality': self.request['monitor']['service_alert_mode'] if new else None}
 
+    def observed(self, name):
+        """The live values a reviewed request pins, printed so the operator can compare or draft it."""
+        component = self.request[name]
+        host = component['host']
+        state = self.ex.probe_unit(host, component['unit'])
+        try:
+            wrapper = wrapped_exec(unit_texts(state))[2]
+            wrapper_sha = self.ex.sha256(host, wrapper)
+        except (DeployError, units.UnitError):
+            wrapper_sha = None
+        line = '%s observed: unit_files_sha256=%s wrapper_sha256=%s running_sha256=%s' % (
+            name, unit_files_digest(state) if state.get('fragment_path') else None, wrapper_sha, state.get('exe_sha256'))
+        if name == 'apm':
+            line += ' config_sha256=%s' % self.ex.sha256(host, component['config']['path'])
+        return line
+
     def report(self, name):
         """Lines naming what is running, never inferred from configuration alone."""
         modes = self.running_modes(name)
@@ -638,6 +654,7 @@ def run(args, executor, out, inventory, lock=None, clock=time.monotonic, sleep=t
             if latest.status not in FINAL:
                 problems.append('transaction %s is %s; roll it back first' % (latest.id, latest.status))
         for name, _ in activation.components():
+            out(activation.observed(name))
             for line in activation.report(name):
                 out(line)
     elif action == 'deploy':
