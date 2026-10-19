@@ -92,7 +92,7 @@ pub async fn probe_live(
         .txids
         .first()
         .ok_or("anchor block has no transactions")?;
-    let mut wallet = status_query_server::protocol::HttpClient::new(&origin, http);
+    let mut wallet = super::http_client::HttpClient::new(&origin, http);
     let began = Instant::now();
     for _ in 0..queries {
         let answer = wallet

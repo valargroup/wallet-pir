@@ -523,7 +523,7 @@ pub async fn validate(entries: usize, cuda: bool, state_dir: PathBuf) -> Result<
     controller.activate(next)?;
     drop(previous);
     check_cases(&http, &origin, &controller, entries, true).await?;
-    let mut wallet = status_query_server::protocol::HttpClient::new(&origin, http.clone());
+    let mut wallet = super::http_client::HttpClient::new(&origin, http.clone());
     let (retry_txid, retry_expected) = fixture::case_at(
         entries,
         true,
