@@ -47,7 +47,7 @@ def commands(group, groups, lint=False, compile_only=False):
     runner = ['cargo', 'test', '--no-run'] if compile_only else ['bash', 'tools/ci/full-test.sh']
     features = {
         'enhance': ['enhance-query-server/native-reinspiring', 'status-query-server/native-reinspiring',
-                    'enhance-publisher/native-reinspiring', 'status-publisher/native-reinspiring',
+                    'enhance-publisher/native-reinspiring', 'status-publisher/native-reinspiring', 'status-publisher/cli',
                     'enhance-pir-client/native-reinspiring', 'enhance-pir-load-test/native-reinspiring'],
         'shared': ['pir-control/admission'],
         'transparent': ['transparent-publisher/rocksdb-reader', 'transparent-tools/test-support', 'transparent-tools/compact-export'],

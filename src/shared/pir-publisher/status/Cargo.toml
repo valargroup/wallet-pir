@@ -12,9 +12,12 @@ path = "src/lib.rs"
 [[bin]]
 name = "status-pir"
 path = "src/bin/status.rs"
+required-features = ["cli"]
 
 [features]
 default = []
+# Standalone diagnostic commands use wallet helpers; the embedded publisher does not.
+cli = ["status-query-server/client"]
 native-reinspiring = ["status-query-server/native-reinspiring", "enhance-query-server/native-reinspiring", "dep:zakura-pir-publisher", "ipir-sp/native-reinspiring"]
 cuda = ["status-query-server/cuda", "enhance-query-server/cuda", "ipir-sp/cuda"]
 

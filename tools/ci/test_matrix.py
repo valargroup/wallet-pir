@@ -21,7 +21,7 @@ from stage import ROOT, run, install_cancellation, inherited_fds
 REGISTRY = ROOT / 'tools/ci/test-matrix.json'
 EXPORT = 'tools/txid/txid-sizing/export/Cargo.toml'
 NATIVE = ['enhance-query-server/native-reinspiring', 'status-query-server/native-reinspiring',
-          'enhance-publisher/native-reinspiring', 'status-publisher/native-reinspiring',
+          'enhance-publisher/native-reinspiring', 'status-publisher/native-reinspiring', 'status-publisher/cli',
           'enhance-pir-client/native-reinspiring', 'enhance-pir-load-test/native-reinspiring']
 CUDA = ['enhance-query-server/cuda', 'status-query-server/cuda', 'enhance-publisher/cuda', 'status-publisher/cuda',
         'enhance-publisher/native-reinspiring', 'enhance-pir-load-test/native-reinspiring']
