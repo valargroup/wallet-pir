@@ -467,7 +467,12 @@ class Activator:
         journal.event('restart issued', target=record['key'], invocation_id=before)
         if new:
             journal.set_phase(index, 'restarting')
-        self.ex.systemctl(host, 'restart', record['unit'])
+        try:
+            self.ex.systemctl(host, 'restart', record['unit'])
+        except Exception as error:
+            # The restart may or may not have happened: observe it, never assume it.
+            journal.event('restart outcome uncertain', target=record['key'], error=str(error))
+            self.out('%s: restart reply lost (%s); verifying by observation' % (record['key'], error))
         if new:
             journal.set_phase(index, 'verifying')
         self.wait_verified(record, new, before)
@@ -550,10 +555,23 @@ class Activator:
         component = self.a.request[name]
         if component is None:
             raise DeployError('the request has no %s component' % name)
-        state, problems = self.a.probe(name)
+        state = self.ex.probe_unit(component['host'], component['unit'])
+        sha = self.a.request['apm']['release']['binary_sha256']
+        problems = []
+        if state['active_state'] != 'active':
+            problems.append('%s is %s' % (component['unit'], state['active_state']))
+        # Before or after activation: the pinned running binary, or for APM the release.
+        allowed = {component['running_sha256']} | ({sha} if name == 'apm' else set())
+        if state['exe_sha256'] not in allowed:
+            problems.append('%s runs %s, not a pinned binary' % (component['unit'], state['exe_sha256']))
+        try:
+            wrapper = wrapped_exec(unit_texts(state))[2]
+            if self.ex.sha256(component['host'], wrapper) != component['wrapper_sha256']:
+                problems.append('credential wrapper %s differs from wrapper_sha256' % wrapper)
+        except (DeployError, units.UnitError) as error:
+            problems.append(str(error))
         if problems:
             raise DeployError('refused before any change:\n  ' + '\n  '.join(problems))
-        sha = self.a.request['apm']['release']['binary_sha256']
         host = component['host']
         tool = apm_binary(sha) if name == 'apm' else monitor_tool(sha)
         journal = Journal.create(self.state_dir, SERVICE + '-test', sha, {'component': name}, [], None)
