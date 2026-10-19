@@ -21,7 +21,7 @@ cli = ["status-query-server/client"]
 native-reinspiring = ["status-query-server/native-reinspiring", "enhance-query-server/native-reinspiring", "dep:zakura-pir-publisher", "ipir-sp/native-reinspiring"]
 cuda = ["status-query-server/cuda", "enhance-query-server/cuda", "ipir-sp/cuda"]
 # Chain fixtures and the wallet client for host regressions. Production builds leave it off.
-fixtures = ["zakura-server-chain/testing", "dep:zakura-pir-client", "zakura-pir-client/status"]
+fixtures = ["zakura-server-chain/testing-node", "dep:zakura-pir-client", "zakura-pir-client/status"]
 
 [dependencies]
 pir-pipeline = { path = "../../shared/pir-pipeline" }
@@ -41,11 +41,11 @@ sha2 = "0.10"
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "a2f87e6f235dc16840be1dd7fc88e6dd06f0a268", default-features = false, features = ["status"] }
+zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "cdba2e1bb062e9ecfd309ba796c84a8a3997c0a7", default-features = false, features = ["status", "rpc"] }
 
-zakura-pir-publisher = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "a2f87e6f235dc16840be1dd7fc88e6dd06f0a268", default-features = false, features = ["status"], optional = true }
+zakura-pir-publisher = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "cdba2e1bb062e9ecfd309ba796c84a8a3997c0a7", default-features = false, features = ["status"], optional = true }
 # Wallet client for the host's Status regressions. Production builds leave it off.
-zakura-pir-client = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "a2f87e6f235dc16840be1dd7fc88e6dd06f0a268", default-features = false, optional = true }
+zakura-pir-client = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "cdba2e1bb062e9ecfd309ba796c84a8a3997c0a7", default-features = false, optional = true }
 
 [dev-dependencies]
 tempfile = "3"

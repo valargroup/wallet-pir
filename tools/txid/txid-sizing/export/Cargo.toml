@@ -22,10 +22,10 @@ sha2 = "0.10"
 thiserror = "2"
 # Transaction and block reads through the server adapter, at the revision the
 # services pin.
-zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "a2f87e6f235dc16840be1dd7fc88e6dd06f0a268", default-features = false, features = ["transparent"] }
+zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "cdba2e1bb062e9ecfd309ba796c84a8a3997c0a7", default-features = false, features = ["transparent"] }
 
-zakura-pir-protocol = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "a2f87e6f235dc16840be1dd7fc88e6dd06f0a268", default-features = false, features = ["transparent"] }
-zakura-pir-publisher = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "a2f87e6f235dc16840be1dd7fc88e6dd06f0a268", default-features = false, features = ["transparent"] }
+zakura-pir-protocol = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "cdba2e1bb062e9ecfd309ba796c84a8a3997c0a7", default-features = false, features = ["transparent"] }
+zakura-pir-publisher = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "cdba2e1bb062e9ecfd309ba796c84a8a3997c0a7", default-features = false, features = ["transparent"] }
 
 [build-dependencies]
 sha2 = "0.10"
@@ -35,9 +35,9 @@ toml = "0.8.23"
 [dev-dependencies]
 toml = "0.8.23"
 # Raw synthetic blocks for the shared extractor's tests.
-zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "a2f87e6f235dc16840be1dd7fc88e6dd06f0a268", default-features = false, features = ["transparent", "testing"] }
+zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "cdba2e1bb062e9ecfd309ba796c84a8a3997c0a7", default-features = false, features = ["transparent", "testing"] }
 
-zakura-pir-client = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "a2f87e6f235dc16840be1dd7fc88e6dd06f0a268", default-features = false, features = ["transparent", "testing"] }
+zakura-pir-client = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "cdba2e1bb062e9ecfd309ba796c84a8a3997c0a7", default-features = false, features = ["transparent", "testing"] }
 
 [profile.release-fast]
 inherits = "release"
