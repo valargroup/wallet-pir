@@ -330,6 +330,29 @@ async fn display_lookup(origin: &str, journal: &Path, height: u64, ledger: &Ledg
     assert!(transcript
         .iter()
         .any(|sent| sent.method == zakura_pir_client::transparent::txid_client::Method::Post));
+    let frozen = std::env::var_os("WALLET_PIR_FROZEN_CLIENT").unwrap();
+    let result = tokio::process::Command::new(frozen)
+        .args([
+            origin,
+            "--display",
+            &hex::encode(record.txid.0),
+            &height.to_string(),
+        ])
+        .kill_on_drop(true)
+        .output()
+        .await
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "released display client refused: {}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let original: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(
+        original["entry_hex"],
+        hex::encode(record.entry.encode().unwrap()),
+        "released client entry differs from committed journal source"
+    );
     ledger.record(
         "exact_display_lookup",
         serde_json::json!({"origin":origin,"height":height,"txid":record.txid.to_display_hex()}),
