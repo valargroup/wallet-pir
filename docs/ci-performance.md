@@ -185,17 +185,14 @@ checks overlap both Rust compilation and execution; completing helper checks
 is not a prerequisite to starting native tests. The gate still requires both
 suites to pass. Cargo writers remain sequential in each target; tooling oracles
 use separate fixture targets. Selected operations suites run in
-four parallel make slots. Deployment unittest modules use two separate processes,
-retaining each module's fixtures. Fast deployment feedback selects exact discovered
-case IDs from `tools/ci/deploy-fast-tests.json`: installation and upgrade, lock
-refusal, interrupted recovery, tampered retained artifacts, failed verification
-and rollback. Empty, duplicate or renamed selections fail. Full qualification
-runs every discovered deployment case without that selection. The package
-transaction module has independent test classes and is explicitly split by class;
-class fixtures stay together, and modules with module fixtures cannot opt in. Each case keeps its
-own mutable deployment tree; negative variants may restore a real transaction
-checkpoint after proving that an untampered copy still recovers. Failures in any
-task fail fast CI. Fast native runs report each executable's wall time and the
+four parallel make slots. The in-memory deploy suite (`make check-ops-deploy`)
+is a local development target. CI and `make check` do not run it. When it is
+run, its modules use two separate processes, retaining each module's fixtures.
+The package transaction module has independent test classes and is explicitly
+split by class; class fixtures stay together, and modules with module fixtures
+cannot opt in. Each case keeps its own mutable deployment tree; negative
+variants may restore a real transaction checkpoint after proving that an
+untampered copy still recovers. Failures in any task fail fast CI. Fast native runs report each executable's wall time and the
 15 slowest completed cases; overlapping program times must not be added to infer
 the job's elapsed time. Tooling cache fixtures cannot write to the outer job's
 GitHub environment files or timing receipts.
@@ -221,16 +218,23 @@ selected helper, shared and infrastructure check. Helpers run on hosted runners
 to reserve the fast queue for main. Operations archives
 assemble on hosted runners without Rust. Full tests and lint run on separate
 Ubuntu 24.04 hosted runners; CPU release builds use the dedicated build runner.
-CPU and Ubuntu 22.04 CUDA candidate builds start alongside family testing;
+CPU candidate builds start alongside family testing. Ubuntu 22.04 CUDA
+candidates are built only for CUDA-selected qualification, after its dedicated
+driver-free CUDA checks pass;
 candidate archives are uploaded under
 an ineligible name and re-verified before qualified publication. Each family
 publishes immediately after its required checks pass. Failure in another family
-cannot authorize or prevent that publication. CPU artifacts do not wait for CUDA.
+cannot authorize or prevent that publication. CPU artifacts do not wait for the
+CUDA release build, but selected CUDA checks remain required.
 CUDA candidates use an ineligible artifact
 name until Enhance qualification and candidate compilation both pass; publication
 rechecks archive contents, ABI metadata and clean source provenance.
 
-Only **CI / Fast checks** validates automatically on main pushes and PRs.
+**CI / Fast checks** validates automatically on main pushes and PRs. A separate
+CUDA job runs only when CUDA code, integration contracts or dependencies are
+affected. Generic full/nightly runs stay CPU-only; manual qualification exposes
+an `include-cuda` opt-in. Missing CUDA qualification means no CUDA artifact for
+that revision.
 Dependency cache priming runs independently on relevant main changes.
 Both PR and main feedback target three minutes from job start through final
 cleanup; report queueing separately. Validation finishes before main's final

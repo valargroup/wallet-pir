@@ -85,12 +85,21 @@ class Role:
     # named by the sha256 of that file.
     binary: str = None
 
-    def render(self, settings, release):
-        """The product adapter's `RenderedRole` for one instance."""
+    def render(self, settings, release, unit=None):
+        """The product adapter's `RenderedRole` for one instance.
+
+        `unit` is the inventory's unit name when this host runs the role more
+        than once. Adapters that take `unit` can give that process its own
+        files; the descriptor's own unit stays the single-instance rendering.
+        """
         import importlib
+        import inspect
         module, function = self.renderer.split(':')
-        return getattr(importlib.import_module(module), function)(
-            settings, release=release, template=self.template.read_text())
+        renderer = getattr(importlib.import_module(module), function)
+        kwargs = {'release': release, 'template': self.template.read_text()}
+        if unit not in (None, self.unit) and 'unit' in inspect.signature(renderer).parameters:
+            kwargs['unit'] = unit
+        return renderer(settings, **kwargs)
 
     def product_guard(self):
         """The product's lifecycle guard for this role, or None."""

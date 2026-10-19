@@ -28,6 +28,8 @@ class CudaBuildTests(unittest.TestCase):
              'features': ['enhance', 'cuda', 'native-reinspiring'], 'executable': str(self.binary)},
             {'reason': 'compiler-artifact', 'target': {'name': 'enhance_query_server'},
              'features': ['cuda', 'native-reinspiring']},
+            {'reason': 'compiler-artifact', 'target': {'name': 'pir_cuda'},
+             'features': ['cuda']},
         ]
 
     def verify(self, revision=SHA):
@@ -54,7 +56,7 @@ class CudaBuildTests(unittest.TestCase):
         self.assertNotIn('enhance-pir-server', self.command[0])
 
     def test_either_package_missing_cuda_refuses(self):
-        for index in (0, 1):
+        for index in (0, 1, 2):
             self.artifacts[index]['features'].remove('cuda')
             with self.assertRaisesRegex(ValueError, 'Cargo did not produce exactly one CUDA artifact'):
                 self.verify()

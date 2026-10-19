@@ -24,6 +24,14 @@ class ComparisonTests(unittest.TestCase):
             self.assertEqual(feedback_base.comparison('pull_request', 'b'*40, 'v/p'), 'b'*40)
             self.assertEqual(api.call_count, 1)
 
+    def test_cuda_keeps_unvalidated_changes_even_after_cpu_preparation(self):
+        run = dict(head_sha='a'*40, conclusion='success', event='push', head_branch='main')
+        with patch.object(feedback_base, 'api', return_value={'workflow_runs': [run]}), \
+                patch.object(feedback_base, 'prepared_base', return_value='b'*40) as prepared:
+            self.assertEqual(feedback_base.comparison('push', 'b'*40, 'v/p', 'c'*40,
+                                                      use_prepared=False), 'a'*40)
+        prepared.assert_not_called()
+
     def test_bad_provenance_and_transport_failure_cannot_pass(self):
         with patch.object(feedback_base, 'api', side_effect=TimeoutError):
             with self.assertRaises(TimeoutError):

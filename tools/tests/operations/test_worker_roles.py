@@ -90,6 +90,34 @@ class WorkerRoles(unittest.TestCase):
         initial = {**SETTINGS[('transparent-display', 'external-worker')], 'publication_dir': '/srv/display/publications/c0'}
         self.assertEqual(check('transparent-display', 'external-worker', initial)[-1], '--verify-only')
 
+    def test_two_external_workers_on_one_host_do_not_share_a_config(self):
+        role = REGISTRY['enhance'].roles['external-worker']
+        base = SETTINGS[('enhance', 'external-worker')]
+        alone = role.render(base, RELEASE)
+        first = role.render({**base, 'listen': '127.0.0.1:8091', 'data_dir': '/srv/enhance-worker/0'},
+                            RELEASE, 'enhance-pir-worker-0.service')
+        second = role.render({**base, 'listen': '127.0.0.1:8092', 'data_dir': '/srv/enhance-worker/1'},
+                             RELEASE, 'enhance-pir-worker-1.service')
+        alone_path = '/etc/enhance-pir/external-worker.json'
+        self.assertIn('--config ' + alone_path, units.exec_start(units.effective([alone.unit])))
+        self.assertEqual(json.loads(alone.files[alone_path])['management_listen'], '127.0.0.1:18091')
+        paths = []
+        ports = []
+        for rendered, listen, data in (
+                (first, '127.0.0.1:8091', '/srv/enhance-worker/0'),
+                (second, '127.0.0.1:8092', '/srv/enhance-worker/1')):
+            command = units.exec_start(units.effective([rendered.unit]))
+            (path,) = [item for item in command.split() if item.endswith('.json')]
+            self.assertNotEqual(path, alone_path)
+            document = json.loads(rendered.files[path])
+            self.assertEqual(document['enhance']['settings']['listen'], listen)
+            self.assertEqual(document['enhance']['settings']['data_dir'], data)
+            paths.append(path)
+            ports.append(document['management_listen'])
+        self.assertEqual(len(set(paths)), 2)
+        self.assertEqual(len(set(ports)), 2)
+        self.assertNotIn('127.0.0.1:18091', ports)
+
 
 class RolesCommand(unittest.TestCase):
     def run_roles(self, *arguments):

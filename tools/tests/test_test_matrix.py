@@ -76,7 +76,7 @@ class MatrixTests(unittest.TestCase):
         command = commands[0][3]
         self.assertEqual({command[i + 1] for i, arg in enumerate(command) if arg == '-p'},
                          {'enhance-query-server', 'status-query-server', 'status-publisher',
-                          'enhance-pir-load-test', 'pir-query-server'})
+                          'enhance-pir-load-test', 'pir-query-server', 'pir-cuda'})
         self.assertEqual(command[command.index('--features') + 1], ','.join(matrix.CUDA))
         self.assertTrue(all('--all-targets' in cmd[3] for cmd in commands))
 
@@ -114,6 +114,35 @@ class MatrixTests(unittest.TestCase):
                      workflow={'GITHUB_RUN_ID': '123', 'GITHUB_RUN_ATTEMPT': '2'},
                      passed=True, compile_only=False, completed=sorted(shard['targets']), cases={})
                 for name, shard in registry.items() if shard['family'] == family]
+
+    def test_cpu_and_cuda_receipts_are_required_independently(self):
+        rows = self.receipts('enhance')
+        cpu = [row for row in rows if not row['shard'].startswith('enhance-cuda-')]
+        cuda = [row for row in rows if row['shard'].startswith('enhance-cuda-')]
+        self.assertEqual(len(cpu), 6)
+        self.assertEqual(len(cuda), 2)
+        for selected, mode in ((cpu, {}), (cuda, {'cuda_only': True}),
+                               (rows, {'include_cuda': True})):
+            with tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                for index, row in enumerate(selected):
+                    (root / f'{index}.json').write_text(json.dumps(row))
+                matrix.verify_receipts('enhance', root, self.plan, 'a' * 40,
+                                       rows[0]['workflow'], **mode)
+                (root / '0.json').unlink()
+                with self.assertRaisesRegex(ValueError, 'missing qualification shards'):
+                    matrix.verify_receipts('enhance', root, self.plan, 'a' * 40,
+                                           rows[0]['workflow'], **mode)
+
+    def test_cpu_baseline_does_not_enable_cuda_without_opt_in(self):
+        self.assertNotIn('cuda', {variant for variant, _ in matrix.baseline_commands('enhance')})
+        self.assertIn('cuda', {variant for variant, _ in matrix.baseline_commands('enhance', True)})
+
+    def test_mixed_cpu_and_cuda_shards_are_rejected_before_setup(self):
+        registry = copy.deepcopy(self.plan[0])
+        registry['enhance-supporting']['targets'].append('cuda:pir-cuda:check:pir_cuda')
+        with self.assertRaisesRegex(ValueError, 'separate nonempty shards'):
+            matrix.selected_shards(registry)
 
     def test_reference_qualification_keeps_oracles_and_native_keeps_http_lifecycles(self):
         package = self.plan[3]['pir-publisher']
@@ -304,11 +333,12 @@ class WorkflowTests(unittest.TestCase):
                   'shared-test', 'receiver-test', 'validate-ops', 'validate-enhance-infra',
                   'validate-transparent-elastic-infra')
         results = {name: {'result': 'success'} for name in checks}
+        results['cuda'] = {'result': 'skipped'}
         results['select'] = {'result': 'success', 'outputs': outputs}
         for outcome in ('success', 'failure', 'skipped', 'cancelled'):
             results['validate-ops']['result'] = outcome
             result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True,
-                                    env={**os.environ, 'RESULTS': json.dumps(results)})
+                                    env={**os.environ, 'RESULTS': json.dumps(results), 'INCLUDE_CUDA': 'false'})
             self.assertEqual(result.returncode == 0, outcome == 'success', result.stderr)
             if outcome != 'success':
                 self.assertIn('validate-ops', result.stderr)

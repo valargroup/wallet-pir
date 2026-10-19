@@ -42,7 +42,7 @@ def variants(groups):
         'native': dict(family='enhance', packages=groups['enhance'], features=NATIVE + ['pir-publisher/enhance-tests', 'pir-publisher/status-tests', 'pir-publisher/native-reinspiring'] + qualification_features(groups['enhance'])),
         'reference': dict(family='enhance', packages=['enhance-query-server', 'status-query-server', 'pir-publisher'],
                           features=['pir-publisher/enhance-tests'] + qualification_features(['enhance-query-server', 'status-query-server', 'pir-publisher'])),
-        'cuda': dict(family='enhance', packages=['enhance-query-server', 'status-query-server',
+        'cuda': dict(family='enhance', packages=['pir-cuda', 'enhance-query-server', 'status-query-server',
                                              'status-publisher', 'enhance-pir-load-test', 'pir-query-server'], features=CUDA),
         'receiver': dict(family='receiver', packages=groups['receiver'], features=[]),
     }
@@ -298,9 +298,22 @@ def run_shard(name, plan, output, compile_only=False):
     print('QUALIFICATION_SHARD ' + json.dumps(receipt), flush=True)
 
 
-def verify_receipts(family, directory, plan, sha, workflow):
+def cuda_shard(shard):
+    modes = {key.startswith('cuda:') for key in shard['targets']}
+    if len(modes) != 1:
+        raise ValueError('CPU and CUDA targets must have separate nonempty shards')
+    return modes == {True}
+
+
+def selected_shards(registry, *, include_cuda=False, cuda_only=False):
+    return {name: shard for name, shard in registry.items()
+            if (cuda_shard(shard) if cuda_only else include_cuda or not cuda_shard(shard))}
+
+
+def verify_receipts(family, directory, plan, sha, workflow, *, include_cuda=False, cuda_only=False):
     registry, _, _, _, digest = plan
-    expected = {name: shard for name, shard in registry.items() if shard['family'] == family}
+    expected = {name: shard for name, shard in selected_shards(
+        registry, include_cuda=include_cuda, cuda_only=cuda_only).items() if shard['family'] == family}
     receipts = [json.loads(path.read_text()) for path in directory.rglob('*.json')]
     seen = set()
     for receipt in receipts:
@@ -318,7 +331,7 @@ def verify_receipts(family, directory, plan, sha, workflow):
     print(f'Qualification coverage complete: {family}, {len(seen)} shards, {sha}')
 
 
-def baseline_commands(family):
+def baseline_commands(family, include_cuda=False):
     """The pre-split qualification commands, retained for same-revision audits."""
     result = [('export' if '--manifest-path' in command else
                'native' if family == 'enhance' else family, command[2:])
@@ -336,20 +349,20 @@ def baseline_commands(family):
             ('cuda', [*options, '-p', 'enhance-query-server', '--features', 'native-reinspiring,cuda', '--lib',
                       'backend_load_failure_does_not_rebuild_or_replace_published_units']),
         ]
-    return result
+    return [(variant, options) for variant, options in result if include_cuda or variant != "cuda"]
 
 
-def run_baseline(family, plan, output):
+def run_baseline(family, plan, output, include_cuda=False):
     sha = source_identity()
     cases = {}
     started = time.monotonic()
     env = {key: value for key, value in os.environ.items() if not key.startswith('QUALIFY_')}
     env['RUST_TEST_THREADS'] = '2' if family == 'transparent' else '1'
-    if family == 'enhance':
+    if family == 'enhance' and include_cuda:
         run(['cargo', 'check', '--locked', '-p', 'enhance-query-server', '-p', 'status-query-server',
-             '-p', 'status-publisher', '-p', 'pir-query-server', '-p', 'enhance-pir-load-test',
+             '-p', 'status-publisher', '-p', 'pir-query-server', '-p', 'enhance-pir-load-test', '-p', 'pir-cuda',
              '--all-targets', '--features', ','.join(CUDA)], env=env, stage='compile:baseline-cuda')
-    for variant, options in baseline_commands(family):
+    for variant, options in baseline_commands(family, include_cuda):
         artifacts = run(['cargo', 'test', '--no-run', *options], env=env,
                         stage='compile:baseline-' + variant, collect_tests=True, test_details=True)
         _, _, listed = test_programs(artifacts, variant, plan[3], env)
@@ -362,9 +375,9 @@ def run_baseline(family, plan, output):
                                      seconds=round(time.monotonic()-started, 3)), indent=2) + '\n')
 
 
-def compare_baseline(family, directory, baseline, plan):
+def compare_baseline(family, directory, baseline, plan, include_cuda=False):
     sha = source_identity()
-    verify_receipts(family, directory, plan, sha, workflow_identity())
+    verify_receipts(family, directory, plan, sha, workflow_identity(), include_cuda=include_cuda)
     expected = json.loads(baseline.read_text())
     if expected['sha'] != sha or expected['family'] != family or expected['passed'] is not True:
         raise ValueError('baseline was not executed successfully at this source revision')
@@ -382,6 +395,8 @@ def compare_baseline(family, directory, baseline, plan):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('command', choices=['validate', 'plan', 'run', 'compile-only', 'verify', 'baseline', 'compare'])
+    parser.add_argument('--include-cuda', action='store_true')
+    parser.add_argument('--cuda-only', action='store_true')
     parser.add_argument('--family', choices=['transparent', 'enhance', 'receiver'])
     parser.add_argument('--selected', help='JSON family-to-boolean selection from the workflow')
     parser.add_argument('--github-output', action='store_true')
@@ -401,7 +416,7 @@ def main():
         print(f'Qualification inventory complete: {len(plan[2])} targets in {len(plan[0])} shards')
     elif args.command == 'plan':
         selected = json.loads(args.selected) if args.selected else dict.fromkeys(('enhance', 'transparent', 'receiver'), True)
-        matrix = {'include': [dict(shard=name, family=s['family']) for name, s in plan[0].items()
+        matrix = {'include': [dict(shard=name, family=s['family']) for name, s in selected_shards(plan[0], include_cuda=args.include_cuda, cuda_only=args.cuda_only).items()
                               if (not args.family or s['family'] == args.family)
                               and selected.get(s['family']) in (True, 'true')]}
         if args.github_output:
@@ -413,15 +428,16 @@ def main():
         if not args.family or args.output is None:
             parser.error('baseline needs --family and --output')
         install_cancellation()
-        run_baseline(args.family, plan, args.output)
+        run_baseline(args.family, plan, args.output, args.include_cuda)
     elif args.command == 'compare':
         if not args.family or args.receipts is None or args.baseline is None:
             parser.error('compare needs --family, --receipts and --baseline')
-        compare_baseline(args.family, args.receipts, args.baseline, plan)
+        compare_baseline(args.family, args.receipts, args.baseline, plan, args.include_cuda)
     elif args.command == 'verify':
         if not args.family or args.receipts is None:
             parser.error('verify needs --family and --receipts')
-        verify_receipts(args.family, args.receipts, plan, source_identity(), workflow_identity())
+        verify_receipts(args.family, args.receipts, plan, source_identity(), workflow_identity(),
+                        include_cuda=args.include_cuda, cuda_only=args.cuda_only)
     else:
         if args.shard not in plan[0] or args.output is None:
             parser.error('execution needs a known --shard and --output')

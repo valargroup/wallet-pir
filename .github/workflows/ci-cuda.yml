@@ -1,0 +1,55 @@
+name: CUDA checks
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -Dwarnings -C target-cpu=x86-64-v3
+  CFLAGS: -mpclmul
+  CXXFLAGS: -mpclmul
+
+jobs:
+  checks:
+    name: CUDA checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      # The caller gates this entire workflow before setup. cudarc dynamically
+      # loads driver/NVRTC libraries; no toolkit or driver is installed here.
+      - uses: ./.github/actions/rust-setup
+        with:
+          lane: cuda-test
+          scope: cuda
+      - name: Check and test the CUDA integration contracts
+        run: |
+          umask 022
+          python3 tools/ci/test_matrix.py run --shard enhance-cuda-check --output "$RUNNER_TEMP/cuda-receipts/check.json"
+          python3 tools/ci/test_matrix.py run --shard enhance-cuda-tests --output "$RUNNER_TEMP/cuda-receipts/tests.json"
+          python3 tools/ci/test_matrix.py verify --family enhance --cuda-only --receipts "$RUNNER_TEMP/cuda-receipts"
+      - name: Lint CUDA integration
+        run: >-
+          python3 tools/ci/stage.py lint:cuda -- cargo clippy --locked --all-targets
+          -p pir-cuda -p enhance-query-server -p status-query-server -p status-publisher -p pir-query-server
+          --features pir-cuda/cuda,enhance-query-server/cuda,enhance-query-server/native-reinspiring,status-query-server/cuda,status-publisher/cuda,pir-query-server/enhance,pir-query-server/native-reinspiring,pir-query-server/cuda
+          -- -D warnings
+      - name: Reject CUDA in a CPU-only Status consumer of a mixed build
+        run: >-
+          python3 tools/ci/stage.py tests:cuda-feature-boundary -- cargo test --locked --profile release-fast
+          -p pir-cuda -p status-query-server --features pir-cuda/cuda --lib
+          cuda_requires_the_status_feature_before_reading_coefficients
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qualification-cuda-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/cuda-receipts/*.json
+          if-no-files-found: error
+          retention-days: 14
+      - name: Report Cargo cache reuse
+        if: always()
+        continue-on-error: true
+        run: python3 tools/ci/cargo_cache.py report

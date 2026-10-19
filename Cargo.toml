@@ -9,6 +9,7 @@ members = [
     "src/shared/pir-observability",
     "src/shared/pir-control",
     "src/shared/pir-runtime",
+    "src/shared/pir-cuda",
     "src/shared/pir-pipeline",
     "src/shared/pir-serving",
     # Protocol libraries, clients and stores.

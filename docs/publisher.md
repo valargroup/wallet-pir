@@ -284,6 +284,15 @@ recent/archive and absent display checks, a graceful restart, rollback and
 recutover, and the existing bounded load gate. A configuration check, management
 readiness or a passing CI run alone does not establish that acceptance.
 
+During a cutover or rollback rehearsal, monitoring stays enabled. Stopping the
+publisher can therefore fire several coverage warnings after the 45-second
+observation deadline: source, host, HTTP and canonical/public-origin verification
+are separate checks. Each emits its own recovery once fresh observations return.
+These warnings describe missing observations, not a detected wrong-chain
+publication or incorrect answer. Inspect the incident records and verify recovery
+before continuing; do not infer that every alert during a deployment is expected.
+Tell the operator before starting a live recovery rehearsal.
+
 The focused `CI full` dispatch with `publisher-only: true` also packages the
 current `rate-query` and `txid-rate` reference clients. Use those pinned clients
 with the independently exported fixtures for bounded live checks, including

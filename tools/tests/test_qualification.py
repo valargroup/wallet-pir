@@ -145,7 +145,8 @@ class QualificationTests(unittest.TestCase):
         build = workflow.split('\n  build-cuda:\n', 1)[1].split('\n  release-cuda:\n', 1)[0]
         publish = workflow.split('\n  release-cuda:\n', 1)[1]
         publish += (ROOT / '.github/actions/qualify-artifacts/action.yml').read_text()
-        self.assertIn('    needs: [select, validate-ops]\n', build)
+        self.assertIn('    needs: [select, validate-ops, cuda]\n', build)
+        self.assertIn("inputs.include-cuda && needs.cuda.result == 'success'", build)
         self.assertNotIn('needs.complete', build)
         self.assertIn('tools/ci/build-cuda.sh', build)
         self.assertIn('name: candidate-native-cuda-${{ github.sha }}', build)
@@ -293,7 +294,8 @@ class QualificationTests(unittest.TestCase):
             with patch.object(q, 'history', return_value=[]), patch.object(q, 'baseline', return_value=BASE) as base, \
                     patch.object(release, 'api', return_value={'files': files}):
                 selected = q.selection(REPO, SHA)
-                self.assertEqual(base.call_count, 4)
+                self.assertEqual(base.call_count, 5)
+                self.assertEqual(base.call_args.kwargs, {'cuda': True})
                 self.assertTrue(selected['receiver']['selected'])
                 # Receiver changes also rebuild the unified native publisher.
                 self.assertTrue(selected['enhance']['selected'])
@@ -308,6 +310,31 @@ class QualificationTests(unittest.TestCase):
     def test_missing_baseline_qualifies_every_family(self):
         with patch.object(q, 'history', return_value=[]):
             self.assertTrue(all(v['selected'] for v in q.selection(REPO, SHA).values()))
+
+    def test_explicit_all_is_cpu_only_unless_cuda_is_requested(self):
+        for include_cuda in (False, True):
+            with patch.object(q, 'history') as history:
+                selected = q.selection(REPO, SHA, 'all', include_cuda)
+            history.assert_not_called()
+            self.assertEqual(selected['cuda']['selected'], include_cuda)
+            self.assertTrue(all(selected[family]['selected'] for family in q.FAMILIES))
+
+    def test_cuda_selection_uses_its_own_qualified_baseline(self):
+        cuda_base = 'c' * 40
+        def baseline(_repo, _sha, _family, _runs, cuda=False):
+            return cuda_base if cuda else BASE
+        def api(path):
+            if f'/compare/{cuda_base}...' in path:
+                return {'files': [{'filename': 'src/shared/pir-cuda/src/lib.rs'}]}
+            return {'files': [{'filename': 'docs/README.md'}]}
+        with patch.object(q, 'history', return_value=[]), \
+                patch.object(q, 'baseline', side_effect=baseline), \
+                patch.object(release, 'api', side_effect=api):
+            result = q.selection(REPO, SHA)
+        self.assertEqual(result['cuda']['base'], cuda_base)
+        self.assertTrue(result['cuda']['selected'])
+        self.assertTrue(result['enhance']['selected'])
+        self.assertFalse(result['receiver']['selected'])
 
     def test_operations_build_runs_no_cargo(self):
         with patch.object(q, 'run') as run:

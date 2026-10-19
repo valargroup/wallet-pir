@@ -186,6 +186,9 @@ which is enough for a no-op check or an already staged release.
   argument tail. A serving role does not keep an `enhance-pir-server` `worker`,
   `query-ingress`, or `packing-router` tail: its `ExecStart` is
   `{release}/pir-query-server --config /etc/enhance-pir/<role>.json`.
+  A second external worker on the same host is a separate unit. Its config file
+  is named for that unit, and its management listener is another loopback port,
+  so it does not share the first worker's file or `127.0.0.1:18091`.
   Earlier drop-ins that set `ExecStart` stay in place and are
   shadowed; one that would sort after the managed drop-in is refused. With
   `--retire-historical`, the ExecStart-only `zz-cleanup-*.conf` drop-ins are
@@ -198,7 +201,10 @@ which is enough for a no-op check or an already staged release.
   as the worker. Its inventory entry names `"artifact_kind":
   "enhance-pir-native-cuda"`, and every plan, preflight or deploy that selects it
   needs `--extra-archive enhance-pir-native-cuda=<bundle>` with the same `--sha`;
-  without it the command refuses rather than skipping the GPU. The GPU then rolls
+  without it the command refuses rather than skipping the GPU. CPU-only
+  qualification omits that artifact: request `include-cuda=true` when qualifying
+  the exact revision before selecting the GPU for deployment. See
+  [CUDA deployment](cuda_workers.md#deployment). The GPU then rolls
   in its own transaction, in rollout order, with its own exact-answer check. Leave
   it out deliberately with `--only`. The GPU is the packing router's preferred
   worker, so a release is not complete until it runs too.

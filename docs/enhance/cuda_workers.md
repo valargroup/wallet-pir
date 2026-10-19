@@ -79,7 +79,16 @@ domains without making GPU availability part of the publication quorum.
 
 ## Deployment
 
-The GPU worker is part of every regular Enhance release. It runs the CUDA
+CUDA artifacts are produced only when CUDA qualification is selected. Before
+deploying a revision to the GPU worker, explicitly qualify it if its ordinary
+qualification omitted CUDA:
+
+```sh
+gh workflow run ci-qualify.yml --ref main -f family=enhance -F include-cuda=true
+```
+
+Use the exact revision of that successful run; a CPU-only qualification does not
+produce or qualify a CUDA artifact. The GPU worker runs the CUDA
 `pir-query-server`; the host does not run the publisher as the worker. The
 deploy inventory lists it with `"artifact_kind": "enhance-pir-native-cuda"`, and
 `wallet-pir-deploy.py deploy enhance` takes the full-CI CUDA bundle through
@@ -115,7 +124,27 @@ in-flight evaluation is never replayed. CPU replicas remain eligible throughout.
 
 ## Validation
 
-Ordinary correctness and configuration tests run without a GPU:
+The optional `pir-cuda` library owns CUDA dependency activation and kernel
+construction. Enhance and Status retain runtime selection and lifecycle policy.
+Default builds of that library have no CUDA dependencies. Product `cuda` features
+forward to it; ordinary CPU lint and correctness never enable them.
+
+PR and main CI select CUDA only for backend code, evaluator preparation/evaluation
+contracts, CUDA tests and build logic, or changes to the backend's locked
+dependency graph. Renames and deletions count. Unrelated products, documentation,
+workspace membership and unrelated lockfile entries do not select CUDA. An
+unavailable comparison requires CUDA checks rather than silently dropping them.
+Main compares against successful CI, so a later unrelated push cannot discard
+CUDA changes from a canceled run. CPU-only cache preparation does not advance
+that comparison.
+The selector prints its reasons before any CUDA job starts. Hosted CUDA checks
+use dynamic loading and install no NVIDIA driver or toolkit.
+
+Full and nightly CPU runs do not implicitly include CUDA. To request driver-free
+CUDA checks at a branch revision, dispatch **CI** with `include-cuda=true`; use
+the qualification command above for a main-revision artifact. Hardware tests
+remain an explicit deployment gate. CPU correctness and driver-free CUDA
+configuration tests are separate commands:
 
 ```sh
 cargo test --locked -p pir-query-server --features enhance --test operator
@@ -158,7 +187,7 @@ same single-permit worker. Wrong-length and unreduced queries must return HTTP
 
 ## CI artifact and manual GPU deployment
 
-Full CI on main builds `enhance-pir-native-cuda-<full-sha>` separately from the
+CUDA-selected full qualification on main builds `enhance-pir-native-cuda-<full-sha>` separately from the
 CPU/native bundles. Its digest-pinned Ubuntu 22.04 build uses Rust 1.97.1,
 glibc 2.35 and `x86-64-v3`, matching the older GPU host ABI. The archive's
 server binary is the CUDA `pir-query-server`, together with the native client

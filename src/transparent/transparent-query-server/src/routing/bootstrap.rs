@@ -512,13 +512,6 @@ pub(crate) async fn stage_holdings(
     full: bool,
 ) -> Result<Staged, Error> {
     let started = std::time::Instant::now();
-    let objects = config.directory.join("objects");
-    if cache {
-        // This directory has one owner; an interrupted object is never reused.
-        // Validate it before enumerating so cleanup never follows a symlink.
-        object_directory(&objects)?;
-        remove_partials(&objects)?;
-    }
     let raw = source
         .small(
             &format!("inventories/{}", current.inventory_sha256),
@@ -542,6 +535,13 @@ pub(crate) async fn stage_holdings(
     }
     // New private staging tree; never join untrusted paths into an existing
     // publication or follow its symlinks. Failed trees remain non-authoritative.
+    // Validate the cache before enumerating it: a symlinked object directory
+    // is refused without reading or cleaning its target.
+    let objects = if cache {
+        Some(prepare_objects(&config.directory)?)
+    } else {
+        None
+    };
     let stage = config.directory.join(format!(
         "staging-{}-{}",
         current.revision,
@@ -565,8 +565,8 @@ pub(crate) async fn stage_holdings(
         ) {
             let target = stage.join(&artifact.path);
             std::fs::create_dir_all(target.parent().ok_or("artifact has no parent")?)?;
-            if cache {
-                if ensure_object(source, &objects, artifact, &mut transfer).await? {
+            if let Some(objects) = &objects {
+                if ensure_object(source, objects, artifact, &mut transfer).await? {
                     downloaded_files += 1;
                 }
                 link_object(
@@ -648,13 +648,17 @@ pub(crate) async fn stage_holdings(
 
 const PARTIAL: &str = ".partial-";
 
-/// Create `objects` if needed and require a real directory, not a symlink.
-fn object_directory(objects: &std::path::Path) -> Result<(), Error> {
-    std::fs::create_dir_all(objects)?;
-    if !std::fs::symlink_metadata(objects)?.is_dir() {
+/// Create or open `<directory>/objects`, refuse anything but a real directory
+/// before enumerating it, and remove interrupted partials. This directory has
+/// one owner; an interrupted object is never reused.
+fn prepare_objects(directory: &std::path::Path) -> Result<std::path::PathBuf, Error> {
+    let objects = directory.join("objects");
+    std::fs::create_dir_all(&objects)?;
+    if !std::fs::symlink_metadata(&objects)?.is_dir() {
         return Err("object cache must be a real directory".into());
     }
-    Ok(())
+    remove_partials(&objects)?;
+    Ok(objects)
 }
 
 fn remove_partials(objects: &std::path::Path) -> Result<(), Error> {
@@ -674,8 +678,9 @@ fn remove_partials(objects: &std::path::Path) -> Result<(), Error> {
 }
 
 /// Make `objects/<sha256>` a complete, verified, read-only object and return
-/// whether its body was downloaded. A reused regular file is hashed again
-/// before every stage; anything else under that name is unlinked and fetched.
+/// whether its body was downloaded. A reused regular file is made read-only,
+/// hashed again and synced before every stage, so a legacy writable object is
+/// never linked writable; anything else under that name is unlinked and fetched.
 /// Downloads stream into a unique partial name while hashing, so a partial
 /// never has a digest name, and are synced before and after the rename.
 async fn ensure_object(
@@ -685,25 +690,15 @@ async fn ensure_object(
     transfer: &mut std::time::Duration,
 ) -> Result<bool, Error> {
     use sha2::Digest;
-    object_directory(objects)?;
+    if !std::fs::symlink_metadata(objects)?.is_dir() {
+        return Err("object cache must be a real directory".into());
+    }
     let object = objects.join(&artifact.sha256);
     match std::fs::symlink_metadata(&object) {
         Ok(metadata) => {
             if metadata.is_file() {
-                // A cache written before objects were sealed may still be
-                // writable; seal it durably before hashing so the verified
-                // inode is read-only when linked into a stage.
-                if !metadata.permissions().readonly() {
-                    let mut permissions = metadata.permissions();
-                    permissions.set_readonly(true);
-                    std::fs::set_permissions(&object, permissions)?;
-                    std::fs::File::open(&object)?.sync_all()?;
-                }
                 let (path, file) = (object.clone(), artifact.clone());
-                if tokio::task::spawn_blocking(move || publication::verify_file(&path, &file))
-                    .await?
-                    .is_ok()
-                {
+                if tokio::task::spawn_blocking(move || reuse_object(&path, &file)).await?? {
                     return Ok(false);
                 }
             }
@@ -767,6 +762,22 @@ async fn ensure_object(
         let _ = std::fs::remove_file(&partial);
     }
     result.map(|()| true)
+}
+
+/// Make a cached regular file read-only, then verify and sync it. Returns
+/// whether it may be linked; a digest mismatch leaves it for replacement.
+fn reuse_object(path: &std::path::Path, artifact: &publication::Artifact) -> Result<bool, Error> {
+    let file = std::fs::File::open(path)?;
+    let mut permissions = file.metadata()?.permissions();
+    if !permissions.readonly() {
+        permissions.set_readonly(true);
+        file.set_permissions(permissions)?;
+    }
+    if publication::verify_file(path, artifact).is_err() {
+        return Ok(false);
+    }
+    file.sync_all()?;
+    Ok(true)
 }
 
 /// Stage a verified immutable object by hard link: the stage and cache share
@@ -1053,78 +1064,53 @@ mod object_tests {
         remove_partials(&root.path().join("missing")).unwrap();
     }
 
-    fn config(directory: &std::path::Path) -> Config {
-        Config {
-            // Unroutable: any download attempt fails the operation.
-            publisher: "https://publisher.invalid".into(),
-            network: "main".into(),
-            genesis_hash: "00".repeat(32),
-            directory: directory.into(),
-            cache_bytes: 0,
-            max_download_bytes: 1024,
-            roots: Vec::new(),
-        }
-    }
-
-    #[tokio::test]
-    async fn symlinked_object_cache_is_rejected_before_cleanup() {
-        let (root, outside) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    #[test]
+    fn symlinked_object_directory_is_refused_before_cleanup() {
+        let root = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
         let sentinel = outside
             .path()
             .join(format!("{}{PARTIAL}1-2", "11".repeat(32)));
         std::fs::write(&sentinel, b"outside").unwrap();
         std::os::unix::fs::symlink(outside.path(), root.path().join("objects")).unwrap();
-        let config = config(root.path());
-        let current = Current {
-            schema: publication::SCHEMA.into(),
-            revision: 1,
-            recovery_epoch: 0,
-            inventory_sha256: "11".repeat(32),
-            network: config.network.clone(),
-            genesis_hash: config.genesis_hash.clone(),
-            anchor_height: 2,
-            anchor_hash: "22".repeat(32),
-            eligibility: publication::Eligibility::Canonical,
-            invalidated_from: None,
-        };
-        let mut source = Source::new(&config).unwrap();
-        let error = stage_holdings(&config, &mut source, &current, true, false)
-            .await
-            .err()
-            .unwrap();
-        assert_eq!(error.to_string(), "object cache must be a real directory");
+        assert!(prepare_objects(root.path()).is_err());
         assert_eq!(std::fs::read(&sentinel).unwrap(), b"outside");
+        let real = tempfile::tempdir().unwrap();
+        let objects = prepare_objects(real.path()).unwrap();
+        assert!(std::fs::symlink_metadata(objects).unwrap().is_dir());
     }
 
     #[tokio::test]
-    async fn verified_writable_cache_object_is_sealed_before_reuse() {
+    async fn writable_cached_object_is_made_read_only_before_linking() {
         let root = tempfile::tempdir().unwrap();
-        let objects = root.path().join("objects");
-        std::fs::create_dir(&objects).unwrap();
-        let body = b"valid but writable";
-        let artifact = publication::Artifact {
-            path: "shards.json".into(),
-            sha256: publication::digest(body),
-            bytes: body.len() as u64,
-            kind: publication::Kind::Metadata,
-        };
-        let path = objects.join(&artifact.sha256);
-        std::fs::write(&path, body).unwrap();
-        assert!(!std::fs::metadata(&path).unwrap().permissions().readonly());
-        let mut source = Source::new(&config(root.path())).unwrap();
+        let objects = prepare_objects(root.path()).unwrap();
+        let (path, artifact) = object(&objects, b"legacy");
+        let mut permissions = std::fs::metadata(&path).unwrap().permissions();
+        permissions.set_readonly(false);
+        std::fs::set_permissions(&path, permissions).unwrap();
+        // An unreachable publisher proves the valid object is reused.
+        let mut source = Source::new(&Config {
+            publisher: "https://publisher.invalid".into(),
+            network: "main".into(),
+            genesis_hash: "00".repeat(32),
+            directory: root.path().into(),
+            cache_bytes: 0,
+            max_download_bytes: 1024,
+            roots: Vec::new(),
+        })
+        .unwrap();
         let mut transfer = std::time::Duration::ZERO;
-        let downloaded = ensure_object(&mut source, &objects, &artifact, &mut transfer)
-            .await
-            .unwrap();
-        assert!(!downloaded, "a verified object is reused, not fetched");
+        assert!(
+            !ensure_object(&mut source, &objects, &artifact, &mut transfer)
+                .await
+                .unwrap()
+        );
         let target = root.path().join("stage");
         link_object(&path, &target, &artifact, |a, b| std::fs::hard_link(a, b)).unwrap();
-        let (a, b) = (
-            std::fs::metadata(&path).unwrap(),
-            std::fs::metadata(&target).unwrap(),
-        );
-        assert_eq!((a.dev(), a.ino()), (b.dev(), b.ino()));
-        assert!(a.permissions().readonly() && b.permissions().readonly());
-        assert_eq!(std::fs::read(&target).unwrap(), body);
+        assert!(std::fs::metadata(&target).unwrap().permissions().readonly());
+        assert!(std::fs::OpenOptions::new()
+            .write(true)
+            .open(&target)
+            .is_err());
     }
 }

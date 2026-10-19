@@ -7,6 +7,10 @@ on:
     branches: [main]
   workflow_dispatch:
     inputs:
+      include-cuda:
+        description: Explicitly run CUDA integration checks
+        type: boolean
+        default: false
       comparison-base:
         description: Compare against this commit to replay a representative change
         type: string
@@ -97,3 +101,37 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: umask 022 && python3 tools/ci/timings.py --run "$GITHUB_RUN_ID" --check-fast-seconds 180
+
+  select-cuda:
+    name: Select CUDA changes
+    runs-on: ubuntu-24.04
+    outputs:
+      cuda: ${{ steps.affected.outputs.cuda }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select CUDA contracts and dependencies
+        id: affected
+        env:
+          BASE: ${{ inputs.comparison-base || github.event.pull_request.base.sha || github.event.before }}
+          INCLUDE_CUDA: ${{ inputs.include-cuda }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [[ "$INCLUDE_CUDA" == true ]]; then
+            echo 'cuda=true' >> "$GITHUB_OUTPUT"
+          elif [[ "$GITHUB_EVENT_NAME" == workflow_dispatch && -z "$BASE" ]]; then
+            echo 'cuda=false' >> "$GITHUB_OUTPUT"
+          else
+            BASE=$(python3 tools/ci/feedback_base.py --cuda)
+            if [[ -n "$BASE" && "$BASE" != 0000000000000000000000000000000000000000 ]]; then
+              [[ "$BASE" =~ ^[0-9a-f]{40}$ ]]
+              git fetch --no-tags --depth=1 origin "$BASE"
+            fi
+            python3 tools/ci/cuda_changes.py --base "$BASE" --github-output
+          fi
+
+  cuda:
+    name: CUDA
+    needs: select-cuda
+    if: needs.select-cuda.outputs.cuda == 'true'
+    uses: ./.github/workflows/ci-cuda.yml

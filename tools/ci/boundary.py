@@ -76,7 +76,7 @@ PURE = {
 # they must never reach. Each product's applications compose its serving library;
 # the shared raw PIR runtime they call is held to the same rule.
 SERVING = {'enhance-query-server', 'status-query-server', 'transparent-shared', 'pir-runtime',
-           'pir-serving'}
+           'pir-serving', 'pir-cuda'}
 INGESTION = {
     'pir-publisher', 'pir-pipeline', 'zakura-server-chain', 'enhance-publisher', 'receiver-indexer',
     'transparent-publisher', 'status-publisher',
@@ -448,7 +448,8 @@ def main(argv=None):
                         help='resolve only already-fetched dependencies without network access')
     args = parser.parse_args(argv)
     allowed = json.loads(ALLOWLIST.read_text())['edges']
-    problems = violations(manifests(), allowed)
+    from cuda_boundary import manifest_violations, cpu_graph_violations
+    problems = violations(manifests(), allowed) + manifest_violations()
     patches = tomllib.loads((ROOT / 'Cargo.toml').read_text())['patch']['crates-io']
     # The historical frozen-client fixture is an independent published client;
     # these are the two workspaces used by the current services and sizing tool.
@@ -460,9 +461,18 @@ def main(argv=None):
         metadata = json.loads(subprocess.check_output(
             ['cargo', 'metadata', '--locked', '--format-version', '1',
              *(['--offline'] if args.offline else [])], cwd=ROOT))
+        problems += cpu_graph_violations(metadata)
+        from backend_features import cpu_features
+        features = cpu_features([p['name'] for p in metadata['packages'] if p['source'] is None])
+        cpu_metadata = json.loads(subprocess.check_output(
+            ['cargo', 'metadata', '--locked', '--format-version', '1', '--features', ','.join(features),
+             *(['--offline'] if args.offline else [])], cwd=ROOT))
+        problems += cpu_graph_violations(cpu_metadata)
         problems += common_family_violations(metadata['packages'], patches)
         problems += resolved_violations(metadata, workspace_unified=True)
         problems += resolved_violations(standalone_metadata(RECEIVER))
+        for name in ('enhance-query-server', 'status-query-server', 'pir-query-server'):
+            problems += cpu_graph_violations(standalone_metadata({name}))
         problems += database_reader_violations(standalone_metadata(set(DATABASE_FREE)))
         for name in sorted(SERVING | PIPELINE_FOUNDATIONS | {PIPELINE}):
             problems += resolved_violations(standalone_metadata({name}))

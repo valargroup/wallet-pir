@@ -46,7 +46,7 @@ pub(super) fn server(
         Backend::Cuda => {
             #[cfg(feature = "cuda")]
             {
-                Box::new(config.cuda_kernel()?)
+                config.cuda_kernel()?
             }
             #[cfg(not(feature = "cuda"))]
             {

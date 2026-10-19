@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Select cumulative service changes and build only their release artifacts."""
 import argparse
+import base64
 import json
 import os
 from pathlib import Path
@@ -31,13 +32,13 @@ def history(repo):
         return []
 
 
-def baseline(repo, sha, family, runs):
+def baseline(repo, sha, family, runs, cuda=False):
     """Only an ancestor with a successful family release can bound the diff."""
     for candidate in runs:
         if candidate.get('head_sha') == sha or not release.service_run(candidate, candidate.get('head_sha'), repo):
             continue
         jobs = release.api(f'repos/{repo}/actions/runs/{candidate["id"]}/attempts/{candidate["run_attempt"]}/jobs?per_page=100')['jobs']
-        if not release.service_jobs(jobs, family):
+        if not release.service_jobs(jobs, family, cuda=cuda):
             continue
         comparison = release.api(f'repos/{repo}/compare/{candidate["head_sha"]}...{sha}')
         if comparison['status'] == 'ahead':
@@ -45,7 +46,7 @@ def baseline(repo, sha, family, runs):
     return None
 
 
-def selection(repo, sha, requested='affected'):
+def selection(repo, sha, requested='affected', include_cuda=False):
     release.check_sha(sha)
     packages = workspace_packages()
     runs = history(repo) if requested == 'affected' else []
@@ -62,6 +63,26 @@ def selection(repo, sha, requested='affected'):
         selected = (requested in ('all', family) if requested != 'affected' else
                     affected is None or family in affected['groups'])
         result[family] = {'selected': selected, 'base': base}
+    # CUDA has its own baseline: a newer CPU release cannot consume its diff.
+    cuda = {'selected': include_cuda, 'base': None}
+    if requested == 'affected' and not include_cuda:
+        from cuda_changes import select
+        base = baseline(repo, sha, 'enhance', runs, cuda=True)
+        comparison = release.api(f'repos/{repo}/compare/{base}...{sha}') if base else None
+        paths = ([name for file in comparison['files'] for name in
+                  (file['filename'], file.get('previous_filename', file['filename']))]
+                 if comparison and len(comparison['files']) < 300 else None)
+        def read(revision, path):
+            value = release.api(f'repos/{repo}/contents/{path}?ref={revision}')
+            if value.get('encoding') != 'base64':
+                raise ValueError('comparison content unavailable')
+            return base64.b64decode(value['content']).decode()
+        affected = (select(paths, lambda path: read(base, path), lambda path: read(sha, path))
+                    if paths is not None else {'cuda': True, 'reasons': ['CUDA baseline or complete diff unavailable']})
+        cuda = {'selected': affected['cuda'], 'base': base, 'reasons': affected['reasons']}
+    result['cuda'] = cuda
+    if cuda['selected']:
+        result['enhance']['selected'] = True
     return result
 
 
@@ -129,6 +150,7 @@ def main():
     sub = parser.add_subparsers(dest='command', required=True)
     select = sub.add_parser('select')
     select.add_argument('--sha', required=True)
+    select.add_argument('--include-cuda', action='store_true')
     select.add_argument('--family', choices=['affected', 'all', *FAMILIES], default='affected')
     check = sub.add_parser('checks')
     check.add_argument('--family', choices=[*FAMILIES, 'common', 'shared'], required=True)
@@ -145,7 +167,7 @@ def main():
             child.add_argument('--cuda', action='store_true')
     args = parser.parse_args()
     if args.command == 'select':
-        result = selection(os.environ['GITHUB_REPOSITORY'], args.sha, args.family)
+        result = selection(os.environ['GITHUB_REPOSITORY'], args.sha, args.family, args.include_cuda)
         print(json.dumps(result, indent=2))
         with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
             for family, value in result.items():

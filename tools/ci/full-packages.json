@@ -4,7 +4,8 @@
     "pir-observability",
     "pir-runtime",
     "pir-pipeline",
-    "pir-serving"
+    "pir-serving",
+    "pir-cuda"
   ],
   "enhance": [
     "enhance-query-server",

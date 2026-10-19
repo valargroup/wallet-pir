@@ -6,6 +6,7 @@
 /// Status admission queues; the application's publisher uses the coordinator queue.
 pub mod admission;
 pub mod artifact;
+mod backend;
 mod controller;
 pub mod distributed;
 pub mod fixture;
