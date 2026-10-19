@@ -156,6 +156,11 @@ pub fn start(dashboard: SharedDashboard, config: Config) -> Result<()> {
     let mut scaling = scaling
         .map(|settings| crate::scaling::Family::open(settings, &path))
         .transpose()?;
+    // A disabled family retires the incidents it left in the shared database.
+    let mut retired_scaling = match scaling {
+        Some(_) => None,
+        None => Some(Store::open(&path)?.with_family("scaling")),
+    };
     let policy = Policy::load()?;
     let url = std::env::var("PIR_APM_PUBLIC_URL")
         .unwrap_or_else(|_| "https://enhance-pir.valargroup.dev/apm/".into());
@@ -281,6 +286,14 @@ pub fn start(dashboard: SharedDashboard, config: Config) -> Result<()> {
                 )?;
                 if let Some(family) = scaling.as_mut() {
                     family.evaluate(now, &config.environment, &transparent_url)?;
+                }
+                if let Some(store) = retired_scaling.as_mut() {
+                    crate::scaling::retire_disabled(
+                        store,
+                        now,
+                        &config.environment,
+                        &transparent_url,
+                    )?;
                 }
                 Ok((store.incidents()?, store.health(configured, now)?))
             })();

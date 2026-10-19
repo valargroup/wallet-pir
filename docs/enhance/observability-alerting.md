@@ -490,8 +490,9 @@ on the same host at every five-second evaluation. It is enabled only when
 `PIR_APM_STATE_PATH`, and shares the incident database and Slack outbox.
 `PIR_APM_SCALING_ALERT_MODE` is `shadow` (default) or `active`, independent of the
 other families; `active` without a status file refuses to start. Without
-`PIR_APM_SCALER_STATUS` nothing is opened, read or written, and Enhance, Status
-and quality alerting are unchanged.
+`PIR_APM_SCALER_STATUS` no status file is read and Enhance, Status and quality
+alerting are unchanged; the only write is retiring stored `scaling_*` incidents
+(below).
 
 Reads stop at 1 MiB. A missing, oversized, unparseable, `schema` ≠ 1 or
 future-dated file, or contents with `updated_unix` older than 90 s, make every
@@ -520,8 +521,14 @@ samples: distinct `updated_unix` values, or distinct heartbeats for
 `scaling_heartbeat`. Critical incidents repeat every 30 minutes like the others.
 
 Roll out with the same gates as the quality families: 24 hours in shadow, then 24
-hours active. Removing `PIR_APM_SCALER_STATUS` stops evaluation and leaves any
-open `scaling_*` incident as it was.
+hours active. Removing `PIR_APM_SCALER_STATUS` stops evaluation and retires every
+stored `scaling_*` incident on resource `transparent-scaler` at the next
+evaluation, through the normal `RETIRED` transition: an incident whose `FIRED`
+reached Slack gets exactly one closing message from the outbox, a shadow-only one
+gets a shadow event and no message, and other families' incidents and modes are
+untouched. An enabled family whose status file is missing or unreadable is not
+retired: its rules are unknown, its incidents stay active and
+`scaling_status_coverage` fires.
 
 ## Enhance memory and growth alerts
 
