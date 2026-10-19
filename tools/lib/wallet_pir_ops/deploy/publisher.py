@@ -173,6 +173,8 @@ class Cutover:
             require(all(states[name]['active_state'] == 'inactive' and not states[name]['main_pid'] for name in OLD),
                     'standalone and unified publishers both own state')
             require(not unified['drop_ins'], 'unexpected publisher drop-ins; reconcile before changing ownership')
+            require(self.request['configuration'] == json.loads(self.read(CONFIG)),
+                    'publisher updates must preserve the installed product settings')
         else:
             require(unified['load_state'] == 'not-found', 'publisher exists but is not running; reconcile it first')
             require(all(states[name]['active_state'] == 'active' for name in OLD), 'both predecessor controllers must be running')
@@ -208,9 +210,14 @@ class Cutover:
                 target['units'] = [u for u in target['units'] if u not in OLD]
         load_command = units.exec_start(units.effective([states[LOAD]['fragment_text'],
             *(entry['text'] for entry in states[LOAD]['drop_ins'])]))
-        expected = '--controller-unit transparent-v12-publish-controller'
-        require(expected in load_command or '--controller-unit pir-publisher' in load_command, 'unknown load controller binding')
-        load_command = load_command.replace(expected, '--controller-unit pir-publisher')
+        load_arguments = shlex.split(load_command)
+        require(load_arguments.count('--controller-unit') == 1, 'unknown load controller binding')
+        position = load_arguments.index('--controller-unit') + 1
+        require(position < len(load_arguments) and load_arguments[position] in
+                ('transparent-v12-publish-controller', 'transparent-v12-publish-controller.service', 'pir-publisher', UNIT),
+                'unknown load controller binding')
+        load_arguments[position] = 'pir-publisher'
+        load_command = shlex.join(load_arguments)
         binary = ROOT_DIR + '/releases/' + self.request['release']['binary_sha256'] + '/pir-publisher'
         desired = {
             CONFIG: json.dumps(config, indent=2) + '\n',

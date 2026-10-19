@@ -571,5 +571,6 @@ jobs:
         with:
           name: transparent-publisher-candidate-${{ github.sha }}
           path: .local-pir/publisher-candidate/
+          include-hidden-files: true
           if-no-files-found: error
           retention-days: 14
