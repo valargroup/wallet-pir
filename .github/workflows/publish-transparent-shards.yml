@@ -164,7 +164,8 @@ jobs:
           # Yield to the ingester and the live services on this host.
           NICE=(nice -n 19)
           if command -v ionice >/dev/null; then NICE+=(ionice -c3); fi
-          "${NICE[@]}" cargo build --locked --release -p transparent-publisher --features rocksdb-reader \
+          "${NICE[@]}" cargo build --locked --release -p transparent-publisher -p transparent-tools \
+            --features transparent-publisher/rocksdb-reader,transparent-tools/rocksdb-reader \
             --bin shard-publish --bin shard-cutoff --bin journal-inventory
           sha256sum target/release/shard-publish
 

@@ -26,6 +26,11 @@
 //! by `prepared_native::read`, and the masks it publishes must equal the stored
 //! bytes — so a restored runtime cannot publish masks its preprocessing does
 //! not answer under.
+#[cfg(test)]
+use zakura_pir_client::transparent::native::TableClientExt as _;
+
+use zakura_pir_protocol::transparent::shard as transparent_shard;
+
 use super::{RuntimeKey, SharedParams, TableRuntime};
 use sha2::{Digest, Sha256};
 use std::fs::{self, File, OpenOptions};
@@ -1036,8 +1041,12 @@ mod cache_integration_tests {
         let dir = tempfile::tempdir().unwrap();
         let (geometry, table) =
             super::super::tests::fixture_shape(&DECOUPLED_2K_8K, Table::Directory);
-        let shared = Arc::new(SharedParams::build(geometry, table).unwrap());
-        let rows = vec![7u8; (table.rows(geometry) * table.row_bytes(geometry) as u64) as usize];
+        let shared = super::super::tests::fixture_params(geometry, table, false);
+        let rows = if cfg!(feature = "qualification-tests") {
+            vec![7u8; (table.rows(geometry) * table.row_bytes(geometry) as u64) as usize]
+        } else {
+            super::super::tests::recovery_rows(&shared, false)
+        };
         let source = SegmentSource::published(
             dir.path().join("table.bin"),
             table.rows(geometry),
@@ -1046,27 +1055,34 @@ mod cache_integration_tests {
             table.rows(geometry),
         );
         fs::write(source.path(), &rows).unwrap();
-        drop(rows);
         let disk = DiskCache::new(dir.path().join("cache"), shared.reserved_bytes() * 2).unwrap();
         let key = ("ab".repeat(32), table, 0);
-        let metrics = Arc::new(Metrics::default());
-        let cache = RuntimeCache::new(shared.reserved_bytes(), 1, metrics.clone())
-            .with_disk(Some(disk.clone()));
-        let first = cache
-            .get(key.clone(), shared.clone(), source.clone())
+        let expected = if cfg!(feature = "qualification-tests") {
+            let metrics = Arc::new(Metrics::default());
+            let cache = RuntimeCache::new(shared.reserved_bytes(), 1, metrics.clone())
+                .with_disk(Some(disk.clone()));
+            let first = cache
+                .get(key.clone(), shared.clone(), source.clone())
+                .await
+                .unwrap();
+            let expected = first.get().public_params_sha256.clone();
+            tokio::time::timeout(std::time::Duration::from_secs(30), async {
+                while Metrics::get(&metrics.disk_save_pending) != 0 {
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                }
+            })
             .await
             .unwrap();
-        let expected = first.get().public_params_sha256.clone();
-        tokio::time::timeout(std::time::Duration::from_secs(30), async {
-            while Metrics::get(&metrics.disk_save_pending) != 0 {
-                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-            }
-        })
-        .await
-        .unwrap();
-        assert_eq!(Metrics::get(&metrics.builds), 1);
-        drop(first);
-        drop(cache);
+            assert_eq!(Metrics::get(&metrics.builds), 1);
+            drop(first);
+            drop(cache);
+            expected
+        } else {
+            let runtime = super::super::tests::prepared_fixture(&shared, &rows).unwrap();
+            disk.save(&key, &shared, source.sha256(), &runtime).unwrap();
+            runtime.public_params_sha256.clone()
+        };
+        drop(rows);
         let metrics = Arc::new(Metrics::default());
         let cache = RuntimeCache::new(shared.reserved_bytes(), 2, metrics.clone())
             .with_disk(Some(disk.clone()));
@@ -1090,8 +1106,12 @@ mod cache_integration_tests {
         cancelled_restore_keeps_its_reservation(&disk, &key, &shared, &source).await;
         fs::write(disk.path(&key, &shared, source.sha256()), b"corrupt").unwrap();
         let metrics = Arc::new(Metrics::default());
+        let mut fallback_disk = disk.clone();
+        if !cfg!(feature = "qualification-tests") {
+            fallback_disk.max_bytes = 1;
+        }
         let cache = RuntimeCache::new(shared.reserved_bytes(), 1, metrics.clone())
-            .with_disk(Some(disk.clone()));
+            .with_disk(Some(fallback_disk));
         assert_eq!(
             cache
                 .get(key.clone(), shared.clone(), source.clone())
@@ -1104,24 +1124,35 @@ mod cache_integration_tests {
         assert_eq!(Metrics::get(&metrics.builds), 1);
         assert_eq!(Metrics::get(&metrics.disk_misses), 1);
         wait_for_saves(&metrics).await;
+        if !cfg!(feature = "qualification-tests") {
+            assert_eq!(Metrics::get(&metrics.disk_write_failures), 1);
+        }
         drop(cache);
-        let metrics = Arc::new(Metrics::default());
-        let tiny_disk = DiskCache::new(dir.path().join("too-small"), 1).unwrap();
-        let cache = RuntimeCache::new(shared.reserved_bytes(), 1, metrics.clone())
-            .with_disk(Some(tiny_disk));
-        assert_eq!(
-            cache
-                .get(key.clone(), shared.clone(), source.clone())
-                .await
-                .unwrap()
-                .get()
-                .public_params_sha256,
-            expected
-        );
-        wait_for_saves(&metrics).await;
-        assert_eq!(Metrics::get(&metrics.disk_write_failures), 1);
-        assert_eq!(Metrics::get(&metrics.builds), 1);
-        drop(cache);
+        if cfg!(feature = "qualification-tests") {
+            let metrics = Arc::new(Metrics::default());
+            let tiny_disk = DiskCache::new(dir.path().join("too-small"), 1).unwrap();
+            let cache = RuntimeCache::new(shared.reserved_bytes(), 1, metrics.clone())
+                .with_disk(Some(tiny_disk));
+            assert_eq!(
+                cache
+                    .get(key.clone(), shared.clone(), source.clone())
+                    .await
+                    .unwrap()
+                    .get()
+                    .public_params_sha256,
+                expected
+            );
+            wait_for_saves(&metrics).await;
+            assert_eq!(Metrics::get(&metrics.disk_write_failures), 1);
+            assert_eq!(Metrics::get(&metrics.builds), 1);
+            drop(cache);
+        } else {
+            // The failed save must not leave a malformed entry for the final
+            // source-integrity check. Seed a valid private entry again.
+            let rows = fs::read(source.path()).unwrap();
+            let runtime = super::super::tests::prepared_fixture(&shared, &rows).unwrap();
+            disk.save(&key, &shared, source.sha256(), &runtime).unwrap();
+        }
         // A valid cache must not conceal plaintext corruption after startup.
         fs::write(source.path(), b"corrupt source").unwrap();
         let cache = RuntimeCache::new(shared.reserved_bytes(), 1, Arc::new(Metrics::default()))
@@ -1230,22 +1261,7 @@ mod shipped_tests {
         } else {
             &super::super::tests::NATIVE_INSTANCE
         };
-        let shared = if cfg!(feature = "qualification-tests") {
-            Arc::new(SharedParams::build_display(geometry, table).unwrap())
-        } else {
-            static SHARED: std::sync::LazyLock<Arc<SharedParams>> =
-                std::sync::LazyLock::new(|| {
-                    Arc::new(
-                        SharedParams::build_display(
-                            &super::super::tests::NATIVE_INSTANCE,
-                            Table::TxDirectory,
-                        )
-                        .unwrap(),
-                    )
-                });
-            assert_eq!(table, Table::TxDirectory);
-            SHARED.clone()
-        };
+        let shared = super::super::tests::fixture_params(geometry, table, true);
         let profile = &shared.profile;
         let mut rows = vec![0u8; profile.rows * profile.row_bytes];
         for (i, byte) in rows[..filled * profile.row_bytes].iter_mut().enumerate() {
@@ -1289,7 +1305,7 @@ mod shipped_tests {
             let table = Table::TxDirectory;
             let dir = tempfile::tempdir().unwrap();
             let s = segment(dir.path(), table, filled, 1);
-            let local = TableRuntime::build(&s.shared, &s.rows).unwrap();
+            let local = crate::runtime::tests::prepared_fixture(&s.shared, &s.rows).unwrap();
             let shipped = candidate(dir.path(), "candidate");
             let bytes = shipped
                 .write(&s.key, &s.shared, s.source.sha256(), &local)
@@ -1346,13 +1362,13 @@ mod shipped_tests {
     }
 
     /// Missing, truncated, corrupted and wrongly named shipped files are all
-    /// refused. One damaged artifact exercises counted cold fallback; ordinary
-    /// builds without an offered artifact have separate accounting.
+    /// refused. The self-check test exercises the common counted fallback;
+    /// this test also distinguishes ordinary builds without an offered file.
     #[tokio::test(flavor = "multi_thread")]
-    async fn refused_shipped_files_fall_back_to_a_counted_local_build() {
+    async fn malformed_shipped_files_are_refused_and_plain_builds_are_counted() {
         let dir = tempfile::tempdir().unwrap();
-        let s = segment(dir.path(), Table::TxDirectory, 700, 2);
-        let local = TableRuntime::build(&s.shared, &s.rows).unwrap();
+        let s = segment(dir.path(), Table::TxDirectory, 2_048, 4);
+        let local = crate::runtime::tests::prepared_fixture(&s.shared, &s.rows).unwrap();
         let mut other_revision = s.key.clone();
         other_revision.0 = "cd".repeat(32);
         let mut other_bucket = s.key.clone();
@@ -1419,9 +1435,9 @@ mod shipped_tests {
                 "{name} must be rejected before use"
             );
             // Rejection and cold construction are separate contracts. Exercise
-            // every refusal here, then build once to verify fallback and its
-            // accounting. The loader owns identity and format validation.
-            if name != "corrupted" {
+            // every refusal here. The forged-runtime test covers the shared
+            // fallback; qualification also repeats it for a damaged file.
+            if !cfg!(feature = "qualification-tests") || name != "corrupted" {
                 continue;
             }
             let metrics = Arc::new(Metrics::default());
@@ -1456,17 +1472,18 @@ mod shipped_tests {
     /// its preprocessing, or is the segment's at all. The self-check can: a
     /// file holding rows A's database with rows B's preprocessing, saved
     /// under A's identity, loads, but fails the self-check and is replaced by
-    /// a local build; so does a consistent runtime of rows B under A's name.
+    /// a local build. A consistent runtime of B under A's name is also refused;
+    /// qualification repeats the rebuild for that case.
     #[tokio::test(flavor = "multi_thread")]
     async fn the_self_check_refuses_a_database_its_preprocessing_was_not_built_from() {
         let dir = tempfile::tempdir().unwrap();
         let a = segment(dir.path(), Table::TxDirectory, 2_048, 4);
         let b = segment(dir.path(), Table::TxDirectory, 2_048, 5);
-        let from_a = TableRuntime::build(&a.shared, &a.rows).unwrap();
+        let from_a = crate::runtime::tests::prepared_fixture(&a.shared, &a.rows).unwrap();
         let expected = from_a.public_params.clone();
         // The matching runtime is checked before its parts are moved into the forgery.
         assert!(from_a.self_check(&a.shared, &a.rows).unwrap() < 2_048);
-        let from_b = TableRuntime::build(&b.shared, &b.rows).unwrap();
+        let from_b = crate::runtime::tests::prepared_fixture(&b.shared, &b.rows).unwrap();
         // Other rows while that runtime is still whole; forging moves its preprocessing.
         expect_self_check_fallback(dir.path(), "other rows", &a, &from_b, &expected, true).await;
         let TableRuntime { native, db, .. } = from_a;
@@ -1494,6 +1511,9 @@ mod shipped_tests {
             database_differs,
             "{name}: {refused}"
         );
+        if database_differs && !cfg!(feature = "qualification-tests") {
+            return;
+        }
         let metrics = Arc::new(Metrics::default());
         let cache = RuntimeCache::new(a.shared.reserved_bytes() * 2, 1, metrics.clone());
         let (handle, produced) = cache
@@ -1507,6 +1527,8 @@ mod shipped_tests {
             .unwrap();
         assert_eq!(produced, Produced::Fallback, "{name}");
         assert_eq!(Metrics::get(&metrics.shipped_fallbacks), 1);
+        assert_eq!(Metrics::get(&metrics.shipped_loads), 0);
+        assert_eq!(Metrics::get(&metrics.builds), 1);
         assert_eq!(handle.get().public_params, expected);
     }
 
@@ -1516,22 +1538,7 @@ mod shipped_tests {
     fn history_segment(dir: &Path, table: Table, filled: usize, seed: usize) -> Segment {
         use transparent_shard::layout::DECOUPLED_2K_8K;
         let (geometry, table) = super::super::tests::fixture_shape(&DECOUPLED_2K_8K, table);
-        let shared = if cfg!(feature = "qualification-tests") {
-            Arc::new(SharedParams::build(geometry, table).unwrap())
-        } else {
-            static SHARED: std::sync::LazyLock<Arc<SharedParams>> =
-                std::sync::LazyLock::new(|| {
-                    Arc::new(
-                        SharedParams::build(
-                            &super::super::tests::NATIVE_INSTANCE,
-                            Table::TxDirectory,
-                        )
-                        .unwrap(),
-                    )
-                });
-            assert_eq!(table, Table::TxDirectory);
-            SHARED.clone()
-        };
+        let shared = super::super::tests::fixture_params(geometry, table, false);
         let profile = &shared.profile;
         let mut rows = vec![0u8; profile.rows * profile.row_bytes];
         for (i, byte) in rows[..filled * profile.row_bytes].iter_mut().enumerate() {
@@ -1575,7 +1582,7 @@ mod shipped_tests {
         let dir = tempfile::tempdir().unwrap();
         let s = history_segment(dir.path(), table, 900, 3);
         let table = s.shared.table;
-        let local = TableRuntime::build(&s.shared, &s.rows).unwrap();
+        let local = crate::runtime::tests::prepared_fixture(&s.shared, &s.rows).unwrap();
         let other_kind = match table {
             Table::Directory => Table::Pages,
             _ => Table::Directory,
@@ -1691,7 +1698,7 @@ mod shipped_tests {
                 &s.key,
                 &s.shared,
                 s.source.sha256(),
-                &TableRuntime::build(&s.shared, &s.rows).unwrap(),
+                &crate::runtime::tests::prepared_fixture(&s.shared, &s.rows).unwrap(),
             )
             .unwrap();
         let mut corrupt = s.rows.clone();
@@ -1726,7 +1733,7 @@ mod shipped_tests {
                 &s.key,
                 &s.shared,
                 s.source.sha256(),
-                &TableRuntime::build(&s.shared, &s.rows).unwrap(),
+                &crate::runtime::tests::prepared_fixture(&s.shared, &s.rows).unwrap(),
             )
             .unwrap();
         let metrics = Arc::new(Metrics::default());
@@ -1820,7 +1827,7 @@ mod shipped_tests {
                 &s.key,
                 &s.shared,
                 s.source.sha256(),
-                &TableRuntime::build(&other.shared, &other.rows).unwrap(),
+                &crate::runtime::tests::prepared_fixture(&other.shared, &other.rows).unwrap(),
             )
             .unwrap();
         let disk = DiskCache::new(dir.path().join("cache"), s.shared.reserved_bytes() * 4).unwrap();
@@ -1900,7 +1907,7 @@ mod shipped_tests {
         assert_eq!(Metrics::get(&metrics.builds), 1);
         assert_eq!(Metrics::get(&metrics.shipped_loads), 0);
         assert!(cache.refused_shipped.lock().unwrap().is_empty());
-        let expected = TableRuntime::build(&s.shared, &s.rows).unwrap();
+        let expected = crate::runtime::tests::prepared_fixture(&s.shared, &s.rows).unwrap();
         assert_eq!(handle.get().public_params, expected.public_params);
         // A new production operation, once the runtime is gone, tries the
         // offered file afresh: a valid one now.
@@ -1945,7 +1952,7 @@ mod shipped_tests {
                 &s.key,
                 &s.shared,
                 s.source.sha256(),
-                &TableRuntime::build(&s.shared, &s.rows).unwrap(),
+                &crate::runtime::tests::prepared_fixture(&s.shared, &s.rows).unwrap(),
             )
             .unwrap();
         let metrics = Arc::new(Metrics::default());

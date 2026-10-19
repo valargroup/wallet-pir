@@ -1,5 +1,15 @@
 //! Real publisher/TLS/manager/owner/recent-worker boundaries, with source rows
 //! as an independent answer oracle. These do not qualify a complete provider.
+#[cfg(test)]
+use zakura_pir_client::transparent::native as transparent_native;
+#[cfg(test)]
+use zakura_pir_client::transparent::native::TableClientExt as _;
+#[cfg(feature = "qualification-tests")]
+use zakura_pir_protocol::transparent::events as transparent_events;
+use zakura_pir_publisher::transparent as transparent_shard;
+#[cfg(feature = "qualification-tests")]
+use zakura_pir_publisher::transparent::filter as transparent_filter;
+
 use super::*;
 #[cfg(feature = "qualification-tests")]
 use transparent_events::TransparentEvent;
@@ -74,6 +84,12 @@ fn prepared_fixture(through: u64) -> &'static Path {
         3 => &NEXT,
         _ => panic!("no prepared publication fixture through height {through}"),
     }
+}
+
+/// A private publication with the recent runtime files already prepared.
+/// Copy files rather than link them: callers may replace or corrupt artifacts.
+pub(super) fn copy_prepared_publication(through: u64, directory: &Path) {
+    copy_fixture_tree(&prepared_fixture(through).join("publication"), directory);
 }
 
 // Reuse only the immutable publisher side. Every manager still owns a fresh
@@ -540,6 +556,8 @@ async fn manager_reuses_immutable_transfers_and_serves_through_failed_update() {
     let mut follow = manager(&tls, &state);
     let first = follow.poll_once().await.unwrap();
     assert!(first.downloaded_files > 0);
+    let stages = first.stages.expect("a changed pass reports its stages");
+    assert!(stages.transfer_seconds > 0.0 && stages.prewarm_seconds > 0.0);
     let live = follow.live().unwrap();
     let (origin, task) = serve_worker(follow.router().unwrap()).await;
     let observed: serde_json::Value = get(&origin, "/v1/provider-status")
@@ -558,8 +576,18 @@ async fn manager_reuses_immutable_transfers_and_serves_through_failed_update() {
     let count = artifact_requests(&tls);
     let unchanged = follow.poll_once().await.unwrap();
     assert!(unchanged.unchanged);
+    assert!(unchanged.stages.is_none());
     assert_eq!(unchanged.downloaded_bytes, 0);
     assert_eq!(count, artifact_requests(&tls));
+    // The last activated change, with its stage timings, survives the 304.
+    let observed: serde_json::Value = get(&origin, "/v1/provider-status")
+        .await
+        .json()
+        .await
+        .unwrap();
+    let change = &observed["synchronization"]["last_change"]["progress"];
+    assert_eq!(change["revision"], first.revision);
+    assert!(change["stages"]["activation_seconds"].as_f64().is_some());
     // Missing many revisions does not require a retained delta base.
     owner.0.distribution_revision.store(40, Ordering::Release);
     let reused = follow.poll_once().await.unwrap();
@@ -772,7 +800,10 @@ async fn manager_restarts_interrupted_staging_and_rejects_superseded_activation(
     assert!(work.await.unwrap_err().is_cancelled());
     std::fs::write(&tls.control, "").unwrap();
     let mut restarted = restart_manager(&tls, &state).await;
-    restarted.poll_once().await.unwrap();
+    let activated = restarted.poll_once().await.unwrap();
+    // A changed pass reports the wall time of each stage it ran.
+    let stages = activated.stages.expect("a changed pass reports its stages");
+    assert!(stages.transfer_seconds > 0.0 && stages.prewarm_seconds > 0.0);
     let live = restarted.live().unwrap();
     let (origin, task) = worker(live.clone()).await;
     query(&origin, &set).await;
@@ -1720,6 +1751,7 @@ with urllib.request.urlopen(r,timeout=20) as response: sys.stdout.buffer.write(r
         snapshot_dir: None,
         ship_runtimes: false,
         distribute_prepared: false,
+        http_only: false,
     };
     let reader = Arc::new(tokio::sync::Mutex::new(
         EventStore::open_existing(&config.data_dir).unwrap(),

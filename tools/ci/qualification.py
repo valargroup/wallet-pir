@@ -104,7 +104,7 @@ def build(family):
     elif family == 'transparent':
         command += ['-p', 'transparent-publisher', '-p', 'transparent-query-server',
                     '-p', 'transparent-tools', '--features',
-                    'transparent-publisher/rocksdb-reader,transparent-query-server/test-support']
+                    'transparent-publisher/rocksdb-reader,transparent-tools/test-support']
         for name in sorted({name for kind in KINDS[family] for name in release.BINARIES[kind]}):
             command += ['--bin', name]
     else:

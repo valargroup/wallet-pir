@@ -6,11 +6,14 @@
 //! filters, which a real wallet must never do. It exists to exercise the fetch,
 //! validate and match path end to end against a live service.
 
+use zakura_pir_client::transparent::filter as transparent_filter;
+use zakura_pir_publisher::transparent::filter::build_filter;
+
 use clap::{Parser, Subcommand};
 use std::io::{BufRead, Write};
 use transparent_filter::{
-    build_filter, filter_hash, http::HttpTransport, sync_range, validate_filter, BlockHash,
-    ChainMap, FilterLimits, RangeRequest, ScriptBytes,
+    filter_hash, http::HttpTransport, sync_range, validate_filter, BlockHash, ChainMap,
+    FilterLimits, RangeRequest, ScriptBytes,
 };
 
 #[derive(Parser)]
@@ -197,7 +200,7 @@ fn run() -> Result<(), String> {
                         "filter": hex::encode(filter.as_slice()),
                         "filter_hash": hex::encode(filter_hash(filter.as_slice()).0),
                         "bytes": filter.len(),
-                        "elements": transparent_filter::element_count(&elements),
+                        "elements": zakura_pir_publisher::transparent::filter::element_count(&elements),
                     })
                 )
                 .map_err(|e| e.to_string())?;

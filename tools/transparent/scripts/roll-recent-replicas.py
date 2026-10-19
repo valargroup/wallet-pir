@@ -89,7 +89,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--fleet-config', type=Path, default=Path('/opt/transparent-publisher/fleet.json'))
     parser.add_argument('--artifacts', type=Path, required=True,
-                        help='directory holding transparent-shard-server and shard-control')
+                        help='directory holding transparent-query-server and shard-control')
     parser.add_argument('--out', type=Path, required=True, help='per-worker rollback material')
     parser.add_argument('--workers', nargs='*', default=[])
     parser.add_argument('--warm-seconds', type=int, default=900)

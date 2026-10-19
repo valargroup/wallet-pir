@@ -14,6 +14,9 @@
 //! Read-only. The expectations come from the publication record the publish
 //! workflow wrote beside the map, or from explicit flags.
 
+use zakura_pir_publisher::transparent as transparent_shard;
+use zakura_pir_publisher::transparent::filter as transparent_filter;
+
 use clap::Parser;
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;

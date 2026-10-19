@@ -3,7 +3,7 @@ use std::{
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
-use zakura_pir_transparent::engine::{
+use zakura_pir_client::transparent::engine::{
     client::Table,
     transport::{BoxError, FilterSource, ShardReply, ShardRequest, ShardTransport},
 };
@@ -78,9 +78,11 @@ impl<T> Counting<T> {
             Ok(down) => entry.down += down,
             Err(error) => {
                 let text = error.to_string();
-                if zakura_pir_transparent::engine::StaleRevision::found_in(error).is_some() {
+                if zakura_pir_client::transparent::engine::StaleRevision::found_in(error).is_some()
+                {
                     entry.http_409 += 1;
-                } else if zakura_pir_transparent::engine::Overloaded::found_in(error).is_some()
+                } else if zakura_pir_client::transparent::engine::Overloaded::found_in(error)
+                    .is_some()
                     || text.contains("503")
                 {
                     entry.http_503 += 1;

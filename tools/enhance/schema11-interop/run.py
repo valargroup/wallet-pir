@@ -44,7 +44,7 @@ def main():
         for name, path in dependencies.items():
             manifest += f'{name} = {{ path = {json.dumps(str(path))} }}\n'
         for name, subdir, features in [
-            ('zakura-pir-enhance', 'zakura/pir-enhance', ['wallet']),
+            ('zakura-pir-client', 'zakura/pir-client', ['enhance', 'wallet']),
             ('zakura-client-backend', 'librustzcash/zcash_client_backend', ['orchard', 'test-dependencies']),
             ('zakura-client-sqlite', 'librustzcash/zcash_client_sqlite', ['orchard', 'test-dependencies']),
         ]:

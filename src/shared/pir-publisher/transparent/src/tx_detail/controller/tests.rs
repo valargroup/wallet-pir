@@ -1,3 +1,9 @@
+#[cfg(feature = "qualification-tests")]
+use zakura_pir_client::transparent::txid_client as transparent_txid_client;
+use zakura_pir_publisher::transparent as transparent_shard;
+#[cfg(feature = "qualification-tests")]
+use zakura_pir_publisher::transparent::filter as transparent_filter;
+
 use super::*;
 use crate::tx_detail::fixture::{self, chain_records};
 #[cfg(feature = "qualification-tests")]
@@ -1916,9 +1922,8 @@ async fn metrics_report_cycles_stages_and_freshness() {
 
 // Reuse the serving tests' independent wallet transport and per-process pure
 // profile cache. This controller still owns fresh journal/root/worker state.
-#[path = "../../../../../../transparent/transparent-query-server/tests/support/display_world.rs"]
 #[cfg(feature = "qualification-tests")]
-mod display_world;
+use crate::tx_detail::display_world;
 
 #[cfg(feature = "qualification-tests")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

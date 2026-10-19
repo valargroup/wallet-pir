@@ -2,7 +2,7 @@
 
 Part of the active [transparent PIR documentation](README.md). This reference defines the filter surface/format; fleet parameters and deployment status live in the linked index.
 
-Status: the public wallet-facing surface of `src/transparent/transparent-filter-server`.
+Status: the public wallet-facing surface of `src/shared/pir-publisher/transparent`.
 Served over TLS on the Enhance PIR host under `/v1/filters/`. The wire format of
 a range response is specified separately in
 [the range envelope format](filter-envelope.md), which is versioned

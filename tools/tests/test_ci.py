@@ -207,6 +207,32 @@ class BoundaryTests(unittest.TestCase):
         self.assertEqual(boundary.resolved_violations(metadata, workspace_unified=True),
                          ['receiver-pir-server: resolves zakura-orchard'])
 
+    def test_client_fixture_unification_still_rejects_production_crypto_and_nodes(self):
+        def node(name, deps=(), features=()):
+            return {'id': name, 'features': features,
+                    'deps': [{'pkg': dep, 'dep_kinds': [{'kind': None}]} for dep in deps]}
+        metadata = {
+            'packages': [
+                {'id': 'pir', 'name': 'transparent-query-server', 'source': None},
+                {'id': 'client', 'name': 'zakura-pir-client',
+                 'source': 'git+https://github.com/zakura-core/wallet-libraries'},
+                {'id': 'orchard', 'name': 'zakura-orchard', 'source': 'registry'},
+                {'id': 'chain', 'name': 'zakura-chain', 'source': 'registry'},
+            ],
+            'resolve': {'nodes': [node('pir', ['client']),
+                                  node('client', ['orchard'], ['testing']),
+                                  node('orchard'), node('chain')]},
+        }
+        self.assertEqual(boundary.resolved_violations(metadata, workspace_unified=True), [])
+        self.assertEqual(boundary.resolved_violations(metadata),
+                         ['transparent-query-server: resolves zakura-orchard'])
+        metadata['resolve']['nodes'][1] = node('client', ['orchard', 'chain'], ['testing'])
+        self.assertEqual(boundary.resolved_violations(metadata, workspace_unified=True),
+                         ['transparent-query-server: resolves zakura-chain'])
+        metadata['resolve']['nodes'][1] = node('client', ['orchard'])
+        self.assertEqual(boundary.resolved_violations(metadata, workspace_unified=True),
+                         ['transparent-query-server: resolves zakura-orchard'])
+
     def test_default_publisher_refuses_transitive_database_dependencies(self):
         def node(name, dependencies=()):
             return {'id': name, 'deps': [{'pkg': dep, 'dep_kinds': [{'kind': None}]}
@@ -270,7 +296,7 @@ class BoundaryTests(unittest.TestCase):
         library = 'https://github.com/zakura-core/wallet-libraries.git'
         allowed = [{**self.edge('pir-control'), 'path': 'src/shared/pir-control/'},
                    {**self.edge('pir-serving'), 'path': 'src/shared/pir-serving/'},
-                   self.edge('zakura-pir-native', git=library), self.edge('axum')]
+                   self.edge('zakura-pir-protocol', git=library), self.edge('axum')]
         self.assertEqual(boundary.violations(package(*allowed), []), [])
         # The publisher, chain readers, ingestion and every tool are refused.
         forbidden = [{**self.edge('pir-publisher'), 'path': 'src/shared/pir-publisher/server/'},
@@ -389,7 +415,7 @@ class BoundaryTests(unittest.TestCase):
         for kind in ['dependencies', 'dev-dependencies', 'build-dependencies',
                      'target.cfg(unix).dependencies', 'target.cfg(unix).dev-dependencies',
                      'target.cfg(unix).build-dependencies']:
-            for name in ['receiver-store', 'zakura-server-chain', 'zakura-pir-native',
+            for name in ['receiver-store', 'zakura-server-chain', 'zakura-pir-protocol',
                          'sha2', 'rand', 'enhance-query-server', 'pir-runtime']:
                 package = {'name': 'pir-pipeline', 'manifest': 'src/shared/pir-publisher/pipeline/Cargo.toml',
                            'dependencies': [self.edge(name, kind)]}
@@ -1149,7 +1175,7 @@ class CacheWorkflowTests(unittest.TestCase):
             self.assertNotIn(forbidden, text)
         routine = self.workflows['ci.yml']
         self.assertNotIn('timeout-minutes:', routine)
-        self.assertIn('--check-fast-seconds 300', routine)
+        self.assertIn('--check-fast-seconds 180', routine)
         self.assertIn("if: github.event_name == 'push' && steps.affected.outputs.rust == 'true'", routine)
         self.assertEqual(self.workflows['ci-cache.yml'].count("if: github.ref == 'refs/heads/main'"), 2)
 

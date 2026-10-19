@@ -154,7 +154,7 @@ def report(repo, run_id, records=False):
     return result
 
 
-def feedback_slo(rows, target=300):
+def feedback_slo(rows, target=180):
     """Qualify representative warm main pushes, never workflow-only or cold runs."""
     eligible, excluded, failures, covered = [], [], [], set()
     required = {'transparent', 'enhance', 'receiver', 'shared', 'docs', 'ops'}

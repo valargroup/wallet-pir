@@ -21,7 +21,7 @@ use enhance_query_server::{
 };
 use tokio_stream::StreamExt;
 use wallet::transport::{Method, Request as WalletRequest, ResponseBody, Transport};
-use zakura_pir_enhance as wallet;
+use zakura_pir_client::enhance as wallet;
 
 /// The library's own transport is HTTPS-only; the loopback fixture speaks plain
 /// HTTP, so the test supplies a transport with the same bounded collection.

@@ -4,6 +4,10 @@
 //! client (`transparent-txid-client`) over a blocking HTTP transport that
 //! logs, and on request rewrites, every exchange.
 #![allow(dead_code)]
+use zakura_pir_client::transparent::txid_client as transparent_txid_client;
+use zakura_pir_protocol::transparent::events as transparent_events;
+use zakura_pir_publisher::transparent as transparent_shard;
+
 use axum::body::Body;
 use axum::extract::{Request, State};
 use axum::http::StatusCode;

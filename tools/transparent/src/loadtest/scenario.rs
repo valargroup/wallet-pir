@@ -1,5 +1,8 @@
 //! Reproducible mixed-wallet scenarios. The supervisor owns admission, evidence
 //! and hard deadlines; blocking wallet work runs in killable child processes.
+use zakura_pir_client::transparent::filter as transparent_filter;
+use zakura_pir_protocol::transparent::events as transparent_events;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Write};
@@ -14,16 +17,16 @@ use clap::Parser;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use zakura_pir_transparent::engine::http::{
+use zakura_pir_client::transparent::engine::http::{
     HttpFilterSource, HttpObserver, HttpOptions, HttpShardTransport,
 };
-use zakura_pir_transparent::engine::store::{
+use zakura_pir_client::transparent::engine::store::{
     ScriptEntry, ScriptOrigin, SetIdentity, ShardCommit, StoredEvent, WalletStore,
 };
-use zakura_pir_transparent::engine::{
+use zakura_pir_client::transparent::engine::{
     sync_into, Anchor, Completion, MemoryStore, StaticChain, StaticScripts, WorkLimits,
 };
-use zakura_pir_transparent::engine_store::SqliteStore;
+use zakura_pir_client::transparent::engine_store::SqliteStore;
 
 use crate::simulation_report::{self, Report};
 use crate::{Sample, SampleClient};
@@ -173,7 +176,7 @@ fn preparation_concurrency() -> usize {
     2
 }
 fn shard_concurrency() -> usize {
-    zakura_pir_transparent::engine::http::SHARD_REQUEST_CONCURRENCY
+    zakura_pir_client::transparent::engine::http::SHARD_REQUEST_CONCURRENCY
 }
 
 fn one_attempt() -> usize {
@@ -334,7 +337,7 @@ pub fn now() -> f64 {
 fn digest(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
 }
-fn io_error(error: zakura_pir_transparent::engine::transport::BoxError) -> anyhow::Error {
+fn io_error(error: zakura_pir_client::transparent::engine::transport::BoxError) -> anyhow::Error {
     anyhow::Error::from_boxed(error)
 }
 
@@ -1763,7 +1766,7 @@ fn block_preflight(
     let manifest = if let Some(path) = &config.block_dataset {
         Manifest::load(path, true)?
     } else {
-        let client = zakura_pir_transparent::engine::http::HttpResourceClient::new(
+        let client = zakura_pir_client::transparent::engine::http::HttpResourceClient::new(
             &config.options(),
             None,
             3,
@@ -1860,7 +1863,7 @@ fn recover_blocks(job: &Job, observer: HttpObserver) -> Result<Value> {
         dataset::{decode, Manifest},
         scan::Scanner,
     };
-    use zakura_pir_transparent::engine::http::HttpResourceClient;
+    use zakura_pir_client::transparent::engine::http::HttpResourceClient;
     let base = job
         .config
         .block_url

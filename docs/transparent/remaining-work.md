@@ -90,6 +90,11 @@ is correctness evidence, not a qualified operating envelope or rollout approval.
   incremental compilation/setup/teardown/tools/lint; diagnose the complete run
   with `correctness.py --record-only`, retaining full-only and frozen coverage.
 
+The small-fixture [controller update campaign](prepared-distribution.md#controller-update-campaign)
+exercises the controller-update, outage, restart and 10-consumer distribution
+cases above as correctness diagnostics; it closes none of these boxes. Its
+100-consumer step needs existing hub storage.
+
 Suitable isolated hardware and unchanged-application fixture access are named
 qualification gates when unavailable; continue correctness without upgrading the
 wallet or weakening validation. No deployment or new infrastructure is authorized.
@@ -1024,7 +1029,7 @@ until all of it passes and every client in use reads declarations:
 - [ ] The continuous publisher carries every earlier declaration forward on each
   republication, in rising epochs, and keeps seal parameters for every geometry any
   declaration names. Today it writes an empty `recuts`
-  (`src/transparent/transparent-ingest/src/publication.rs`); a republication
+  (`src/shared/pir-publisher/transparent/src/history/publication.rs`); a republication
   that dropped a declaration would strand wallets holding the revisions it named.
 - [ ] `shard-verify` checks a declaration against the previous map: identical prefix,
   unchanged boundary terminal blocks, exact tiling, declared entries equal to what was

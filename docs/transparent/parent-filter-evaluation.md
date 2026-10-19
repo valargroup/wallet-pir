@@ -7,9 +7,9 @@ This implements an opt-in experiment. The user subsequently approved [production
 Build `hierarchical-filter-eval` from `transparent-regression` and `transparent-loadtest` with the `release-fast` profile. The evaluator uses the regression crate's read-only committed-journal reader, without starting ingest or opening RocksDB. Use a fresh output directory for every extraction and sweep.
 
 ```sh
-cargo build --profile release-fast -p transparent-regression --bin hierarchical-filter-eval
-cargo build --profile release-fast -p transparent-loadtest
-cargo build --profile release-fast -p transparent-shard-server --bin parent-evaluation-server
+cargo build --profile release-fast -p transparent-tools --bin hierarchical-filter-eval
+cargo build --profile release-fast -p transparent-tools --features benchmarks --bin transparent-loadtest
+cargo build --profile release-fast -p transparent-tools --bin parent-evaluation-server
 
 target/release-fast/hierarchical-filter-eval extract \
   --data-dir /path/to/journal --publication /path/to/frozen/publication \
@@ -47,7 +47,7 @@ These are example matrix entries, not selected production parameters. Serve the 
 ```sh
 python3 tools/transparent/parent-filters/transparent_parent_evaluate.py waves \
   --evaluation /path/to/evaluation/sweep \
-  --scenario src/transparent/transparent-loadtest/scenarios/mixed-20-wave.json \
+  --scenario tools/transparent/loadtest/scenarios/mixed-20-wave.json \
   --sample /path/to/sample.json \
   --shard-url http://127.0.0.1:18092 \
   --filter-url http://127.0.0.1:18092 \

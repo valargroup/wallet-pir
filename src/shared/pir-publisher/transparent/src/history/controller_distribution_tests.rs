@@ -1,4 +1,8 @@
 //! Real producer → TLS termination → strict production-loader bootstrap.
+use zakura_pir_protocol::transparent::events as transparent_events;
+use zakura_pir_publisher::transparent as transparent_shard;
+use zakura_pir_publisher::transparent::filter as transparent_filter;
+
 use super::*;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use transparent_events::TransparentEvent;
@@ -264,10 +268,10 @@ async fn canonical_rpc(root: &Path, set: &ShardSet) -> CanonicalRpc {
     }
 }
 
-struct Tls {
-    origin: String,
-    cert: reqwest::Certificate,
-    control: PathBuf,
+pub(crate) struct Tls {
+    pub(crate) origin: String,
+    pub(crate) cert: reqwest::Certificate,
+    pub(crate) control: PathBuf,
     _child: tokio::process::Child,
     server: tokio::task::JoinHandle<()>,
 }
@@ -277,6 +281,10 @@ impl Drop for Tls {
     }
 }
 async fn tls(root: &Path, authority: Authority) -> Tls {
+    tls_router(root, authority.router()).await
+}
+
+pub(crate) async fn tls_router(root: &Path, router: Router) -> Tls {
     let cert = root.join("ca.pem");
     let key = root.join("key.pem");
     static MATERIAL: std::sync::LazyLock<(Vec<u8>, Vec<u8>)> = std::sync::LazyLock::new(|| {
@@ -317,7 +325,7 @@ async fn tls(root: &Path, authority: Authority) -> Tls {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let server = tokio::spawn(async move {
-        axum::serve(listener, authority.router()).await.unwrap();
+        axum::serve(listener, router).await.unwrap();
     });
     let control = root.join("fault");
     std::fs::write(&control, "").unwrap();
@@ -770,3 +778,88 @@ async fn https_bootstrap_charges_all_response_bytes_at_exact_budget_boundary() {
 
 #[path = "controller_manager_tests.rs"]
 mod manager_tests;
+
+/// Full holdings require archive bytes and native files, not an archive address.
+#[tokio::test(flavor = "multi_thread")]
+async fn full_history_http_holdings_include_archive_runtimes() {
+    let root = tempfile::tempdir().unwrap();
+    let (directory, set) = if cfg!(feature = "qualification-tests") {
+        publication_fixture(root.path(), 2, true)
+    } else {
+        let directory = root.path().join("publication");
+        manager_tests::copy_prepared_publication(2, &directory);
+        let set = ShardSet::open(&directory, 0).unwrap();
+        (directory, set)
+    };
+    let recent_files: std::collections::BTreeSet<_> = std::fs::read_dir(&directory)
+        .unwrap()
+        .map(Result::unwrap)
+        .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "runtime"))
+        .map(|entry| entry.file_name().into_string().unwrap())
+        .collect();
+    let prepared =
+        transparent_shared::runtime::prebuild::prepare_publication(&set, &directory, &[], &|| {
+            false
+        })
+        .unwrap();
+    assert!(prepared.failures.is_empty());
+    if !cfg!(feature = "qualification-tests") {
+        assert!(!recent_files.is_empty());
+        assert_eq!(prepared.linked(), recent_files.len());
+        assert!(
+            prepared.built() > 0,
+            "archive runtimes must still be prepared"
+        );
+        for file in &prepared.files {
+            assert_eq!(file.linked, recent_files.contains(&file.name));
+        }
+    }
+    let finalized = Finalized::prepare_full(&directory, &set, 2).unwrap();
+    assert!(finalized
+        .inventory()
+        .artifacts
+        .iter()
+        .any(|f| f.kind == Kind::ArchiveRuntime));
+    let rpc = canonical_rpc(root.path(), &set).await;
+    let authority = authority(&directory, Some(finalized), rpc.client.clone());
+    let tls = tls(root.path(), authority).await;
+    let mut manager = transparent_query_server::routing::manager::Manager::new(
+        config(&tls, root.path().join("consumer")),
+        transparent_query_server::config::ServiceConfig {
+            cache_bytes: 4 << 30,
+            ..Default::default()
+        },
+    )
+    .unwrap()
+    .with_full_holdings();
+    manager.poll_once().await.unwrap();
+    let status = manager
+        .live()
+        .unwrap()
+        .command(transparent_query_server::history::live::Command::Status)
+        .await
+        .unwrap();
+    assert_eq!(status["runtimes"]["built"], 0);
+    assert_eq!(status["runtimes"]["shipped_fallbacks"], 0);
+    assert!(status["runtimes"]["shipped"].as_u64().unwrap() > 0);
+    assert!(status["revisions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|r| r["end_height"] == 1));
+    drop(manager);
+    let mut restarted = transparent_query_server::routing::manager::Manager::new(
+        config(&tls, root.path().join("consumer")),
+        transparent_query_server::config::ServiceConfig {
+            cache_bytes: 4 << 30,
+            ..Default::default()
+        },
+    )
+    .unwrap()
+    .with_full_holdings();
+    let progress = restarted.poll_once().await.unwrap();
+    assert_eq!(
+        progress.downloaded_files, 0,
+        "restart reuses completed files"
+    );
+}

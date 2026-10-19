@@ -97,6 +97,62 @@ processes from owning the same state. Older binaries do not know these locks:
 operator cutover must stop their services first. Do not forcibly remove locks
 or start a replacement while the previous process is still stopping.
 
+## Autonomous Transparent HTTP prototype
+
+History and transaction details can use `http_only: true` in their existing
+settings. History also requires `ship_runtimes: true` and
+`distribute_prepared: true`; transaction details requires `ship_runtimes: true`.
+In this mode the publisher does not contact or activate query servers, so the
+history fleet command/configuration and display workers file can be omitted.
+The publisher still needs its existing journal, initial publication or display
+controller root, node access and durable state. It finalizes data without waiting
+for consumers, and refuses to publish incomplete prepared material.
+
+History keeps `/provider/v1/`. Display offers the same discovery/immutable-file
+pattern under `/provider/txid/v1/`, with a distinct inventory schema. Each product
+has its own revision and live canonicality checks. These are distribution APIs;
+the wallet's `/v2/` routes, payloads and protocol identities are unchanged.
+A TLS edge may expose both distribution prefixes from one origin while the
+products retain separate loopback listeners.
+
+For complete local history, run `transparent-query-server --publisher <HTTPS-origin>`
+with its existing managed settings and `--full-holdings`, without an archive
+upstream. For display, run `transparent-txid-server --role combined --publisher
+<HTTPS-origin> --state-dir <absolute-directory> --publisher-network main
+--publisher-genesis <hash>`, with an optional `--publisher-ca <PEM-file>`.
+Both processes need explicit cache and download budgets sized for their complete
+holdings, including active/candidate overlap. Full holdings are not a claim that
+production history fits on one machine.
+
+Each consumer owns a separate durable directory. It downloads missing immutable
+objects, verifies and warms a new serving view, rechecks publisher authority,
+then persists and atomically activates it. Required runtimes include archives;
+missing or invalid files never trigger a local PIR build. A failed ordinary
+update preserves a valid predecessor. Restart reuses verified completed files
+but still requires fresh HTTPS authority; cached bytes alone cannot start a
+wallet listener. `/v1/provider-status` is private operational status, separate
+from wallet routes. Synchronization runs independently of wallet requests.
+A withdrawal observed during preparation fences affected active and retained
+views immediately, even when the incoming candidate has different revision
+identities. A display publisher restarted after a recent reorg leaves its saved
+noncanonical view unpublished while normal journal reconciliation rebuilds it;
+invalid material, a different chain identity or RPC failures still refuse startup.
+
+Journal reuse is independent of distribution state. Existing version-2 journals
+retain fixed 87-byte records when appended; version-3 journals retain their
+length-prefixed records. Version-2 metadata is restored from committed display
+source sidecars when available and otherwise remains unknown. Existing source
+sidecars must be copied with the journal. Unsupported metadata, a different
+chain identity or a different start height is refused without moving data aside.
+No conversion, journal consolidation or historical re-ingestion is part of this
+prototype. Derived publications and prepared runtimes may be rebuilt locally
+from the retained source data.
+
+Qualification must include complete, consistent production snapshots and the
+unchanged current released wallet at its existing origin with valid TLS. Synthetic
+HTTPS tests and client-library tests do not establish either gate. Never run a
+second writer against a live journal or test against a real wallet database.
+
 ## Release and deployment preparation
 
 The `pir-publisher` artifact is built in the native CPU release lane and contains

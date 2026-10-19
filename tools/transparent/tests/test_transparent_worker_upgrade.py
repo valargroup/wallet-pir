@@ -67,7 +67,7 @@ class UpgradeTests(unittest.IsolatedAsyncioTestCase):
         worker = dict(id='recent', role='recent-replica', ssh_host='host', upstream='host:8093')
         with tempfile.TemporaryDirectory() as directory:
             artifacts = Path(directory)
-            (artifacts/'transparent-shard-server').write_bytes(b'binary')
+            (artifacts/'transparent-query-server').write_bytes(b'binary')
             digest = hashlib.sha256(b'binary').hexdigest()
             with patch.object(M, 'read_json', side_effect=[{'ready':True,'mode':'warm','map_sha256':'old'}, {'ready':True,'binary_sha256':digest,'map_sha256':'new'}]), patch.object(M.LIVE, 'run', new=AsyncMock()):
                 await M.install_worker(fleet, worker, artifacts, '/rollback')
@@ -124,7 +124,7 @@ class UpgradeTests(unittest.IsolatedAsyncioTestCase):
         fleet.control.return_value = {'active': {'map_sha256': 'new'}, 'warm': True}
         worker = dict(id='recent', role='recent-replica', ssh_host='host', upstream='host:8093')
         with tempfile.TemporaryDirectory() as directory:
-            artifacts=Path(directory);(artifacts/'transparent-shard-server').write_bytes(b'binary')
+            artifacts=Path(directory);(artifacts/'transparent-query-server').write_bytes(b'binary')
             digest=hashlib.sha256(b'binary').hexdigest()
             with patch.object(M,'read_json',side_effect=[{'ready':True,'mode':'warm'}, {'ready':True,'binary_sha256':digest,'map_sha256':'new'}]), patch.object(M.LIVE,'run',new=AsyncMock()):
                 await M.install_worker(fleet,worker,artifacts,'/rollback')
@@ -162,7 +162,7 @@ class UpgradeTests(unittest.IsolatedAsyncioTestCase):
         fleet.control.return_value = {'active': {'map_sha256': 'new'}, 'warm': True}
         worker = dict(id='recent', role='recent-replica', ssh_host='host', upstream='host:8093')
         with tempfile.TemporaryDirectory() as directory:
-            artifacts=Path(directory);(artifacts/'transparent-shard-server').write_bytes(b'binary')
+            artifacts=Path(directory);(artifacts/'transparent-query-server').write_bytes(b'binary')
             digest=hashlib.sha256(b'binary').hexdigest()
             with patch.object(M,'read_json',side_effect=[{'ready':True,'mode':'warm'}, {'ready':True,'binary_sha256':digest,'map_sha256':'new'}]), patch.object(M.LIVE,'run',new=AsyncMock()):
                 await M.install_worker(fleet,worker,artifacts,'/rollback')
@@ -224,10 +224,10 @@ class SchemaNamespaceTests(unittest.IsolatedAsyncioTestCase):
     async def test_transfer_corruption_is_rejected_for_either_binary(self):
         with tempfile.TemporaryDirectory() as directory:
             artifacts = Path(directory)
-            for name in ('transparent-shard-server','shard-control'):
+            for name in ('transparent-query-server','shard-control'):
                 (artifacts/name).write_bytes(name.encode())
             lines = [hashlib.sha256((artifacts/name).read_bytes()).hexdigest()+'  /stage/'+name
-                     for name in ('transparent-shard-server','shard-control')]
+                     for name in ('transparent-query-server','shard-control')]
             fleet = AsyncMock()
             fleet.ssh.return_value = ('\n'.join(lines)+'\n').encode()
             await M.verify_worker_artifacts(fleet,'host',artifacts,'/stage')

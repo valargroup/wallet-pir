@@ -18,6 +18,10 @@
 //!
 //! Read-only against the journal.
 
+use zakura_pir_protocol::transparent::events as transparent_events;
+use zakura_pir_publisher::transparent as transparent_shard;
+use zakura_pir_publisher::transparent::filter as transparent_filter;
+
 use clap::Parser;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
@@ -279,30 +283,32 @@ pub fn publish_with(
     // first publication every time.
     let mut previous: std::collections::BTreeMap<u64, transparent_filter::ShardMapEntry> =
         match std::fs::read(previous_dir.join("shards.json")) {
-            Ok(raw) => serde_json::from_slice::<transparent_filter::ShardMap>(&raw)
-                // A map this build cannot read is a set published under another
-                // schema. Publishing beside it would leave two incompatible
-                // sets in one directory, which the loader refuses to serve, so
-                // say what to do instead of reporting a parse error.
-                .map_err(|error| {
-                    format!(
-                        "{} was published under a schema this build cannot read \
+            Ok(raw) => {
+                serde_json::from_slice::<transparent_filter::ShardMap>(&raw)
+                    // A map this build cannot read is a set published under another
+                    // schema. Publishing beside it would leave two incompatible
+                    // sets in one directory, which the loader refuses to serve, so
+                    // say what to do instead of reporting a parse error.
+                    .map_err(|error| {
+                        format!(
+                            "{} was published under a schema this build cannot read \
                          ({error}); publish into a directory of its own",
-                        previous_dir.join("shards.json").display()
-                    )
-                })?
-                .pipe_validate(
-                    store,
-                    recent,
-                    archive,
-                    cutoff,
-                    &cli.range_profile,
-                    policy_of,
-                )?
-                .shards
-                .into_iter()
-                .map(|entry| (entry.shard_id, entry))
-                .collect(),
+                            previous_dir.join("shards.json").display()
+                        )
+                    })?
+                    .pipe_validate(
+                        store,
+                        recent,
+                        archive,
+                        cutoff,
+                        &cli.range_profile,
+                        policy_of,
+                    )?
+                    .shards
+                    .into_iter()
+                    .map(|entry| (entry.shard_id, entry))
+                    .collect()
+            }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Default::default(),
             Err(error) => return Err(error.into()),
         };

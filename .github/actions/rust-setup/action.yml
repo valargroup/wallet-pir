@@ -21,16 +21,21 @@ runs:
     - name: Record setup start
       shell: bash
       run: echo "WALLET_PIR_SETUP_STARTED=$(date +%s.%N)" >> "$GITHUB_ENV"
-    - name: Install hosted toolchain
-      if: runner.environment != 'self-hosted' && env.WALLET_PIR_HOSTED_TOOLS_READY != '1'
-      uses: dtolnay/rust-toolchain@stable
-      with:
-        toolchain: 1.97.1
-        components: rustfmt, clippy
-    - name: Install hosted native dependencies
+    - name: Probe hosted prerequisites
+      id: prerequisites
       if: runner.environment != 'self-hosted' && env.WALLET_PIR_HOSTED_TOOLS_READY != '1'
       shell: bash
-      run: sudo apt-get update -qq && sudo apt-get install -y -qq libclang-dev protobuf-compiler
+      run: python3 tools/ci/hosted_tools.py probe
+    - name: Install hosted toolchain
+      if: runner.environment != 'self-hosted' && env.WALLET_PIR_HOSTED_TOOLS_READY != '1' && steps.prerequisites.outputs.rust-ready != 'true'
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        toolchain: ${{ steps.prerequisites.outputs.toolchain }}
+        components: rustfmt, clippy
+    - name: Install hosted native dependencies
+      if: runner.environment != 'self-hosted' && env.WALLET_PIR_HOSTED_TOOLS_READY != '1' && steps.prerequisites.outputs.native-ready != 'true'
+      shell: bash
+      run: python3 tools/ci/hosted_tools.py install-native
     - name: Remember hosted prerequisites
       if: runner.environment != 'self-hosted'
       shell: bash

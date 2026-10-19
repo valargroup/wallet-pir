@@ -39,6 +39,9 @@ struct Cli {
     publisher_ca: Option<PathBuf>,
     #[arg(long, default_value_t = 64 << 30)]
     bootstrap_max_bytes: u64,
+    /// Synchronize every history shard, without an archive forwarding dependency.
+    #[arg(long, requires = "publisher", conflicts_with = "archive_upstream")]
+    full_holdings: bool,
     /// Loopback by default. Deployment exposes only the required wallet routes
     /// through its proxy and keeps operational endpoints private.
     #[arg(long, default_value = "127.0.0.1:8092")]
@@ -170,7 +173,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             max_download_bytes: cli.bootstrap_max_bytes,
             roots,
         };
-        if !cli.verify_only || cli.archive_upstream.is_some() {
+        if !cli.verify_only || cli.archive_upstream.is_some() || cli.full_holdings {
             let service = ServiceConfig {
                 cache_bytes: cli.cache_bytes,
                 build_slots: cli.build_slots,
@@ -183,6 +186,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             };
             let mut manager =
                 transparent_query_server::routing::manager::Manager::new(provider, service)?;
+            if cli.full_holdings {
+                manager = manager.with_full_holdings();
+            }
             if let Some(origin) = cli.archive_upstream {
                 let roots = cli
                     .archive_ca

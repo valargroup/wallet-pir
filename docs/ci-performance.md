@@ -1,6 +1,6 @@
 # CI and deployment latency
 
-The target is **under five minutes from PR update or main push to fast checks completing**
+The target is **under three minutes for the complete warm fast job**
 for routine changes on warm runners, and **two minutes from deployment dispatch
 to healthy service** when an exact-SHA qualified artifact is already available.
 Cold builds, dependency/toolchain changes, initial data preparation, schema
@@ -53,8 +53,8 @@ Expensive fixtures are organized around the guarantee being checked:
 | --- | --- |
 | The independent 67-record generic-hint oracle, frozen vectors, padding/binding checks, damaged-artifact checks, and one unequal-unit comparison of the supported 8K composed tail, including its zero-filled gap, against monolithic preprocessing. | The 68-record hint oracle, the 16K monolithic comparison, and tail-growth artifact/coordinate checks run with reference arithmetic and the native backend. The encrypted HTTP pending-commit and fresh-wallet restart lifecycle also remains full-only. |
 | Preparation failures retain cold partial-allocation cleanup and a cached backend failure that must neither reread source rows nor replace a published view. | The combined failure on the second cached unit and the larger candidate geometry. |
-| Native cache admission and built-size bounds use one supported column instance; the batched-hint oracle retains a deployed display geometry with nonzero and padded rows. | Deployed cache/build shapes and the full history/display hint geometry and occupancy combinations. |
-| Transparent HTTP checks one cold encrypted retrieval and one cached restart. Runtime tests reject each distinct artifact fault and verify one complete optional fallback build, plus required-file refusal and ordinary-build accounting. | The composed history activation and display sealing/restart lifecycles retain their real workers, original geometries and independent source/wallet oracles. |
+| Native cache admission and built-size bounds use one supported column instance; an independent row-byte oracle checks the reference hint. | Deployed cache/build shapes and the full history/display hint geometry and occupancy combinations. |
+| Transparent HTTP checks one cold encrypted retrieval and one cached restart. Runtime tests reject each distinct artifact fault and use one forged-runtime fallback build, plus required-file refusal and ordinary-build accounting. Disk recovery combines corruption fallback and failed-save accounting in one build. Preparation checks every refusal to link but rebuilds one truncated file. Full-history HTTP reuses prepared recent files and still prepares and transfers real archive runtimes. | The composed history activation and display sealing/restart lifecycles retain their real workers, original geometries and independent source/wallet oracles. |
 
 Fast coverage follows properties, not a product/size/fault cross-product: correct
 bytes, malformed-input refusal, safe publication, durable revocation/recovery,
@@ -232,9 +232,10 @@ rechecks archive contents, ABI metadata and clean source provenance.
 
 Only **CI / Fast checks** validates automatically on main pushes and PRs.
 Dependency cache priming runs independently on relevant main changes.
-Both PR and main feedback target five minutes; queueing also counts toward the
-latency target. During the current repair, validation finishes before main's
-final timing check enforces 300 seconds. PRs and manual runs report timings.
+Both PR and main feedback target three minutes from job start through final
+cleanup; report queueing separately. Validation finishes before main's final
+timing check enforces 180 seconds through reporting. Completed-run evidence
+also includes the remaining cleanup. PRs and manual runs report timings.
 A completed over-budget run provides diagnostic coverage, not a timing pass.
 The pre-push health guard follows this workflow, rather than long qualification.
 
@@ -445,7 +446,7 @@ Concurrency belongs to the label-filtered job: unrelated label events cannot
 cancel preparation; genuine same-PR preparation requests still supersede it.
 Then rerun the ordinary CI job at the same PR merge SHA and verify actual Cargo
 fresh flags, executed tests, matched key/ref and complete warm duration including
-archive/cleanup under 300 seconds. Branch dispatch does not warm the PR merge ref.
+archive/cleanup under 180 seconds. Branch dispatch does not warm the PR merge ref.
 An already-existing partial exact snapshot cannot be filled in: prepare the next
 source-tree key before routine Rust validation, without deleting old entries.
 The parent owns this hosted sequence and independent review; local tooling-only
@@ -459,7 +460,7 @@ Main uses persistent targets; the separate
 one successful main fast snapshot for hosted PRs. It compiles fast units only
 when the exact key is missing, runs no tests and is not a gate. Full qualification
 retains persistent build lanes. A missing cache never relaxes validation or the
-300-second warm feedback target.
+180-second warm feedback target.
 
 ## Cold preparation and representative latency
 
@@ -469,7 +470,7 @@ concurrency group, so it cannot occupy main's runner or scheduling slot. Dispatc
 on `main` to prepare its trusted persistent cache. Main pushes preempt that
 preparation; preparation cannot cancel a running main check.
 Main rejects an entirely empty cache with an explicit
-preparation error instead of spending its five-minute budget on native builds.
+preparation error instead of spending its three-minute budget on native builds.
 Preparation validates the complete fast selection, then validates the affected
 selection using the same command as routine CI: Cargo can unify dependency
 features differently for those roots. The optional `comparison-base` input pins
@@ -506,7 +507,7 @@ python3 tools/ci/timings.py --workflow ci.yml --limit 100 --slo --since-run <fir
 
 The explicit starting run excludes older pipeline versions and their failures.
 This needs at least 20 representative runs, coverage of all service families,
-shared changes, operations and docs, and a p95 below 300 seconds. Workflow-only,
+shared changes, operations and docs, and a p95 below 180 seconds. Workflow-only,
 canceled, cold and unknown-cache samples cannot qualify the target. Failed runs
 remain visible. Warm means Cargo reported no third-party compilation; workspace
 source can still rebuild. Queueing and final job cleanup count. A missing sample

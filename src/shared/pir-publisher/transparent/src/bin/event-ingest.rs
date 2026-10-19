@@ -16,6 +16,8 @@
 //! a kill loses at most the blocks since the last one, and rerunning the same
 //! command resumes from the last committed height.
 
+use zakura_pir_publisher::transparent::filter as transparent_filter;
+
 use clap::Parser;
 use std::path::PathBuf;
 use std::time::Instant;

@@ -8,6 +8,13 @@
 //! errors can sum to the right number, and a balance check would pass a
 //! reconstruction that had lost a receive and a spend of equal value.
 
+use zakura_pir_client::transparent::native::TableClientExt as _;
+
+use zakura_pir_protocol::transparent::events as transparent_events;
+use zakura_pir_protocol::transparent::filter as transparent_filter;
+use zakura_pir_publisher::transparent as transparent_shard;
+use zakura_pir_query_server::transparent::native as transparent_native;
+
 #[path = "common/prepared.rs"]
 mod prepared;
 #[path = "common/runtime.rs"]
@@ -31,11 +38,11 @@ use transparent_shard::build::{BuiltChild, BuiltDirectory};
 use transparent_shard::layout::{Geometry, DECOUPLED_2K_8K, DECOUPLED_32K_32K};
 use transparent_shard::manifest::ShardManifest;
 use transparent_shared::history::shardset::{ShardSet, DEFAULT_RETAIN_REVISIONS};
-use zakura_pir_transparent::engine::client::Table;
-use zakura_pir_transparent::engine::http::{HttpOptions, HttpShardTransport};
-use zakura_pir_transparent::engine::ledger::Ledger;
-use zakura_pir_transparent::engine::sync::{sync, GeometryParams, ServiceGeometry};
-use zakura_pir_transparent::engine::transport::{
+use zakura_pir_client::transparent::engine::client::Table;
+use zakura_pir_client::transparent::engine::http::{HttpOptions, HttpShardTransport};
+use zakura_pir_client::transparent::engine::ledger::Ledger;
+use zakura_pir_client::transparent::engine::sync::{sync, GeometryParams, ServiceGeometry};
+use zakura_pir_client::transparent::engine::transport::{
     refusal, BoxError, FilterSource, ShardReply, ShardRequest, ShardTransport,
 };
 
@@ -643,7 +650,7 @@ async fn run_sync(
     wallet: Vec<ScriptBytes>,
     birthday: u64,
     map: ShardMap,
-) -> zakura_pir_transparent::engine::SyncOutcome {
+) -> zakura_pir_client::transparent::engine::SyncOutcome {
     run_sync_with_init(dir, base, wallet, birthday, map, |_| {}).await
 }
 
@@ -655,7 +662,7 @@ async fn run_sync_with_init(
     birthday: u64,
     map: ShardMap,
     edit: fn(&mut serde_json::Value),
-) -> zakura_pir_transparent::engine::SyncOutcome {
+) -> zakura_pir_client::transparent::engine::SyncOutcome {
     let filters = PublishedFilters::load(dir, &map);
     let map_bytes = serde_json::to_vec(&map).unwrap().len() as u64;
     tokio::task::spawn_blocking(move || {
@@ -684,8 +691,8 @@ async fn run_sync_with_init(
             &mut transport,
             &wallet,
             birthday,
-            &zakura_pir_transparent::engine::StaticChain::from_map(&map),
-            &zakura_pir_transparent::engine::Anchor {
+            &zakura_pir_client::transparent::engine::StaticChain::from_map(&map),
+            &zakura_pir_client::transparent::engine::Anchor {
                 height: map.shards.last().unwrap().end_height,
                 hash: map.shards.last().unwrap().terminal_block_hash.clone(),
             },
@@ -802,8 +809,8 @@ async fn a_service_serving_another_schema_is_refused() {
             &mut transport,
             &wallet,
             FIRST,
-            &zakura_pir_transparent::engine::StaticChain::from_map(&map),
-            &zakura_pir_transparent::engine::Anchor {
+            &zakura_pir_client::transparent::engine::StaticChain::from_map(&map),
+            &zakura_pir_client::transparent::engine::Anchor {
                 height: map.shards.last().unwrap().end_height,
                 hash: map.shards.last().unwrap().terminal_block_hash.clone(),
             },
@@ -817,7 +824,7 @@ async fn a_service_serving_another_schema_is_refused() {
     assert!(
         matches!(
             error,
-            zakura_pir_transparent::engine::SyncError::Schema { .. }
+            zakura_pir_client::transparent::engine::SyncError::Schema { .. }
         ),
         "expected a schema refusal, got {error}"
     );
@@ -1111,8 +1118,8 @@ async fn coverage_does_not_advance_when_a_segment_is_missing() {
             &mut transport,
             &wallet,
             FIRST,
-            &zakura_pir_transparent::engine::StaticChain::from_map(&map),
-            &zakura_pir_transparent::engine::Anchor {
+            &zakura_pir_client::transparent::engine::StaticChain::from_map(&map),
+            &zakura_pir_client::transparent::engine::Anchor {
                 height: map.shards.last().unwrap().end_height,
                 hash: map.shards.last().unwrap().terminal_block_hash.clone(),
             },
@@ -1213,8 +1220,8 @@ async fn a_wallet_refuses_a_manifest_that_does_not_digest_to_the_map() {
             &mut transport,
             &wallet,
             FIRST,
-            &zakura_pir_transparent::engine::StaticChain::from_map(&map),
-            &zakura_pir_transparent::engine::Anchor {
+            &zakura_pir_client::transparent::engine::StaticChain::from_map(&map),
+            &zakura_pir_client::transparent::engine::Anchor {
                 height: map.shards.last().unwrap().end_height,
                 hash: map.shards.last().unwrap().terminal_block_hash.clone(),
             },
@@ -1243,7 +1250,7 @@ async fn a_wallet_refuses_a_manifest_that_does_not_digest_to_the_map() {
     assert!(
         matches!(
             error,
-            zakura_pir_transparent::engine::SyncError::ManifestMismatch {
+            zakura_pir_client::transparent::engine::SyncError::ManifestMismatch {
                 field: "digest",
                 ..
             }
@@ -1329,12 +1336,12 @@ async fn a_birthday_that_omits_a_receive_cannot_report_complete() {
     let birthday = map.shards[2].start_height;
     let filters = PublishedFilters::load(dir.path(), &map);
     let outcome = tokio::task::spawn_blocking(move || {
-        use zakura_pir_transparent::engine::{
+        use zakura_pir_client::transparent::engine::{
             Anchor, MemoryStore, ScriptEntry, ScriptOrigin, StaticChain, StaticScripts,
             WalletStore, WorkLimits,
         };
         let mut store = MemoryStore::new();
-        let mut transport = zakura_pir_transparent::engine::http::HttpShardTransport::new(
+        let mut transport = zakura_pir_client::transparent::engine::http::HttpShardTransport::new(
             base,
             &Default::default(),
         )
@@ -1352,7 +1359,7 @@ async fn a_birthday_that_omits_a_receive_cannot_report_complete() {
                 .collect(),
         );
         let tip = map.shards.last().unwrap();
-        let result = zakura_pir_transparent::engine::sync_into(
+        let result = zakura_pir_client::transparent::engine::sync_into(
             &mut store,
             &map,
             0,
@@ -1370,8 +1377,8 @@ async fn a_birthday_that_omits_a_receive_cannot_report_complete() {
         .unwrap();
         assert!(matches!(
             result.completion,
-            zakura_pir_transparent::engine::Completion::Incomplete {
-                reason: zakura_pir_transparent::engine::IncompleteReason::UnresolvedSpends,
+            zakura_pir_client::transparent::engine::Completion::Incomplete {
+                reason: zakura_pir_client::transparent::engine::IncompleteReason::UnresolvedSpends,
                 ..
             }
         ));
@@ -1591,8 +1598,8 @@ async fn a_shard_naming_an_unknown_geometry_stops_the_sync() {
             &mut transport,
             &wallet,
             FIRST,
-            &zakura_pir_transparent::engine::StaticChain::from_map(&map),
-            &zakura_pir_transparent::engine::Anchor {
+            &zakura_pir_client::transparent::engine::StaticChain::from_map(&map),
+            &zakura_pir_client::transparent::engine::Anchor {
                 height: map.shards.last().unwrap().end_height,
                 hash: map.shards.last().unwrap().terminal_block_hash.clone(),
             },
@@ -1604,7 +1611,7 @@ async fn a_shard_naming_an_unknown_geometry_stops_the_sync() {
     .unwrap();
 
     assert!(
-        matches!(error, zakura_pir_transparent::engine::SyncError::UnknownGeometry(ref name) if name == "recent-2k"),
+        matches!(error, zakura_pir_client::transparent::engine::SyncError::UnknownGeometry(ref name) if name == "recent-2k"),
         "expected an unknown-geometry refusal, got {error}"
     );
 }
@@ -1755,8 +1762,8 @@ async fn replaced_tail_recovers(filter_race: bool, concurrency: usize) {
             &mut transport,
             &wallet,
             FIRST,
-            &zakura_pir_transparent::engine::StaticChain::from_map(&map_before),
-            &zakura_pir_transparent::engine::Anchor {
+            &zakura_pir_client::transparent::engine::StaticChain::from_map(&map_before),
+            &zakura_pir_client::transparent::engine::Anchor {
                 height: map_before.shards.last().unwrap().end_height,
                 hash: map_before
                     .shards
@@ -1929,8 +1936,8 @@ async fn overloaded_then_recovers(concurrency: usize) {
             &mut transport,
             &wallet,
             FIRST,
-            &zakura_pir_transparent::engine::StaticChain::from_map(&map),
-            &zakura_pir_transparent::engine::Anchor {
+            &zakura_pir_client::transparent::engine::StaticChain::from_map(&map),
+            &zakura_pir_client::transparent::engine::Anchor {
                 height: map.shards.last().unwrap().end_height,
                 hash: map.shards.last().unwrap().terminal_block_hash.clone(),
             },
@@ -1996,8 +2003,8 @@ async fn unrelenting_overload_stops(concurrency: usize) {
             &mut transport,
             &wallet,
             FIRST,
-            &zakura_pir_transparent::engine::StaticChain::from_map(&map),
-            &zakura_pir_transparent::engine::Anchor {
+            &zakura_pir_client::transparent::engine::StaticChain::from_map(&map),
+            &zakura_pir_client::transparent::engine::Anchor {
                 height: map.shards.last().unwrap().end_height,
                 hash: map.shards.last().unwrap().terminal_block_hash.clone(),
             },
@@ -2011,7 +2018,7 @@ async fn unrelenting_overload_stops(concurrency: usize) {
     assert!(
         matches!(
             error,
-            zakura_pir_transparent::engine::SyncError::Overloaded { .. }
+            zakura_pir_client::transparent::engine::SyncError::Overloaded { .. }
         ),
         "expected a named overload, got: {error}"
     );
@@ -2060,8 +2067,8 @@ async fn a_503_that_names_no_delay_is_not_retried() {
             &mut transport,
             &wallet,
             FIRST,
-            &zakura_pir_transparent::engine::StaticChain::from_map(&map),
-            &zakura_pir_transparent::engine::Anchor {
+            &zakura_pir_client::transparent::engine::StaticChain::from_map(&map),
+            &zakura_pir_client::transparent::engine::Anchor {
                 height: map.shards.last().unwrap().end_height,
                 hash: map.shards.last().unwrap().terminal_block_hash.clone(),
             },
@@ -2075,7 +2082,7 @@ async fn a_503_that_names_no_delay_is_not_retried() {
     assert!(
         !matches!(
             error,
-            zakura_pir_transparent::engine::SyncError::Overloaded { .. }
+            zakura_pir_client::transparent::engine::SyncError::Overloaded { .. }
         ),
         "a 503 without a delay must not be treated as the capacity refusal"
     );
@@ -2188,8 +2195,8 @@ async fn unhelpful_refresh_stops(corrupt_filter: bool, concurrency: usize) {
             &mut transport,
             &wallet,
             FIRST,
-            &zakura_pir_transparent::engine::StaticChain::from_map(&map_before),
-            &zakura_pir_transparent::engine::Anchor {
+            &zakura_pir_client::transparent::engine::StaticChain::from_map(&map_before),
+            &zakura_pir_client::transparent::engine::Anchor {
                 height: map_before.shards.last().unwrap().end_height,
                 hash: map_before
                     .shards
@@ -2206,7 +2213,7 @@ async fn unhelpful_refresh_stops(corrupt_filter: bool, concurrency: usize) {
     .unwrap();
 
     match error {
-        zakura_pir_transparent::engine::SyncError::StaleRevision {
+        zakura_pir_client::transparent::engine::SyncError::StaleRevision {
             shard_id,
             refreshes,
             ..
@@ -2534,7 +2541,7 @@ async fn run_recorded(
     map: ShardMap,
     concurrency: usize,
     batches: Batches,
-) -> (zakura_pir_transparent::engine::SyncOutcome, Log) {
+) -> (zakura_pir_client::transparent::engine::SyncOutcome, Log) {
     let filters = PublishedFilters::load(dir, &map);
     let map_bytes = serde_json::to_vec(&map).unwrap().len() as u64;
     let log = Arc::new(Mutex::new(Log::default()));
@@ -2557,8 +2564,8 @@ async fn run_recorded(
             &mut transport,
             &wallet,
             FIRST,
-            &zakura_pir_transparent::engine::StaticChain::from_map(&map),
-            &zakura_pir_transparent::engine::Anchor {
+            &zakura_pir_client::transparent::engine::StaticChain::from_map(&map),
+            &zakura_pir_client::transparent::engine::Anchor {
                 height: map.shards.last().unwrap().end_height,
                 hash: map.shards.last().unwrap().terminal_block_hash.clone(),
             },
@@ -2864,8 +2871,8 @@ async fn an_unknown_range_profile_stops_the_sync_before_matching() {
             &mut transport,
             &wallet,
             FIRST,
-            &zakura_pir_transparent::engine::StaticChain::from_map(&map),
-            &zakura_pir_transparent::engine::Anchor {
+            &zakura_pir_client::transparent::engine::StaticChain::from_map(&map),
+            &zakura_pir_client::transparent::engine::Anchor {
                 height: map.shards.last().unwrap().end_height,
                 hash: map.shards.last().unwrap().terminal_block_hash.clone(),
             },
@@ -2876,7 +2883,7 @@ async fn an_unknown_range_profile_stops_the_sync_before_matching() {
     .await
     .unwrap();
     assert!(
-        matches!(error, zakura_pir_transparent::engine::SyncError::UnknownProfile(ref name) if name == "zcash-transparent-range-v99"),
+        matches!(error, zakura_pir_client::transparent::engine::SyncError::UnknownProfile(ref name) if name == "zcash-transparent-range-v99"),
         "{error}"
     );
 }
@@ -3021,10 +3028,13 @@ impl<T: ShardTransport> ShardTransport for Alters<T> {
     }
 }
 
-/// What a recorded [`sync_into`](zakura_pir_transparent::engine::sync_into) against one
+/// What a recorded [`sync_into`](zakura_pir_client::transparent::engine::sync_into) against one
 /// store returned and sent.
 type Recorded = (
-    Result<zakura_pir_transparent::engine::SyncReport, zakura_pir_transparent::engine::SyncError>,
+    Result<
+        zakura_pir_client::transparent::engine::SyncReport,
+        zakura_pir_client::transparent::engine::SyncError,
+    >,
     Log,
 );
 
@@ -3036,17 +3046,20 @@ async fn sync_recorded(
     dir: &Path,
     base: &str,
     map: &ShardMap,
-    store: zakura_pir_transparent::engine::MemoryStore,
+    store: zakura_pir_client::transparent::engine::MemoryStore,
     wallet: &[ScriptBytes],
     concurrency: usize,
     corruption: Option<Corruption>,
-) -> (zakura_pir_transparent::engine::MemoryStore, Recorded) {
+) -> (
+    zakura_pir_client::transparent::engine::MemoryStore,
+    Recorded,
+) {
     let filters = PublishedFilters::load(dir, map);
     let map = map.clone();
     let base = base.to_string();
     let wallet = wallet.to_vec();
     tokio::task::spawn_blocking(move || {
-        use zakura_pir_transparent::engine::{
+        use zakura_pir_client::transparent::engine::{
             Anchor, ScriptEntry, ScriptOrigin, StaticChain, StaticScripts, WorkLimits,
         };
         let mut store = store;
@@ -3076,7 +3089,7 @@ async fn sync_recorded(
                 .collect(),
         );
         let tip = map.shards.last().unwrap();
-        let result = zakura_pir_transparent::engine::sync_into(
+        let result = zakura_pir_client::transparent::engine::sync_into(
             &mut store,
             &map,
             0,
@@ -3222,7 +3235,9 @@ async fn honest_and_corrupt(
 /// with concurrent lookahead alike.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_corrupt_directory_row_fails_one_entry_and_the_sync_finishes() {
-    use zakura_pir_transparent::engine::{Completion, FailedEntry, IncompleteReason, MemoryStore};
+    use zakura_pir_client::transparent::engine::{
+        Completion, FailedEntry, IncompleteReason, MemoryStore,
+    };
     let per_shard = chain();
     let ((honest_dir, honest_map, honest_base), (dir, map, base)) =
         honest_and_corrupt(&per_shard, &|shard_id, built, _| {
@@ -3285,9 +3300,11 @@ async fn a_corrupt_directory_row_fails_one_entry_and_the_sync_finishes() {
         without[2].retain(|(owner, _)| owner.as_slice() != script(1).as_slice());
         compare(&report.ledger, &traverse(&without, &wallet, 0));
         assert!(report.covered_through < map.shards[2].end_height);
-        assert!(zakura_pir_transparent::engine::WalletStore::anchor(&store)
-            .unwrap()
-            .is_none());
+        assert!(
+            zakura_pir_client::transparent::engine::WalletStore::anchor(&store)
+                .unwrap()
+                .is_none()
+        );
     }
 }
 
@@ -3296,7 +3313,9 @@ async fn a_corrupt_directory_row_fails_one_entry_and_the_sync_finishes() {
 /// report keeps listing the entry.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_corrupt_entry_is_asked_three_times_then_held() {
-    use zakura_pir_transparent::engine::{Completion, IncompleteReason, MemoryStore, WalletStore};
+    use zakura_pir_client::transparent::engine::{
+        Completion, IncompleteReason, MemoryStore, WalletStore,
+    };
     let per_shard = chain();
     let dir = tempfile::tempdir().unwrap();
     let map = publish_corrupting(dir.path(), &per_shard, &|shard_id, built, _| {
@@ -3347,7 +3366,9 @@ async fn a_corrupt_entry_is_asked_three_times_then_held() {
 /// entry is counted, its walk stays owed, and the next sync asks again.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_corrupt_page_row_fails_one_walk_with_the_honest_transcript() {
-    use zakura_pir_transparent::engine::{Completion, IncompleteReason, MemoryStore, WalletStore};
+    use zakura_pir_client::transparent::engine::{
+        Completion, IncompleteReason, MemoryStore, WalletStore,
+    };
     let per_shard = chain();
     let ((honest_dir, honest_map, honest_base), (dir, map, base)) =
         honest_and_corrupt(&per_shard, &|shard_id, built, children| {
@@ -3448,7 +3469,9 @@ fn chain_with_a_long_oldest_run() -> Vec<Vec<(ScriptBytes, TransparentEvent)>> {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_bad_link_owes_dummies_and_keeps_the_honest_transcript() {
     use transparent_shard::{decode_page_row, encode_page_row, page_tag_salt, script_tag, RunLink};
-    use zakura_pir_transparent::engine::{Completion, IncompleteReason, MemoryStore, WalletStore};
+    use zakura_pir_client::transparent::engine::{
+        Completion, IncompleteReason, MemoryStore, WalletStore,
+    };
     let per_shard = chain_with_a_long_oldest_run();
     let honest_dir = tempfile::tempdir().unwrap();
     let honest_map = publish(honest_dir.path(), &per_shard);
@@ -3561,7 +3584,7 @@ async fn a_bad_link_owes_dummies_and_keeps_the_honest_transcript() {
 /// The failure is counted once.
 #[tokio::test(flavor = "multi_thread")]
 async fn an_overload_after_a_failed_entry_retries_with_the_honest_transcript() {
-    use zakura_pir_transparent::engine::{
+    use zakura_pir_client::transparent::engine::{
         Completion, FailedEntry, IncompleteReason, MemoryStore, WalletStore,
     };
     let per_shard = chain();
@@ -3673,8 +3696,8 @@ async fn an_overload_after_a_failed_entry_retries_with_the_honest_transcript() {
 /// wallet holds drops that setup, so the next sync fetches it again.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_reply_failing_its_binding_or_epoch_fails_the_request_not_an_entry() {
-    use zakura_pir_transparent::engine::client::ClientError;
-    use zakura_pir_transparent::engine::{MemoryStore, SetupKey, SyncError, WalletStore};
+    use zakura_pir_client::transparent::engine::client::ClientError;
+    use zakura_pir_client::transparent::engine::{MemoryStore, SetupKey, SyncError, WalletStore};
     let dir = tempfile::tempdir().unwrap();
     let per_shard = chain();
     let map = publish(dir.path(), &per_shard);
@@ -3749,7 +3772,7 @@ async fn a_reply_failing_its_binding_or_epoch_fails_the_request_not_an_entry() {
 /// every wallet, so refusing it reveals nothing about the wallet's rows.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_corrupt_manifest_still_stops_the_sync() {
-    use zakura_pir_transparent::engine::{MemoryStore, WalletStore};
+    use zakura_pir_client::transparent::engine::{MemoryStore, WalletStore};
     let dir = tempfile::tempdir().unwrap();
     let per_shard = chain();
     let map = publish(dir.path(), &per_shard);
@@ -3777,7 +3800,7 @@ async fn a_corrupt_manifest_still_stops_the_sync() {
 /// A malformed shard map still stops the sync before anything is read.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_malformed_shard_map_still_stops_the_sync() {
-    use zakura_pir_transparent::engine::{MemoryStore, SyncError};
+    use zakura_pir_client::transparent::engine::{MemoryStore, SyncError};
     let dir = tempfile::tempdir().unwrap();
     let per_shard = chain();
     let map = publish(dir.path(), &per_shard);

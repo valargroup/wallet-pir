@@ -15,10 +15,6 @@ name = "shard-publish"
 path = "src/bin/shard-publish.rs"
 
 [[bin]]
-name = "shard-census"
-path = "src/bin/shard-census.rs"
-
-[[bin]]
 name = "transparent-event-ingest"
 required-features = ["rocksdb-reader"]
 path = "src/bin/event-ingest.rs"
@@ -28,46 +24,8 @@ name = "transparent-publisher"
 path = "src/bin/server.rs"
 
 [[bin]]
-name = "journal-convert-v1"
-path = "src/bin/journal-convert-v1.rs"
-
-[[bin]]
-name = "sample-redigest"
-path = "src/bin/sample-redigest.rs"
-
-[[bin]]
-name = "shard-cutoff"
-required-features = ["rocksdb-reader"]
-path = "src/bin/shard-cutoff.rs"
-
-[[bin]]
-name = "journal-inventory"
-required-features = ["rocksdb-reader"]
-path = "src/bin/journal-inventory.rs"
-
-[[bin]]
-name = "event-spotcheck"
-path = "src/bin/event-spotcheck.rs"
-
-[[bin]]
-name = "shard-verify"
-path = "src/bin/shard-verify.rs"
-
-[[bin]]
-name = "script-sample"
-path = "src/bin/script-sample.rs"
-
-[[bin]]
-name = "filter-sweep"
-path = "src/bin/filter-sweep.rs"
-
-[[bin]]
 name = "txid-display-controller"
 path = "src/bin/txid-display-controller.rs"
-
-[[bin]]
-name = "sample-oracle"
-path = "src/bin/sample-oracle.rs"
 
 [[bin]]
 name = "transparent-publish-controller"
@@ -101,24 +59,23 @@ tokio = { version = "1", features = ["full"] }
 tokio-util = { version = "0.7", features = ["io"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-transparent-events = { package = "zakura-transparent-events", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "b7fffbbc98d75af5ebc9c9d9da92ca19e9f0fdbd" }
-transparent-filter = { package = "zakura-transparent-filter", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "b7fffbbc98d75af5ebc9c9d9da92ca19e9f0fdbd" }
-transparent-native = { package = "zakura-transparent-native", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "b7fffbbc98d75af5ebc9c9d9da92ca19e9f0fdbd" }
-transparent-shard = { package = "zakura-transparent-shard", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "b7fffbbc98d75af5ebc9c9d9da92ca19e9f0fdbd" }
 transparent-shared = { path = "../../../transparent/transparent-shared", features = ["test-support"] }
 # Node reads, transparent extraction, compact blocks and the RocksDB state
 # reader, pinned to an exact wallet-libraries revision. The reader opens the
 # node's RocksDB directly: before deploying it, verify that the zakura-state
 # revision wallet-libraries pins matches the running node's database format.
-zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "b7fffbbc98d75af5ebc9c9d9da92ca19e9f0fdbd", default-features = false, features = ["transparent"] }
+zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "a2f87e6f235dc16840be1dd7fc88e6dd06f0a268", default-features = false, features = ["transparent"] }
+
+zakura-pir-protocol = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "a2f87e6f235dc16840be1dd7fc88e6dd06f0a268", default-features = false, features = ["transparent"] }
+zakura-pir-publisher = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "a2f87e6f235dc16840be1dd7fc88e6dd06f0a268", default-features = false, features = ["transparent"] }
 
 [dev-dependencies]
 transparent-query-server = { path = "../../../transparent/transparent-query-server" }
 base64 = "0.22"
 sysinfo = "0.36"
-transparent-txid-client = { package = "zakura-transparent-txid-client", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "b7fffbbc98d75af5ebc9c9d9da92ca19e9f0fdbd", features = ["testing"] }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "json"] }
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
 # Raw synthetic blocks for the extraction tests.
-zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "b7fffbbc98d75af5ebc9c9d9da92ca19e9f0fdbd", default-features = false, features = ["transparent", "testing"] }
+zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "a2f87e6f235dc16840be1dd7fc88e6dd06f0a268", default-features = false, features = ["transparent", "testing"] }
+zakura-pir-client = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "a2f87e6f235dc16840be1dd7fc88e6dd06f0a268", default-features = false, features = ["transparent", "testing"] }

@@ -241,6 +241,21 @@ class PlannerTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'unknown helper'):
             helpers.targets(['check-docs; unsafe'])
 
+    def test_full_helpers_restore_full_fixtures_even_with_a_fast_parent(self):
+        for full in (False, True):
+            arguments = ['helpers.py', '--targets', '["check-tools"]']
+            if full:
+                arguments.append('--full')
+            with patch.dict(os.environ, {'WALLET_PIR_FAST_TESTS': '1'}), \
+                 patch.object(sys, 'argv', arguments), patch.object(helpers, 'run') as run:
+                helpers.main()
+                environment = run.call_args.kwargs['env']
+                if full:
+                    self.assertNotIn('WALLET_PIR_FAST_TESTS', environment)
+                else:
+                    self.assertEqual(environment['WALLET_PIR_FAST_TESTS'], '1')
+                self.assertEqual(os.environ['WALLET_PIR_FAST_TESTS'], '1')
+
     def test_rust_execution_can_start_while_independent_helpers_are_running(self):
         started = threading.Event()
         helper_fails = False

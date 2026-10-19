@@ -1,5 +1,8 @@
 //! History-only prepared-publication distribution. Verified bytes alone never
 //! grant serving authority. This inventory is not a wallet format.
+use zakura_pir_protocol::transparent::filter as transparent_filter;
+use zakura_pir_protocol::transparent::shard as transparent_shard;
+
 use crate::{
     history::shardset::ShardSet,
     runtime::{disk::ShippedRuntimes, SharedParams},
@@ -88,10 +91,11 @@ pub enum Kind {
     RecentTable,
     RecentRuntime,
     ArchiveTable,
+    ArchiveRuntime,
 }
 impl Kind {
     pub fn local(self) -> bool {
-        self != Self::ArchiveTable
+        !matches!(self, Self::ArchiveTable | Self::ArchiveRuntime)
     }
 }
 
@@ -163,7 +167,7 @@ impl Inventory {
                         return Err("invalid metadata classification".into());
                     }
                 }
-                Kind::RecentRuntime => {
+                Kind::RecentRuntime | Kind::ArchiveRuntime => {
                     let Some((a, b)) = file
                         .path
                         .strip_suffix(".runtime")
@@ -263,6 +267,22 @@ impl Finalized {
         self.files.get(digest).map(PathBuf::as_path)
     }
     pub fn prepare(root: &Path, set: &ShardSet, recent_from_height: u64) -> Result<Self, Error> {
+        Self::prepare_holdings(root, set, recent_from_height, false)
+    }
+    /// Finalize every table and runtime for autonomous full-coverage consumers.
+    pub fn prepare_full(
+        root: &Path,
+        set: &ShardSet,
+        recent_from_height: u64,
+    ) -> Result<Self, Error> {
+        Self::prepare_holdings(root, set, recent_from_height, true)
+    }
+    fn prepare_holdings(
+        root: &Path,
+        set: &ShardSet,
+        recent_from_height: u64,
+        full: bool,
+    ) -> Result<Self, Error> {
         let recent = set
             .map
             .shards
@@ -313,7 +333,7 @@ impl Finalized {
             let mut hash = Sha256::new();
             io::copy(&mut file, &mut HashWriter(&mut hash))?;
             let sha256 = hex::encode(hash.finalize());
-            if kind.local() {
+            if full || kind.local() {
                 files.insert(sha256.clone(), path);
             }
             inventory.artifacts.push(Artifact {
@@ -335,7 +355,7 @@ impl Finalized {
                 .ok_or("producer needs verified complete set")?;
             let local = entry.shard_id >= recent;
             for table in shard.tables() {
-                let params = if local {
+                let params = if full || local {
                     Some(SharedParams::build(shard.geometry, table.kind())?)
                 } else {
                     None
@@ -363,7 +383,11 @@ impl Finalized {
                         runtime.self_check(shared, &source.load()?)?;
                         add(
                             shipped.path(&key, shared, source.sha256()),
-                            Kind::RecentRuntime,
+                            if local {
+                                Kind::RecentRuntime
+                            } else {
+                                Kind::ArchiveRuntime
+                            },
                         )?;
                     }
                 }

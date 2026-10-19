@@ -6,6 +6,10 @@
 //! use v2; substituting that builder would change retained v1 measurements.
 //! Original Git blob: c727f4ad41d9631ecb85ef0fd49d377d6ffa00d1.
 //! Record encoding/decoding stays owned by the pinned library's `txid_v1`.
+use zakura_pir_protocol::transparent::events as transparent_events;
+use zakura_pir_protocol::transparent::filter as transparent_filter;
+use zakura_pir_publisher::transparent as transparent_shard;
+
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};

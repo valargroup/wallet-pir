@@ -12,10 +12,13 @@ path = "src/lib.rs"
 [[bin]]
 name = "status-pir"
 path = "src/bin/status.rs"
+required-features = ["cli"]
 
 [features]
 default = []
-native-reinspiring = ["status-query-server/native-reinspiring", "enhance-query-server/native-reinspiring", "dep:pir-native", "ipir-sp/native-reinspiring"]
+# Standalone diagnostic commands use wallet helpers; the embedded publisher does not.
+cli = ["status-query-server/client"]
+native-reinspiring = ["status-query-server/native-reinspiring", "enhance-query-server/native-reinspiring", "dep:zakura-pir-publisher", "ipir-sp/native-reinspiring"]
 cuda = ["status-query-server/cuda", "enhance-query-server/cuda", "ipir-sp/cuda"]
 
 [dependencies]
@@ -25,7 +28,6 @@ status-query-server = { path = "../../../status/status-query-server" }
 # The synthetic listeners serve an empty, unready Enhance query gateway beside Status.
 enhance-query-server = { path = "../../../enhance/enhance-query-server" }
 pir-control = { path = "../../pir-control", features = ["admission"] }
-pir-native = { package = "zakura-pir-native", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "b7fffbbc98d75af5ebc9c9d9da92ca19e9f0fdbd", optional = true }
 axum = "0.7"
 clap = { version = "4", features = ["derive", "env"] }
 hex = "0.4"
@@ -37,11 +39,22 @@ sha2 = "0.10"
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "b7fffbbc98d75af5ebc9c9d9da92ca19e9f0fdbd", default-features = false, features = ["status"] }
+zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "a2f87e6f235dc16840be1dd7fc88e6dd06f0a268", default-features = false, features = ["status"] }
+
+zakura-pir-publisher = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "a2f87e6f235dc16840be1dd7fc88e6dd06f0a268", default-features = false, features = ["status"], optional = true }
 
 [dev-dependencies]
 # Independent Status client for the real HTTP runtime regression.
-zakura-pir-status = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "b7fffbbc98d75af5ebc9c9d9da92ca19e9f0fdbd" }
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
-zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "b7fffbbc98d75af5ebc9c9d9da92ca19e9f0fdbd", default-features = false, features = ["status", "testing"] }
+zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "a2f87e6f235dc16840be1dd7fc88e6dd06f0a268", default-features = false, features = ["status", "testing"] }
+zakura-pir-client = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "a2f87e6f235dc16840be1dd7fc88e6dd06f0a268", default-features = false, features = ["status"] }
+
+
+[dev-dependencies.enhance-query-server]
+path = "../../../enhance/enhance-query-server"
+features = ["client"]
+
+[dev-dependencies.status-query-server]
+path = "../../../status/status-query-server"
+features = ["client"]

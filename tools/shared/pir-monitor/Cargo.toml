@@ -10,7 +10,7 @@ native-reinspiring = ["enhance-query-server/native-reinspiring"]
 [dependencies]
 anyhow = "1"
 axum = "0.7"
-enhance-query-server = { path = "../../../src/enhance/enhance-query-server" }
+enhance-query-server = { path = "../../../src/enhance/enhance-query-server" , features = ["client"] }
 pir-apm = { path = "../../../src/shared/pir-apm" }
 hex = "0.4"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }

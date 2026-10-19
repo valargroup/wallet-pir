@@ -321,12 +321,12 @@ class FastBuildTests(unittest.TestCase):
         tests = [build[index + 1] for index, word in enumerate(build[:-1]) if word == '--test']
         self.assertEqual(packages, sorted(fast_build.FAST_FEATURE_ROOTS))
         self.assertIn('--lib', build)
-        self.assertNotIn('--features', build)
+        self.assertEqual(build[build.index('--features') + 1], 'status-publisher/cli')
         self.assertNotIn('--bins', build)
         self.assertEqual(bins, [
-            'enhance-pir-exercise', 'enhance-pir-load-test', 'event-spotcheck',
+            'enhance-pir-exercise', 'enhance-pir-load-test',
             'hierarchical-filter-eval', 'journal-convert-v1', 'pir-monitor',
-            'shard-census', 'txid-quality-canary'])
+            'txid-quality-canary'])
         self.assertEqual(tests, [
             'boundary_recovery_model', 'ci_hint', 'ci_smoke', 'lifecycle',
             'record_layout', 'schema11_cutover', 'status_routes'])

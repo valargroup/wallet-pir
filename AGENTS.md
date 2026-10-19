@@ -23,7 +23,7 @@ Preserve existing Cargo package and binary names.
 - Fetch pinned dependencies and install the local push guard with
   `make prepare-dev`; verify prerequisites with `make doctor`.
 - Compile all CPU workspace binaries, including the Enhance CLI, for local use:
-  `cargo build --locked --workspace --bins --profile release-fast --features transparent-filter-server/rocksdb-reader`.
+  `cargo build --locked --workspace --bins --profile release-fast --features transparent-publisher/rocksdb-reader,transparent-tools/test-support,transparent-tools/compact-export`.
   Use `make build` for deploy-profile binaries (fat-LTO `release`, slower
   and more memory-intensive). Do not enable CUDA on a CPU-only devbox.
 - Inspect entrypoints without starting a fleet:
@@ -46,7 +46,7 @@ Preserve existing Cargo package and binary names.
 
 ## Iteration and validation
 
-- Temporarily let PR and main CI validation finish without a five-minute cancellation; enforce the five-minute timing check only after validation on pushes to main. Retain full service qualification separately.
+- Temporarily let PR and main CI validation finish without a three-minute cancellation; enforce the three-minute timing check only after validation on pushes to main. Retain full service qualification separately.
 - Keep every automated CPU correctness test below 30 seconds and the complete
   warm correctness run below five minutes, including incremental compilation,
   setup, teardown, tooling and lint. `make check-correctness` enforces the budget;
@@ -78,6 +78,7 @@ Preserve existing Cargo package and binary names.
 - Keep Cargo writers sequential within one target directory. For independent
   concurrent work use separate worktrees/target lanes; reuse each lane across
   edits. Do not create a new cold target per command or weaken trust boundaries.
+- Keep fast-suite fixtures small enough to finish in a few seconds; retain deployed-size parameter combinations in full qualification.
 
 ## Branches and production changes
 

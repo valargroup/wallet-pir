@@ -1,4 +1,5 @@
 //! Test-only process using the original released 391 adapter and c085 engine.
+mod display;
 use std::{io::Read, time::Duration};
 use zakura_pir_transparent::{
     FilterSource, HttpExchange, HttpFailure, HttpReply, HttpRequest, ShardTransport,
@@ -24,6 +25,11 @@ impl HttpExchange for Exchange {
             .get("retry-after")
             .and_then(|s| s.to_str().ok())
             .map(str::to_owned);
+        let map_sha256 = response
+            .headers()
+            .get("x-txid-map-sha256")
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned);
         let success = (200..300).contains(&status);
         let limit = if success {
             request.limit
@@ -42,13 +48,16 @@ impl HttpExchange for Exchange {
         Ok(HttpReply {
             status,
             retry_after,
-            map_sha256: None,
+            map_sha256,
             body,
         })
     }
 }
 fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let args: Vec<_> = std::env::args().collect();
+    if args.len() == 5 && args[2] == "--display" {
+        return display::lookup(&args[1], &args[3], &args[4]);
+    }
     if args.len() != 4 {
         return Err("usage: frozen-provider-client ORIGIN SCRIPT_HEX BIRTHDAY".into());
     }

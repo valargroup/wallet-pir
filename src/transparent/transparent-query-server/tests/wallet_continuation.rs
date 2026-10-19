@@ -5,6 +5,10 @@
 //! traversal of the same events, and every recovery path — crash, restart,
 //! replaced tail, reorg, budget, overload — has to reach that equality.
 
+use zakura_pir_protocol::transparent::events as transparent_events;
+use zakura_pir_protocol::transparent::filter as transparent_filter;
+use zakura_pir_publisher::transparent as transparent_shard;
+
 mod common;
 
 use common::*;
@@ -12,18 +16,18 @@ use std::path::Path;
 use transparent_events::{ReceiveEvent, TransparentEvent};
 use transparent_filter::{ScriptBytes, ShardMap};
 use transparent_shard::layout::{DECOUPLED_2K_8K, DECOUPLED_32K_32K};
-use zakura_pir_transparent::engine::client::Table;
-use zakura_pir_transparent::engine::http::{HttpOptions, HttpShardTransport};
-use zakura_pir_transparent::engine::store::{
+use zakura_pir_client::transparent::engine::client::Table;
+use zakura_pir_client::transparent::engine::http::{HttpOptions, HttpShardTransport};
+use zakura_pir_client::transparent::engine::store::{
     Anchor, CoverageRange, PendingPages, ScriptEntry, ScriptOrigin, SetIdentity, SetupBlob,
     SetupKey, ShardCommit, StoreError, StoredEvent, WalletStore,
 };
-use zakura_pir_transparent::engine::transport::{refusal, BoxError, ShardTransport};
-use zakura_pir_transparent::engine::{
+use zakura_pir_client::transparent::engine::transport::{refusal, BoxError, ShardTransport};
+use zakura_pir_client::transparent::engine::{
     sync_into, Completion, IncompleteReason, ScriptProvider, StaticChain, StaticScripts, SyncError,
     SyncReport, WorkLimits,
 };
-use zakura_pir_transparent::engine_store::SqliteStore;
+use zakura_pir_client::transparent::engine_store::SqliteStore;
 
 fn entry(tag: u32, required_from: u64) -> ScriptEntry {
     ScriptEntry {
@@ -72,7 +76,7 @@ where
             &mut filters,
             &mut transport,
             &limits,
-            &zakura_pir_transparent::engine::Anchor {
+            &zakura_pir_client::transparent::engine::Anchor {
                 height: map.shards.last().unwrap().end_height,
                 hash: map.shards.last().unwrap().terminal_block_hash.clone(),
             },
@@ -84,13 +88,17 @@ where
 }
 
 trait GeometryOf {
-    fn geometry(&mut self) -> Result<zakura_pir_transparent::engine::ServiceGeometry, BoxError>;
+    fn geometry(
+        &mut self,
+    ) -> Result<zakura_pir_client::transparent::engine::ServiceGeometry, BoxError>;
 }
 
 impl<T: ShardTransport> GeometryOf for T {
-    fn geometry(&mut self) -> Result<zakura_pir_transparent::engine::ServiceGeometry, BoxError> {
+    fn geometry(
+        &mut self,
+    ) -> Result<zakura_pir_client::transparent::engine::ServiceGeometry, BoxError> {
         let (raw, _) = self.init()?;
-        zakura_pir_transparent::engine::parse_init(&raw)
+        zakura_pir_client::transparent::engine::parse_init(&raw)
     }
 }
 
@@ -518,7 +526,7 @@ impl<S: WalletStore> WalletStore for CrashAt<S> {
         &self,
         child_digest: &str,
         script: &[u8],
-    ) -> Result<Option<zakura_pir_transparent::engine::store::CachedRun>, StoreError> {
+    ) -> Result<Option<zakura_pir_client::transparent::engine::store::CachedRun>, StoreError> {
         self.inner.cached_run(child_digest, script)
     }
     fn setup(&self, key: &SetupKey) -> Result<Option<SetupBlob>, StoreError> {

@@ -1,4 +1,7 @@
 //! Block-bounded canonical extraction; no chain-sized in-memory JSON or UTXO map.
+use zakura_pir_protocol::transparent::events as transparent_events;
+use zakura_pir_publisher::transparent as transparent_shard;
+
 use super::*;
 use std::io::{self, BufRead, Read, Write};
 const MAX_LINE: u64 = 256 * 1024 * 1024;

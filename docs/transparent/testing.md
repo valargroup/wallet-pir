@@ -268,10 +268,10 @@ exercise memory/SQLite parity and legacy progress migration. The regression
 crate tests the oracle independently.
 
 ```sh
-cargo test -p transparent-blocks --test recovery
+cargo test -p transparent-tools --features benchmarks --test compact_recovery
 cargo test -p transparent-query-server --test wallet_anchor \
   --test wallet_continuation --test wallet_recut --test wallet_sync
-cargo test -p transparent-tools
+cargo test -p transparent-tools --test regression_runner
 ```
 
 The artifact build selects service workspace targets only. Library-internal

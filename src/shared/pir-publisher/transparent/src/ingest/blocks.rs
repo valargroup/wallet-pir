@@ -1,6 +1,9 @@
 //! Fetching one block and extracting its transparent events, shared by the
 //! filter service's ingest loop and the txid display controller.
 
+use zakura_pir_publisher::transparent as transparent_shard;
+use zakura_pir_publisher::transparent::filter as transparent_filter;
+
 use crate::ingest::extract::{index, IndexedEvent};
 use crate::ingest::prevout::OutputCache;
 use transparent_filter::BlockHash;

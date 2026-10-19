@@ -415,6 +415,7 @@ def main():
         if selected['helpers'] and not args.compile_only:
             from helpers import targets
             helper_env = dict(os.environ, OFFLINE='1') if args.offline else os.environ.copy()
+            helper_env['WALLET_PIR_FAST_TESTS'] = '1'
             helpers = pool.submit(run, ['make', '-j4', *targets(selected['helpers'])],
                                   env=helper_env, stage='helpers')
             futures.append(helpers)

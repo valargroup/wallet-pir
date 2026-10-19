@@ -20,6 +20,9 @@
 //! Throughput that flattens means the cores are waiting on memory, and the only
 //! way to buy more of it is more hosts.
 
+use zakura_pir_protocol::transparent::shard as transparent_shard;
+use zakura_pir_query_server::transparent::native as transparent_native;
+
 use clap::Parser;
 use ipir_sp::server::IPIRServer;
 use std::time::{Duration, Instant};

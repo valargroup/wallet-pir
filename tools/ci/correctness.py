@@ -27,9 +27,9 @@ from fast import HELPERS, local_target
 
 FEATURES = ','.join([
     'enhance-query-server/native-reinspiring', 'status-query-server/native-reinspiring',
-    'enhance-publisher/native-reinspiring', 'status-publisher/native-reinspiring',
+    'enhance-publisher/native-reinspiring', 'status-publisher/native-reinspiring', 'status-publisher/cli',
     'enhance-pir-client/native-reinspiring', 'enhance-pir-load-test/native-reinspiring',
-    'pir-control/admission', 'transparent-publisher/rocksdb-reader', 'transparent-query-server/test-support', 'transparent-tools/compact-export',
+    'pir-control/admission', 'transparent-publisher/rocksdb-reader', 'transparent-tools/test-support', 'transparent-tools/compact-export',
 ])
 
 

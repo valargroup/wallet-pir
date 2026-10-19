@@ -12,6 +12,8 @@
 //! and table names in request paths. Nothing here sees a script, a row or a
 //! page locator.
 
+use zakura_pir_protocol::transparent::filter as transparent_filter;
+
 use clap::{Parser, Subcommand};
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;

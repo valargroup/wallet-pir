@@ -7,6 +7,8 @@
 //! counted build for a file it cannot use; collection removes the candidate
 //! with its files.
 
+use zakura_pir_publisher::transparent as transparent_shard;
+
 use std::path::{Path, PathBuf};
 use transparent_publisher::tx_detail::publisher::verify_dir;
 use transparent_query_server::config::ServiceConfig;

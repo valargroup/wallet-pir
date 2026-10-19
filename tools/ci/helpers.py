@@ -2,6 +2,7 @@
 """Execute selected helper suites; full qualification restores exhaustive tiers."""
 import argparse
 import json
+import os
 from fast import HELPERS, run
 
 
@@ -24,7 +25,13 @@ def main():
     selected = targets(json.loads(args.targets), args.full)
     print('Selected helper checks: ' + ', '.join(selected), flush=True)
     if selected:
-        run(['make', '-j4', *selected], stage='full-helpers' if args.full else 'helpers')
+        environment = os.environ.copy()
+        if args.full:
+            environment.pop('WALLET_PIR_FAST_TESTS', None)
+        else:
+            environment['WALLET_PIR_FAST_TESTS'] = '1'
+        run(['make', '-j4', *selected], env=environment,
+            stage='full-helpers' if args.full else 'helpers')
 
 
 if __name__ == '__main__':

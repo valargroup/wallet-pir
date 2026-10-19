@@ -9,6 +9,8 @@
 //! fixed records of `txid(32) || height u64 LE`, heights non-decreasing,
 //! truncated when the chain rolls back. It is not served.
 
+use zakura_pir_publisher::transparent as transparent_shard;
+
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::os::unix::fs::FileExt;

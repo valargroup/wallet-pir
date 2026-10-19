@@ -14,6 +14,9 @@
 //! [`BeforeRollback`] first, so the invalidation the rollback calls for is
 //! durable before any published block leaves the journal.
 
+use zakura_pir_publisher::transparent as transparent_shard;
+use zakura_pir_publisher::transparent::filter as transparent_filter;
+
 use super::cache::DisplayCache;
 use super::now_ms;
 use crate::history::publication::BoxError;

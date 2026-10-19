@@ -18,6 +18,9 @@
 //! bytes of response) are recorded in
 //! `evidence/transparent/baselines/shard-utilisation/measurement-v4.json`.
 
+use zakura_pir_publisher::transparent as transparent_shard;
+use zakura_pir_query_server::transparent::native as transparent_native;
+
 use transparent_native::Profile;
 use transparent_shard::layout::{Geometry, DECOUPLED_2K_8K, PROFILES};
 use transparent_shard::PAGE_ROW_BYTES;

@@ -1,5 +1,9 @@
 //! Bounded, process-local reuse of deterministic publication bytes. Each caller
 //! still writes a fresh publication and opens fresh service and wallet stores.
+use zakura_pir_protocol::transparent::events as transparent_events;
+use zakura_pir_protocol::transparent::filter as transparent_filter;
+use zakura_pir_publisher::transparent as transparent_shard;
+
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, OnceLock};
 use transparent_events::TransparentEvent;
