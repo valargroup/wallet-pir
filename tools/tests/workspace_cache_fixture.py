@@ -46,6 +46,10 @@ class WorkspaceCacheFixture(unittest.TestCase):
                                            'std::fs::read_to_string("build.txt").unwrap()); }\n')
         shutil.copyfile(ROOT / 'rust-toolchain.toml', self.root / 'rust-toolchain.toml')
         self.git('init', '-q')
+        # Directory snapshots must observe cache operations alone. Git's
+        # asynchronous maintenance can remove its own lock during an assertion.
+        self.git('config', 'maintenance.auto', 'false')
+        self.git('config', 'gc.auto', '0')
         self.git('add', '.')
         self.git('-c', 'user.name=Oracle', '-c', 'user.email=oracle@example.invalid', 'commit', '-qm', 'fixture')
         self.target = self.area / 'target'
@@ -82,7 +86,8 @@ class WorkspaceCacheFixture(unittest.TestCase):
         self.sequence += 1
         old = self.area / f'checkout-{self.sequence}'
         self.root.rename(old)
-        subprocess.run(['git', 'clone', '-q', str(old), str(self.root)], check=True, timeout=5)
+        subprocess.run(['git', 'clone', '-q', '-c', 'maintenance.auto=false', '-c', 'gc.auto=0',
+                        str(old), str(self.root)], check=True, timeout=5)
 
     def restore(self, identity='compatible'):
         workspace_cache.restore(self.root, self.target, identity, self.pending)
