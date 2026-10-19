@@ -1,7 +1,5 @@
 //! Admission for allocations outside the runtime cache. Reservations remain
 //! owned by blocking work after its HTTP/control caller is cancelled.
-use zakura_pir_protocol::transparent::shard as transparent_shard;
-
 use std::sync::{Arc, Mutex};
 
 #[derive(Default)]
@@ -345,7 +343,7 @@ mod query_memory_tests {
     use crate::runtime::tests::GENESIS_RUNTIMES;
     use crate::runtime::SharedParams;
     use std::sync::Arc;
-    use transparent_shard::display::TXID_2K8;
+    use zakura_pir_protocol::transparent::shard::display::TXID_2K8;
 
     /// The combined display worker runs under `MemoryMax=48G` and holds every
     /// archive runtime and the recent one. Admission allows

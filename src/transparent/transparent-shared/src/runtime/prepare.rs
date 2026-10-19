@@ -17,8 +17,6 @@
 //! header. Anything else is rebuilt. A worker checksums and self-checks every
 //! file it loads whichever way the publisher came by it.
 
-use zakura_pir_protocol::transparent::shard as transparent_shard;
-
 use super::disk::ShippedRuntimes;
 use super::{build_pool, RuntimeKey, SharedParams, TableRuntime};
 use crate::history::shardset::SegmentSource;
@@ -159,7 +157,7 @@ mod tests {
     use sha2::{Digest, Sha256};
     use std::fs;
     use std::os::unix::fs::MetadataExt;
-    use transparent_shard::layout::DECOUPLED_2K_8K;
+    use zakura_pir_protocol::transparent::shard::layout::DECOUPLED_2K_8K;
 
     fn segment(dir: &std::path::Path, seed: u8) -> (SharedParams, SegmentSource) {
         let (geometry, table) =
