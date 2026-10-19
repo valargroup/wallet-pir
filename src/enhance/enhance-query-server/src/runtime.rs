@@ -780,8 +780,12 @@ mod tests {
             .coverage(67, Geometry::default())
             .unwrap();
         let plan = plan(coverage.shards[0].clone(), records).unwrap();
+        // The 67-record publication is the same immutable predecessor other
+        // failure tests build. Reuse those bytes; this case still checks the
+        // pinned digests and packed answer.
+        seed_published_fixture(dir.path(), &plan);
         let mut engine = Engine::new(dir.path());
-        let (eval, _) = engine.prepare(plan.clone(), records).unwrap();
+        let (eval, _) = engine.prepare(plan, records).unwrap();
         let hint = eval.hint().unwrap();
         let pack = Packing::new(4096, &hint, &crate::PackingBudget::coordinator()).unwrap();
         let mut hint_digest = Sha256::new();
