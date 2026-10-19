@@ -10,7 +10,7 @@ use receiver_directory::{
 #[cfg(not(test))]
 use receiver_pir::server::Server;
 use receiver_pir_server::Publication;
-use receiver_store::{Error, IndexedBlock, Store};
+use receiver_store::{Error, IndexedBlock, Store, WitnessInputs};
 use zakura_receiver_crypto::{
     witness::{self, WitnessCache, WitnessSnapshot},
     Record,
@@ -66,16 +66,15 @@ pub fn publication(manifest: &Manifest) -> Result<witness::Publication, Error> {
     })
 }
 
-/// Builds the publication's common witness file from `store`'s commitment history,
-/// reusing unchanged subtrees from `cache`. A history of more than `max_commitments`
-/// commitments, or a file over the node limit, is [`Error::Capacity`].
+/// Builds the publication's common witness file from `inputs`, its commitment history
+/// as [`Store::witness_inputs`] reads it, reusing unchanged subtrees from `cache`. A
+/// file over the witness file's size bound is [`Error::Capacity`], found while its
+/// nodes are collected.
 pub fn build_witnesses(
-    store: &Store,
+    inputs: &WitnessInputs,
     manifest: &Manifest,
     cache: &mut WitnessCache,
-    max_commitments: u64,
 ) -> Result<Vec<u8>, Error> {
-    let inputs = store.witness_inputs(manifest, max_commitments)?;
     let proof = cache
         .build(
             &publication(manifest)?,
@@ -300,14 +299,10 @@ mod tests {
         append(&mut store, &block).unwrap();
         let mut cache = WitnessCache::default();
         let check = |store: &Store, cache: &mut WitnessCache, snapshot: &Snapshot| {
-            let fresh = build_witnesses(
-                store,
-                &snapshot.manifest,
-                &mut WitnessCache::default(),
-                TREE_SIZE,
-            )
-            .unwrap();
-            let cached = build_witnesses(store, &snapshot.manifest, cache, TREE_SIZE).unwrap();
+            let inputs = store.witness_inputs(&snapshot.manifest, TREE_SIZE).unwrap();
+            let manifest = &snapshot.manifest;
+            let fresh = build_witnesses(&inputs, manifest, &mut WitnessCache::default()).unwrap();
+            let cached = build_witnesses(&inputs, manifest, cache).unwrap();
             assert_eq!(cached, fresh);
             check_publication(snapshot, Some(&cached)).unwrap();
             cached
@@ -316,7 +311,7 @@ mod tests {
         let expected = check(&store, &mut cache, &first);
         let len = first.manifest.end_position;
         assert!(matches!(
-            build_witnesses(&store, &first.manifest, &mut cache, len - 1),
+            store.witness_inputs(&first.manifest, len - 1),
             Err(Error::Capacity)
         ));
         (block.height, block.hash, block.parent) = (101, [4; 32], [3; 32]);
@@ -391,5 +386,35 @@ mod tests {
         let proof = WitnessSnapshot::decode(&bytes, &publication(&manifest).unwrap()).unwrap();
         proof.path(5, tree[5]).unwrap();
         assert!(proof.path(5, [9; 32]).is_err());
+    }
+
+    /// A history within any commitment limit can still need a witness file over its
+    /// size bound: a payment at each of the 917,504 positions a full table holds needs
+    /// about 1.84 million nodes, over the file's 1.81 million. The build refuses it, and
+    /// the indexer reports that as `witness_bytes`, apart from the commitment limit
+    /// that [`Store::witness_inputs`] enforces. Hashing that tree takes about 20
+    /// seconds, so run it with `--ignored`.
+    #[test]
+    #[ignore]
+    fn a_witness_file_over_its_size_bound_is_refused_below_the_commitment_limit() {
+        use receiver_directory::snapshot::{capacity, MAX_ROWS};
+        let records = capacity(MAX_ROWS).unwrap();
+        let mut manifest = common::manifest(MAX_ROWS);
+        (manifest.start_position, manifest.end_position) = (0, records);
+        manifest.records = records;
+        manifest.filters[0].count = records as u32;
+        let commitments = (1..=records as u32)
+            .map(|i| {
+                let mut cmx = [0; 32];
+                cmx[..4].copy_from_slice(&i.to_le_bytes());
+                cmx
+            })
+            .collect();
+        let inputs = WitnessInputs {
+            commitments,
+            positions: (0..records as u32).collect(),
+        };
+        let built = build_witnesses(&inputs, &manifest, &mut WitnessCache::default());
+        assert!(matches!(built, Err(Error::Capacity)));
     }
 }

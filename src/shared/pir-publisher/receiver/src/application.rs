@@ -508,27 +508,29 @@ impl<'a> Collected<'a> {
         let witnesses = if args.witnesses {
             let started = std::time::Instant::now();
             // Blocks only the main future, not a worker: the HTTP server and guard are spawned tasks.
-            let proof = match verify::build_witnesses(
-                store,
-                &snapshot.manifest,
-                witness_cache,
-                args.max_witness_commitments,
-            ) {
+            let max = args.max_witness_commitments;
+            let inputs = match store.witness_inputs(&snapshot.manifest, max) {
                 Err(Error::Capacity) => {
                     let used = snapshot.manifest.end_position;
                     let error = format!(
-                        "witnesses for {used} commitments exceed --max-witness-commitments or the \
-                     witness file's node limit; no publication created"
+                        "witnesses for {used} commitments exceed --max-witness-commitments; \
+                         no publication created"
                     );
-                    let max = args.max_witness_commitments;
                     return Err(refusal.refuse("witness_commitments", Some(used), max, &error));
+                }
+                inputs => inputs?,
+            };
+            let error = "witness file exceeds its size bound; no publication created";
+            let max = MAX_WITNESS_BYTES as u64;
+            let proof = match verify::build_witnesses(&inputs, &snapshot.manifest, witness_cache) {
+                Err(Error::Capacity) => {
+                    return Err(refusal.refuse("witness_bytes", None, max, error))
                 }
                 proof => proof?,
             };
-            if proof.len() > MAX_WITNESS_BYTES {
-                let (used, max) = (proof.len() as u64, MAX_WITNESS_BYTES as u64);
-                let error = "witness file exceeds its size bound; no publication created";
-                return Err(refusal.refuse("witness_bytes", Some(used), max, error));
+            if proof.len() as u64 > max {
+                let used = Some(proof.len() as u64);
+                return Err(refusal.refuse("witness_bytes", used, max, error));
             }
             log_stage("witness_prepare", started);
             info!(witness_bytes = proof.len(), "witnesses prepared");

@@ -345,10 +345,12 @@ the best of 16 salts placed 291,280 records.
 Health's `capacity_refusal` names the limit that stopped this process's latest
 publication, with its use (null when the build stopped before measuring it) and
 maximum, until a publication succeeds: one of the above, or `buckets` when every
-salt overflowed a bucket at the maximum row count. The probe passes `capacity` on
-whatever else it finds, with a refusal making it `critical`, and `pir-monitor`
-raises `capacity_warning` and `capacity_critical` apart from availability, so a
-capacity alert neither fails the probe nor hides a failure.
+salt overflowed a bucket at the maximum row count. A witness file over its bound is
+`witness_bytes` even below the commitment limit, since every payment's siblings
+count. The probe passes `capacity` on whatever else it finds, with a refusal making
+it `critical`, and `pir-monitor` raises `capacity_warning` and `capacity_critical`
+apart from availability, so a capacity alert neither fails the probe nor hides a
+failure.
 
 At `warning`, start the change that raises the limit, so it ships before
 `critical`. The first three are wallet-libraries constants, so raising one is a
