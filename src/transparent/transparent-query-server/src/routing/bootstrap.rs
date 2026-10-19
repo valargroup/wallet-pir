@@ -1018,9 +1018,9 @@ mod object_tests {
         let root = tempfile::tempdir().unwrap();
         let objects = prepare_objects(root.path()).unwrap();
         let (path, artifact) = object(&objects, b"legacy");
-        let mut permissions = std::fs::metadata(&path).unwrap().permissions();
-        permissions.set_readonly(false);
-        std::fs::set_permissions(&path, permissions).unwrap();
+        // An owner-writable object, as an older cache left it.
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
         // An unreachable publisher proves the valid object is reused.
         let mut source = Source::new(&Config {
             publisher: "https://publisher.invalid".into(),
