@@ -171,19 +171,34 @@ class HistoryUpgrade(Harness):
         self.assertEqual(code, 0, lines)
         self.assertEqual(set(self.running().values()), {sha256(NEW)})
 
-    def test_preflight_reports_alert_delivery_from_the_apm_config_not_the_observer(self):
+    def test_preflight_reports_running_alert_mode_and_delivery_not_the_observer(self):
         self.run_cli('baseline')
         code, lines = self.run_cli('preflight', '--binary', str(self.binary))
         self.assertEqual(code, 0, lines)
-        self.assertIn('notifications: unknown', '\n'.join(lines))
-        self.fake.put('coordinator', binary_upgrade.APM_CONFIG, json.dumps({
-            'capacity_alert_mode': 'shadow', 'services': [
-                {'service': 'transparent', 'kind': 'history', 'alert_mode': 'active'},
-                {'service': 'txid', 'kind': 'txid'}]}))
+        text = '\n'.join(lines)
+        self.assertIn('alert_mode configured on disk (read only at APM start): unknown', text)
+        self.assertIn('transparent mode of the running APM: unknown (incident database unreadable)', text)
+        self.assertIn('notifications: APM delivery: unknown', text)
+        self.assertIn('recorded only; Slack is not notified', text)
+        # Configured active on disk, but the running APM still evaluates shadow.
+        self.fake.put('coordinator', binary_upgrade.APM_CONFIG, json.dumps({'services': [
+            {'service': 'transparent', 'kind': 'history', 'alert_mode': 'active'}]}))
+        self.fake.put('coordinator', '/usr/bin/python3', b'python')
+        self.fake.product_check = lambda host, argv: (
+            (0, json.dumps({'mode': 'active', 'mode:quality-transparent': 'shadow'}))
+            if argv[-1] == binary_upgrade.APM_STATE else (1, 'unexpected'))
+        self.fake.install('coordinator', 'pir-apm.service', '[Service]\nExecStart=/usr/bin/python3 apm\n')
+        self.fake.endpoints[('coordinator', 'http://127.0.0.1:3002/monitor-status')] = 'pir-apm.service'
+        self.fake.health_shapes[('coordinator', 'pir-apm.service')] = lambda ready_, exe: {
+            'progress_ok': True, 'delivery': {'configured': True, 'pending': 0, 'last_success': 5, 'failure': None}}
         code, lines = self.run_cli('status')
-        self.assertIn('notifications: APM transparent (this service) alert_mode active (Slack)', lines)
-        self.assertIn('notifications: APM txid alert_mode shadow (recorded only, no Slack)', lines)
-        self.assertIn('notifications: APM transparent capacity_alert_mode shadow (recorded only, no Slack)', lines)
+        text = '\n'.join(lines)
+        self.assertIn('configured on disk (read only at APM start): active', text)
+        self.assertIn('transparent mode of the running APM: shadow', text)
+        self.assertIn('configured active differs from running shadow', text)
+        self.assertIn('webhook configured=True pending=0 last_success=5', text)
+        self.assertIn('recorded only; Slack is not notified', text)
+        self.assertNotIn('(Slack)', text)
 
     def test_successful_retry_resumes_the_requested_observer(self):
         self.run_cli('baseline')

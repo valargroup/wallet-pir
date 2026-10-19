@@ -153,10 +153,10 @@ def monitor_tool(sha):
 
 def running_modes(ex, host, state_path):
     """Each family's last evaluated mode from a service's own incident database, or None."""
-    code, output = ex.run(host, ['/usr/bin/python3', '-c', MODE_QUERY, state_path], 30)
     try:
+        code, output = ex.run(host, ['/usr/bin/python3', '-c', MODE_QUERY, state_path], 30)
         modes = json.loads(output.strip().splitlines()[-1]) if code == 0 else None
-    except (ValueError, IndexError):
+    except Exception:  # an unreachable host or unreadable database is reported as unknown
         modes = None
     return modes if isinstance(modes, dict) else None
 
@@ -166,7 +166,7 @@ def monitor_status(ex, host, listen):
     try:
         status, body = ex.http_get(host, 'http://%s/monitor-status' % listen)
         document = json.loads(body) if status == 200 else None
-    except (ValueError, OSError, RuntimeError):
+    except Exception:  # unreachable or invalid is reported as unknown, never as healthy
         document = None
     return document if isinstance(document, dict) else None
 
