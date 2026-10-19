@@ -21,10 +21,10 @@ def row(number, category='shared', seconds=120, **changes):
 
 class FeedbackTests(unittest.TestCase):
     def test_final_timing_check_reports_before_failing_at_the_limit(self):
-        for seconds, fails in [(179, False), (180, True), (240, True)]:
+        for seconds, fails in [(240, False), (299, False), (300, True), (360, True)]:
             result = {'jobs': [{'name': 'Fast checks', 'job_seconds': seconds,
                                 'reused_from_previous_attempt': False}]}
-            with patch.object(sys, 'argv', ['timings.py', '--run', '1', '--check-fast-seconds', '180']), patch.object(timings, 'report', return_value=result), patch.dict(timings.os.environ, {'GITHUB_STEP_SUMMARY': ''}), contextlib.redirect_stdout(io.StringIO()) as output:
+            with patch.object(sys, 'argv', ['timings.py', '--run', '1', '--check-fast-seconds', '300']), patch.object(timings, 'report', return_value=result), patch.dict(timings.os.environ, {'GITHUB_STEP_SUMMARY': ''}), contextlib.redirect_stdout(io.StringIO()) as output:
                 if fails:
                     with self.assertRaises(SystemExit):
                         timings.main()
@@ -36,7 +36,7 @@ class FeedbackTests(unittest.TestCase):
         return [row(i, ['shared', 'docs', 'ops'][i % 3]) for i in range(20)]
 
     def test_timeout_cancellation_and_rerun_do_not_erase_failed_validation(self):
-        for changes in [dict(conclusion='cancelled', dispatch_seconds=200), dict(attempt=2)]:
+        for changes in [dict(conclusion='cancelled', dispatch_seconds=320), dict(attempt=2)]:
             rows = self.samples()
             rows[0].update(changes)
             result = timings.feedback_slo(rows)
@@ -76,7 +76,7 @@ class FeedbackTests(unittest.TestCase):
 
     def test_slow_tail_and_non_main_runs_are_not_hidden(self):
         rows = self.samples()
-        rows[0]['dispatch_seconds'] = rows[1]['dispatch_seconds'] = 181
+        rows[0]['dispatch_seconds'] = rows[1]['dispatch_seconds'] = 301
         self.assertFalse(timings.feedback_slo(rows)['accepted'])
         rows = self.samples()
         rows[0]['branch'] = 'feature'

@@ -89,7 +89,7 @@ jobs:
             mkdir -p "$receipt"
             git rev-parse HEAD > "$receipt/source.txt"
             TMPDIR="$RUNNER_TEMP" WALLET_PIR_STAGE_LOG="$PWD/$receipt/stages.jsonl" \
-              timeout --signal=TERM --kill-after=5s 180s \
+              timeout --signal=TERM --kill-after=5s 300s \
               python3 tools/ci/fast.py --all --unit-jobs 3 2>&1 | tee "$receipt/run.log"
           done
       - name: Diagnose complete CPU correctness

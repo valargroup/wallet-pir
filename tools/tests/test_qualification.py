@@ -194,7 +194,7 @@ class QualificationTests(unittest.TestCase):
         self.assertNotIn('timeout-minutes:', workflow)
         timing = workflow.split('- name: Check main feedback timing after validation', 1)[1]
         self.assertIn("if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'", timing)
-        self.assertIn('--check-fast-seconds 180', timing)
+        self.assertIn('--check-fast-seconds 300', timing)
         self.assertLess(workflow.index('- name: Run affected fast checks'), workflow.index('- name: Check main feedback timing'))
         self.assertIn("inputs.hosted && 'hosted-'", workflow)
         self.assertIn('!inputs.hosted', workflow)

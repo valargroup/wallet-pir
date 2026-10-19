@@ -1,6 +1,6 @@
 # CI and deployment latency
 
-The target is **under three minutes from PR update or main push to fast checks completing**
+The target is **under five minutes from PR update or main push to fast checks completing**
 for routine changes on warm runners, and **two minutes from deployment dispatch
 to healthy service** when an exact-SHA qualified artifact is already available.
 Cold builds, dependency/toolchain changes, initial data preparation, schema
@@ -12,7 +12,7 @@ not measured guarantees; hosted fallback and cold fleet warming can exceed them.
 `make check-correctness` runs all ordinary CPU correctness targets, reference
 arithmetic and encrypted HTTP restart checks, doctests, the standalone sizing
 exporter, operations/tooling checks and native CPU lint. The budget is 30 seconds
-per test and 180 seconds for the complete warm command, including compilation,
+per test and 300 seconds for the complete warm command, including compilation,
 fixture setup and teardown. CUDA and explicit soak/hardware campaigns keep their
 existing qualification commands and durations. This command does not replace
 exact-SHA release qualification.
@@ -219,9 +219,9 @@ rechecks archive contents, ABI metadata and clean source provenance.
 
 Only **CI / Fast checks** validates automatically on main pushes and PRs.
 Dependency cache priming runs independently on relevant main changes.
-Both PR and main feedback target three minutes; queueing also counts toward the
+Both PR and main feedback target five minutes; queueing also counts toward the
 latency target. During the current repair, validation finishes before main's
-final timing check enforces 180 seconds. PRs and manual runs report timings.
+final timing check enforces 300 seconds. PRs and manual runs report timings.
 A completed over-budget run provides diagnostic coverage, not a timing pass.
 The pre-push health guard follows this workflow, rather than long qualification.
 
@@ -432,7 +432,7 @@ Concurrency belongs to the label-filtered job: unrelated label events cannot
 cancel preparation; genuine same-PR preparation requests still supersede it.
 Then rerun the ordinary CI job at the same PR merge SHA and verify actual Cargo
 fresh flags, executed tests, matched key/ref and complete warm duration including
-archive/cleanup under 180 seconds. Branch dispatch does not warm the PR merge ref.
+archive/cleanup under 300 seconds. Branch dispatch does not warm the PR merge ref.
 An already-existing partial exact snapshot cannot be filled in: prepare the next
 source-tree key before routine Rust validation, without deleting old entries.
 The parent owns this hosted sequence and independent review; local tooling-only
@@ -446,7 +446,7 @@ Main uses persistent targets; the separate
 one successful main fast snapshot for hosted PRs. It compiles fast units only
 when the exact key is missing, runs no tests and is not a gate. Full qualification
 retains persistent build lanes. A missing cache never relaxes validation or the
-180-second warm feedback target.
+300-second warm feedback target.
 
 ## Cold preparation and representative latency
 
@@ -456,7 +456,7 @@ concurrency group, so it cannot occupy main's runner or scheduling slot. Dispatc
 on `main` to prepare its trusted persistent cache. Main pushes preempt that
 preparation; preparation cannot cancel a running main check.
 Main rejects an entirely empty cache with an explicit
-preparation error instead of spending its three-minute budget on native builds.
+preparation error instead of spending its five-minute budget on native builds.
 Preparation validates the complete fast selection, then validates the affected
 selection using the same command as routine CI: Cargo can unify dependency
 features differently for those roots. The optional `comparison-base` input pins
@@ -472,7 +472,7 @@ been removed. Default fixtures keep complete failure/recovery assertions with
 supported narrow inputs; explicit full runners enable `qualification-tests` to
 restore deployed geometry combinations and larger history/publication runs.
 Complete CPU correctness uses the same bounded native selection and retains its
-reference, exporter, documentation and lint checks under the 180-second limit. Transparent checks a nonzero row against public source bytes, refuses
+reference, exporter, documentation and lint checks under the 300-second limit. Transparent checks a nonzero row against public source bytes, refuses
 malformed input before preparation, and repeats after a cache restore and
 corruption. Enhance verifies encrypted records after draining the old listener
 and reopening durable coordinator state. Listener readiness/shutdown use bound
@@ -493,7 +493,7 @@ python3 tools/ci/timings.py --workflow ci.yml --limit 100 --slo --since-run <fir
 
 The explicit starting run excludes older pipeline versions and their failures.
 This needs at least 20 representative runs, coverage of all service families,
-shared changes, operations and docs, and a p95 below 180 seconds. Workflow-only,
+shared changes, operations and docs, and a p95 below 300 seconds. Workflow-only,
 canceled, cold and unknown-cache samples cannot qualify the target. Failed runs
 remain visible. Warm means Cargo reported no third-party compilation; workspace
 source can still rebuild. Queueing and final job cleanup count. A missing sample

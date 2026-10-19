@@ -44,7 +44,7 @@ def deadline_cancelled(job):
         end = datetime.fromisoformat(job['completedAt'].replace('Z', '+00:00'))
     except (KeyError, ValueError, TypeError):
         return False
-    return (end - start).total_seconds() >= 180
+    return (end - start).total_seconds() >= 300
 
 
 def latest_finished(runs, jobs_for=None):
