@@ -275,7 +275,7 @@ fn guard_revocation_fences_pending_activation() {
     let first = store.stage(blocks(256, false, false), None, 0).unwrap();
     store.activate(&first, 0).unwrap();
     // A pending extension and a refreshed seen object can both change the head digest.
-    let seen = SeenSet::new(config().genesis, 0).unwrap();
+    let seen = SeenSet::new(config().genesis, 0);
     let reference = store.record_seen(&seen).unwrap();
     let delayed = store
         .stage(blocks(257, false, false), Some(reference), 1)
