@@ -15,22 +15,27 @@ path = "src/lib.rs"
 [[bin]]
 name = "transparent-query-server"
 path = "src/bin/server.rs"
+test = false
 
 [[bin]]
 name = "shard-scaling"
 path = "src/bin/shard-scaling.rs"
+test = false
 
 [[bin]]
 name = "shard-residency"
 path = "src/bin/shard-residency.rs"
+test = false
 
 [[bin]]
 name = "transparent-txid-server"
 path = "src/bin/txid-server.rs"
+test = false
 
 [[bin]]
 name = "txid-control"
 path = "src/bin/txid-control.rs"
+test = false
 
 [[bin]]
 name = "txid-inventory"
@@ -40,18 +45,22 @@ required-features = ["test-support"]
 [[bin]]
 name = "shard-assign"
 path = "src/bin/shard-assign.rs"
+test = false
 
 [[bin]]
 name = "shard-prune"
 path = "src/bin/shard-prune.rs"
+test = false
 
 [[bin]]
 name = "shard-control"
 path = "src/bin/shard-control.rs"
+test = false
 
 [[bin]]
 name = "parent-evaluation-server"
 path = "src/bin/parent-evaluation-server.rs"
+test = false
 
 [features]
 # Reproduce the existing non-AVX-512 backend on newer benchmark CPUs.

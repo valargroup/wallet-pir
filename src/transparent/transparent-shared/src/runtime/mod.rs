@@ -1938,18 +1938,22 @@ pub(crate) mod tests {
         );
     }
 
+    #[cfg(feature = "qualification-tests")]
     #[test]
     fn trailing_zero_blocks_leave_the_published_masks_unchanged() {
         check_zero_tail(|_| (0, 1));
     }
+    #[cfg(feature = "qualification-tests")]
     #[test]
     fn trailing_zero_masks_match_with_one_nonzero_byte() {
         check_zero_tail(|_| (1, 1));
     }
+    #[cfg(feature = "qualification-tests")]
     #[test]
     fn trailing_zero_masks_match_at_the_block_boundary() {
         check_zero_tail(|profile| (native::D * profile.row_bytes, 1));
     }
+    #[cfg(feature = "qualification-tests")]
     #[test]
     fn trailing_zero_masks_match_past_the_block_boundary() {
         check_zero_tail(|profile| (native::D * profile.row_bytes + 1, 2));

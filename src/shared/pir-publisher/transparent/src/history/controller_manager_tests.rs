@@ -683,6 +683,7 @@ async fn manager_reuses_immutable_transfers_and_serves_through_failed_update() {
     task.stop().await;
 }
 
+#[cfg(feature = "qualification-tests")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn manager_persists_invalidation_and_refuses_equal_revision_reenable_after_restart() {
     let root = tempfile::tempdir().unwrap();
@@ -827,6 +828,7 @@ async fn manager_restarts_interrupted_staging_and_rejects_superseded_activation(
     task.stop().await;
 }
 
+#[cfg(feature = "qualification-tests")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn manager_checks_inventory_and_required_files_on_unchanged_maps() {
     let root = tempfile::tempdir().unwrap();
@@ -871,6 +873,7 @@ async fn manager_checks_inventory_and_required_files_on_unchanged_maps() {
     task.stop().await;
 }
 
+#[cfg(feature = "qualification-tests")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn manager_refuses_changed_holdings_on_an_unchanged_map() {
     let root = tempfile::tempdir().unwrap();
@@ -1137,19 +1140,23 @@ async fn control_write_failure(pause_at: Option<u32>, failed_record: &str) {
 async fn manager_high_water_write_failure_still_fences_http() {
     control_write_failure(None, "publisher-high-water.tmp").await;
 }
+#[cfg(feature = "qualification-tests")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn manager_activation_poll_write_failure_still_fences_http() {
     control_write_failure(Some(2), "publisher-high-water.tmp").await;
 }
+#[cfg(feature = "qualification-tests")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn manager_final_poll_write_failure_still_fences_http() {
     control_write_failure(Some(3), "publisher-high-water.tmp").await;
 }
+#[cfg(feature = "qualification-tests")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn manager_owner_fence_write_failure_still_fences_http() {
     control_write_failure(None, "active.invalid.tmp").await;
 }
 
+#[cfg(feature = "qualification-tests")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn manager_bounds_memory_while_retaining_admitted_upload() {
     use tokio::io::AsyncWriteExt;
@@ -1248,11 +1255,13 @@ async fn manager_bounds_memory_while_retaining_admitted_upload() {
     task.stop().await;
 }
 
+#[cfg(feature = "qualification-tests")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn manager_unreadable_revocation_floor_still_fences_http() {
     control_write_failure(None, "revocation-floor.json").await;
 }
 
+#[cfg(feature = "qualification-tests")]
 async fn recovery_poll_write_failure(pause_at: u32) {
     let root = tempfile::tempdir().unwrap();
     let (directory, set, distribution) = immutable_publication(2);
@@ -1302,15 +1311,18 @@ async fn recovery_poll_write_failure(pause_at: u32) {
     query(&origin, &set).await;
     task.stop().await;
 }
+#[cfg(feature = "qualification-tests")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn manager_recovery_poll_write_failure_keeps_saved_view_unexposed() {
     recovery_poll_write_failure(2).await;
 }
+#[cfg(feature = "qualification-tests")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn manager_recovery_final_poll_write_failure_keeps_saved_view_unexposed() {
     recovery_poll_write_failure(3).await;
 }
 
+#[cfg(feature = "qualification-tests")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn manager_missing_durable_revision_cannot_reenable_revoked_view() {
     // Lose both exact-revision writes, retaining only the owner's digest fence.
@@ -1318,11 +1330,13 @@ async fn manager_missing_durable_revision_cannot_reenable_revoked_view() {
     control_write_failure(None, "both").await;
 }
 
+#[cfg(feature = "qualification-tests")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn manager_malformed_revocation_floor_still_fences_http() {
     control_write_failure(None, "malformed").await;
 }
 
+#[cfg(feature = "qualification-tests")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn manager_rejects_replayed_different_map_below_durable_revocation_floor() {
     let root = tempfile::tempdir().unwrap();
@@ -1376,46 +1390,55 @@ async fn manager_rejects_replayed_different_map_below_durable_revocation_floor()
     task.stop().await;
 }
 
+#[cfg(feature = "qualification-tests")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn manager_primary_read_failure_at_poll_still_fences_http() {
     control_write_failure(None, "read:publisher-high-water.json").await;
 }
 
+#[cfg(feature = "qualification-tests")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn manager_primary_read_failure_at_guard_still_fences_http() {
     control_write_failure(Some(2), "read:publisher-high-water.json").await;
 }
 
+#[cfg(feature = "qualification-tests")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn manager_primary_parse_failure_at_poll_still_fences_http() {
     control_write_failure(None, "parse:publisher-high-water.json").await;
 }
 
+#[cfg(feature = "qualification-tests")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn manager_primary_parse_failure_at_guard_still_fences_http() {
     control_write_failure(Some(3), "parse:publisher-high-water.json").await;
 }
 
+#[cfg(feature = "qualification-tests")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn manager_fallback_read_failure_at_poll_still_fences_http() {
     control_write_failure(None, "read:publisher-high-water-fallback.json").await;
 }
 
+#[cfg(feature = "qualification-tests")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn manager_fallback_read_failure_at_guard_still_fences_http() {
     control_write_failure(Some(2), "read:publisher-high-water-fallback.json").await;
 }
 
+#[cfg(feature = "qualification-tests")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn manager_fallback_parse_failure_at_poll_still_fences_http() {
     control_write_failure(None, "parse:publisher-high-water-fallback.json").await;
 }
 
+#[cfg(feature = "qualification-tests")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn manager_fallback_parse_failure_at_guard_still_fences_http() {
     control_write_failure(Some(3), "parse:publisher-high-water-fallback.json").await;
 }
 
+#[cfg(feature = "qualification-tests")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn manager_double_intent_write_failure_retains_exact_negative_revision() {
     let root = tempfile::tempdir().unwrap();

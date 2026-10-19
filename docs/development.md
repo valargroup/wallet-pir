@@ -64,7 +64,10 @@ Explicit full commands (`make test`, `make check-full`, full package families an
 the qualification matrix) enable the declared `qualification-tests` features.
 These restore the original deployed geometry combinations, mixed-size archive
 preparation, full publication sequence, longer display histories and the larger
-Enhance multi-unit failure fixture and 16K monolithic comparison. Ordinary
+Enhance multi-unit failure fixture and 16K monolithic comparison. Repeated
+campaigns that rebuild one runtime only to assert an additional property stay
+behind that feature; fast feedback keeps a single case for each property.
+Ordinary
 unequal-unit checks use a supported 8K composed tail and independently assemble
 the whole table, including its zero-filled gap. Cold and cached preparation
 failures are separate cases; their retry answers are checked against direct

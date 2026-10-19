@@ -2127,6 +2127,7 @@ print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('re
     /// runtime of each candidate beside its revisions and offers them in the
     /// fleet's prepare request; the next candidate links the unchanged ones
     /// from the active publication and builds only what changed.
+    #[cfg(feature = "qualification-tests")]
     #[tokio::test(flavor = "multi_thread")]
     async fn shipped_runtimes_are_prepared_linked_and_offered_with_the_candidate() {
         shipped_runtime_scenario(false).await;
@@ -2134,6 +2135,7 @@ print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('re
 
     /// Source-only candidates still exercise invalidation, verification against
     /// previously verified files, and a counted runtime write failure.
+    #[cfg(feature = "qualification-tests")]
     #[tokio::test(flavor = "multi_thread")]
     async fn shipped_runtime_preparation_refuses_invalid_candidates_and_reports_write_failure() {
         shipped_runtime_scenario(true).await;
@@ -2142,6 +2144,7 @@ print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('re
     // Success exercises cold preparation and handover with both supported
     // geometries. Refusals need the same verified source files, but no prior
     // cryptographic build: keep that independent work in its own bounded case.
+    #[cfg(feature = "qualification-tests")]
     async fn shipped_runtime_scenario(failures_only: bool) {
         use std::os::unix::fs::{MetadataExt, PermissionsExt};
         let root = tempfile::tempdir().unwrap();

@@ -1521,6 +1521,7 @@ mod shipped_tests {
         history_identity_refusals(Table::Directory).await;
     }
 
+    #[cfg(feature = "qualification-tests")]
     #[tokio::test(flavor = "multi_thread")]
     async fn page_files_of_another_identity_are_refused_once_each() {
         history_identity_refusals(Table::Pages).await;

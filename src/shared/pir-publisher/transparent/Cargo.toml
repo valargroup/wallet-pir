@@ -13,6 +13,7 @@ path = "src/lib.rs"
 [[bin]]
 name = "shard-publish"
 path = "src/bin/shard-publish.rs"
+test = false
 
 [[bin]]
 name = "shard-census"
@@ -22,10 +23,12 @@ path = "src/bin/shard-census.rs"
 name = "transparent-event-ingest"
 required-features = ["rocksdb-reader"]
 path = "src/bin/event-ingest.rs"
+test = false
 
 [[bin]]
 name = "transparent-publisher"
 path = "src/bin/server.rs"
+test = false
 
 [[bin]]
 name = "journal-convert-v1"
@@ -34,6 +37,7 @@ path = "src/bin/journal-convert-v1.rs"
 [[bin]]
 name = "sample-redigest"
 path = "src/bin/sample-redigest.rs"
+test = false
 
 [[bin]]
 name = "shard-cutoff"
@@ -44,6 +48,7 @@ path = "src/bin/shard-cutoff.rs"
 name = "journal-inventory"
 required-features = ["rocksdb-reader"]
 path = "src/bin/journal-inventory.rs"
+test = false
 
 [[bin]]
 name = "event-spotcheck"
@@ -52,26 +57,32 @@ path = "src/bin/event-spotcheck.rs"
 [[bin]]
 name = "shard-verify"
 path = "src/bin/shard-verify.rs"
+test = false
 
 [[bin]]
 name = "script-sample"
 path = "src/bin/script-sample.rs"
+test = false
 
 [[bin]]
 name = "filter-sweep"
 path = "src/bin/filter-sweep.rs"
+test = false
 
 [[bin]]
 name = "txid-display-controller"
 path = "src/bin/txid-display-controller.rs"
+test = false
 
 [[bin]]
 name = "sample-oracle"
 path = "src/bin/sample-oracle.rs"
+test = false
 
 [[bin]]
 name = "transparent-publish-controller"
 path = "src/bin/transparent-publish-controller.rs"
+test = false
 
 [features]
 default = []
