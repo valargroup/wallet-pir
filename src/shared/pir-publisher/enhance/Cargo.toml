@@ -69,10 +69,6 @@ tower = { version = "0.5", features = ["util"] }
 zakura-pir-client = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "a2f87e6f235dc16840be1dd7fc88e6dd06f0a268", default-features = false, features = ["status", "enhance", "testing"] }
 
 [[example]]
-name = "cuda_domain"
-required-features = ["cuda"]
-
-[[example]]
 name = "native_certificate"
 required-features = ["native-reinspiring"]
 
