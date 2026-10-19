@@ -3914,6 +3914,15 @@ component. `baseline` records both components.
   until the exact-answer gate passes. The latch and incident records are never removed. Monitoring
   is not ready while the pins name a binary the workers no longer run. Display has no load
   (`load: null`); a controller transaction does not touch the load.
+- **Alert delivery is reported, not inferred.** `plan`, `preflight` and `status` print one
+  `notifications:` line per service in pir-apm's Transparent configuration
+  (`/etc/pir-quality/transparent-production.json` on the controller host): `active (Slack)` or
+  `shadow (recorded only, no Slack)`, plus `capacity_alert_mode`. An unreadable configuration
+  prints `notifications: unknown`. The continuous load (lines labelled `exact-answer load:`) is an
+  exact-answer observer, not alert delivery, and pir-apm keeps running through a worker upgrade.
+  While a service is in shadow, a maintenance restart sends nothing to Slack; once it is active,
+  the unavailability the restart causes (archive warm-up takes minutes) fires and recovers real
+  incidents. The tool sends no deployment notification of its own.
 - Supported topology only: history workers exactly `transparent-v12-archive.service` and
   `transparent-v12-recent.service` with the `transparent-v12-publish-controller.service` controller;
   display worker exactly `transparent-txid-display-worker.service` with

@@ -171,6 +171,20 @@ class HistoryUpgrade(Harness):
         self.assertEqual(code, 0, lines)
         self.assertEqual(set(self.running().values()), {sha256(NEW)})
 
+    def test_preflight_reports_alert_delivery_from_the_apm_config_not_the_observer(self):
+        self.run_cli('baseline')
+        code, lines = self.run_cli('preflight', '--binary', str(self.binary))
+        self.assertEqual(code, 0, lines)
+        self.assertIn('notifications: unknown', '\n'.join(lines))
+        self.fake.put('coordinator', binary_upgrade.APM_CONFIG, json.dumps({
+            'capacity_alert_mode': 'shadow', 'services': [
+                {'service': 'transparent', 'kind': 'history', 'alert_mode': 'active'},
+                {'service': 'txid', 'kind': 'txid'}]}))
+        code, lines = self.run_cli('status')
+        self.assertIn('notifications: APM transparent (this service) alert_mode active (Slack)', lines)
+        self.assertIn('notifications: APM txid alert_mode shadow (recorded only, no Slack)', lines)
+        self.assertIn('notifications: APM transparent capacity_alert_mode shadow (recorded only, no Slack)', lines)
+
     def test_successful_retry_resumes_the_requested_observer(self):
         self.run_cli('baseline')
         self.fake.systemctl('coordinator', 'stop', LOAD_UNIT)
