@@ -269,6 +269,28 @@ class ParallelStagingTests(Fleet):
 
 
 class DeployTests(Fleet):
+    def test_cuda_driver_failure_refuses_before_restarting_the_working_worker(self):
+        deployer = self.enhance_fleet()
+        deployer.targets = [dataclasses.replace(deployer.targets[0],
+                            artifact_kind='enhance-pir-native-cuda',
+                            health_equals={'matvec.cuda_device': 2})]
+        self.fake.product_check = lambda host, argv: (1, 'CUDA unavailable')
+        with self.assertRaisesRegex(DeployError, 'staged CUDA evaluator check failed'):
+            deployer.deploy(NEW_SHA, self.binary)
+        self.assertEqual(self.restarts(), [])
+        self.assertEqual(self.running('worker-01', 'enhance-pir-worker.service'), OLD_SHA)
+        self.assertIn(('worker-01', [deployer.service.release_binary(NEW_SHA), 'check-backend',
+                                   '--matvec-backend', 'cuda', '--cuda-device', '2']), self.fake.runs)
+
+    def test_cuda_evaluator_is_checked_before_activation(self):
+        deployer = self.enhance_fleet()
+        deployer.targets = [dataclasses.replace(deployer.targets[0],
+                            artifact_kind='enhance-pir-native-cuda')]
+        journal = deployer.deploy(NEW_SHA, self.binary)
+        self.assertEqual(journal.status, 'committed')
+        self.assertIn(('worker-01', [deployer.service.release_binary(NEW_SHA), 'check-backend',
+                                   '--matvec-backend', 'cuda', '--cuda-device', '0']), self.fake.runs)
+
     def test_only_the_selected_targets_roll(self):
         self.enhance_fleet()
         deployer = self.deployer(only=['worker@worker-02', 'worker@worker-01'])

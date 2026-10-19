@@ -478,6 +478,16 @@ class Deployer:
         code, output = self.ex.run(host, [path, *self.service.self_check], SELF_CHECK_SECONDS)
         if code:
             raise DeployError('%s: staged binary failed its self-check (exit %d): %s' % (host, code, output[-500:]))
+        if self.service.name == 'enhance':
+            for target in self.targets:
+                if target.host != host or target.artifact_kind != 'enhance-pir-native-cuda':
+                    continue
+                device = target.health_equals.get('matvec.cuda_device', 0)
+                code, output = self.ex.run(host, [path, 'check-backend', '--matvec-backend', 'cuda',
+                                                  '--cuda-device', str(device)], SELF_CHECK_SECONDS)
+                if code:
+                    raise DeployError('%s: staged CUDA evaluator check failed (exit %d): %s'
+                                      % (host, code, output[-500:]))
         self.out('%s: staged %s and it runs' % (host, path))
 
     def activate(self, journal, index, sha):

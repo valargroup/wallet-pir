@@ -15,6 +15,13 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Report compiled capabilities without opening state or loading a GPU driver.
+    BuildInfo,
+    /// Check the selected evaluator and GPU driver without opening worker state.
+    CheckBackend {
+        #[command(flatten)]
+        matvec: enhance_query_server::matvec::MatvecConfig,
+    },
     /// Offline migration: coordinator-owned artifacts for all retained sessions.
     PreparePackingArtifacts {
         #[arg(long)]
@@ -152,6 +159,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     };
     placement_policy.validate()?;
     match cli.command {
+        Command::BuildInfo => {
+            println!(
+                "{}",
+                serde_json::json!({
+                    "cuda": enhance_query_server::matvec::CUDA_COMPILED,
+                    "native_reinspiring": cfg!(feature = "native-reinspiring"),
+                    "source_revision": option_env!("WALLET_PIR_SOURCE_REVISION"),
+                })
+            );
+        }
+        Command::CheckBackend { matvec } => matvec.validate()?,
         Command::PreparePackingArtifacts { data_dir } => Coordinator::backfill_prepared(&data_dir)?,
         Command::RestoreLegacyPlacement { control_dir } => {
             enhance_publisher::control::Store::open(&control_dir)?.restore_legacy_placement()?;
