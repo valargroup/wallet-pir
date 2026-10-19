@@ -80,6 +80,19 @@ impl Distribution {
         directory: PathBuf,
         retained: Vec<PathBuf>,
     ) -> Result<(), BoxError> {
+        if !self.restore(directory, retained).await? {
+            return Err("display publication anchor is not canonical".into());
+        }
+        Ok(())
+    }
+    /// Reuse a saved publication only while its anchor is canonical. A stale
+    /// tip returns false with authority withdrawn so startup can rebuild it;
+    /// invalid material, chain identity and RPC/storage failures remain errors.
+    pub(crate) async fn restore(
+        &self,
+        directory: PathBuf,
+        retained: Vec<PathBuf>,
+    ) -> Result<bool, BoxError> {
         let work = directory.clone();
         let finalized = tokio::task::spawn_blocking(move || -> Result<Finalized, BoxError> {
             let set = transparent_shared::tx_detail::set::DisplaySet::open(
@@ -97,18 +110,22 @@ impl Distribution {
             Finalized::prepare(&work)
         })
         .await??;
-        if self.0.rpc.block_hash_display(0).await? != finalized.inventory.genesis_hash
-            || self
-                .0
-                .rpc
-                .block_hash_display(finalized.anchor_height)
-                .await?
-                != finalized.anchor_hash
+        if self.0.rpc.block_hash_display(0).await? != finalized.inventory.genesis_hash {
+            self.withdraw(0)?;
+            return Err("display publication genesis differs from the node".into());
+        }
+        if self
+            .0
+            .rpc
+            .block_hash_display(finalized.anchor_height)
+            .await?
+            != finalized.anchor_hash
         {
             self.withdraw(0)?;
-            return Err("display publication anchor is not canonical".into());
+            return Ok(false);
         }
-        self.commit(finalized)
+        self.commit(finalized)?;
+        Ok(true)
     }
 }
 async fn request(State(authority): State<Distribution>, request: Request) -> Response {

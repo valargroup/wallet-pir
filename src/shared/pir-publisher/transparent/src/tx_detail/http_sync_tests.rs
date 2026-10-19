@@ -248,3 +248,125 @@ async fn full_display_consumers_follow_https_and_restart_without_building() {
     );
     node_task.abort();
 }
+
+/// An orphaned saved tip is an input to recovery, never startup authority.
+#[tokio::test(flavor = "multi_thread")]
+async fn http_display_publisher_recovers_after_an_offline_reorg() {
+    use super::{
+        controller::{Controller, Outcome, Settings},
+        source::{open_writer, Script, ScriptStep, Source},
+    };
+
+    for journal_already_rolled_back in [false, true] {
+        let scratch = tempfile::tempdir().unwrap();
+        let journal = scratch.path().join("journal");
+        fixture::write_journal(&journal, 0, 3, 0);
+        let root = scratch.path().join("publisher");
+        let store = EventStore::open_existing(&journal).unwrap();
+        let mut layout = fixture::layout(&store, 1, 16);
+        layout.seal.archive_target = 1_000;
+        let initial = bootstrap(&store, &root, &layout, 3).unwrap();
+        drop(store);
+        let fork_hash = fixture::block_hash(1, 3);
+        let wrong_genesis = Arc::new(AtomicBool::new(false));
+        let state = wrong_genesis.clone();
+        let node = axum::Router::new().route(
+            "/",
+            axum::routing::post(move |axum::Json(request): axum::Json<serde_json::Value>| {
+                let wrong_genesis = state.clone();
+                async move {
+                    assert_eq!(request["method"], "getblockhash");
+                    let height = request["params"][0].as_u64().unwrap();
+                    let hash = match height {
+                        0 if wrong_genesis.load(Ordering::Acquire) => "11".repeat(32),
+                        0 => fixture::GENESIS.to_string(),
+                        3 => fork_hash.to_display_hex(),
+                        _ => fixture::block_hash(0, height).to_display_hex(),
+                    };
+                    axum::Json(serde_json::json!({"id":request["id"],"result":hash,"error":null}))
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let node_task = tokio::spawn(async move { axum::serve(listener, node).await.unwrap() });
+        let cookie = scratch.path().join("cookie");
+        std::fs::write(&cookie, "fixture:fixture").unwrap();
+        let rpc = crate::ingest::zakura::connect(format!("http://{address}"), cookie).unwrap();
+        let distribution = Distribution::new(&root, rpc).unwrap();
+        let records = fixture::chain_sources(1, 3);
+        let steps = if journal_already_rolled_back {
+            // A crash after journal replacement left the old active pointer.
+            let mut store = open_writer(&journal).unwrap();
+            store.rollback_to(Some(2)).unwrap();
+            let events =
+                transparent_shared::journal::display_journal::implied_events(3, &records).unwrap();
+            store
+                .append_block_with_display(3, fork_hash, &events, &records)
+                .unwrap();
+            store.commit().unwrap();
+            vec![]
+        } else {
+            // The chain changed while stopped; normal source polling must run.
+            vec![ScriptStep::Reorg {
+                ancestor: 2,
+                blocks: vec![(fork_hash, records)],
+            }]
+        };
+        let mut controller = Controller::open(
+            &root,
+            open_writer(&journal).unwrap(),
+            Source::Script(Script::new(steps)),
+            vec![],
+            Settings {
+                distribution: Some(distribution.clone()),
+                exit_when_idle: true,
+                ..Settings::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(controller.run().await.unwrap(), Outcome::Idle);
+        assert_ne!(controller.active().map_sha256, initial.map_sha256);
+        assert_eq!(controller.active().tip_hash, fork_hash.to_display_hex());
+        let response = distribution
+            .router()
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/provider/txid/v1/current")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+        let current: transparent_shared::publication::Current = serde_json::from_slice(
+            &axum::body::to_bytes(response.into_body(), 16 << 10)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert!(current.eligible());
+        assert_eq!(current.anchor_hash, fork_hash.to_display_hex());
+        drop(controller);
+        wrong_genesis.store(true, Ordering::Release);
+        let mut refused = Controller::open(
+            &root,
+            open_writer(&journal).unwrap(),
+            Source::Script(Script::new([])),
+            vec![],
+            Settings {
+                distribution: Some(distribution.clone()),
+                exit_when_idle: true,
+                ..Settings::default()
+            },
+        )
+        .unwrap();
+        assert!(refused
+            .run()
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("genesis differs"));
+        node_task.abort();
+    }
+}

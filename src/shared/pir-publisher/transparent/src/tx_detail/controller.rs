@@ -742,12 +742,17 @@ impl Controller {
             return Ok(Outcome::Halted(reason.clone()));
         }
         if let Some(distribution) = &self.settings.distribution {
-            distribution
-                .finalize(
+            // A reorg while stopped can orphan the saved tip. Keep HTTP
+            // authority withdrawn while the source loop repairs that view.
+            if !distribution
+                .restore(
                     self.active.directory.clone(),
                     vec![self.active.directory.clone()],
                 )
-                .await?;
+                .await?
+            {
+                tracing::warn!("saved display publication is noncanonical; rebuilding");
+            }
         }
         let errors = self
             .fleet
