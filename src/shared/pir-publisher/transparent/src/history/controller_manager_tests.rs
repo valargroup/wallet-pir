@@ -1,6 +1,7 @@
 //! Real publisher/TLS/manager/owner/recent-worker boundaries, with source rows
 //! as an independent answer oracle. These do not qualify a complete provider.
 use super::*;
+#[cfg(feature = "qualification-tests")]
 use transparent_events::TransparentEvent;
 use transparent_query_server::history::live::Command;
 use transparent_query_server::history::service::ServiceConfig;
