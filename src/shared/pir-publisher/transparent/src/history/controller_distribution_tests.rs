@@ -783,13 +783,37 @@ mod manager_tests;
 #[tokio::test(flavor = "multi_thread")]
 async fn full_history_http_holdings_include_archive_runtimes() {
     let root = tempfile::tempdir().unwrap();
-    let (directory, set) = publication_fixture(root.path(), 2, true);
+    let (directory, set) = if cfg!(feature = "qualification-tests") {
+        publication_fixture(root.path(), 2, true)
+    } else {
+        let directory = root.path().join("publication");
+        manager_tests::copy_prepared_publication(2, &directory);
+        let set = ShardSet::open(&directory, 0).unwrap();
+        (directory, set)
+    };
+    let recent_files: std::collections::BTreeSet<_> = std::fs::read_dir(&directory)
+        .unwrap()
+        .map(Result::unwrap)
+        .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "runtime"))
+        .map(|entry| entry.file_name().into_string().unwrap())
+        .collect();
     let prepared =
         transparent_shared::runtime::prebuild::prepare_publication(&set, &directory, &[], &|| {
             false
         })
         .unwrap();
     assert!(prepared.failures.is_empty());
+    if !cfg!(feature = "qualification-tests") {
+        assert!(!recent_files.is_empty());
+        assert_eq!(prepared.linked(), recent_files.len());
+        assert!(
+            prepared.built() > 0,
+            "archive runtimes must still be prepared"
+        );
+        for file in &prepared.files {
+            assert_eq!(file.linked, recent_files.contains(&file.name));
+        }
+    }
     let finalized = Finalized::prepare_full(&directory, &set, 2).unwrap();
     assert!(finalized
         .inventory()
@@ -815,6 +839,9 @@ async fn full_history_http_holdings_include_archive_runtimes() {
         .command(transparent_query_server::history::live::Command::Status)
         .await
         .unwrap();
+    assert_eq!(status["runtimes"]["built"], 0);
+    assert_eq!(status["runtimes"]["shipped_fallbacks"], 0);
+    assert!(status["runtimes"]["shipped"].as_u64().unwrap() > 0);
     assert!(status["revisions"]
         .as_array()
         .unwrap()

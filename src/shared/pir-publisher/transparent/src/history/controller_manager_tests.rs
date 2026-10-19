@@ -86,6 +86,12 @@ fn prepared_fixture(through: u64) -> &'static Path {
     }
 }
 
+/// A private publication with the recent runtime files already prepared.
+/// Copy files rather than link them: callers may replace or corrupt artifacts.
+pub(super) fn copy_prepared_publication(through: u64, directory: &Path) {
+    copy_fixture_tree(&prepared_fixture(through).join("publication"), directory);
+}
+
 // Reuse only the immutable publisher side. Every manager still owns a fresh
 // consumer directory and verifies all bytes over its own real HTTP boundary.
 // Corruption and changing-holdings cases use independently copied files below.
