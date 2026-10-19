@@ -152,8 +152,12 @@ impl Journal for Snapshot {
             .map_or(file.metadata()?.len(), |next| {
                 next.offset - self.events_offset
             });
-        let mut events =
-            transparent_shared::journal::events::read_event_record(&mut file, entry, end)?;
+        let mut events = transparent_shared::journal::events::read_event_record_version(
+            &mut file,
+            entry,
+            end,
+            self.journal_version,
+        )?;
         if let Some(events) = &mut events {
             events.extend(
                 transparent_shared::journal::display_journal::oversized_events(
@@ -161,6 +165,13 @@ impl Journal for Snapshot {
                     entry.block_hash,
                 )?,
             );
+            if self.journal_version == 2 {
+                transparent_shared::journal::display_journal::restore_metadata(
+                    &self.display_dir,
+                    entry.block_hash,
+                    events,
+                )?;
+            }
         }
         Ok(events)
     }

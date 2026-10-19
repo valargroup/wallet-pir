@@ -37,11 +37,9 @@ use transparent_filter::{BlockHash, ScriptBytes};
 
 /// Bump when the on-disk layout changes.
 ///
-/// Version 2 is the 87-byte event codec. A version-1 journal is refused and
-/// left in place: opening it must not move the production journal aside.
-/// Rebuild into a new directory. A same-version journal whose chain identity
-/// or start height differs is still set aside, because that journal was
-/// written by this codec and can be re-derived.
+/// Version 2 uses fixed 87-byte events; version 3 prefixes variable events
+/// with their length. Existing journals retain their codec when appended.
+/// Unsupported versions and identity mismatches are refused without relocation.
 const STORE_VERSION: u16 = 3;
 
 const BLOCK_RECORD_BYTES: usize = 32 + 8 + 8;
@@ -124,10 +122,9 @@ impl EventStore {
     }
     /// Opens or creates the store, discarding anything past the checkpoint.
     ///
-    /// An existing store whose chain identity or start height differs, at this
-    /// version, is moved aside and a fresh one begun. A different version is
-    /// refused and left untouched: the production journal is too large to
-    /// discard because a newer binary restarted in its directory.
+    /// Existing version-2 and version-3 stores retain their on-disk codec.
+    /// An incompatible identity or unsupported version is refused untouched:
+    /// restarting a publisher must never implicitly reset indexed history.
     pub fn open(
         dir: impl AsRef<Path>,
         genesis_hash: &str,
@@ -144,36 +141,33 @@ impl EventStore {
         lock.try_lock().map_err(|error| {
             EventStoreError::Invariant(format!("journal already has a writer: {error}"))
         })?;
-        let wanted = Meta {
+        let mut wanted = Meta {
             version: STORE_VERSION,
             genesis_hash: genesis_hash.to_string(),
             start_height,
         };
         let meta_path = dir.join("meta.json");
         if meta_path.exists() {
-            let found: Result<Meta, _> = serde_json::from_slice(&std::fs::read(&meta_path)?);
-            if let Ok(found) = &found {
-                if found.version != STORE_VERSION {
-                    return Err(EventStoreError::Invariant(format!(
-                        "journal is version {}, this build reads {STORE_VERSION} and will not move it aside; rebuild into a new directory",
-                        found.version
-                    )));
-                }
+            let found: Meta = serde_json::from_slice(&std::fs::read(&meta_path)?)?;
+            if !matches!(found.version, 2 | STORE_VERSION) {
+                return Err(EventStoreError::Invariant(format!("journal is version {}, this build reads versions 2 and {STORE_VERSION} and will not move it aside", found.version)));
             }
-            if !matches!(&found, Ok(found) if *found == wanted) {
-                let label = match &found {
-                    Ok(found) => format!("v{}", found.version),
-                    Err(_) => "unreadable".to_string(),
-                };
-                let superseded = dir.join(format!("superseded-{label}"));
-                std::fs::create_dir_all(&superseded)?;
-                for name in ["meta.json", "events.bin", "blocks.bin", "checkpoint.bin"] {
-                    let from = dir.join(name);
-                    if from.exists() {
-                        std::fs::rename(&from, superseded.join(name))?;
-                    }
-                }
+            if found.genesis_hash != wanted.genesis_hash
+                || found.start_height != wanted.start_height
+            {
+                return Err(EventStoreError::Invariant(
+                    "existing journal chain identity or start height differs; journal retained"
+                        .into(),
+                ));
             }
+            wanted = found;
+        } else if ["events.bin", "blocks.bin", "checkpoint.bin"]
+            .iter()
+            .any(|name| std::fs::metadata(dir.join(name)).is_ok_and(|m| m.len() != 0))
+        {
+            return Err(EventStoreError::Invariant(
+                "existing journal data has no metadata; journal retained".into(),
+            ));
         }
         if !meta_path.exists() {
             std::fs::write(&meta_path, serde_json::to_vec_pretty(&wanted)?)?;
@@ -378,9 +372,15 @@ impl EventStore {
             buffer.extend_from_slice(&length.to_le_bytes());
             buffer.extend_from_slice(script.as_slice());
             event.validate_metadata()?;
-            let raw = event.to_bytes()?;
-            buffer.extend_from_slice(&(raw.len() as u16).to_le_bytes());
-            buffer.extend_from_slice(&raw);
+            if self.meta.version == 2 {
+                // Preserve the deployed fixed record codec. Metadata that this
+                // codec cannot represent remains explicitly unavailable on read.
+                buffer.extend_from_slice(&event.to_legacy_bytes());
+            } else {
+                let raw = event.to_bytes()?;
+                buffer.extend_from_slice(&(raw.len() as u16).to_le_bytes());
+                buffer.extend_from_slice(&raw);
+            }
         }
 
         let mut file = OpenOptions::new()
@@ -474,6 +474,9 @@ impl EventStore {
                 &self.dir,
                 entry.block_hash,
             )?);
+            if self.meta.version == 2 {
+                super::display_journal::restore_metadata(&self.dir, entry.block_hash, events)?;
+            }
         }
         if events.as_ref().is_some_and(|events| {
             events
@@ -943,9 +946,9 @@ mod tests {
         assert_eq!(store.events_stored(), 0);
     }
 
-    /// A store built for a different chain must not be read as this one's.
+    /// A bad configuration must not reset a production journal.
     #[test]
-    fn an_incompatible_store_is_set_aside_rather_than_refused() {
+    fn an_incompatible_store_is_refused_and_left_in_place() {
         let dir = tempfile::tempdir().unwrap();
         {
             let mut store = store(dir.path());
@@ -954,13 +957,83 @@ mod tests {
                 .unwrap();
             store.commit().unwrap();
         }
-        let fresh = EventStore::open(dir.path(), GENESIS, START + 5).unwrap();
-        assert_eq!(fresh.covered_through(), None);
-        assert!(dir
+        let before = std::fs::read(dir.path().join("events.bin")).unwrap();
+        assert!(EventStore::open(dir.path(), GENESIS, START + 5).is_err());
+        assert_eq!(
+            std::fs::read(dir.path().join("events.bin")).unwrap(),
+            before
+        );
+        assert_eq!(
+            EventStore::open_existing(dir.path())
+                .unwrap()
+                .covered_through(),
+            Some(START)
+        );
+        assert!(!dir
             .path()
             .join(format!("superseded-v{STORE_VERSION}"))
-            .join("events.bin")
             .exists());
+    }
+
+    /// Fixed old bytes, rather than a new-writer/new-reader round trip, prove compatibility.
+    #[test]
+    fn a_fixed_version_two_journal_can_append_and_restart_without_conversion() {
+        let dir = tempfile::tempdir().unwrap();
+        let old = receive(100, 1);
+        let mut bytes = (old.0.as_slice().len() as u16).to_le_bytes().to_vec();
+        bytes.extend_from_slice(old.0.as_slice());
+        bytes.extend_from_slice(&old.1.to_legacy_bytes());
+        let mut block = hash(START).internal_bytes().to_vec();
+        block.extend_from_slice(&0u64.to_le_bytes());
+        block.extend_from_slice(&1u64.to_le_bytes());
+        std::fs::write(
+            dir.path().join("meta.json"),
+            serde_json::to_vec(&Meta {
+                version: 2,
+                genesis_hash: GENESIS.into(),
+                start_height: START,
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("events.bin"), &bytes).unwrap();
+        std::fs::write(dir.path().join("blocks.bin"), &block).unwrap();
+        let checkpoint = [bytes.len() as u64, block.len() as u64]
+            .into_iter()
+            .flat_map(u64::to_le_bytes)
+            .collect::<Vec<_>>();
+        std::fs::write(dir.path().join("checkpoint.bin"), checkpoint).unwrap();
+        let metadata = std::fs::read(dir.path().join("meta.json")).unwrap();
+        let mut writer = EventStore::open(dir.path(), GENESIS, START).unwrap();
+        assert_eq!(writer.events_at(START).unwrap().unwrap(), vec![old.clone()]);
+        writer
+            .append_block(START + 1, hash(START + 1), &[receive(200, 2)])
+            .unwrap();
+        writer.commit().unwrap();
+        drop(writer);
+        assert_eq!(
+            std::fs::read(dir.path().join("meta.json")).unwrap(),
+            metadata
+        );
+        assert!(std::fs::read(dir.path().join("events.bin"))
+            .unwrap()
+            .starts_with(&bytes));
+        let reader = EventStore::open_existing(dir.path()).unwrap();
+        assert_eq!(reader.version(), 2);
+        assert_eq!(reader.events_at(START).unwrap().unwrap(), vec![old]);
+        assert_eq!(
+            reader.events_at(START + 1).unwrap().unwrap(),
+            vec![receive(200, 2)]
+        );
+        let (mut snapshot, offset) = reader.snapshot_suffix(START, dir.path()).unwrap();
+        let entry = reader.block_at(START).unwrap();
+        assert_eq!(offset, 0);
+        assert_eq!(
+            read_event_record_version(&mut snapshot, entry, bytes.len() as u64, 2)
+                .unwrap()
+                .unwrap(),
+            reader.events_at(START).unwrap().unwrap()
+        );
     }
 
     /// A version-1 production journal must survive a restart of this binary.
@@ -1135,7 +1208,7 @@ pub fn read_event_record(
     read_event_record_version(file, entry, end, STORE_VERSION)
 }
 
-fn read_event_record_version(
+pub fn read_event_record_version(
     file: &mut File,
     entry: BlockEntry,
     end: u64,

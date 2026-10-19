@@ -23,6 +23,7 @@ use transparent_shared::{
 
 pub struct Manager {
     config: Config,
+    full: bool,
     service: ServiceConfig,
     archive: Option<std::sync::Arc<crate::routing::archive::Archive>>,
     source: Source,
@@ -94,6 +95,7 @@ impl Manager {
         // No disk-cache restore/build path in this mode, including after restart.
         Ok(Self {
             config,
+            full: false,
             service,
             archive: None,
             source,
@@ -105,6 +107,11 @@ impl Manager {
                 serde_json::json!({"state":"not-polled"}),
             )),
         })
+    }
+    /// Hold and verify every shard locally, including archive runtimes.
+    pub fn with_full_holdings(mut self) -> Self {
+        self.full = true;
+        self
     }
     pub fn with_archive(
         mut self,
@@ -230,16 +237,23 @@ impl Manager {
         if !directory.starts_with(&self.config.directory) {
             return Err("saved publication escapes provider root".into());
         }
-        let assignment = publication
-            .assignment
-            .as_ref()
-            .ok_or("saved provider lacks assignment")?;
-        let options = LoadOptions {
-            scope: LoadScope::Assigned {
-                worker_id: "provider".into(),
-                assignment: std::sync::Arc::new(Assignment::load(assignment)?),
-            },
-            ..LoadOptions::whole(0)
+        let options = if self.full {
+            if publication.assignment.is_some() {
+                return Err("saved provider holdings differ from full coverage".into());
+            }
+            LoadOptions::whole(0)
+        } else {
+            let assignment = publication
+                .assignment
+                .as_ref()
+                .ok_or("saved provider lacks assignment")?;
+            LoadOptions {
+                scope: LoadScope::Assigned {
+                    worker_id: "provider".into(),
+                    assignment: std::sync::Arc::new(Assignment::load(assignment)?),
+                },
+                ..LoadOptions::whole(0)
+            }
         };
         let load_options = options.clone();
         let set =
@@ -362,7 +376,9 @@ struct Prepared<'a> {
 impl<'a> Acquired<'a> {
     async fn prepare(self) -> Result<Input<Prepared<'a>>, Error> {
         let Acquired { owner, current } = self;
-        let staged = bootstrap::stage(&owner.config, &mut owner.source, &current, true).await?;
+        let staged =
+            bootstrap::stage_holdings(&owner.config, &mut owner.source, &current, true, owner.full)
+                .await?;
         let mut stages = Stages {
             transfer_seconds: staged.transfer_seconds,
             staging_seconds: staged.stage_seconds - staged.transfer_seconds,
@@ -370,7 +386,7 @@ impl<'a> Acquired<'a> {
         };
         let publication = Publication {
             directory: staged.directory.clone(),
-            assignment: Some(staged.directory.join("assignment.json")),
+            assignment: (!owner.full).then(|| staged.directory.join("assignment.json")),
             map_sha256: staged.inventory.map_sha256.clone(),
             runtimes: Some(staged.directory.clone()),
         };

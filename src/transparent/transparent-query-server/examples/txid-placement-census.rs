@@ -28,7 +28,8 @@ use rayon::prelude::*;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::time::Instant;
-use transparent_shard::display::{place_bucket, Placement, MAX_PLACEMENT_SEEDS, TXID_2K8};
+use transparent_shard::display::tables::Placement;
+use transparent_shard::display::{place_bucket, MAX_PLACEMENT_SEEDS, TXID_2K8};
 use transparent_shard::txid::{slots_per_row, Tag};
 
 type Error = Box<dyn std::error::Error + Send + Sync>;

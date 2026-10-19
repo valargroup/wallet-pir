@@ -72,6 +72,8 @@ pub type Prebuild = fn(&Path, &Path) -> Result<Vec<Shipped>, String>;
 pub struct Settings {
     /// Skip re-verifying sealed revisions at startup.
     pub trust_sealed: bool,
+    /// Finalized HTTP publications; no externally controlled worker is required.
+    pub distribution: Option<super::distribution::Distribution>,
     /// Build the recent revision's runtimes into each candidate, so recent
     /// replicas load them instead of building (`--ship-runtimes`). A failed
     /// build is counted and the candidate ships without them.
@@ -94,6 +96,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             trust_sealed: false,
+            distribution: None,
             ship_runtimes: None,
             retain_candidates: 3,
             max_recent_records: None,
@@ -738,6 +741,14 @@ impl Controller {
             self.update_status();
             return Ok(Outcome::Halted(reason.clone()));
         }
+        if let Some(distribution) = &self.settings.distribution {
+            distribution
+                .finalize(
+                    self.active.directory.clone(),
+                    vec![self.active.directory.clone()],
+                )
+                .await?;
+        }
         let errors = self
             .fleet
             .refresh((&self.active.map_sha256, &self.map))
@@ -832,6 +843,7 @@ impl Controller {
 
     async fn poll_source(&mut self) -> Result<(), BoxError> {
         let floor = self.sealed_floor();
+        let distribution = self.settings.distribution.clone();
         let (fleet, rollback, saved, root, active) = (
             &mut self.fleet,
             &mut self.rollback,
@@ -840,6 +852,11 @@ impl Controller {
             &self.active.map_sha256,
         );
         let mut before_rollback = |ancestor: u64, hash: BlockHash| {
+            if let Some(distribution) = &distribution {
+                distribution
+                    .withdraw(ancestor + 1)
+                    .map_err(|e| e.to_string())?;
+            }
             fleet.queue_invalidation(ancestor + 1);
             note_rollback(rollback, active, ancestor, hash);
             let next = Invalidations {
@@ -1424,6 +1441,12 @@ impl Controller {
             .activate(&candidate, &sha, &map, true)
             .await
             .map_err(CycleError::Retry)?;
+        if let Some(distribution) = &self.settings.distribution {
+            distribution
+                .finalize(candidate.clone(), vec![self.active.directory.clone()])
+                .await
+                .map_err(retry)?;
+        }
         let activated_ms = now_ms();
         self.last_success_ms = activated_ms;
 

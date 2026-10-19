@@ -40,7 +40,9 @@ pub struct Config {
     pub rpc_url: String,
     pub rpc_cookie: PathBuf,
     /// Executable implementing prepare/activate/invalidate with JSON on stdin.
+    #[serde(default)]
     pub fleet_command: PathBuf,
+    #[serde(default)]
     pub fleet_config: PathBuf,
     pub listen: std::net::SocketAddr,
     pub source_sha: String,
@@ -75,9 +77,24 @@ pub struct Config {
     /// runtimes; existing deployments keep their existing preparation policy.
     #[serde(default)]
     pub distribute_prepared: bool,
+    /// Finalize full prepared publications without managing query servers.
+    #[serde(default)]
+    pub http_only: bool,
 }
 
 impl Config {
+    pub fn validate(&self) -> Result<(), BoxError> {
+        if self.http_only && (!self.distribute_prepared || !self.ship_runtimes || self.shadow) {
+            return Err("HTTP-only publishing requires prepared distribution, shipped runtimes and no shadow mode".into());
+        }
+        if !self.http_only
+            && (self.fleet_command.as_os_str().is_empty()
+                || self.fleet_config.as_os_str().is_empty())
+        {
+            return Err("fleet publishing requires fleet_command and fleet_config".into());
+        }
+        Ok(())
+    }
     fn snapshot_dir(&self) -> &Path {
         self.snapshot_dir
             .as_deref()
@@ -243,6 +260,7 @@ pub async fn run_managed(
     http: pir_pipeline::service::Http<Router>,
     shutdown: pir_pipeline::service::Shutdown,
 ) -> Result<(), BoxError> {
+    config.validate()?;
     if config.distribute_prepared && !config.ship_runtimes {
         return Err("prepared distribution requires ship_runtimes".into());
     }
@@ -498,7 +516,7 @@ async fn invalidate(config: &Config, authority: &Authority, from: u64) -> Result
         )?;
         retain
     };
-    if !config.shadow {
+    if !config.shadow && !config.http_only {
         let result = fleet(
             config,
             serde_json::json!({"operation":"invalidate","from_height":from,
@@ -886,8 +904,13 @@ async fn prepare_history(
             .ok_or("prepared distribution has no verified candidate")?;
         let root = directory.clone();
         let cutoff = config.recent_from;
+        let full = config.http_only;
         let (set, distribution) = tokio::task::spawn_blocking(move || {
-            let result = transparent_shared::publication::Finalized::prepare(&root, &set, cutoff);
+            let result = if full {
+                transparent_shared::publication::Finalized::prepare_full(&root, &set, cutoff)
+            } else {
+                transparent_shared::publication::Finalized::prepare(&root, &set, cutoff)
+            };
             (set, result)
         })
         .await?;
@@ -910,10 +933,14 @@ async fn prepare_history(
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         }
     };
-    let prepared = tokio::select! {
-        biased;
-        _ = invalidated => return Err("candidate invalidated while preparing".into()),
-        result = fleet(config, request) => result?,
+    let prepared = if config.http_only {
+        serde_json::json!({"workers": []})
+    } else {
+        tokio::select! {
+            biased;
+            _ = invalidated => return Err("candidate invalidated while preparing".into()),
+            result = fleet(config, request) => result?,
+        }
     };
     if authority.0.epoch.load(Ordering::Acquire) != epoch
         || rpc.block_hash_display(height).await? != hash
@@ -972,14 +999,20 @@ async fn activate_history(
         &config.publication_root.join("activation.json"),
         &serde_json::to_vec(&candidate.publication)?,
     )?;
-    let activated=fleet(config,serde_json::json!({"operation":"activate","directory":directory,"map_sha256":candidate.publication.map_sha256,"prepared":prepared})).await?;
+    let activated = if config.http_only {
+        serde_json::json!({"upstreams": [], "recent_replicas": []})
+    } else {
+        fleet(config,serde_json::json!({"operation":"activate","directory":directory,"map_sha256":candidate.publication.map_sha256,"prepared":prepared})).await?
+    };
     if authority.0.epoch.load(Ordering::Acquire) != epoch
         || rpc.block_hash_display(height).await? != hash
     {
         authority.0.withdrawn.store(true, Ordering::Release);
         // The ingest loop invalidates the exact changed suffix; until then the
         // fleet hook withdraws routing entirely.
-        fleet(config, serde_json::json!({"operation":"withdraw"})).await?;
+        if !config.http_only {
+            fleet(config, serde_json::json!({"operation":"withdraw"})).await?;
+        }
         return Err("candidate invalidated during fleet activation".into());
     }
     candidate.publication.upstreams = serde_json::from_value(activated["upstreams"].clone())?;
@@ -1184,7 +1217,7 @@ fn init_for_map(
         .map(|(_, value)| value.clone())
 }
 
-fn advance_distribution_revision(root: &Path) -> Result<u64, BoxError> {
+pub(crate) fn advance_distribution_revision(root: &Path) -> Result<u64, BoxError> {
     advance_distribution_revision_with_sync(root, |directory| directory.sync_all())
 }
 
@@ -1902,6 +1935,7 @@ print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('re
             snapshot_dir: None,
             ship_runtimes: false,
             distribute_prepared: false,
+            http_only: false,
         };
         let authority = Authority(Arc::new(Inner {
             cycle_duration: Default::default(),
@@ -2244,6 +2278,7 @@ print(json.dumps({'ok':True,'upstreams':[],'workers':{},'retained_publication':b
             snapshot_dir: None,
             ship_runtimes: true,
             distribute_prepared: false,
+            http_only: false,
         };
         let authority = Authority(Arc::new(Inner {
             cycle_duration: Default::default(),
@@ -2528,4 +2563,4 @@ print(json.dumps({'ok':True,'upstreams':[],'workers':{},'retained_publication':b
 
 #[cfg(test)]
 #[path = "controller_distribution_tests.rs"]
-mod distribution_tests;
+pub(crate) mod distribution_tests;

@@ -286,6 +286,59 @@ impl DisplayLive {
         })))
     }
 
+    /// Exact anchors of active and retained revisions, for live publisher checks.
+    pub(crate) fn anchors(&self) -> Vec<(String, u64, String)> {
+        let active = self.0.active.read().unwrap();
+        let retired = self.0.retired.read().unwrap();
+        active
+            .iter()
+            .chain(retired.iter())
+            .flat_map(|a| a.state.set().revisions())
+            .map(|r| {
+                (
+                    r.digest.clone(),
+                    r.manifest.end_height,
+                    r.manifest.terminal_block_hash.clone(),
+                )
+            })
+            .collect()
+    }
+    /// Fence memory before durable writes so a storage failure cannot release an orphaned answer.
+    pub(crate) fn revoke(&self, digests: &BTreeSet<String>) -> Result<(), String> {
+        let _gate = self.0.publication_gate.lock().unwrap();
+        self.0.epoch.fetch_add(1, Ordering::AcqRel);
+        let active = self.0.active.read().unwrap();
+        let retired = self.0.retired.read().unwrap();
+        let mut invalid = self.0.invalid.write().unwrap();
+        invalid.extend(digests.iter().cloned());
+        for a in active.iter().chain(retired.iter()) {
+            a.state.release_pins(Some(&invalid));
+        }
+        persist(&self.0.record.with_extension("invalid.json"), &*invalid)
+    }
+    pub(crate) fn restore_verified(&self, digests: &BTreeSet<String>) -> Result<(), String> {
+        let _gate = self.0.publication_gate.lock().unwrap();
+        let mut invalid = self.0.invalid.write().unwrap();
+        let next: BTreeSet<_> = invalid.difference(digests).cloned().collect();
+        persist(&self.0.record.with_extension("invalid.json"), &next)?;
+        *invalid = next;
+        Ok(())
+    }
+    pub(crate) async fn activate_checked<F, Fut>(
+        &self,
+        expected: String,
+        map: String,
+        check: F,
+    ) -> Result<(), String>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = Result<(), String>>,
+    {
+        let operation = self.0.operations.clone().lock_owned().await;
+        check().await?;
+        crate::activation::activate(expected, map, DisplayActivation(self.0.clone()), operation)
+            .await
+    }
     pub fn router(&self) -> Router {
         Router::new().fallback(dispatch).with_state(self.clone())
     }
@@ -369,7 +422,7 @@ impl DisplayLive {
             "role": self.0.role.as_str(),
             "active": active.as_ref().map(|a| &a.publication),
             "staged": staged,
-            "warm": active.as_ref().is_some_and(|a| a.state.is_warm()),
+            "warm": active.as_ref().is_some_and(|a| a.state.is_warm() && a.state.set().current().iter().all(|r| !self.0.invalid.read().unwrap().contains(&r.digest))),
             "binary_sha256": pir_control::binary_sha256(),
             "candidate": candidate,
             "preparing": preparing,

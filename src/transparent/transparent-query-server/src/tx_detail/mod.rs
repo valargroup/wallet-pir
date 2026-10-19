@@ -36,4 +36,5 @@
 //! share a cache entry.
 
 pub mod live;
+pub mod manager;
 pub mod service;

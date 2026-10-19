@@ -20,6 +20,7 @@
 
 pub mod cache;
 pub mod controller;
+pub mod distribution;
 pub mod metrics;
 pub mod offline;
 pub mod publisher;
@@ -41,3 +42,6 @@ pub fn now_ms() -> u64 {
 pub(crate) mod fixture;
 
 pub mod service;
+
+#[cfg(all(test, feature = "qualification-tests"))]
+mod http_sync_tests;

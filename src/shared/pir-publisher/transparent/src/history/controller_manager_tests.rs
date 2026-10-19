@@ -1745,6 +1745,7 @@ with urllib.request.urlopen(r,timeout=20) as response: sys.stdout.buffer.write(r
         snapshot_dir: None,
         ship_runtimes: false,
         distribute_prepared: false,
+        http_only: false,
     };
     let reader = Arc::new(tokio::sync::Mutex::new(
         EventStore::open_existing(&config.data_dir).unwrap(),

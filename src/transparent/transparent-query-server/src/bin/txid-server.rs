@@ -21,6 +21,20 @@ use transparent_shared::tx_detail::{parse_role, serves};
     about = "Private retrieval from a tiered txid display publication"
 )]
 struct Cli {
+    /// Full-coverage managed synchronization from a trusted HTTPS publisher.
+    #[arg(long, requires_all = ["state_dir", "publisher_network", "publisher_genesis"], conflicts_with_all = ["publication_dir", "control_socket", "runtime_cache_dir", "loaded_only"])]
+    publisher: Option<String>,
+    #[arg(long, requires = "publisher")]
+    state_dir: Option<PathBuf>,
+    #[arg(long, requires = "publisher")]
+    publisher_network: Option<String>,
+    #[arg(long, requires = "publisher")]
+    publisher_genesis: Option<String>,
+    #[arg(long, requires = "publisher")]
+    publisher_ca: Option<PathBuf>,
+    #[arg(long, default_value_t = 64 << 30)]
+    bootstrap_max_bytes: u64,
+
     /// Loopback by default; a worker binds its private address.
     #[arg(long, default_value = "127.0.0.1:8095")]
     listen: SocketAddr,
@@ -90,6 +104,53 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
         .init();
     let cli = Cli::parse();
+    if let Some(publisher) = cli.publisher {
+        if cli.role != DisplayRole::Combined {
+            return Err("managed display prototype requires combined holdings".into());
+        }
+        let roots = cli
+            .publisher_ca
+            .map(|p| -> Result<_, Box<dyn std::error::Error + Send + Sync>> {
+                Ok(reqwest::Certificate::from_pem(&std::fs::read(p)?)?)
+            })
+            .transpose()?
+            .into_iter()
+            .collect();
+        let config = transparent_query_server::routing::bootstrap::Config {
+            publisher,
+            network: cli.publisher_network.unwrap(),
+            genesis_hash: cli.publisher_genesis.unwrap(),
+            directory: cli.state_dir.unwrap(),
+            cache_bytes: cli.cache_bytes,
+            max_download_bytes: cli.bootstrap_max_bytes,
+            roots,
+        };
+        let service = ServiceConfig {
+            cache_bytes: cli.cache_bytes,
+            build_slots: cli.build_slots,
+            query_slots: cli.query_slots,
+            max_waiters: cli.query_waiters,
+            max_body_bytes: cli.body_bytes,
+            upload_deadline: std::time::Duration::from_secs(cli.upload_deadline_secs),
+            query_deadline: std::time::Duration::from_secs(cli.query_deadline_secs),
+            readiness: ReadinessMode::Warm,
+        };
+        let mut manager =
+            transparent_query_server::tx_detail::manager::Manager::new(config, service)?;
+        if let Err(error) = manager.poll_once().await {
+            if !manager.ready().await {
+                return Err(error);
+            }
+            tracing::warn!(%error,"new display publication refused; recovered checked predecessor");
+        }
+        if cli.verify_only {
+            return Ok(());
+        }
+        let app = manager.router();
+        let _manager = tokio::spawn(manager.run());
+        axum::serve(tokio::net::TcpListener::bind(cli.listen).await?, app).await?;
+        return Ok(());
+    }
     let mut directory = cli.publication_dir.clone();
     if let Some(record) = cli.active_record.as_ref().filter(|r| r.exists()) {
         let active: DisplayPublication = serde_json::from_slice(&std::fs::read(record)?)?;

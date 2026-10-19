@@ -42,6 +42,7 @@ type ParamsKey = (&'static str, Table);
 /// first activation.
 pub struct DisplayRuntime {
     pub config: ServiceConfig,
+    required: bool,
     pub cache: Arc<RuntimeCache>,
     pub admission: Arc<Admission>,
     pub metrics: Arc<Metrics>,
@@ -50,6 +51,13 @@ pub struct DisplayRuntime {
 
 impl DisplayRuntime {
     pub fn new(config: ServiceConfig, disk: Option<DiskCache>) -> Arc<Self> {
+        Self::create(config, disk, false)
+    }
+    /// Managed consumers may only load publisher-prepared native files.
+    pub fn new_required(config: ServiceConfig) -> Arc<Self> {
+        Self::create(config, None, true)
+    }
+    fn create(config: ServiceConfig, disk: Option<DiskCache>, required: bool) -> Arc<Self> {
         let _ = pir_control::Identity::process();
         let metrics = Arc::new(Metrics::default());
         let cache = Arc::new(
@@ -68,6 +76,7 @@ impl DisplayRuntime {
         ));
         Arc::new(Self {
             config,
+            required,
             cache,
             admission,
             metrics,
@@ -118,7 +127,13 @@ impl DisplayRuntime {
         let shared = self
             .params(revision.geometry, kind(table))
             .map_err(CacheError::Failed)?;
-        let shipped = shipped.filter(|_| !revision.manifest.sealed);
+        let shipped = if self.required {
+            Some(shipped.ok_or_else(|| {
+                CacheError::Failed("managed display requires prepared material".into())
+            })?)
+        } else {
+            shipped.filter(|_| !revision.manifest.sealed)
+        };
         transparent_shared::runtime::prewarm::retry(
             cancelled,
             std::time::Duration::from_secs(30),
@@ -251,7 +266,20 @@ impl DisplayState {
     /// Prepares a snapshot of `set` over the shared runtime. In warm mode the
     /// role's runtimes must fit the cache with nothing evicted, as for a
     /// history worker's assignment.
-    pub fn build(set: DisplaySet, runtime: &Arc<DisplayRuntime>) -> Result<Self, String> {
+    pub fn build(mut set: DisplaySet, runtime: &Arc<DisplayRuntime>) -> Result<Self, String> {
+        if runtime.required {
+            // Read every required native body through the production verifier even
+            // when a previous snapshot has the same runtime resident in memory.
+            let root = set
+                .current()
+                .first()
+                .and_then(|r| r.dir.parent())
+                .ok_or("display set has no root")?
+                .to_path_buf();
+            transparent_shared::tx_detail::distribution::Finalized::prepare(&root)
+                .map_err(|e| e.to_string())?;
+            set.shipped = Some(ShippedRuntimes::required(root));
+        }
         let config = runtime.config;
         let mut params = HashMap::new();
         let mut max_query_bytes = 0usize;

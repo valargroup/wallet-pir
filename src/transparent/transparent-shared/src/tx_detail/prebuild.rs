@@ -54,10 +54,20 @@ impl From<Prepared> for Shipped {
 /// it would. Builds run on the runtime build pool, one at a time. Returns one
 /// record per file.
 pub fn build_shipped(revision_dir: &Path, out_dir: &Path) -> Result<Vec<Shipped>, String> {
+    build_shipped_reusing(revision_dir, out_dir, &[])
+}
+
+/// Reuse verified immutable runtimes across full-coverage publications.
+pub fn build_shipped_reusing(
+    revision_dir: &Path,
+    out_dir: &Path,
+    retained: &[std::path::PathBuf],
+) -> Result<Vec<Shipped>, String> {
     let revision = DisplayRevision::read(revision_dir)
         .and_then(DisplayRevision::verify_tables)
         .map_err(|error| error.to_string())?;
     let shipped = ShippedRuntimes::new(out_dir.to_path_buf());
+    let retained: Vec<_> = retained.iter().cloned().map(ShippedRuntimes::new).collect();
     let mut params = HashMap::new();
     let mut written = Vec::new();
     for (table, segment) in revision.targets() {
@@ -74,7 +84,7 @@ pub fn build_shipped(revision_dir: &Path, out_dir: &Path) -> Result<Vec<Shipped>
         let key = runtime_key(&revision.digest, table, segment);
         // The recent revision is new at every block, so nothing retained
         // can share its identity: every file is built.
-        let prepared = prepare_segment(&shipped, &[], &key, shared, source, table.label())
+        let prepared = prepare_segment(&shipped, &retained, &key, shared, source, table.label())
             .map_err(|error| error.to_string())?;
         written.push(prepared.into());
     }
