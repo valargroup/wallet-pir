@@ -311,12 +311,27 @@ class BoundaryTests(unittest.TestCase):
                  patch.object(boundary.subprocess, 'check_output', side_effect=resolve):
                 boundary.standalone_metadata({'server'})
 
+    def test_online_mode_fetches_the_locked_graph_before_standalone_resolution(self):
+        metadata = {'packages': [], 'resolve': {'nodes': []}}
+        order = []
+        with patch.object(boundary.subprocess, 'check_output', return_value=json.dumps(metadata)), \
+             patch.object(boundary.subprocess, 'check_call',
+                          side_effect=lambda command, **_: order.append(command)), \
+             patch.object(boundary, 'standalone_metadata',
+                          side_effect=lambda *_: order.append('standalone') or metadata), \
+             patch.object(boundary, 'runtime_graph_violations', return_value=[]):
+            self.assertEqual(boundary.main(['--resolved']), 0)
+        self.assertEqual(order[0], ['cargo', 'fetch', '--locked', '--quiet'])
+        self.assertIn('standalone', order)
+
     def test_offline_mode_reaches_workspace_metadata_and_helper_targets(self):
         metadata = {'packages': [], 'resolve': {'nodes': []}}
         with patch.object(boundary.subprocess, 'check_output', return_value=json.dumps(metadata)), \
              patch.object(boundary, 'standalone_metadata', return_value=metadata), \
-             patch.object(boundary, 'runtime_graph_violations', return_value=[]):
+             patch.object(boundary, 'runtime_graph_violations', return_value=[]), \
+             patch.object(boundary.subprocess, 'check_call') as fetch:
             self.assertEqual(boundary.main(['--resolved', '--offline']), 0)
+            fetch.assert_not_called()
             self.assertIn('--offline', boundary.subprocess.check_output.call_args.args[0])
         commands = subprocess.check_output(['make', '-n', 'check-tools', 'OFFLINE=1'],
                                            cwd=ROOT, text=True)
