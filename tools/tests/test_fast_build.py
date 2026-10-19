@@ -322,7 +322,7 @@ class FastBuildTests(unittest.TestCase):
         self.assertEqual(packages, sorted(fast_build.FAST_FEATURE_ROOTS))
         self.assertIn('--lib', build)
         self.assertEqual(build[build.index('--features') + 1],
-                         'pir-publisher/enhance-tests,pir-publisher/status-tests,pir-publisher/transparent-tests,status-publisher/cli')
+                         'pir-publisher/enhance-tests,pir-publisher/status-tests,pir-publisher/transparent-tests,pir-query-server/enhance,status-publisher/cli')
         self.assertNotIn('--bins', build)
         self.assertEqual(bins, [
             'enhance-pir-exercise', 'enhance-pir-load-test',
@@ -330,7 +330,7 @@ class FastBuildTests(unittest.TestCase):
             'txid-quality-canary'])
         self.assertEqual(tests, [
             'boundary_recovery_model', 'ci_hint', 'ci_smoke', 'lifecycle',
-            'record_layout', 'status_routes'])
+            'operator', 'publisher_cli', 'record_layout', 'status_routes'])
 
     def test_hardware_features_cannot_silently_replace_reference_arithmetic(self):
         self.packages[0]['targets'][1]['required-features'] = ['native-reinspiring']
