@@ -61,10 +61,12 @@ PRODUCTS = {
         'load': None,
     },
 }
-# The pir-apm Transparent configuration on the controller host: each service's
-# alert_mode decides whether its incidents reach Slack (active) or are only
-# recorded (shadow). Read for reporting; never a refusal or a change.
+# pir-apm on the controller host. Its configuration names each service's alert_mode
+# but is read only at APM start; the incident database records the mode each family
+# last evaluated in, and monitor-status reports delivery. Read for reporting only.
 APM_CONFIG = '/etc/pir-quality/transparent-production.json'
+APM_STATE = '/var/lib/pir-apm/incidents.sqlite'
+APM_LISTEN = '127.0.0.1:3002'
 APM_SERVICE = {'transparent-history': 'transparent', 'transparent-display': 'txid'}
 REQUEST_KEYS = {'schema', 'service', 'component', 'release', 'publication', 'controller', 'workers', 'load'}
 COMPONENTS = ('workers', 'controller')
@@ -160,26 +162,34 @@ def adapter_path(adapter):
 
 
 def notification_state(ex, host, product_service):
-    """Report lines saying which APM service families deliver to Slack.
+    """Report lines on alert delivery for this service, from the running APM, never inferred.
 
-    A running observer or continuous load proves exact-answer coverage, not
-    alert delivery: only an `active` alert_mode queues Slack messages. An
-    unreadable or invalid configuration is reported as unknown.
+    A running observer or continuous load proves exact-answer coverage, not alert
+    delivery. The configuration on disk is labelled as configured only: APM reads
+    it at start, so it can disagree with the running process. The running mode is
+    the one each family last recorded in APM's incident database, and delivery
+    health comes from APM's monitor-status; either is unknown when unreadable.
     """
+    from tools.transparent.lib import alert_activation
+    service = APM_SERVICE[product_service]
+    lines = []
     try:
         config = json.loads(ex.read(host, APM_CONFIG) or 'null')
-        services = {s['service']: s.get('alert_mode', 'shadow') for s in config['services']}
-        capacity = config.get('capacity_alert_mode', 'shadow')
-    except (TypeError, KeyError, ValueError) as error:
-        return ['notifications: unknown; %s on %s is unreadable (%s), so no alert delivery is proven'
-                % (APM_CONFIG, host, error)]
-    def describe(mode):
-        return {'active': 'active (Slack)', 'shadow': 'shadow (recorded only, no Slack)'}.get(mode, 'unknown %r' % mode)
-    lines = ['notifications: APM %s%s alert_mode %s' % (name, ' (this service)' if name == APM_SERVICE[product_service] else '',
-                                                        describe(mode)) for name, mode in sorted(services.items())]
-    if APM_SERVICE[product_service] not in services:
-        lines.append('notifications: APM does not monitor %s; no alert covers this upgrade' % APM_SERVICE[product_service])
-    lines.append('notifications: APM transparent capacity_alert_mode %s' % describe(capacity))
+        configured = {s['service']: s.get('alert_mode', 'shadow') for s in config['services']}.get(service)
+    except (TypeError, KeyError, ValueError):
+        configured = None
+    lines.append('notifications: %s alert_mode configured on disk (read only at APM start): %s'
+                 % (service, configured or 'unknown'))
+    modes = alert_activation.running_modes(ex, host, APM_STATE)
+    running = None if modes is None else modes.get('mode:quality-' + service)
+    lines.append('notifications: %s mode of the running APM: %s' % (
+        service, running or ('unknown (incident database unreadable)' if modes is None else 'unknown (not recorded)')))
+    if configured and running and configured != running:
+        lines.append('notifications: configured %s differs from running %s; APM has not restarted since the change'
+                     % (configured, running))
+    lines.append(alert_activation.delivery_line('notifications: APM', alert_activation.monitor_status(ex, host, APM_LISTEN)))
+    if running != 'active':
+        lines.append('notifications: %s incidents during this upgrade are recorded only; Slack is not notified' % service)
     return lines
 
 
