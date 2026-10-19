@@ -2116,6 +2116,38 @@ dependencies = [
 ]
 
 [[package]]
+name = "pir-e2e-tests"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "base64",
+ "clap",
+ "enhance-publisher",
+ "enhance-query-server",
+ "hex",
+ "libc",
+ "pir-pipeline",
+ "pir-query-server",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "tokio",
+ "tokio-stream",
+ "tower",
+ "tracing",
+ "tracing-subscriber",
+ "transparent-publisher",
+ "transparent-query-server",
+ "transparent-shared",
+ "zakura-pir-client",
+ "zakura-pir-protocol",
+ "zakura-pir-publisher",
+ "zakura-server-chain",
+]
+
+[[package]]
 name = "pir-monitor"
 version = "0.1.0"
 dependencies = [
@@ -2156,33 +2188,19 @@ name = "pir-publisher"
 version = "0.1.0"
 dependencies = [
  "axum",
- "base64",
  "clap",
  "enhance-publisher",
- "enhance-query-server",
- "hex",
- "libc",
  "pir-pipeline",
- "pir-query-server",
  "receiver-indexer",
  "reqwest",
  "serde",
  "serde_json",
- "sha2",
  "status-publisher",
  "tempfile",
  "tokio",
- "tokio-stream",
- "tower",
  "tracing",
  "tracing-subscriber",
  "transparent-publisher",
- "transparent-query-server",
- "transparent-shared",
- "zakura-pir-client",
- "zakura-pir-protocol",
- "zakura-pir-publisher",
- "zakura-server-chain",
 ]
 
 [[package]]

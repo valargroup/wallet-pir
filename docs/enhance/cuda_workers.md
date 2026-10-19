@@ -159,7 +159,7 @@ an error, not a skipped success):
 ```sh
 cargo test --locked --profile release-fast -p enhance-query-server --features cuda \
   --lib cuda_encrypted_bootstrap_round_trip_and_cached_restart -- --ignored
-cargo test --locked --profile release-fast -p pir-publisher --features enhance-tests,cuda \
+cargo test --locked --profile release-fast -p pir-e2e-tests --features enhance-tests,cuda \
   --test http cuda_distributed_round_trip_retention_failover_and_restart -- --ignored
 cargo test --locked --profile release-fast -p enhance-query-server --features cuda \
   --lib cuda_partial_preparation_failure_preserves_published_and_retries -- --ignored

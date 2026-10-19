@@ -322,7 +322,7 @@ class FastBuildTests(unittest.TestCase):
         self.assertEqual(packages, sorted(fast_build.FAST_FEATURE_ROOTS))
         self.assertIn('--lib', build)
         self.assertEqual(build[build.index('--features') + 1],
-                         'pir-publisher/enhance-tests,pir-publisher/status-tests,pir-publisher/transparent-tests,pir-query-server/enhance,status-publisher/cli')
+                         'pir-e2e-tests/enhance-tests,pir-e2e-tests/transparent-tests,pir-publisher/status-tests,pir-query-server/enhance,status-publisher/cli')
         self.assertNotIn('--bins', build)
         self.assertEqual(bins, [
             'enhance-pir-exercise', 'enhance-pir-load-test',

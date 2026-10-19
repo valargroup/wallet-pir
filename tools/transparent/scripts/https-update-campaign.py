@@ -120,7 +120,7 @@ def main():
         "build", "-p", "transparent-query-server", "--bin", "transparent-query-server"]),
         "transparent-query-server")
     built = cargo_artifacts(args.profile, [
-        "test", "-p", "pir-publisher", "--features", "transparent-tests", "--test", TEST, "--no-run"])
+        "test", "-p", "pir-e2e-tests", "--features", "transparent-tests", "--test", TEST, "--no-run"])
     test = executable(built, TEST)
     controller = next(a["executable"] for a in built
                       if a.get("target", {}).get("name") == "transparent-publish-controller-test")

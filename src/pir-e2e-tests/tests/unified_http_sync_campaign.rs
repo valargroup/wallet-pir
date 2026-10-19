@@ -175,7 +175,7 @@ async fn tls(
     let mut child = tokio::process::Command::new("python3")
         .arg(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/tests/support/distribution_tls.py"
+            "/../pir-publisher/tests/support/distribution_tls.py"
         ))
         .args([
             upstream,

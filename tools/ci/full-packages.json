@@ -20,6 +20,7 @@
     "pir-apm",
     "pir-monitor",
     "pir-publisher",
+    "pir-e2e-tests",
     "pir-query-server"
   ],
   "receiver": [

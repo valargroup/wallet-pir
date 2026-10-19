@@ -67,7 +67,7 @@ class MatrixTests(unittest.TestCase):
         reference_features = matrix.package_features('enhance-query-server', contexts['reference'], packages)
         self.assertEqual(reference_features, ['enhance-query-server/client',
                                               'enhance-query-server/qualification-tests'])
-        self.assertIn('pir-publisher/qualification-tests', contexts['reference']['features'])
+        self.assertIn('pir-e2e-tests/qualification-tests', contexts['reference']['features'])
         self.assertIn('status-query-server/qualification-tests', contexts['reference']['features'])
         self.assertIn('status-query-server/qualification-tests', contexts['native']['features'])
         self.assertNotIn('enhance-publisher/native-reinspiring', native)
@@ -145,17 +145,17 @@ class MatrixTests(unittest.TestCase):
             matrix.selected_shards(registry)
 
     def test_reference_qualification_keeps_oracles_and_native_keeps_http_lifecycles(self):
-        package = self.plan[3]['pir-publisher']
+        package = self.plan[3]['pir-e2e-tests']
         lifecycle = {'encrypted_publication_advances_with_a_pending_commit_and_survives_restart'}
         oracles = {'single_unit_hint_matches_independent_generic_67',
                    'single_unit_hint_matches_independent_generic_68',
                    'single_unit_hint_rejects_damage_and_pins_retired_file'}
         reference = self.plan[0]['enhance-reference']['targets']
         from integration_tests import inventory
-        self.assertNotIn('encrypted_lifecycle', inventory()['pir-publisher']['fast'])
-        self.assertIn('encrypted_lifecycle', inventory()['pir-publisher']['full'])
-        self.assertIn('reference:pir-publisher:test:ci_hint', reference)
-        self.assertIn('reference:pir-publisher:test:encrypted_lifecycle', reference)
+        self.assertNotIn('encrypted_lifecycle', inventory()['pir-e2e-tests']['fast'])
+        self.assertIn('encrypted_lifecycle', inventory()['pir-e2e-tests']['full'])
+        self.assertIn('reference:pir-e2e-tests:test:ci_hint', reference)
+        self.assertIn('reference:pir-e2e-tests:test:encrypted_lifecycle', reference)
         for case in ('unequal_units_match_monolithic_preprocessing_and_evaluation',
                      'tail_domain_reuses_b_units_and_decodes_b_at_unchanged_coordinates'):
             self.assertIn('runtime::tests::' + case, matrix.REFERENCE_LIB_FILTERS)
@@ -173,7 +173,7 @@ class MatrixTests(unittest.TestCase):
             with self.subTest(variant=variant, target=target), \
                     patch.object(matrix.subprocess, 'check_output', side_effect=listing):
                 _, programs, cases = matrix.test_programs([artifact], variant, {package['name']: package}, {})
-            self.assertEqual(set(cases[f'{variant}:pir-publisher:{target}']['tests']), expected)
+            self.assertEqual(set(cases[f'{variant}:pir-e2e-tests:{target}']['tests']), expected)
             self.assertEqual(programs[0]['args'], [])
 
     def verify(self, receipts):

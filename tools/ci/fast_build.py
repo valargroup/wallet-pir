@@ -42,6 +42,7 @@ FAST_FEATURE_ROOTS = frozenset({
     'enhance-pir-load-test',
     'enhance-publisher',
     'enhance-query-server',
+    'pir-e2e-tests',
     'pir-monitor',
     'pir-publisher',
     'pir-query-server',
@@ -198,12 +199,13 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3,
     # Product fixture modules compile only when the host enables them. One
     # feature set builds the wallet client and chain fixtures for every product.
     # A compile set that does not include the host leaves its feature list alone.
-    if 'pir-publisher' in compile_packages:
+    if 'pir-e2e-tests' in compile_packages:
         features.update({
-            'pir-publisher/enhance-tests',
-            'pir-publisher/status-tests',
-            'pir-publisher/transparent-tests',
+            'pir-e2e-tests/enhance-tests',
+            'pir-e2e-tests/transparent-tests',
         })
+    if 'pir-publisher' in compile_packages:
+        features.add('pir-publisher/status-tests')
     features.update(additional_features)
     command = ['cargo', 'test', '--locked', '--profile', 'release-fast', '--no-run', *options]
     for name in sorted(compile_packages):
