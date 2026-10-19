@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import subprocess
 import tomllib
+from backend_features import NATIVE, TRANSPARENT
 from fast import ROOT, workspace_packages
 from stage import run
 
@@ -46,18 +47,14 @@ def commands(group, groups, lint=False, compile_only=False):
                  *[arg for name in names for arg in ('-p', name)], '--', '-D', 'warnings']]
     runner = ['cargo', 'test', '--no-run'] if compile_only else ['bash', 'tools/ci/full-test.sh']
     features = {
-        'enhance': ['enhance-query-server/native-reinspiring', 'status-query-server/native-reinspiring',
-                    'enhance-publisher/native-reinspiring', 'status-publisher/native-reinspiring', 'status-publisher/cli',
-                    'enhance-pir-client/native-reinspiring', 'enhance-pir-load-test/native-reinspiring',
-                    'native-certificate/native-reinspiring',
-                    'pir-publisher/enhance', 'pir-publisher/status', 'pir-publisher/transparent',
-                    'pir-publisher/receiver', 'pir-publisher/native-reinspiring',
-                    'pir-publisher/enhance-tests', 'pir-publisher/status-tests',
-                    'pir-query-server/enhance', 'pir-query-server/status', 'pir-query-server/transparent',
-                    'pir-query-server/native-reinspiring'],
+        'enhance': NATIVE + [
+            'pir-publisher/enhance', 'pir-publisher/status', 'pir-publisher/transparent',
+            'pir-publisher/receiver', 'pir-publisher/native-reinspiring',
+            'pir-publisher/enhance-tests', 'pir-publisher/status-tests',
+            'pir-query-server/enhance', 'pir-query-server/status', 'pir-query-server/transparent',
+            'pir-query-server/native-reinspiring'],
         'shared': ['pir-control/admission'],
-        'transparent': ['transparent-publisher/rocksdb-reader', 'transparent-tools/test-support', 'transparent-tools/compact-export',
-                        'pir-publisher/transparent-tests'],
+        'transparent': TRANSPARENT,
     }.get(group, []) + qualification_features([*names, *(['pir-publisher'] if group == 'transparent' else [])])
     if group == 'transparent':
         names = [*names, 'pir-publisher']

@@ -96,6 +96,14 @@ class IntegrationTests(unittest.TestCase):
                             if word == '--test'}
                 self.assertFalse(selected - discovered[package])
 
+    def test_full_runs_both_tiers_and_fast_only_runs_fast(self):
+        tiers = {'fast': ['zebra', 'alpha'], 'full': ['crypto']}
+        prefix = ['--locked', '--profile', 'release-fast', '-p', 'enhance-publisher']
+        self.assertEqual(tests.cargo_args('enhance-publisher', tiers, 'fast'),
+                         prefix + ['--test', 'alpha', '--test', 'zebra'])
+        self.assertEqual(tests.cargo_args('enhance-publisher', tiers, 'full'),
+                         prefix + ['--lib', '--bins', '--test', 'alpha', '--test', 'crypto', '--test', 'zebra'])
+
     def test_fast_never_compiles_the_campaign_target(self):
         tiers = {'fast': ['smoke'], 'full': ['campaign']}
         self.assertEqual(tests.cargo_args('p', tiers, 'fast')[-2:], ['--test', 'smoke'])

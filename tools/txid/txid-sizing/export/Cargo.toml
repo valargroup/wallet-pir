@@ -6,6 +6,12 @@ publish = false
 
 [workspace]
 
+[features]
+# The included extractor gates its tests on this feature. Keep those regressions
+# in ordinary exporter tests; their synthetic-block dependencies stay dev-only.
+default = ["fixtures"]
+fixtures = []
+
 [dependencies]
 rusqlite = "0.37"
 hex = "0.4"
