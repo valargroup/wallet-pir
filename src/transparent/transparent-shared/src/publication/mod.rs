@@ -643,8 +643,8 @@ mod tests {
             results: vec![result(2, "bb", false), result(1, "aa", true)],
         };
         let answers = batch.answers(&request, &current.genesis_hash).unwrap();
-        assert_eq!(answers[&pair(1, "aa")], true);
-        assert_eq!(answers[&pair(2, "bb")], false);
+        assert!(answers[&pair(1, "aa")]);
+        assert!(!answers[&pair(2, "bb")]);
         assert!(batch.answers(&request, &"44".repeat(32)).is_err());
         for broken in [
             vec![result(1, "aa", true)],
