@@ -483,8 +483,14 @@ class Deployer:
                 if target.host != host or target.artifact_kind != 'enhance-pir-native-cuda':
                     continue
                 device = target.health_equals.get('matvec.cuda_device', 0)
-                code, output = self.ex.run(host, [path, 'check-backend', '--matvec-backend', 'cuda',
-                                                  '--cuda-device', str(device)], SELF_CHECK_SECONDS)
+                # NVRTC may live outside ldconfig's search path. Preserve only
+                # the unit's explicit loader path, never its credentials.
+                state = self.ex.probe_unit(host, target.unit)
+                config = units.effective(text for _, text in unit_files(state))
+                library_path = config.get('Service', {}).get('Environment', {}).get('LD_LIBRARY_PATH')
+                command = (["env", "LD_LIBRARY_PATH=" + library_path] if library_path is not None else [])
+                command += [path, 'check-backend', '--matvec-backend', 'cuda', '--cuda-device', str(device)]
+                code, output = self.ex.run(host, command, SELF_CHECK_SECONDS)
                 if code:
                     raise DeployError('%s: staged CUDA evaluator check failed (exit %d): %s'
                                       % (host, code, output[-500:]))

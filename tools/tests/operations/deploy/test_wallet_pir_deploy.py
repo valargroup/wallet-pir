@@ -291,6 +291,21 @@ class DeployTests(Fleet):
         self.assertIn(('worker-01', [deployer.service.release_binary(NEW_SHA), 'check-backend',
                                    '--matvec-backend', 'cuda', '--cuda-device', '0']), self.fake.runs)
 
+    def test_cuda_probe_preserves_only_the_units_explicit_library_path(self):
+        deployer = self.enhance_fleet()
+        deployer.targets = [dataclasses.replace(deployer.targets[0],
+                            artifact_kind='enhance-pir-native-cuda')]
+        state = self.fake.probe_unit('worker-01', 'enhance-pir-worker.service')
+        self.fake.host('worker-01').files[state['fragment_path']] += (
+            b'\n[Service]\nEnvironment=LD_LIBRARY_PATH=/opt/cuda/lib PRIVATE_TOKEN=fixture-only\n')
+        self.fake.systemctl('worker-01', 'daemon-reload')
+        deployer.capture_baseline()
+        deployer.deploy(NEW_SHA, self.binary)
+        command = ['env', 'LD_LIBRARY_PATH=/opt/cuda/lib', deployer.service.release_binary(NEW_SHA),
+                   'check-backend', '--matvec-backend', 'cuda', '--cuda-device', '0']
+        self.assertIn(('worker-01', command), self.fake.runs)
+        self.assertFalse(any('PRIVATE_TOKEN' in argument for _, argv in self.fake.runs for argument in argv))
+
     def test_only_the_selected_targets_roll(self):
         self.enhance_fleet()
         deployer = self.deployer(only=['worker@worker-02', 'worker@worker-01'])
