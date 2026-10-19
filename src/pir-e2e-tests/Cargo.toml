@@ -9,6 +9,8 @@ autobins = false
 
 [features]
 default = []
+# The copied query-host entrypoint selects its diagnostic subcommands with this feature.
+enhance = ["dep:enhance-publisher", "dep:enhance-query-server", "dep:pir-query-server", "pir-query-server/enhance"]
 native-reinspiring = ["enhance-publisher?/native-reinspiring"]
 # The Enhance hint cache records whether this build includes CUDA.
 cuda = ["enhance-query-server?/cuda"]
@@ -16,6 +18,7 @@ cuda = ["enhance-query-server?/cuda"]
 qualification-tests = []
 # Wallet-client and chain-fixture regressions.
 enhance-tests = [
+    "enhance",
     "dep:enhance-publisher",
     "enhance-publisher/fault-injection",
     "enhance-publisher/fixtures",
