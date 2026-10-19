@@ -9,6 +9,7 @@ The remaining programs share a pool of at most three processes.
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 
@@ -28,6 +29,71 @@ def publisher_runs_alone(name, kinds):
     build threads, so it stays in the shared pool there.
     """
     return name == 'transparent-publisher' and 'lib' in kinds and available_cpus() < 8
+
+
+# Dev-dependencies activate only for roots named in one Cargo command. These
+# packages define the fast closure (chain `testing`, reqwest `blocking`, and
+# the publisher product features). A smaller affected set still compiles them
+# so the warm cache is reused; only affected packages are executed.
+FAST_FEATURE_ROOTS = frozenset({
+    'enhance-pir-client',
+    'enhance-pir-exercise',
+    'enhance-pir-load-test',
+    'enhance-publisher',
+    'enhance-query-server',
+    'pir-monitor',
+    'pir-publisher',
+    'status-publisher',
+    'transparent-publisher',
+    'transparent-query-server',
+    'transparent-shared',
+    'transparent-tools',
+})
+
+
+def compile_roots(selected, available):
+    """Affected packages plus the stable fast dev-dependency closure."""
+    selected = set(selected)
+    available = set(available)
+    missing = selected - available
+    if missing:
+        raise ValueError('selected fast packages are missing from Cargo metadata: '
+                         + ', '.join(sorted(missing)))
+    return selected | (FAST_FEATURE_ROOTS & available)
+
+
+_TEST_ATTRIBUTE = re.compile(r'#\[(?:[\w:]+::)?test\b|#\[tokio::test\b')
+
+
+def target_declares_tests(target):
+    """Whether a binary's source contains a unit test.
+
+    An empty harness still links the binary's whole dependency graph. Fast
+    correctness compiles only binaries that declare a test. Missing source
+    stays included so an unread target is not dropped. Qualification builds
+    every binary on its own command.
+    """
+    src = target.get('src_path')
+    if not src:
+        return True
+    path = Path(src)
+    if not path.is_file():
+        return True
+    pending, seen = [path], set()
+    while pending:
+        current = pending.pop()
+        if current in seen or not current.is_file():
+            continue
+        seen.add(current)
+        text = current.read_text(encoding='utf-8', errors='replace')
+        if _TEST_ATTRIBUTE.search(text):
+            return True
+        directory = current.parent
+        for name in re.findall(
+                r'(?m)^(?:pub(?:\([^)]*\))?\s+)?mod\s+([A-Za-z_][A-Za-z0-9_]*)\s*;', text):
+            pending.append(directory / f'{name}.rs')
+            pending.append(directory / name / 'mod.rs')
+    return False
 
 
 def test_names(binary, directory, *, ignored=False):
@@ -79,14 +145,18 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3,
     metadata = json.loads(subprocess.check_output(
         ['cargo', 'metadata', '--locked', '--no-deps', '--format-version=1', *options],
         cwd=ROOT, env=environment, **inherited_fds()))
-    selected = set(selected)
-    packages = {p['id']: p for p in metadata['packages'] if p['name'] in selected}
-    if {p['name'] for p in packages.values()} != selected:
+    run_packages = set(selected)
+    compile_packages = compile_roots(run_packages, {p['name'] for p in metadata['packages']})
+    packages = {p['id']: p for p in metadata['packages'] if p['name'] in compile_packages}
+    if {p['name'] for p in packages.values()} != compile_packages:
         raise ValueError('selected fast packages are missing from Cargo metadata')
-    expected_integrations = {(name, target) for name in selected
-                             for target in registry.get(name, {}).get('fast', [])}
-    integration_names = {target for _, target in expected_integrations}
-    collisions = {(name, target) for name in selected
+    compile_integrations = {(name, target) for name in compile_packages
+                            for target in registry.get(name, {}).get('fast', [])}
+    expected_integrations = {item for item in compile_integrations if item[0] in run_packages}
+    integration_names = {target for _, target in compile_integrations}
+    # Name collisions are checked for every compiled root. Campaign targets of
+    # an anchor must not be pulled in by another package's fast name.
+    collisions = {(name, target) for name in compile_packages
                   for target in registry.get(name, {}).get('full', [])
                   if target in integration_names}
     if collisions:
@@ -94,6 +164,7 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3,
     features = set()
     kinds = set()
     expected_units = set()
+    package_bins = []
     for package in packages.values():
         name = package['name']
         classified = {f for entry in slow.get(name, {}).values() if isinstance(entry, dict)
@@ -102,22 +173,43 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3,
                  and set(t['kind']) & {'lib', 'bin'}]
         enabled = classified | {f for t in units for f in t.get('required-features', []) if f == 'cli'}
         for target in package['targets']:
-            if (name, target['name']) in expected_integrations and 'test' in target['kind']:
+            if (name, target['name']) in compile_integrations and 'test' in target['kind']:
                 enabled.update(target.get('required-features', []))
         if any(f.rsplit('/', 1)[-1] in {'native-reinspiring', 'cuda'} for f in enabled):
             raise ValueError(f'{name}: CPU fast builds must keep reference arithmetic separate from native/CUDA features')
         features.update(f if '/' in f else f'{name}/{f}' for f in enabled)
+        included_bins, skipped_bin = [], False
         for target in units:
+            if not set(target.get('required-features', [])) <= enabled:
+                continue
+            if 'bin' in target['kind'] and not target_declares_tests(target):
+                skipped_bin = True
+                continue
             kinds.update(set(target['kind']) & {'lib', 'bin'})
-            if set(target.get('required-features', [])) <= enabled:
+            if name in run_packages:
                 expected_units.add((name, target['name']))
+            if 'bin' in target['kind']:
+                included_bins.append(target['name'])
+        package_bins.append((skipped_bin, included_bins))
     if not kinds and not integration_names:
         return
     features.update(additional_features)
     command = ['cargo', 'test', '--locked', '--profile', 'release-fast', '--no-run', *options]
-    for name in sorted(selected):
+    for name in sorted(compile_packages):
         command += ['-p', name]
-    command += [flag for kind, flag in [('lib', '--lib'), ('bin', '--bins')] if kind in kinds]
+    if 'lib' in kinds:
+        command.append('--lib')
+    # --bins also links harnesses for binaries that contain no tests. Name the
+    # bins that declare one. With no skip, keep --bins so an unreadable target
+    # stays fail-open.
+    if 'bin' in kinds:
+        skipped_any = any(skipped for skipped, _included in package_bins)
+        if skipped_any:
+            included = sorted({name for _skipped, names in package_bins for name in names})
+            for name in included:
+                command += ['--bin', name]
+        else:
+            command.append('--bins')
     command += [arg for target in sorted(integration_names) for arg in ('--test', target)]
     if features:
         command += ['--features', ','.join(sorted(features))]
@@ -130,7 +222,7 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3,
         return
     programs = []
     actual_integrations, actual_units = set(), set()
-    discovered_units = {name: set() for name in selected}
+    discovered_units = {name: set() for name in run_packages}
     seen = set()
     for artifact in artifacts:
         binary = artifact['executable']
@@ -143,6 +235,10 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3,
         name = package['name']
         if 'qualification-tests' in artifact.get('features', []):
             raise ValueError(f'{name}: qualification test campaigns leaked into ordinary correctness')
+        # Anchors keep the dev-dependency feature closure compiled. Their
+        # programs are not part of this affected run.
+        if name not in run_packages:
+            continue
         target = artifact['target']
         integration = 'test' in target['kind']
         identity = (name, target['name'])
