@@ -278,6 +278,8 @@ def parser():
             command.add_argument('--fleet', help='the planned inventory, if it is not yet installed')
             command.add_argument('--known-hosts', help='the planned host-key pins, if not yet installed')
     transparent_cli().register(commands)
+    from . import publisher
+    publisher.register(commands)
     for name in ('plan', 'preflight', 'deploy'):
         command = commands.add_parser(name)
         command.add_argument('service')
@@ -382,13 +384,20 @@ def main(argv=None, executor=None, out=print, package_layout=None, package_githu
     try:
         from ..bundle import check_installed
         product_command = args.command.startswith(('schema-', 'txid-display-', 'transparent-binary-', 'transparent-alerts-',
-                                                   'ops-package-'))
+                                                   'ops-package-', 'publisher-cutover-'))
         mutation = (args.command in ('deploy', 'rollback') or getattr(args, 'stage', False)
                     or product_command and not args.command.endswith(('-plan', '-preflight', '-status', '-summary', '-recipe')))
         # A clean installed package may install a newer package revision; every
         # binary change still names the same source revision as the package.
         package_command = args.command.startswith('ops-package-')
         check_installed(mutation=mutation, revision=None if package_command else getattr(args, 'sha', None))
+        if args.command.startswith('publisher-cutover-'):
+            from . import publisher
+            request, _inventory = publisher.load_request(args.request, args.request_sha256)
+            check_installed(mutation=mutation, revision=request['release']['git_sha'])
+            result = publisher.dispatch(args, executor=executor, **options)
+            out(json.dumps(result, sort_keys=True))
+            return 0
         if args.command.startswith(('schema-', 'txid-display-', 'transparent-binary-', 'transparent-alerts-')):
             if args.json:
                 raise DeployError('product recipes already provide their own JSON receipts; omit --json')

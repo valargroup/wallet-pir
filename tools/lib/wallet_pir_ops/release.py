@@ -71,6 +71,7 @@ FILES['enhance-pir-native-cuda'] = FILES['enhance-pir-native'] + [
 ON_REQUEST = ('pir-publisher', 'enhance-pir-native', 'enhance-pir-native-cuda', 'status-pir', 'wallet-pir-ops')
 # Build-time protocol identity recorded in candidate.json and re-checked on extract.
 PROTOCOLS = {
+    'pir-publisher': 'wallet-pir-publisher-v1',
     'enhance-pir': 'ironwood-enhance-pir-v7',
     'enhance-pir-native': 'ironwood-enhance-pir-v9-native-two-mask-m29',
     'enhance-pir-native-cuda': 'ironwood-enhance-pir-v9-native-two-mask-m29',

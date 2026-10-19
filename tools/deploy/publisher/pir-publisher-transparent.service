@@ -1,0 +1,27 @@
+[Unit]
+Description=Transparent history and transaction-detail publisher
+After=network-online.target zakurad.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/transparent-publisher/v12
+ExecStart=@BIN@ --config /etc/wallet-pir/publisher.json
+Restart=on-failure
+RestartSec=15
+TimeoutStopSec=infinity
+KillMode=mixed
+UMask=0077
+Environment=RUST_LOG=info
+MemoryMax=12G
+MemorySwapMax=0
+Nice=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/srv/transparent-activity/full-v12 /srv/transparent-activity/full-v3/journal /opt/transparent-publisher/v12/state /srv/txid-display-genesis/v4/root /srv/txid-display-genesis/journal-v3 /opt/transparent-txid-display-k8/state
+ReadOnlyPaths=/opt/transparent-publisher/credentials
+
+[Install]
+WantedBy=multi-user.target
