@@ -908,6 +908,12 @@ class Fleet:
         self.bump_generation()
         if not self.quorum(active):
             await self.route([])
+            # Workers that attested the new digest have left the publication
+            # active.json still names. A later membership or https-recent
+            # update routes that set whenever its ids still form a quorum, so
+            # a moved replica would be published beside members still serving
+            # the previous map. Drop only the workers that moved.
+            self.drop_moved_workers(digest, active)
             raise RuntimeError('activation quorum unavailable; router withdrawn')
         # Only members attesting the new digest serve it: a member still on the
         # previous digest cannot answer the new tail revision.
@@ -985,6 +991,27 @@ class Fleet:
             await self.route([])
             retained = None
         return {'ok':True,'invalidated':list(revoked),'retained_publication':retained is not None}
+
+    def drop_moved_workers(self, digest, moved):
+        """Remove workers that attested `digest` from the previous active set.
+
+        Called only after a new publication failed to reach routing quorum.
+        Workers absent from `moved` were not activated and still serve the
+        previous map, so they stay listed.
+        """
+        path = self.root/'active.json'
+        try:
+            previous = json.loads(path.read_text())
+        except (OSError, ValueError):
+            return
+        if (not isinstance(previous, dict) or previous.get('map_sha256') in (None, digest)
+                or not isinstance(previous.get('workers'), list)):
+            return
+        survivors = sorted(worker for worker in previous['workers'] if worker not in moved)
+        if survivors != sorted(previous['workers']):
+            atomic_json(path, {**previous, 'workers': survivors})
+            print(json.dumps({'event':'activation_quorum_unavailable', 'map_sha256':digest,
+                              'moved':sorted(moved), 'retained':survivors}), file=sys.stderr)
 
     async def activate(self, req):
         async with self.lock('routing'):

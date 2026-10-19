@@ -9,6 +9,7 @@ use crate::{
 };
 use std::{
     collections::BTreeSet,
+    path::Path,
     sync::{Arc, RwLock},
     time::Duration,
 };
@@ -103,19 +104,6 @@ impl Manager {
         }))
     }
 
-    fn revoke(&mut self, current: &Current, digests: BTreeSet<String>) -> Result<(), Error> {
-        self.floor.revision = self.floor.revision.max(current.revision);
-        self.floor.digests.extend(digests.iter().cloned());
-        // Fence the serving owner first, including when disk writes fail.
-        let owner = self.live.revoke(&digests);
-        let floor = persist(
-            &self.config.directory.join("revocation-floor.json"),
-            &self.floor,
-        );
-        owner?;
-        floor?;
-        Ok(())
-    }
     async fn observe(&mut self) -> Result<Current, Error> {
         let polled = self
             .source
@@ -135,35 +123,18 @@ impl Manager {
                 None,
             ),
         };
-        let anchors = self.live.anchors();
-        if let Some(from) = current.invalidated_from {
-            let digests = anchors
-                .iter()
-                .filter(|(_, h, _)| *h >= from)
-                .map(|(d, _, _)| d.clone())
-                .collect();
-            self.revoke(&current, digests)?;
-        }
-        if !current.eligible() {
-            let digests = anchors
-                .iter()
-                .filter(|(_, h, hash)| *h == current.anchor_height && *hash == current.anchor_hash)
-                .map(|(d, _, _)| d.clone())
-                .collect();
-            self.revoke(&current, digests)?;
-        }
-        let observed = self.source.observe(&self.config.directory, &current);
+        let reconciled = reconcile_serving(
+            &mut self.source,
+            &self.config.directory,
+            &self.live,
+            &mut self.floor,
+            &current,
+        )
+        .await;
         if let Some(error) = storage_error {
             return Err(error);
         }
-        observed?;
-        // Latest invalidated_from is not a cumulative reorg log. Check every
-        // retained exact anchor, even after skipped revisions or an unchanged poll.
-        for (digest, height, hash) in anchors {
-            if !self.source.anchor(&current, height, &hash).await? {
-                self.revoke(&current, BTreeSet::from([digest]))?;
-            }
-        }
+        reconciled?;
         if !current.eligible() {
             return Err("display source is withdrawn or noncanonical".into());
         }
@@ -354,31 +325,12 @@ impl Manager {
         let floor = &mut self.floor;
         let source = &mut self.source;
         live.activate_checked(expected, publication.map_sha256, || async {
-            let latest = source
-                .poll(&root, None, &current.network, &current.genesis_hash)
+            let latest = refresh_serving(source, &root, &live, floor, current)
                 .await
-                .map_err(|e| e.to_string())?
-                .ok_or("missing display current")?;
-            let (latest, storage) = latest;
+                .map_err(|e| e.to_string())?;
             if latest != *current || !latest.eligible() {
-                let revoked: BTreeSet<String> = anchors
-                    .iter()
-                    .filter(|(_, h, _)| {
-                        latest.invalidated_from.is_some_and(|from| *h >= from) || !latest.eligible()
-                    })
-                    .map(|(d, _, _)| d.clone())
-                    .collect();
-                floor.revision = floor.revision.max(latest.revision);
-                floor.digests.extend(revoked.iter().cloned());
-                live.revoke(&revoked)?;
-                persist(&root.join("revocation-floor.json"), floor)?;
-                source.observe(&root, &latest).map_err(|e| e.to_string())?;
                 return Err("display candidate superseded or invalidated".into());
             }
-            if let Some(error) = storage {
-                return Err(error.to_string());
-            }
-            source.observe(&root, &latest).map_err(|e| e.to_string())?;
             let mut keep = BTreeSet::new();
             for (digest, height, hash) in &anchors {
                 if !source
@@ -386,11 +338,18 @@ impl Manager {
                     .await
                     .map_err(|e| e.to_string())?
                 {
-                    let revoked = BTreeSet::from([digest.clone()]);
-                    floor.revision = floor.revision.max(latest.revision);
-                    floor.digests.extend(revoked.iter().cloned());
-                    live.revoke(&revoked)?;
-                    persist(&root.join("revocation-floor.json"), floor)?;
+                    let revoked = revoke(
+                        &root,
+                        &live,
+                        floor,
+                        &latest,
+                        BTreeSet::from([digest.clone()]),
+                    );
+                    // The chain can change after the preceding pointer check.
+                    // Refresh serving authority before leaving the rejected candidate.
+                    let reconciled = refresh_serving(source, &root, &live, floor, &latest).await;
+                    revoked.map_err(|e| e.to_string())?;
+                    reconciled.map_err(|e| e.to_string())?;
                     return Err("display candidate has noncanonical history".into());
                 }
                 if floor.digests.contains(digest) && latest.revision <= floor.revision {
@@ -398,40 +357,12 @@ impl Manager {
                 }
                 keep.insert(digest.clone());
             }
-            let (final_current, storage) = source
-                .poll(&root, None, &current.network, &current.genesis_hash)
+            let final_current = refresh_serving(source, &root, &live, floor, current)
                 .await
-                .map_err(|e| e.to_string())?
-                .ok_or("missing final display current")?;
+                .map_err(|e| e.to_string())?;
             if final_current != latest {
-                let revoked: BTreeSet<String> = live
-                    .anchors()
-                    .into_iter()
-                    .filter(|(_, height, _)| {
-                        final_current
-                            .invalidated_from
-                            .is_some_and(|from| *height >= from)
-                            || !final_current.eligible()
-                    })
-                    .map(|(digest, _, _)| digest)
-                    .collect();
-                floor.revision = floor.revision.max(final_current.revision);
-                floor.digests.extend(revoked.iter().cloned());
-                if !revoked.is_empty() {
-                    live.revoke(&revoked)?;
-                }
-                persist(&root.join("revocation-floor.json"), floor)?;
-                source
-                    .observe(&root, &final_current)
-                    .map_err(|e| e.to_string())?;
                 return Err("display current changed during anchor checks".into());
             }
-            if let Some(error) = storage {
-                return Err(error.to_string());
-            }
-            source
-                .observe(&root, &final_current)
-                .map_err(|e| e.to_string())?;
             live.restore_verified(&keep)?;
             Ok(())
         })
@@ -455,4 +386,86 @@ impl Manager {
             tokio::time::sleep(Duration::from_millis(base * 1000 + jitter)).await;
         }
     }
+}
+
+/// Fence memory first; a failed durable write must never release an orphaned answer.
+fn revoke(
+    root: &Path,
+    live: &DisplayLive,
+    floor: &mut Floor,
+    current: &Current,
+    digests: BTreeSet<String>,
+) -> Result<(), Error> {
+    floor.revision = floor.revision.max(current.revision);
+    floor.digests.extend(digests.iter().cloned());
+    let owner = live.revoke(&digests);
+    let saved = persist(&root.join("revocation-floor.json"), floor);
+    owner?;
+    saved?;
+    Ok(())
+}
+
+/// Apply every accepted source snapshot to active and retained serving views.
+/// A recovered canonical pointer may omit a withdrawal the consumer missed, so
+/// exact anchor checks must precede even a superseded-candidate return.
+async fn reconcile_serving(
+    source: &mut Source,
+    root: &Path,
+    live: &DisplayLive,
+    floor: &mut Floor,
+    current: &Current,
+) -> Result<(), Error> {
+    let anchors: BTreeSet<_> = live.anchors().into_iter().collect();
+    if let Some(from) = current.invalidated_from {
+        let digests = anchors
+            .iter()
+            .filter(|(_, height, _)| *height >= from)
+            .map(|(digest, _, _)| digest.clone())
+            .collect();
+        revoke(root, live, floor, current, digests)?;
+    }
+    if !current.eligible() {
+        let digests = anchors
+            .iter()
+            .filter(|(_, height, hash)| {
+                *height == current.anchor_height && *hash == current.anchor_hash
+            })
+            .map(|(digest, _, _)| digest.clone())
+            .collect();
+        revoke(root, live, floor, current, digests)?;
+    }
+    let recorded = source.observe(root, current);
+    // A storage failure cannot hide exact negative evidence from the live owner.
+    let checked = async {
+        for (digest, height, hash) in anchors {
+            if !source.anchor(current, height, &hash).await? {
+                revoke(root, live, floor, current, BTreeSet::from([digest]))?;
+            }
+        }
+        Ok(())
+    }
+    .await;
+    recorded?;
+    checked
+}
+
+/// Read a fresh pointer and reconcile serving authority before any caller can
+/// reject a superseded candidate or publish a replacement.
+async fn refresh_serving(
+    source: &mut Source,
+    root: &Path,
+    live: &DisplayLive,
+    floor: &mut Floor,
+    identity: &Current,
+) -> Result<Current, Error> {
+    let (current, storage) = source
+        .poll(root, None, &identity.network, &identity.genesis_hash)
+        .await?
+        .ok_or("missing display current")?;
+    let reconciled = reconcile_serving(source, root, live, floor, &current).await;
+    if let Some(error) = storage {
+        return Err(error);
+    }
+    reconciled?;
+    Ok(current)
 }

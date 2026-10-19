@@ -132,6 +132,14 @@ update preserves a valid predecessor. Restart reuses verified completed files
 but still requires fresh HTTPS authority; cached bytes alone cannot start a
 wallet listener. `/v1/provider-status` is private operational status, separate
 from wallet routes. Synchronization runs independently of wallet requests.
+A withdrawal observed during preparation fences affected active and retained
+views immediately, even when the incoming candidate has different revision
+identities. Every authority recheck also validates the exact anchors of active
+and retained views before rejecting a superseded candidate. This fences orphaned
+answers when a consumer skips a withdrawal and sees the recovered canonical
+publication directly; a still-canonical predecessor remains available. A display publisher restarted after a recent reorg leaves its saved
+noncanonical view unpublished while normal journal reconciliation rebuilds it;
+invalid material, a different chain identity or RPC failures still refuse startup.
 
 Journal reuse is independent of distribution state. Existing version-2 journals
 retain fixed 87-byte records when appended; version-3 journals retain their

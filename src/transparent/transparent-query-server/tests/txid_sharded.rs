@@ -6,7 +6,7 @@ use zakura_pir_client::transparent::txid_client as transparent_txid_client;
 use zakura_pir_protocol::transparent::events as transparent_events;
 use zakura_pir_publisher::transparent as transparent_shard;
 
-#[path = "../examples/support/bytemeter.rs"]
+#[path = "support/bytemeter.rs"]
 mod bytemeter;
 
 use axum::body::Body;

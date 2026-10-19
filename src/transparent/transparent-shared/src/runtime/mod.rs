@@ -1485,6 +1485,44 @@ pub(crate) mod tests {
         }
     }
 
+    /// Share only parameters of the same schema. History and display derive
+    /// different masks even when their test dimensions match.
+    pub(crate) fn fixture_params(
+        geometry: &'static transparent_shard::layout::Geometry,
+        table: Table,
+        display: bool,
+    ) -> Arc<SharedParams> {
+        if cfg!(feature = "qualification-tests") {
+            return Arc::new(if display {
+                SharedParams::build_display(geometry, table).unwrap()
+            } else {
+                SharedParams::build(geometry, table).unwrap()
+            });
+        }
+        assert_eq!(geometry, &NATIVE_INSTANCE);
+        assert_eq!(table, Table::TxDirectory);
+        static HISTORY: std::sync::LazyLock<Arc<SharedParams>> = std::sync::LazyLock::new(|| {
+            Arc::new(SharedParams::build(&NATIVE_INSTANCE, Table::TxDirectory).unwrap())
+        });
+        static DISPLAY: std::sync::LazyLock<Arc<SharedParams>> = std::sync::LazyLock::new(|| {
+            Arc::new(SharedParams::build_display(&NATIVE_INSTANCE, Table::TxDirectory).unwrap())
+        });
+        if display {
+            DISPLAY.clone()
+        } else {
+            HISTORY.clone()
+        }
+    }
+
+    /// Two fully occupied deterministic inputs for recovery tests. All rows
+    /// differ between inputs, so a random self-check cannot miss the forgery.
+    pub(crate) fn recovery_rows(shared: &SharedParams, different: bool) -> Vec<u8> {
+        let seed = if different { 5 } else { 4 };
+        (0..shared.profile.rows * shared.profile.row_bytes)
+            .map(|i| ((i + seed * 7_919).wrapping_mul(2_654_435_761) >> 9) as u8)
+            .collect()
+    }
+
     /// Prepare immutable native bytes once; every consumer gets a private file
     /// before testing corruption, replacement or retirement. Qualification
     /// deliberately keeps independent cold builds.
@@ -1525,6 +1563,7 @@ pub(crate) mod tests {
         let private = tempfile::tempdir().unwrap();
         let files = ShippedRuntimes::new(private.path().to_path_buf());
         std::fs::copy(&path, files.path(&key, shared, &digest)).unwrap();
+        drop(lock);
         // Loaded runtimes own their mappings after the private pathname is
         // removed; no consumer can mutate the retained fixture's inode.
         files

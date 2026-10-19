@@ -1,9 +1,5 @@
 //! Real HTTPS full-coverage display synchronization and durable recovery.
-use super::{
-    distribution::Distribution,
-    fixture,
-    publisher::{bootstrap, write_candidate},
-};
+use super::{distribution::Distribution, fixture, publisher::bootstrap};
 use crate::history::controller::distribution_tests::tls_router;
 use std::{
     path::Path,
@@ -12,6 +8,7 @@ use std::{
         Arc,
     },
 };
+use tower::ServiceExt;
 use transparent_query_server::{
     config::ServiceConfig, routing::bootstrap::Config, tx_detail::manager::Manager,
 };
@@ -42,10 +39,14 @@ fn manager(root: &Path, origin: &str, cert: reqwest::Certificate) -> Manager {
 async fn full_display_consumers_follow_https_and_restart_without_building() {
     let scratch = tempfile::tempdir().unwrap();
     let journal = scratch.path().join("journal");
-    fixture::write_journal(&journal, 0, 16, 0);
+    fixture::write_journal(&journal, 0, 8, 0);
     let store = EventStore::open_existing(&journal).unwrap();
     let root = scratch.path().join("publisher");
-    let bootstrap = bootstrap(&store, &root, &fixture::layout(&store, 1, 16), 16).unwrap();
+    let initial = bootstrap(&store, &root, &fixture::layout(&store, 1, 16), 7).unwrap();
+    assert!(
+        !initial.seals.is_empty(),
+        "the fixture must include archive holdings"
+    );
     let canonical = Arc::new(AtomicBool::new(true));
     let state = canonical.clone();
     let node = axum::Router::new().route(
@@ -76,7 +77,7 @@ async fn full_display_consumers_follow_https_and_restart_without_building() {
     let rpc = crate::ingest::zakura::connect(format!("http://{address}"), cookie).unwrap();
     let distribution = Distribution::new(&root, rpc).unwrap();
     distribution
-        .finalize(bootstrap.candidate.clone(), vec![])
+        .finalize(initial.candidate.clone(), vec![])
         .await
         .unwrap();
     let tls_root = scratch.path().join("tls");
@@ -125,9 +126,15 @@ async fn full_display_consumers_follow_https_and_restart_without_building() {
             .unwrap();
     });
     let mut wallet = display_world::Wallet::at(&origin);
-    for height in [1, 8, 16] {
-        wallet.found(&fixture::chain_records(0, height)[0], height);
+    let mut old_query = None;
+    for height in [1, 4, 7] {
+        let (_, transcript) = wallet.found(&fixture::chain_records(0, height)[0], height);
+        old_query = transcript
+            .into_iter()
+            .find(|request| request.path.contains("/recent/") && request.path.contains("/query/"))
+            .or(old_query);
     }
+    let old_query = old_query.expect("the wallet queried the serving recent revision");
     let metrics = reqwest::get(format!("{origin}/metrics"))
         .await
         .unwrap()
@@ -152,10 +159,38 @@ async fn full_display_consumers_follow_https_and_restart_without_building() {
     assert!(restarted.ready().await);
     // The budget includes live metadata and attestations, not cached runtime bodies.
     assert!(result["downloaded_bytes"].as_u64().unwrap() < 1 << 20);
-    // A new pointer to the same immutable map is still reconciled, without runtime bodies.
-    let (same, _) = write_candidate(&root, &bootstrap.map).unwrap();
+    // The serving recent revision must differ from the incoming candidate:
+    // withdrawing only the candidate must not leave its predecessor answerable.
+    let next = bootstrap(
+        &store,
+        &scratch.path().join("next"),
+        &fixture::layout(&store, 1, 16),
+        8,
+    )
+    .unwrap();
+    let old = initial.map.shards.last().unwrap();
+    assert_ne!(
+        old.manifest_digest,
+        next.map.shards.last().unwrap().manifest_digest
+    );
+    let old_request = || {
+        axum::http::Request::builder()
+            .method(axum::http::Method::POST)
+            .uri(&old_query.path)
+            .body(axum::body::Body::from(old_query.body.clone()))
+            .unwrap()
+    };
+    assert_eq!(
+        second
+            .router()
+            .oneshot(old_request())
+            .await
+            .unwrap()
+            .status(),
+        axum::http::StatusCode::OK
+    );
     distribution
-        .finalize(same, vec![bootstrap.candidate.clone()])
+        .finalize(next.candidate.clone(), vec![initial.candidate.clone()])
         .await
         .unwrap();
     // Change authority after staging but before the checked activation commits.
@@ -164,24 +199,39 @@ async fn full_display_consumers_follow_https_and_restart_without_building() {
         let result = second.poll_once().await;
         (second, result)
     });
-    tokio::time::timeout(std::time::Duration::from_secs(5), async {
-        while !tls.control.with_extension("entered").exists() {
+    // A different map performs real native preparation before this check;
+    // the former same-map case skipped that work.
+    tokio::time::timeout(std::time::Duration::from_secs(20), async {
+        while !tls.control.with_extension("entered").exists() && !checking.is_finished() {
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
     })
     .await
     .unwrap();
+    if !tls.control.with_extension("entered").exists() {
+        let (_, result) = checking.await.unwrap();
+        panic!("synchronization ended before the activation check: {result:?}");
+    }
     distribution.withdraw(0).unwrap();
     std::fs::write(&tls.control, "").unwrap();
     let (mut second, result) = checking.await.unwrap();
     assert!(result.is_err(), "a withdrawn candidate must not activate");
+    assert_eq!(
+        second
+            .router()
+            .oneshot(old_request())
+            .await
+            .unwrap()
+            .status(),
+        axum::http::StatusCode::CONFLICT,
+        "a withdrawn predecessor must stop answering immediately"
+    );
     assert!(
         !second.ready().await,
         "withdrawal must fence the previous view too"
     );
-    let (canonical_again, _) = write_candidate(&root, &bootstrap.map).unwrap();
     distribution
-        .finalize(canonical_again, vec![bootstrap.candidate.clone()])
+        .finalize(next.candidate.clone(), vec![initial.candidate.clone()])
         .await
         .unwrap();
     second.poll_once().await.unwrap();
@@ -196,5 +246,370 @@ async fn full_display_consumers_follow_https_and_restart_without_building() {
         !refused.ready().await,
         "saved bytes cannot revive revoked service"
     );
+    node_task.abort();
+}
+
+/// An orphaned saved tip is an input to recovery, never startup authority.
+#[tokio::test(flavor = "multi_thread")]
+async fn http_display_publisher_recovers_after_an_offline_reorg() {
+    use super::{
+        controller::{Controller, Outcome, Settings},
+        source::{open_writer, Script, ScriptStep, Source},
+    };
+
+    for journal_already_rolled_back in [false, true] {
+        let scratch = tempfile::tempdir().unwrap();
+        let journal = scratch.path().join("journal");
+        fixture::write_journal(&journal, 0, 3, 0);
+        let root = scratch.path().join("publisher");
+        let store = EventStore::open_existing(&journal).unwrap();
+        let mut layout = fixture::layout(&store, 1, 16);
+        layout.seal.archive_target = 1_000;
+        let initial = bootstrap(&store, &root, &layout, 3).unwrap();
+        drop(store);
+        let fork_hash = fixture::block_hash(1, 3);
+        let wrong_genesis = Arc::new(AtomicBool::new(false));
+        let state = wrong_genesis.clone();
+        let node = axum::Router::new().route(
+            "/",
+            axum::routing::post(move |axum::Json(request): axum::Json<serde_json::Value>| {
+                let wrong_genesis = state.clone();
+                async move {
+                    assert_eq!(request["method"], "getblockhash");
+                    let height = request["params"][0].as_u64().unwrap();
+                    let hash = match height {
+                        0 if wrong_genesis.load(Ordering::Acquire) => "11".repeat(32),
+                        0 => fixture::GENESIS.to_string(),
+                        3 => fork_hash.to_display_hex(),
+                        _ => fixture::block_hash(0, height).to_display_hex(),
+                    };
+                    axum::Json(serde_json::json!({"id":request["id"],"result":hash,"error":null}))
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let node_task = tokio::spawn(async move { axum::serve(listener, node).await.unwrap() });
+        let cookie = scratch.path().join("cookie");
+        std::fs::write(&cookie, "fixture:fixture").unwrap();
+        let rpc = crate::ingest::zakura::connect(format!("http://{address}"), cookie).unwrap();
+        let distribution = Distribution::new(&root, rpc).unwrap();
+        let records = fixture::chain_sources(1, 3);
+        let steps = if journal_already_rolled_back {
+            // A crash after journal replacement left the old active pointer.
+            let mut store = open_writer(&journal).unwrap();
+            store.rollback_to(Some(2)).unwrap();
+            let events =
+                transparent_shared::journal::display_journal::implied_events(3, &records).unwrap();
+            store
+                .append_block_with_display(3, fork_hash, &events, &records)
+                .unwrap();
+            store.commit().unwrap();
+            vec![]
+        } else {
+            // The chain changed while stopped; normal source polling must run.
+            vec![ScriptStep::Reorg {
+                ancestor: 2,
+                blocks: vec![(fork_hash, records)],
+            }]
+        };
+        let mut controller = Controller::open(
+            &root,
+            open_writer(&journal).unwrap(),
+            Source::Script(Script::new(steps)),
+            vec![],
+            Settings {
+                distribution: Some(distribution.clone()),
+                exit_when_idle: true,
+                ..Settings::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(controller.run().await.unwrap(), Outcome::Idle);
+        assert_ne!(controller.active().map_sha256, initial.map_sha256);
+        assert_eq!(controller.active().tip_hash, fork_hash.to_display_hex());
+        let response = distribution
+            .router()
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/provider/txid/v1/current")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+        let current: transparent_shared::publication::Current = serde_json::from_slice(
+            &axum::body::to_bytes(response.into_body(), 16 << 10)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert!(current.eligible());
+        assert_eq!(current.anchor_hash, fork_hash.to_display_hex());
+        drop(controller);
+        wrong_genesis.store(true, Ordering::Release);
+        let mut refused = Controller::open(
+            &root,
+            open_writer(&journal).unwrap(),
+            Source::Script(Script::new([])),
+            vec![],
+            Settings {
+                distribution: Some(distribution.clone()),
+                exit_when_idle: true,
+                ..Settings::default()
+            },
+        )
+        .unwrap();
+        assert!(refused
+            .run()
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("genesis differs"));
+        node_task.abort();
+    }
+}
+
+#[derive(Clone, Copy)]
+enum Recheck {
+    AfterPreparation,
+    FloorWriteFailure,
+    AfterAnchors,
+    CandidateAnchor,
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn display_rechecks_serving_anchors_after_preparation_skips_a_withdrawal() {
+    recheck_after_recovery(Recheck::AfterPreparation, true).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn display_rechecks_serving_anchors_after_final_current_skips_a_withdrawal() {
+    recheck_after_recovery(Recheck::AfterAnchors, true).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn display_rechecks_serving_anchors_after_a_candidate_anchor_turns_noncanonical() {
+    recheck_after_recovery(Recheck::CandidateAnchor, true).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn display_rechecks_fence_memory_when_the_revocation_floor_cannot_be_saved() {
+    recheck_after_recovery(Recheck::FloorWriteFailure, true).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn display_rechecks_preserve_a_canonical_predecessor_when_an_update_is_superseded() {
+    recheck_after_recovery(Recheck::AfterPreparation, false).await;
+}
+
+async fn recheck_after_recovery(phase: Recheck, reorg: bool) {
+    let scratch = tempfile::tempdir().unwrap();
+    let journal = scratch.path().join("journal");
+    fixture::write_journal(&journal, 0, 4, 0);
+    let store = EventStore::open_existing(&journal).unwrap();
+    let mut layout = fixture::layout(&store, 1, 16);
+    layout.seal.archive_target = 1_000;
+    let root = scratch.path().join("publisher");
+    let initial = bootstrap(&store, &root, &layout, 3).unwrap();
+    let next = bootstrap(&store, &scratch.path().join("next"), &layout, 4).unwrap();
+    let fork_journal = scratch.path().join("fork-journal");
+    fixture::write_journal(&fork_journal, 0, 2, 0);
+    {
+        let mut fork = super::source::open_writer(&fork_journal).unwrap();
+        for height in 3..=4 {
+            let records = fixture::chain_sources(1, height);
+            let events =
+                transparent_shared::journal::display_journal::implied_events(height, &records)
+                    .unwrap();
+            fork.append_block_with_display(
+                height,
+                fixture::block_hash(1, height),
+                &events,
+                &records,
+            )
+            .unwrap();
+        }
+        fork.commit().unwrap();
+    }
+    let recovered = bootstrap(
+        &EventStore::open_existing(&fork_journal).unwrap(),
+        &scratch.path().join("recovered"),
+        &layout,
+        4,
+    )
+    .unwrap();
+    let forked = Arc::new(AtomicBool::new(false));
+    let state = forked.clone();
+    let node = axum::Router::new().route(
+        "/",
+        axum::routing::post(move |axum::Json(request): axum::Json<serde_json::Value>| {
+            let forked = state.clone();
+            async move {
+                assert_eq!(request["method"], "getblockhash");
+                let height = request["params"][0].as_u64().unwrap();
+                let tag = u8::from(height >= 3 && forked.load(Ordering::Acquire));
+                let hash = if height == 0 {
+                    fixture::GENESIS.to_string()
+                } else {
+                    fixture::block_hash(tag, height).to_display_hex()
+                };
+                axum::Json(serde_json::json!({"id":request["id"],"result":hash,"error":null}))
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let node_task = tokio::spawn(async move {
+        axum::serve(listener, node).await.unwrap();
+    });
+    let cookie = scratch.path().join("cookie");
+    std::fs::write(&cookie, "fixture:fixture").unwrap();
+    let rpc = crate::ingest::zakura::connect(format!("http://{address}"), cookie).unwrap();
+    let distribution = Distribution::new(&root, rpc).unwrap();
+    distribution
+        .finalize(initial.candidate.clone(), vec![])
+        .await
+        .unwrap();
+    let tls_root = scratch.path().join("tls");
+    std::fs::create_dir(&tls_root).unwrap();
+    let tls = tls_router(&tls_root, distribution.router()).await;
+    let consumer_root = scratch.path().join("consumer");
+    let mut consumer = manager(&consumer_root, &tls.origin, tls.cert.clone());
+    consumer.poll_once().await.unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let router = consumer.router();
+    let query_task = tokio::spawn(async move {
+        axum::serve(listener, router).await.unwrap();
+    });
+    let mut wallet = display_world::Wallet::at(&origin);
+    let (_, transcript) = wallet.found(&fixture::chain_records(0, 3)[0], 3);
+    let query = transcript
+        .into_iter()
+        .find(|r| r.path.contains("/query/"))
+        .unwrap();
+    tokio::task::block_in_place(|| drop(wallet));
+    let old_query = || {
+        axum::http::Request::builder()
+            .method(axum::http::Method::POST)
+            .uri(&query.path)
+            .body(axum::body::Body::from(query.body.clone()))
+            .unwrap()
+    };
+    distribution
+        .finalize(next.candidate.clone(), vec![initial.candidate.clone()])
+        .await
+        .unwrap();
+    let pause = match phase {
+        Recheck::AfterPreparation | Recheck::FloorWriteFailure => "pause-current-2".to_string(),
+        Recheck::AfterAnchors => "pause-current-3".to_string(),
+        Recheck::CandidateAnchor => format!(
+            "pause-anchor-{}",
+            fixture::block_hash(0, 4).to_display_hex()
+        ),
+    };
+    std::fs::write(&tls.control, pause).unwrap();
+    let checking = tokio::spawn(async move {
+        let result = consumer.poll_once().await;
+        (consumer, result)
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(20), async {
+        while !tls.control.with_extension("entered").exists() && !checking.is_finished() {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    if !tls.control.with_extension("entered").exists() {
+        let (_, result) = checking.await.unwrap();
+        panic!("synchronization ended before the authority check: {result:?}");
+    }
+    forked.store(reorg, Ordering::Release);
+    if !matches!(phase, Recheck::CandidateAnchor) {
+        if reorg {
+            distribution.withdraw(3).unwrap();
+        }
+        let offered = if reorg { &recovered } else { &next };
+        distribution
+            .finalize(offered.candidate.clone(), vec![initial.candidate.clone()])
+            .await
+            .unwrap();
+        // The consumer receives the recovered canonical pointer, not the
+        // intervening withdrawal. Negative ranges are not a cumulative log.
+        let response = distribution
+            .router()
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/provider/txid/v1/current")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let current: transparent_shared::publication::Current = serde_json::from_slice(
+            &axum::body::to_bytes(response.into_body(), 16 << 10)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert!(current.eligible() && current.invalidated_from.is_none());
+    }
+    let failed_floor = consumer_root.join("revocation-floor.json");
+    if matches!(phase, Recheck::FloorWriteFailure) {
+        std::fs::create_dir(&failed_floor).unwrap();
+    }
+    std::fs::write(&tls.control, "").unwrap();
+    let (mut consumer, result) = checking.await.unwrap();
+    assert!(result.is_err(), "the prepared candidate lost authority");
+    let expected = if reorg {
+        axum::http::StatusCode::CONFLICT
+    } else {
+        axum::http::StatusCode::OK
+    };
+    assert_eq!(
+        consumer
+            .router()
+            .oneshot(old_query())
+            .await
+            .unwrap()
+            .status(),
+        expected,
+        "serving predecessors must be checked even when the withdrawal was skipped"
+    );
+    assert_eq!(consumer.ready().await, !reorg);
+    if matches!(phase, Recheck::FloorWriteFailure) {
+        std::fs::remove_dir(&failed_floor).unwrap();
+    }
+    if matches!(phase, Recheck::CandidateAnchor) {
+        distribution
+            .finalize(recovered.candidate.clone(), vec![initial.candidate.clone()])
+            .await
+            .unwrap();
+    }
+    consumer.poll_once().await.unwrap();
+    assert!(
+        consumer.ready().await,
+        "fresh canonical data can recover service"
+    );
+    query_task.abort();
+    let _ = query_task.await;
+    drop(consumer);
+    let mut restarted = manager(&consumer_root, &tls.origin, tls.cert.clone());
+    restarted.poll_once().await.unwrap();
+    assert!(restarted.ready().await);
+    if reorg {
+        assert_eq!(
+            restarted
+                .router()
+                .oneshot(old_query())
+                .await
+                .unwrap()
+                .status(),
+            expected,
+            "restart must retain the orphaned predecessor fence"
+        );
+    }
     node_task.abort();
 }

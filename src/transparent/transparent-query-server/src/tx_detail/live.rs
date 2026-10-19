@@ -315,13 +315,17 @@ impl DisplayLive {
     /// Fence memory before durable writes so a storage failure cannot release an orphaned answer.
     pub(crate) fn revoke(&self, digests: &BTreeSet<String>) -> Result<(), String> {
         let _gate = self.0.publication_gate.lock().unwrap();
-        self.0.epoch.fetch_add(1, Ordering::AcqRel);
         let active = self.0.active.read().unwrap();
         let retired = self.0.retired.read().unwrap();
         let mut invalid = self.0.invalid.write().unwrap();
-        invalid.extend(digests.iter().cloned());
-        for a in active.iter().chain(retired.iter()) {
-            a.state.release_pins(Some(&invalid));
+        // Rechecking an already fenced predecessor must not cancel a freshly
+        // prepared canonical replacement. Still retry the durable write below.
+        if !digests.is_subset(&invalid) {
+            self.0.epoch.fetch_add(1, Ordering::AcqRel);
+            invalid.extend(digests.iter().cloned());
+            for a in active.iter().chain(retired.iter()) {
+                a.state.release_pins(Some(&invalid));
+            }
         }
         persist(&self.0.record.with_extension("invalid.json"), &*invalid)
     }
