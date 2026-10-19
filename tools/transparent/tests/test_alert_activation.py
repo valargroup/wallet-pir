@@ -113,7 +113,8 @@ class WrappedFleet(FakeFleet):
         if command == 'shadow':
             return self.shadow_result or {'evaluated': True, 'exited': None, 'summary': {
                 'evaluated_at': 1, 'quality_enabled': True, 'storage_error': False, 'quality_storage_error': False},
-                'modes': {'mode:quality-transparent': 'shadow', 'mode:quality-txid': 'shadow'}}
+                'modes': {'mode:quality-transparent': 'shadow', 'mode:quality-txid': 'shadow'}, 'sources_ok': True,
+                'services': {'transparent': {'sources': 4, 'problems': []}, 'txid': {'sources': 2, 'problems': []}}}
         unit = self.endpoints[(host, args[0])]
         if self.host(host).units[unit]['active'] != 'active' or (host, unit) in self.oversized:
             return None
@@ -143,6 +144,8 @@ class WrappedFleet(FakeFleet):
 
 class Activation(unittest.TestCase):
     def setUp(self):
+        if getattr(self, 'dir', None) is not None:
+            self.dir.cleanup()  # a test that starts over on a fresh fleet
         self.dir = tempfile.TemporaryDirectory()
         root = Path(self.dir.name)
         self.state, self.binary = root / 'state', root / 'pir-apm'
@@ -390,7 +393,7 @@ class Activation(unittest.TestCase):
         self.fake.shadow_result = {'evaluated': True, 'exited': 1, 'summary': {'quality_enabled': False}, 'modes': {}}
         code, lines = self.run_cli('deploy', '--binary', str(self.binary))
         self.assertNotEqual(code, 0)
-        self.assertIn('did not evaluate the configured sources in an isolated shadow run', '\n'.join(lines))
+        self.assertIn('did not evaluate sound configured sources in an isolated shadow run', '\n'.join(lines))
         self.assertEqual(self.running()[0], sha256(OLD))
         after = self.files()
         for host in after:
@@ -398,6 +401,21 @@ class Activation(unittest.TestCase):
             self.assertEqual({p: d for p, d in after[host].items() if p != staged}, before[host])
         journal = json.loads(next(self.state.glob('transparent-alerts-2*.json')).read_text())
         self.assertEqual(journal['status'], 'failed')
+
+    def test_shadow_run_with_broken_sources_refuses_before_live_writes(self):
+        before = self.files()
+        self.fake.shadow_result = {
+            'evaluated': True, 'exited': None, 'summary': {'evaluated_at': 9, 'quality_enabled': True,
+                                                          'storage_error': False, 'quality_storage_error': False},
+            'modes': {'mode:quality-transparent': 'shadow', 'mode:quality-txid': 'shadow'}, 'sources_ok': False,
+            'services': {'transparent': {'sources': 4, 'problems': ['archive-01: error']},
+                         'txid': {'sources': 2, 'problems': []}}}
+        code, lines = self.run_cli('deploy', '--binary', str(self.binary))
+        self.assertNotEqual(code, 0)
+        self.assertIn('archive-01: error', '\n'.join(lines))
+        staged = aa.apm_binary(sha256(NEW))
+        self.assertEqual({p: d for p, d in self.files()['coordinator'].items() if p != staged}, before['coordinator'])
+        self.assertEqual(self.files()['monitor'], before['monitor'])
 
     def test_unhealthy_or_unobservable_new_process_rolls_back_to_verified_prior_modes(self):
         for fault in ('progress', 'oversized'):
@@ -467,6 +485,7 @@ class HostProbe(unittest.TestCase):
                 pass
         server = http.server.HTTPServer(('127.0.0.1', 0), Handler)
         threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
         self.addCleanup(server.shutdown)
         return 'http://127.0.0.1:%d/monitor-status' % server.server_port
 
@@ -482,66 +501,99 @@ class HostProbe(unittest.TestCase):
         self.assertEqual(self.run_probe('status', self.serve(oversized)), {'ok': False, 'error': 'ValueError'})
         self.assertEqual(self.run_probe('status', self.serve(b'{"truncated": ')), {'ok': False, 'error': 'JSONDecodeError'})
 
-    def test_environ_returns_only_whitelisted_settings(self):
-        import os
+    def spawn(self, env):
         import subprocess
+        child = subprocess.Popen(['sleep', '60'], env=env)
+
+        def stop():
+            child.kill()
+            child.wait()
+        self.addCleanup(stop)
+        return child
+
+    @unittest.skipUnless(sys.platform.startswith('linux'), 'reads /proc, as on the Linux hosts')
+    def test_environ_returns_only_whitelisted_settings(self):
         env = {'PATH': '/usr/bin:/bin', 'PIR_APM_STATE_PATH': '/var/lib/pir-apm/incidents.sqlite',
                'PIR_APM_SLACK_WEBHOOK_URL': 'https://hooks.example/SECRET'}
-        child = subprocess.Popen(['sleep', '30'], env=env)
-        self.addCleanup(child.kill)
-        reply = self.run_probe('environ', child.pid)
+        reply = self.run_probe('environ', self.spawn(env).pid)
         self.assertEqual(reply['result']['PIR_APM_STATE_PATH'], '/var/lib/pir-apm/incidents.sqlite')
         self.assertNotIn('SECRET', json.dumps(reply))
         self.assertEqual(set(reply['result']), set(probe.ENV_KEYS))
-        self.assertEqual(os.getpid() > 0, True)
 
-    def test_shadow_runs_an_isolated_child_without_the_webhook_and_cleans_up(self):
-        import os
-        import socket
-        import subprocess
-        directory = Path(tempfile.mkdtemp())
-        self.addCleanup(lambda: __import__('shutil').rmtree(directory, ignore_errors=True))
-        # A stand-in pir-apm: records its environment's secrets, serves monitor-status and records shadow modes.
+    def stand_in(self, directory):
+        """A pir-apm stand-in: records shadow modes, and serves monitor-status and the quality API.
+
+        Its sources are broken when the running process's PIR_APM_FIXTURE_SOURCES says so, and its
+        quality is disabled if the webhook reached it.
+        """
         binary = directory / 'pir-apm'
         binary.write_text('#!%s\n' % sys.executable + (
-            'import http.server, json, os, sqlite3\n'
-            'open(os.environ["LEAK_FILE"] if "LEAK_FILE" in os.environ else os.devnull, "w")\n'
+            'import http.server, json, os, sqlite3, time\n'
             'db = sqlite3.connect(os.environ["PIR_APM_STATE_PATH"])\n'
             'db.execute("CREATE TABLE metadata(key TEXT PRIMARY KEY, value TEXT)")\n'
             'config = json.load(open(os.environ["PIR_APM_TRANSPARENT_CONFIG"]))\n'
             'db.executemany("INSERT INTO metadata VALUES(?,?)", [("mode:quality-" + s["service"], s["alert_mode"]) '
-            'for s in config["services"]]); db.commit()\n'
+            'for s in config["services"]]); db.commit(); db.close()\n'
             'leaked = "PIR_APM_SLACK_WEBHOOK_URL" in os.environ\n'
-            'body = json.dumps({"progress_ok": False, "evaluated_at": 5, "quality": {"enabled": not leaked}, '
-            '"delivery": {"configured": leaked}}).encode()\n'
+            'broken = os.environ.get("PIR_APM_FIXTURE_SOURCES") == "broken"\n'
+            'def body(path):\n'
+            '    now = int(time.time())\n'
+            '    if path.startswith("/api/quality"):\n'
+            '        return {"sources": {"worker-01": {"role": "archive-owner", "sampled_at": now, "ready": True,\n'
+            '                "error": "connection refused" if broken else None},\n'
+            '                "probe": {"role": "independent-probe", "sampled_at": now - 60, "error": None}},\n'
+            '                "publication": {"sampled_at": now, "canonical": True, "origins_agree": True}}\n'
+            '    return {"progress_ok": False, "evaluated_at": now, "quality": {"enabled": not leaked},\n'
+            '            "delivery": {"configured": leaked}}\n'
             'class H(http.server.BaseHTTPRequestHandler):\n'
             '    def do_GET(self):\n'
-            '        self.send_response(200); self.end_headers(); self.wfile.write(body)\n'
+            '        self.send_response(200); self.end_headers(); self.wfile.write(json.dumps(body(self.path)).encode())\n'
             '    def log_message(self, *a): pass\n'
             'host, port = os.environ["PIR_APM_LISTEN"].split(":")\n'
             'http.server.HTTPServer((host, int(port)), H).serve_forever()\n'))
         binary.chmod(0o755)
+        return binary
+
+    def run_shadow(self, sources):
+        import os
+        import shutil
+        import socket
+        directory = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: shutil.rmtree(directory, ignore_errors=True))
+        binary = self.stand_in(directory)
         config = directory / 'transparent.json'
         config.write_text(json.dumps({'services': [{'service': 'transparent', 'alert_mode': 'active'},
                                                    {'service': 'txid', 'alert_mode': 'active'}]}))
-        running = subprocess.Popen(['sleep', '60'], env={
-            'PATH': '/usr/bin:/bin', 'PIR_APM_SLACK_WEBHOOK_URL': 'https://hooks.example/SECRET',
-            'PIR_APM_SCRAPE_URL': 'http://127.0.0.1:8080', 'PIR_APM_SCALER_STATUS': '/nonexistent'})
-        self.addCleanup(running.kill)
+        running = self.spawn({'PATH': '/usr/bin:/bin', 'PIR_APM_SLACK_WEBHOOK_URL': 'https://hooks.example/SECRET',
+                              'PIR_APM_SCRAPE_URL': 'http://127.0.0.1:8080', 'PIR_APM_SCALER_STATUS': '/nonexistent',
+                              'PIR_APM_FIXTURE_SOURCES': sources})
         with socket.socket() as sock:
             sock.bind(('127.0.0.1', 0))
             port = sock.getsockname()[1]
-        reply = self.run_probe('shadow', running.pid, binary, config, port, 30)
+        before = set(os.listdir(tempfile.gettempdir()))
+        reply = self.run_probe('shadow', running.pid, binary, config, port, 12)
         self.assertTrue(reply['ok'], reply)
-        result = reply['result']
+        self.assertEqual(json.loads(config.read_text())['services'][0]['alert_mode'], 'active')
+        left = [p for p in set(os.listdir(tempfile.gettempdir())) - before if p.startswith('pir-apm-shadow-')]
+        self.assertEqual(left, [], 'the probe removes its temporary state')
+        return reply['result']
+
+    @unittest.skipUnless(sys.platform.startswith('linux'), 'reads /proc, as on the Linux hosts')
+    def test_shadow_runs_an_isolated_child_without_the_webhook_and_cleans_up(self):
+        result = self.run_shadow('good')
         self.assertTrue(result['evaluated'])
         self.assertIs(result['summary']['quality_enabled'], True, 'the webhook must not reach the child')
         self.assertEqual(result['modes'], {'mode:quality-transparent': 'shadow', 'mode:quality-txid': 'shadow'})
-        self.assertEqual(json.loads(config.read_text())['services'][0]['alert_mode'], 'active')
-        self.assertFalse([p for p in os.listdir(tempfile.gettempdir()) if p.startswith('pir-apm-shadow-')
-                          and (Path(tempfile.gettempdir()) / p).stat().st_uid == os.getuid()
-                          and (Path(tempfile.gettempdir()) / p / 'transparent.json').exists()])
+        self.assertIs(result['sources_ok'], True, result)
 
+    @unittest.skipUnless(sys.platform.startswith('linux'), 'reads /proc, as on the Linux hosts')
+    def test_shadow_with_valid_modes_but_broken_sources_is_not_sound(self):
+        result = self.run_shadow('broken')
+        self.assertTrue(result['evaluated'] and result['summary']['quality_enabled'])
+        self.assertEqual(result['modes'], {'mode:quality-transparent': 'shadow', 'mode:quality-txid': 'shadow'})
+        self.assertIs(result['sources_ok'], False)
+        self.assertEqual(result['services']['transparent']['problems'], ['worker-01: error'])
+        self.assertNotIn('connection refused', json.dumps(result))
 
 if __name__ == '__main__':
     unittest.main()

@@ -14,7 +14,8 @@ never leave the host: every command prints only whitelisted fields.
   `PIR_APM_*` settings (so the real configured sources), a temporary state,
   history and configuration copy with every mode `shadow`, its own loopback port,
   no webhook and no scaler. It runs as the unit's user, is stopped and removed
-  within the bound, and reports whether it evaluated with a valid configuration.
+  within the bound, and reports whether it evaluated with a valid configuration
+  and whether every configured service's real sources answered (`quality`).
 """
 import json
 import os
@@ -41,12 +42,45 @@ def modes(database):
         db.close()
 
 
-def status(url):
+def bounded_json(url):
     with urllib.request.urlopen(url, timeout=10) as response:
         body = response.read(STATUS_LIMIT + 1)
     if len(body) > STATUS_LIMIT:
-        raise ValueError('monitor-status exceeds %d bytes' % STATUS_LIMIT)
-    document = json.loads(body)
+        raise ValueError('response exceeds %d bytes' % STATUS_LIMIT)
+    return json.loads(body)
+
+
+def quality(url, now):
+    """Problems with one service's sources and publication as pir-apm sees them; empty when all are sound.
+
+    Every configured source must have a sample without error, fresh by APM's own rule
+    (45 s, 90 s for the independent probe), and be ready where it reports readiness.
+    The publication must be sampled within 90 s, canonical and agreed across origins.
+    Names only: source errors can carry URLs.
+    """
+    document = bounded_json(url)
+    sources = document.get('sources') or {}
+    problems = [] if sources else ['no configured sources']
+    for name, source in sorted(sources.items()):
+        limit = 90 if source.get('role') == 'independent-probe' else 45
+        sampled = source.get('sampled_at') or 0
+        if source.get('error') is not None:
+            problems.append('%s: error' % name)
+        elif not 0 < sampled <= now + 5 or now - sampled > limit:
+            problems.append('%s: not sampled within %ss' % (name, limit))
+        elif source.get('ready') is False:
+            problems.append('%s: not ready' % name)
+    publication = document.get('publication') or {}
+    if not 0 < (publication.get('sampled_at') or 0) <= now + 5 or now - publication['sampled_at'] > 90:
+        problems.append('publication: not sampled within 90s')
+    elif publication.get('canonical') is not True or publication.get('origins_agree') is not True:
+        problems.append('publication: canonical %r, origins agree %r'
+                        % (publication.get('canonical'), publication.get('origins_agree')))
+    return {'sources': len(sources), 'problems': problems[:12]}
+
+
+def status(url):
+    document = bounded_json(url)
     delivery = document.get('delivery') or {}
     quality = document.get('quality') or {}
     return {'progress_ok': document.get('progress_ok'), 'evaluated_at': document.get('evaluated_at'),
@@ -110,9 +144,18 @@ def shadow(pid, binary, config, port, seconds):
             except Exception:
                 continue
             recorded = modes(env['PIR_APM_STATE_PATH'])
+            services = {}
+            for service in document.get('services', []):
+                try:
+                    services[service['service']] = quality('http://127.0.0.1:%d/api/quality?service=%s'
+                                                           % (int(port), service['service']), time.time())
+                except Exception as error:
+                    services[service['service']] = {'sources': 0, 'problems': ['api: %s' % type(error).__name__]}
             result = {'evaluated': bool(summary['evaluated_at']), 'summary': summary,
-                      'modes': {k: v for k, v in recorded.items() if k.startswith('mode')}}
-            if result['evaluated'] and summary['quality_enabled'] and any(k.startswith('mode:quality-') for k in recorded):
+                      'modes': {k: v for k, v in recorded.items() if k.startswith('mode')}, 'services': services,
+                      'sources_ok': bool(services) and not any(v['problems'] for v in services.values())}
+            if (result['evaluated'] and summary['quality_enabled'] and result['sources_ok']
+                    and any(k.startswith('mode:quality-') for k in recorded)):
                 break
         result['exited'] = child.poll()
     finally:

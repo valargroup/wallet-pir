@@ -542,8 +542,9 @@ class Activator:
         wanted = {'mode:quality-' + service for service in apm['config']['alert_modes']}
         if not (result and result.get('evaluated') and summary.get('quality_enabled') is True
                 and not summary.get('storage_error') and not summary.get('quality_storage_error')
-                and all(recorded.get(key) == 'shadow' for key in wanted)):
-            raise DeployError('the staged pir-apm did not evaluate the configured sources in an isolated shadow run; '
+                and all(recorded.get(key) == 'shadow' for key in wanted) and result.get('sources_ok') is True
+                and set(apm['config']['alert_modes']) <= set(result.get('services') or {})):
+            raise DeployError('the staged pir-apm did not evaluate sound configured sources in an isolated shadow run; '
                               'nothing live was changed: %s' % json.dumps(result, sort_keys=True))
         self.out('%s: staged pir-apm evaluated %s in an isolated shadow run' % (apm['host'], sorted(wanted)))
 
