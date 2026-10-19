@@ -16,7 +16,7 @@ test-support = ["dep:zakura-pir-publisher"]
 
 [dependencies]
 axum = "0.7"
-pir-observability = { version = "=0.1.0", path = "../../shared/pir-observability" }
+pir-observability = { version = "=0.1.0", path = "../../shared/pir-observability", features = ["http"] }
 pir-runtime = { version = "=0.1.0", path = "../../shared/pir-runtime" }
 hex = "0.4"
 ipir-sp = "=0.1.0-rc.7"

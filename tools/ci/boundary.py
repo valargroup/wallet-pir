@@ -24,6 +24,15 @@ shared libraries under `src/shared/`, and the publisher and query-server hosts a
 `src/pir-publisher` and `src/pir-query-server`. Their workspace graphs (including
 their own dev-dependencies) and standalone graphs are resolved and checked too.
 
+Product publisher and query cores (`RUNTIME_FREE`) leave the Tokio runtime and
+HTTP transport (`TRANSPORT`) to the publisher and query-server hosts. They declare
+no transport edge of any kind, and their standalone production graphs with every
+feature they define enabled resolve none. Shared foundations the cores use
+(`HOST_FEATURES`) may offer host adapters only as optional features; their
+default standalone graphs resolve none. `RUNTIME_PENDING` lists the cores that
+still own transport while that refactor moves it into the hosts; an entry that is
+no longer needed fails the resolved check.
+
 Common and node packages are named exactly: wallet-libraries adapters are
 intentionally `zakura-*` packages too, and low-level PIR cryptography (ipir-sp,
 reinspiring, spiral, hashes, randomness) is wallet-pir's own.
@@ -120,6 +129,24 @@ PIPELINE_UTILITIES = {
     'tracing-core', 'valuable',
 }
 
+# Runtime and HTTP transport packages the hosts own.
+TRANSPORT = {'tokio', 'tokio-stream', 'tokio-util', 'axum', 'axum-core', 'hyper', 'hyper-util',
+             'reqwest', 'tower', 'tower-http', 'h2'}
+# Shared foundations and the host-only features that alone may reach TRANSPORT.
+HOST_FEATURES = {'pir-observability': {'http'}, 'pir-control': {'admission'}}
+RUNTIME_FREE = {
+    'pir-runtime', 'pir-serving', 'pir-cuda', 'receiver-store',
+    'enhance-publisher', 'enhance-query-server', 'status-publisher', 'status-query-server',
+    'transparent-publisher', 'transparent-query-server', 'transparent-shared',
+    'receiver-indexer', 'receiver-pir-server',
+}
+# Temporary exceptions; remove each as its product's transport moves to the hosts.
+RUNTIME_PENDING = {
+    'enhance-publisher', 'enhance-query-server', 'status-publisher', 'status-query-server',
+    'transparent-publisher', 'transparent-query-server', 'transparent-shared',
+    'receiver-indexer', 'receiver-pir-server',
+}
+
 RECEIVER = {'receiver-pir-server'}
 CODEC = 'zakura-receiver-crypto'
 # The canonical PIR primitive and protocol packages wallet-libraries owns. A pure
@@ -211,10 +238,12 @@ def manifests(root=ROOT):
                     dependencies.append({'name': value.get('package', key),
                                          'kind': prefix + kind, 'git': value.get('git', ''),
                                          'path': local,
+                                         'optional': value.get('optional', False),
                                          'default-features': value.get('default-features', True),
                                          'features': value.get('features', [])})
         packages.append({'name': data['package']['name'], 'manifest': relative,
                          'dependencies': dependencies,
+                         'features': sorted(data.get('features', {})),
                          'preserved': relative.startswith(EXCLUDED)})
     return packages
 
@@ -225,6 +254,9 @@ def violations(packages, allowed):
     for package in packages:
         for dependency in package['dependencies']:
             name = dependency['name']
+            reason = runtime_edge_problem(package, dependency)
+            if reason:
+                problems.append(f"{package['manifest']}: {reason}")
             if package['name'] == PIPELINE and (
                     name not in PIPELINE_DIRECT or dependency.get('path')
                     or dependency['git']):
@@ -254,6 +286,59 @@ def violations(packages, allowed):
     for edge in sorted(set(allowed) - found):
         problems.append(f'{edge}: allowlisted edge no longer exists; remove it from '
                         f'{ALLOWLIST.relative_to(ROOT)}')
+    return problems
+
+
+def runtime_edge_problem(package, dependency):
+    """Why a direct edge gives a runtime-free core or a shared foundation the host
+    runtime or transport, or None. Cores may declare no transport edge of any kind;
+    foundations only optional production edges, which their host features enable."""
+    owner, name = package['name'], dependency['name']
+    if name not in TRANSPORT or package.get('preserved'):
+        return None
+    if owner in RUNTIME_FREE and owner not in RUNTIME_PENDING:
+        return f"runtime-free core has a {dependency['kind']} on host transport {name}"
+    if (owner in HOST_FEATURES and dependency['kind'].endswith('dependencies')
+            and not dependency['kind'].endswith('dev-dependencies')
+            and not dependency.get('optional')):
+        return f"shared foundation has a non-optional {dependency['kind']} on host transport {name}"
+    return None
+
+
+def runtime_resolved_violations(metadata, name):
+    """Host transport packages the standalone consumer `metadata` of the repository
+    package `name` reaches through normal or build edges."""
+    packages = {p['id']: p for p in metadata['packages']}
+    nodes = {n['id']: n for n in metadata['resolve']['nodes']}
+    roots = [p['id'] for p in metadata['packages'] if p['name'] == name and p['source'] is None]
+    reached, seen, pending = set(), set(), list(roots)
+    while pending:
+        current = pending.pop()
+        if current in seen:
+            continue
+        seen.add(current)
+        if packages[current]['name'] in TRANSPORT:
+            reached.add(packages[current]['name'])
+        pending.extend(dep['pkg'] for dep in nodes[current]['deps']
+                       if any(k['kind'] in (None, 'build') for k in dep['dep_kinds']))
+    return sorted(reached)
+
+
+def runtime_graph_violations():
+    """Resolve each runtime-free core with every feature it defines, and each shared
+    foundation with its defaults, alone; report transport they reach and pending
+    exceptions that are no longer needed."""
+    features = {p['name']: p['features'] for p in manifests() if not p['preserved']}
+    problems = []
+    for name in sorted(RUNTIME_FREE | set(HOST_FEATURES)):
+        selected = [] if name in HOST_FEATURES else features[name]
+        reached = runtime_resolved_violations(standalone_metadata({name}, {name: selected}), name)
+        if name in RUNTIME_PENDING:
+            if not reached:
+                problems.append(f'{name}: no longer reaches host transport; '
+                                f'remove it from RUNTIME_PENDING')
+        elif reached:
+            problems.append(f"{name}: production graph resolves host transport {', '.join(reached)}")
     return problems
 
 
@@ -377,10 +462,11 @@ def database_reader_violations(metadata):
     return sorted(problems)
 
 
-def standalone_metadata(names):
+def standalone_metadata(names, features=None):
     """Resolve a fresh consumer of the named repository packages alone, without
     features other workspace members unify into them (such as the indexer's
-    receiver crypto).
+    receiver crypto). `features` optionally maps a package to the features the
+    consumer enables on it.
 
     Seed from the committed lockfile and source overrides so dependencies retain
     the workspace's pinned identities. The
@@ -394,7 +480,9 @@ def standalone_metadata(names):
         lines = ['[package]', 'name = "boundary-consumer"',
                  'version = "0.0.0"', 'edition = "2021"', '[workspace]', '[dependencies]']
         for name in sorted(names):
-            lines.append(f'{name} = {{ path = {json.dumps(str(ROOT / folders[name]))} }}')
+            selected = (features or {}).get(name, [])
+            lines.append(f'{name} = {{ path = {json.dumps(str(ROOT / folders[name]))}, '
+                         f'features = {json.dumps(selected)} }}')
         patches = tomllib.loads((ROOT / 'Cargo.toml').read_text()).get('patch', {})
         for source, dependencies in patches.items():
             lines.append(f'[patch.{json.dumps(source)}]')
@@ -476,6 +564,7 @@ def main(argv=None):
         problems += database_reader_violations(standalone_metadata(set(DATABASE_FREE)))
         for name in sorted(SERVING | PIPELINE_FOUNDATIONS | {PIPELINE}):
             problems += resolved_violations(standalone_metadata({name}))
+        problems += runtime_graph_violations()
     for problem in problems:
         print(problem, file=sys.stderr)
     return 1 if problems else 0
