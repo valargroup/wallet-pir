@@ -64,7 +64,9 @@ class MatrixTests(unittest.TestCase):
         self.assertNotIn('enhance-query-server/cuda', native)
         self.assertIn('enhance-query-server/native-reinspiring', cuda)
         self.assertIn('enhance-query-server/cuda', cuda)
-        self.assertFalse(matrix.package_features('enhance-query-server', contexts['reference'], packages))
+        reference_features = matrix.package_features('enhance-query-server', contexts['reference'], packages)
+        self.assertEqual(reference_features, ['enhance-query-server/qualification-tests'])
+        self.assertIn('enhance-publisher/qualification-tests', contexts['reference']['features'])
         self.assertNotIn('enhance-publisher/native-reinspiring', native)
         commands = matrix.cargo_commands(registry['enhance-cuda-check']['targets'], contexts, targets, packages)
         self.assertEqual(len(commands), 1)
@@ -112,6 +114,9 @@ class MatrixTests(unittest.TestCase):
         self.assertIn('encrypted_lifecycle', inventory()['enhance-publisher']['full'])
         self.assertIn('reference:enhance-publisher:test:ci_hint', reference)
         self.assertIn('reference:enhance-publisher:test:encrypted_lifecycle', reference)
+        for case in ('unequal_units_match_monolithic_preprocessing_and_evaluation',
+                     'tail_domain_reuses_b_units_and_decodes_b_at_unchanged_coordinates'):
+            self.assertIn('runtime::tests::' + case, matrix.REFERENCE_LIB_FILTERS)
         for variant, target, expected in [('reference', 'ci_hint', oracles),
                                           ('native', 'ci_hint', oracles),
                                           ('native', 'encrypted_lifecycle', lifecycle),

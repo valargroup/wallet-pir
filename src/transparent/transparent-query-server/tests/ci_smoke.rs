@@ -262,16 +262,8 @@ async fn encrypted_http_matches_published_bytes_after_cold_start_and_cached_rest
             .unwrap();
         let expected = bytes[row * row_bytes..(row + 1) * row_bytes].to_vec();
         let cache_root = tempfile::tempdir().unwrap();
-        for attempt in 0..3 {
+        for attempt in 0..2 {
             let restored = attempt == 1;
-            if attempt == 2 {
-                for entry in std::fs::read_dir(cache_root.path()).unwrap() {
-                    let path = entry.unwrap().path();
-                    if path.extension().is_some_and(|ext| ext == "runtime") {
-                        std::fs::write(path, b"truncated runtime").unwrap();
-                    }
-                }
-            }
             let set = ShardSet::open(root.path(), DEFAULT_RETAIN_REVISIONS).unwrap();
             let disk = DiskCache::new(cache_root.path().into(), 1 << 30).unwrap();
             let state =
@@ -279,15 +271,17 @@ async fn encrypted_http_matches_published_bytes_after_cold_start_and_cached_rest
             let metrics = state.metrics().clone();
             let mut server = serve(state).await;
             let path = format!("/v2/shards/0/revisions/{revision}/query/directory");
-            assert_eq!(
-                post(&server.origin, &path, vec![0; 8]).await.0,
-                StatusCode::BAD_REQUEST
-            );
-            assert_eq!(
-                Metrics::get(&metrics.builds),
-                0,
-                "malformed input cannot prepare a runtime"
-            );
+            if !restored {
+                assert_eq!(
+                    post(&server.origin, &path, vec![0; 8]).await.0,
+                    StatusCode::BAD_REQUEST
+                );
+                assert_eq!(
+                    Metrics::get(&metrics.builds),
+                    0,
+                    "malformed input cannot prepare a runtime"
+                );
+            }
             assert_eq!(retrieve(&server.origin, revision, row).await, expected);
             assert_eq!(Metrics::get(&metrics.disk_hits), u64::from(restored));
             assert_eq!(Metrics::get(&metrics.builds), u64::from(!restored));

@@ -1346,8 +1346,8 @@ mod shipped_tests {
     }
 
     /// Missing, truncated, corrupted and wrongly named shipped files are all
-    /// refused. Missing and corrupted files also exercise counted cold fallback
-    /// builds; full qualification exercises that fallback for every refusal.
+    /// refused. One damaged artifact exercises counted cold fallback; ordinary
+    /// builds without an offered artifact have separate accounting.
     #[tokio::test(flavor = "multi_thread")]
     async fn refused_shipped_files_fall_back_to_a_counted_local_build() {
         let dir = tempfile::tempdir().unwrap();
@@ -1419,9 +1419,9 @@ mod shipped_tests {
                 "{name} must be rejected before use"
             );
             // Rejection and cold construction are separate contracts. Exercise
-            // every refusal here, then the complete fallback for a missing file
-            // and damaged content. Qualification repeats it for every identity.
-            if !cfg!(feature = "qualification-tests") && !matches!(name, "missing" | "corrupted") {
+            // every refusal here, then build once to verify fallback and its
+            // accounting. The loader owns identity and format validation.
+            if name != "corrupted" {
                 continue;
             }
             let metrics = Arc::new(Metrics::default());

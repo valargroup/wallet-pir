@@ -1313,36 +1313,22 @@ mod tests {
         assert_eq!(faults.live_bytes.load(SeqCst), 0);
     }
 
+    #[cfg(feature = "qualification-tests")]
     #[test]
     fn unequal_units_match_monolithic_preprocessing_and_evaluation() {
         let directory = tempfile::tempdir().unwrap();
         let geometry = Geometry::default();
-        let (shard, monolithic_rows, expected_units, targets) =
-            if cfg!(feature = "qualification-tests") {
-                let coverage = Lifecycle::default()
-                    .coverage(8192 * RECORDS_PER_ROW as u64 + 17, geometry)
-                    .unwrap();
-                (
-                    coverage.shards[0].clone(),
-                    16384,
-                    [8192, 2048],
-                    vec![0, 8191, 8192, 10239, 16383],
-                )
-            } else {
-                let coverage = Lifecycle::default()
-                    .coverage(
-                        geometry.max_shard_rows * RECORDS_PER_ROW as u64 + 17,
-                        geometry,
-                    )
-                    .unwrap();
-                // A real composed tail has unequal units and a zero-filled gap.
-                (
-                    coverage.shards[1].clone(),
-                    8192,
-                    [2048, 4096],
-                    vec![0, 2047, 2048, 4095, 4096, 8191],
-                )
-            };
+        let coverage = Lifecycle::default()
+            .coverage(
+                geometry.max_shard_rows * RECORDS_PER_ROW as u64 + 17,
+                geometry,
+            )
+            .unwrap();
+        // One composed tail exercises unequal units, A's suffix and a padded gap.
+        let shard = coverage.shards[1].clone();
+        let monolithic_rows = 8192;
+        let expected_units = [2048, 4096];
+        let targets = [0, 2047, 2048, 4095, 4096, 8191];
         let domain = plan(shard.clone(), records).unwrap();
         assert_eq!(
             domain
@@ -1415,6 +1401,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "qualification-tests")]
     #[test]
     fn tail_domain_reuses_b_units_and_decodes_b_at_unchanged_coordinates() {
         #[cfg(not(feature = "native-reinspiring"))]
@@ -1423,18 +1410,8 @@ mod tests {
         use ipir_sp::serialize::serialize_packing_keys;
 
         const B_START: u64 = 32768;
-        // Reuse and coordinate binding need two valid units, not two 4K
-        // units on every push. Qualification keeps the boundary-crossing B.
-        const B_ROWS: u64 = if cfg!(feature = "qualification-tests") {
-            2049
-        } else {
-            17
-        };
-        const B_SLOT: u64 = if cfg!(feature = "qualification-tests") {
-            4096
-        } else {
-            2048
-        };
+        const B_ROWS: u64 = 2049;
+        const B_SLOT: u64 = 4096;
         const SUFFIX_ROWS: u64 = B_SLOT;
         let directory = tempfile::tempdir().unwrap();
         let shard = QueryShard {
@@ -1589,11 +1566,7 @@ mod tests {
                 shard_id: 7,
                 epoch: Sha256::digest(&packing.public)[..8].try_into().unwrap(),
             };
-            let mut targets = if cfg!(feature = "qualification-tests") {
-                vec![0, B_ROWS as usize - 2, B_ROWS as usize - 1]
-            } else {
-                vec![B_ROWS as usize - 1]
-            };
+            let mut targets = vec![0, B_ROWS as usize - 2, B_ROWS as usize - 1];
             if logical_rows == 8192 {
                 targets.push(B_SLOT as usize);
             }

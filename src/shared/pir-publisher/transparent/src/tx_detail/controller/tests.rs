@@ -1913,8 +1913,10 @@ async fn metrics_report_cycles_stages_and_freshness() {
 // Reuse the serving tests' independent wallet transport and per-process pure
 // profile cache. This controller still owns fresh journal/root/worker state.
 #[path = "../../../../../../transparent/transparent-query-server/tests/support/display_world.rs"]
+#[cfg(feature = "qualification-tests")]
 mod display_world;
 
+#[cfg(feature = "qualification-tests")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn shared_display_lifecycle_serves_before_and_after_ordered_seals_and_restart() {
     use transparent_query_server::tx_detail::live::{reply_line, DisplayCommand};

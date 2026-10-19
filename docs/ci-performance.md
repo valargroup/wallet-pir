@@ -49,10 +49,20 @@ Expensive fixtures are organized around the guarantee being checked:
 
 | Fast coverage | Additional full qualification coverage |
 | --- | --- |
-| Independent 67/68-record generic-hint oracles and damaged-artifact checks remain. | The encrypted HTTP pending-commit and fresh-wallet restart lifecycle runs with both reference arithmetic and the native backend. |
-| Enhance tail reuse independently builds both copies and checks complete artifacts, partial hints, a nonzero B coordinate before/after growth, and the suffix with two supported 2K units in the original 4K/8K query domains. | The original boundary-crossing 4K preparation units and the complete coordinate set. |
+| The independent 67-record generic-hint oracle, frozen vectors, padding/binding checks and damaged-artifact checks remain. | The 68-record hint oracle, unequal-unit/monolithic comparison and tail-growth artifact/coordinate checks run with reference arithmetic and the native backend. The encrypted HTTP pending-commit and fresh-wallet restart lifecycle also remains full-only. |
 | Preparation failures retain cold partial-allocation cleanup and a cached backend failure that must neither reread source rows nor replace a published view. | The combined failure on the second cached unit and the larger candidate geometry. |
 | Native cache admission and built-size bounds use one supported column instance; the batched-hint oracle retains a deployed display geometry with nonzero and padded rows. | Deployed cache/build shapes and the full history/display hint geometry and occupancy combinations. |
+| Transparent HTTP checks one cold encrypted retrieval and one cached restart. Runtime tests reject each distinct artifact fault and verify one complete optional fallback build, plus required-file refusal and ordinary-build accounting. | The composed history activation and display sealing/restart lifecycles retain their real workers, original geometries and independent source/wallet oracles. |
+
+Fast coverage follows properties, not a product/size/fault cross-product: correct
+bytes, malformed-input refusal, safe publication, durable revocation/recovery,
+bounded resource lifetimes, real transport wiring and honest automation results.
+Repeated cold fallback builds and the HTTP smoke's corrupt-cache restart are
+deleted because the runtime tests already check rejection and recovery. Keep
+distinct validation rules and meaningful boundaries; additional interior values
+do not need another encrypted retrieval. Roster-loop tests wait for observed
+membership and cancellation with test-local polling, rather than sleeping through
+production intervals. Production deadlines and the correctness budgets are unchanged.
 
 Transparent history distribution tests stay in one process so their immutable
 producer fixtures are prepared once. Each consumer still owns its mutable

@@ -119,6 +119,7 @@ async fn single_unit_hint_matches_independent_generic_67() {
     hint_matches_generic(67).await;
 }
 
+#[cfg(feature = "qualification-tests")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn single_unit_hint_matches_independent_generic_68() {
     hint_matches_generic(68).await;

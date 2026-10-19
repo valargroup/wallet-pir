@@ -1521,6 +1521,7 @@ async fn manager_double_intent_write_failure_retains_exact_negative_revision() {
 
 /// Standard controller/followed-journal adoption with the production sealing
 /// policy, original mixed geometries, and an independent native row oracle.
+#[cfg(feature = "qualification-tests")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn standard_history_lifecycle_queries_advance_and_reconciles_lost_activation() {
     use std::os::unix::fs::PermissionsExt;
