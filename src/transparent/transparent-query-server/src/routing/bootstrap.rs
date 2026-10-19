@@ -105,16 +105,15 @@ impl Source {
         .into()
     }
     pub(crate) async fn get(&mut self, suffix: &str) -> Result<reqwest::Response, Error> {
+        let url = self.origin.join(&format!("{}{}", self.prefix, suffix))?;
+        let request = self.client.get(url);
+        self.send(request).await
+    }
+    async fn send(&mut self, request: reqwest::RequestBuilder) -> Result<reqwest::Response, Error> {
         if self.downloaded >= self.budget {
             return Err(self.budget_error());
         }
-        let url = self.origin.join(&format!("{}{}", self.prefix, suffix))?;
-        let mut response = self
-            .client
-            .get(url)
-            .header("cache-control", "no-cache")
-            .send()
-            .await?;
+        let mut response = request.header("cache-control", "no-cache").send().await?;
         if response.status() != reqwest::StatusCode::OK {
             // Refused response bytes consume the same attempt budget. Never
             // retry or reset accounting after a status or validation failure.
@@ -144,7 +143,14 @@ impl Source {
         Ok(chunk)
     }
     pub(crate) async fn small(&mut self, suffix: &str, limit: usize) -> Result<Vec<u8>, Error> {
-        let mut response = self.get(suffix).await?;
+        let response = self.get(suffix).await?;
+        self.read_small(response, limit).await
+    }
+    async fn read_small(
+        &mut self,
+        mut response: reqwest::Response,
+        limit: usize,
+    ) -> Result<Vec<u8>, Error> {
         let mut bytes = Vec::new();
         while let Some(chunk) = self.chunk(&mut response).await? {
             if chunk.len() > limit.saturating_sub(bytes.len()) {
@@ -366,6 +372,36 @@ impl Source {
         }
         Ok(check.canonical)
     }
+    /// Fresh canonicality of every anchor in one batch, for exactly
+    /// `current`'s snapshot. Bodies, refused ones included, consume the same
+    /// budget as every other source read; any failure answers for no anchor.
+    pub(crate) async fn anchors(
+        &mut self,
+        current: &Current,
+        anchors: &[publication::AnchorPair],
+    ) -> Result<std::collections::BTreeMap<publication::AnchorPair, bool>, Error> {
+        let request = publication::AnchorBatchRequest::new(current, anchors.to_vec())?;
+        let body = serde_json::to_vec(&request)?;
+        if body.len() > publication::MAX_ANCHOR_BATCH_BYTES {
+            return Err("anchor batch request exceeds limit".into());
+        }
+        let url = self.origin.join(&format!(
+            "{}{}",
+            self.prefix,
+            publication::ANCHOR_BATCH_PATH
+        ))?;
+        let post = self
+            .client
+            .post(url)
+            .header("content-type", "application/json")
+            .body(body);
+        let response = self.send(post).await?;
+        let raw = self
+            .read_small(response, publication::MAX_ANCHOR_BATCH_BYTES)
+            .await?;
+        let batch: publication::AnchorBatch = serde_json::from_slice(&raw)?;
+        batch.answers(&request, &current.genesis_hash)
+    }
     pub(crate) async fn current(&mut self, directory: &std::path::Path) -> Result<Current, Error> {
         let current: Current = serde_json::from_slice(&self.small("current", 16 << 10).await?)?;
         if current.schema != self.schema
@@ -499,6 +535,13 @@ pub(crate) async fn stage_holdings(
     }
     // New private staging tree; never join untrusted paths into an existing
     // publication or follow its symlinks. Failed trees remain non-authoritative.
+    // Validate the cache before enumerating it: a symlinked object directory
+    // is refused without reading or cleaning its target.
+    let objects = if cache {
+        Some(prepare_objects(&config.directory)?)
+    } else {
+        None
+    };
     let stage = config.directory.join(format!(
         "staging-{}-{}",
         current.revision,
@@ -522,12 +565,16 @@ pub(crate) async fn stage_holdings(
         ) {
             let target = stage.join(&artifact.path);
             std::fs::create_dir_all(target.parent().ok_or("artifact has no parent")?)?;
-            let cached = config.directory.join("objects").join(&artifact.sha256);
-            let reuse = cache
-                && std::fs::symlink_metadata(&cached).is_ok_and(|m| m.is_file())
-                && publication::verify_file(&cached, artifact).is_ok();
-            if reuse {
-                tokio::fs::copy(&cached, &target).await?;
+            if let Some(objects) = &objects {
+                if ensure_object(source, objects, artifact, &mut transfer).await? {
+                    downloaded_files += 1;
+                }
+                link_object(
+                    &objects.join(&artifact.sha256),
+                    &target,
+                    artifact,
+                    |from, to| std::fs::hard_link(from, to),
+                )?;
             } else {
                 let fetching = std::time::Instant::now();
                 let mut output = tokio::fs::OpenOptions::new()
@@ -553,19 +600,10 @@ pub(crate) async fn stage_holdings(
                 output.sync_all().await?;
                 drop(output);
                 downloaded_files += 1;
-            }
-            let file = artifact.clone();
-            let path = target.clone();
-            tokio::task::spawn_blocking(move || publication::verify_file(&path, &file)).await??;
-            if cache && !reuse {
-                std::fs::create_dir_all(cached.parent().ok_or("missing cache parent")?)?;
-                // Completed objects alone are reusable. A partial copy never has
-                // its digest name; every reuse hashes again.
-                let partial = cached.with_extension("partial");
-                tokio::fs::copy(&target, &partial).await?;
-                std::fs::File::open(&partial)?.sync_all()?;
-                std::fs::rename(&partial, &cached)?;
-                std::fs::File::open(cached.parent().unwrap())?.sync_all()?;
+                let file = artifact.clone();
+                let path = target.clone();
+                tokio::task::spawn_blocking(move || publication::verify_file(&path, &file))
+                    .await??;
             }
             if artifact.path == "shards.json" {
                 let map: transparent_filter::ShardMap =
@@ -585,51 +623,7 @@ pub(crate) async fn stage_holdings(
         if publication::digest(&serde_json::to_vec(&map)?) != inventory.map_sha256 {
             return Err("downloaded map has another publication identity".into());
         }
-        // Reuse the production assignment planner, with an explicitly inert
-        // archive row for cost/accounting only. Nothing here qualifies routes.
-        let options = if full {
-            LoadOptions::whole(0)
-        } else {
-            let mut roster = vec![RosterEntry {
-                id: "provider".into(),
-                role: WorkerRole::RecentReplica,
-                replica_group: Some("recent".into()),
-                ssh_host: String::new(),
-                upstream: "127.0.0.1:0".into(),
-                cache_bytes: config.cache_bytes,
-                archive_range: None,
-            }];
-            if inventory.recent_from_shard > 0 {
-                roster.push(RosterEntry {
-                    id: "archive-metadata-only".into(),
-                    role: WorkerRole::ArchiveOwner,
-                    replica_group: None,
-                    ssh_host: String::new(),
-                    upstream: "unconfigured.invalid:0".into(),
-                    cache_bytes: u64::MAX,
-                    archive_range: None,
-                });
-            }
-            let assignment = plan(
-                &map,
-                &inventory.map_sha256,
-                &roster,
-                inventory.recent_from_shard,
-                0.15,
-                GeneratedBy {
-                    tool: "HTTPS bootstrap verifier".into(),
-                    source_sha: None,
-                    generated_at: "not-serving".into(),
-                },
-            )?;
-            LoadOptions {
-                scope: LoadScope::Assigned {
-                    assignment: Arc::new(assignment),
-                    worker_id: "provider".into(),
-                },
-                ..LoadOptions::whole(0)
-            }
-        };
+        let options = holdings(config, &map, &inventory, full)?;
         if let LoadScope::Assigned { assignment, .. } = &options.scope {
             crate::control::persist(&stage.join("assignment.json"), assignment.as_ref())?;
         }
@@ -652,8 +646,216 @@ pub(crate) async fn stage_holdings(
     result
 }
 
+const PARTIAL: &str = ".partial-";
+
+/// Create or open `<directory>/objects`, refuse anything but a real directory
+/// before enumerating it, and remove interrupted partials. This directory has
+/// one owner; an interrupted object is never reused.
+fn prepare_objects(directory: &std::path::Path) -> Result<std::path::PathBuf, Error> {
+    let objects = directory.join("objects");
+    std::fs::create_dir_all(&objects)?;
+    if !std::fs::symlink_metadata(&objects)?.is_dir() {
+        return Err("object cache must be a real directory".into());
+    }
+    remove_partials(&objects)?;
+    Ok(objects)
+}
+
+fn remove_partials(objects: &std::path::Path) -> Result<(), Error> {
+    let entries = match std::fs::read_dir(objects) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e.into()),
+    };
+    for entry in entries {
+        let entry = entry?;
+        // Includes the previous `<sha256>.partial` copy name.
+        if entry.file_name().to_string_lossy().contains(".partial") {
+            std::fs::remove_file(entry.path())?;
+        }
+    }
+    Ok(())
+}
+
+/// Make `objects/<sha256>` a complete, verified, read-only object and return
+/// whether its body was downloaded. A reused regular file is made read-only,
+/// hashed again and synced before every stage, so a legacy writable object is
+/// never linked writable; anything else under that name is unlinked and fetched.
+/// Downloads stream into a unique partial name while hashing, so a partial
+/// never has a digest name, and are synced before and after the rename.
+async fn ensure_object(
+    source: &mut Source,
+    objects: &std::path::Path,
+    artifact: &publication::Artifact,
+    transfer: &mut std::time::Duration,
+) -> Result<bool, Error> {
+    use sha2::Digest;
+    if !std::fs::symlink_metadata(objects)?.is_dir() {
+        return Err("object cache must be a real directory".into());
+    }
+    let object = objects.join(&artifact.sha256);
+    match std::fs::symlink_metadata(&object) {
+        Ok(metadata) => {
+            if metadata.is_file() {
+                let (path, file) = (object.clone(), artifact.clone());
+                if tokio::task::spawn_blocking(move || reuse_object(&path, &file)).await?? {
+                    return Ok(false);
+                }
+            }
+            // A corrupt object, or a symlink/directory under its name: unlink
+            // the entry itself and never follow it.
+            if metadata.is_dir() {
+                std::fs::remove_dir_all(&object)?;
+            } else {
+                std::fs::remove_file(&object)?;
+            }
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e.into()),
+    }
+    let partial = objects.join(format!(
+        "{}{PARTIAL}{}-{}",
+        artifact.sha256,
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_nanos()
+    ));
+    let fetching = std::time::Instant::now();
+    let result = async {
+        let mut output = tokio::fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&partial)
+            .await?;
+        let mut response = source
+            .get(&format!("artifacts/{}", artifact.sha256))
+            .await?;
+        let mut hash = sha2::Sha256::new();
+        let mut remaining = artifact.bytes;
+        while let Some(chunk) = source.chunk(&mut response).await? {
+            if chunk.len() as u64 > remaining {
+                return Err::<(), Error>("artifact exceeds declared length".into());
+            }
+            hash.update(&chunk);
+            output.write_all(&chunk).await?;
+            remaining -= chunk.len() as u64;
+        }
+        if remaining != 0 {
+            return Err("artifact incomplete".into());
+        }
+        if hex::encode(hash.finalize()) != artifact.sha256 {
+            return Err("artifact digest mismatch".into());
+        }
+        let mut permissions = output.metadata().await?.permissions();
+        permissions.set_readonly(true);
+        output.set_permissions(permissions).await?;
+        output.sync_all().await?;
+        drop(output);
+        std::fs::rename(&partial, &object)?;
+        std::fs::File::open(objects)?.sync_all()?;
+        Ok(())
+    }
+    .await;
+    *transfer += fetching.elapsed();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&partial);
+    }
+    result.map(|()| true)
+}
+
+/// Make a cached regular file read-only, then verify and sync it. Returns
+/// whether it may be linked; a digest mismatch leaves it for replacement.
+fn reuse_object(path: &std::path::Path, artifact: &publication::Artifact) -> Result<bool, Error> {
+    let file = std::fs::File::open(path)?;
+    let mut permissions = file.metadata()?.permissions();
+    if !permissions.readonly() {
+        permissions.set_readonly(true);
+        file.set_permissions(permissions)?;
+    }
+    if publication::verify_file(path, artifact).is_err() {
+        return Ok(false);
+    }
+    file.sync_all()?;
+    Ok(true)
+}
+
+/// Stage a verified immutable object by hard link: the stage and cache share
+/// one read-only inode that nothing writes, so it is not hashed again here.
+/// Only a filesystem that explicitly cannot link falls back to a copy, which
+/// is then verified on its own.
+fn link_object(
+    object: &std::path::Path,
+    target: &std::path::Path,
+    artifact: &publication::Artifact,
+    link: impl FnOnce(&std::path::Path, &std::path::Path) -> std::io::Result<()>,
+) -> Result<(), Error> {
+    match link(object, target) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::Unsupported => {
+            std::fs::copy(object, target)?;
+            publication::verify_file(target, artifact)
+        }
+        Err(e) => Err(e.into()),
+    }
+}
+
+/// Holdings selected for this provider by the production assignment planner,
+/// with an explicitly inert archive row for cost/accounting only. Nothing here
+/// qualifies routes. Deterministic for one map, inventory and configuration.
+pub(crate) fn holdings(
+    config: &Config,
+    map: &transparent_filter::ShardMap,
+    inventory: &Inventory,
+    full: bool,
+) -> Result<LoadOptions, Error> {
+    Ok(if full {
+        LoadOptions::whole(0)
+    } else {
+        let mut roster = vec![RosterEntry {
+            id: "provider".into(),
+            role: WorkerRole::RecentReplica,
+            replica_group: Some("recent".into()),
+            ssh_host: String::new(),
+            upstream: "127.0.0.1:0".into(),
+            cache_bytes: config.cache_bytes,
+            archive_range: None,
+        }];
+        if inventory.recent_from_shard > 0 {
+            roster.push(RosterEntry {
+                id: "archive-metadata-only".into(),
+                role: WorkerRole::ArchiveOwner,
+                replica_group: None,
+                ssh_host: String::new(),
+                upstream: "unconfigured.invalid:0".into(),
+                cache_bytes: u64::MAX,
+                archive_range: None,
+            });
+        }
+        let assignment = plan(
+            map,
+            &inventory.map_sha256,
+            &roster,
+            inventory.recent_from_shard,
+            0.15,
+            GeneratedBy {
+                tool: "HTTPS bootstrap verifier".into(),
+                source_sha: None,
+                generated_at: "not-serving".into(),
+            },
+        )?;
+        LoadOptions {
+            scope: LoadScope::Assigned {
+                assignment: Arc::new(assignment),
+                worker_id: "provider".into(),
+            },
+            ..LoadOptions::whole(0)
+        }
+    })
+}
+
 // Persist child entries before their parents and before the owner's active
-// pointer. Cached copies require the same durability as downloaded files.
+// pointer. Linked objects and fallback copies are synced like downloads.
 pub(crate) fn sync_tree(path: &std::path::Path) -> Result<(), Error> {
     for entry in std::fs::read_dir(path)? {
         let entry = entry?;
@@ -773,5 +975,142 @@ mod observation_tests {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod object_tests {
+    use super::*;
+    use std::os::unix::fs::MetadataExt;
+
+    fn object(root: &std::path::Path, body: &[u8]) -> (PathBuf, publication::Artifact) {
+        let artifact = publication::Artifact {
+            path: "shards.json".into(),
+            sha256: publication::digest(body),
+            bytes: body.len() as u64,
+            kind: publication::Kind::Metadata,
+        };
+        let path = root.join(&artifact.sha256);
+        std::fs::write(&path, body).unwrap();
+        let mut permissions = std::fs::metadata(&path).unwrap().permissions();
+        permissions.set_readonly(true);
+        std::fs::set_permissions(&path, permissions).unwrap();
+        (path, artifact)
+    }
+
+    #[test]
+    fn staged_objects_share_one_read_only_inode() {
+        let root = tempfile::tempdir().unwrap();
+        let (path, artifact) = object(root.path(), b"immutable");
+        let target = root.path().join("stage");
+        link_object(&path, &target, &artifact, |a, b| std::fs::hard_link(a, b)).unwrap();
+        let (a, b) = (
+            std::fs::metadata(&path).unwrap(),
+            std::fs::metadata(&target).unwrap(),
+        );
+        assert_eq!((a.dev(), a.ino()), (b.dev(), b.ino()));
+        assert!(b.permissions().readonly());
+        assert!(std::fs::OpenOptions::new()
+            .write(true)
+            .open(&target)
+            .is_err());
+        // Cleanup unlinks the stage entry and leaves the cached object intact.
+        std::fs::remove_file(&target).unwrap();
+        publication::verify_file(&path, &artifact).unwrap();
+    }
+
+    #[test]
+    fn only_unsupported_links_fall_back_to_a_verified_copy() {
+        let root = tempfile::tempdir().unwrap();
+        let (path, artifact) = object(root.path(), b"immutable");
+        let unsupported = || std::io::Error::from(std::io::ErrorKind::Unsupported);
+        let copy = root.path().join("copy");
+        link_object(&path, &copy, &artifact, |_, _| Err(unsupported())).unwrap();
+        assert_eq!(std::fs::read(&copy).unwrap(), b"immutable");
+        assert_ne!(
+            std::fs::metadata(&copy).unwrap().ino(),
+            std::fs::metadata(&path).unwrap().ino()
+        );
+        let mut wrong = artifact.clone();
+        wrong.sha256 = "00".repeat(32);
+        assert!(
+            link_object(&path, &root.path().join("bad"), &wrong, |_, _| Err(
+                unsupported()
+            ))
+            .is_err()
+        );
+        assert!(
+            link_object(&path, &root.path().join("denied"), &artifact, |_, _| Err(
+                std::io::Error::from(std::io::ErrorKind::PermissionDenied)
+            ))
+            .is_err()
+        );
+        assert!(
+            !root.path().join("denied").exists(),
+            "no copy on other errors"
+        );
+    }
+
+    #[test]
+    fn interrupted_partials_are_removed_and_never_reused() {
+        let root = tempfile::tempdir().unwrap();
+        let (path, _) = object(root.path(), b"complete");
+        let partial = root.path().join(format!("{}{PARTIAL}1-2", "11".repeat(32)));
+        let legacy = root.path().join(format!("{}.partial", "22".repeat(32)));
+        std::fs::write(&partial, b"x").unwrap();
+        std::fs::write(&legacy, b"x").unwrap();
+        remove_partials(root.path()).unwrap();
+        assert!(!partial.exists() && !legacy.exists() && path.exists());
+        remove_partials(&root.path().join("missing")).unwrap();
+    }
+
+    #[test]
+    fn symlinked_object_directory_is_refused_before_cleanup() {
+        let root = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let sentinel = outside
+            .path()
+            .join(format!("{}{PARTIAL}1-2", "11".repeat(32)));
+        std::fs::write(&sentinel, b"outside").unwrap();
+        std::os::unix::fs::symlink(outside.path(), root.path().join("objects")).unwrap();
+        assert!(prepare_objects(root.path()).is_err());
+        assert_eq!(std::fs::read(&sentinel).unwrap(), b"outside");
+        let real = tempfile::tempdir().unwrap();
+        let objects = prepare_objects(real.path()).unwrap();
+        assert!(std::fs::symlink_metadata(objects).unwrap().is_dir());
+    }
+
+    #[tokio::test]
+    async fn writable_cached_object_is_made_read_only_before_linking() {
+        let root = tempfile::tempdir().unwrap();
+        let objects = prepare_objects(root.path()).unwrap();
+        let (path, artifact) = object(&objects, b"legacy");
+        let mut permissions = std::fs::metadata(&path).unwrap().permissions();
+        permissions.set_readonly(false);
+        std::fs::set_permissions(&path, permissions).unwrap();
+        // An unreachable publisher proves the valid object is reused.
+        let mut source = Source::new(&Config {
+            publisher: "https://publisher.invalid".into(),
+            network: "main".into(),
+            genesis_hash: "00".repeat(32),
+            directory: root.path().into(),
+            cache_bytes: 0,
+            max_download_bytes: 1024,
+            roots: Vec::new(),
+        })
+        .unwrap();
+        let mut transfer = std::time::Duration::ZERO;
+        assert!(
+            !ensure_object(&mut source, &objects, &artifact, &mut transfer)
+                .await
+                .unwrap()
+        );
+        let target = root.path().join("stage");
+        link_object(&path, &target, &artifact, |a, b| std::fs::hard_link(a, b)).unwrap();
+        assert!(std::fs::metadata(&target).unwrap().permissions().readonly());
+        assert!(std::fs::OpenOptions::new()
+            .write(true)
+            .open(&target)
+            .is_err());
     }
 }

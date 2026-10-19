@@ -898,7 +898,12 @@ async fn manager_checks_inventory_and_required_files_on_unchanged_maps() {
     follow.poll_once().await.unwrap();
     // Rehash cached files, then charge the actual replacement transfer. A bad
     // cache object plus bad download cannot borrow a resident runtime to pass.
-    std::fs::write(state.join("objects").join(&runtime.sha256), b"corrupt").unwrap();
+    // Objects are read-only inodes shared with staged trees; replace the cache
+    // entry rather than write through the active publication's runtime.
+    let object = state.join("objects").join(&runtime.sha256);
+    assert!(std::fs::metadata(&object).unwrap().permissions().readonly());
+    std::fs::remove_file(&object).unwrap();
+    std::fs::write(&object, b"corrupt").unwrap();
     std::fs::write(&tls.control, "corrupt").unwrap();
     owner.0.distribution_revision.fetch_add(1, Ordering::AcqRel);
     assert!(follow.poll_once().await.is_err());

@@ -270,33 +270,60 @@ async fn installation_case(case: Case) {
         "\"{}\"",
         publication::digest(&serde_json::to_vec(&current).unwrap())
     );
-    let app = axum::Router::new().fallback(axum::routing::get(
-        move |uri: axum::http::Uri, headers: axum::http::HeaderMap| {
-            let mode = fault.load(std::sync::atomic::Ordering::Acquire);
-            let unchanged = mode == 0
-                && uri.path() == "/provider/v1/current"
-                && headers
-                    .get("if-none-match")
-                    .is_some_and(|h| h.as_bytes() == token.as_bytes());
-            let body = if mode > 0 && uri.path() == "/provider/v1/current" {
-                Some(alternate_current[mode - 1].clone())
-            } else if uri.path() == runtime_path
-                && corrupt.load(std::sync::atomic::Ordering::Acquire)
-            {
-                Some(vec![0])
-            } else {
-                replies.get(uri.path()).cloned()
-            };
-            async move {
-                if unchanged {
-                    return (axum::http::StatusCode::NOT_MODIFIED, Vec::new());
-                }
-                body.map_or((axum::http::StatusCode::NOT_FOUND, Vec::new()), |b| {
-                    (axum::http::StatusCode::OK, b)
+    let canonical: std::collections::BTreeSet<(u64, String)> = map
+        .shards
+        .iter()
+        .map(|shard| (shard.end_height, shard.terminal_block_hash.clone()))
+        .collect();
+    let genesis = map.genesis_hash.clone();
+    let batch = move |axum::Json(request): axum::Json<publication::AnchorBatchRequest>| {
+        let answer = publication::AnchorBatch {
+            schema: publication::SCHEMA.into(),
+            revision: request.revision,
+            recovery_epoch: request.recovery_epoch,
+            inventory_sha256: request.inventory_sha256.clone(),
+            genesis_hash: genesis.clone(),
+            results: request
+                .anchors
+                .iter()
+                .map(|anchor| publication::AnchorResult {
+                    height: anchor.height,
+                    hash: anchor.hash.clone(),
+                    canonical: canonical.contains(&(anchor.height, anchor.hash.clone())),
                 })
-            }
-        },
-    ));
+                .collect(),
+        };
+        async move { axum::Json(answer) }
+    };
+    let app = axum::Router::new()
+        .route("/provider/v1/anchors/check", axum::routing::post(batch))
+        .fallback(axum::routing::get(
+            move |uri: axum::http::Uri, headers: axum::http::HeaderMap| {
+                let mode = fault.load(std::sync::atomic::Ordering::Acquire);
+                let unchanged = mode == 0
+                    && uri.path() == "/provider/v1/current"
+                    && headers
+                        .get("if-none-match")
+                        .is_some_and(|h| h.as_bytes() == token.as_bytes());
+                let body = if mode > 0 && uri.path() == "/provider/v1/current" {
+                    Some(alternate_current[mode - 1].clone())
+                } else if uri.path() == runtime_path
+                    && corrupt.load(std::sync::atomic::Ordering::Acquire)
+                {
+                    Some(vec![0])
+                } else {
+                    replies.get(uri.path()).cloned()
+                };
+                async move {
+                    if unchanged {
+                        return (axum::http::StatusCode::NOT_MODIFIED, Vec::new());
+                    }
+                    body.map_or((axum::http::StatusCode::NOT_FOUND, Vec::new()), |b| {
+                        (axum::http::StatusCode::OK, b)
+                    })
+                }
+            },
+        ));
     let (publisher, publisher_server) = serve_app(app).await;
     command(
         &[

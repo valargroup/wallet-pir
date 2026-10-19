@@ -517,6 +517,135 @@ async fn https_bootstrap_fails_closed_on_origin_network_and_transport_errors() {
         .contains("replay"));
 }
 
+/// One batched canonicality request answers every exact anchor for exactly the
+/// requested snapshot, or answers for none of them.
+#[tokio::test(flavor = "multi_thread")]
+async fn batched_anchor_checks_bind_the_snapshot_and_fail_closed() {
+    use transparent_shared::publication::{
+        AnchorBatch, AnchorBatchRequest, AnchorPair, Current, MAX_ANCHOR_BATCH,
+        MAX_ANCHOR_BATCH_BYTES,
+    };
+    let root = tempfile::tempdir().unwrap();
+    let (directory, set, finalized) = manager_tests::immutable_publication(2);
+    let rpc = canonical_rpc(root.path(), &set).await;
+    let owner = authority(&directory, Some(finalized), rpc.client.clone());
+    let tls = tls(root.path(), owner.clone()).await;
+    let client = reqwest::Client::builder()
+        .add_root_certificate(tls.cert.clone())
+        .https_only(true)
+        .build()
+        .unwrap();
+    let url = format!("{}/provider/v1/anchors/check", tls.origin);
+    let current: Current = client
+        .get(format!("{}/provider/v1/current", tls.origin))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let older = BlockHash::from_internal_bytes([1; 32]).to_display_hex();
+    let tip = set.map.shards.last().unwrap();
+    let anchors = vec![
+        AnchorPair {
+            height: 1,
+            hash: older.clone(),
+        },
+        AnchorPair {
+            height: 1,
+            hash: "99".repeat(32),
+        },
+        AnchorPair {
+            height: tip.end_height,
+            hash: tip.terminal_block_hash.clone(),
+        },
+    ];
+    let request = AnchorBatchRequest::new(&current, anchors.clone()).unwrap();
+    let post = |body: Vec<u8>| client.post(&url).body(body).send();
+    let response = post(serde_json::to_vec(&request).unwrap()).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let batch: AnchorBatch = response.json().await.unwrap();
+    let answers = batch.answers(&request, &current.genesis_hash).unwrap();
+    assert!(answers[&anchors[0]]);
+    assert!(!answers[&anchors[1]], "a same-network mismatch is negative");
+    assert!(answers[&anchors[2]]);
+
+    // Requests are POST-only, bounded and well formed.
+    assert_eq!(
+        client.get(&url).send().await.unwrap().status(),
+        StatusCode::METHOD_NOT_ALLOWED
+    );
+    assert_eq!(
+        post(vec![b' '; MAX_ANCHOR_BATCH_BYTES + 1])
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::PAYLOAD_TOO_LARGE
+    );
+    let mut invalid = request.clone();
+    invalid.anchors = (0..=MAX_ANCHOR_BATCH as u64)
+        .map(|height| AnchorPair {
+            height,
+            hash: older.clone(),
+        })
+        .collect();
+    let mut duplicate = request.clone();
+    duplicate.anchors.push(anchors[0].clone());
+    for body in [invalid, duplicate] {
+        assert_eq!(
+            post(serde_json::to_vec(&body).unwrap())
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::BAD_REQUEST
+        );
+    }
+    // Never an answer for a snapshot the consumer did not ask about.
+    for mutate in [
+        |r: &mut AnchorBatchRequest| r.revision += 1,
+        |r: &mut AnchorBatchRequest| r.recovery_epoch += 1,
+        |r: &mut AnchorBatchRequest| r.inventory_sha256 = "33".repeat(32),
+    ] {
+        let mut other = request.clone();
+        mutate(&mut other);
+        assert_eq!(
+            post(serde_json::to_vec(&other).unwrap())
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::CONFLICT
+        );
+    }
+    // An outage or a repointed node proves nothing about any anchor.
+    rpc.available.store(false, Ordering::Release);
+    assert_eq!(
+        post(serde_json::to_vec(&request).unwrap())
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+    rpc.available.store(true, Ordering::Release);
+    *rpc.genesis.write().unwrap() = "55".repeat(32);
+    assert_eq!(
+        post(serde_json::to_vec(&request).unwrap())
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+    *rpc.genesis.write().unwrap() = set.map.genesis_hash.clone();
+    // A revision committed after the request's snapshot is refused.
+    owner.0.distribution_revision.fetch_add(1, Ordering::AcqRel);
+    assert_eq!(
+        post(serde_json::to_vec(&request).unwrap())
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::CONFLICT
+    );
+}
+
 #[cfg(feature = "qualification-tests")]
 #[tokio::test(flavor = "multi_thread")]
 async fn https_bootstrap_consumes_canonicality_withdrawal_and_recovery_state() {
@@ -862,4 +991,51 @@ async fn full_history_http_holdings_include_archive_runtimes() {
         progress.downloaded_files, 0,
         "restart reuses completed files"
     );
+    // The freshly checked predecessor is the current publication: it was
+    // loaded and warmed once, and nothing was restaged or prepared again.
+    assert!(progress.unchanged, "{progress:?}");
+    let entries = |root: &std::path::Path| {
+        std::fs::read_dir(root)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .filter(|name| name.starts_with("staging-"))
+            .count()
+    };
+    assert_eq!(
+        entries(&root.path().join("consumer")),
+        1,
+        "no new staging tree"
+    );
+    let status = restarted
+        .live()
+        .unwrap()
+        .command(transparent_query_server::history::live::Command::Status)
+        .await
+        .unwrap();
+    assert_eq!(status["runtimes"]["built"], 0);
+    assert_eq!(status["runtimes"]["shipped_fallbacks"], 0);
+    let again = restarted.poll_once().await.unwrap();
+    assert!(again.unchanged && again.downloaded_files == 0);
+    drop(restarted);
+
+    // A damaged verified inventory never infers the recovered map is Current:
+    // the restart updates through a full staging pass instead.
+    let consumer = root.path().join("consumer");
+    let active: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(consumer.join("active.json")).unwrap()).unwrap();
+    let staged = std::path::PathBuf::from(active["directory"].as_str().unwrap());
+    std::fs::write(staged.join("verified-inventory.json"), b"{").unwrap();
+    let mut damaged = transparent_query_server::routing::manager::Manager::new(
+        config(&tls, consumer.clone()),
+        transparent_query_server::config::ServiceConfig {
+            cache_bytes: 4 << 30,
+            ..Default::default()
+        },
+    )
+    .unwrap()
+    .with_full_holdings();
+    let progress = damaged.poll_once().await.unwrap();
+    assert!(!progress.unchanged, "{progress:?}");
+    assert_eq!(progress.downloaded_files, 0, "objects are still reusable");
+    assert!(damaged.live().is_some());
 }
