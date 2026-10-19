@@ -127,7 +127,7 @@ pub fn check_publication_for_serving(
         receiver_pir::Error::Directory(match error {
             Error::Malformed => receiver_directory::Error::Malformed,
             Error::Coverage => receiver_directory::Error::Coverage,
-            Error::Capacity => receiver_directory::Error::Capacity,
+            Error::Capacity | Error::FilterBytes => receiver_directory::Error::Capacity,
             Error::MissingPage => receiver_directory::Error::MissingPage,
             Error::Json(error) => receiver_directory::Error::Json(error),
             // A publication check reads no database.

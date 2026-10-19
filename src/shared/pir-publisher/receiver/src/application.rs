@@ -67,8 +67,9 @@ fn capacity(limits: &[(&str, u64, u64)]) -> serde_json::Value {
 }
 
 /// The limit that stopped this process's latest publication, for health's
-/// `capacity_refusal` (`{"limit", "used", "max"}`), null once a publication is
-/// activated. Clones share it.
+/// `capacity_refusal` (`{"limit", "used", "max"}`, `used` null when the limit stopped
+/// the build before measuring it), null once a publication is activated. Clones share
+/// it.
 #[derive(Clone, Default)]
 pub struct Refusal(Arc<Mutex<Option<serde_json::Value>>>);
 
@@ -78,7 +79,7 @@ impl Refusal {
     fn refuse(
         &self,
         limit: &str,
-        used: u64,
+        used: Option<u64>,
         max: u64,
         error: &str,
     ) -> Box<dyn std::error::Error + Send + Sync> {
@@ -473,7 +474,7 @@ impl<'a> Collected<'a> {
         let records = store.counts()?.0;
         if records > MAX_RECORDS {
             let error = "directory exceeds the maximum row count; no publication created";
-            return Err(refusal.refuse("records", records, MAX_RECORDS, error));
+            return Err(refusal.refuse("records", Some(records), MAX_RECORDS, error));
         }
         // A crowded bucket retries the salt, then grows the table.
         let mut rows =
@@ -482,11 +483,15 @@ impl<'a> Collected<'a> {
             if rows > MAX_ROWS {
                 let error = "every salt overflowed a bucket at the maximum row count; \
                     no publication created";
-                return Err(refusal.refuse("buckets", records, PLACEABLE_RECORDS, error));
+                return Err(refusal.refuse("buckets", Some(records), PLACEABLE_RECORDS, error));
             }
             match store.snapshot(rows, &capture.sets) {
                 Ok(s) => break s,
                 Err(Error::Capacity) => rows *= 2,
+                Err(Error::FilterBytes) => {
+                    let (max, error) = (MAX_FILTERS_BYTES as u64, Error::FilterBytes.to_string());
+                    return Err(refusal.refuse("filter_bytes", None, max, &error));
+                }
                 Err(e) => return Err(e.into()),
             }
         };
@@ -516,14 +521,14 @@ impl<'a> Collected<'a> {
                      witness file's node limit; no publication created"
                     );
                     let max = args.max_witness_commitments;
-                    return Err(refusal.refuse("witness_commitments", used, max, &error));
+                    return Err(refusal.refuse("witness_commitments", Some(used), max, &error));
                 }
                 proof => proof?,
             };
             if proof.len() > MAX_WITNESS_BYTES {
                 let (used, max) = (proof.len() as u64, MAX_WITNESS_BYTES as u64);
                 let error = "witness file exceeds its size bound; no publication created";
-                return Err(refusal.refuse("witness_bytes", used, max, error));
+                return Err(refusal.refuse("witness_bytes", Some(used), max, error));
             }
             log_stage("witness_prepare", started);
             info!(witness_bytes = proof.len(), "witnesses prepared");
@@ -1564,6 +1569,59 @@ mod tests {
         let level = |records| capacity(&[("records", records, PLACEABLE_RECORDS)])["level"].clone();
         assert_eq!(level(placed), "critical");
         assert_eq!(level(PLACEABLE_RECORDS * 7 / 10), "warning");
+    }
+
+    /// A history that completes publishes the seen set beside the recent one, and when
+    /// the two no longer fit the filter file's size bound the refusal names the filter
+    /// limit while the previous publication keeps serving.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_seen_set_over_the_filter_bound_is_a_capacity_refusal() {
+        use receiver_store::Pass;
+        let mut paused = Paused::new(|_| {}).await;
+        let mut provider = paused.provider();
+        // Three million receivers, recent ones, fill about 4.7 MB of the 8 MiB bound
+        // once and overflow it twice.
+        let receivers: Vec<_> = (0..3_000_000u32)
+            .map(|i| {
+                let mut receiver = [0; 43];
+                receiver[..4].copy_from_slice(&i.to_be_bytes());
+                (receiver, false, NOW - 20)
+            })
+            .collect();
+        for feed in [crate::near::Feed::Payouts, crate::near::Feed::Refunds] {
+            let found = match feed {
+                crate::near::Feed::Refunds => &receivers[..],
+                crate::near::Feed::Payouts => &[],
+            };
+            provider
+                .record(feed.name(), Some(NOW - 100), found, &[], NOW - 10, NOW - 10)
+                .unwrap();
+        }
+        paused.refresh().await.unwrap();
+        let first = paused.get("init").await;
+        let labels = |init: &Value| -> Vec<Value> {
+            let filters = init["directory"]["filters"].as_array().unwrap();
+            filters.iter().map(|f| f["label"].clone()).collect()
+        };
+        assert_eq!(labels(&first), ["near-intents/recent", "paid"]);
+        let capacity = paused.get("health").await["indexer"]["capacity"].clone();
+        let filter_bytes = capacity["limits"]["filter_bytes"]["used"].as_u64().unwrap();
+        assert!(filter_bytes > 4_000_000, "{filter_bytes}");
+        assert_eq!(capacity["level"], "ok");
+        for feed in [crate::near::Feed::Payouts, crate::near::Feed::Refunds] {
+            provider
+                .begin_sweep(feed.name(), Pass::Full, NOW - 1_000, NOW - 5)
+                .unwrap();
+            provider
+                .sweep_page(feed.name(), Pass::Full, NOW - 5, &[], &[], None, None)
+                .unwrap();
+        }
+        let error = paused.refresh().await.unwrap_err();
+        assert!(error.to_string().contains("filter"), "{error}");
+        let refusal = json!({"limit": "filter_bytes", "used": null,
+            "max": receiver_directory::filter::MAX_FILTERS_BYTES});
+        assert_eq!(paused.state.refusal().health()["capacity_refusal"], refusal);
+        assert_eq!(paused.get("init").await, first);
     }
 
     #[test]

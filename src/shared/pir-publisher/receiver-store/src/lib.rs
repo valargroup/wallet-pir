@@ -4,6 +4,7 @@
 //! Records, placement and publications are wallet-libraries'
 //! `zakura-receiver-directory`; this crate only persists them.
 use receiver_directory::{
+    filter::{Filter, Filters},
     snapshot::{self, Manifest, ProviderSet, Snapshot, PROFILE, TREE_SIZE},
     Hash, Payment, RawRecord, ReceiverBytes,
 };
@@ -22,6 +23,8 @@ pub enum Error {
     Coverage,
     #[error("receiver directory table or commitment history limit exceeded")]
     Capacity,
+    #[error("receiver directory filter file exceeds its size bound")]
+    FilterBytes,
     #[error("missing continuation page")]
     MissingPage,
     #[error(transparent)]
@@ -319,8 +322,9 @@ impl Store {
     /// A crowded bucket retries the next of [`SALT_ATTEMPTS`] salts derived from the
     /// anchor, so the result is deterministic; [`Error::Capacity`] means every salt
     /// overflowed at `rows`, or the history has more payments than `rows` has slots,
-    /// found without loading more records than that. `provider` holds the swap provider
-    /// filter sets (see [`ProviderStore::sets`]).
+    /// found without loading more records than that. A filter file over its size bound,
+    /// which no salt or row count changes, is [`Error::FilterBytes`]. `provider` holds
+    /// the swap provider filter sets (see [`ProviderStore::sets`]).
     pub fn snapshot(&mut self, rows: u32, provider: &[ProviderSet]) -> Result<Snapshot, Error> {
         let capacity = snapshot::capacity(rows)?;
         let tx = self.db.transaction()?;
@@ -372,8 +376,22 @@ impl Store {
                 filters: Vec::new(),
                 filters_sha256: [0; 32],
             };
+            let salt = manifest.salt;
             match Snapshot::build(manifest, &records, provider) {
                 Err(receiver_directory::Error::Capacity) => continue,
+                // The build reports an oversized filter file as malformed. Encoding the
+                // same filters alone tells the two apart.
+                Err(receiver_directory::Error::Malformed)
+                    if Filters::new(
+                        Filter::build(&salt, records.iter().map(|r| &r.receiver)),
+                        provider
+                            .iter()
+                            .map(|set| (set.label.clone(), Filter::build(&salt, &set.receivers))),
+                    )
+                    .is_ok_and(|filters| filters.encode().is_err()) =>
+                {
+                    return Err(Error::FilterBytes)
+                }
                 built => return Ok(built?),
             }
         }
@@ -737,19 +755,19 @@ fn insert(
     receivers: &[(ReceiverBytes, bool, i64)],
     completions: &[(ReceiverBytes, Hash, i64)],
 ) -> Result<(), Error> {
+    let mut insert = tx.prepare_cached(
+        "INSERT INTO receivers VALUES (?1,?2,?3) ON CONFLICT(receiver,payout)
+         DO UPDATE SET seen_at=MAX(seen_at,excluded.seen_at)",
+    )?;
     for (receiver, payout, seen_at) in receivers {
-        tx.execute(
-            "INSERT INTO receivers VALUES (?1,?2,?3) ON CONFLICT(receiver,payout)
-             DO UPDATE SET seen_at=MAX(seen_at,excluded.seen_at)",
-            params![receiver.as_slice(), payout, seen_at],
-        )?;
+        insert.execute(params![receiver.as_slice(), payout, seen_at])?;
     }
+    let mut insert = tx.prepare_cached(
+        "INSERT INTO payouts VALUES (?1,?2,?3) ON CONFLICT(receiver,txid)
+         DO UPDATE SET seen_at=MIN(seen_at,excluded.seen_at)",
+    )?;
     for (receiver, txid, seen_at) in completions {
-        tx.execute(
-            "INSERT INTO payouts VALUES (?1,?2,?3) ON CONFLICT(receiver,txid)
-             DO UPDATE SET seen_at=MIN(seen_at,excluded.seen_at)",
-            params![receiver.as_slice(), txid.as_slice(), seen_at],
-        )?;
+        insert.execute(params![receiver.as_slice(), txid.as_slice(), seen_at])?;
     }
     Ok(())
 }
