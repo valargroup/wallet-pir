@@ -26,7 +26,7 @@ wallet-libraries' server-only chain adapters (`zakura-server-chain`), which deco
 blocks, count note positions and recover receivers.
 
 The indexer's `receiver_indexer::application` supplies operations to the internal
-`src/shared/pir-publisher/pipeline` lifecycle. Shared supervision retains the poll delay after
+`src/shared/pir-pipeline` lifecycle. Shared supervision retains the poll delay after
 each complete pass and the product's retry policy. Shared acquisition reconciles
 and commits through the concrete chain client and store; its work token borrows
 those dependencies. Shared preparation consumes that token, building from one

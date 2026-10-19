@@ -10,7 +10,7 @@ name = "enhance-pir-exercise"
 path = "src/main.rs"
 
 [dependencies]
-enhance-publisher = { path = "../../../src/shared/pir-publisher/enhance" }
+enhance-publisher = { path = "../../../src/enhance/enhance-publisher" }
 enhance-query-server = { path = "../../../src/enhance/enhance-query-server" , features = ["client"] }
 axum = "0.7"
 clap = { version = "4", features = ["derive"] }

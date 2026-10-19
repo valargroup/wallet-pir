@@ -36,7 +36,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix='schema11-interop-') as directory:
         project = Path(directory)
         dependencies = {
-            'enhance-publisher': ROOT / 'src/shared/pir-publisher/enhance',
+            'enhance-publisher': ROOT / 'src/enhance/enhance-publisher',
             'enhance-query-server': ROOT / 'src/enhance/enhance-query-server',
         }
         manifest = '[package]\nname="schema11-interop"\nversion="0.0.0"\nedition="2021"\n'

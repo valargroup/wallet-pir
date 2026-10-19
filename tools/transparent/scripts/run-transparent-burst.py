@@ -70,7 +70,7 @@ def main():
         paths += [ROOT / 'Cargo.toml', ROOT / 'Cargo.lock']
         paths += sorted((ROOT / 'src/transparent').glob('*/Cargo.toml'))
         paths += sorted((ROOT / 'src/shared').glob('*/Cargo.toml'))
-        paths += sorted((ROOT / 'src/shared/pir-publisher').glob('*/Cargo.toml'))
+        paths += [ROOT / 'src/pir-publisher/Cargo.toml']
         paths += sorted((ROOT / 'src/transparent/transparent-query-server').rglob('*.rs'))
         paths += sorted((ROOT / 'src/transparent/transparent-shared').rglob('*.rs'))
         json.dump({'source_sha': source, 'machine': platform.platform(), 'cpu_info': Path('/proc/cpuinfo').read_text() if Path('/proc/cpuinfo').exists() else None,

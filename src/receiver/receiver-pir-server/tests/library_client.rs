@@ -2,7 +2,7 @@
 //! (`zakura-receiver-pir`). These tests drive that
 //! client against the production router over real HTTP, so its manifest, filter, PIR,
 //! witness and revision handling interoperate with these routes byte for byte.
-#[path = "../../../shared/pir-publisher/receiver-store/tests/common/mod.rs"]
+#[path = "../../receiver-store/tests/common/mod.rs"]
 mod common;
 #[path = "common/history.rs"]
 mod history;

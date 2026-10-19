@@ -4,6 +4,9 @@ The root workspace contains Enhance PIR, Status PIR, transparent shard recovery,
 transaction-detail (txid) PIR and the receiver directory. Cargo packages live
 directly under `src/<product>/` (`enhance`, `status`, `transparent`, `txid`,
 `receiver`); packages used by more than one product live under `src/shared/`.
+The publisher and query-server hosts live at `src/pir-publisher` and
+`src/pir-query-server`. Each product publisher lives beside that product's
+query server, and `src/shared` holds libraries only.
 Keep operations and standalone scripts under `tools/<product>/`, documentation
 under `docs/<product>/` and evidence under `evidence/<product>/`; shared automation
 lives under `tools/{ci,dev,scripts,lib,deploy,infra}/`. A product never depends

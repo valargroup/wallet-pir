@@ -1,7 +1,8 @@
 # Query server host
 
 `pir-query-server` is one process that serves any compiled subset of Enhance,
-Status, Transparent history, and transaction details. Its management server
+Status, Transparent history, and transaction details. The host crate is
+`src/pir-query-server`. Its management server
 reserves listeners and owns process shutdown. Product libraries continue to own
 evaluation, admission, and readiness.
 
