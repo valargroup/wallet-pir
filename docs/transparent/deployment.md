@@ -3951,30 +3951,51 @@ is the supported way to upgrade the coordinator's running pir-apm and change onl
 The second setting is one family covering the Receiver, Status, Transparent and txid probes together. The
 monitor's global `PIR_MONITOR_ALERT_MODE` and pir-apm's other families are not changed.
 
-The request (`transparent-alert-activation/1`, bound by `--request-sha256`) has two components, `apm` and
-`monitor` (which may be `null`). Each component pins:
+The request (`transparent-alert-activation/1`, bound by `--request-sha256`) has two components. `apm` is
+`pir-apm.service` and `monitor` is `pir-monitor.service`; `monitor` may be `null`. Each component pins:
 
-- the host and unit;
+- the host;
 - `unit_files_sha256`, the exact loaded fragment and drop-ins;
 - `wrapper_sha256`, the `credential-exec.py` digest;
 - `running_sha256`, the executable after the wrapper execs it;
-- its incident database (`state_path`);
-- its loopback `listen`;
+- its incident database (`state_path`) and loopback `listen`, which must equal the running process's own
+  `*_STATE_PATH` and `*_LISTEN`;
 - the `environment` label for test messages.
 
 `apm` also pins:
 
-- `release` (`git_sha` and `binary_sha256`);
-- `config` (`path`, `previous_sha256` and `alert_modes`).
+- `release`: `git_sha` (40 lowercase hex) and `binary_sha256`;
+- `config`: `path` (which must be the running `PIR_APM_TRANSPARENT_CONFIG`), `previous_sha256`, and
+  `alert_modes`, which names only `transparent` and `txid`.
 
-`monitor` also pins `service_alert_mode`. `plan`, `preflight` and `status` print the observed values next to the
-pins.
+`monitor` also pins `service_alert_mode`.
+
+Every host observation goes through `alert_host_probe.py`. Its source is sent to `python3 -c` on the host, and it
+prints only small whitelisted JSON fields:
+
+- the running process's settings, read from `/proc/<pid>/environ` and limited to path, listen and mode keys;
+- each family's mode from the incident database, opened read-only;
+- a summary of `monitor-status`, read with a 16 MiB bound. An oversized or invalid body is an error, never a
+  truncated parse. Delivery failures are reported as present or absent, never as text.
+
+Secrets in the environment or in error messages never leave the host. `plan`, `preflight` and `status` print the
+observed values next to the pins.
 
 What a deploy changes:
 
-- **pir-apm.** The release is staged immutably at `/opt/pir-quality/releases/<sha256>/pir-apm` and passes
-  `--help` there. Only the final binary argument of `python3 <credential-exec.py> <pir-apm>` changes, through
-  the managed `zzz…-wallet-pir-release.conf` ExecStart drop-in. A deploy refuses when:
+- **pir-apm.** The release is staged immutably at `/opt/pir-quality/releases/<sha256>/pir-apm` and must pass
+  `--help` there. Before any live write, under the lock, it then runs as an isolated shadow process beside the
+  running one:
+  - it uses the running process's nonsecret `PIR_APM_*` settings, so it reads the real configured sources;
+  - its state, history and configuration copy are temporary, with every mode set to `shadow`;
+  - it uses loopback port 3092, has no webhook and no scaler, and runs as the unit's user;
+  - it is stopped and removed within 120 s.
+
+  It must evaluate with the Transparent configuration enabled and record `shadow` for `transparent` and `txid`.
+  Otherwise the deploy fails with nothing live changed.
+
+  Only the final binary argument of `python3 <credential-exec.py> <pir-apm>` changes, through the managed
+  `zzz…-wallet-pir-release.conf` ExecStart drop-in. A deploy refuses when:
   - any other unit setting would change;
   - a later drop-in sets ExecStart;
   - the unit does not run through the wrapper.
@@ -3984,23 +4005,28 @@ What a deploy changes:
   `pir-monitor.service.d/95-service-alert-mode.conf`, which adds that file as the last `EnvironmentFile` so it
   applies over `Environment=` and `monitor.env`. Credential drop-ins, wrappers, `monitor.env` and every SQLite
   database are left as they are.
-- **Under the production lock.** The deploy checks the schema fence, then reruns every pin check. The runner
-  journal records each previous byte before any write. Each component is restarted and verified in turn:
-  - a new systemd invocation;
-  - the expected executable;
-  - a reachable `monitor-status`;
-  - the running mode, as recorded in its own incident database, equal to the requested mode.
+- **Under the production lock.** The deploy checks the schema fence, then reruns every pin and process-binding
+  check. The runner journal records each previous byte and the previous running modes before any write. Each
+  component is restarted and verified in turn:
+  - a new systemd invocation running the expected executable, still bound to the request's paths;
+  - an `evaluated_at` later than before the restart;
+  - `progress_ok`, working storage, and configured delivery with no failure;
+  - the requested running modes.
 
   A lost restart reply is recorded as uncertain and resolved by observation. Any failure after a write restores
-  every touched component (files, binary selection and process) and marks the transaction `rolled-back`.
-  `rollback` restores a committed or interrupted transaction. It refuses when a file changed after the
-  transaction, unless given `--force` after review.
+  every touched component. Each restored process must have evaluated again and recorded its previous modes; its
+  delivery health is reported but not required.
+- **Rollback.** `rollback` restores a committed or interrupted transaction. It refuses when a file changed after
+  the transaction, unless given `--force` after review.
+- **Status.** With the same request, `status` checks the live state against that request's committed transaction
+  (new state) or rolled-back transaction (previous state), not against the pre-deploy pins, and reports drift.
+  Without a finished transaction, it checks the pins.
 
 `test --component apm|monitor` sends real labelled test messages:
 
 - It queues one labelled `PIR test · FIRED` / `RECOVERED` pair into that component's existing outbox. It runs the
-  checksum-qualified `pir-apm --enqueue-test-alert` as the unit's `User`, which writes the outbox and exits
-  without starting a daemon.
+  checksum-qualified `pir-apm --enqueue-test-alert` through `runuser` as the unit's `User` and `Group`, so no
+  root-owned WAL or SHM file is created. The command writes the outbox and exits without starting a daemon.
 - The monitor host gets a copy of that binary at `/opt/pir-monitor/tools/<sha256>/pir-apm`.
 - The running service's own delivery worker sends the messages: pir-monitor reads `PIR_APM_SLACK_WEBHOOK_URL`
   through its wrapper.

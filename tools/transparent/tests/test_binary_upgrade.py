@@ -185,10 +185,10 @@ class HistoryUpgrade(Harness):
             {'service': 'transparent', 'kind': 'history', 'alert_mode': 'active'}]}))
         self.fake.put('coordinator', '/usr/bin/python3', b'python')
         summary = {'progress_ok': True, 'delivery': {'configured': True, 'pending': 0, 'last_success': 5, 'failure': False}}
+        replies = {binary_upgrade.APM_STATE: {'mode': 'active', 'mode:quality-transparent': 'shadow'},
+                   'http://127.0.0.1:3002/monitor-status': summary}
         self.fake.product_check = lambda host, argv: (
-            (0, json.dumps({'mode': 'active', 'mode:quality-transparent': 'shadow'}))
-            if argv[-1] == binary_upgrade.APM_STATE else (0, json.dumps(summary))
-            if argv[-1] == 'http://127.0.0.1:3002/monitor-status' else (1, 'unexpected'))
+            (0, json.dumps({'ok': True, 'result': replies[argv[-1]]})) if argv[-1] in replies else (1, 'unexpected'))
         code, lines = self.run_cli('status')
         text = '\n'.join(lines)
         self.assertIn('configured on disk (read only at APM start): active', text)
