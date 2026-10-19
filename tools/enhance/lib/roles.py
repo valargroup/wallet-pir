@@ -3,14 +3,20 @@
 Settings come from the operator inventory, which owns hosts, paths, budgets
 and credential file references; the template owns the sandbox. Each renderer
 writes `/etc/enhance-pir/<role>.json` and a unit whose command is
-`{release}/pir-query-server --config` that file. The coordinator keeps
-`enhance-pir-server` and is not rendered here.
+`{release}/pir-query-server --config` that file. A second external worker on
+the same host is another unit: it gets a file named for that unit and its own
+loopback management port, so the two processes do not share a configuration
+or a listener. The coordinator keeps `enhance-pir-server` and is not rendered
+here.
 
 An Enhance worker is reserved, filled and activated by its coordinator and
 only serves once a packing router lists it. It has no staged inputs of its
 own, so it has no preflight input check: the product says so rather than
 manufacturing one.
 """
+import re
+import zlib
+
 from wallet_pir_ops.paths import ROOT
 from wallet_pir_ops.role_config import address, directory, number, settings_of, worker as render_worker
 
@@ -47,16 +53,38 @@ def _origin(value):
     return value
 
 
-def _render(role, template, release, settings, body, writable):
+def _binding(role, unit, listen):
+    """Config path and loopback management port for one process.
+
+    The descriptor's unit keeps `/etc/enhance-pir/<role>.json` and the role's
+    port. Another external-worker unit on that host is a second process: its
+    file is named for the unit, and its port is in 20000-29999 so it does not
+    bind the first worker's `127.0.0.1:18091` or its own service listener.
+    """
+    if role != 'external-worker' or unit is None:
+        return '%s/%s.json' % (CONFIG_ROOT, role), MANAGEMENT[role]
+    if not unit.endswith('.service'):
+        raise ValueError('external worker unit must be a systemd service name')
+    stem = unit[:-len('.service')]
+    if not re.fullmatch(r'[A-Za-z0-9._-]+', stem):
+        raise ValueError('external worker unit name must be a plain file name')
+    port = 20000 + (zlib.crc32(unit.encode()) % 10000)
+    management = '127.0.0.1:%d' % port
+    if management == listen:
+        management = '127.0.0.1:%d' % (20000 + ((port - 20000 + 1) % 10000))
+    return '%s/%s.json' % (CONFIG_ROOT, stem), management
+
+
+def _render(role, template, release, settings, body, writable, unit=None):
     """One query-server process: config file, command, and the template's sandbox."""
-    path = '%s/%s.json' % (CONFIG_ROOT, role)
-    document = {'management_listen': MANAGEMENT[role],
+    path, management = _binding(role, unit, body.get('listen'))
+    document = {'management_listen': management,
                 'enhance': {'enabled': True, 'settings': body}}
     return render_worker(template, directory(release) + '/' + QUERY_BINARY, ['--config', path],
                          configurations={path: document}, writable=writable, readonly=[path], settings=settings)
 
 
-def _worker(role, settings, release, template):
+def _worker(role, settings, release, template, unit=None):
     """`pir-query-server` worker: CPU by default; CUDA only when the inventory says so."""
     parsed = settings_of(settings, ('listen', 'data_dir'), ('sealed_shards', 'matvec_backend', 'cuda_device'))
     data = directory(parsed['data_dir'])
@@ -64,7 +92,7 @@ def _worker(role, settings, release, template):
             'sealed_shards': int(number(parsed.get('sealed_shards', 6), 'sealed_shards', 1)),
             'matvec': _matvec(parsed)}
     text = WORKER_TEMPLATE.read_text() if template is None else template
-    return _render(role, text, release, parsed, body, [data])
+    return _render(role, text, release, parsed, body, [data], unit)
 
 
 def worker(settings, *, release, template=None):
@@ -72,9 +100,9 @@ def worker(settings, *, release, template=None):
     return _worker('worker', settings, release, template)
 
 
-def external_worker(settings, *, release, template=None):
-    """The worker renderer, with the external role's own config file."""
-    return _worker('external-worker', settings, release, template)
+def external_worker(settings, *, release, template=None, unit=None):
+    """The worker renderer. A non-default unit on this host gets its own config file."""
+    return _worker('external-worker', settings, release, template, unit)
 
 
 def query_ingress(settings, *, release, template=None):
