@@ -238,8 +238,9 @@ the first does or one after an outage of over a day, restarts the feed's live
 coverage there.
 
 History comes from sweeps, which walk a feed from its newest swap down to a floor,
-30 pages a feed each poll between two passes, the recent one first. Each page is
-recorded with where the next one starts, so a sweep resumes after a failed request
+30 pages a feed each poll between two passes. Each pass that is running gets at
+least half of them and any the other leaves, so neither starves the other. Each page
+is recorded with where the next one starts, so a sweep resumes after a failed request
 or a restart and no history is too long to read.
 
 - The full pass reads down to the history's start. The first backfills to

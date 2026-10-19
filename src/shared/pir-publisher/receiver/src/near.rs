@@ -457,7 +457,9 @@ impl Explorer {
     }
 
     /// Advances `feed`'s history sweeps by up to `SWEEP_PAGES` pages of swaps in every
-    /// status between them, the recent pass first, recording each page as it is read
+    /// status between them, each pass in progress or due getting at least half the
+    /// pages and any the other leaves, so neither starves the other however long it
+    /// runs. Each page is recorded as it is read
     /// (see [`ProviderStore::sweep_page`]), so a failure or restart resumes after the
     /// last recorded page and no bound on one read limits the history. A pass not in
     /// progress begins from the explorer's newest swap when it is due. The full pass
@@ -475,10 +477,16 @@ impl Explorer {
         start: i64,
     ) -> Result<usize> {
         let mut pages = 0;
-        for pass in [Pass::Recent, Pass::Full] {
-            pages += self
-                .pass(store, feed, pass, start, self.sweep_pages - pages)
-                .await?;
+        // The recent pass takes up to half, the full pass what remains, and the recent
+        // pass any the full pass left.
+        let half = self.sweep_pages.div_ceil(2);
+        for (pass, share) in [
+            (Pass::Recent, half),
+            (Pass::Full, usize::MAX),
+            (Pass::Recent, usize::MAX),
+        ] {
+            let budget = share.min(self.sweep_pages - pages);
+            pages += self.pass(store, feed, pass, start, budget).await?;
         }
         Ok(pages)
     }
@@ -1413,6 +1421,39 @@ mod tests {
         assert_eq!(history.since, since);
         assert!(history.full >= now);
         assert_eq!(explorer.sweep(&mut store, feed, since).await.unwrap(), 0);
+    }
+
+    /// While a recent and a full pass both need many polls, each advances every poll:
+    /// the recent pass, which would otherwise take every page and be due again by the
+    /// time it finished, leaves the full pass its share.
+    #[tokio::test]
+    async fn the_recent_pass_cannot_starve_the_full_pass() {
+        let (feed, now) = (Feed::Refunds, unix_now());
+        let name = feed.name();
+        let listing = Listing::default();
+        let address = Receiver::from_bytes(receiver(1))
+            .unwrap()
+            .to_unified_address(Network::Main);
+        for i in 0..6 * PAGE {
+            let swap = serde_json::json!({"refundTo": address,
+                "createdAtTimestamp": now - 60 * i as i64, "depositAddress": format!("d{i}")});
+            listing.swaps.lock().unwrap().push(swap);
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = ProviderStore::open(dir.path().join("providers.sqlite")).unwrap();
+        // Both passes are due.
+        let (since, full) = (now - 30 * RECENT_SECS, now - RECENT_SECS - 600);
+        swept(&mut store, name, Pass::Full, since, full);
+        swept(&mut store, name, Pass::Recent, full - 3600, now - 2 * 3600);
+        let mut explorer = listing.explorer().await;
+        explorer.sweep_pages = 2;
+        for poll in 1..=3 {
+            assert_eq!(explorer.sweep(&mut store, feed, since).await.unwrap(), 2);
+            for pass in [Pass::Recent, Pass::Full] {
+                let pages = store.sweep(name, pass).unwrap().unwrap().pages;
+                assert_eq!(pages, poll, "{}", pass.name());
+            }
+        }
     }
 
     /// After a long outage, a live read of either feed reaches back only a day, its
