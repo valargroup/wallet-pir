@@ -381,14 +381,15 @@ def main(argv=None, executor=None, out=print, package_layout=None, package_githu
             out('error: ' + message)
     try:
         from ..bundle import check_installed
-        product_command = args.command.startswith(('schema-', 'txid-display-', 'transparent-binary-', 'ops-package-'))
+        product_command = args.command.startswith(('schema-', 'txid-display-', 'transparent-binary-', 'transparent-alerts-',
+                                                   'ops-package-'))
         mutation = (args.command in ('deploy', 'rollback') or getattr(args, 'stage', False)
                     or product_command and not args.command.endswith(('-plan', '-preflight', '-status', '-summary', '-recipe')))
         # A clean installed package may install a newer package revision; every
         # binary change still names the same source revision as the package.
         package_command = args.command.startswith('ops-package-')
         check_installed(mutation=mutation, revision=None if package_command else getattr(args, 'sha', None))
-        if args.command.startswith(('schema-', 'txid-display-', 'transparent-binary-')):
+        if args.command.startswith(('schema-', 'txid-display-', 'transparent-binary-', 'transparent-alerts-')):
             if args.json:
                 raise DeployError('product recipes already provide their own JSON receipts; omit --json')
             return transparent_cli().dispatch(args, executor=executor, out=out, **options)
