@@ -55,6 +55,7 @@ def main():
     manifest = {"schema": "transparent-unified-http-sync-v1", "source_sha": source,
                 "source_dirty": bool(subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT)),
                 "host": {"platform": platform.platform(), "machine": platform.machine(), "cpus": os.cpu_count()},
+                "fixture_recent_privacy_floor": 1,
                 "scope": "synthetic local correctness; production journal snapshots and original wallet application are separate gates"}
     (output / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     code = 1
