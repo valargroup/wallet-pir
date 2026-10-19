@@ -35,8 +35,10 @@ five-second overruns in its receipt. Diagnostic success establishes correctness;
 only an enforced passing run establishes compliance with the selected budget.
 
 Native tests compile once with a consistent feature set, then run Cargo-reported
-executables with at most three programs active and one case per program. Mutable
-service state is fresh; only immutable public runtime material is shared within
+executables with at most three programs active and one case per program. The fast
+compile leaves out binaries that declare no unit tests; qualification still
+builds every binary. Mutable service state is fresh; only immutable public
+runtime material is shared within
 the run. Serving HTTP and packing tests live beside the serving library and
 avoid the application's chain ingestion dependencies. Reference arithmetic,
 encrypted HTTP, frozen v7 vectors and Status checks run under the reference
@@ -49,7 +51,7 @@ Expensive fixtures are organized around the guarantee being checked:
 
 | Fast coverage | Additional full qualification coverage |
 | --- | --- |
-| The independent 67-record generic-hint oracle, frozen vectors, padding/binding checks and damaged-artifact checks remain. | The 68-record hint oracle, unequal-unit/monolithic comparison and tail-growth artifact/coordinate checks run with reference arithmetic and the native backend. The encrypted HTTP pending-commit and fresh-wallet restart lifecycle also remains full-only. |
+| The independent 67-record generic-hint oracle, frozen vectors, padding/binding checks, damaged-artifact checks, and one unequal-unit comparison of the supported 8K composed tail, including its zero-filled gap, against monolithic preprocessing. | The 68-record hint oracle, the 16K monolithic comparison, and tail-growth artifact/coordinate checks run with reference arithmetic and the native backend. The encrypted HTTP pending-commit and fresh-wallet restart lifecycle also remains full-only. |
 | Preparation failures retain cold partial-allocation cleanup and a cached backend failure that must neither reread source rows nor replace a published view. | The combined failure on the second cached unit and the larger candidate geometry. |
 | Native cache admission and built-size bounds use one supported column instance; the batched-hint oracle retains a deployed display geometry with nonzero and padded rows. | Deployed cache/build shapes and the full history/display hint geometry and occupancy combinations. |
 | Transparent HTTP checks one cold encrypted retrieval and one cached restart. Runtime tests reject each distinct artifact fault and verify one complete optional fallback build, plus required-file refusal and ordinary-build accounting. | The composed history activation and display sealing/restart lifecycles retain their real workers, original geometries and independent source/wallet oracles. |

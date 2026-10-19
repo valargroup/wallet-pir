@@ -105,6 +105,41 @@ class FastBuildTests(unittest.TestCase):
         [shard] = fast_build.bounded_programs(program, only_distribution)
         self.assertCountEqual(shard['args'][1:], only_distribution)
 
+    def test_bins_without_unit_tests_are_omitted_from_the_fast_compile(self):
+        root = Path(self.directory.name) / 'sources'
+        root.mkdir()
+        empty = root / 'empty.rs'
+        tested = root / 'client.rs'
+        empty.write_text('fn main() {}\n')
+        tested.write_text('fn main() {}\n#[test]\nfn keeps_the_binary() {}\n')
+        for package in self.packages:
+            for target in package['targets']:
+                if target['kind'] == ['bin']:
+                    target['src_path'] = str(tested)
+        self.packages[0]['targets'].append(
+            dict(name='empty', kind=['bin'], src_path=str(empty)))
+        self.execute()
+        build = next(command for command, _ in self.calls if command[:2] == ['cargo', 'test'])
+        self.assertNotIn('--bins', build)
+        names = [build[i + 1] for i, word in enumerate(build[:-1]) if word == '--bin']
+        self.assertEqual(names, ['client'])
+        self.assertNotIn('empty', build)
+
+    def test_target_declares_tests_follows_modules_and_fails_open(self):
+        root = Path(self.directory.name) / 'scan'
+        root.mkdir()
+        (root / 'empty.rs').write_text('fn main() {}\n')
+        (root / 'direct.rs').write_text('#[test]\nfn keeps() {}\n')
+        (root / 'async_bin.rs').write_text('#[tokio::test]\nasync fn keeps() {}\n')
+        (root / 'parent.rs').write_text('mod child;\nfn main() {}\n')
+        (root / 'child.rs').write_text('#[test]\nfn nested() {}\n')
+        self.assertFalse(fast_build.target_declares_tests(dict(src_path=str(root / 'empty.rs'))))
+        self.assertTrue(fast_build.target_declares_tests(dict(src_path=str(root / 'direct.rs'))))
+        self.assertTrue(fast_build.target_declares_tests(dict(src_path=str(root / 'async_bin.rs'))))
+        self.assertTrue(fast_build.target_declares_tests(dict(src_path=str(root / 'parent.rs'))))
+        self.assertTrue(fast_build.target_declares_tests(dict()))
+        self.assertTrue(fast_build.target_declares_tests(dict(src_path=str(root / 'missing.rs'))))
+
     def test_one_build_preserves_units_binaries_fast_targets_and_package_specific_exclusions(self):
         self.execute()
         builds = [command for command, _ in self.calls if command[:2] == ['cargo', 'test']]

@@ -71,6 +71,23 @@ impl PublicationArtifact {
         result
     }
 
+    /// Re-open a hint file and apply the checks a worker runs before serving it.
+    /// Callers use this to reject each damaged shape without preparing another runtime.
+    #[doc(hidden)]
+    pub fn revalidate_hint_file(
+        path: &Path,
+        length: u64,
+        digest: &str,
+        blocks: usize,
+        degree: usize,
+    ) -> Result<(), String> {
+        let artifact = PublicationArtifact::open(path, length, digest.to_string())
+            .map_err(|error| error.to_string())?;
+        artifact
+            .validate(blocks, degree)
+            .map_err(|error| error.to_string())
+    }
+
     /// Every reader has an independent offset and verifies the pinned file.
     pub fn reader(&self) -> impl Read + Send + 'static {
         BufReader::with_capacity(

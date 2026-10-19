@@ -9,6 +9,7 @@ The remaining programs share a pool of at most three processes.
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 
@@ -28,6 +29,40 @@ def publisher_runs_alone(name, kinds):
     build threads, so it stays in the shared pool there.
     """
     return name == 'transparent-publisher' and 'lib' in kinds and available_cpus() < 8
+
+
+_TEST_ATTRIBUTE = re.compile(r'#\[(?:[\w:]+::)?test\b|#\[tokio::test\b')
+
+
+def target_declares_tests(target):
+    """Whether a binary's source contains a unit test.
+
+    An empty harness still links the binary's whole dependency graph. Fast
+    correctness compiles only binaries that declare a test. Missing source
+    stays included so an unread target is not dropped. Qualification builds
+    every binary on its own command.
+    """
+    src = target.get('src_path')
+    if not src:
+        return True
+    path = Path(src)
+    if not path.is_file():
+        return True
+    pending, seen = [path], set()
+    while pending:
+        current = pending.pop()
+        if current in seen or not current.is_file():
+            continue
+        seen.add(current)
+        text = current.read_text(encoding='utf-8', errors='replace')
+        if _TEST_ATTRIBUTE.search(text):
+            return True
+        directory = current.parent
+        for name in re.findall(
+                r'(?m)^(?:pub(?:\([^)]*\))?\s+)?mod\s+([A-Za-z_][A-Za-z0-9_]*)\s*;', text):
+            pending.append(directory / f'{name}.rs')
+            pending.append(directory / name / 'mod.rs')
+    return False
 
 
 def test_names(binary, directory, *, ignored=False):
@@ -94,6 +129,7 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3,
     features = set()
     kinds = set()
     expected_units = set()
+    package_bins = []
     for package in packages.values():
         name = package['name']
         classified = {f for entry in slow.get(name, {}).values() if isinstance(entry, dict)
@@ -107,17 +143,37 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3,
         if any(f.rsplit('/', 1)[-1] in {'native-reinspiring', 'cuda'} for f in enabled):
             raise ValueError(f'{name}: CPU fast builds must keep reference arithmetic separate from native/CUDA features')
         features.update(f if '/' in f else f'{name}/{f}' for f in enabled)
+        included_bins, skipped_bin = [], False
         for target in units:
+            if not set(target.get('required-features', [])) <= enabled:
+                continue
+            if 'bin' in target['kind'] and not target_declares_tests(target):
+                skipped_bin = True
+                continue
             kinds.update(set(target['kind']) & {'lib', 'bin'})
-            if set(target.get('required-features', [])) <= enabled:
-                expected_units.add((name, target['name']))
+            expected_units.add((name, target['name']))
+            if 'bin' in target['kind']:
+                included_bins.append(target['name'])
+        package_bins.append((skipped_bin, included_bins))
     if not kinds and not integration_names:
         return
     features.update(additional_features)
     command = ['cargo', 'test', '--locked', '--profile', 'release-fast', '--no-run', *options]
     for name in sorted(selected):
         command += ['-p', name]
-    command += [flag for kind, flag in [('lib', '--lib'), ('bin', '--bins')] if kind in kinds]
+    if 'lib' in kinds:
+        command.append('--lib')
+    # --bins also links harnesses for binaries that contain no tests. Name the
+    # bins that declare one. With no skip, keep --bins so an unreadable target
+    # stays fail-open.
+    if 'bin' in kinds:
+        skipped_any = any(skipped for skipped, _included in package_bins)
+        if skipped_any:
+            included = sorted({name for _skipped, names in package_bins for name in names})
+            for name in included:
+                command += ['--bin', name]
+        else:
+            command.append('--bins')
     command += [arg for target in sorted(integration_names) for arg in ('--test', target)]
     if features:
         command += ['--features', ','.join(sorted(features))]

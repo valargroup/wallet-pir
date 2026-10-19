@@ -1464,43 +1464,50 @@ mod shipped_tests {
         let b = segment(dir.path(), Table::TxDirectory, 2_048, 5);
         let from_a = TableRuntime::build(&a.shared, &a.rows).unwrap();
         let expected = from_a.public_params.clone();
+        // The matching runtime is checked before its parts are moved into the forgery.
+        assert!(from_a.self_check(&a.shared, &a.rows).unwrap() < 2_048);
         let from_b = TableRuntime::build(&b.shared, &b.rows).unwrap();
+        // Other rows while that runtime is still whole; forging moves its preprocessing.
+        expect_self_check_fallback(dir.path(), "other rows", &a, &from_b, &expected, true).await;
         let TableRuntime { native, db, .. } = from_a;
         let forged = TableRuntime::assemble(native, db, from_b.preprocessed).unwrap();
-        let from_b = TableRuntime::build(&b.shared, &b.rows).unwrap();
-        // The forged database is the segment's, so only its answer can fail.
-        for (name, runtime, database_differs) in
-            [("forged", &forged, false), ("other rows", &from_b, true)]
-        {
-            let shipped = candidate(dir.path(), name);
-            shipped
-                .write(&a.key, &a.shared, a.source.sha256(), runtime)
-                .unwrap();
-            let loaded = shipped.load(&a.key, &a.shared, a.source.sha256()).unwrap();
-            let refused = loaded.self_check(&a.shared, &a.rows).unwrap_err();
-            assert_eq!(
-                refused.contains("differs from the segment"),
-                database_differs,
-                "{name}: {refused}"
-            );
-            let metrics = Arc::new(Metrics::default());
-            let cache = RuntimeCache::new(a.shared.reserved_bytes() * 2, 1, metrics.clone());
-            let (handle, produced) = cache
-                .get_from(
-                    a.key.clone(),
-                    a.shared.clone(),
-                    a.source.clone(),
-                    Some(shipped),
-                )
-                .await
-                .unwrap();
-            assert_eq!(produced, Produced::Fallback, "{name}");
-            assert_eq!(Metrics::get(&metrics.shipped_fallbacks), 1);
-            assert_eq!(handle.get().public_params, expected);
-        }
-        // The check passes for a runtime of the segment's own rows.
-        let own = TableRuntime::build(&a.shared, &a.rows).unwrap();
-        assert!(own.self_check(&a.shared, &a.rows).unwrap() < 2_048);
+        expect_self_check_fallback(dir.path(), "forged", &a, &forged, &expected, false).await;
+    }
+
+    async fn expect_self_check_fallback(
+        dir: &Path,
+        name: &str,
+        segment: &Segment,
+        runtime: &TableRuntime,
+        expected: &[u8],
+        database_differs: bool,
+    ) {
+        let a = segment;
+        let shipped = candidate(dir, name);
+        shipped
+            .write(&a.key, &a.shared, a.source.sha256(), runtime)
+            .unwrap();
+        let loaded = shipped.load(&a.key, &a.shared, a.source.sha256()).unwrap();
+        let refused = loaded.self_check(&a.shared, &a.rows).unwrap_err();
+        assert_eq!(
+            refused.contains("differs from the segment"),
+            database_differs,
+            "{name}: {refused}"
+        );
+        let metrics = Arc::new(Metrics::default());
+        let cache = RuntimeCache::new(a.shared.reserved_bytes() * 2, 1, metrics.clone());
+        let (handle, produced) = cache
+            .get_from(
+                a.key.clone(),
+                a.shared.clone(),
+                a.source.clone(),
+                Some(shipped),
+            )
+            .await
+            .unwrap();
+        assert_eq!(produced, Produced::Fallback, "{name}");
+        assert_eq!(Metrics::get(&metrics.shipped_fallbacks), 1);
+        assert_eq!(handle.get().public_params, expected);
     }
 
     /// A history segment of `table` at `decoupled-2k-8k` whose first

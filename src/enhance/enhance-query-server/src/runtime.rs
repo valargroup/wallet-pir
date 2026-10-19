@@ -1312,7 +1312,6 @@ mod tests {
         assert_eq!(faults.live_bytes.load(SeqCst), 0);
     }
 
-    #[cfg(feature = "qualification-tests")]
     #[test]
     fn unequal_units_match_monolithic_preprocessing_and_evaluation() {
         let directory = tempfile::tempdir().unwrap();
