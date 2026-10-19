@@ -1362,10 +1362,10 @@ mod shipped_tests {
     }
 
     /// Missing, truncated, corrupted and wrongly named shipped files are all
-    /// refused. One damaged artifact exercises counted cold fallback; ordinary
-    /// builds without an offered artifact have separate accounting.
+    /// refused. The self-check test exercises the common counted fallback;
+    /// this test also distinguishes ordinary builds without an offered file.
     #[tokio::test(flavor = "multi_thread")]
-    async fn refused_shipped_files_fall_back_to_a_counted_local_build() {
+    async fn malformed_shipped_files_are_refused_and_plain_builds_are_counted() {
         let dir = tempfile::tempdir().unwrap();
         let s = segment(dir.path(), Table::TxDirectory, 2_048, 4);
         let local = crate::runtime::tests::prepared_fixture(&s.shared, &s.rows).unwrap();
@@ -1435,9 +1435,9 @@ mod shipped_tests {
                 "{name} must be rejected before use"
             );
             // Rejection and cold construction are separate contracts. Exercise
-            // every refusal here, then build once to verify fallback and its
-            // accounting. The loader owns identity and format validation.
-            if name != "corrupted" {
+            // every refusal here. The forged-runtime test covers the shared
+            // fallback; qualification also repeats it for a damaged file.
+            if !cfg!(feature = "qualification-tests") || name != "corrupted" {
                 continue;
             }
             let metrics = Arc::new(Metrics::default());
@@ -1472,7 +1472,8 @@ mod shipped_tests {
     /// its preprocessing, or is the segment's at all. The self-check can: a
     /// file holding rows A's database with rows B's preprocessing, saved
     /// under A's identity, loads, but fails the self-check and is replaced by
-    /// a local build; so does a consistent runtime of rows B under A's name.
+    /// a local build. A consistent runtime of B under A's name is also refused;
+    /// qualification repeats the rebuild for that case.
     #[tokio::test(flavor = "multi_thread")]
     async fn the_self_check_refuses_a_database_its_preprocessing_was_not_built_from() {
         let dir = tempfile::tempdir().unwrap();
@@ -1510,6 +1511,9 @@ mod shipped_tests {
             database_differs,
             "{name}: {refused}"
         );
+        if database_differs && !cfg!(feature = "qualification-tests") {
+            return;
+        }
         let metrics = Arc::new(Metrics::default());
         let cache = RuntimeCache::new(a.shared.reserved_bytes() * 2, 1, metrics.clone());
         let (handle, produced) = cache
@@ -1523,6 +1527,8 @@ mod shipped_tests {
             .unwrap();
         assert_eq!(produced, Produced::Fallback, "{name}");
         assert_eq!(Metrics::get(&metrics.shipped_fallbacks), 1);
+        assert_eq!(Metrics::get(&metrics.shipped_loads), 0);
+        assert_eq!(Metrics::get(&metrics.builds), 1);
         assert_eq!(handle.get().public_params, expected);
     }
 
