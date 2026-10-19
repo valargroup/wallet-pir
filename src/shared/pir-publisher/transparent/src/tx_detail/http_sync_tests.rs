@@ -159,7 +159,34 @@ async fn full_display_consumers_follow_https_and_restart_without_building() {
         .finalize(same, vec![bootstrap.candidate.clone()])
         .await
         .unwrap();
-    assert_eq!(second.poll_once().await.unwrap()["unchanged"], false);
+    // Change authority after staging but before the checked activation commits.
+    std::fs::write(&tls.control, "pause-current-2").unwrap();
+    let checking = tokio::spawn(async move {
+        let result = second.poll_once().await;
+        (second, result)
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while !tls.control.with_extension("entered").exists() {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    distribution.withdraw(0).unwrap();
+    std::fs::write(&tls.control, "").unwrap();
+    let (mut second, result) = checking.await.unwrap();
+    assert!(result.is_err(), "a withdrawn candidate must not activate");
+    assert!(
+        !second.ready().await,
+        "withdrawal must fence the previous view too"
+    );
+    let (canonical_again, _) = write_candidate(&root, &bootstrap.map).unwrap();
+    distribution
+        .finalize(canonical_again, vec![bootstrap.candidate.clone()])
+        .await
+        .unwrap();
+    second.poll_once().await.unwrap();
+    assert!(second.ready().await);
     canonical.store(false, Ordering::Release);
     assert!(restarted.poll_once().await.is_err());
     assert!(second.poll_once().await.is_err());
