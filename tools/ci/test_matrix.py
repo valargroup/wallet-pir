@@ -322,7 +322,8 @@ def baseline_commands(family):
         result += [
             ('reference', [*options, '-p', 'enhance-query-server', '--features', 'qualification-tests',
                            '--lib', '--', *REFERENCE_LIB_FILTERS]),
-            ('reference', [*options, '-p', 'enhance-query-server', '--test', 'routing_contract', '--test', 'v7_contract']),
+            ('reference', [*options, '-p', 'enhance-query-server', '--features', 'qualification-tests',
+                           '--test', 'routing_contract', '--test', 'v7_contract']),
             ('reference', [*options, '-p', 'enhance-publisher', '--features', 'qualification-tests',
                            '--test', 'ci_hint', '--test', 'encrypted_lifecycle']),
             ('reference', [*options, '-p', 'status-query-server', '--lib', '--tests']),

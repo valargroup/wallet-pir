@@ -67,6 +67,13 @@ class MatrixTests(unittest.TestCase):
         reference_features = matrix.package_features('enhance-query-server', contexts['reference'], packages)
         self.assertEqual(reference_features, ['enhance-query-server/qualification-tests'])
         self.assertIn('enhance-publisher/qualification-tests', contexts['reference']['features'])
+        # The same-revision baseline audit must build reference Enhance executables
+        # in the matrix feature graph, or test_programs rejects them.
+        for variant, options in matrix.baseline_commands('enhance'):
+            package = options[options.index('-p') + 1]
+            if variant == 'reference' and package.startswith('enhance-'):
+                self.assertIn('--features', options)
+                self.assertEqual(options[options.index('--features') + 1], 'qualification-tests', options)
         self.assertNotIn('enhance-publisher/native-reinspiring', native)
         commands = matrix.cargo_commands(registry['enhance-cuda-check']['targets'], contexts, targets, packages)
         self.assertEqual(len(commands), 1)
