@@ -752,7 +752,12 @@ mod tests {
                 }
             }
         }
-        copy(&prepared.join("artifacts-9"), &root.join("artifacts-9"));
+        source = prepared.join("artifacts-9");
+        assert!(
+            source.is_dir(),
+            "published fixture is missing its artifact tree"
+        );
+        copy(&source, &root.join("artifacts-9"));
     }
 
     /// Deterministic bytes for fixed-input regression vectors.

@@ -136,7 +136,10 @@ Partial diagnostic dispatches, canceled or skipped validation, unrelated branche
 and stale ancestry cannot leave unchecked changes behind.
 
 Rust feedback compiles the selected unit tests, CLI test binaries and named fast
-integration targets together in one `release-fast` Cargo invocation. Campaign
+integration targets together in one `release-fast` Cargo invocation. That command
+also names the stable fast dev-dependency roots, so a smaller affected set does
+not drop chain `testing` or reqwest `blocking` and rebuild a second copy of the
+dependency graph. Only the affected packages' programs run. Campaign
 targets are excluded from that build. Local and CI checks then execute at most
 three Cargo-reported test programs concurrently. The publisher library builds
 full archive runtimes on every core of a 4-core hosted runner, so it runs alone

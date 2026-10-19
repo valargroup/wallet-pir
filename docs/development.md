@@ -39,7 +39,9 @@ Each `zakura-server-chain` consumer selects its product (`transparent`, `enhance
 adapter. Database readers additionally enable the existing `rocksdb-reader` feature.
 
 Fast Rust checks run every library unit test, and every binary that declares one,
-in `release-fast`, plus classified bounded integration targets. A binary with no
+in `release-fast`, plus classified bounded integration targets. The compile names
+a stable dev-dependency closure so a smaller affected set reuses the warm
+dependency graph; only affected packages run. A binary with no
 unit tests is left out of that compile; qualification still builds every binary.
 There are no named slow-unit exclusions.
 Required CLI features are enabled for binary unit targets. Ordinary cache,

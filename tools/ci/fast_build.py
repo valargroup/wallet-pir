@@ -31,6 +31,37 @@ def publisher_runs_alone(name, kinds):
     return name == 'transparent-publisher' and 'lib' in kinds and available_cpus() < 8
 
 
+# Dev-dependencies activate only for roots named in one Cargo command. These
+# packages define the fast closure (chain `testing`, reqwest `blocking`, and
+# the publisher product features). A smaller affected set still compiles them
+# so the warm cache is reused; only affected packages are executed.
+FAST_FEATURE_ROOTS = frozenset({
+    'enhance-pir-client',
+    'enhance-pir-exercise',
+    'enhance-pir-load-test',
+    'enhance-publisher',
+    'enhance-query-server',
+    'pir-monitor',
+    'pir-publisher',
+    'status-publisher',
+    'transparent-publisher',
+    'transparent-query-server',
+    'transparent-shared',
+    'transparent-tools',
+})
+
+
+def compile_roots(selected, available):
+    """Affected packages plus the stable fast dev-dependency closure."""
+    selected = set(selected)
+    available = set(available)
+    missing = selected - available
+    if missing:
+        raise ValueError('selected fast packages are missing from Cargo metadata: '
+                         + ', '.join(sorted(missing)))
+    return selected | (FAST_FEATURE_ROOTS & available)
+
+
 _TEST_ATTRIBUTE = re.compile(r'#\[(?:[\w:]+::)?test\b|#\[tokio::test\b')
 
 
@@ -114,14 +145,18 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3,
     metadata = json.loads(subprocess.check_output(
         ['cargo', 'metadata', '--locked', '--no-deps', '--format-version=1', *options],
         cwd=ROOT, env=environment, **inherited_fds()))
-    selected = set(selected)
-    packages = {p['id']: p for p in metadata['packages'] if p['name'] in selected}
-    if {p['name'] for p in packages.values()} != selected:
+    run_packages = set(selected)
+    compile_packages = compile_roots(run_packages, {p['name'] for p in metadata['packages']})
+    packages = {p['id']: p for p in metadata['packages'] if p['name'] in compile_packages}
+    if {p['name'] for p in packages.values()} != compile_packages:
         raise ValueError('selected fast packages are missing from Cargo metadata')
-    expected_integrations = {(name, target) for name in selected
-                             for target in registry.get(name, {}).get('fast', [])}
-    integration_names = {target for _, target in expected_integrations}
-    collisions = {(name, target) for name in selected
+    compile_integrations = {(name, target) for name in compile_packages
+                            for target in registry.get(name, {}).get('fast', [])}
+    expected_integrations = {item for item in compile_integrations if item[0] in run_packages}
+    integration_names = {target for _, target in compile_integrations}
+    # Name collisions are checked for every compiled root. Campaign targets of
+    # an anchor must not be pulled in by another package's fast name.
+    collisions = {(name, target) for name in compile_packages
                   for target in registry.get(name, {}).get('full', [])
                   if target in integration_names}
     if collisions:
@@ -138,7 +173,7 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3,
                  and set(t['kind']) & {'lib', 'bin'}]
         enabled = classified | {f for t in units for f in t.get('required-features', []) if f == 'cli'}
         for target in package['targets']:
-            if (name, target['name']) in expected_integrations and 'test' in target['kind']:
+            if (name, target['name']) in compile_integrations and 'test' in target['kind']:
                 enabled.update(target.get('required-features', []))
         if any(f.rsplit('/', 1)[-1] in {'native-reinspiring', 'cuda'} for f in enabled):
             raise ValueError(f'{name}: CPU fast builds must keep reference arithmetic separate from native/CUDA features')
@@ -151,7 +186,8 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3,
                 skipped_bin = True
                 continue
             kinds.update(set(target['kind']) & {'lib', 'bin'})
-            expected_units.add((name, target['name']))
+            if name in run_packages:
+                expected_units.add((name, target['name']))
             if 'bin' in target['kind']:
                 included_bins.append(target['name'])
         package_bins.append((skipped_bin, included_bins))
@@ -159,7 +195,7 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3,
         return
     features.update(additional_features)
     command = ['cargo', 'test', '--locked', '--profile', 'release-fast', '--no-run', *options]
-    for name in sorted(selected):
+    for name in sorted(compile_packages):
         command += ['-p', name]
     if 'lib' in kinds:
         command.append('--lib')
@@ -186,7 +222,7 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3,
         return
     programs = []
     actual_integrations, actual_units = set(), set()
-    discovered_units = {name: set() for name in selected}
+    discovered_units = {name: set() for name in run_packages}
     seen = set()
     for artifact in artifacts:
         binary = artifact['executable']
@@ -199,6 +235,10 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3,
         name = package['name']
         if 'qualification-tests' in artifact.get('features', []):
             raise ValueError(f'{name}: qualification test campaigns leaked into ordinary correctness')
+        # Anchors keep the dev-dependency feature closure compiled. Their
+        # programs are not part of this affected run.
+        if name not in run_packages:
+            continue
         target = artifact['target']
         integration = 'test' in target['kind']
         identity = (name, target['name'])
