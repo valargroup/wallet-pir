@@ -22,7 +22,7 @@
 //! reports how often the first seed fits beside the Poisson model's figure.
 //!
 //! Nothing is read but the map, and nothing is written but stdout.
-use zakura_pir_publisher::transparent as transparent_shard;
+use zakura_pir_protocol::transparent::shard as transparent_shard;
 
 use rayon::prelude::*;
 use serde_json::{json, Value};
