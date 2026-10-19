@@ -151,7 +151,8 @@ fn bytes<const N: usize>(hex: &str) -> Option<[u8; N]> {
 pub async fn run(args: Args) -> bool {
     let health_url = args.health_url.clone();
     let mut lookup = None;
-    let (passed, category, detail) = match probe(args, &mut lookup).await {
+    let (result, capacity) = observe_capacity(probe(args, &mut lookup), &health_url).await;
+    let (passed, category, detail) = match result {
         Ok(None) => (true, None, Value::Null),
         Ok(Some((category, detail))) => (false, Some(category), detail),
         Err(error) => (false, Some("request_failed"), error.to_string().into()),
@@ -162,9 +163,23 @@ pub async fn run(args: Args) -> bool {
         output["queries"] = queries.into();
         output["correct"] = (if correct { queries } else { 0 }).into();
     }
-    output["capacity"] = capacity(&health_url).await;
+    output["capacity"] = capacity;
     println!("{output}");
     passed
+}
+
+/// Observes optional capacity concurrently without delaying the primary verdict.
+async fn observe_capacity<T>(
+    work: impl std::future::Future<Output = T>,
+    health_url: &str,
+) -> (T, Value) {
+    tokio::pin!(work);
+    let observation = capacity(health_url);
+    tokio::pin!(observation);
+    tokio::select! {
+        result = &mut work => (result, json!({"level": "unknown", "error": "capacity request still pending"})),
+        capacity = &mut observation => (work.await, capacity),
+    }
 }
 
 /// The indexer's capacity from health, whatever the other checks found, for the
@@ -806,6 +821,41 @@ mod tests {
     /// The anchor must have the node's hash and the tree size after that block. A node
     /// that cannot give the size, or whose chain changes during the read, proves
     /// nothing against the publication.
+    /// An unresponsive private health endpoint cannot swallow a correctness verdict.
+    #[tokio::test]
+    async fn pending_capacity_never_delays_a_detected_mismatch() {
+        let requested = std::sync::Arc::new(tokio::sync::Notify::new());
+        let signal = requested.clone();
+        let router = axum::Router::new().route(
+            "/health",
+            axum::routing::get(move || {
+                let signal = signal.clone();
+                async move {
+                    signal.notify_one();
+                    std::future::pending::<axum::Json<Value>>().await
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, router).await.unwrap();
+        });
+        let verdict = async {
+            requested.notified().await;
+            "answer_mismatch"
+        };
+        let result = tokio::time::timeout(
+            Duration::from_secs(2),
+            observe_capacity(verdict, &format!("http://{address}/health")),
+        )
+        .await;
+        server.abort();
+        let (category, capacity) = result.expect("capacity must not delay the verdict");
+        assert_eq!(category, "answer_mismatch");
+        assert_eq!(capacity["level"], "unknown");
+    }
+
     #[tokio::test]
     async fn the_anchor_must_match_the_nodes_hash_and_tree_size() {
         let directory = anchored();
