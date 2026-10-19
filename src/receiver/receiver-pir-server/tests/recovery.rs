@@ -23,6 +23,7 @@ const IMMUTABLE: &str = "public, max-age=31536000, immutable";
 struct Http(reqwest::Client);
 
 impl Transport for Http {
+    /// GETs `url`, failing on any status but success or a body over `limit` bytes.
     async fn get(&self, url: &str, limit: usize) -> Result<Vec<u8>, Error> {
         let response = self
             .0
@@ -43,6 +44,7 @@ impl Transport for Http {
         Ok(body.to_vec())
     }
 
+    /// Never called: objects are only fetched.
     async fn post(&self, _: &str, _: Vec<u8>, _: usize) -> Result<Vec<u8>, Error> {
         unreachable!("objects are only fetched")
     }

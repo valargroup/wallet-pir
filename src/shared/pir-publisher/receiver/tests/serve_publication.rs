@@ -429,6 +429,8 @@ async fn corrupt_rows_keep_the_valid_publication_serving() {
     check_staged_publication(StagedCase::Rows).await;
 }
 
+/// A staged publication missing an object its catalog names is refused as an
+/// invalid source, and the valid publication keeps serving.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_missing_recovery_object_keeps_the_valid_publication_serving() {
     check_staged_publication(StagedCase::Recovery).await;
