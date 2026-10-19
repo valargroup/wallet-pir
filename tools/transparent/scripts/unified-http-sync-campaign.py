@@ -12,6 +12,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import signal
 import subprocess
 import sys
 import time
@@ -70,8 +71,23 @@ def main():
                    WALLET_PIR_FROZEN_CLIENT=str(client), WALLET_PIR_SOURCE_SHA=source,
                    WALLET_PIR_CAMPAIGN_OUT=str(output))
         with (output / "campaign.log").open("w") as log:
-            code = subprocess.run([str(tests[TEST]), CASE, "--exact", "--ignored", "--nocapture"],
-                                  cwd=ROOT, env=env, stdout=log, stderr=subprocess.STDOUT, timeout=args.timeout).returncode
+            process = subprocess.Popen([str(tests[TEST]), CASE, "--exact", "--ignored", "--nocapture"],
+                                       cwd=ROOT, env=env, stdout=log, stderr=subprocess.STDOUT,
+                                       start_new_session=True)
+            try:
+                code = process.wait(timeout=args.timeout)
+            finally:
+                # Every service/TLS child belongs to this newly created group.
+                # A killed test cannot run Rust destructors, so reap its children too.
+                try:
+                    os.killpg(process.pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
+                try:
+                    process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    os.killpg(process.pid, signal.SIGKILL)
+                    process.wait()
     except subprocess.TimeoutExpired:
         code = 124
     finally:
