@@ -862,4 +862,47 @@ async fn full_history_http_holdings_include_archive_runtimes() {
         progress.downloaded_files, 0,
         "restart reuses completed files"
     );
+    // The freshly checked predecessor is the current publication: it was
+    // loaded and warmed once, and nothing was restaged or prepared again.
+    assert!(progress.unchanged, "{progress:?}");
+    let entries = |root: &std::path::Path| {
+        std::fs::read_dir(root)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .filter(|name| name.starts_with("staging-"))
+            .count()
+    };
+    assert_eq!(entries(&root.path().join("consumer")), 1, "no new staging tree");
+    let status = restarted
+        .live()
+        .unwrap()
+        .command(transparent_query_server::history::live::Command::Status)
+        .await
+        .unwrap();
+    assert_eq!(status["runtimes"]["built"], 0);
+    assert_eq!(status["runtimes"]["shipped_fallbacks"], 0);
+    let again = restarted.poll_once().await.unwrap();
+    assert!(again.unchanged && again.downloaded_files == 0);
+    drop(restarted);
+
+    // A damaged verified inventory never infers the recovered map is Current:
+    // the restart updates through a full staging pass instead.
+    let consumer = root.path().join("consumer");
+    let active: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(consumer.join("active.json")).unwrap()).unwrap();
+    let staged = std::path::PathBuf::from(active["directory"].as_str().unwrap());
+    std::fs::write(staged.join("verified-inventory.json"), b"{").unwrap();
+    let mut damaged = transparent_query_server::routing::manager::Manager::new(
+        config(&tls, consumer.clone()),
+        transparent_query_server::config::ServiceConfig {
+            cache_bytes: 4 << 30,
+            ..Default::default()
+        },
+    )
+    .unwrap()
+    .with_full_holdings();
+    let progress = damaged.poll_once().await.unwrap();
+    assert!(!progress.unchanged, "{progress:?}");
+    assert_eq!(progress.downloaded_files, 0, "objects are still reusable");
+    assert!(damaged.live().is_some());
 }

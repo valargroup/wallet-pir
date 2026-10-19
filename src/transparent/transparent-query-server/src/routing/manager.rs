@@ -12,7 +12,7 @@ use crate::{
 };
 use pir_pipeline::Input;
 use std::{collections::BTreeSet, path::Path, time::Duration};
-use transparent_shared::publication::{Current, Error};
+use transparent_shared::publication::{self, Current, Error, Inventory};
 use transparent_shared::{
     history::{
         assignment::Assignment,
@@ -202,12 +202,16 @@ impl Manager {
         let Some(current) = current else {
             return Ok(Input::Unchanged);
         };
+        let mut recovered = false;
         if self.live.is_none() && self.config.directory.join("active.json").exists() {
             // A failed update does not discard the complete predecessor across
             // restart. Recovery still requires a fresh source snapshot and exact
             // retained anchors; loading this record alone never opens a listener.
             match self.recover(&current).await {
-                Ok(live) => self.live = Some(live),
+                Ok(live) => {
+                    self.live = Some(live);
+                    recovered = true;
+                }
                 Err(error) => tracing::warn!(%error, "saved publication not eligible for recovery"),
             }
         }
@@ -224,6 +228,20 @@ impl Manager {
         }
         if !current.eligible() {
             return Err("publisher current publication is withdrawn or noncanonical".into());
+        }
+        if recovered {
+            // The freshly checked predecessor already serves this exact snapshot:
+            // restaging would only load and warm the same files a second time.
+            match self.recovered_is_current(&current).await {
+                Ok(true) => {
+                    self.current = Some(current);
+                    return Ok(Input::Unchanged);
+                }
+                Ok(false) => {}
+                Err(error) => {
+                    tracing::warn!(%error, "recovered publication not confirmed current; updating")
+                }
+            }
         }
         Ok(Input::Work(Acquired {
             owner: self,
@@ -323,6 +341,75 @@ impl Manager {
         )
         .await?;
         Ok(live)
+    }
+    /// Whether the recovered predecessor is exactly the fresh `current`: its
+    /// persisted verified inventory, map, holdings and runtime configuration
+    /// must all equal what a new pass would stage. A matching map alone is not
+    /// enough, and an absent or damaged record only means another update.
+    /// Saved files never grant authority: recovery already rechecked the fresh
+    /// snapshot and every retained anchor before this runs.
+    async fn recovered_is_current(&mut self, current: &Current) -> Result<bool, Error> {
+        let publication: Publication = serde_json::from_slice(&std::fs::read(
+            self.config.directory.join("active.json"),
+        )?)?;
+        let directory = std::fs::canonicalize(&publication.directory)?;
+        let runtimes = publication
+            .runtimes
+            .as_deref()
+            .map(std::fs::canonicalize)
+            .transpose()?;
+        if runtimes.as_ref() != Some(&directory) {
+            return Ok(false);
+        }
+        let Some(saved) = std::fs::read(directory.join("verified-inventory.json"))
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<Inventory>(&bytes).ok())
+        else {
+            return Ok(false);
+        };
+        if saved.map_sha256 != publication.map_sha256 {
+            return Ok(false);
+        }
+        let raw = self
+            .source
+            .small(
+                &format!("inventories/{}", current.inventory_sha256),
+                16 << 20,
+            )
+            .await?;
+        if publication::digest(&raw) != current.inventory_sha256 {
+            return Err("inventory digest mismatch".into());
+        }
+        let fresh: Inventory = serde_json::from_slice(&raw)?;
+        fresh.validate(&self.config.network, &self.config.genesis_hash)?;
+        if fresh != saved {
+            return Ok(false);
+        }
+        let map: transparent_filter::ShardMap =
+            serde_json::from_slice(&std::fs::read(directory.join("shards.json"))?)?;
+        fresh.validate_map(&map)?;
+        let end = map.shards.last().ok_or("empty publication")?;
+        if current.anchor_height != end.end_height || current.anchor_hash != end.terminal_block_hash
+        {
+            return Ok(false);
+        }
+        // A revoked exact digest needs the full update's anchor restoration.
+        let floor = combined_floor(&self.config.directory, &mut self.revocations)?;
+        if map
+            .shards
+            .iter()
+            .any(|shard| floor.digests.contains(&shard.manifest_digest))
+        {
+            return Ok(false);
+        }
+        let expected = bootstrap::holdings(&self.config, &map, &fresh, self.full)?;
+        Ok(match (&expected.scope, &publication.assignment) {
+            (LoadScope::Whole, None) => true,
+            (LoadScope::Assigned { assignment, .. }, Some(path)) => {
+                Assignment::load(path)? == **assignment
+            }
+            _ => false,
+        })
     }
     /// One sequential transfer at a time; bounded attempts, jitter and capped
     /// exponential backoff. An outage leaves the valid owner/router untouched.
