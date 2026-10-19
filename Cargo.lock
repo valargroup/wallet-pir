@@ -2223,6 +2223,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "pir-sync-manager"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "pir-pipeline",
+ "reqwest",
+ "rustls",
+ "tempfile",
+ "tokio",
+ "tokio-rustls",
+]
+
+[[package]]
 name = "pkcs8"
 version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3522,6 +3535,7 @@ dependencies = [
  "pir-control",
  "pir-observability",
  "pir-pipeline",
+ "pir-sync-manager",
  "rayon",
  "reinspiring",
  "reqwest",

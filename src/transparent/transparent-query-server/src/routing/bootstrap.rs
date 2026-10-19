@@ -51,12 +51,8 @@ struct HighWater {
 }
 
 pub(crate) struct Source {
-    origin: reqwest::Url,
-    client: reqwest::Client,
-    budget: u64,
-    pub(crate) downloaded: u64,
+    transport: pir_sync_manager::HttpsSource,
     observed: Option<Current>,
-    prefix: &'static str,
     schema: &'static str,
 }
 impl Source {
@@ -68,56 +64,27 @@ impl Source {
         prefix: &'static str,
         schema: &'static str,
     ) -> Result<Self, Error> {
-        let origin = reqwest::Url::parse(&config.publisher)?;
-        if origin.scheme() != "https"
-            || origin.host_str().is_none()
-            || !origin.username().is_empty()
-            || origin.password().is_some()
-            || origin.path() != "/"
-            || origin.query().is_some()
-            || origin.fragment().is_some()
-        {
-            return Err("publisher must be an explicit HTTPS origin without credentials, path, query or fragment".into());
-        }
-        let mut builder = reqwest::Client::builder()
-            .https_only(true)
-            .redirect(reqwest::redirect::Policy::none())
-            .connect_timeout(std::time::Duration::from_secs(10))
-            .timeout(std::time::Duration::from_secs(120));
-        for root in &config.roots {
-            builder = builder.add_root_certificate(root.clone());
-        }
         Ok(Self {
-            origin,
-            client: builder.build()?,
-            budget: config.max_download_bytes,
-            downloaded: 0,
+            transport: pir_sync_manager::HttpsSource::new(
+                &config.publisher,
+                prefix,
+                config.max_download_bytes,
+                &config.roots,
+            )?,
             observed: None,
-            prefix,
             schema,
         })
     }
-    fn budget_error(&self) -> Error {
-        format!(
-            "prepared publication exceeds download budget ({} body bytes consumed, cap {})",
-            self.downloaded, self.budget
-        )
-        .into()
+    pub(crate) fn downloaded(&self) -> u64 {
+        self.transport.downloaded()
     }
-    pub(crate) async fn get(&mut self, suffix: &str) -> Result<reqwest::Response, Error> {
-        let url = self.origin.join(&format!("{}{}", self.prefix, suffix))?;
-        let request = self.client.get(url);
-        self.send(request).await
-    }
-    async fn send(&mut self, request: reqwest::RequestBuilder) -> Result<reqwest::Response, Error> {
-        if self.downloaded >= self.budget {
-            return Err(self.budget_error());
-        }
-        let mut response = request.header("cache-control", "no-cache").send().await?;
+    pub(crate) async fn get(
+        &mut self,
+        suffix: &str,
+    ) -> Result<pir_sync_manager::Response<'_>, Error> {
+        let mut response = self.transport.request(suffix, None).await?;
         if response.status() != reqwest::StatusCode::OK {
-            // Refused response bytes consume the same attempt budget. Never
-            // retry or reset accounting after a status or validation failure.
-            while self.chunk(&mut response).await?.is_some() {}
+            response.discard().await?;
             return Err(format!(
                 "publisher refused distribution with HTTP {}",
                 response.status()
@@ -126,39 +93,8 @@ impl Source {
         }
         Ok(response)
     }
-    pub(crate) async fn chunk(
-        &mut self,
-        response: &mut reqwest::Response,
-    ) -> Result<Option<axum::body::Bytes>, Error> {
-        let chunk = response.chunk().await?;
-        if let Some(bytes) = &chunk {
-            self.downloaded = self
-                .downloaded
-                .checked_add(bytes.len() as u64)
-                .ok_or("download budget overflow")?;
-            if self.downloaded > self.budget {
-                return Err(self.budget_error());
-            }
-        }
-        Ok(chunk)
-    }
     pub(crate) async fn small(&mut self, suffix: &str, limit: usize) -> Result<Vec<u8>, Error> {
-        let response = self.get(suffix).await?;
-        self.read_small(response, limit).await
-    }
-    async fn read_small(
-        &mut self,
-        mut response: reqwest::Response,
-        limit: usize,
-    ) -> Result<Vec<u8>, Error> {
-        let mut bytes = Vec::new();
-        while let Some(chunk) = self.chunk(&mut response).await? {
-            if chunk.len() > limit.saturating_sub(bytes.len()) {
-                return Err("distribution metadata exceeds limit".into());
-            }
-            bytes.extend_from_slice(&chunk);
-        }
-        Ok(bytes)
+        self.get(suffix).await?.read_limited(limit).await
     }
     pub(crate) fn observed_revision(&self, directory: &std::path::Path) -> Result<u64, Error> {
         let mut revision = 0;
@@ -169,7 +105,7 @@ impl Source {
             match std::fs::read(directory.join(name)) {
                 Ok(bytes) => {
                     let saved: HighWater = serde_json::from_slice(&bytes)?;
-                    if saved.origin != self.origin.as_str() {
+                    if saved.origin != self.transport.origin().as_str() {
                         return Err("publisher origin change".into());
                     }
                     revision = revision.max(saved.current.revision);
@@ -216,7 +152,9 @@ impl Source {
                 }
             };
             if let Some(saved) = saved {
-                if saved.origin != self.origin.as_str() || !current.succeeds(&saved.current) {
+                if saved.origin != self.transport.origin().as_str()
+                    || !current.succeeds(&saved.current)
+                {
                     return Err(
                         "publisher origin change, replay or contradictory current record".into(),
                     );
@@ -245,7 +183,7 @@ impl Source {
         // Keep the full source identity as well as its revision: an equal
         // revision must not substitute another inventory after a write failure.
         let saved = HighWater {
-            origin: self.origin.to_string(),
+            origin: self.transport.origin().to_string(),
             current: current.clone(),
         };
         let primary = crate::control::persist(&directory.join("publisher-high-water.json"), &saved);
@@ -290,7 +228,7 @@ impl Source {
     }
 
     pub(crate) fn reset_budget(&mut self) {
-        self.downloaded = 0;
+        self.transport.reset_budget();
     }
     pub(crate) async fn poll(
         &mut self,
@@ -299,23 +237,16 @@ impl Source {
         network: &str,
         genesis: &str,
     ) -> Result<Option<(Current, Option<Error>)>, Error> {
-        if self.downloaded >= self.budget {
-            return Err(self.budget_error());
-        }
-        let mut request = self
-            .client
-            .get(self.origin.join(&format!("{}current", self.prefix))?)
-            .header("cache-control", "no-cache");
-        if let Some(previous) = previous {
-            request = request.header(
-                "if-none-match",
-                format!(
-                    "\"{}\"",
-                    publication::digest(&serde_json::to_vec(previous)?)
-                ),
-            );
-        }
-        let mut response = request.send().await?;
+        let conditional = previous
+            .map(|previous| {
+                serde_json::to_vec(previous)
+                    .map(|bytes| format!("\"{}\"", publication::digest(&bytes)))
+            })
+            .transpose()?;
+        let mut response = self
+            .transport
+            .request("current", conditional.as_deref())
+            .await?;
         if response.status() == reqwest::StatusCode::NOT_MODIFIED {
             if previous.is_none() {
                 return Err("unexpected unchanged response".into());
@@ -324,7 +255,7 @@ impl Source {
         }
         let status = response.status();
         let mut bytes = Vec::new();
-        while let Some(chunk) = self.chunk(&mut response).await? {
+        while let Some(chunk) = response.chunk().await? {
             if chunk.len() > (16usize << 10).saturating_sub(bytes.len()) {
                 return Err("current exceeds limit".into());
             }
@@ -333,6 +264,7 @@ impl Source {
         if status != reqwest::StatusCode::OK {
             return Err(format!("publisher refused current with HTTP {status}").into());
         }
+        drop(response);
         let current: Current = serde_json::from_slice(&bytes)?;
         if current.schema != self.schema
             || current.revision == 0
@@ -385,19 +317,20 @@ impl Source {
         if body.len() > publication::MAX_ANCHOR_BATCH_BYTES {
             return Err("anchor batch request exceeds limit".into());
         }
-        let url = self.origin.join(&format!(
-            "{}{}",
-            self.prefix,
-            publication::ANCHOR_BATCH_PATH
-        ))?;
-        let post = self
-            .client
-            .post(url)
-            .header("content-type", "application/json")
-            .body(body);
-        let response = self.send(post).await?;
-        let raw = self
-            .read_small(response, publication::MAX_ANCHOR_BATCH_BYTES)
+        let mut response = self
+            .transport
+            .post_json(publication::ANCHOR_BATCH_PATH, body)
+            .await?;
+        if response.status() != reqwest::StatusCode::OK {
+            response.discard().await?;
+            return Err(format!(
+                "publisher refused distribution with HTTP {}",
+                response.status()
+            )
+            .into());
+        }
+        let raw = response
+            .read_limited(publication::MAX_ANCHOR_BATCH_BYTES)
             .await?;
         let batch: publication::AnchorBatch = serde_json::from_slice(&raw)?;
         batch.answers(&request, &current.genesis_hash)
@@ -472,7 +405,7 @@ pub async fn verify(config: Config) -> Result<Report, Error> {
             current,
             map_sha256: inventory.map_sha256,
             directory: stage.clone(),
-            downloaded_bytes: source.downloaded,
+            downloaded_bytes: source.downloaded(),
             downloaded_files: staged.downloaded_files,
             archive_tables_downloaded: 0,
             serving: false,
@@ -528,7 +461,7 @@ pub(crate) async fn stage_holdings(
         .artifacts
         .iter()
         .filter(|f| full || f.kind.local())
-        .try_fold(source.downloaded, |n, f| n.checked_add(f.bytes))
+        .try_fold(source.downloaded(), |n, f| n.checked_add(f.bytes))
         .ok_or("download budget overflow")?;
     if !cache && total > config.max_download_bytes {
         return Err("prepared publication exceeds download budget".into());
@@ -586,7 +519,7 @@ pub(crate) async fn stage_holdings(
                     .get(&format!("artifacts/{}", artifact.sha256))
                     .await?;
                 let mut remaining = artifact.bytes;
-                while let Some(chunk) = source.chunk(&mut response).await? {
+                while let Some(chunk) = response.chunk().await? {
                     if chunk.len() as u64 > remaining {
                         return Err("artifact exceeds declared length".into());
                     }
@@ -733,7 +666,7 @@ async fn ensure_object(
             .await?;
         let mut hash = sha2::Sha256::new();
         let mut remaining = artifact.bytes;
-        while let Some(chunk) = source.chunk(&mut response).await? {
+        while let Some(chunk) = response.chunk().await? {
             if chunk.len() as u64 > remaining {
                 return Err::<(), Error>("artifact exceeds declared length".into());
             }
@@ -945,7 +878,7 @@ mod observation_tests {
                     "publisher-high-water-fallback.json"
                 };
                 let mut saved = HighWater {
-                    origin: source.origin.to_string(),
+                    origin: source.transport.origin().to_string(),
                     current: next.clone(),
                 };
                 crate::control::persist(&root.path().join(companion), &saved).unwrap();

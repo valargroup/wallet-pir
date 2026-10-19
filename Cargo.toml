@@ -11,6 +11,7 @@ members = [
     "src/shared/pir-runtime",
     "src/shared/pir-cuda",
     "src/shared/pir-pipeline",
+    "src/shared/pir-sync-manager",
     "src/shared/pir-serving",
     # Protocol libraries, clients and stores.
     "src/enhance/enhance-query-server",

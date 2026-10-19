@@ -41,6 +41,7 @@ path = "src/bin/shard-control.rs"
 portable-kernel = ["transparent-shared/portable-kernel"]
 
 [dependencies]
+pir-sync-manager = { path = "../../shared/pir-sync-manager" }
 pir-pipeline = { path = "../../shared/pir-pipeline" }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 transparent-shared = { path = "../transparent-shared" }

@@ -453,6 +453,39 @@ class BoundaryTests(unittest.TestCase):
                     self.assertIn(f'enhance-query-server: serving library resolves {name}',
                                   boundary.resolved_violations(metadata), (target, kind))
 
+    def test_sync_manager_refuses_products_engines_and_replaced_utilities(self):
+        for kind in ['dependencies', 'dev-dependencies', 'build-dependencies',
+                     'target.cfg(unix).dependencies', 'target.cfg(unix).dev-dependencies',
+                     'target.cfg(unix).build-dependencies']:
+            for name, path, git in [('transparent-shared', 'src/transparent/transparent-shared/', ''),
+                                    ('pir-publisher', 'src/pir-publisher/', ''),
+                                    ('ipir-sp', None, ''),
+                                    ('reqwest', 'local/reqwest/', ''),
+                                    ('reqwest', None, 'https://example.invalid/replacement'),
+                                    ('pir-pipeline', 'local/replacement/', '')]:
+                package = {'name': boundary.SYNC_MANAGER,
+                           'manifest': 'src/shared/pir-sync-manager/Cargo.toml',
+                           'dependencies': [{'name': name, 'kind': kind, 'git': git, 'path': path}]}
+                self.assertTrue(boundary.violations([package], []), (kind, name))
+
+    def test_sync_manager_rejects_transitive_product_and_engine_edges(self):
+        def package(name, source):
+            return {'id': name, 'name': name, 'source': source,
+                    'manifest_path': str(ROOT / 'src/shared' / name / 'Cargo.toml')}
+
+        def node(name, deps):
+            return {'id': name, 'deps': [{'pkg': dep, 'dep_kinds': [{'kind': kind}]} for dep, kind in deps]}
+
+        for target, source in [('transparent-shared', None), ('pir-publisher', None),
+                               ('reinspiring', 'registry+example'), ('zakura-chain', 'git+example')]:
+            for kind in [None, 'dev', 'build']:
+                metadata = {'packages': [package(boundary.SYNC_MANAGER, None),
+                                         package('reqwest', 'registry+example'), package(target, source)],
+                            'resolve': {'nodes': [node(boundary.SYNC_MANAGER, [('reqwest', kind)]),
+                                                  node('reqwest', [(target, None)]), node(target, [])]}}
+                self.assertIn(f'{boundary.SYNC_MANAGER}: resolves outside its utility boundary: {target}',
+                              boundary.resolved_violations(metadata))
+
     def test_pipeline_refuses_every_nonutility_dependency_kind(self):
         for kind in ['dependencies', 'dev-dependencies', 'build-dependencies',
                      'target.cfg(unix).dependencies', 'target.cfg(unix).dev-dependencies',
