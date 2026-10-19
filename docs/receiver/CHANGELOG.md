@@ -19,7 +19,9 @@
   witness bytes and commitments, and the NEAR full pass duration against two days) as `indexer.capacity`, with a `warning` level from
   70% and `critical` from 90%, and the limit behind a refused publication, an
   oversized filter or witness file included, as `capacity_refusal`. The probe passes
-  them on, and `pir-monitor` alerts on them apart from availability.
+  them on, and `pir-monitor` alerts on them apart from availability. Running sweep
+  duration uses wall time even when the chain is paused. Optional capacity reads
+  run concurrently and never delay the primary probe verdict.
 
 - Validate records and witness proofs before writing one-shot publication files,
   including when reading an existing database; refuse invalid output before any

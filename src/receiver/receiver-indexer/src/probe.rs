@@ -818,9 +818,6 @@ mod tests {
         directory
     }
 
-    /// The anchor must have the node's hash and the tree size after that block. A node
-    /// that cannot give the size, or whose chain changes during the read, proves
-    /// nothing against the publication.
     /// An unresponsive private health endpoint cannot swallow a correctness verdict.
     #[tokio::test]
     async fn pending_capacity_never_delays_a_detected_mismatch() {
@@ -856,6 +853,9 @@ mod tests {
         assert_eq!(capacity["level"], "unknown");
     }
 
+    /// The anchor must have the node's hash and the tree size after that block. A node
+    /// that cannot give the size, or whose chain changes during the read, proves
+    /// nothing against the publication.
     #[tokio::test]
     async fn the_anchor_must_match_the_nodes_hash_and_tree_size() {
         let directory = anchored();
