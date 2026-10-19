@@ -38,6 +38,11 @@ impl Publication {
         self
     }
 
+    /// Returns the exact prepared PIR session bound by archive coverage declarations.
+    pub fn id(&self) -> Hash {
+        self.id
+    }
+
     /// The directory manifest this publication serves.
     pub fn manifest(&self) -> &Manifest {
         &self.server.manifest().directory
@@ -50,6 +55,7 @@ const GRACE: Duration = Duration::from_secs(60);
 #[derive(Default)]
 struct State {
     epoch: u64,
+    staged: std::collections::BTreeMap<Hash, usize>,
     current: Option<Arc<Publication>>,
     previous: Option<(Arc<Publication>, Instant)>,
 }
@@ -100,7 +106,49 @@ impl State {
 #[derive(Clone, Default)]
 pub struct Publications(Arc<RwLock<State>>);
 
+/// Pins a candidate session against archive GC until activation or rejection finishes.
+pub struct Staged {
+    owner: Publications,
+    id: Hash,
+}
+
+impl Drop for Staged {
+    /// Releases this candidate after its declaration has either become served or been rejected.
+    fn drop(&mut self) {
+        let mut state = self.owner.0.write().unwrap();
+        let count = state
+            .staged
+            .get_mut(&self.id)
+            .expect("staged session lease");
+        *count -= 1;
+        if *count == 0 {
+            state.staged.remove(&self.id);
+        }
+    }
+}
+
 impl Publications {
+    /// Retains the declaration before the publisher writes it and attempts activation.
+    pub fn stage(&self, id: Hash) -> Staged {
+        *self.0.write().unwrap().staged.entry(id).or_default() += 1;
+        Staged {
+            owner: self.clone(),
+            id,
+        }
+    }
+
+    /// Runs GC with a stable set of current, grace and staged sessions. Candidate
+    /// registration and activation cannot race deletion while this read lock is held.
+    pub fn with_protected_sessions<T>(&self, run: impl FnOnce(&[Hash]) -> T) -> T {
+        let state = self.0.read().unwrap();
+        let ids: Vec<_> = state
+            .live()
+            .map(|p| p.id)
+            .chain(state.staged.keys().copied())
+            .collect();
+        run(&ids)
+    }
+
     /// Runs [`State::expire`]. Every read path calls it, including the owner's periodic
     /// [`Self::anchors`] check, so an idle service frees it within a poll; [`Self::publish`]
     /// expires under its own lock.

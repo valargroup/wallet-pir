@@ -62,10 +62,10 @@ enhance-query-server = { path = "../enhance/enhance-query-server", optional = tr
 pir-query-server = { path = "../pir-query-server", optional = true, features = ["enhance"] }
 transparent-query-server = { path = "../transparent/transparent-query-server", optional = true }
 transparent-shared = { path = "../transparent/transparent-shared", optional = true }
-zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "a2f87e6f235dc16840be1dd7fc88e6dd06f0a268", default-features = false, optional = true }
-zakura-pir-client = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "a2f87e6f235dc16840be1dd7fc88e6dd06f0a268", default-features = false, optional = true }
-zakura-pir-publisher = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "a2f87e6f235dc16840be1dd7fc88e6dd06f0a268", default-features = false, optional = true }
-zakura-pir-protocol = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "a2f87e6f235dc16840be1dd7fc88e6dd06f0a268", default-features = false, optional = true }
+zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "12c3b438c80f3fe7a2f7bf2fbb25c41f556edbb6", default-features = false, optional = true }
+zakura-pir-client = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "12c3b438c80f3fe7a2f7bf2fbb25c41f556edbb6", default-features = false, optional = true }
+zakura-pir-publisher = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "12c3b438c80f3fe7a2f7bf2fbb25c41f556edbb6", default-features = false, optional = true }
+zakura-pir-protocol = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "12c3b438c80f3fe7a2f7bf2fbb25c41f556edbb6", default-features = false, optional = true }
 pir-pipeline = { path = "../shared/pir-pipeline" }
 axum = "0.7"
 clap = { version = "4", features = ["derive"] }

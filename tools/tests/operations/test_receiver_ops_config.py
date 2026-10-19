@@ -25,7 +25,9 @@ import unittest
 ROOT = Path(__file__).resolve().parents[3]
 DIR = ROOT / 'tools/receiver/digitalocean'
 WALLET_ROUTES = {'/v1/receiver/init', '/v1/receiver/query', '/v1/receiver/public/*',
-                 '/v1/receiver/witness/*', '/v1/receiver/filters/*'}
+                 '/v1/receiver/witness/*', '/v1/receiver/filters/*',
+                 '/v1/receiver/archive/head', '/v1/receiver/archive/range/*',
+                 '/v1/receiver/archive/seen/*', '/v1/receiver/archive/coverage/*'}
 PRIVATE_NETWORK = ipaddress.ip_network('10.70.0.0/16')
 DEPLOY = ROOT / 'tools/receiver/digitalocean/service.toml'
 INVENTORY = ROOT / 'tools/enhance/deploy/deploy-inventory.example.json'

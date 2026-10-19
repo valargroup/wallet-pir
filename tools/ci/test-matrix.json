@@ -227,6 +227,7 @@
       "receiver:receiver-indexer:test:serve_publication",
       "receiver:receiver-store:doc:receiver_store",
       "receiver:receiver-store:lib:receiver_store",
+      "receiver:receiver-store:test:archive",
       "receiver:receiver-store:test:store"
     ]
   },

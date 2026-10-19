@@ -25,20 +25,7 @@ admission (`pir-control`), metrics (`pir-observability`) and the PIR profile
 wallet-libraries' server-only chain adapters (`zakura-server-chain`), which decode
 blocks, count note positions and recover receivers.
 
-The indexer's `receiver_indexer::application` supplies operations to the internal
-`src/shared/pir-pipeline` lifecycle. Shared supervision retains the poll delay after
-each complete pass and the product's retry policy. Shared acquisition reconciles
-and commits through the concrete chain client and store; its work token borrows
-those dependencies. Shared preparation consumes that token, building from one
-provider capture, and passes the prepared product candidate to owner publication.
-The final canonical check and epoch-fenced atomic activation remain product owned;
-one-shot publication still writes the same files. Preparation failure keeps
-committed progress for retry. `receiver-directory` configures these calls and
-independently wires the HTTP server, canonical guard and provider feed; the guard
-continues checking served anchors throughout both phases. No persisted formats,
-wallet protocols, routes or status fields change. This standard-path adapter adds
-no HTTP source. The shared acquisition seam accepts product work without owning a
-store, protocol, queue or authority ([lifecycle boundaries](../enhance/architecture.md#ingestion-application)).
+The indexer keeps validated chain ingestion on a dedicated filter worker. PIR preparation reads a committed prefix on its own worker, so proof construction and session-rotation grace do not delay filter publication. Both workers validate their publication anchors. Independent guards revoke orphaned archive heads and PIR sessions. Provider history is separate from paid-filter coverage. A failed or incomplete provider read suppresses seen issuance evidence without holding back block filters.
 
 ## Node RPC policy
 
@@ -86,6 +73,18 @@ bucket, the exact record count, every receiver's pages, each continuing the last
 in chain order as `snapshot::check_next` requires, and that no two records share an
 output or note position. No chain trust is implied. A record stored outside its
 bucket would otherwise make lookups of that receiver find nothing.
+
+## Block filter archive
+
+`archive.sqlite` retains the complete canonical per-block GCS history, including empty blocks, in authenticated 256-block pages. Keep it with the publisher during failover. Its archive identity, correction epoch and monotone seen union are continuity state. Losing it requires a new identity and wallet bootstrap. Never copy an old identity into a new database or restore an older epoch under an existing identity. `directory.sqlite` remains the rebuildable chain index.
+
+Every indexed block has a fingerprint of its complete ordered payment records. A changed record on an unchanged block hash increments the durable epoch, including a correction below a simultaneous fork and a correction that adds the first payment to an empty block. A changed block hash alone replaces the affected pages without changing the epoch. Staging and activation are separate. The node must still accept the frontier before the staged head becomes public.
+
+Canonical history has no age cutoff. Superseded heads and their unique objects remain for at least 180 seconds after retirement, and active/staged heads are protected. A range read pins a SQLite snapshot until its bounded response is buffered. Two download slots cover database work and response bytes through their last transport owner. Unknown/expired revisions return 410. Corruption, missing storage and exhausted capacity return an error, never an empty filter. The range index is capped at 65,536 pages. Exceeding that limit stops publication instead of truncating history.
+
+PIR coverage declarations bind the archive identity and epoch to the actual session and connected block frontier. They are written only for an indexed anchor under the epoch captured before preparation. Current, grace and staged sessions are protected from concurrent cleanup. A wallet must still validate the connected chain and its local rewind/settings generations before settling work.
+
+`--filter-depth` can select a shallower filter depth than `--depth`. Omitting it keeps the existing depth. This code does not change production settings. The `receiver filter ready` event records observed node tip, published filter height, configured depth and ingestion duration. `receiver filter publication` records filter build duration and epoch. Qualification must combine these with wallet receipt/processing timestamps to report p50, p95, p99 and worst delay, scanned-block distance, cache-hit and PIR-fallback rates. Separate direct issuer-watch hits. A three-block wallet cache is useful only when filter processing beats eviction at height `h+3`; eventual discovery alone is not latency qualification.
 
 ## Filters
 
@@ -152,6 +151,10 @@ the session ID.
 | `POST /v1/receiver/query` | One encrypted row query |
 | `GET /v1/receiver/witness/:session` | Common witness file |
 | `GET /v1/receiver/filters/:session` | Filter file |
+| `GET /v1/receiver/archive/head` | Current complete archive head, independent of PIR readiness |
+| `GET /v1/receiver/archive/range/:head/:page` | Immutable page and proof under a pinned head digest |
+| `GET /v1/receiver/archive/seen/:digest` | Complete monotone seen object |
+| `GET /v1/receiver/archive/coverage/:archive/:epoch/:session` | Exact PIR session coverage declaration |
 | `GET /v1/receiver/health` | Process identity, the served session, the indexer's report, this process's NEAR reads and capacity refusal (operators only) |
 
 A query holds `RPQ1`, the session ID, a fresh 16-byte nonce, the packing key and
@@ -195,7 +198,7 @@ receiver-directory --data-dir /srv/receiver-pir/index --rpc-url http://127.0.0.1
 ```
 
 `receiver-directory --help` and the `Args` documentation in
-`services/receiver-indexer/src/main.rs` describe every flag. The indexer requires
+`src/receiver/receiver-indexer/src/service.rs` describe every flag. The indexer requires
 mainnet and indexes from Ironwood activation to `--depth` (default 2) blocks below
 the tip of the freshest mainnet `--rpc-url` node, which runs the whole pass and
 must still be on mainnet to publish; the next poll checks each node's genesis and
@@ -210,8 +213,7 @@ prints a summary. With `--serve`, it polls every `--poll-seconds`, prepares each
 canonical tip in memory and serves on `--bind`, a loopback or private address
 behind a TLS proxy. A paused tip is republished when its provider sets or report
 change. A guard revokes every session once a node shows a served anchor is off its
-chain. A replaced revision stays available for 60 seconds, and the next one waits
-for that. Logs go to standard error, filtered by `RUST_LOG`. See [the DigitalOcean deployment](../../tools/receiver/digitalocean/README.md).
+chain. A replaced PIR revision stays available for 60 seconds, and the next PIR rotation waits for that. Filter ingestion and publication continue during this grace period. Logs go to standard error, filtered by `RUST_LOG`. See [the DigitalOcean deployment](../../tools/receiver/digitalocean/README.md).
 
 With a partner key in `NEAR_INTENTS_EXPLORER`, the server reads the NEAR Intents
 explorer into `providers.sqlite` and publishes the `near-intents` recent and seen
@@ -223,7 +225,7 @@ completed NEAR payouts with no indexed payment: the signal that the index missed
 one or NEAR stopped paying with the zero OVK. `payouts_uncheckable` counts those
 to an Orchard receiver first seen in the last day that NEAR reported without a
 parsable transaction. Payouts to other recipients are not checked.
-`services/receiver-indexer/src/near.rs` documents the feed and the report.
+`src/receiver/receiver-indexer/src/near.rs` documents the feed and the report.
 
 Health's `near.reads` gives, for each NEAR feed, when the last read this process
 completed began, or null until one completes, so unlike the report's `feeds` it

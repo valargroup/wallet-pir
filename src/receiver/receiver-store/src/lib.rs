@@ -3,6 +3,8 @@
 //!
 //! Records, placement and publications are wallet-libraries'
 //! `zakura-receiver-directory`; this crate only persists them.
+pub mod archive;
+
 use receiver_directory::{
     filter::{Filter, Filters},
     snapshot::{self, Manifest, ProviderSet, Snapshot, PROFILE, TREE_SIZE},
@@ -138,6 +140,11 @@ impl Store {
         }
         tx.commit()?;
         Ok(Self { db, config })
+    }
+
+    /// Returns the immutable network and starting boundary shared with the archive.
+    pub fn config(&self) -> &Config {
+        &self.config
     }
 
     /// Every note commitment from the pool's empty tree to `manifest`'s end, and the
@@ -318,6 +325,87 @@ impl Store {
             .ok_or(Error::Malformed)
     }
 
+    /// Streams every canonical block and its ordered record fingerprint into the archive.
+    /// The source read transaction pins one complete history, including empty blocks.
+    pub fn stage_archive(
+        &self,
+        archive: &mut archive::ArchiveStore,
+        seen: Option<receiver_directory::archive::SeenRef>,
+        now: i64,
+    ) -> Result<receiver_directory::archive::Head, Error> {
+        let tx = self.db.unchecked_transaction()?;
+        let mut query = tx.prepare(
+            "SELECT b.height,b.hash,p.receiver,p.record FROM blocks b
+            LEFT JOIN payments p ON p.height=b.height ORDER BY b.height,p.position",
+        )?;
+        let mut rows = query
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, u32>(0)?,
+                    r.get::<_, Vec<u8>>(1)?,
+                    r.get::<_, Option<Vec<u8>>>(2)?,
+                    r.get::<_, Option<Vec<u8>>>(3)?,
+                ))
+            })?
+            .peekable();
+        let mut parent = self.config.start_parent;
+        let blocks = std::iter::from_fn(|| {
+            let first = rows.next()?;
+            Some((|| {
+                let (height, hash, receiver, record) = first?;
+                let hash: Hash = hash.try_into().map_err(|_| Error::Malformed)?;
+                let mut receivers = Vec::new();
+                let mut digest =
+                    Sha256::new().chain_update(b"ironwood-receiver/v1/block-records\0");
+                let mut pair = (receiver, record);
+                loop {
+                    match pair {
+                        (Some(receiver), Some(record)) => {
+                            let receiver: ReceiverBytes =
+                                receiver.try_into().map_err(|_| Error::Malformed)?;
+                            let parsed = decode(&record)?.ok_or(Error::Malformed)?;
+                            if parsed.receiver != receiver {
+                                return Err(Error::Malformed);
+                            }
+                            // Include txid, action and position changes even when receiver membership stays unchanged.
+                            digest.update(&record);
+                            if receivers.len() >= receiver_directory::blocks::MAX_RECEIVERS as usize
+                            {
+                                return Err(Error::Capacity);
+                            }
+                            receivers.push(receiver);
+                        }
+                        (None, None) if receivers.is_empty() => {}
+                        _ => return Err(Error::Malformed),
+                    }
+                    match rows.peek() {
+                        Some(Ok((next, _, _, _))) if *next == height => {
+                            let (_, same_hash, receiver, record) = rows.next().unwrap()?;
+                            if same_hash != hash {
+                                return Err(Error::Malformed);
+                            }
+                            pair = (receiver, record);
+                        }
+                        _ => break,
+                    }
+                }
+                let block = archive::Block {
+                    id: receiver_directory::blocks::BlockId { height, hash },
+                    parent,
+                    records: digest.finalize().into(),
+                    receivers,
+                };
+                parent = hash;
+                Ok(block)
+            })())
+        });
+        let head = archive.stage(blocks, seen, now)?;
+        drop(rows);
+        drop(query);
+        tx.commit()?;
+        Ok(head)
+    }
+
     /// Build all receiver pages from one SQLite read transaction and immutable anchor.
     /// A crowded bucket retries the next of [`SALT_ATTEMPTS`] salts derived from the
     /// anchor, so the result is deterministic; [`Error::Capacity`] means every salt
@@ -326,16 +414,35 @@ impl Store {
     /// which no salt or row count changes, is [`Error::FilterBytes`]. `provider` holds
     /// the swap provider filter sets (see [`ProviderStore::sets`]).
     pub fn snapshot(&mut self, rows: u32, provider: &[ProviderSet]) -> Result<Snapshot, Error> {
+        let height = self.tip()?.height;
+        self.snapshot_at(rows, provider, height)
+    }
+
+    /// Builds a PIR snapshot at a committed prefix while filter ingestion may be further ahead.
+    pub fn snapshot_at(
+        &mut self,
+        rows: u32,
+        provider: &[ProviderSet],
+        height: u32,
+    ) -> Result<Snapshot, Error> {
         let capacity = snapshot::capacity(rows)?;
         let tx = self.db.transaction()?;
-        let anchor = tip(&tx, &self.config)?;
+        let anchor = tx
+            .query_row(
+                "SELECT height,hash,end_position FROM blocks WHERE height=?1",
+                [height],
+                checkpoint_row,
+            )?
+            .ok_or(Error::Coverage)?;
         if anchor.height < self.config.start_height {
             return Err(Error::Coverage);
         }
         let mut records = Vec::new();
         {
-            let mut query = tx.prepare("SELECT record FROM payments ORDER BY receiver,position")?;
-            let mut result = query.query([])?;
+            let mut query = tx.prepare(
+                "SELECT record FROM payments WHERE height<=?1 ORDER BY receiver,position",
+            )?;
+            let mut result = query.query([height])?;
             while let Some(row) = result.next()? {
                 if records.len() as u64 == capacity {
                     return Err(Error::Capacity);

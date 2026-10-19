@@ -28,7 +28,9 @@
     ]
   },
   "receiver-store": {
-    "fast": [],
+    "fast": [
+      "archive"
+    ],
     "full": [
       "store"
     ]

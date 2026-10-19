@@ -54,6 +54,11 @@ pub struct Config {
     /// the chain passes it: it is canonical, and the depth applies to new blocks.
     #[arg(long, default_value_t = 2, value_parser = clap::value_parser!(u32).range(0..=50))]
     pub depth: u32,
+    /// Optional shallower depth for filters, independently of PIR preparation.
+    /// Omit to retain the existing depth until latency qualification justifies a change.
+    #[arg(long, value_parser = clap::value_parser!(u32).range(0..=50))]
+    #[serde(default)]
+    pub filter_depth: Option<u32>,
     /// Continuously reconcile the canonical chain and atomically rotate the service,
     /// publishing from memory. Without it, one run writes its publication's files.
     #[arg(long, conflicts_with = "end_height")]
@@ -110,6 +115,7 @@ impl From<&Config> for application::Config {
             start_height: args.start_height,
             end_height: args.end_height,
             depth: args.depth,
+            filter_depth: args.filter_depth,
             batch_size: args.batch_size,
             concurrency: args.concurrency,
             providers_enabled: args.near_key.is_some(),
@@ -146,6 +152,7 @@ impl Config {
             || self.near_poll_seconds < 10
             || !(2..=60).contains(&self.near_sweep_pages)
             || self.depth > 50
+            || self.filter_depth.is_some_and(|depth| depth > self.depth)
             || self.batch_size == 0
             || self.batch_size > MAX_RECEIVER_BATCH_BLOCKS
             || self.concurrency == 0
@@ -184,6 +191,19 @@ pub async fn run(
         application::refresh(&config, &nodes, genesis, None, &mut state).await?;
         return Ok(());
     }
+    let (_, rpc) = freshest(&nodes, genesis).await?;
+    let boundary = crate::blocks::boundary(&rpc, args.start_height - 1).await?;
+    let archive = crate::archive::Location {
+        path: args.data_dir.join(crate::archive::FILE),
+        config: receiver_store::Config {
+            genesis,
+            start_height: args.start_height,
+            start_parent: boundary.hash,
+            start_position: boundary.position,
+        },
+    };
+    receiver_store::archive::ArchiveStore::open(&archive.path, archive.config.clone())?
+        .revoke(application::unix_now())?;
     let publications = Publications::default();
     struct Fence(Publications);
     impl Drop for Fence {
@@ -201,7 +221,8 @@ pub async fn run(
             fields.extend(refusal.health());
             fields
         })
-    });
+    })
+    .merge(crate::archive::router(archive.clone()));
     info!(
         address = %args.bind,
         "receiver PIR listening; waiting for a canonical publication"
@@ -214,6 +235,13 @@ pub async fn run(
         Duration::from_secs(args.poll_seconds),
     ));
     tasks.own(&guard);
+    let archive_guard = tokio::spawn(crate::archive::guard(
+        archive,
+        nodes.clone(),
+        Duration::from_secs(args.poll_seconds),
+    ));
+    tasks.own(&archive_guard);
+
     if let (Some(key), Some(start)) = (args.near_key.clone(), args.near_since) {
         let path = args.data_dir.join(PROVIDERS);
         let poll = Duration::from_secs(args.near_poll_seconds);
@@ -233,21 +261,41 @@ pub async fn run(
     let stop = shutdown.clone();
     let watched = tokio::spawn(async move {
         let mut guard = guard;
-        tokio::select! { _ = &mut guard => {}, _ = &mut serving => {} }
+        let mut archive_guard = archive_guard;
+        tokio::select! { _ = &mut guard => {}, _ = &mut archive_guard => {}, _ = &mut serving => {} }
         failed_task.store(true, std::sync::atomic::Ordering::SeqCst);
         stop.request();
     });
     tasks.own(&watched);
-    application::run_until(
-        &config,
-        &nodes,
+    struct StopFilters(pir_pipeline::service::Shutdown);
+    impl Drop for StopFilters {
+        /// Stops the ingestion owner even when the service future is dropped by its host.
+        fn drop(&mut self) {
+            self.0.request();
+        }
+    }
+    let _stop_filters = StopFilters(shutdown.clone());
+    let mut filters = crate::archive::start(
+        config.clone(),
+        nodes.clone(),
         genesis,
-        &publications,
-        &mut state,
+        publications.clone(),
         Duration::from_secs(args.poll_seconds),
-        shutdown,
-    )
-    .await?;
+        shutdown.clone(),
+    )?;
+    let (result, filters_finished) = tokio::select! {
+        result = application::run_until(&config,&nodes,genesis,&publications,&mut state,
+            Duration::from_secs(args.poll_seconds),shutdown.clone()) => (result,false),
+        result = &mut filters => (match result { Ok(Ok(())) if shutdown.requested() => Ok(()),
+            Ok(Err(error)) => Err(error), _ => Err("filter ingestion thread stopped".into()) },true),
+    };
+    shutdown.request();
+    if !filters_finished {
+        filters
+            .await
+            .map_err(|_| "filter ingestion thread panicked")??;
+    }
+    result?;
     if failed.load(std::sync::atomic::Ordering::SeqCst) {
         return Err("receiver background service stopped".into());
     }

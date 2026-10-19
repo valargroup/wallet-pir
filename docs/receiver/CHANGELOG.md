@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Publish permanent per-block receiver filters and durable seen objects independently of PIR preparation. Bind immutable ranges and session coverage to a durable archive identity and correction epoch. Detect record corrections even in empty blocks below a simultaneous fork. Preserve canonical history while pruning retired versions after their serving grace. Add an independently configurable filter depth without changing production defaults.
+
 - Backfill the NEAR feeds' history from `--near-since`, now required to serve with a
   key, in sweeps that record each page and resume after a failure or restart. A
   recent pass rereads the last week hourly and a full pass the whole history daily,

@@ -44,14 +44,14 @@ thiserror = "2"
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
 
-zakura-pir-query-server = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "a2f87e6f235dc16840be1dd7fc88e6dd06f0a268", default-features = false, features = ["status"], optional = true }
-zakura-pir-client = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "a2f87e6f235dc16840be1dd7fc88e6dd06f0a268", default-features = false, features = ["native"], optional = true }
+zakura-pir-query-server = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "12c3b438c80f3fe7a2f7bf2fbb25c41f556edbb6", default-features = false, features = ["status"], optional = true }
+zakura-pir-client = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "12c3b438c80f3fe7a2f7bf2fbb25c41f556edbb6", default-features = false, features = ["native"], optional = true }
 
 [dev-dependencies]
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
 # Independent wallet client exercises the serving wire contract over HTTP.
-zakura-pir-client = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "a2f87e6f235dc16840be1dd7fc88e6dd06f0a268", default-features = false, features = ["native", "status"] }
+zakura-pir-client = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "12c3b438c80f3fe7a2f7bf2fbb25c41f556edbb6", default-features = false, features = ["native", "status"] }
 
 
 [dev-dependencies.status-query-server]

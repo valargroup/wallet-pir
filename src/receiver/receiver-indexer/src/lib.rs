@@ -4,6 +4,7 @@
 //! as receiver directory revisions. The binary is `receiver-directory`; see
 //! `docs/receiver/README.md`.
 pub mod application;
+pub mod archive;
 pub mod blocks;
 pub mod canonical;
 pub mod near;

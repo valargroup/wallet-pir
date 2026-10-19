@@ -96,6 +96,7 @@ impl Refusal {
 }
 
 /// Collection and publication settings, independent of CLI parsing and credentials.
+#[derive(Clone)]
 pub struct Config {
     pub data_dir: PathBuf,
     pub min_rows: u32,
@@ -104,6 +105,8 @@ pub struct Config {
     pub start_height: u32,
     pub end_height: Option<u32>,
     pub depth: u32,
+    /// Independent filter depth. None keeps the PIR depth until latency qualification changes it.
+    pub filter_depth: Option<u32>,
     pub batch_size: u32,
     pub concurrency: u32,
     /// Without an enabled feed, ignore even persisted provider sets.
@@ -118,6 +121,7 @@ struct Active {
     anchor: (u32, [u8; 32]),
     /// The [`crate::near::digest`] of its provider sets.
     inputs: [u8; 32],
+    archive_revision: ([u8; 32], u64),
     report: serde_json::Value,
 }
 
@@ -194,11 +198,11 @@ struct Ingestion<'a> {
 impl pir_pipeline::Task for Ingestion<'_> {
     type Error = Box<dyn std::error::Error + Send + Sync>;
     async fn run(&mut self) -> Result<()> {
-        refresh(
+        refresh_indexed(
             self.config,
             self.nodes,
             self.genesis,
-            Some(self.publications),
+            self.publications,
             self.state,
         )
         .await
@@ -248,7 +252,7 @@ pub async fn refresh(
         true => ProviderStore::open(args.data_dir.join(PROVIDERS))?,
         false => ProviderStore::open(":memory:")?,
     };
-    if let Some(collected) = collect(
+    let mut collected = collect(
         args,
         rpc,
         node_tip,
@@ -257,11 +261,64 @@ pub async fn refresh(
         genesis,
         refresh_started,
     )
-    .await?
-    {
-        collected.publish(&provider_store, state).await?;
-    }
+    .await?;
+    collected.publish_filters().await?;
+    collected.publish(&provider_store, state).await?;
     Ok(())
+}
+
+/// Publishes a committed prefix without fetching or appending blocks. The independent
+/// ingestion owner keeps filters moving while this task prepares proofs and PIR rows.
+async fn refresh_indexed(
+    args: &Config,
+    nodes: &[NodeClient],
+    genesis: [u8; 32],
+    serving: &Publications,
+    state: &mut State,
+) -> Result<()> {
+    let refresh_started = std::time::Instant::now();
+    let (node_tip, rpc) = freshest(nodes, genesis).await?;
+    check_serving(serving, &rpc, genesis, node_tip).await?;
+    if serving.ready_at().is_some() {
+        return Ok(());
+    }
+    let boundary = crate::blocks::boundary(&rpc, args.start_height - 1).await?;
+    let mut store = Store::open(
+        args.data_dir.join("directory.sqlite"),
+        StoreConfig {
+            genesis,
+            start_height: args.start_height,
+            start_parent: boundary.hash,
+            start_position: boundary.position,
+        },
+    )?;
+    let end = store
+        .tip()?
+        .height
+        .min(u32::try_from(node_tip)?.saturating_sub(args.depth));
+    if end < args.start_height {
+        return Ok(());
+    }
+    let tip = store.checkpoint(end)?;
+    if !is_canonical(&rpc, tip.height, tip.hash).await? {
+        return Ok(());
+    }
+    let providers = match args.providers_enabled {
+        true => ProviderStore::open(args.data_dir.join(PROVIDERS))?,
+        false => ProviderStore::open(":memory:")?,
+    };
+    Collected {
+        args,
+        rpc: &rpc,
+        store: &mut store,
+        serving: Some(serving),
+        genesis,
+        tip,
+        epoch: Some(serving.epoch()),
+        refresh_started,
+    }
+    .publish(&providers, state)
+    .await
 }
 
 /// A completed collection pass, fenced after reconciliation and before appending.
@@ -278,7 +335,7 @@ pub struct Collected<'a> {
 }
 
 /// Reconcile and commit validated blocks, revoking served sessions before rewind.
-/// Grace-period backpressure returns `None` without collecting or preparing.
+/// Ingestion never waits for PIR grace or preparation.
 /// The caller must keep the independent canonical guard running throughout both phases.
 pub async fn collect<'a>(
     args: &'a Config,
@@ -288,44 +345,7 @@ pub async fn collect<'a>(
     serving: Option<&'a Publications>,
     genesis: [u8; 32],
     refresh_started: std::time::Instant,
-) -> Result<Option<Collected<'a>>> {
-    let input = pir_pipeline::acquire(
-        async {
-            Ok::<_, Box<dyn std::error::Error + Send + Sync>>(
-                match collect_inner(
-                    args,
-                    rpc,
-                    node_tip,
-                    store,
-                    serving,
-                    genesis,
-                    refresh_started,
-                )
-                .await?
-                {
-                    Some(work) => Input::Work(work),
-                    None => Input::Deferred,
-                },
-            )
-        },
-        &mut (),
-    )
-    .await?;
-    Ok(match input {
-        Input::Work(work) => Some(work),
-        Input::Unchanged | Input::Deferred => None,
-    })
-}
-
-async fn collect_inner<'a>(
-    args: &'a Config,
-    rpc: &'a NodeClient,
-    node_tip: u64,
-    store: &'a mut Store,
-    serving: Option<&'a Publications>,
-    genesis: [u8; 32],
-    refresh_started: std::time::Instant,
-) -> Result<Option<Collected<'a>>> {
+) -> Result<Collected<'a>> {
     let node_tip = u32::try_from(node_tip)?;
     let requested = args
         .end_height
@@ -353,6 +373,11 @@ async fn collect_inner<'a>(
         if let Some(serving) = serving {
             serving.revoke();
         }
+        let archive = args.data_dir.join(crate::archive::FILE);
+        if archive.exists() {
+            receiver_store::archive::ArchiveStore::open(&archive, store.config().clone())?
+                .revoke(unix_now())?;
+        }
         store.rewind(tip.height, tip.hash)?;
     }
     // See `Config::depth`; an explicit `--end-height` is kept.
@@ -365,11 +390,6 @@ async fn collect_inner<'a>(
     }
     if end < tip.height {
         return Err("end height precedes stored tip".into());
-    }
-    // Wait out the previous revision's grace before building the next (see
-    // `Publications::ready_at`); a later poll publishes.
-    if serving.is_some_and(|s| s.ready_at().is_some()) {
-        return Ok(None);
     }
     // Capture the fence after any rewind; a concurrent revocation invalidates preparation below.
     let epoch = serving.map(Publications::epoch);
@@ -407,7 +427,7 @@ async fn collect_inner<'a>(
         );
     }
     log_stage("ingestion", started);
-    Ok(Some(Collected {
+    Ok(Collected {
         args,
         rpc,
         store,
@@ -416,14 +436,22 @@ async fn collect_inner<'a>(
         tip,
         epoch,
         refresh_started,
-    }))
+    })
 }
 
 impl<'a> Collected<'a> {
+    /// Publishes filter history before and independently of provider availability and PIR work.
+    pub async fn publish_filters(&mut self) -> Result<()> {
+        crate::archive::publish(self.args, self.rpc, self.store).await
+    }
+
     /// Build from committed records and one complete provider capture, then write
     /// files or prepare and activate in memory. Preparation failures keep commits;
     /// anchor revalidation and the captured publication fence govern activation.
     pub async fn publish(self, provider_store: &ProviderStore, state: &'a mut State) -> Result<()> {
+        if self.serving.is_some_and(|s| s.ready_at().is_some()) {
+            return Ok(());
+        }
         pir_pipeline::advance(
             Input::Work(self),
             |work| work.prepare(provider_store, state),
@@ -449,6 +477,14 @@ impl<'a> Collected<'a> {
             epoch,
             refresh_started,
         } = self;
+        let archive = receiver_store::archive::ArchiveStore::open(
+            args.data_dir.join(crate::archive::FILE),
+            store.config().clone(),
+        )?;
+        let archive_head = archive
+            .head()?
+            .ok_or("filter archive has no canonical frontier yet")?;
+        let archive_config = store.config().clone();
         let State {
             active,
             witness_cache,
@@ -464,7 +500,8 @@ impl<'a> Collected<'a> {
         let full_pass_secs = capture.full_pass_secs;
         let report = capture.report(store)?;
         if let (Some(serving), Some(active)) = (serving, active.as_ref()) {
-            if active.anchor == (tip.height, tip.hash)
+            if active.archive_revision == (archive_head.archive, archive_head.epoch)
+                && active.anchor == (tip.height, tip.hash)
                 && serving.anchors().first() == Some(&active.anchor)
                 && (active.inputs, &active.report) == (inputs, &report)
             {
@@ -486,7 +523,7 @@ impl<'a> Collected<'a> {
                     no publication created";
                 return Err(refusal.refuse("buckets", Some(records), PLACEABLE_RECORDS, error));
             }
-            match store.snapshot(rows, &capture.sets) {
+            match store.snapshot_at(rows, &capture.sets, tip.height) {
                 Ok(s) => break s,
                 Err(Error::Capacity) => rows *= 2,
                 Err(Error::FilterBytes) => {
@@ -609,6 +646,8 @@ impl<'a> Collected<'a> {
             refresh_started,
             revision,
             summary,
+            archive_head,
+            archive_config,
         }))
     }
 }
@@ -636,6 +675,8 @@ struct Prepared<'a> {
     refresh_started: std::time::Instant,
     revision: String,
     summary: serde_json::Value,
+    archive_head: receiver_directory::archive::Head,
+    archive_config: StoreConfig,
 }
 impl Prepared<'_> {
     async fn activate(self) -> Result<()> {
@@ -653,6 +694,8 @@ impl Prepared<'_> {
             refresh_started,
             revision,
             summary,
+            archive_head,
+            archive_config,
         } = self;
         let publication = match candidate {
             Candidate::Files {
@@ -675,6 +718,22 @@ impl Prepared<'_> {
             serving.revoke();
             return Err("chain changed during PIR preparation; retrying".into());
         }
+        let _staged = serving.stage(publication.id());
+        let mut archive = receiver_store::archive::ArchiveStore::open(
+            args.data_dir.join(crate::archive::FILE),
+            archive_config,
+        )?;
+        archive.record_coverage(&receiver_directory::archive::Coverage {
+            genesis: archive_head.genesis,
+            archive: archive_head.archive,
+            epoch: archive_head.epoch,
+            session: publication.id(),
+            first_height: anchor.start_height,
+            frontier: receiver_directory::blocks::BlockId {
+                height: anchor.end_height,
+                hash: anchor.end_hash,
+            },
+        })?;
         let anchor = (anchor.end_height, anchor.end_hash);
         let mut published = report.clone();
         published["capacity"] = capacity;
@@ -683,6 +742,7 @@ impl Prepared<'_> {
         }
         *refusal.0.lock().unwrap() = None;
         *active = Some(Active {
+            archive_revision: (archive_head.archive, archive_head.epoch),
             anchor,
             inputs,
             report,
@@ -953,6 +1013,7 @@ mod tests {
                 start_height: height as u32,
                 end_height: None,
                 depth: 0,
+                filter_depth: None,
                 batch_size: crate::blocks::MAX_RECEIVER_BATCH_BLOCKS,
                 concurrency: 8,
                 providers_enabled: true,
@@ -960,7 +1021,12 @@ mod tests {
             let publications = Publications::default();
             let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
             let origin = format!("http://{}", socket.local_addr().unwrap());
-            let app = receiver_pir_server::router_with_publications(publications.clone());
+            let app = receiver_pir_server::router_with_publications(publications.clone()).merge(
+                crate::archive::router(crate::archive::Location {
+                    path: dir.path().join(crate::archive::FILE),
+                    config: store.config().clone(),
+                }),
+            );
             tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
             Self {
                 dir,
@@ -1115,7 +1181,7 @@ mod tests {
         let mut store = paused.store();
         let provider = paused.provider();
         let height = crate::blocks::ironwood_activation();
-        let work = collect(
+        let mut work = collect(
             &paused.args,
             &paused.rpc,
             u64::from(height),
@@ -1125,8 +1191,8 @@ mod tests {
             std::time::Instant::now(),
         )
         .await
-        .unwrap()
         .unwrap();
+        work.publish_filters().await.unwrap();
         let result = pir_pipeline::advance(
             Input::Work(work),
             |work| async {
@@ -1216,6 +1282,65 @@ mod tests {
         paused.refresh().await.unwrap();
         let next: receiver_pir::Manifest =
             serde_json::from_value(paused.get("init").await).unwrap();
+        assert!(paused.publications.ready_at().is_some());
+        // A separate filter worker must advance while the old PIR session is still in grace.
+        paused
+            .store()
+            .append(&receiver_store::IndexedBlock {
+                height: height + 1,
+                hash: [5; 32],
+                parent: [4; 32],
+                start_position: 1,
+                end_position: 1,
+                coinbase_actions: 0,
+                commitments: vec![],
+                payments: vec![],
+            })
+            .unwrap();
+        *paused.node.tip.lock().unwrap() = u64::from(height + 1);
+        paused
+            .node
+            .hashes
+            .lock()
+            .unwrap()
+            .insert(u64::from(height + 1), [5; 32]);
+        let shutdown = pir_pipeline::service::Shutdown::default();
+        let filters = crate::archive::start(
+            paused.args.clone(),
+            vec![paused.rpc.clone()],
+            Network::Mainnet.genesis_hash(),
+            paused.publications.clone(),
+            std::time::Duration::from_secs(10),
+            shutdown.clone(),
+        )
+        .unwrap();
+        let head = tokio::time::timeout(std::time::Duration::from_secs(3), async {
+            loop {
+                let bytes = reqwest::get(format!("{}/v1/receiver/archive/head", paused.origin))
+                    .await
+                    .unwrap()
+                    .bytes()
+                    .await
+                    .unwrap();
+                if let Ok(head) = receiver_directory::archive::Head::decode(&bytes) {
+                    if head.frontier.height == height + 1 {
+                        break head;
+                    }
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        shutdown.request();
+        filters.await.unwrap().unwrap();
+        assert_eq!(head.frontier.hash, [5; 32]);
+        assert!(paused.publications.ready_at().is_some());
+        assert_eq!(
+            paused.get("init").await,
+            serde_json::to_value(&next).unwrap()
+        );
+
         assert_ne!(
             next.directory.data_sha256,
             old_manifest.directory.data_sha256
