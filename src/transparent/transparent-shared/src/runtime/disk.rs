@@ -1235,22 +1235,7 @@ mod shipped_tests {
         } else {
             &super::super::tests::NATIVE_INSTANCE
         };
-        let shared = if cfg!(feature = "qualification-tests") {
-            Arc::new(SharedParams::build_display(geometry, table).unwrap())
-        } else {
-            static SHARED: std::sync::LazyLock<Arc<SharedParams>> =
-                std::sync::LazyLock::new(|| {
-                    Arc::new(
-                        SharedParams::build_display(
-                            &super::super::tests::NATIVE_INSTANCE,
-                            Table::TxDirectory,
-                        )
-                        .unwrap(),
-                    )
-                });
-            assert_eq!(table, Table::TxDirectory);
-            SHARED.clone()
-        };
+        let shared = super::super::tests::fixture_params(geometry, table, true);
         let profile = &shared.profile;
         let mut rows = vec![0u8; profile.rows * profile.row_bytes];
         for (i, byte) in rows[..filled * profile.row_bytes].iter_mut().enumerate() {
@@ -1356,7 +1341,7 @@ mod shipped_tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn refused_shipped_files_fall_back_to_a_counted_local_build() {
         let dir = tempfile::tempdir().unwrap();
-        let s = segment(dir.path(), Table::TxDirectory, 700, 2);
+        let s = segment(dir.path(), Table::TxDirectory, 2_048, 4);
         let local = crate::runtime::tests::prepared_fixture(&s.shared, &s.rows).unwrap();
         let mut other_revision = s.key.clone();
         other_revision.0 = "cd".repeat(32);
@@ -1521,22 +1506,7 @@ mod shipped_tests {
     fn history_segment(dir: &Path, table: Table, filled: usize, seed: usize) -> Segment {
         use transparent_shard::layout::DECOUPLED_2K_8K;
         let (geometry, table) = super::super::tests::fixture_shape(&DECOUPLED_2K_8K, table);
-        let shared = if cfg!(feature = "qualification-tests") {
-            Arc::new(SharedParams::build(geometry, table).unwrap())
-        } else {
-            static SHARED: std::sync::LazyLock<Arc<SharedParams>> =
-                std::sync::LazyLock::new(|| {
-                    Arc::new(
-                        SharedParams::build(
-                            &super::super::tests::NATIVE_INSTANCE,
-                            Table::TxDirectory,
-                        )
-                        .unwrap(),
-                    )
-                });
-            assert_eq!(table, Table::TxDirectory);
-            SHARED.clone()
-        };
+        let shared = super::super::tests::fixture_params(geometry, table, false);
         let profile = &shared.profile;
         let mut rows = vec![0u8; profile.rows * profile.row_bytes];
         for (i, byte) in rows[..filled * profile.row_bytes].iter_mut().enumerate() {

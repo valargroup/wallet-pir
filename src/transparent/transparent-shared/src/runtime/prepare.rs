@@ -159,15 +159,20 @@ mod tests {
     use std::os::unix::fs::MetadataExt;
     use zakura_pir_protocol::transparent::shard::layout::DECOUPLED_2K_8K;
 
-    fn segment(dir: &std::path::Path, seed: u8) -> (SharedParams, SegmentSource) {
+    fn segment(dir: &std::path::Path, seed: u8) -> (std::sync::Arc<SharedParams>, SegmentSource) {
         let (geometry, table) =
             crate::runtime::tests::fixture_shape(&DECOUPLED_2K_8K, Table::Pages);
-        let shared = SharedParams::build(geometry, table).unwrap();
+        let shared = crate::runtime::tests::fixture_params(geometry, table, false);
         let profile = &shared.profile;
-        let mut rows = vec![0u8; profile.rows * profile.row_bytes];
-        for (i, byte) in rows[..300 * profile.row_bytes].iter_mut().enumerate() {
-            *byte = (i as u8).wrapping_mul(31) ^ seed;
-        }
+        let rows = if cfg!(feature = "qualification-tests") {
+            let mut rows = vec![0u8; profile.rows * profile.row_bytes];
+            for (i, byte) in rows[..300 * profile.row_bytes].iter_mut().enumerate() {
+                *byte = (i as u8).wrapping_mul(31) ^ seed;
+            }
+            rows
+        } else {
+            crate::runtime::tests::recovery_rows(&shared, false)
+        };
         let path = dir.join(format!("pages-{seed}.bin"));
         fs::write(&path, &rows).unwrap();
         let source = SegmentSource::published(
@@ -192,7 +197,6 @@ mod tests {
         use std::sync::Arc;
         let dir = tempfile::tempdir().unwrap();
         let (shared, source) = segment(dir.path(), 3);
-        let shared = Arc::new(shared);
         let key = ("12".repeat(32), shared.table, 0);
         let out = publication(dir.path(), "strict");
         let strict = ShippedRuntimes::required(out.directory().to_path_buf());
