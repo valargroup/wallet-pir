@@ -164,7 +164,7 @@ async fn single_unit_hint_rejects_damage_and_pins_retired_file() {
         .is_ok(),
         "prepared hint must pass the worker checks"
     );
-    let mut damage = |fault: &str| {
+    let damage = |fault: &str| {
         let mut file = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
         match fault {
             "truncated" => file.set_len(original.len() as u64 - 1).unwrap(),
