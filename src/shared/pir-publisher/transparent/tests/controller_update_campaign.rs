@@ -36,6 +36,8 @@ use transparent_query_server::routing::router::{plan, RosterEntry};
 use transparent_shared::history::assignment::{GeneratedBy, WorkerRole};
 use transparent_shared::history::shardset::ShardSet;
 use transparent_shared::journal::events::EventStore;
+use zakura_pir_protocol::transparent::events as transparent_events;
+use zakura_pir_publisher::transparent::filter as transparent_filter;
 
 const GENESIS: &str = transparent_filter::MAINNET_GENESIS_DISPLAY;
 const RECENT_FROM: u64 = 2;
