@@ -61,7 +61,7 @@ SCOPES = {
     ('full-test', 'shared'): ('dev,release-fast', 'clippy all-features; pir-control/admission'),
     ('full-test', 'receiver'): ('dev,release-fast', 'clippy all-features'),
     ('release', 'q48'): ('release', 'enhance-pir-client'),
-    ('release', 'publisher'): ('release,release-fast', 'pir-publisher/transparent; transparent regression and display acceptance tools'),
+    ('release', 'publisher'): ('release,release-fast', 'pir-publisher/transparent; transparent regression, history rate and txid rate acceptance tools'),
     ('release-native', 'native'): ('release', 'enhance-pir-client,native-reinspiring'),
     ('native-cuda', 'cuda'): ('release', 'enhance-pir-client,native-reinspiring,cuda'),
 }
