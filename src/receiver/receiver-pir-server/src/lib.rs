@@ -21,7 +21,7 @@ use pir_control::admission::{client_key, read_body, BodyError, ClientSlots, Queu
 pub use publication::{Publication, Publications};
 use receiver_directory::Hash;
 use receiver_pir::{query_bytes, Error, HEADER_BYTES, MAGIC, MAX_ROWS};
-pub use recovery::{Object, Recovery};
+pub use recovery::{Object, Recovery, Retention};
 use std::{sync::Arc, time::Duration};
 
 // Preserve the historical bounded categories for unmatched product-shaped

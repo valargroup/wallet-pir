@@ -1,9 +1,10 @@
 //! Immutable prepared publications and atomic, reorg-fenced serving state.
-use crate::recovery::{Object, Recovery};
+use crate::recovery::{Object, Recovery, Retention};
 use axum::{body::Bytes, http::StatusCode};
 use receiver_directory::{snapshot::Manifest, Hash};
 use receiver_pir::server::Server;
 use std::{
+    collections::BTreeMap,
     sync::{Arc, RwLock},
     time::{Duration, Instant},
 };
@@ -67,6 +68,10 @@ struct State {
     epoch: u64,
     current: Option<Arc<Publication>>,
     previous: Option<(Arc<Publication>, Instant)>,
+    /// Recovery objects of revisions that no longer accept requests, each until its
+    /// retention ends; see [`Retention`].
+    retired: BTreeMap<Object, (Bytes, Instant)>,
+    retention: Retention,
 }
 
 impl State {
@@ -107,7 +112,27 @@ impl State {
     /// See [`Publications::revoke`].
     fn revoke(&mut self) {
         self.epoch = self.epoch.checked_add(1).expect("recovery epoch exhausted");
-        (self.current, self.previous) = (None, None);
+        for publication in [self.current.take(), self.previous.take().map(|(p, _)| p)] {
+            self.retire(publication, Instant::now());
+        }
+    }
+
+    /// Keeps the recovery objects of `publication`, which stops accepting requests at
+    /// `from`, for their retention after it, and drops those whose retention has ended.
+    fn retire(&mut self, publication: Option<Arc<Publication>>, from: Instant) {
+        let now = Instant::now();
+        self.retired.retain(|_, (_, until)| *until > now);
+        let Some(recovery) = publication.as_ref().and_then(|p| p.recovery.as_ref()) else {
+            return;
+        };
+        for (object, bytes) in recovery.objects() {
+            let until = from + self.retention.of(object);
+            let entry = self
+                .retired
+                .entry(*object)
+                .or_insert_with(|| (bytes.clone(), until));
+            entry.1 = entry.1.max(until);
+        }
     }
 }
 
@@ -116,6 +141,14 @@ impl State {
 pub struct Publications(Arc<RwLock<State>>);
 
 impl Publications {
+    /// No publications yet, keeping displaced recovery objects for `retention`.
+    pub fn with_retention(retention: Retention) -> Self {
+        Self(Arc::new(RwLock::new(State {
+            retention,
+            ..State::default()
+        })))
+    }
+
     /// Runs [`State::expire`]. Every read path calls it, including the owner's periodic
     /// [`Self::anchors`] check, so an idle service frees it within a poll; [`Self::publish`]
     /// expires under its own lock.
@@ -181,7 +214,8 @@ impl Publications {
             .as_ref()
             .is_some_and(|p| p.id == publication.id)
         {
-            state.current = Some(Arc::new(publication));
+            let replaced = state.current.replace(Arc::new(publication));
+            state.retire(replaced, Instant::now());
             return true;
         }
         let end = publication.manifest().end_height;
@@ -193,7 +227,10 @@ impl Publications {
         {
             return false;
         }
-        state.previous = state.current.take().map(|p| (p, Instant::now() + GRACE));
+        let displaced = state.current.take();
+        let until = Instant::now() + GRACE;
+        state.retire(displaced.clone(), until);
+        state.previous = displaced.map(|p| (p, until));
         state.current = Some(Arc::new(publication));
         true
     }
@@ -218,13 +255,17 @@ impl Publications {
         true
     }
 
-    /// The encoding of `object`, if a revision that accepts new requests names it.
-    /// Objects are immutable, so any such revision may answer.
+    /// The encoding of `object`, if a revision that accepts new requests names it or
+    /// one that did within the object's retention. Objects are immutable, so any of
+    /// them may answer, whether a revision was displaced or revoked.
     pub(crate) fn object(&self, object: &Object) -> Option<Bytes> {
         self.expire();
         let state = self.0.read().unwrap();
-        let found = state.live().find_map(|p| p.recovery.as_ref()?.get(object));
-        found
+        let live = state.live().find_map(|p| p.recovery.as_ref()?.get(object));
+        live.or_else(|| {
+            let (bytes, until) = state.retired.get(object)?;
+            (*until > Instant::now()).then(|| bytes.clone())
+        })
     }
 
     /// The publication `id` names, or the current one for `None`, with the current
@@ -365,5 +406,55 @@ mod tests {
         assert!(publications.publish(publication(2), 0));
         assert_eq!(publications.ready_at(), Some(ready));
         assert_eq!(publications.anchors().len(), 2);
+    }
+
+    /// A publication ending at `hash` committing to a catalog whose cumulative set pays
+    /// `paid`, with that catalog's cumulative set's object.
+    fn with_catalog(hash: u8, paid: u8) -> (Publication, Object) {
+        let mut c = crate::common::catalog([1; 32]);
+        let span = *c.paid.span();
+        c.paid = receiver_directory::paid::PaidSet::build([1; 32], 0, span, &[[paid; 43]]).unwrap();
+        c.head.paid = c.paid.digest();
+        let mut manifest = crate::common::manifest(receiver_pir::MIN_ROWS);
+        manifest.end_hash = [hash; 32];
+        manifest.catalog_sha256 = c.head.digest().unwrap();
+        let snapshot = receiver_directory::snapshot::Snapshot::build(manifest, &[], &[]).unwrap();
+        let recovery = Recovery::new(&c.head, &c.index, &c.buckets, &c.paid, &c.seen).unwrap();
+        let publication = crate::prepared::prepare(snapshot, None)
+            .unwrap()
+            .with_recovery(recovery)
+            .unwrap();
+        (publication, Object::Paid(c.head.paid))
+    }
+
+    /// A displaced revision's recovery objects outlive its grace for their retention,
+    /// and none at all with no retention.
+    #[test]
+    fn displaced_objects_outlive_the_grace_for_their_retention() {
+        for (retention, kept) in [
+            (Retention::default(), true),
+            (
+                Retention {
+                    buckets: Duration::ZERO,
+                    others: Duration::ZERO,
+                },
+                false,
+            ),
+        ] {
+            let publications = Publications::with_retention(retention);
+            let (first, paid) = with_catalog(1, 1);
+            assert!(publications.publish(first, 0));
+            assert!(publications.publish(with_catalog(2, 2).0, 0));
+            assert!(publications.object(&paid).is_some(), "served in its grace");
+            let ended = Instant::now()
+                .checked_sub(Duration::from_millis(1))
+                .unwrap();
+            publications.0.write().unwrap().previous.as_mut().unwrap().1 = ended;
+            // Ending the grace now moves the retained copy's expiry with it.
+            for (_, until) in publications.0.write().unwrap().retired.values_mut() {
+                *until = (*until).min(ended + retention.others);
+            }
+            assert_eq!(publications.object(&paid).is_some(), kept);
+        }
     }
 }

@@ -13,7 +13,8 @@ use receiver_pir::{
     transport::{DirectoryClient, Transport},
     Error, MIN_ROWS,
 };
-use receiver_pir_server::{Object, Publication, Publications, Recovery};
+use receiver_pir_server::{Object, Publication, Publications, Recovery, Retention};
+use std::time::Duration;
 
 /// The cache policy of every digest-addressed object.
 const IMMUTABLE: &str = "public, max-age=31536000, immutable";
@@ -115,7 +116,7 @@ async fn a_served_manifest_names_served_immutable_objects() {
     assert_eq!(seen, c.seen);
 
     for (object, _) in recovery(&c).objects() {
-        assert_eq!(head_of(&origin, object).await, (200, IMMUTABLE.into()));
+        assert_eq!(get_object(&origin, object).await, (200, IMMUTABLE.into()));
     }
     let digest = hex::encode(c.head.index);
     for path in [
@@ -138,14 +139,14 @@ async fn a_served_manifest_names_served_immutable_objects() {
 }
 
 /// `object`'s status and `Cache-Control` at its route.
-async fn head_of(origin: &str, object: &Object) -> (u16, String) {
+async fn get_object(origin: &str, object: &Object) -> (u16, String) {
     get(origin, &object.path()).await
 }
 
 /// A displaced publication's objects stay served through its grace, alongside its
-/// successor's; a revocation stops serving both.
+/// successor's, and both outlive a revocation for their retention, and only then.
 #[tokio::test]
-async fn objects_follow_their_publication() {
+async fn objects_outlive_their_publication_for_their_retention() {
     let old = catalog([1; 32]);
     let mut new = catalog([1; 32]);
     let span = Span {
@@ -156,17 +157,31 @@ async fn objects_follow_their_publication() {
     };
     new.paid = PaidSet::build([1; 32], 0, span, &[[7; 43]]).unwrap();
     new.head.paid = new.paid.digest();
-    let publications = Publications::default();
-    assert!(publications.publish(publication(&old, [3; 32]), 0));
-    let origin = serve(publications.clone()).await;
-    assert!(publications.publish(publication(&new, [4; 32]), 0));
     let old_paid = Object::Paid(old.head.paid);
     let new_paid = Object::Paid(new.head.paid);
-    assert_eq!(head_of(&origin, &old_paid).await.0, 200);
-    assert_eq!(head_of(&origin, &new_paid).await.0, 200);
-    publications.revoke();
-    assert_eq!(head_of(&origin, &old_paid).await.0, 404);
-    assert_eq!(head_of(&origin, &new_paid).await.0, 404);
+    let none = Retention {
+        buckets: Duration::ZERO,
+        others: Duration::ZERO,
+    };
+    for (retention, kept) in [(Retention::default(), 200), (none, 404)] {
+        let publications = Publications::with_retention(retention);
+        assert!(publications.publish(publication(&old, [3; 32]), 0));
+        let origin = serve(publications.clone()).await;
+        assert!(publications.publish(publication(&new, [4; 32]), 0));
+        assert_eq!(get_object(&origin, &old_paid).await.0, 200);
+        assert_eq!(get_object(&origin, &new_paid).await.0, 200);
+        publications.revoke();
+        assert_eq!(get_object(&origin, &old_paid).await.0, kept);
+        assert_eq!(get_object(&origin, &new_paid).await, (kept, cache(kept)));
+    }
+}
+
+/// The `Cache-Control` of a response with `status`.
+fn cache(status: u16) -> String {
+    match status {
+        200 => IMMUTABLE.into(),
+        _ => "no-store".into(),
+    }
 }
 
 /// A publication refuses a catalog its manifest does not commit to, and a catalog

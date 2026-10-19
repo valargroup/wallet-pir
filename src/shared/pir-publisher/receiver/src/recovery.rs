@@ -24,13 +24,16 @@ use receiver_directory::{
     snapshot::ProviderSet,
     Hash, ReceiverBytes, RECORD_BYTES,
 };
-use receiver_pir_server::Recovery;
+use receiver_pir_server::{Recovery, Retention};
 use receiver_store::{
     recovery::{Block, RecoveryStore, Segment},
     Store,
 };
 use sha2::{Digest, Sha256};
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
@@ -42,6 +45,18 @@ type Payment = (u32, ReceiverBytes, [u8; RECORD_BYTES]);
 pub const RECOVERY: &str = "recovery.sqlite";
 /// Buckets a catalog retains by default: 30 days at 75-second spacing.
 pub const RETAINED_BUCKETS: u32 = 720;
+/// The nominal block spacing that converts bucket counts to durations.
+const BLOCK_SECS: u64 = 75;
+
+/// How long the server keeps displaced recovery objects for a catalog that retains
+/// `retained` buckets: buckets for as long as the catalog lists them at the nominal
+/// spacing, and the rest for [`Retention`]'s default.
+pub fn retention(retained: u32) -> Retention {
+    Retention {
+        buckets: Duration::from_secs(u64::from(retained) * u64::from(BUCKET_BLOCKS) * BLOCK_SECS),
+        ..Retention::default()
+    }
+}
 
 /// The paid history through a publication's cumulative end, by interval.
 #[derive(Debug)]
@@ -674,6 +689,12 @@ mod tests {
         head.seen = older.digest().unwrap();
         fresh.adopt(&head, &older).unwrap();
         assert_eq!(fresh.seen().unwrap(), Some(live));
+    }
+
+    /// The default catalog keeps displaced buckets the server's default time.
+    #[test]
+    fn the_default_retention_matches_the_retained_buckets() {
+        assert_eq!(retention(RETAINED_BUCKETS), Retention::default());
     }
 
     /// Restoring a missing second payment to a receiver already paid in an old interval

@@ -175,7 +175,8 @@ pub async fn run(
         application::refresh(&config, &nodes, genesis, None, &mut state).await?;
         return Ok(());
     }
-    let publications = Publications::default();
+    let publications =
+        Publications::with_retention(crate::recovery::retention(args.retained_buckets));
     struct Fence(Publications);
     impl Drop for Fence {
         fn drop(&mut self) {

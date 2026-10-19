@@ -7,7 +7,7 @@ use receiver_directory::{
     seen::SeenSet,
     Error, Hash,
 };
-use std::{collections::BTreeMap, sync::Arc};
+use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
 /// One recovery object by kind and digest, with a bucket's start height.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -31,6 +31,43 @@ impl Object {
             Self::Bucket(start, d) => format!("bucket/{start}/{}", hex::encode(d)),
             Self::Paid(d) => format!("paid/{}", hex::encode(d)),
             Self::Seen(d) => format!("seen/{}", hex::encode(d)),
+        }
+    }
+}
+
+/// How long a recovery object stays served once no publication that accepts requests
+/// names it, whether displaced or revoked, so a wallet that pinned its digest can
+/// still fetch it. Each is measured from when its last such publication stopped
+/// accepting requests.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Retention {
+    /// For buckets: the publisher's bucket retention window, so any bucket a wallet's
+    /// index listed stays fetchable as long as the index could list it.
+    pub buckets: Duration,
+    /// For catalog heads, bucket indexes and cumulative paid and seen sets, which change
+    /// far more often than buckets: long enough for a wallet's bootstrap to retry
+    /// against the snapshot it pinned, after which it starts again from the current
+    /// catalog.
+    pub others: Duration,
+}
+
+impl Default for Retention {
+    /// 30 days for buckets, 720 buckets at 75-second spacing, and 6 hours for the
+    /// rest, which bounds memory to a few hours of seen sets.
+    fn default() -> Self {
+        Self {
+            buckets: Duration::from_secs(30 * 24 * 60 * 60),
+            others: Duration::from_secs(6 * 60 * 60),
+        }
+    }
+}
+
+impl Retention {
+    /// The retention of `object`.
+    pub(crate) fn of(&self, object: &Object) -> Duration {
+        match object {
+            Object::Bucket(..) => self.buckets,
+            _ => self.others,
         }
     }
 }

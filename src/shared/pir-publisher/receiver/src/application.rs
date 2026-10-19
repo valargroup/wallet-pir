@@ -945,37 +945,49 @@ mod tests {
     }
 
     /// A served manifest's recovery catalog is served with it, immutably, and a
-    /// restart publishes the same catalog from the durable recovery state.
+    /// restarted service, with nothing kept in memory, serves the same objects from
+    /// the durable recovery state.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_publication_serves_the_catalog_it_commits_to() {
         let mut paused = Paused::new(|_| {}).await;
         paused.refresh().await.unwrap();
         let catalog = paused.get("init").await["directory"]["catalog_sha256"].clone();
         let digest: Vec<u8> = serde_json::from_value(catalog.clone()).unwrap();
-        let url = format!(
-            "{}/v1/receiver/catalog/{}",
-            paused.origin,
-            hex::encode(&digest)
-        );
-        let response = reqwest::get(&url).await.unwrap();
-        assert!(response.status().is_success());
-        assert_eq!(
-            response.headers()["cache-control"],
-            "public, max-age=31536000, immutable"
-        );
-        let head =
-            receiver_directory::catalog::CatalogHead::decode(&response.bytes().await.unwrap())
+        let path = format!("catalog/{}", hex::encode(&digest));
+        let fetch = |origin: String, path: String| async move {
+            let response = reqwest::get(format!("{origin}/v1/receiver/{path}"))
+                .await
                 .unwrap();
+            assert!(response.status().is_success(), "{path}");
+            let cache = response.headers()["cache-control"].clone();
+            assert_eq!(cache, "public, max-age=31536000, immutable");
+            response.bytes().await.unwrap()
+        };
+        let head = fetch(paused.origin.clone(), path.clone()).await;
+        let head = receiver_directory::catalog::CatalogHead::decode(&head).unwrap();
         // The index ends before the first bucket closes: no bucket, and a cumulative
         // set ending at the start boundary.
         assert_eq!(head.oldest_start, head.latest_end);
-        paused.state = State::default();
-        paused.publications.revoke();
-        paused.refresh().await.unwrap();
-        assert_eq!(
-            paused.get("init").await["directory"]["catalog_sha256"],
-            catalog
-        );
+        let paid = format!("paid/{}", hex::encode(head.paid));
+        // A new process: new serving state, router and in-memory state.
+        let publications = Publications::default();
+        let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let origin = format!("http://{}", socket.local_addr().unwrap());
+        let app = receiver_pir_server::router_with_publications(publications.clone());
+        tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
+        let rpc = std::slice::from_ref(&paused.rpc);
+        let genesis = Network::Mainnet.genesis_hash();
+        refresh(
+            &paused.args,
+            rpc,
+            genesis,
+            Some(&publications),
+            &mut State::default(),
+        )
+        .await
+        .unwrap();
+        fetch(origin.clone(), path).await;
+        fetch(origin, paid).await;
     }
 
     /// Revocation and durable rewind precede collection: a source that cannot supply

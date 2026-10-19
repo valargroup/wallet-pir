@@ -217,10 +217,17 @@ checked before the query waits for evaluation. Every response on the session
 routes, refusals included, is `Cache-Control: no-store`, since a revoked session ID
 serves again if the same publication is republished. A recovery object's route
 names its digest, so its content never changes: it is served `public,
-max-age=31536000, immutable` for a CDN to keep, while a publication that accepts
-requests (the current one, or its predecessor in its grace) names it. The objects
-activate atomically with their manifest, so `/v1/receiver/init` never names a
-catalog that is not served. An unknown or non-canonical route (an uppercase
+max-age=31536000, immutable` for a CDN to keep. The objects activate atomically
+with their manifest, so `/v1/receiver/init` never names a catalog that is not
+served. Once no publication that accepts requests names an object, whether its
+publication was displaced or revoked, the server keeps it for its retention, so a
+wallet that pinned a cumulative cutoff and its digest can retry: buckets for as
+long as the catalog lists them (`--retained-buckets` at 75-second spacing, 30 days
+by default), and catalog heads, bucket indexes and the cumulative paid and seen
+sets for 6 hours, which bounds memory to a few hours of seen sets. After that a
+wallet starts again from the current catalog. A restart keeps nothing in memory,
+but rebuilds the current objects to the same digests from the index and
+`recovery.sqlite`. An unknown or non-canonical route (an uppercase
 digest, a padded start) is a `no-store` 404. A query revoked while it is
 evaluated is 410; a response already being sent completes, and wallets
 revalidate their anchor. Queries are admitted with the primitives Enhance uses
