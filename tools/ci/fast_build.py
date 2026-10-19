@@ -158,14 +158,10 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3,
             actual_units.add(identity)
             discovered_units[name].update(names)
         exclusions = [] if integration else list(slow.get(name, {}))
-        # Real Enhance HTTP preparation exceeds its case deadline beside
-        # archive and native runtime builds, including on the 8-core runner.
-        # Isolate this executable without relaxing its assertions or deadline.
-        isolated_http = integration and name == 'enhance-publisher' and target['name'] == 'ci_smoke'
         program = dict(executable=binary, directory=directory, package=name,
                              version=package['version'],
                              integration=integration,
-                             exclusive=isolated_http or publisher_runs_alone(name, target['kind']),
+                             exclusive=publisher_runs_alone(name, target['kind']),
                              case_count=len(names),
                              args=[arg for case in exclusions for arg in ('--skip', case)])
         programs.extend(bounded_programs(program, names))

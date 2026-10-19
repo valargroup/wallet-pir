@@ -49,7 +49,7 @@ Expensive fixtures are organized around the guarantee being checked:
 
 | Fast coverage | Additional full qualification coverage |
 | --- | --- |
-| One Enhance HTTP lifecycle publishes through a pending commit, reconciles it, rejects malformed queries, drains its listener, and retrieves adjacent old/new records in one encrypted row from reopened durable state with a fresh wallet. Both independent 67/68-record hint oracles and damaged-file checks remain. | The same lifecycle runs on the native backend. |
+| Independent 67/68-record generic-hint oracles and damaged-artifact checks remain. | The encrypted HTTP pending-commit and fresh-wallet restart lifecycle runs with both reference arithmetic and the native backend. |
 | Enhance tail reuse independently builds both copies and checks complete artifacts, partial hints, a nonzero B coordinate before/after growth, and the suffix with two supported 2K units in the original 4K/8K query domains. | The original boundary-crossing 4K preparation units and the complete coordinate set. |
 | Preparation failures retain cold partial-allocation cleanup and a cached backend failure that must neither reread source rows nor replace a published view. | The combined failure on the second cached unit and the larger candidate geometry. |
 | Native cache admission and built-size bounds use one supported column instance; the batched-hint oracle retains a deployed display geometry with nonzero and padded rows. | Deployed cache/build shapes and the full history/display hint geometry and occupancy combinations. |
@@ -78,9 +78,8 @@ alongside helper checks. The final completion and artifact publication gates sti
 require every selected helper check to pass. Whole test executables retain their
 fixture reuse and existing thread limits. Reference arithmetic and CUDA checks
 have separate feature/cache partitions. The reference shard retains the independent
-generic-hint and damaged-artifact checks; encrypted lifecycle smokes run with
-reference arithmetic in fast correctness and with the native backend in full
-qualification. Deployment builds remain on the dedicated
+generic-hint and damaged-artifact checks; the encrypted HTTP lifecycle runs with both reference arithmetic and the native
+backend in full qualification. Deployment builds remain on the dedicated
 build runner. Example builds, doctests, binary tests and the standalone sizing
 exporter are included. New or removed targets require an explicit matrix update.
 
@@ -131,12 +130,11 @@ three Cargo-reported test programs concurrently. The publisher library builds
 full archive runtimes on every core of a 4-core hosted runner, so it runs alone
 there before the pool; beside it, the encrypted HTTP smokes miss the 30-second
 case deadline. The 8-core fast runner keeps that library in the pool with four
-build threads. The Enhance encrypted HTTP executable runs alone before the
-pool on every runner: concurrent runtime preparation exceeded its per-case
-deadline even on eight cores. The independent hint and damaged-artifact checks
-have their own executable in the bounded pool. Both Enhance executables copy
-immutable preparation bytes from the same run-owned directory; workers verify
-their own copies, and generic hint oracles still cold-build independently.
+build threads. The expensive Enhance encrypted HTTP lifecycle belongs to full qualification;
+it is excluded from fast compilation and execution. Independent hint and
+damaged-artifact checks remain in the bounded pool. Each worker verifies its
+own copied immutable preparation bytes, and generic hint oracles still build
+independently.
 Other HTTP integration programs use the pool
 ahead of ordinary units. Within each group, binaries with more discovered cases start first,
 independently of Cargo's artifact order. Large unit executables are divided into
@@ -151,8 +149,8 @@ targets must contain an enabled, unignored case. Ordinary unit discovery has no
 named exclusions. Cold cache preparation compiles the same target selection.
 Enhance smoke cases reuse immutable prepared input bytes for the same record count,
 then copy them into separate writable worker directories. Workers still verify
-their copies and both 67/68-record generic oracles build independently. The encrypted
-restart and pending-commit publication checks retain the required two-worker quorum.
+their copies and both 67/68-record generic oracles build independently. Full encrypted restart and pending-commit publication checks retain the required
+two-worker quorum.
 Transparent fixture exit tests use tiny file trees with the actual ownership and
 copying helpers. Manager behavior tests still prepare and verify real publications.
 Fixture construction, copying, verification and cleanup stay inside measured work.

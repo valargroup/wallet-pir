@@ -30,7 +30,7 @@ CUDA = ['enhance-query-server/cuda', 'status-query-server/cuda', 'enhance-publis
 # publisher's independent hint and damaged-artifact checks.
 REFERENCE_LIB_FILTERS = ['ipir::tests', 'client::', 'protocol::', 'record::', 'record_types::']
 REFERENCE_TESTS = {('enhance-query-server', 'routing_contract'), ('enhance-query-server', 'v7_contract'),
-                   ('enhance-publisher', 'ci_hint')}
+                   ('enhance-publisher', 'ci_hint'), ('enhance-publisher', 'encrypted_lifecycle')}
 
 
 def variants(groups):
@@ -320,7 +320,7 @@ def baseline_commands(family):
         result += [
             ('reference', [*options, '-p', 'enhance-query-server', '--lib', '--', *REFERENCE_LIB_FILTERS]),
             ('reference', [*options, '-p', 'enhance-query-server', '--test', 'routing_contract', '--test', 'v7_contract']),
-            ('reference', [*options, '-p', 'enhance-publisher', '--test', 'ci_hint']),
+            ('reference', [*options, '-p', 'enhance-publisher', '--test', 'ci_hint', '--test', 'encrypted_lifecycle']),
             ('reference', [*options, '-p', 'status-query-server', '--lib', '--tests']),
             ('cuda', [*options, '-p', 'enhance-publisher', '--features', 'native-reinspiring,cuda', '--test', 'matvec_config']),
             ('cuda', [*options, '-p', 'enhance-query-server', '--features', 'native-reinspiring,cuda', '--lib',

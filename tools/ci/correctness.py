@@ -91,7 +91,7 @@ def rust_checks(env, temporary, offline):
                      '--test', 'routing_contract', '--test', 'v7_contract'],
                     env=env, stage='compile:reference', collect_tests=True, test_details=True)
     reference += run(['cargo', 'test', '--no-run', *options, '-p', 'enhance-publisher',
-                     '--test', 'ci_smoke', '--test', 'ci_hint'],
+                     '--test', 'ci_hint'],
                      env=env, stage='compile:reference', collect_tests=True, test_details=True)
     reference += run(['cargo', 'test', '--no-run', *options, '-p', 'status-query-server', '--lib', '--tests'],
                      env=env, stage='compile:reference', collect_tests=True, test_details=True)

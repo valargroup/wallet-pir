@@ -107,11 +107,15 @@ class MatrixTests(unittest.TestCase):
                    'single_unit_hint_matches_independent_generic_68',
                    'single_unit_hint_rejects_damage_and_pins_retired_file'}
         reference = self.plan[0]['enhance-reference']['targets']
+        from integration_tests import inventory
+        self.assertNotIn('encrypted_lifecycle', inventory()['enhance-publisher']['fast'])
+        self.assertIn('encrypted_lifecycle', inventory()['enhance-publisher']['full'])
         self.assertIn('reference:enhance-publisher:test:ci_hint', reference)
-        self.assertNotIn('reference:enhance-publisher:test:ci_smoke', reference)
+        self.assertIn('reference:enhance-publisher:test:encrypted_lifecycle', reference)
         for variant, target, expected in [('reference', 'ci_hint', oracles),
                                           ('native', 'ci_hint', oracles),
-                                          ('native', 'ci_smoke', lifecycle)]:
+                                          ('native', 'encrypted_lifecycle', lifecycle),
+                                          ('reference', 'encrypted_lifecycle', lifecycle)]:
             artifact = dict(package_id=package['id'], target=dict(name=target, kind=['test']),
                             executable='/not-executed', features=['qualification-tests'])
 
