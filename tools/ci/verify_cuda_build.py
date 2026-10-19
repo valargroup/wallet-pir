@@ -22,8 +22,11 @@ def verify(messages, target, revision):
             artifacts.append(value)
     for name in ('enhance-pir-server', 'enhance_query_server'):
         matching = [a for a in artifacts if a['target']['name'] == name]
+        observed = [{'features': a.get('features'), 'executable': a.get('executable'),
+                     'fresh': a.get('fresh')} for a in matching]
+        print('CUDA_COMPILER_ARTIFACT ' + json.dumps({'target': name, 'artifacts': observed}), flush=True)
         if len(matching) != 1 or 'cuda' not in matching[0]['features']:
-            raise ValueError(f'{name}: Cargo did not produce exactly one CUDA artifact')
+            raise ValueError(f'{name}: Cargo did not produce exactly one CUDA artifact: {observed}')
     server = next(a for a in artifacts if a['target']['name'] == 'enhance-pir-server')
     binary = target / 'release/enhance-pir-server'
     if Path(server['executable']).resolve() != binary.resolve():
