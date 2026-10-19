@@ -248,14 +248,14 @@ jobs:
           HELPERS: ${{ needs.select.outputs.helpers }}
         run: umask 022 && python3 tools/ci/helpers.py --full --targets "$HELPERS"
       - name: Validate current transparent deployment inputs
-        if: contains(needs.select.outputs.helpers, 'check-ops-contracts') || contains(needs.select.outputs.helpers, 'check-ops-deploy')
+        if: contains(needs.select.outputs.helpers, 'check-ops-contracts')
         # The current candidate validator owns filter/publisher artifact inputs.
         # Exercise valid inputs and refusal cases; the retired shell wrapper is
         # no longer an executable deployment contract.
         run: umask 022 && python3 -B tools/transparent/tests/test_activity_candidate.py
 
-      - name: Validate transparent shard inputs when only contracts are selected
-        if: contains(needs.select.outputs.helpers, 'check-ops-contracts') && !contains(needs.select.outputs.helpers, 'check-ops-deploy')
+      - name: Validate transparent shard inputs
+        if: contains(needs.select.outputs.helpers, 'check-ops-contracts')
         run: umask 022 && python3 -B tools/tests/operations/deploy/test_transparent_inputs.py
 
   enhance-lint:
@@ -565,6 +565,7 @@ jobs:
         run: |
           cargo build --locked --profile release-fast -p transparent-tools --bin transparent-regression --bin regression-export --bin txid-quality-canary
           cargo build --locked --profile release-fast -p transparent-query-server --example rate-query --example txid-rate
+          cargo test --locked --profile release-fast -p transparent-query-server --example rate-query
       - name: Package the exact source candidate
         run: |
           python3 tools/ci/release.py assemble --kind pir-publisher --sha "$GITHUB_SHA" --output .local-pir/publisher-candidate

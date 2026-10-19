@@ -44,6 +44,8 @@
   identities bind the native params encoding, mask/query/response widths and
   column count; default v7 identities are unchanged. The interim
   `ironwood-enhance-pir-v8-native-poc` revision is retired.
+- A second external worker on one host gets its own configuration file and
+  loopback management port, instead of sharing the first worker's.
 
 This entry describes the source prepared for the first release. Production
 promotion requires separate hardware and operational qualification; the

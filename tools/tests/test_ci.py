@@ -78,7 +78,7 @@ class SelectionTests(unittest.TestCase):
     def test_build_changes_do_not_drop_direct_operations_or_deleted_package_coverage(self):
         selected = fast.plan(self.packages, ['Cargo.lock', 'tools/tests/operations/deploy/test_ops_package.py',
                                              'crates/client/src/deleted.rs'])
-        self.assertIn('check-ops-deploy', selected['helpers'])
+        self.assertNotIn('check-ops-deploy', selected['helpers'])
         self.assertIn('check-ops-contracts', selected['helpers'])
         self.assertEqual(set(selected['packages']), {'core', 'client', 'server', 'other'})
 

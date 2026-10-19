@@ -88,6 +88,9 @@ fn bucket(sequence: u64) -> usize {
         _ => 3,
     }
 }
+fn admission_wait(due: Instant, now: Instant, interval: Duration) -> Duration {
+    (due + interval).saturating_duration_since(now)
+}
 fn retryable_transport(error: &BoxError) -> bool {
     error.downcast_ref::<reqwest::Error>().is_some_and(|e| {
         e.is_timeout() || e.is_connect() || e.is_request() || e.is_body() || e.is_decode()
@@ -316,20 +319,29 @@ fn main() -> Result<(), BoxError> {
         // the send gate. HTTP requests remain concurrent: only their starts are
         // paced. At most one prepared job waits for its admission acknowledgement.
         if enqueued {
-            loop {
-                match started_rx.recv_timeout(interval) {
-                    Ok(actual) => {
-                        due = actual + interval;
-                        break;
-                    }
-                    Err(mpsc::RecvTimeoutError::Timeout) => emit(
+            // Dispatch can precede the intended POST by 100 ms. That planned
+            // wait is not a missed slot; allow one interval past the due time.
+            let actual = match started_rx.recv_timeout(admission_wait(
+                due,
+                Instant::now(),
+                interval,
+            )) {
+                Ok(actual) => actual,
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    emit(
                         serde_json::json!({"event":"missed_slot","unix":now(),"sequence":sequence,"reason":"client admission delayed beyond one interval"}),
-                    ),
-                    Err(mpsc::RecvTimeoutError::Disconnected) => {
-                        return Err("query admission channel closed".into())
-                    }
+                    );
+                    // One delayed admission is one missed slot, even if it
+                    // takes several intervals before the worker acknowledges it.
+                    started_rx
+                        .recv()
+                        .map_err(|_| "query admission channel closed")?
                 }
-            }
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    return Err("query admission channel closed".into())
+                }
+            };
+            due = actual + interval;
         } else {
             due = Instant::now() + interval;
         }
@@ -344,6 +356,25 @@ fn main() -> Result<(), BoxError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn early_dispatch_waits_until_after_the_intended_post_time() {
+        let now = Instant::now();
+        let interval = Duration::from_millis(50);
+        let due = now + Duration::from_millis(100);
+        assert_eq!(
+            admission_wait(due, now, interval),
+            Duration::from_millis(150)
+        );
+        assert_eq!(admission_wait(due, due, interval), interval);
+        assert_eq!(
+            admission_wait(due, due + interval, interval),
+            Duration::ZERO
+        );
+        assert_eq!(
+            admission_wait(due, due + 2 * interval, interval),
+            Duration::ZERO
+        );
+    }
     #[test]
     fn application_errors_are_never_retried() {
         let wrong: BoxError = "decoded row differs from independent plaintext oracle".into();

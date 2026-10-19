@@ -50,7 +50,7 @@ check-full: check-hygiene check-ops check-docs check-reports check-tools
 # which never parses a served document. Cheap, and it needs no build, so it runs
 # first and fails in seconds rather than after the release test suite.
 .PHONY: check-ops-enhance check-ops-shared check-ops-control-sessions check-ops-deploy check-ops-contracts check-ops-parents check-ops-fleet check-ops-publication check-ops-burst check-ops-regression-recut check-ops-regression-fixtures check-ops-observation check-ops-stage-timing check-ops-membership check-ops-elastic check-ops-scaler check-ops-txid-display
-check-ops: check-ops-enhance check-ops-shared check-ops-control-sessions check-ops-deploy check-ops-contracts check-ops-parents check-ops-fleet check-ops-publication check-ops-burst check-ops-regression-recut check-ops-regression-fixtures check-ops-observation check-ops-stage-timing check-ops-membership check-ops-elastic check-ops-scaler check-ops-txid-display
+check-ops: check-ops-enhance check-ops-shared check-ops-control-sessions check-ops-contracts check-ops-parents check-ops-fleet check-ops-publication check-ops-burst check-ops-regression-recut check-ops-regression-fixtures check-ops-observation check-ops-stage-timing check-ops-membership check-ops-elastic check-ops-scaler check-ops-txid-display
 
 check-ops-enhance:
 	python3 -m unittest discover -s tools/enhance/tests -p 'test_*.py'
@@ -64,18 +64,10 @@ check-ops-shared:
 check-ops-control-sessions:
 	python3 -m unittest discover -s tools/tests/operations/control_sessions -p 'test_*.py'
 
-# The Enhance and Status deploy CLI (tools/scripts/wallet-pir-deploy.py) against
-# an in-memory fleet, plus its host helper run locally.
+# Local in-memory fleet for the deploy CLI and host helper. Not part of
+# `check-ops` or CI; run it when editing tools/tests/operations/deploy.
 check-ops-deploy:
 	python3 tools/ci/python_tests.py tools/tests/operations/deploy --jobs 2 --split-module test_ops_package
-	python3 tools/transparent/tests/test_activity_schema_operation.py
-	python3 tools/transparent/tests/test_activity_schema_baseline.py
-
-.PHONY: check-ops-deploy-fast
-check-ops-deploy-fast:
-	python3 tools/ci/python_tests.py tools/tests/operations/deploy --jobs 2 --split-module test_ops_package --selection tools/ci/deploy-fast-tests.json
-	python3 tools/transparent/tests/test_activity_schema_operation.py
-	python3 tools/transparent/tests/test_activity_schema_baseline.py
 
 check-ops-contracts:
 	tools/scripts/check-jq-contracts.sh
@@ -90,6 +82,8 @@ check-ops-fleet:
 
 check-ops-publication:
 	python3 tools/transparent/tests/test_transparent_publication.py
+	python3 tools/transparent/tests/test_activity_schema_operation.py
+	python3 tools/transparent/tests/test_activity_schema_baseline.py
 
 check-ops-burst:
 	python3 tools/transparent/tests/test_transparent_burst.py

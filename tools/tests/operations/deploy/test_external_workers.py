@@ -306,5 +306,57 @@ class ProviderLifecycle(unittest.TestCase):
         self.assertEqual(self.fake.log, [])
 
 
+class TwoEnhanceWorkers(unittest.TestCase):
+    """Two external Enhance workers on one host each keep the config they were given."""
+
+    def test_install_writes_a_config_and_management_port_per_unit(self):
+        root = tempfile.TemporaryDirectory()
+        self.addCleanup(root.cleanup)
+        directory = Path(root.name)
+        binary = directory / 'pir-query-server'
+        binary.write_bytes(b'pir-query-server for two external workers')
+        digest = sha256(binary.read_bytes())
+        workers = (
+            ('enhance-pir-worker-0.service', '127.0.0.1:8091', '/srv/enhance-worker/0'),
+            ('enhance-pir-worker-1.service', '127.0.0.1:8092', '/srv/enhance-worker/1'),
+        )
+        inventory = directory / 'inventory.json'
+        inventory.write_text(json.dumps({
+            'lock': {'type': 'remote', 'host': 'local'}, 'ssh': {'mode': 'config'},
+            'hosts': {'local': {}},
+            'services': {'enhance': {'roles': {'external-worker': [
+                {'host': 'local', 'install': True, 'unit': unit, 'vars': {'listen': listen},
+                 'settings': {'listen': listen, 'data_dir': data}}
+                for unit, listen, data in workers]}}},
+        }))
+        fake = FakeFleet()
+        for unit, listen, _data in workers:
+            fake.endpoints[('local', 'http://%s/internal/health' % listen)] = unit
+        now = [0.0]
+
+        def sleep(seconds):
+            now[0] += seconds
+
+        deployer = Deployer(SERVICES['enhance'], descriptors.load_inventory(inventory), fake, directory / 'state',
+                            lock=lambda: fake.hold_lock('local', descriptors.LOCK_PATH),
+                            sleep=sleep, clock=lambda: now[0], out=lambda _line: None)
+        deployer.capture_baseline()
+        journal = deployer.deploy(digest, str(binary), skip_exact_check=True)
+        self.assertEqual(journal.status, 'committed')
+        configs = []
+        for unit, listen, data in workers:
+            text = fake.read('local', '/etc/systemd/system/' + unit)
+            command = units.exec_start(units.effective([text]))
+            (path,) = [item for item in command.split() if item.endswith('.json')]
+            self.assertNotEqual(path, '/etc/enhance-pir/external-worker.json')
+            document = json.loads(fake.read('local', path))
+            self.assertEqual(document['enhance']['settings']['listen'], listen)
+            self.assertEqual(document['enhance']['settings']['data_dir'], data)
+            configs.append((path, document['management_listen']))
+        self.assertEqual(len({path for path, _port in configs}), 2)
+        self.assertEqual(len({port for _path, port in configs}), 2)
+        self.assertNotIn('127.0.0.1:18091', {port for _path, port in configs})
+
+
 if __name__ == '__main__':
     unittest.main()

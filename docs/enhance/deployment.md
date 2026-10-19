@@ -186,6 +186,9 @@ which is enough for a no-op check or an already staged release.
   argument tail. A serving role does not keep an `enhance-pir-server` `worker`,
   `query-ingress`, or `packing-router` tail: its `ExecStart` is
   `{release}/pir-query-server --config /etc/enhance-pir/<role>.json`.
+  A second external worker on the same host is a separate unit. Its config file
+  is named for that unit, and its management listener is another loopback port,
+  so it does not share the first worker's file or `127.0.0.1:18091`.
   Earlier drop-ins that set `ExecStart` stay in place and are
   shadowed; one that would sort after the managed drop-in is refused. With
   `--retire-historical`, the ExecStart-only `zz-cleanup-*.conf` drop-ins are
