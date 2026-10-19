@@ -11,7 +11,6 @@ use std::{
     collections::BTreeSet,
     path::Path,
     sync::{Arc, RwLock},
-    time::Duration,
 };
 use tokio::io::AsyncWriteExt;
 use transparent_shared::{
@@ -29,7 +28,31 @@ struct Floor {
     digests: BTreeSet<String>,
 }
 
+/// Display-specific validation and activation using shared HTTPS synchronization.
 pub struct Manager {
+    sync: pir_sync_manager::SyncManager<DisplaySync>,
+}
+impl Manager {
+    pub fn new(config: Config, service: crate::config::ServiceConfig) -> Result<Self, Error> {
+        Ok(Self {
+            sync: pir_sync_manager::SyncManager::new(DisplaySync::new(config, service)?),
+        })
+    }
+    pub fn router(&self) -> axum::Router {
+        self.sync.task().router()
+    }
+    pub async fn ready(&self) -> bool {
+        self.sync.task().ready().await
+    }
+    pub async fn poll_once(&mut self) -> Result<serde_json::Value, Error> {
+        self.sync.poll_once().await
+    }
+    pub async fn run(self) {
+        self.sync.run().await;
+    }
+}
+
+struct DisplaySync {
     config: Config,
     source: Source,
     live: DisplayLive,
@@ -38,7 +61,7 @@ pub struct Manager {
     _lock: Arc<std::fs::File>,
     synchronization: Arc<RwLock<serde_json::Value>>,
 }
-impl Manager {
+impl DisplaySync {
     pub fn new(mut config: Config, service: crate::config::ServiceConfig) -> Result<Self, Error> {
         std::fs::create_dir_all(&config.directory)?;
         if !std::fs::symlink_metadata(&config.directory)?.is_dir() {
@@ -140,23 +163,6 @@ impl Manager {
         }
         Ok(current)
     }
-    pub async fn poll_once(&mut self) -> Result<serde_json::Value, Error> {
-        self.source.reset_budget();
-        *self.synchronization.write().unwrap() = serde_json::json!({"state":"synchronizing"});
-        self.live.command(DisplayCommand::Collect).await?;
-        let result = self.update().await;
-        match &result {
-            Ok(report) => {
-                *self.synchronization.write().unwrap() =
-                    serde_json::json!({"state":"synchronized","last_change":report})
-            }
-            Err(error) => {
-                *self.synchronization.write().unwrap() =
-                    serde_json::json!({"state":"refused","error":error.to_string()})
-            }
-        }
-        result
-    }
     async fn update(&mut self) -> Result<serde_json::Value, Error> {
         let current = self.observe().await?;
         if self.current.as_ref() == Some(&current) {
@@ -182,7 +188,7 @@ impl Manager {
         self.live.command(DisplayCommand::Collect).await?;
         self.current = Some(current.clone());
         Ok(
-            serde_json::json!({"unchanged":false,"revision":current.revision,"downloaded_bytes":self.source.downloaded}),
+            serde_json::json!({"unchanged":false,"revision":current.revision,"downloaded_bytes":self.source.downloaded()}),
         )
     }
     /// Whether a checked publication is actually active; saved pointers alone never count.
@@ -233,7 +239,7 @@ impl Manager {
                         .get(&format!("artifacts/{}", artifact.sha256))
                         .await?;
                     let mut remaining = artifact.bytes;
-                    while let Some(chunk) = self.source.chunk(&mut response).await? {
+                    while let Some(chunk) = response.chunk().await? {
                         if chunk.len() as u64 > remaining {
                             return Err("display artifact exceeds declared length".into());
                         }
@@ -369,21 +375,31 @@ impl Manager {
         .await?;
         Ok(())
     }
-    pub async fn run(mut self) {
-        let mut failures = 0u32;
-        loop {
-            match self.poll_once().await {
-                Ok(_) => failures = 0,
-                Err(error) => {
-                    failures = failures.saturating_add(1);
-                    tracing::warn!(%error,"display synchronization refused");
-                }
+}
+
+impl pir_sync_manager::SyncTask for DisplaySync {
+    type Report = serde_json::Value;
+    type Error = Error;
+    async fn synchronize(&mut self) -> Result<Self::Report, Error> {
+        self.source.reset_budget();
+        *self.synchronization.write().unwrap() = serde_json::json!({"state":"synchronizing"});
+        self.live.command(DisplayCommand::Collect).await?;
+        let result = self.update().await;
+        match &result {
+            Ok(report) => {
+                *self.synchronization.write().unwrap() =
+                    serde_json::json!({"state":"synchronized","last_change":report})
             }
-            let base = (5u64.saturating_mul(1u64 << failures.min(5))).min(120);
-            let jitter = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |d| u64::from(d.subsec_nanos()) % 1000);
-            tokio::time::sleep(Duration::from_millis(base * 1000 + jitter)).await;
+            Err(error) => {
+                *self.synchronization.write().unwrap() =
+                    serde_json::json!({"state":"refused","error":error.to_string()})
+            }
+        }
+        result
+    }
+    fn report(&self, result: &Result<Self::Report, Error>) {
+        if let Err(error) = result {
+            tracing::warn!(%error,"display synchronization refused");
         }
     }
 }

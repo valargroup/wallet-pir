@@ -4,6 +4,7 @@
     "pir-observability",
     "pir-runtime",
     "pir-pipeline",
+    "pir-sync-manager",
     "pir-serving",
     "pir-cuda"
   ],

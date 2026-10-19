@@ -25,7 +25,43 @@ use transparent_shared::{
     runtime::disk::ShippedRuntimes,
 };
 
+/// Transparent publication policy hosted by the shared synchronization loop.
 pub struct Manager {
+    sync: pir_sync_manager::SyncManager<HistorySync>,
+}
+impl Manager {
+    pub fn new(config: Config, service: ServiceConfig) -> Result<Self, Error> {
+        Ok(Self {
+            sync: pir_sync_manager::SyncManager::new(HistorySync::new(config, service)?),
+        })
+    }
+    /// Hold and verify every shard locally, including archive runtimes.
+    pub fn with_full_holdings(mut self) -> Self {
+        self.sync.task_mut().full = true;
+        self
+    }
+    pub fn with_archive(
+        mut self,
+        archive: std::sync::Arc<crate::routing::archive::Archive>,
+    ) -> Self {
+        self.sync.task_mut().archive = Some(archive);
+        self
+    }
+    pub fn live(&self) -> Option<LiveService> {
+        self.sync.task().live()
+    }
+    pub fn router(&self) -> Result<axum::Router, Error> {
+        self.sync.task().router()
+    }
+    pub async fn poll_once(&mut self) -> Result<Progress, Error> {
+        self.sync.poll_once().await
+    }
+    pub async fn run(self) {
+        self.sync.run().await;
+    }
+}
+
+struct HistorySync {
     config: Config,
     full: bool,
     service: ServiceConfig,
@@ -63,7 +99,7 @@ pub struct Stages {
     /// Final source/anchor checks, the predecessor CAS and collection.
     pub activation_seconds: f64,
 }
-impl Manager {
+impl HistorySync {
     pub fn new(mut config: Config, mut service: ServiceConfig) -> Result<Self, Error> {
         let source = Source::new(&config)?;
         std::fs::create_dir_all(&config.directory)?;
@@ -112,18 +148,6 @@ impl Manager {
             )),
         })
     }
-    /// Hold and verify every shard locally, including archive runtimes.
-    pub fn with_full_holdings(mut self) -> Self {
-        self.full = true;
-        self
-    }
-    pub fn with_archive(
-        mut self,
-        archive: std::sync::Arc<crate::routing::archive::Archive>,
-    ) -> Self {
-        self.archive = Some(archive);
-        self
-    }
     pub fn live(&self) -> Option<LiveService> {
         self.live.clone()
     }
@@ -146,31 +170,6 @@ impl Manager {
             }),
         ))
     }
-    pub async fn poll_once(&mut self) -> Result<Progress, Error> {
-        self.synchronization.write().unwrap()["in_progress"] = true.into();
-        let result = self.reconcile().await;
-        let at = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.as_secs());
-        let mut sync = self.synchronization.write().unwrap();
-        // The last activated change survives later unchanged or refused polls.
-        let last_change = match &result {
-            Ok(progress) if !progress.unchanged => {
-                serde_json::json!({"completed_unix":at,"progress":progress})
-            }
-            _ => sync["last_change"].clone(),
-        };
-        *sync = match &result {
-            Ok(progress) => {
-                serde_json::json!({"in_progress":false,"completed_unix":at,"state":"synchronized","progress":progress})
-            }
-            Err(error) => {
-                serde_json::json!({"in_progress":false,"completed_unix":at,"state":"refused","error":error.to_string()})
-            }
-        };
-        sync["last_change"] = last_change;
-        result
-    }
     async fn reconcile(&mut self) -> Result<Progress, Error> {
         let input = pir_pipeline::acquire(self.acquire(), &mut ()).await?;
         match pir_pipeline::advance(input, Acquired::prepare, Prepared::publish, &mut ()).await? {
@@ -182,7 +181,7 @@ impl Manager {
                     .as_ref()
                     .expect("conditional poll has an active snapshot")
                     .revision,
-                downloaded_bytes: self.source.downloaded,
+                downloaded_bytes: self.source.downloaded(),
                 downloaded_files: 0,
                 stages: None,
             }),
@@ -414,39 +413,56 @@ impl Manager {
             _ => false,
         })
     }
-    /// One sequential transfer at a time; bounded attempts, jitter and capped
-    /// exponential backoff. An outage leaves the valid owner/router untouched.
-    pub async fn run(mut self) {
-        let mut failures = 0u32;
-        loop {
-            match self.poll_once().await {
-                Ok(progress) => {
-                    failures = 0;
-                    tracing::info!(?progress, "publication synchronized");
-                }
-                Err(error) => {
-                    failures = failures.saturating_add(1);
-                    tracing::warn!(%error, "publication synchronization refused");
-                }
+}
+impl pir_sync_manager::SyncTask for HistorySync {
+    type Report = Progress;
+    type Error = Error;
+    fn started(&mut self) {
+        self.synchronization.write().unwrap()["in_progress"] = true.into();
+    }
+    async fn synchronize(&mut self) -> Result<Progress, Error> {
+        self.reconcile().await
+    }
+    fn finished(
+        &mut self,
+        result: &Result<Progress, Error>,
+        completed: std::time::SystemTime,
+        _elapsed: Duration,
+    ) {
+        let at = completed
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs());
+        let mut sync = self.synchronization.write().unwrap();
+        // The last activated change survives later unchanged or refused polls.
+        let last_change = match result {
+            Ok(progress) if !progress.unchanged => {
+                serde_json::json!({"completed_unix":at,"progress":progress})
             }
-            let base = 5u64.saturating_mul(1u64 << failures.min(5)).min(120);
-            let jitter = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |d| u64::from(d.subsec_nanos()) % 1000);
-            pir_pipeline::wait(
-                tokio::time::Instant::now() + Duration::from_millis(base * 1000 + jitter),
-                std::future::pending(),
-                std::future::pending(),
-            )
-            .await;
+            _ => sync["last_change"].clone(),
+        };
+        *sync = match result {
+            Ok(progress) => {
+                serde_json::json!({"in_progress":false,"completed_unix":at,"state":"synchronized","progress":progress})
+            }
+            Err(error) => {
+                serde_json::json!({"in_progress":false,"completed_unix":at,"state":"refused","error":error.to_string()})
+            }
+        };
+        sync["last_change"] = last_change;
+    }
+    fn report(&self, result: &Result<Progress, Error>) {
+        match result {
+            Ok(progress) => tracing::info!(?progress, "publication synchronized"),
+            Err(error) => tracing::warn!(%error, "publication synchronization refused"),
         }
     }
 }
+
 /// Authenticated, replay-ordered source work. Safety evidence is applied before
 /// returning it, including predecessor recovery. Neither this token nor staged
 /// files grant authority. The borrow keeps one source budget and one owner/pass.
 struct Acquired<'a> {
-    owner: &'a mut Manager,
+    owner: &'a mut HistorySync,
     current: Current,
 }
 
@@ -643,7 +659,7 @@ impl Prepared<'_> {
         Ok(Progress {
             unchanged: false,
             revision: current.revision,
-            downloaded_bytes: owner.source.downloaded,
+            downloaded_bytes: owner.source.downloaded(),
             downloaded_files: staged.downloaded_files,
             stages: Some(stages),
         })
