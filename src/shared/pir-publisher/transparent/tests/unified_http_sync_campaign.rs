@@ -253,9 +253,9 @@ fn consumer(
         "--publisher-ca".into(),
         cert.display().to_string(),
         "--cache-bytes".into(),
-        (4u64 << 30).to_string(),
+        (16u64 << 30).to_string(),
         "--bootstrap-max-bytes".into(),
-        (4u64 << 30).to_string(),
+        (16u64 << 30).to_string(),
         "--listen".into(),
         listen.into(),
     ];
@@ -458,7 +458,7 @@ async fn unified_publisher_drives_independent_full_history_and_display_consumers
     let management = address();
     let configuration = out.join("publisher.json");
     std::fs::write(&configuration,serde_json::to_vec_pretty(&serde_json::json!({"management_listen":management,
-        "transparent_history":{"enabled":true,"settings":{"data_dir":history,"publication_root":out.join("history-publisher"),"initial_publication":history_bootstrap,"recent_from":2,"recent_geometry":"decoupled-2k-8k","archive_geometry":"decoupled-2k-8k","rpc_url":node_origin,"rpc_cookie":cookie,"listen":history_listen,"source_sha":std::env::var("WALLET_PIR_SOURCE_SHA").unwrap(),"follow_journal":true,"ship_runtimes":true,"distribute_prepared":true,"http_only":true}},
+        "transparent_history":{"enabled":true,"settings":{"data_dir":history,"publication_root":out.join("history-publisher"),"initial_publication":history_bootstrap,"recent_from":2,"recent_geometry":"decoupled-2k-8k","archive_geometry":"decoupled-32k-32k","rpc_url":node_origin,"rpc_cookie":cookie,"listen":history_listen,"source_sha":std::env::var("WALLET_PIR_SOURCE_SHA").unwrap(),"follow_journal":true,"ship_runtimes":true,"distribute_prepared":true,"http_only":true}},
         "transaction_details":{"enabled":true,"settings":{"root":display_root,"journal":display,"rpc_url":node_origin,"rpc_cookie":cookie,"poll_ms":100,"status_listen":display_listen,"ship_runtimes":true,"http_only":true}}
     })).unwrap()).unwrap();
     let cert = out.join("ca.pem");
