@@ -2,6 +2,7 @@
   "enhance-publisher": {
     "fast": [
       "boundary_recovery_model",
+      "ci_hint",
       "ci_smoke",
       "record_layout",
       "schema11_cutover",

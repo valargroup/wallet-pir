@@ -1521,6 +1521,7 @@ mod shipped_tests {
         history_identity_refusals(Table::Directory).await;
     }
 
+    #[cfg(feature = "qualification-tests")]
     #[tokio::test(flavor = "multi_thread")]
     async fn page_files_of_another_identity_are_refused_once_each() {
         history_identity_refusals(Table::Pages).await;
@@ -1636,6 +1637,7 @@ mod shipped_tests {
     /// A shipped file is never trusted over its segment: a source changed
     /// since it was verified fails the request as a build would, and is not
     /// counted as a refused file.
+    #[cfg(feature = "qualification-tests")]
     #[tokio::test(flavor = "multi_thread")]
     async fn a_corrupt_source_fails_even_with_a_valid_shipped_file() {
         let dir = tempfile::tempdir().unwrap();
@@ -1670,6 +1672,7 @@ mod shipped_tests {
 
     /// Concurrent requests and a prewarm for one cold runtime are one
     /// production operation: one shipped load, one handle, no build.
+    #[cfg(feature = "qualification-tests")]
     #[tokio::test(flavor = "multi_thread")]
     async fn concurrent_callers_share_one_shipped_load() {
         let dir = tempfile::tempdir().unwrap();
@@ -1723,7 +1726,7 @@ mod shipped_tests {
     /// until the returned sender is used: the test then knows a load of that
     /// segment is in progress. Once released, the rows are written and the
     /// FIFO is replaced by the plain file again.
-    #[cfg(unix)]
+    #[cfg(all(unix, feature = "qualification-tests"))]
     fn held_source(
         source: &SegmentSource,
         rows: Vec<u8>,
@@ -1760,7 +1763,7 @@ mod shipped_tests {
     /// file again, and reports a fallback. A later operation for the same
     /// key, after the runtime was produced and evicted, is a new operation
     /// and tries what is offered afresh.
-    #[cfg(unix)]
+    #[cfg(all(unix, feature = "qualification-tests"))]
     #[tokio::test(flavor = "multi_thread")]
     async fn a_refusal_is_counted_once_across_admission_retries() {
         let dir = tempfile::tempdir().unwrap();
@@ -1888,7 +1891,7 @@ mod shipped_tests {
     /// the load still uses: once the file is read its read slot is free for
     /// the next file, while its memory reservation and the cache's charge
     /// for its key stay held until the self-check's blocking read ends.
-    #[cfg(unix)]
+    #[cfg(all(unix, feature = "qualification-tests"))]
     #[tokio::test(flavor = "multi_thread")]
     async fn a_cancelled_shipped_load_keeps_its_reservations_until_it_ends() {
         let dir = tempfile::tempdir().unwrap();

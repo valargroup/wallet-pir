@@ -4,6 +4,11 @@ SETTINGS = {
         'listen': '127.0.0.1:8092', 'state_dir': '/var/lib/transparent-provider',
         'publisher': 'https://publisher.example.invalid', 'archive_upstream': 'https://archive.example.invalid',
         'publisher_network': 'main', 'publisher_genesis': '00' * 32},
+    ('transparent-history', 'https-recent'): {
+        'listen': '127.0.0.1:8092', 'state_dir': '/var/lib/transparent-provider',
+        'publisher': 'https://publisher.example.invalid', 'archive_upstream': 'https://archive.example.invalid',
+        'publisher_network': 'main', 'publisher_genesis': '00' * 32,
+        'member_id': 'https-1', 'fleet_host': 'coordinator', 'fleet_state': '/opt/transparent-publisher/state'},
     ('enhance', 'external-worker'): {
         'listen': '127.0.0.1:8091', 'data_dir': '/srv/enhance-worker',
         'credentials': ['/etc/enhance-worker/internal-token.env'], 'limits': {'MemoryMax': '7G'}},

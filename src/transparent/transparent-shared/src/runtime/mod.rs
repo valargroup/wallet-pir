@@ -1605,7 +1605,7 @@ pub(crate) mod tests {
         let matrix_packed = (native::D * (native::D * native::ELL / 8) * 27 + 8) as u64;
         for (geometry, table) in [
             (&DECOUPLED_2K_8K, Table::Directory),
-            (&TXID_2K8, Table::TxDirectory),
+            fixture_shape(&TXID_2K8, Table::TxDirectory),
         ] {
             let shared = SharedParams::build(geometry, table).unwrap();
             let profile = &shared.profile;
@@ -1700,8 +1700,7 @@ pub(crate) mod tests {
         use std::io::Write;
         // An empty 8-bit table: its one-digit matrix fits four-byte words, so
         // it is built narrower than its bound, which a table with data is not.
-        let geometry = &TXID_2K8;
-        let table = Table::TxDirectory;
+        let (geometry, table) = fixture_shape(&TXID_2K8, Table::TxDirectory);
         let dir = tempfile::tempdir().unwrap();
         let shared = Arc::new(SharedParams::build(geometry, table).unwrap());
         let rows = vec![0u8; shared.profile.rows * shared.profile.row_bytes];
@@ -1939,18 +1938,22 @@ pub(crate) mod tests {
         );
     }
 
+    #[cfg(feature = "qualification-tests")]
     #[test]
     fn trailing_zero_blocks_leave_the_published_masks_unchanged() {
         check_zero_tail(|_| (0, 1));
     }
+    #[cfg(feature = "qualification-tests")]
     #[test]
     fn trailing_zero_masks_match_with_one_nonzero_byte() {
         check_zero_tail(|_| (1, 1));
     }
+    #[cfg(feature = "qualification-tests")]
     #[test]
     fn trailing_zero_masks_match_at_the_block_boundary() {
         check_zero_tail(|profile| (native::D * profile.row_bytes, 1));
     }
+    #[cfg(feature = "qualification-tests")]
     #[test]
     fn trailing_zero_masks_match_past_the_block_boundary() {
         check_zero_tail(|profile| (native::D * profile.row_bytes + 1, 2));
@@ -1972,6 +1975,7 @@ pub(crate) mod tests {
             (&DECOUPLED_2K_8K, Table::Directory, 2_048),
             #[cfg(feature = "qualification-tests")]
             (&DECOUPLED_2K_8K, Table::Pages, 5_000),
+            #[cfg(feature = "qualification-tests")]
             (&TXID_2K8, Table::TxDirectory, 2_048),
             (&TXID_2K8, Table::TxDirectory, 700),
         ] {

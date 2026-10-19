@@ -27,10 +27,10 @@ CUDA = ['enhance-query-server/cuda', 'status-query-server/cuda', 'enhance-publis
         'enhance-publisher/native-reinspiring', 'enhance-pir-load-test/native-reinspiring']
 # Reference arithmetic runs the IPIR units and the absorbed protocol, client and
 # record units of the query-server library, its protocol contract tests, and the
-# publisher's bounded HTTP smoke test.
+# publisher's independent hint and damaged-artifact checks.
 REFERENCE_LIB_FILTERS = ['ipir::tests', 'client::', 'protocol::', 'record::', 'record_types::']
 REFERENCE_TESTS = {('enhance-query-server', 'routing_contract'), ('enhance-query-server', 'v7_contract'),
-                   ('enhance-publisher', 'ci_smoke')}
+                   ('enhance-publisher', 'ci_hint')}
 
 
 def variants(groups):
@@ -227,12 +227,6 @@ def test_programs(artifacts, variant, packages, env):
         args = []
         if variant == 'reference' and identity == ('enhance-query-server', 'enhance_query_server'):
             args = list(REFERENCE_LIB_FILTERS)
-        if variant == 'reference' and identity == ('enhance-publisher', 'ci_smoke'):
-            # Fast correctness already runs these lifecycle checks with reference
-            # arithmetic; native qualification repeats them on the deployed backend.
-            # Keep the independent generic-hint oracles and damaged-file checks here.
-            args = ['--skip', 'encrypted_http_answers_survive_coordinator_restart',
-                    '--skip', 'encrypted_publication_advances_while_another_commit_is_pending']
         if variant == 'cuda' and identity == ('enhance-query-server', 'enhance_query_server'):
             args = ['backend_load_failure_does_not_rebuild_or_replace_published_units']
         program = dict(executable=artifact['executable'], package=package['name'],
@@ -326,7 +320,7 @@ def baseline_commands(family):
         result += [
             ('reference', [*options, '-p', 'enhance-query-server', '--lib', '--', *REFERENCE_LIB_FILTERS]),
             ('reference', [*options, '-p', 'enhance-query-server', '--test', 'routing_contract', '--test', 'v7_contract']),
-            ('reference', [*options, '-p', 'enhance-publisher', '--test', 'ci_smoke']),
+            ('reference', [*options, '-p', 'enhance-publisher', '--test', 'ci_hint']),
             ('reference', [*options, '-p', 'status-query-server', '--lib', '--tests']),
             ('cuda', [*options, '-p', 'enhance-publisher', '--features', 'native-reinspiring,cuda', '--test', 'matvec_config']),
             ('cuda', [*options, '-p', 'enhance-query-server', '--features', 'native-reinspiring,cuda', '--lib',

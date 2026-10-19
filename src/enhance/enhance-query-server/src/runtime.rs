@@ -820,6 +820,9 @@ mod tests {
         assert!(unit_rows(shard, &short, &mut records).is_err());
     }
 
+    /// Partial, misaligned and Status layouts are extra properties of the
+    /// same 67-record runtime the bootstrap round trip already prepares.
+    #[cfg(feature = "qualification-tests")]
     #[test]
     fn hint_artifact_excludes_partial_misaligned_and_status_layouts() {
         let dir = tempfile::tempdir().unwrap();
@@ -1079,6 +1082,9 @@ mod tests {
         partial_preparation_failure(MatvecConfig::default(), false);
     }
 
+    /// The cached retry is checked against the same direct column sums as
+    /// the cold retry, so fast keeps that one case.
+    #[cfg(feature = "qualification-tests")]
     #[test]
     fn cached_partial_preparation_failure_preserves_published_and_retries() {
         partial_preparation_failure(MatvecConfig::default(), true);
@@ -1324,8 +1330,19 @@ mod tests {
         use ipir_sp::serialize::serialize_packing_keys;
 
         const B_START: u64 = 32768;
-        const B_ROWS: u64 = 2049;
-        const SUFFIX_ROWS: u64 = 4096;
+        // Reuse and coordinate binding need two valid units, not two 4K
+        // units on every push. Qualification keeps the boundary-crossing B.
+        const B_ROWS: u64 = if cfg!(feature = "qualification-tests") {
+            2049
+        } else {
+            17
+        };
+        const B_SLOT: u64 = if cfg!(feature = "qualification-tests") {
+            4096
+        } else {
+            2048
+        };
+        const SUFFIX_ROWS: u64 = B_SLOT;
         let directory = tempfile::tempdir().unwrap();
         let shard = QueryShard {
             id: 7,
@@ -1344,7 +1361,7 @@ mod tests {
                 .iter()
                 .map(|unit| (unit.local_row_start, unit.allocated_rows))
                 .collect::<Vec<_>>(),
-            [(0, 4096)]
+            [(0, B_SLOT)]
         );
 
         // Prepare B independently in both contexts; sharing an Arc here would
@@ -1381,7 +1398,7 @@ mod tests {
             assert_eq!(left_hint, right_hint, "B partial hints differ");
         }
 
-        // A's suffix occupies a new B-seeded unit after B's entire 4K slot.
+        // A's suffix occupies a new B-seeded unit after B's entire slot.
         let layout = DatabaseLayout {
             shard_rows: SUFFIX_ROWS as usize,
             ..ENHANCE_LAYOUT
@@ -1407,7 +1424,7 @@ mod tests {
         let extra = PreparedShard::build(
             &layout,
             7,
-            4096,
+            B_SLOT as usize,
             suffix_hash.clone(),
             &suffix,
             rlwe(),
@@ -1427,7 +1444,7 @@ mod tests {
             recovery_epoch: 0,
             table: "enhance".into(),
             shard_id: 7,
-            local_row_start: 4096,
+            local_row_start: B_SLOT,
             allocated_rows: SUFFIX_ROWS,
             setup_sha256: hex::encode(Sha256::digest(setup_seed(7))),
             parameter_id: unit_parameter_id(SUFFIX_ROWS).unwrap(),
@@ -1479,12 +1496,11 @@ mod tests {
                 shard_id: 7,
                 epoch: Sha256::digest(&packing.public)[..8].try_into().unwrap(),
             };
-            let targets: &[usize] = if logical_rows == 8192 {
-                &[0, 2047, 2048, 4096]
-            } else {
-                &[0, 2047, 2048]
-            };
-            for &row in targets {
+            let mut targets = vec![0, B_ROWS as usize - 2, B_ROWS as usize - 1];
+            if logical_rows == 8192 {
+                targets.push(B_SLOT as usize);
+            }
+            for row in targets {
                 let mut body = binding.encode();
                 #[cfg(feature = "native-reinspiring")]
                 let secret = {
@@ -1517,7 +1533,7 @@ mod tests {
                 #[cfg(not(feature = "native-reinspiring"))]
                 let decoded =
                     wallet.decode_response_simplepir(&seed, &public, &response[HEADER_BYTES..]);
-                let start = if row == 4096 {
+                let start = if row == B_SLOT as usize {
                     9_000_000
                 } else {
                     (B_START + row as u64) * RECORDS_PER_ROW as u64

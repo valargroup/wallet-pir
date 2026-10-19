@@ -847,6 +847,7 @@ mod tests {
     use crate::tx_detail::fixture::{self, record};
     use transparent_shared::journal::events::EventStore;
 
+    #[cfg(feature = "qualification-tests")]
     #[test]
     fn bootstrap_publishes_verifiable_chained_shards() {
         let temp = tempfile::tempdir().unwrap();
@@ -969,6 +970,7 @@ mod tests {
         assert!(publish_shard(temp.path(), &layout, &chained, &records).is_err());
     }
 
+    #[cfg(feature = "qualification-tests")]
     #[test]
     fn recent_revisions_reproduce_or_supersede() {
         let temp = tempfile::tempdir().unwrap();
@@ -1083,6 +1085,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "qualification-tests")]
     #[test]
     fn candidates_link_the_split_map_and_collection_drops_unlinked_chunks() {
         let temp = tempfile::tempdir().unwrap();

@@ -73,8 +73,16 @@ OPERATIONAL_KEYS = ('control_sessions', 'status_socket_forwarding', 'headless_co
                     'membership_failures', 'membership_failure_seconds', 'activation_grace_seconds',
                     'activation_lock_seconds', 'prepare_grace_seconds', 'route_imports', 'api_version')
 ASSIGNMENT_SCHEMA = 'transparent-assignment-v1'
+# An `https-recent` member's provider listens on loopback only (the operator
+# TLS proxy exposes wallet paths alone), so its status is read on its host.
+PROVIDER_LISTEN = r'(127\.0\.0\.1|\[::1\]):[0-9]{1,5}'
+# Publication identity a provider's wallet `init` must share with the fleet's
+# active map, beside `map_sha256` and the covered range.
+PROTOCOL_FIELDS = ('network', 'genesis_hash', 'profile', 'start_height')
 # Absolute Caddyfile import globs only: the value is spliced into both sites.
 ROUTE_IMPORT = re.compile(r'/[A-Za-z0-9_.*/-]+\.caddy')
+# Members rendered in the shared recent group.
+RECENT_ROLES = ('recent-replica', 'https-recent')
 
 
 def carry_operational(config, previous):
@@ -220,6 +228,8 @@ class Fleet:
                     raise ValueError('invalid roster id')
                 if 'control_socket' in worker and not re.fullmatch(r'/[A-Za-z0-9_./-]+', worker['control_socket']):
                     raise ValueError('invalid roster control_socket')
+                if worker['role'] == 'https-recent' and not re.fullmatch(PROVIDER_LISTEN, worker.get('status_listen', '')):
+                    raise ValueError('invalid roster status_listen')
         except (OSError, ValueError, KeyError, TypeError) as error:
             if strict:
                 raise
@@ -227,6 +237,20 @@ class Fleet:
             return False
         self.roster, self.roster_mark = roster, mark
         return True
+
+    def data_members(self):
+        """Roster members whose data this adapter stages, prepares and activates.
+
+        An `https-recent` member updates only through its own HTTPS
+        synchronization: it is never planned, staged, prepared, activated,
+        invalidated or counted toward quorum here, and takes no control
+        session. The reconciler routes it on its own status (`reconcile_https`).
+        """
+        return [w for w in self.roster if w['role'] != 'https-recent']
+
+    def https_members(self):
+        """Roster members routed only on their own observed provider status."""
+        return [w for w in self.roster if w['role'] == 'https-recent']
 
     @asynccontextmanager
     async def lock(self, name, wait=True, timeout=None):
@@ -450,11 +474,12 @@ class Fleet:
             async with asyncio.TaskGroup() as group:
                 sessions = {}
                 while True:
-                    # One owned master per roster member, following the
+                    # One owned master per data member, following the
                     # inventory: an enrolled member gets a session within a
-                    # second and a retired member's master is closed.
+                    # second and a retired member's master is closed. An
+                    # `https-recent` member takes no control commands.
                     self.refresh_roster()
-                    wanted = {w['id']: w for w in self.roster}
+                    wanted = {w['id']: w for w in self.data_members()}
                     for worker_id in [i for i in sessions if i not in wanted]:
                         sessions.pop(worker_id).cancel()
                     for worker_id, worker in wanted.items():
@@ -687,7 +712,7 @@ class Fleet:
         # after an inventory change plans and stages the same members.
         roster = self.root / (digest + '.roster.json')
         if not roster.exists():
-            atomic_json(roster, self.roster)
+            atomic_json(roster, self.data_members())
         # Same map retries preserve assignment provenance and its digest. The
         # plan is written once and completely: the controller can kill this
         # adapter mid-plan, and a truncated file must never be reused.
@@ -724,7 +749,7 @@ class Fleet:
         # The grace lets replicas that finish their tail build moments after
         # the first one activate together, instead of leaving routing at every
         # activation and rejoining seconds later. It costs freshness directly.
-        prepared = await self.collect(bounded_stage, self.roster, early=True,
+        prepared = await self.collect(bounded_stage, self.data_members(), early=True,
                                       grace=self.c.get('prepare_grace_seconds', 0.5))
         if not self.quorum(prepared):
             raise RuntimeError('warm prepare quorum unavailable')
@@ -762,10 +787,12 @@ class Fleet:
             imports = route_import_lines(self.c)
             workers = self.render_set(workers, assignment)
             groups = []
-            recent = [w for w in workers if w['role'] == 'recent-replica']
+            recent = [w for w in workers if w['role'] in RECENT_ROLES]
             by_id = {w['id']:w for w in assignment['workers']}
-            if recent:
-                groups.append(('recent', by_id[recent[0]['id']]['shards'], [w['upstream'] for w in recent]))
+            replica = next((w for w in recent if w['role'] == 'recent-replica'), None)
+            shards = by_id[replica['id']]['shards'] if replica else self.recent_shards(assignment)
+            if recent and shards is not None:
+                groups.append(('recent', shards, [w['upstream'] for w in recent]))
             for worker in workers:
                 if worker['role'] == 'archive-owner':
                     groups.append((worker['id'].replace('-','_'),by_id[worker['id']]['shards'],[worker['upstream']]))
@@ -816,20 +843,28 @@ class Fleet:
     def render_set(self, workers, assignment):
         """The members the router sends traffic to.
 
-        A member the assignment does not name is never rendered. Draining
-        recent replicas leave the router while an enrolled recent replica
-        serves, and stay only as the last resort.
+        A data member the assignment does not name is never rendered. An
+        `https-recent` member is never named; it is passed here only once
+        admitted (`reconcile_https`) and serves the recent group's shards.
+        Draining recent members leave the router while an enrolled recent
+        member serves, and stay only as the last resort.
         """
         named = {w['id'] for w in assignment['workers']}
         kept = []
         for worker in workers:
-            if worker['id'] in named:
+            if worker['id'] in named or worker['role'] == 'https-recent':
                 kept.append(worker)
             else:
                 print(json.dumps({'event':'route_skipped_unassigned', 'worker':worker['id']}), file=sys.stderr)
-        if any(w['role'] == 'recent-replica' and w.get('intent', 'enrolled') == 'enrolled' for w in kept):
-            kept = [w for w in kept if not (w['role'] == 'recent-replica' and w.get('intent') == 'draining')]
+        if any(w['role'] in RECENT_ROLES and w.get('intent', 'enrolled') == 'enrolled' for w in kept):
+            kept = [w for w in kept if not (w['role'] in RECENT_ROLES and w.get('intent') == 'draining')]
         return kept
+
+    def recent_shards(self, assignment):
+        """The shards the assignment gives the recent group, or None."""
+        by_id = {w['id']: w for w in assignment['workers']}
+        replica = next((w for w in self.roster if w['role'] == 'recent-replica' and w['id'] in by_id), None)
+        return by_id[replica['id']]['shards'] if replica else None
 
     def rendered_ids(self):
         try:
@@ -909,7 +944,9 @@ class Fleet:
         self.canonical.clear()
         if await self.canonical_hash(tail['end_height']) != tail['terminal_block_hash']:
             return None
-        workers = [w for w in self.roster if w['id'] in active['workers']]
+        # An admitted `https-recent` member takes no control command; its own
+        # reconciler loop keeps observing it under the new generation.
+        workers = [w for w in self.data_members() if w['id'] in active['workers']]
         if not self.quorum({w['id'] for w in workers}):
             return None
         statuses = await asyncio.gather(*(self.control(w, {'operation':'status'}) for w in workers))
@@ -940,7 +977,9 @@ class Fleet:
             # Even if every served/retired revision remains canonical, a
             # candidate in preparation must lose its activation epoch.
             return await self.revoke_orphans(worker,status,from_height,force=True)
-        revoked = await self.collect(revoke,self.roster)
+        # Only data members take invalidation: an `https-recent` provider
+        # updates itself over HTTPS, so its absence here never fails retention.
+        revoked = await self.collect(revoke,self.data_members())
         if retained is not None and not retained.issubset(revoked):
             atomic_json(self.root/'withdrawn.json', {'withdrawn':True})
             await self.route([])
@@ -1011,7 +1050,7 @@ class Fleet:
         # With manage_all_workers every roster member, archive owners included,
         # is prepared by the reconciler and never staged by the foreground.
         if self.c.get('manage_all_workers', False):
-            return {w['id'] for w in self.roster}
+            return {w['id'] for w in self.data_members()}
         return set(self.c.get('managed_recent_workers', []))
 
     @staticmethod
@@ -1207,6 +1246,149 @@ class Fleet:
                 print(json.dumps({'event':'worker_membership','worker':worker['id'],'map_sha256':digest,'eligible':valid}),file=sys.stderr)
                 self.observe(worker, status)
 
+    async def provider_observation(self, worker):
+        """An `https-recent` member's `(provider status, wallet init)`.
+
+        Both are read from its loopback listener over one direct SSH command:
+        no control session and no control command. `init` is read at the
+        fleet's wallet API version, so a provider that does not speak it has
+        no init and is never admitted.
+        """
+        listen = worker['status_listen']
+        if not re.fullmatch(PROVIDER_LISTEN, listen):
+            raise ValueError('invalid status_listen')
+        api = api_version(self.c)
+        fetch = 'curl -fsS --max-time 2 '
+        raw = await self.ssh(worker['ssh_host'], f'{fetch}http://{listen}/v1/provider-status && echo && '
+                             f'{fetch}http://{listen}/{api}/shards/init', timeout=3, multiplex=False)
+        lines = [line for line in raw.decode().splitlines() if line.strip()]
+        if len(lines) != 2:
+            raise RuntimeError('incomplete provider observation')
+        status, init = map(json.loads, lines)
+        if not isinstance(status, dict) or not isinstance(init, dict):
+            raise ValueError('provider observation is not two objects')
+        return status, init
+
+    @staticmethod
+    def https_refusals(status, init, digest, publication, recent_shards):
+        """Why a provider may not serve the fleet's active publication; [] when it may.
+
+        Its own status must show the exact active `map_sha256`, warm and not
+        invalidated, with every recent-group shard local and unrevoked at the
+        published manifest; its wallet `init` must show the same map and
+        protocol identity. A downloaded candidate is never consulted, and a
+        reachable URL alone proves nothing.
+        """
+        refusals = []
+        loaded = (status.get('verified_publication') or {}).get('map_sha256')
+        if loaded != digest:
+            refusals.append(f'serves publication {loaded}, fleet active is {digest}')
+        runtime = status.get('runtime_readiness') or {}
+        if runtime.get('warm') is not True or runtime.get('invalidated') is not False:
+            refusals.append('publication is not warm and valid')
+        tail = publication['shards'][-1]
+        expected = {'map_sha256': digest, 'covered_through': tail['end_height'], 'shards': len(publication['shards']),
+                    **{key: publication.get(key) for key in PROTOCOL_FIELDS}}
+        differing = sorted(key for key, value in expected.items() if init.get(key) != value)
+        if differing:
+            refusals.append('wallet init differs from the active publication in ' + ', '.join(differing))
+        if recent_shards is None:
+            refusals.append('the active assignment names no recent group')
+        else:
+            manifests = {s['shard_id']: s['manifest_digest'] for s in publication['shards']}
+            coverage = {c.get('shard_id'): c for c in status.get('active_coverage') or [] if isinstance(c, dict)}
+            missing = [i for i in recent_shards if not (
+                (coverage.get(i) or {}).get('local') is True and coverage[i].get('revoked') is False
+                and coverage[i].get('manifest_digest') == manifests.get(i))]
+            if missing:
+                refusals.append('recent shards not served locally and unrevoked: ' + ','.join(map(str, missing)))
+        return refusals
+
+    def observe_https(self, worker, status, refusals, routed):
+        """Record an `https-recent` observation in membership.json's vocabulary."""
+        runtime = (status or {}).get('runtime_readiness') or {}
+        if status is None:
+            state = 'unreachable'
+        elif runtime.get('invalidated') is not False:
+            state = 'invalidated'
+        elif not refusals:
+            state = 'serving' if routed else 'prepared'
+        else:
+            state = 'lagging'
+        self.observations[worker['id']] = dict(
+            role=worker['role'], intent=worker.get('intent', 'enrolled'), state=state, routed=routed,
+            map_sha256=((status or {}).get('verified_publication') or {}).get('map_sha256'),
+            warm=runtime.get('warm'), candidate_map_sha256=None, preparing=False,
+            transport_failures=self.failures.get(worker['id'], (0, 0))[0],
+            error='; '.join(refusals) or None, observed_unix=time.time())
+
+    async def reconcile_https(self, worker):
+        """Admit or withdraw one `https-recent` member from its own status.
+
+        Admission needs `https_refusals` empty and the publication endpoint
+        canonical now; it is withdrawn at the first observation that refuses.
+        Like a data member, a run of transport failures withdraws it while an
+        isolated one does not. Nothing here sends a control command, and its
+        routing change never withdraws the fleet: it neither counts toward
+        quorum nor routes when quorum is absent.
+        """
+        target = self.reconciliation_target()
+        if target is None:
+            return
+        active, req = target
+        digest = active['map_sha256']
+        generation = self.routing_generation()
+        routed = worker['id'] in active['workers']
+        try:
+            status, init = await asyncio.wait_for(self.provider_observation(worker), 4)
+        except Exception as error:
+            print(json.dumps({'event':'membership_status_failed', 'worker':worker['id'],
+                              'error_type':type(error).__name__}), file=sys.stderr)
+            if self.transport_failure(worker) and routed:
+                await self.apply_https(worker, False, digest, generation, time.monotonic())
+            self.observe_https(worker, None, ['provider status unobserved'], self.routed_now(worker))
+            return
+        self.failures.pop(worker['id'], None)
+        assignment = json.loads(Path(active['assignment']).read_text())
+        publication = json.loads((Path(req['directory'])/'shards.json').read_text())
+        refusals = self.https_refusals(status, init, digest, publication, self.recent_shards(assignment))
+        canonical = None if refusals else await self.member_canonical(req)
+        if canonical is False:
+            refusals = ['the active publication endpoint is no longer canonical']
+        observed = time.monotonic()
+        # An unknown endpoint is not evidence of a fork, nor of validity.
+        if (not refusals) != routed and not (canonical is None and not refusals):
+            await self.apply_https(worker, not refusals, digest, generation, observed)
+        self.observe_https(worker, status, refusals, self.routed_now(worker))
+
+    def routed_now(self, worker):
+        try:
+            return worker['id'] in json.loads((self.root/'active.json').read_text())['workers']
+        except (FileNotFoundError, ValueError, KeyError):
+            return False
+
+    async def apply_https(self, worker, admitted, digest, generation, observed):
+        async with self.lock('routing'):
+            target = self.reconciliation_target()
+            if (target is None or target[0]['map_sha256'] != digest
+                    or self.routing_generation() != generation or time.monotonic() - observed > 2):
+                return
+            active = target[0]
+            ids = set(active['workers'])
+            updated = ids | {worker['id']} if admitted else ids - {worker['id']}
+            if updated == ids:
+                return
+            if self.quorum(updated):
+                await self.route([w for w in self.roster if w['id'] in updated],
+                                 json.loads(Path(active['assignment']).read_text()))
+            elif admitted:
+                # Data members own the fleet's availability: never admit into,
+                # or withdraw, a router without quorum from here.
+                return
+            atomic_json(self.root/'active.json', {**active, 'workers':sorted(updated)})
+            print(json.dumps({'event':'worker_membership','worker':worker['id'],'map_sha256':digest,
+                              'eligible':admitted}), file=sys.stderr)
+
     async def managed_once(self, worker):
         # Routing membership after activation is reconciled for recent
         # replicas only. Archive owners are prepared here but leave routing only
@@ -1339,6 +1521,17 @@ class Fleet:
                 except Exception as exc:
                     print(json.dumps({'event':'membership_write_failed','error':str(exc)}), file=sys.stderr)
                 await asyncio.sleep(1)
+        async def https_loop(worker_id):
+            while True:
+                worker = next((w for w in self.https_members() if w['id'] == worker_id), None)
+                if worker is None:
+                    return
+                try:
+                    await self.reconcile_https(worker)
+                except Exception as exc:
+                    print(json.dumps({'event':'https_membership_failed', 'worker':worker_id,
+                                      'error':type(exc).__name__+': '+str(exc)}), file=sys.stderr)
+                await asyncio.sleep(0.5)
         async def legacy():
             while True:
                 try:
@@ -1358,13 +1551,15 @@ class Fleet:
                     # Follow the inventory: an enrolled member gets its own
                     # preparation loop within a second; a retired member's
                     # loop ends and it stops being prepared.
-                    wanted = self.managed_ids()
+                    # `https-recent` members get an admission loop instead.
+                    wanted = {i: worker_loop for i in self.managed_ids()}
+                    wanted.update({w['id']: https_loop for w in self.https_members()})
                     for worker_id in [i for i in loops if i not in wanted]:
                         loops.pop(worker_id).cancel()
                         self.observations.pop(worker_id, None)
-                    for worker_id in wanted:
+                    for worker_id, loop in wanted.items():
                         if worker_id not in loops or loops[worker_id].done():
-                            loops[worker_id] = group.create_task(worker_loop(worker_id))
+                            loops[worker_id] = group.create_task(loop(worker_id))
                     await asyncio.sleep(1)
 
     async def request(self, req):

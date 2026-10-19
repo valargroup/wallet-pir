@@ -45,6 +45,21 @@ HTTP peers; separate worker tests
 check durable reservation, abort and commit behavior. Real encrypted HTTP,
 restart, independent wallet, publication, packing and revocation checks remain.
 
+Expensive fixtures are organized around the guarantee being checked:
+
+| Fast coverage | Additional full qualification coverage |
+| --- | --- |
+| One Enhance HTTP lifecycle publishes through a pending commit, reconciles it, rejects malformed queries, drains its listener, and answers from reopened durable state with a fresh wallet. Both independent 67/68-record hint oracles and damaged-file checks remain. | The same lifecycle runs on the native backend. |
+| Enhance tail reuse independently builds both copies and checks artifacts, partial hints, encrypted answers and unchanged coordinates with two supported 2K units in the original 4K/8K query domains. | The original boundary-crossing 4K preparation units. |
+| Native cache admission and built-size bounds use one supported column instance; the batched-hint oracle retains a deployed display geometry with nonzero and padded rows. | Deployed cache/build shapes and the full history/display hint geometry and occupancy combinations. |
+
+Transparent history distribution tests stay in one process so their immutable
+producer fixtures are prepared once. Each consumer still owns its mutable
+files and verifies transfers over its own HTTP boundary. Process partitioning
+uses the current module path and must cover discovered cases exactly once.
+Their public client masks are shared; query secrets and decoded source checks
+remain fresh for every consumer.
+
 ## Parallel release qualification
 
 Service qualification targets five minutes from dispatch to qualified artifacts
@@ -113,7 +128,11 @@ there before the pool; beside it, the encrypted HTTP smokes miss the 30-second
 case deadline. The 8-core fast runner keeps that library in the pool with four
 build threads. The Enhance encrypted HTTP executable runs alone before the
 pool on every runner: concurrent runtime preparation exceeded its per-case
-deadline even on eight cores. Other HTTP integration programs use the pool
+deadline even on eight cores. The independent hint and damaged-artifact checks
+have their own executable in the bounded pool. Both Enhance executables copy
+immutable preparation bytes from the same run-owned directory; workers verify
+their own copies, and generic hint oracles still cold-build independently.
+Other HTTP integration programs use the pool
 ahead of ordinary units. Within each group, binaries with more discovered cases start first,
 independently of Cargo's artifact order. Large unit executables are divided into
 at most three disjoint groups of exact discovered case names, within that same
@@ -136,7 +155,9 @@ Fixture construction, copying, verification and cleanup stay inside measured wor
 Ordinary cache, identity, preparation-failure, publication, TLS fault and recovery
 assertions all run in fast feedback. The non-default `qualification-tests` feature
 restores their original larger geometry combinations and longer histories for
-full qualification. Binary unit tests run as well as library targets. Affected
+full qualification, including repeated campaigns that rebuild one runtime to
+assert an additional property. The cached preparation retry checks the same
+direct column sums as the cold retry, so fast keeps the cold case. Binary unit tests run as well as library targets. Affected
 packages also run integrations classified as `fast` in
 [`tools/ci/integration-tests.json`](../tools/ci/integration-tests.json). Complete
 correctness includes independent reference oracles, doctests and CPU lint. Larger

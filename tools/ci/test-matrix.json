@@ -156,6 +156,7 @@
       "native:enhance-publisher:example:suffix_width",
       "native:enhance-publisher:lib:enhance_publisher",
       "native:enhance-publisher:test:boundary_recovery_model",
+      "native:enhance-publisher:test:ci_hint",
       "native:enhance-publisher:test:ci_smoke",
       "native:enhance-publisher:test:matvec_config",
       "native:enhance-publisher:test:packing_http",
@@ -190,7 +191,7 @@
   "enhance-reference": {
     "family": "enhance",
     "targets": [
-      "reference:enhance-publisher:test:ci_smoke",
+      "reference:enhance-publisher:test:ci_hint",
       "reference:enhance-query-server:lib:enhance_query_server",
       "reference:enhance-query-server:test:routing_contract",
       "reference:enhance-query-server:test:v7_contract",

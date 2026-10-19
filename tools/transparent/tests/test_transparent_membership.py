@@ -58,6 +58,16 @@ class MembershipTests(unittest.IsolatedAsyncioTestCase):
             status.update(active={'map_sha256': cmd['map_sha256']}, candidate=None, warm=True)
         return json.loads(json.dumps(status))
 
+    async def test_https_recent_members_are_never_prepared_or_managed(self):
+        https = dict(id='h1', role='https-recent', ssh_host='h1', upstream='h1:8092')
+        self.f.roster = self.roster + [https]
+        self.assertEqual(self.f.managed_ids(), {'owner', 'r1', 'r2'})
+        self.assertNotIn(https, self.f.data_members())
+        self.assertFalse(self.f.quorum({'owner', 'h1'}), 'an HTTPS member never completes quorum')
+        self.f.control.reset_mock()
+        await self.f.reconcile()
+        self.assertNotIn('h1', [call.args[0]['id'] for call in self.f.control.await_args_list])
+
     def test_manage_all_includes_archive_owners(self):
         self.assertEqual(self.f.managed_ids(), {'owner', 'r1', 'r2'})
         self.f.c['manage_all_workers'] = False
@@ -394,3 +404,224 @@ class DynamicRosterTests(unittest.IsolatedAsyncioTestCase):
         snapshot = json.loads((self.root/('c'*64+'.roster.json')).read_text())
         self.assertEqual([w['id'] for w in snapshot], ['owner', 'r1', 'r2'])
         self.assertEqual(plans, [snapshot])
+        # An HTTPS member is neither planned nor prepared.
+        self.f.roster = self.f.roster + [dict(id='h1', role='https-recent', ssh_host='h1', upstream='h1:8092')]
+        staged = []
+        async def collect(operation, workers, **kwargs):
+            staged.extend(w['id'] for w in workers)
+            return {w['id']: {'expected': 'a'*64} for w in workers}
+        self.f.collect = collect
+        req = dict(req, map_sha256='d'*64)
+        async def planner_d(args, *rest, **kwargs):
+            plans.append(json.loads(Path(args[args.index('--roster')+1]).read_text()))
+            Path(args[args.index('--out-assignment')+1]).write_text(json.dumps(
+                dict(schema=M.ASSIGNMENT_SCHEMA, set={'map_sha256': 'd'*64}, workers=[{'id': 'owner'}])))
+            return b''
+        with patch.object(M, 'run', new=AsyncMock(side_effect=planner_d)):
+            await self.f.prepare(dict(req))
+        self.assertNotIn('h1', [w['id'] for w in plans[-1]])
+        self.assertNotIn('h1', staged)
+
+
+class HttpsRecentTests(unittest.IsolatedAsyncioTestCase):
+    """An `https-recent` member is routed only on its own observed status and
+    never receives a control command, invalidation or control session."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.https = dict(id='h1', role='https-recent', ssh_host='h1', upstream='h1:8443',
+                          status_listen='127.0.0.1:8092', intent='enrolled')
+        self.members = [dict(id='owner', role='archive-owner', ssh_host='owner', upstream='owner:8093', intent='enrolled'),
+                        dict(id='r1', role='recent-replica', ssh_host='r1', upstream='r1:8093', intent='enrolled'),
+                        self.https]
+        (self.root/'roster').write_text(json.dumps(self.members))
+        self.f = M.Fleet(dict(roster=str(self.root/'roster'), state_dir=str(self.root), known_hosts='unused',
+                              ssh_key='unused', manage_all_workers=True, public_host='pir.example',
+                              authority_upstream='https://filters.example', router_host='router', api_version='v2'))
+        self.assignment = self.root/'assignment'
+        self.assignment.write_text(json.dumps({'workers': [{'id': 'owner', 'shards': [0]}, {'id': 'r1', 'shards': [1]}]}))
+        self.map = dict(network='main', genesis_hash='g'*64, profile='zcash-transparent-range-v1', start_height=100,
+                        shards=[dict(shard_id=0, manifest_digest='m0', end_height=150, terminal_block_hash='old'),
+                                dict(shard_id=1, manifest_digest='m1', end_height=160, terminal_block_hash='canonical')])
+        (self.root/'shards.json').write_text(json.dumps(self.map))
+        req = dict(map_sha256='a'*64, directory=str(self.root), assignment=str(self.assignment))
+        M.atomic_json(self.root/('a'*64+'.request.json'), req)
+        M.atomic_json(self.root/'desired.json', req)
+        M.atomic_json(self.root/'active.json', dict(map_sha256='a'*64, workers=['owner', 'r1'], assignment=str(self.assignment)))
+        self.provider = self.serving('a'*64)
+        self.rendered, self.commands = [], []
+        async def ssh(host, command, data=None, **kwargs):
+            self.commands.append((host, command, kwargs))
+            if host == 'router':
+                self.rendered.append(data.decode())
+                return b''
+            if isinstance(self.provider, Exception):
+                raise self.provider
+            status, init = self.provider
+            return (json.dumps(status) + '\n' + json.dumps(init) + '\n').encode()
+        self.f.ssh = ssh
+        self.controlled = []
+        async def control(worker, value):
+            self.controlled.append((worker['id'], value['operation']))
+            if worker['role'] == 'https-recent':
+                raise AssertionError('a control command reached an https-recent member')
+            return {'active': {'map_sha256': 'a'*64}, 'warm': True, 'invalidated': False, 'revisions': []}
+        self.f.control = control
+        self.f.canonical_hash = AsyncMock(return_value='canonical')
+
+    def serving(self, digest, warm=True, invalidated=False, local=True):
+        status = {'verified_publication': {'map_sha256': digest},
+                  'runtime_readiness': {'warm': warm, 'invalidated': invalidated},
+                  'active_coverage': [dict(shard_id=s['shard_id'], manifest_digest=s['manifest_digest'],
+                                           local=local or s['shard_id'] == 0, revoked=False) for s in self.map['shards']]}
+        init = dict(map_sha256=digest, covered_through=160, shards=2, schema='transparent-shard-v12',
+                    **{k: self.map[k] for k in M.PROTOCOL_FIELDS})
+        return status, init
+
+    def routed(self):
+        return json.loads((self.root/'active.json').read_text())['workers']
+
+    async def test_admission_requires_exact_publication_protocol_and_warm_valid_coverage(self):
+        refused = {
+            'stale publication': self.serving('b'*64),
+            'cold': self.serving('a'*64, warm=False),
+            'invalidated': self.serving('a'*64, invalidated=True),
+            'recent shard forwarded, not local': self.serving('a'*64, local=False),
+        }
+        status, init = self.serving('a'*64)
+        refused['downloaded candidate only'] = (dict(status, verified_publication={'map_sha256': 'b'*64},
+                                                     candidate={'map_sha256': 'a'*64, 'warm': True}), init)
+        refused['other network'] = (status, dict(init, network='test'))
+        refused['other genesis'] = (status, dict(init, genesis_hash='h'*64))
+        refused['short coverage'] = (status, dict(init, covered_through=159))
+        for reason, observation in refused.items():
+            with self.subTest(reason):
+                self.provider = observation
+                await self.f.reconcile_https(self.https)
+                self.assertEqual(self.routed(), ['owner', 'r1'])
+                self.assertEqual(self.rendered, [])
+        self.provider = RuntimeError('wallet API v2 not served')
+        await self.f.reconcile_https(self.https)
+        self.assertEqual(self.rendered, [], 'a provider without the fleet API version is never admitted')
+        self.provider = self.serving('a'*64)
+        await self.f.reconcile_https(self.https)
+        self.assertEqual(self.routed(), ['h1', 'owner', 'r1'])
+        self.assertIn('reverse_proxy r1:8093 h1:8443', self.rendered[-1])
+        self.assertIn('/v2/shards/(1)/revisions', self.rendered[-1])
+        self.assertTrue(all(kwargs.get('multiplex') is False for host, _, kwargs in self.commands if host == 'h1'))
+        self.assertIn('http://127.0.0.1:8092/v2/shards/init', next(c for h, c, _ in self.commands if h == 'h1'))
+        self.f.write_membership()
+        member = json.loads((self.root/'membership.json').read_text())['members']['h1']
+        self.assertEqual((member['state'], member['rendered']), ('serving', True))
+        self.assertEqual(self.controlled, [])
+
+    async def test_withdrawn_at_the_first_refusing_observation(self):
+        await self.f.reconcile_https(self.https)
+        self.assertIn('h1', self.routed())
+        self.provider = self.serving('a'*64, invalidated=True)
+        await self.f.reconcile_https(self.https)
+        self.assertEqual(self.routed(), ['owner', 'r1'])
+        self.assertNotIn('h1:8443', self.rendered[-1])
+        self.assertIn('reverse_proxy r1:8093', self.rendered[-1], 'withdrawing it never withdraws the fleet')
+        self.f.write_membership()
+        member = json.loads((self.root/'membership.json').read_text())['members']['h1']
+        self.assertEqual((member['state'], member['rendered']), ('invalidated', False))
+
+    async def test_a_noncanonical_endpoint_refuses_and_an_unknown_one_changes_nothing(self):
+        self.f.canonical_hash = AsyncMock(side_effect=RuntimeError('node unavailable'))
+        await self.f.reconcile_https(self.https)
+        self.assertEqual(self.routed(), ['owner', 'r1'])
+        self.f.canonical_hash = AsyncMock(return_value='canonical')
+        await self.f.reconcile_https(self.https)
+        self.f.canonical_hash = AsyncMock(return_value='forked')
+        self.f.canonical.clear()
+        await self.f.reconcile_https(self.https)
+        self.assertEqual(self.routed(), ['owner', 'r1'])
+
+    async def test_one_unobserved_status_keeps_it_and_a_run_withdraws_it(self):
+        self.f.c.update(membership_failures=2, membership_failure_seconds=0)
+        await self.f.reconcile_https(self.https)
+        self.provider = RuntimeError('ssh: connection refused')
+        await self.f.reconcile_https(self.https)
+        self.assertIn('h1', self.routed())
+        await self.f.reconcile_https(self.https)
+        self.assertEqual(self.routed(), ['owner', 'r1'])
+
+    async def test_never_admitted_into_or_withdrawing_a_router_without_quorum(self):
+        M.atomic_json(self.root/'active.json', dict(map_sha256='a'*64, workers=['owner'], assignment=str(self.assignment)))
+        await self.f.reconcile_https(self.https)
+        self.assertEqual((self.routed(), self.rendered), (['owner'], []))
+        M.atomic_json(self.root/'active.json', dict(map_sha256='a'*64, workers=['owner', 'h1'], assignment=str(self.assignment)))
+        self.provider = self.serving('b'*64)
+        await self.f.reconcile_https(self.https)
+        self.assertEqual((self.routed(), self.rendered), (['owner'], []), 'no route([]) from an https member')
+
+    async def test_activation_drops_it_until_it_attests_the_new_publication(self):
+        await self.f.reconcile_https(self.https)
+        self.assertIn('h1', self.routed())
+        self.assertEqual(self.f.quorum({'owner', 'h1'}), False)
+        prepared = {'workers': {'owner': {'expected': 'a'*64}, 'r1': {'expected': 'a'*64}},
+                    'assignment': str(self.assignment)}
+        async def control(worker, value):
+            self.assertNotEqual(worker['id'], 'h1')
+            return {'active': {'map_sha256': 'c'*64}, 'warm': True, 'invalidated': False}
+        self.f.control = control
+        await self.f.activate({'map_sha256': 'c'*64, 'prepared': prepared})
+        self.assertEqual(self.routed(), ['owner', 'r1'])
+
+    async def test_invalidation_sends_it_nothing_and_its_failure_never_withdraws(self):
+        await self.f.reconcile_https(self.https)
+        self.rendered.clear()
+        result = await self.f.invalidate({'from_height': 200, 'retain_publication':
+                                          {'map_sha256': 'a'*64, 'height': 160, 'hash': 'canonical'}})
+        self.assertTrue(result['retained_publication'])
+        self.assertEqual(sorted(result['invalidated']), ['owner', 'r1'])
+        self.assertNotIn('h1', [worker for worker, _ in self.controlled])
+        self.assertEqual(self.rendered, [], 'retained coverage is not withdrawn')
+        self.assertFalse(json.loads((self.root/'withdrawn.json').read_text())['withdrawn']
+                         if (self.root/'withdrawn.json').exists() else False)
+        # Unretained invalidation withdraws, still without touching the provider.
+        self.controlled.clear()
+        await self.f.invalidate({'from_height': 120})
+        self.assertEqual(self.rendered[-1], M.withdrawn_router(self.f.c, guarded=False))
+        self.assertEqual(sorted({w for w, _ in self.controlled}), ['owner', 'r1'])
+
+    async def test_control_sessions_exclude_it(self):
+        running = set()
+        async def control_session(worker):
+            running.add(worker['id'])
+            await asyncio.sleep(3600)
+        self.f.control_session = control_session
+        task = asyncio.create_task(self.f.serve_control_sessions())
+        await asyncio.sleep(0.3)
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+        self.assertEqual(running, {'owner', 'r1'})
+
+    async def test_the_reconciler_runs_an_admission_loop_for_it(self):
+        seen = []
+        async def reconcile_https(worker):
+            seen.append(worker['id'])
+        async def managed_once(worker):
+            await asyncio.sleep(0.05)
+        self.f.reconcile_https = reconcile_https
+        self.f.managed_once = managed_once
+        task = asyncio.create_task(self.f.serve_reconciler())
+        await asyncio.sleep(0.3)
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+        self.assertEqual(set(seen), {'h1'})
+
+    def test_its_roster_entry_must_name_a_loopback_status_listener(self):
+        for listen in (None, '0.0.0.0:8092', 'h1:8092', '127.0.0.1:8092/../x'):
+            with self.subTest(listen=listen):
+                entry = {k: v for k, v in self.https.items() if k != 'status_listen'}
+                if listen is not None:
+                    entry['status_listen'] = listen
+                (self.root/'roster').write_text(json.dumps(self.members[:2] + [entry]))
+                with self.assertRaisesRegex(ValueError, 'status_listen'):
+                    M.Fleet(dict(self.f.c))

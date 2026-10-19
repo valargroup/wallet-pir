@@ -1130,6 +1130,7 @@ mod tests {
     }
     /// A block where a few busy scripts receive several times, so events are
     /// pushed out of the directory every block, and a new script appears.
+    #[cfg(feature = "qualification-tests")]
     fn busy_block(store: &mut EventStore, h: u64, fork: u8) {
         use transparent_events::{ReceiveEvent, TransparentEvent};
         let mut events = Vec::new();
@@ -1166,6 +1167,7 @@ mod tests {
     /// Small enough that a few dozen blocks close many page shards and
     /// several directory shards, by page rows, by the child limit and by
     /// directory bytes.
+    #[cfg(feature = "qualification-tests")]
     fn small(geometry: &Geometry) -> DecoupledPolicy {
         use transparent_shard::seal::Limit;
         DecoupledPolicy {
@@ -1177,6 +1179,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "qualification-tests")]
     fn single_tier(output: &Path, previous: Option<&Path>, through: u64) -> PublishOptions {
         PublishOptions {
             archive_geometry: None,
@@ -1186,6 +1189,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "qualification-tests")]
     fn read_manifest(dir: &Path, e: &transparent_filter::ShardMapEntry) -> ShardManifest {
         serde_json::from_slice(
             &std::fs::read(dir.join(&e.manifest_digest).join("manifest.json")).unwrap(),
@@ -1197,6 +1201,7 @@ mod tests {
     /// fresh build: every directory shard and page shard has the same
     /// content, differing only in revision numbering. Sealed page
     /// shards of the open directory shard are carried by link, not rewritten.
+    #[cfg(feature = "qualification-tests")]
     #[test]
     fn block_by_block_publication_equals_a_fresh_build() {
         use std::os::unix::fs::MetadataExt;
@@ -1287,27 +1292,32 @@ mod tests {
     /// A reorg at a page-shard boundary, at a directory-shard boundary and
     /// inside a page shard republishes from the open directory shard, and
     /// every directory shard sealed below the fork is the same revision.
+    #[cfg(feature = "qualification-tests")]
     enum ForkBoundary {
         Directory,
         Page,
         InsidePage,
     }
 
+    #[cfg(feature = "qualification-tests")]
     #[test]
     fn a_directory_boundary_reorg_republishes_only_changed_blocks() {
         check_reorg(ForkBoundary::Directory);
     }
 
+    #[cfg(feature = "qualification-tests")]
     #[test]
     fn a_page_boundary_reorg_republishes_only_changed_blocks() {
         check_reorg(ForkBoundary::Page);
     }
 
+    #[cfg(feature = "qualification-tests")]
     #[test]
     fn a_reorg_inside_a_page_republishes_only_changed_blocks() {
         check_reorg(ForkBoundary::InsidePage);
     }
 
+    #[cfg(feature = "qualification-tests")]
     fn check_reorg(boundary: ForkBoundary) {
         let root = tempfile::tempdir().unwrap();
         let zero = BlockHash::from_internal_bytes([0; 32]);
@@ -1360,6 +1370,7 @@ mod tests {
     /// The choice option never changes an existing digest: a republication
     /// that reproduces keeps what it published, and only content that changes
     /// anyway (a grown tail, a fresh set) takes the option.
+    #[cfg(feature = "qualification-tests")]
     #[test]
     fn directory_choice_is_added_without_changing_published_digests() {
         let root = tempfile::tempdir().unwrap();
@@ -1423,6 +1434,7 @@ mod tests {
     }
     /// A publication under the v2 range profile names it everywhere and
     /// loads; continuing a set published under another profile is refused.
+    #[cfg(feature = "qualification-tests")]
     #[test]
     fn a_range_profile_change_is_a_new_publication() {
         let root = tempfile::tempdir().unwrap();
@@ -1459,6 +1471,7 @@ mod tests {
     }
     /// The scan `link_superseded_tails` replaced: every manifest read again
     /// for every shard of the map.
+    #[cfg(feature = "qualification-tests")]
     fn link_superseded_tails_per_shard(
         previous: &Path,
         output: &Path,
@@ -1499,6 +1512,7 @@ mod tests {
     /// per-shard scan did: the newest three superseded tails per shard whose
     /// endpoints are canonical, never a sealed or orphaned one, and nothing
     /// for directories without a readable manifest.
+    #[cfg(feature = "qualification-tests")]
     #[test]
     fn superseded_tails_are_carried_as_the_per_shard_scan_did() {
         let root = tempfile::tempdir().unwrap();
@@ -1560,6 +1574,7 @@ mod tests {
     /// table sized for its script count, and three superseded tails. Prints
     /// both scans' seconds; run with `--ignored --nocapture` on an optimized
     /// build.
+    #[cfg(feature = "qualification-tests")]
     #[test]
     #[ignore]
     fn retention_scan_cost_at_census_scale() {
@@ -1649,6 +1664,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "qualification-tests")]
     #[test]
     fn sealed_reorg_builds_a_separate_suffix_and_snapshot_survives_rollback() {
         let root = tempfile::tempdir().unwrap();

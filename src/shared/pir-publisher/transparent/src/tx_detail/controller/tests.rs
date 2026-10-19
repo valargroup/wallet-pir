@@ -1,15 +1,23 @@
 use super::*;
-use crate::tx_detail::fixture::{self, block_hash, chain_records, chain_sources};
+use crate::tx_detail::fixture::{self, chain_records};
+#[cfg(feature = "qualification-tests")]
+use crate::tx_detail::fixture::{block_hash, chain_sources};
 use crate::tx_detail::offline::{bench_recent, plan_start, synthetic_records, verify};
-use crate::tx_detail::publisher::{bootstrap, CANDIDATE_PREFIX, SEALED_DIR};
-use crate::tx_detail::serving::{Transport, WorkerRole, WorkersFile};
+#[cfg(feature = "qualification-tests")]
+use crate::tx_detail::publisher::CANDIDATE_PREFIX;
+use crate::tx_detail::publisher::{bootstrap, SEALED_DIR};
+#[cfg(feature = "qualification-tests")]
+use crate::tx_detail::serving::WorkersFile;
+use crate::tx_detail::serving::{Transport, WorkerRole};
 use crate::tx_detail::source::{open_writer, Script, ScriptStep};
 use crate::tx_detail::timeline::read_timeline;
 use std::collections::BTreeSet;
 use std::os::unix::fs::{FileExt, MetadataExt};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+#[cfg(feature = "qualification-tests")]
 use transparent_filter::BlockHash;
 use transparent_shard::txid::{DisplayEntry, DisplayRecord, ENTRY_BYTES};
+#[cfg(feature = "qualification-tests")]
 use transparent_shard::txid_v2x::TransparentDisplayRecordV2x;
 
 fn settings() -> Settings {
@@ -116,11 +124,13 @@ fn layout(journal: &Path, max_archive_shards: u64) -> DisplayRoot {
     )
 }
 
+#[cfg(feature = "qualification-tests")]
 fn active_map(root: &Path) -> DisplayMap {
     let active = ActiveRecord::load(root).unwrap();
     read_map(&active.directory, &active.map_sha256).unwrap()
 }
 
+#[cfg(feature = "qualification-tests")]
 fn sealed_count(map: &DisplayMap) -> usize {
     map.shards.iter().filter(|s| s.sealed).count()
 }
@@ -141,6 +151,7 @@ fn check_maps(maps: &[DisplayMap], first: &DisplayMap) {
 /// latest start whose blocks hold `window` txids (`held` counts a height's),
 /// capped at the first unsealed height and floored at the map's start.
 /// Returns how many maps' recent shards overlap an archive.
+#[cfg(feature = "qualification-tests")]
 fn check_windows(maps: &[DisplayMap], window: u64, held: impl Fn(u64) -> u64) -> usize {
     let mut overlapping = 0;
     for map in maps {
@@ -164,6 +175,7 @@ fn check_windows(maps: &[DisplayMap], window: u64, held: impl Fn(u64) -> u64) ->
 /// recent shard reaches over several archives, moves back when a rollback
 /// empties the tip, and is the same after a restart, whose cache must reach
 /// back as far.
+#[cfg(feature = "qualification-tests")]
 #[tokio::test(flavor = "multi_thread")]
 async fn the_recent_window_overlaps_archives_through_reorgs_and_restarts() {
     let temp = tempfile::tempdir().unwrap();
@@ -212,6 +224,7 @@ async fn the_recent_window_overlaps_archives_through_reorgs_and_restarts() {
     assert!(sealed_count(run.maps.last().unwrap()) > sealed_count(&moved));
 }
 
+#[cfg(feature = "qualification-tests")]
 #[tokio::test(flavor = "multi_thread")]
 async fn incremental_stepping_reproduces_bootstrap() {
     let through = if cfg!(feature = "qualification-tests") {
@@ -299,12 +312,14 @@ async fn incremental_stepping_reproduces_bootstrap() {
     }
 }
 
+#[cfg(feature = "qualification-tests")]
 fn fork(tag: u8, from: u64, through: u64) -> Vec<(BlockHash, Vec<TransparentDisplayRecordV2x>)> {
     (from..=through)
         .map(|h| (block_hash(tag, h), chain_sources(tag, h)))
         .collect()
 }
 
+#[cfg(feature = "qualification-tests")]
 #[tokio::test(flavor = "multi_thread")]
 async fn reorgs_rebuild_recent_and_a_sealed_fork_halts() {
     let temp = tempfile::tempdir().unwrap();
@@ -498,6 +513,7 @@ async fn restart_resumes_without_touching_sealed_files() {
     );
 }
 
+#[cfg(feature = "qualification-tests")]
 #[tokio::test(flavor = "multi_thread")]
 async fn the_window_drops_oldest_archives_and_keeps_the_rest() {
     let through = if cfg!(feature = "qualification-tests") {
@@ -555,10 +571,12 @@ async fn the_window_drops_oldest_archives_and_keeps_the_rest() {
 }
 
 type Log = Arc<std::sync::Mutex<Vec<(String, Value)>>>;
+#[cfg(feature = "qualification-tests")]
 type States = BTreeMap<String, Arc<std::sync::Mutex<Fake>>>;
 
 /// A display worker that keeps only control state. After its first
 /// activation it refuses a prepare naming an archive it was not staged with.
+#[cfg(feature = "qualification-tests")]
 #[derive(Default)]
 struct Fake {
     active: Option<(String, String, Vec<String>)>,
@@ -577,6 +595,7 @@ struct Fake {
     stages: usize,
 }
 
+#[cfg(feature = "qualification-tests")]
 fn fake_reply(state: &mut Fake, role: &str, command: &mut Value) -> Value {
     let expected = state
         .active
@@ -682,6 +701,7 @@ fn fake_reply(state: &mut Fake, role: &str, command: &mut Value) -> Value {
     }
 }
 
+#[cfg(feature = "qualification-tests")]
 fn spawn_fakes(dir: &Path, workers: &[(&str, &'static str)]) -> (Log, States) {
     let log: Log = Default::default();
     let mut states = BTreeMap::new();
@@ -728,6 +748,7 @@ fn socket_worker(dir: &Path, name: &str, role: WorkerRole) -> WorkerConfig {
     }
 }
 
+#[cfg(feature = "qualification-tests")]
 #[tokio::test(flavor = "multi_thread")]
 async fn archive_owners_stage_before_any_map_names_a_seal() {
     let temp = tempfile::tempdir().unwrap();
@@ -823,6 +844,7 @@ async fn archive_owners_stage_before_any_map_names_a_seal() {
 /// One combined worker serves the whole publication: every seal is staged on
 /// it before any prepare names it, it takes every map like a recent replica,
 /// and a reorg is delivered to it before anything newer.
+#[cfg(feature = "qualification-tests")]
 #[tokio::test(flavor = "multi_thread")]
 async fn a_combined_worker_is_staged_follows_every_map_and_is_invalidated() {
     let temp = tempfile::tempdir().unwrap();
@@ -896,6 +918,7 @@ async fn a_combined_worker_is_staged_follows_every_map_and_is_invalidated() {
     assert_eq!(pending_invalidations(&root), json!({}));
 }
 
+#[cfg(feature = "qualification-tests")]
 fn commands(log: &Log, worker: &str) -> Vec<Value> {
     log.lock()
         .unwrap()
@@ -905,6 +928,7 @@ fn commands(log: &Log, worker: &str) -> Vec<Value> {
         .collect()
 }
 
+#[cfg(feature = "qualification-tests")]
 fn invalidated(log: &Log) -> Vec<u64> {
     commands(log, "recent")
         .iter()
@@ -913,12 +937,14 @@ fn invalidated(log: &Log) -> Vec<u64> {
         .collect()
 }
 
+#[cfg(feature = "qualification-tests")]
 fn pending_invalidations(root: &Path) -> Value {
     serde_json::from_slice::<Value>(&std::fs::read(root.join(INVALIDATE_FILE)).unwrap()).unwrap()
         ["pending"]
         .clone()
 }
 
+#[cfg(feature = "qualification-tests")]
 #[tokio::test(flavor = "multi_thread")]
 async fn invalidations_reach_every_replica_before_it_moves_on() {
     let temp = tempfile::tempdir().unwrap();
@@ -975,6 +1001,7 @@ async fn invalidations_reach_every_replica_before_it_moves_on() {
     assert_eq!(pending_invalidations(&root), json!({}));
 }
 
+#[cfg(feature = "qualification-tests")]
 #[tokio::test(flavor = "multi_thread")]
 async fn a_restart_after_a_rollback_still_invalidates() {
     let temp = tempfile::tempdir().unwrap();
@@ -1062,6 +1089,7 @@ async fn a_restart_after_a_rollback_still_invalidates() {
     }
 }
 
+#[cfg(feature = "qualification-tests")]
 #[tokio::test(flavor = "multi_thread")]
 async fn a_seal_a_rollback_undoes_waits_for_the_reorg_margin() {
     use transparent_shard::display::height_counts;
@@ -1134,6 +1162,7 @@ async fn a_seal_a_rollback_undoes_waits_for_the_reorg_margin() {
     }
 }
 
+#[cfg(feature = "qualification-tests")]
 #[tokio::test(flavor = "multi_thread")]
 async fn an_archive_owner_that_lost_staging_is_staged_again() {
     let temp = tempfile::tempdir().unwrap();
@@ -1194,6 +1223,7 @@ async fn an_archive_owner_that_lost_staging_is_staged_again() {
     assert_eq!(lag, 1);
 }
 
+#[cfg(feature = "qualification-tests")]
 #[tokio::test(flavor = "multi_thread")]
 async fn command_adapters_ship_then_relay_control() {
     use std::os::unix::fs::PermissionsExt;
@@ -1290,6 +1320,7 @@ else:
     );
 }
 
+#[cfg(feature = "qualification-tests")]
 #[tokio::test(flavor = "multi_thread")]
 async fn replay_paces_coalesces_and_stops_at_its_end() {
     use crate::tx_detail::source::ReplaySource;
@@ -1462,6 +1493,7 @@ fn bench_records_follow_the_requested_case_mix() {
     assert!(lines[0]["fill"].as_f64().unwrap() > 0.0);
 }
 
+#[cfg(feature = "qualification-tests")]
 mod live {
     //! Live follow against a mock node, as `controller.rs`'s RPC fixture.
     use super::*;
@@ -1540,6 +1572,7 @@ mod live {
         .unwrap_or_else(|_| panic!("tip {tip} was not published"));
     }
 
+    #[cfg(feature = "qualification-tests")]
     #[tokio::test(flavor = "multi_thread")]
     async fn live_follow_publishes_rolls_back_and_halts_on_a_sealed_fork() {
         let temp = tempfile::tempdir().unwrap();
@@ -1659,6 +1692,7 @@ fn shipped_files(candidate: &Path) -> BTreeSet<String> {
 /// segment of its recent revision, as plain files at its root; the cycle
 /// records the prebuild; revision directories still hold exactly their
 /// manifests' files; and collection removes a candidate with its files.
+#[cfg(feature = "qualification-tests")]
 #[tokio::test(flavor = "multi_thread")]
 async fn shipped_runtimes_go_out_with_each_candidate_and_go_with_it() {
     use transparent_shared::tx_detail::prebuild::build_shipped;
@@ -1777,6 +1811,7 @@ async fn a_failed_prebuild_still_publishes_without_runtimes() {
 }
 
 /// The value of one series in a Prometheus text rendering.
+#[cfg(feature = "qualification-tests")]
 fn series(text: &str, name: &str) -> f64 {
     text.lines()
         .find_map(|line| line.strip_prefix(name)?.strip_prefix(' ')?.parse().ok())
@@ -1785,6 +1820,7 @@ fn series(text: &str, name: &str) -> f64 {
 
 /// Checks that one histogram's buckets are cumulative and end at its count,
 /// and returns `(count, sum)`.
+#[cfg(feature = "qualification-tests")]
 fn histogram(text: &str, name: &str, labels: &str) -> (f64, f64) {
     let comma = if labels.is_empty() { "" } else { "," };
     let prefix = format!("{name}_bucket{{{labels}{comma}le=");
@@ -1810,6 +1846,7 @@ fn histogram(text: &str, name: &str, labels: &str) -> (f64, f64) {
 /// `/metrics` after scripted cycles: every family is present, each stage that
 /// ran has one observation per cycle, and each published block one freshness
 /// observation.
+#[cfg(feature = "qualification-tests")]
 #[tokio::test(flavor = "multi_thread")]
 async fn metrics_report_cycles_stages_and_freshness() {
     let temp = tempfile::tempdir().unwrap();

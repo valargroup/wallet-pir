@@ -514,6 +514,21 @@ or invalidation. The reconciler writes observed member states and the routed
 recent count to `state/membership.json`; the controller's `ready_replicas`
 reads it while it is under ten seconds old.
 
+An `https-recent` roster member is a provider that updates itself over HTTPS;
+its entry also names `status_listen`, the provider's loopback listener. The
+adapter never plans, stages, prepares, activates, invalidates or opens a control
+session for it, and it never counts toward quorum, `routed_recent` or
+`ready_replicas`. The reconciler reads its `/v1/provider-status` and
+`/<api_version>/shards/init` on its host over one direct SSH command, every half
+second. It is rendered in the recent group only while its own status shows the
+fleet's exact active `map_sha256`, warm and not invalidated, with every recent
+shard local and unrevoked at the published manifest digest, and its `init` shows
+the same map, network, genesis, profile, start height and covered range.
+The publication endpoint must also be canonical. The first refusing observation
+withdraws it; transport failures follow the replica rule above. Activation
+drops it until it attests the new publication. Its admission or withdrawal
+never routes a fleet without quorum, so it can never force a withdrawal.
+
 Artifact transfers use their own SSH master for up to 60 seconds, never the
 owned control session: a transfer on that connection delayed status past its
 budget. Assignment plans are written once per publication, locally and on each

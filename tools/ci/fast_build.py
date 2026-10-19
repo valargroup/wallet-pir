@@ -49,7 +49,7 @@ def bounded_programs(program, names):
     lanes = min(3, (len(names) + 47) // 48)
     ordered = sorted(names)
     distribution = [name for name in ordered
-                    if name.startswith('controller::distribution_tests::')]
+                    if name.startswith('history::controller::distribution_tests::')]
     if program.get('package') == 'transparent-publisher' and distribution:
         # These cases share expensive immutable native producer bytes. Keep
         # them in one process; each consumer still has its own files and HTTP.
