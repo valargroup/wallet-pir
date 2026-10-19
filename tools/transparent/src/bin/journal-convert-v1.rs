@@ -19,7 +19,6 @@
 //! interrupted run leaves nothing that opens as a journal.
 
 use zakura_pir_protocol::transparent::events as transparent_events;
-use zakura_pir_publisher::transparent::filter as transparent_filter;
 
 use clap::Parser;
 use std::fs::{File, OpenOptions};
@@ -334,7 +333,7 @@ fn main() -> Result<(), BoxError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use transparent_filter::{BlockHash, ScriptBytes};
+    use zakura_pir_publisher::transparent::filter::{BlockHash, ScriptBytes};
 
     fn encode_v1(event: &TransparentEvent) -> [u8; V1_EVENT_BYTES] {
         let mut bytes = [0u8; V1_EVENT_BYTES];
