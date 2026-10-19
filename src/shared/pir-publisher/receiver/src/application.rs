@@ -31,6 +31,14 @@ pub const PROVIDERS: &str = "providers.sqlite";
 const START_OCCUPANCY: u64 = SLOTS as u64 / 2;
 /// The most records a publication holds: more would size the table past [`MAX_ROWS`].
 const MAX_RECORDS: u64 = MAX_ROWS as u64 * START_OCCUPANCY - 1;
+/// The most records the table at [`MAX_ROWS`] places reliably, which health's capacity
+/// measures records against. Placement hashes each record to a row, so a row's load is
+/// about Poisson with mean records / [`MAX_ROWS`], and a salt fails when any row gets
+/// more than its [`SLOTS`]. At 240,000 records about 0.5 rows overflow per salt, so all
+/// 16 salts fail about once in six million publications, and at 300,000, 5.8 rows do
+/// and nearly every publication fails, far below [`MAX_RECORDS`]. In a simulation of
+/// random receivers the best of 16 salts placed 291,280.
+const PLACEABLE_RECORDS: u64 = 240_000;
 /// The shares of a limit at which health's `capacity` level is `warning` and
 /// `critical`. Past a limit no publication is created, so these leave time to act, as
 /// the receiver README's capacity section describes.
@@ -474,7 +482,7 @@ impl<'a> Collected<'a> {
             if rows > MAX_ROWS {
                 let error = "every salt overflowed a bucket at the maximum row count; \
                     no publication created";
-                return Err(refusal.refuse("buckets", records, MAX_RECORDS, error));
+                return Err(refusal.refuse("buckets", records, PLACEABLE_RECORDS, error));
             }
             match store.snapshot(rows, &capture.sets) {
                 Ok(s) => break s,
@@ -536,7 +544,7 @@ impl<'a> Collected<'a> {
         rpc.check_network(genesis).await?;
         let revision = hex::encode(snapshot.manifest.revision()?);
         let mut limits = vec![
-            ("records", records, MAX_RECORDS),
+            ("records", records, PLACEABLE_RECORDS),
             (
                 "filter_bytes",
                 snapshot.filters.len() as u64,
@@ -1469,7 +1477,7 @@ mod tests {
         paused.refresh().await.unwrap();
         let capacity = paused.get("health").await["indexer"]["capacity"].clone();
         assert_eq!(capacity["level"], "ok");
-        let records = json!({"used": 0, "max": MAX_RECORDS});
+        let records = json!({"used": 0, "max": PLACEABLE_RECORDS});
         assert_eq!(capacity["limits"]["records"], records);
         assert!(capacity["limits"]["filter_bytes"]["used"].as_u64().unwrap() > 0);
         assert!(capacity["limits"]["witness_bytes"].is_null());
@@ -1522,6 +1530,40 @@ mod tests {
                 .unwrap()
                 > 0
         );
+    }
+
+    /// Placement at the maximum row count fails every salt well before the sizing
+    /// ceiling. Placing a history of distinct receivers one record at a time, the
+    /// longest any of 16 salts places is above the ceiling health measures records
+    /// against, so the level is already `critical` there and `warning` long before.
+    #[test]
+    fn record_headroom_warns_before_placement_fails() {
+        use receiver_directory::snapshot::row_for;
+        use sha2::{Digest, Sha256};
+        let receivers: Vec<receiver_directory::ReceiverBytes> = (0..330_000u32)
+            .map(|i| {
+                Sha256::digest(i.to_le_bytes()).repeat(2)[..43]
+                    .try_into()
+                    .unwrap()
+            })
+            .collect();
+        let mut manifest = super::common::manifest(MAX_ROWS);
+        let mut placed = 0;
+        for salt in 0..16 {
+            manifest.salt = [salt; 32];
+            let mut load = vec![0; MAX_ROWS as usize];
+            let fits = receivers.iter().position(|receiver| {
+                let row = row_for(&manifest, receiver, 0).unwrap();
+                load[row] += 1;
+                load[row] > SLOTS
+            });
+            placed = placed.max(fits.unwrap_or(receivers.len()) as u64);
+        }
+        assert!(placed > PLACEABLE_RECORDS, "{placed}");
+        assert!(placed < MAX_RECORDS * 2 / 3, "{placed}");
+        let level = |records| capacity(&[("records", records, PLACEABLE_RECORDS)])["level"].clone();
+        assert_eq!(level(placed), "critical");
+        assert_eq!(level(PLACEABLE_RECORDS * 7 / 10), "warning");
     }
 
     #[test]

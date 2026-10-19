@@ -330,10 +330,17 @@ any limit, `critical` from 90%.
 
 | Limit | Maximum | Set by |
 |---|---|---|
-| `records` | 458,751 records: a table starts at half occupancy, so more would need over 65,536 rows | `MAX_ROWS` in wallet-libraries |
+| `records` | 240,000 records, which 65,536 rows place reliably (below) | `MAX_ROWS` in wallet-libraries |
 | `filter_bytes` | 8 MiB | `MAX_FILTERS_BYTES` in wallet-libraries |
 | `witness_bytes` | 64 MiB | `MAX_WITNESS_BYTES` in wallet-libraries |
 | `witness_commitments` | `--max-witness-commitments` (2^24) | the indexer's unit |
+
+Placement hashes each record to a row, and a salt fails when any row gets more than
+its 14 slots, so the largest table fills well before its sizing ceiling of 458,751
+records. Rows load about as a Poisson variable: at 240,000 records about half a row
+overflows per salt and all 16 salts fail about once in six million publications,
+while at 300,000 nearly every publication fails. In a simulation of random receivers
+the best of 16 salts placed 291,280 records.
 
 Health's `capacity_refusal` names the limit that stopped this process's latest
 publication, with its use and maximum, until a publication succeeds: one of the

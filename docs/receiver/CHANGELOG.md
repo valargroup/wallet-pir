@@ -13,10 +13,11 @@
   `stale_history` when it ends more than six hours ago or was last fully reread more
   than three days ago.
 - Report each publication's use of the limits past which no publication is created
-  (records, filter bytes, witness bytes and commitments) as `indexer.capacity`, with
-  a `warning` level from 70% and `critical` from 90%, and the limit behind a refused
-  publication as `capacity_refusal`. The probe passes them on, and `pir-monitor`
-  alerts on them apart from availability.
+  (records against the 240,000 the largest table places reliably, filter bytes,
+  witness bytes and commitments) as `indexer.capacity`, with a `warning` level from
+  70% and `critical` from 90%, and the limit behind a refused publication as
+  `capacity_refusal`. The probe passes them on, and `pir-monitor` alerts on them
+  apart from availability.
 
 - Validate records and witness proofs before writing one-shot publication files,
   including when reading an existing database; refuse invalid output before any
