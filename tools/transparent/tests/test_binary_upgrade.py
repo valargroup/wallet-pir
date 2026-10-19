@@ -18,7 +18,7 @@ from tools.transparent.lib import binary_upgrade  # noqa: E402
 
 OLD, NEW = b'transparent-shard-server v12', b'transparent-shard-server next'
 CTRL_OLD, CTRL_NEW = b'controller v12', b'controller next'
-SERVER = '/usr/local/bin/transparent-shard-server'
+SERVER = '/usr/local/bin/transparent-query-server'
 CONTROLLER_BIN = '/usr/local/bin/transparent-publication-controller'
 WORKERS = {'transparent-v12-archive.service': '10.142.0.9:8093', 'transparent-v12-recent.service': '10.142.0.9:8193'}
 IDS = {'transparent-v12-archive.service': 'transparent-v12-archive-01', 'transparent-v12-recent.service': 'transparent-v12-recent-01'}
@@ -193,7 +193,7 @@ class HistoryUpgrade(Harness):
         self.assertTrue(self.load_active())
         stops = [m for m in self.fake.mutations('coordinator') if m[1] == 'systemctl' and m[2] == ('stop', LOAD_UNIT)]
         self.assertEqual(len(stops), 1)
-        self.assertEqual(self.fake.sha256('v12', '/opt/transparent-publisher/releases/%s/transparent-shard-server'
+        self.assertEqual(self.fake.sha256('v12', '/opt/transparent-publisher/releases/%s/transparent-query-server'
                                           % sha256(NEW)), sha256(NEW))
         code, lines = self.run_cli('rollback')
         self.assertEqual(code, 0, lines)
@@ -461,7 +461,7 @@ class HistoryUpgrade(Harness):
         self.assertEqual(self.fake.probe_unit('coordinator', CONTROLLER)['exe_sha256'], sha256(CTRL_OLD))
 
     def test_staged_release_bytes_are_immutable(self):
-        release = '/opt/transparent-publisher/releases/%s/transparent-shard-server' % sha256(NEW)
+        release = '/opt/transparent-publisher/releases/%s/transparent-query-server' % sha256(NEW)
         self.fake.put('v12', release, b'other bytes')
         self.run_cli('baseline')
         code, lines = self.run_cli('deploy', '--binary', str(self.binary), '--skip-exact-check')
