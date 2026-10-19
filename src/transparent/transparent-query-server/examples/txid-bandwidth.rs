@@ -13,7 +13,7 @@
 use zakura_pir_publisher::transparent as transparent_shard;
 use zakura_pir_query_server::transparent::native as transparent_native;
 
-#[path = "support/bytemeter.rs"]
+#[path = "../tests/support/bytemeter.rs"]
 mod bytemeter;
 #[path = "support/txdisplay.rs"]
 mod txdisplay;
