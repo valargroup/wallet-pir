@@ -88,8 +88,14 @@ fn bucket(sequence: u64) -> usize {
         _ => 3,
     }
 }
-fn admission_wait(due: Instant, now: Instant, interval: Duration) -> Duration {
-    (due + interval).saturating_duration_since(now)
+const PREPARATION_LEAD: Duration = Duration::from_millis(200);
+
+fn preparation_window(interval: Duration, workers: usize) -> usize {
+    (PREPARATION_LEAD.as_nanos().div_ceil(interval.as_nanos()) as usize + 1).min(workers)
+}
+
+fn admission_late(due: Instant, actual: Instant, interval: Duration) -> bool {
+    actual.saturating_duration_since(due) > interval
 }
 fn retryable_transport(error: &BoxError) -> bool {
     error.downcast_ref::<reqwest::Error>().is_some_and(|e| {
@@ -250,6 +256,9 @@ fn main() -> Result<(), BoxError> {
                     continue;
                 }
                 let started = Instant::now(); let unix = now(); let upload = query.body.len();
+                if admission_late(due, started, interval) {
+                    emit(serde_json::json!({"event":"missed_slot","unix":unix,"sequence":sequence,"reason":"client admission delayed beyond one interval"}));
+                }
                 let _ = started_tx.send(started);
                 let response = transport.query(f.shard_id, &f.revision, target.table, &query.body);
                 let http_seconds = started.elapsed().as_secs_f64();
@@ -277,6 +286,8 @@ fn main() -> Result<(), BoxError> {
     let start = Instant::now();
     let mut due = Instant::now() + Duration::from_secs(1);
     let mut sequence = 0;
+    let mut pending_admissions = 0;
+    let window = preparation_window(interval, args.workers);
     let mut counters = [0usize; 4];
     while args.seconds == 0 || start.elapsed() < Duration::from_secs(args.seconds) {
         if !allowed(&args.permit) {
@@ -287,7 +298,7 @@ fn main() -> Result<(), BoxError> {
             due = Instant::now() + interval;
             continue;
         }
-        let dispatch = due.checked_sub(Duration::from_millis(100)).unwrap_or(due);
+        let dispatch = due.checked_sub(PREPARATION_LEAD).unwrap_or(due);
         if let Some(wait) = dispatch.checked_duration_since(Instant::now()) {
             std::thread::sleep(wait);
         }
@@ -315,33 +326,22 @@ fn main() -> Result<(), BoxError> {
             }
         };
         sequence += 1;
-        // Advance from actual admission, not an ideal clock that drifts ahead of
-        // the send gate. HTTP requests remain concurrent: only their starts are
-        // paced. At most one prepared job waits for its admission acknowledgement.
         if enqueued {
-            // Dispatch can precede the intended POST by 100 ms. That planned
-            // wait is not a missed slot; allow one interval past the due time.
-            let actual = match started_rx.recv_timeout(admission_wait(
-                due,
-                Instant::now(),
-                interval,
-            )) {
-                Ok(actual) => actual,
-                Err(mpsc::RecvTimeoutError::Timeout) => {
-                    emit(
-                        serde_json::json!({"event":"missed_slot","unix":now(),"sequence":sequence,"reason":"client admission delayed beyond one interval"}),
-                    );
-                    // One delayed admission is one missed slot, even if it
-                    // takes several intervals before the worker acknowledges it.
-                    started_rx
-                        .recv()
-                        .map_err(|_| "query admission channel closed")?
-                }
-                Err(mpsc::RecvTimeoutError::Disconnected) => {
-                    return Err("query admission channel closed".into())
-                }
-            };
-            due = actual + interval;
+            pending_admissions += 1;
+            due += interval;
+            // Prepare a bounded number of future queries in parallel. Waiting
+            // for every POST before dispatching the next preparation serializes
+            // the expensive archive queries and cannot sustain the reference rate.
+            if pending_admissions >= window {
+                let actual = started_rx
+                    .recv()
+                    .map_err(|_| "query admission channel closed")?;
+                pending_admissions -= 1;
+                // Recenter future work on real POST starts, so scheduling noise
+                // cannot accumulate into an unbounded preparation queue. The
+                // worker's send gate still prevents a catch-up burst.
+                due = due.max(actual + interval * (pending_admissions as u32 + 1));
+            }
         } else {
             due = Instant::now() + interval;
         }
@@ -357,23 +357,25 @@ fn main() -> Result<(), BoxError> {
 mod tests {
     use super::*;
     #[test]
-    fn early_dispatch_waits_until_after_the_intended_post_time() {
+    fn planned_preparation_wait_is_not_a_missed_post() {
         let now = Instant::now();
         let interval = Duration::from_millis(50);
-        let due = now + Duration::from_millis(100);
-        assert_eq!(
-            admission_wait(due, now, interval),
-            Duration::from_millis(150)
-        );
-        assert_eq!(admission_wait(due, due, interval), interval);
-        assert_eq!(
-            admission_wait(due, due + interval, interval),
-            Duration::ZERO
-        );
-        assert_eq!(
-            admission_wait(due, due + 2 * interval, interval),
-            Duration::ZERO
-        );
+        let due = now + PREPARATION_LEAD;
+        assert!(!admission_late(due, now, interval));
+        assert!(!admission_late(due, due, interval));
+        assert!(!admission_late(due, due + interval, interval));
+        assert!(admission_late(
+            due,
+            due + interval + Duration::from_millis(1),
+            interval
+        ));
+    }
+    #[test]
+    fn preparation_lead_has_a_bounded_worker_window() {
+        assert_eq!(preparation_window(Duration::from_millis(50), 16), 5);
+        assert_eq!(preparation_window(Duration::from_millis(500), 8), 2);
+        assert_eq!(preparation_window(Duration::from_millis(10), 4), 4);
+        assert_eq!(preparation_window(Duration::from_millis(50), 1), 1);
     }
     #[test]
     fn application_errors_are_never_retried() {
