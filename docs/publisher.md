@@ -216,3 +216,70 @@ Receiver currently runs on another host. Enabling it on the coordinator needs a
 separately reviewed relocation of its index, witnesses, provider state,
 credentials, node access and serving edge. This implementation does not perform
 that relocation, modify DNS or change any production host.
+
+## Transparent coordinator cutover
+
+The existing v12 history and 4k8 display controllers can be replaced by one
+Transparent-only process without moving their journals or publications. Use the
+`publisher-cutover-*` commands of `tools/scripts/wallet-pir-deploy.py` from a clean
+pinned checkout or matching verified operations bundle. This path deliberately
+keeps fleet-controlled distribution; both products require `http_only: false`.
+It does not deploy or move query workers, change public routes, or enable the
+other publishers.
+
+Prepare a private request with schema `transparent-publisher-cutover/1`, the
+inventory coordinator `host` and its `machine_id`, and `release` containing the
+full `git_sha`, `binary_sha256` and `binary_bytes`. `configuration` is the typed
+publisher configuration with exactly `transparent_history` and
+`transaction_details` enabled and management at `127.0.0.1:18080`. The history
+settings must match the current controller configuration; display settings must
+match the existing run command, whose initial replay must already have reached
+live mode. Make existing false distribution/runtime defaults explicit. Keep the
+publication's existing `source_sha`; the executable's release identity is recorded
+separately. Unknown display command options are refused rather than ignored.
+
+`inventory` is the complete Transparent fleet under
+`tools/deploy/publisher/transparent-services.toml`: retain the history/display
+workers and routing ancillary records, replace their controller roles with one
+publisher server, and set its `managed_products` to
+`["transparent_history", "transaction_details"]`. Each entry of `checks` uses
+one of those two product names and contains `host`, `argv` and `timeout` for an
+independent encrypted-answer probe. Timeouts are at most 900 seconds. Credentials
+remain in the existing runtime files, never in the request. Operator requests
+and inventories stay outside Git.
+
+Run `publisher-cutover-plan` and `publisher-cutover-preflight` with `--request`
+and its exact `--request-sha256`; preflight additionally verifies `--archive`.
+Review the returned `plan_sha256`, then pass it as `--expect-plan-sha256` to
+`publisher-cutover-deploy` with the same inputs. The archive is the clean,
+checksum-verified `pir-publisher` artifact for that source revision, built with
+`--features transparent`. Its actual typed configuration check runs on the
+coordinator before any existing publisher is stopped. This path does not require
+main CI status and does not change the CI-qualified artifact resolver's policy.
+
+The deployment holds the normal production lock, stages the executable, pauses
+the continuous load, stops the old owners and checks that their state locks are
+free. It installs the restricted 12 GiB shared service budget, publisher
+configuration and `/etc/wallet-pir/transparent-fleet.json`. Existing node and
+worker locations remain unchanged. The capacity sampler is retargeted to the
+shared process and the continuous-load controller-unit reference is updated.
+The load resumes only after aggregate readiness and both encrypted probes pass.
+Keep at least 20 percent memory and filesystem headroom; the executable does not
+provide memory isolation between products.
+
+Use `publisher-cutover-status` to inspect observed unit identities and the
+coordinator's journal. Every mutation records intent and completion in
+`/opt/pir-publisher/transactions/<id>/journal.json`; a runner-side copy is retained
+in the chosen state directory. A failed or interrupted deployment is unfinished,
+not accepted. `publisher-cutover-reconcile` restores the captured predecessor
+ownership, as does explicit `publisher-cutover-rollback`. Both take the original
+request and digest. They refuse foreign file changes, stop and join the unified
+process before restoring the old owners, and verify both products before
+resuming load. They restore absent files to absence and never rewind journals or
+publications. Retained executable releases are kept for recovery.
+
+Deployment acceptance additionally requires independent canonical publication
+progress, the deployed wallet regression suite with SQLite reopen/recovery,
+recent/archive and absent display checks, a graceful restart, rollback and
+recutover, and the existing bounded load gate. A configuration check, management
+readiness or a passing CI run alone does not establish that acceptance.
