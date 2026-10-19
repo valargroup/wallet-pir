@@ -590,6 +590,30 @@ class HttpsRecentTests(unittest.IsolatedAsyncioTestCase):
         await self.f.activate({'map_sha256': 'c'*64, 'prepared': prepared})
         self.assertEqual(self.routed(), ['owner', 'r1'])
 
+    async def test_partial_activation_drops_workers_that_moved_to_the_candidate(self):
+        await self.f.reconcile_https(self.https)
+        self.assertIn('h1', self.routed())
+        prepared = {'workers': {'owner': {'expected': 'a'*64}, 'r1': {'expected': 'a'*64}},
+                    'assignment': str(self.assignment)}
+        async def control(worker, value):
+            self.assertNotEqual(worker['id'], 'h1')
+            if worker['id'] == 'owner':
+                raise RuntimeError('archive activation failed')
+            return {'active': {'map_sha256': 'c'*64}, 'warm': True, 'invalidated': False}
+        self.f.control = control
+        with self.assertRaisesRegex(RuntimeError, 'activation quorum unavailable'):
+            await self.f.activate({'map_sha256': 'c'*64, 'prepared': prepared})
+        self.assertEqual(self.f.rendered_ids(), [])
+        self.assertEqual(json.loads((self.root/'active.json').read_text())['map_sha256'], 'a'*64)
+        self.assertEqual(self.routed(), ['h1', 'owner'])
+        self.rendered.clear()
+        # The provider followed the candidate. Withdrawing it routes whatever
+        # active.json still lists, so the moved replica must already be gone.
+        self.provider = self.serving('c'*64)
+        await self.f.reconcile_https(self.https)
+        self.assertNotIn('r1', self.routed())
+        self.assertFalse(any('r1:8093' in body for body in self.rendered))
+
     async def test_invalidation_sends_it_nothing_and_its_failure_never_withdraws(self):
         await self.f.reconcile_https(self.https)
         self.rendered.clear()
