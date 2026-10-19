@@ -58,6 +58,7 @@
   "transparent-publisher": {
     "fast": [],
     "full": [
+      "controller_update_campaign",
       "event_codec_bounds",
       "service_round_trip",
       "shard_filters"

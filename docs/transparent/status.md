@@ -6,6 +6,17 @@ M4–M6 are open.** This records observed progress, not a new live fleet health
 check. [Remaining work](remaining-work.md) is the authoritative outstanding
 checklist; [deployment](deployment.md) owns operating targets.
 
+## HTTPS controller-update campaign, 2026-10-19
+
+A local small-fixture run at `d0f41852` used the real controller, a fixed archive
+owner and two providers. It recorded 1,448 exact released391 recoveries against
+journal-derived ledgers, with zero wrong answers. It also covered supersession,
+restarts during transfer and activation, and a publisher TLS restart.
+10-consumer distribution waves completed for 8 of 10 consumers under HTTP 503
+admission refusals. The 100-consumer step was refused by the disk bound. This is
+diagnostic evidence, not qualification
+([details](prepared-distribution.md#controller-update-campaign)).
+
 ## Prepared history runtimes
 
 The publisher can prepare segment runtimes and transfer only the files assigned

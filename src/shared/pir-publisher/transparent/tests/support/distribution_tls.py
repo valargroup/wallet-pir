@@ -13,7 +13,9 @@ import sys
 import time
 from pathlib import Path
 
-upstream, cert, key, control = sys.argv[1:]
+upstream, cert, key, control = sys.argv[1:5]
+# An optional fixed port lets a restarted terminator keep the configured origin.
+port = int(sys.argv[5]) if len(sys.argv) > 5 else 0
 
 class Handler(http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
@@ -127,7 +129,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         finally:
             connection.close()
 
-server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+server = http.server.ThreadingHTTPServer(("127.0.0.1", port), Handler)
 server.daemon_threads = True
 context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
 context.load_cert_chain(cert, key)

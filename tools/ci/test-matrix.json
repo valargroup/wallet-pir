@@ -62,6 +62,7 @@
       "transparent:transparent-publisher:doc:transparent_publisher",
       "transparent:transparent-publisher:example:publication_bench",
       "transparent:transparent-publisher:lib:transparent_publisher",
+      "transparent:transparent-publisher:test:controller_update_campaign",
       "transparent:transparent-publisher:test:event_codec_bounds",
       "transparent:transparent-publisher:test:service_round_trip",
       "transparent:transparent-publisher:test:shard_filters",
