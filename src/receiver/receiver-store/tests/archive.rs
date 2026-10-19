@@ -265,3 +265,22 @@ fn returning_branch_keeps_its_own_correction_baseline() {
     let repaired = store.stage(returned, None, 2).unwrap();
     assert_eq!(repaired.epoch, 1);
 }
+
+/// Guard revocation cancels a delayed republication but cannot revoke a newer head.
+#[test]
+fn guard_revocation_fences_pending_activation() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("archive.sqlite");
+    let mut store = ArchiveStore::open(&path, config()).unwrap();
+    let first = store.stage(blocks(256, false, false), None, 0).unwrap();
+    store.activate(&first, 0).unwrap();
+    let delayed = store.stage(blocks(256, false, false), None, 1).unwrap();
+    store.revoke_if_head(&first, 2).unwrap();
+    assert!(store.activate(&delayed, 3).is_err());
+    assert!(store.head().unwrap().is_none());
+    let newer = store.stage(blocks(257, false, true), None, 4).unwrap();
+    store.activate(&newer, 4).unwrap();
+    store.revoke_if_head(&first, 5).unwrap();
+    assert_eq!(store.head().unwrap(), Some(newer.clone()));
+    store.activate(&newer, 6).unwrap();
+}
