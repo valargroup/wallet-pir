@@ -227,3 +227,41 @@ fn streamed_source_and_pir_prefix_share_exact_records() {
     assert_eq!(correction.epoch, head.epoch + 1);
     assert_eq!(correction.index_root, head.index_root);
 }
+
+/// Rebuilding against a shorter node cannot discard a suffix's correction baseline.
+#[test]
+fn shortened_rebuild_preserves_correction_baseline() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("archive");
+    let mut store = ArchiveStore::open(&path, config()).unwrap();
+    let initial = store.stage(blocks(257, false, false), None, 0).unwrap();
+    store.activate(&initial, 0).unwrap();
+    let prefix = store.stage(blocks(254, false, false), None, 1).unwrap();
+    store.activate(&prefix, 1).unwrap();
+    assert_eq!(prefix.epoch, 0);
+    drop(store);
+    let mut store = ArchiveStore::open(&path, config()).unwrap();
+    let mut rebuilt = blocks(257, false, false);
+    let changed = rebuilt[2].as_mut().unwrap();
+    changed.records = [8; 32];
+    changed.receivers = vec![[7; 43]];
+    let repaired = store.stage(rebuilt, None, 2).unwrap();
+    assert_eq!(repaired.archive, initial.archive);
+    assert_eq!(repaired.epoch, 1);
+}
+
+/// An offline wallet may never observe an intervening fork before its original chain returns.
+#[test]
+fn returning_branch_keeps_its_own_correction_baseline() {
+    let mut store = ArchiveStore::open(":memory:", config()).unwrap();
+    let initial = store.stage(blocks(257, false, false), None, 0).unwrap();
+    store.activate(&initial, 0).unwrap();
+    let fork = store.stage(blocks(257, false, true), None, 1).unwrap();
+    store.activate(&fork, 1).unwrap();
+    let mut returned = blocks(257, false, false);
+    let changed = returned[2].as_mut().unwrap();
+    changed.records = [8; 32];
+    changed.receivers = vec![[7; 43]];
+    let repaired = store.stage(returned, None, 2).unwrap();
+    assert_eq!(repaired.epoch, 1);
+}

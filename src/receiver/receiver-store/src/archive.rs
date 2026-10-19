@@ -46,6 +46,10 @@ impl ArchiveStore {
             seen BLOB, active BLOB, staged BLOB);
             CREATE TABLE IF NOT EXISTS archive_blocks (height INTEGER PRIMARY KEY,
                 hash BLOB NOT NULL CHECK(length(hash)=32), records BLOB NOT NULL CHECK(length(records)=32));
+            CREATE TABLE IF NOT EXISTS archive_fingerprints (
+                height INTEGER NOT NULL, hash BLOB NOT NULL CHECK(length(hash)=32), records BLOB NOT NULL CHECK(length(records)=32),
+                PRIMARY KEY(height,hash));
+            INSERT OR IGNORE INTO archive_fingerprints SELECT height,hash,records FROM archive_blocks;
             CREATE TABLE IF NOT EXISTS archive_pages (digest BLOB PRIMARY KEY CHECK(length(digest)=32), bytes BLOB NOT NULL);
             CREATE TABLE IF NOT EXISTS archive_seen (digest BLOB PRIMARY KEY CHECK(length(digest)=32), bytes BLOB NOT NULL);
             CREATE TABLE IF NOT EXISTS archive_heads (digest BLOB PRIMARY KEY CHECK(length(digest)=32),
@@ -129,20 +133,33 @@ impl ArchiveStore {
                 store_page(&tx, page_parent, std::mem::take(&mut filters), &mut leaves)?;
                 page_parent = parent;
             }
-            let old: Option<(Vec<u8>, Vec<u8>)> = tx
+            let old: Option<Vec<u8>> = tx
                 .query_row(
-                    "SELECT hash,records FROM archive_blocks WHERE height=?1",
-                    [block.id.height],
-                    |r| Ok((r.get(0)?, r.get(1)?)),
+                    "SELECT records FROM archive_fingerprints WHERE height=?1 AND hash=?2",
+                    params![block.id.height, block.id.hash.as_slice()],
+                    |r| r.get(0),
                 )
                 .optional()?;
-            if let Some((hash, records)) = old {
-                if hash == block.id.hash {
-                    corrected |= records != block.records;
-                } else {
-                    forked = true;
-                }
-            }
+            corrected |= old.is_some_and(|records| records != block.records);
+            let canonical: Option<Vec<u8>> = tx
+                .query_row(
+                    "SELECT hash FROM archive_blocks WHERE height=?1",
+                    [block.id.height],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            forked |= canonical.is_some_and(|hash| hash != block.id.hash);
+            // A shortened rebuild or an intervening fork must not erase the comparison
+            // baseline a returning offline wallet may still rely on.
+            tx.execute(
+                "INSERT INTO archive_fingerprints VALUES (?1,?2,?3)
+                ON CONFLICT(height,hash) DO UPDATE SET records=excluded.records",
+                params![
+                    block.id.height,
+                    block.id.hash.as_slice(),
+                    block.records.as_slice()
+                ],
+            )?;
             tx.execute(
                 "INSERT INTO archive_blocks VALUES (?1,?2,?3) ON CONFLICT(height)
                 DO UPDATE SET hash=excluded.hash,records=excluded.records",
