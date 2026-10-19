@@ -565,6 +565,7 @@ jobs:
         run: |
           cargo build --locked --profile release-fast -p transparent-tools --bin transparent-regression --bin regression-export --bin txid-quality-canary
           cargo build --locked --profile release-fast -p transparent-query-server --example rate-query --example txid-rate
+          cargo test --locked --profile release-fast -p transparent-query-server --example rate-query
       - name: Package the exact source candidate
         run: |
           python3 tools/ci/release.py assemble --kind pir-publisher --sha "$GITHUB_SHA" --output .local-pir/publisher-candidate
