@@ -84,6 +84,122 @@ pub struct AnchorCheck {
     pub canonical: bool,
 }
 
+/// Most exact anchors one batched canonicality check names.
+pub const MAX_ANCHOR_BATCH: usize = 256;
+/// Largest batched canonicality request or response body.
+pub const MAX_ANCHOR_BATCH_BYTES: usize = 64 << 10;
+/// Path below [`PREFIX`] for a POSTed [`AnchorBatchRequest`].
+pub const ANCHOR_BATCH_PATH: &str = "anchors/check";
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(deny_unknown_fields)]
+pub struct AnchorPair {
+    pub height: u64,
+    pub hash: String,
+}
+
+/// Exact anchors checked against one source snapshot. The publisher refuses a
+/// request for any other snapshot instead of answering for its own.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct AnchorBatchRequest {
+    pub schema: String,
+    pub revision: u64,
+    pub recovery_epoch: u64,
+    pub inventory_sha256: String,
+    pub anchors: Vec<AnchorPair>,
+}
+impl AnchorBatchRequest {
+    /// The request names `current`'s snapshot and at most
+    /// [`MAX_ANCHOR_BATCH`] distinct well-formed anchors.
+    pub fn new(current: &Current, anchors: Vec<AnchorPair>) -> Result<Self, Error> {
+        let request = Self {
+            schema: current.schema.clone(),
+            revision: current.revision,
+            recovery_epoch: current.recovery_epoch,
+            inventory_sha256: current.inventory_sha256.clone(),
+            anchors,
+        };
+        request.validate()?;
+        Ok(request)
+    }
+    pub fn validate(&self) -> Result<(), Error> {
+        let distinct: BTreeSet<_> = self.anchors.iter().collect();
+        if self.schema != SCHEMA
+            || !is_digest(&self.inventory_sha256)
+            || self.anchors.is_empty()
+            || self.anchors.len() > MAX_ANCHOR_BATCH
+            || distinct.len() != self.anchors.len()
+            || self.anchors.iter().any(|a| !is_digest(&a.hash))
+        {
+            return Err("invalid anchor batch request".into());
+        }
+        Ok(())
+    }
+    /// Whether this request names the snapshot `current` describes.
+    pub fn names(&self, current: &Current) -> bool {
+        self.schema == current.schema
+            && self.revision == current.revision
+            && self.recovery_epoch == current.recovery_epoch
+            && self.inventory_sha256 == current.inventory_sha256
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct AnchorResult {
+    pub height: u64,
+    pub hash: String,
+    pub canonical: bool,
+}
+
+/// A live publisher attestation for every anchor of one request, from the same
+/// canonicality source and snapshot fences as [`AnchorCheck`].
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct AnchorBatch {
+    pub schema: String,
+    pub revision: u64,
+    pub recovery_epoch: u64,
+    pub inventory_sha256: String,
+    pub genesis_hash: String,
+    pub results: Vec<AnchorResult>,
+}
+impl AnchorBatch {
+    /// Exactly one answer for every requested anchor, for the requested
+    /// snapshot and genesis. Anything else proves nothing about any anchor.
+    pub fn answers(
+        &self,
+        request: &AnchorBatchRequest,
+        genesis_hash: &str,
+    ) -> Result<BTreeMap<AnchorPair, bool>, Error> {
+        if self.schema != request.schema
+            || self.revision != request.revision
+            || self.recovery_epoch != request.recovery_epoch
+            || self.inventory_sha256 != request.inventory_sha256
+            || self.genesis_hash != genesis_hash
+        {
+            return Err("canonicality attestation identity/snapshot superseded".into());
+        }
+        let mut answers = BTreeMap::new();
+        for result in &self.results {
+            let pair = AnchorPair {
+                height: result.height,
+                hash: result.hash.clone(),
+            };
+            if answers.insert(pair, result.canonical).is_some() {
+                return Err("duplicate canonicality answer".into());
+            }
+        }
+        if answers.len() != request.anchors.len()
+            || request.anchors.iter().any(|a| !answers.contains_key(a))
+        {
+            return Err("canonicality answers do not match the request".into());
+        }
+        Ok(answers)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum Kind {
@@ -459,5 +575,100 @@ mod tests {
         assert!(safe_path("abc-123/directory.0.bin"));
         assert!(is_digest(&"ab".repeat(32)));
         assert!(!is_digest(&"AB".repeat(32)));
+    }
+
+    #[test]
+    fn anchor_batches_bind_one_snapshot_and_answer_every_anchor_once() {
+        let current = Current {
+            schema: SCHEMA.into(),
+            revision: 7,
+            recovery_epoch: 2,
+            inventory_sha256: "11".repeat(32),
+            network: "main".into(),
+            genesis_hash: "00".repeat(32),
+            anchor_height: 9,
+            anchor_hash: "22".repeat(32),
+            eligibility: Eligibility::Canonical,
+            invalidated_from: None,
+        };
+        let pair = |height, byte: &str| AnchorPair {
+            height,
+            hash: byte.repeat(32),
+        };
+        assert!(AnchorBatchRequest::new(&current, vec![]).is_err());
+        assert!(AnchorBatchRequest::new(&current, vec![pair(1, "aa"), pair(1, "aa")]).is_err());
+        assert!(AnchorBatchRequest::new(&current, vec![pair(1, "AA")]).is_err());
+        let many = (0..=MAX_ANCHOR_BATCH as u64)
+            .map(|h| pair(h, "aa"))
+            .collect();
+        assert!(AnchorBatchRequest::new(&current, many).is_err());
+        let full: Vec<_> = (0..MAX_ANCHOR_BATCH as u64)
+            .map(|h| pair(h, "aa"))
+            .collect();
+        let largest = AnchorBatchRequest::new(&current, full).unwrap();
+        assert!(serde_json::to_vec(&largest).unwrap().len() < MAX_ANCHOR_BATCH_BYTES);
+        let response = AnchorBatch {
+            schema: SCHEMA.into(),
+            revision: 7,
+            recovery_epoch: 2,
+            inventory_sha256: "11".repeat(32),
+            genesis_hash: "00".repeat(32),
+            results: (0..MAX_ANCHOR_BATCH as u64)
+                .map(|height| AnchorResult {
+                    height,
+                    hash: "aa".repeat(32),
+                    canonical: true,
+                })
+                .collect(),
+        };
+        assert!(serde_json::to_vec(&response).unwrap().len() < MAX_ANCHOR_BATCH_BYTES);
+
+        let request =
+            AnchorBatchRequest::new(&current, vec![pair(1, "aa"), pair(2, "bb")]).unwrap();
+        assert!(request.names(&current));
+        let mut other = current.clone();
+        other.inventory_sha256 = "33".repeat(32);
+        assert!(!request.names(&other));
+        let result = |height, byte: &str, canonical| AnchorResult {
+            height,
+            hash: byte.repeat(32),
+            canonical,
+        };
+        let batch = AnchorBatch {
+            schema: SCHEMA.into(),
+            revision: 7,
+            recovery_epoch: 2,
+            inventory_sha256: "11".repeat(32),
+            genesis_hash: "00".repeat(32),
+            results: vec![result(2, "bb", false), result(1, "aa", true)],
+        };
+        let answers = batch.answers(&request, &current.genesis_hash).unwrap();
+        assert_eq!(answers[&pair(1, "aa")], true);
+        assert_eq!(answers[&pair(2, "bb")], false);
+        assert!(batch.answers(&request, &"44".repeat(32)).is_err());
+        for broken in [
+            vec![result(1, "aa", true)],
+            vec![result(1, "aa", true), result(1, "aa", true)],
+            vec![
+                result(1, "aa", true),
+                result(2, "bb", false),
+                result(1, "aa", true),
+            ],
+            vec![result(1, "aa", true), result(3, "bb", false)],
+        ] {
+            let mut wrong = batch.clone();
+            wrong.results = broken;
+            assert!(wrong.answers(&request, &current.genesis_hash).is_err());
+        }
+        for mutate in [
+            |b: &mut AnchorBatch| b.revision += 1,
+            |b: &mut AnchorBatch| b.recovery_epoch += 1,
+            |b: &mut AnchorBatch| b.inventory_sha256 = "33".repeat(32),
+            |b: &mut AnchorBatch| b.schema = "other".into(),
+        ] {
+            let mut wrong = batch.clone();
+            mutate(&mut wrong);
+            assert!(wrong.answers(&request, &current.genesis_hash).is_err());
+        }
     }
 }

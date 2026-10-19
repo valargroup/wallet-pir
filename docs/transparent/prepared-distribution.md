@@ -23,12 +23,13 @@ or incompatible recent runtime prevents finalization. It verifies native body
 checksums, public-mask binding and source self-consistency through the production
 loader; a header/length match alone is insufficient.
 
-All routes are GET-only under `/provider/v1/`:
+All routes are under `/provider/v1/`, GET-only except the POSTed batch check:
 
 | Route | Response |
 |---|---|
 | `current` | `transparent-prepared-distribution-v1`: durable `revision`, process-local `recovery_epoch`, `inventory_sha256`, network/genesis, exact anchor, eligibility and `invalidated_from` |
 | `anchors/{height}/{hash}` | Live canonicality attestation for a public anchor, bound to genesis and the publisher revision/recovery snapshot; no serving permission |
+| `POST anchors/check` | The same attestation for at most 256 distinct anchors in one request of at most 64 KiB naming schema, `revision`, `recovery_epoch` and `inventory_sha256`; any other snapshot is 409. One admission and genesis read before and after the hash reads, then one fence against epoch, revision, map, inventory and withdrawal changes; the response repeats the snapshot and genesis with exactly one result per anchor, or answers none (503) |
 | `inventories/{sha256}` | Exact digest-bound inventory JSON for the current publication |
 | `artifacts/{sha256}` | Exact immutable file bytes referenced locally by that inventory |
 
@@ -154,10 +155,14 @@ it does not grant permission to serve. The PR2 publication owner repeats the fre
 prepare/activate CAS, consumes applicable invalidation first, and retains admitted
 handles under the existing rules. Persisted prepared files and saved attestations
 can never bypass that owner boundary on restart. A retained older publication can
-be checked through `anchors/{height}/{hash}` after missed revisions; the latest
+be checked through `anchors/check` after missed revisions; the latest
 `invalidated_from` alone is not a cumulative revocation history and must not be
 used to infer old-anchor validity. Positive noncanonical evidence is applied via
-the existing persisted invalidation path before admitting/returning affected work.
+the existing persisted invalidation path before admitting/returning affected work. The manager asks
+each distinct anchor once, in batches of 256, and revokes every completed batch's
+negatives before requesting the next, so a later failure cannot discard them.
+There is no fallback to per-anchor requests: release the publisher with this
+route before or together with its query servers.
 
 Transparent has **no lease**, expiry extension or watchdog renewal. A fresh HTTPS
 response means the publisher checked the offered anchor; it does not promise a
@@ -185,7 +190,12 @@ worker in the existing binary. A successful initial fetch or verified predecesso
 and live owner check precede listener binding. Startup source failure refuses to
 listen; restart retries through the operator's normal process supervisor. A saved
 predecessor can recover through fresh exact-anchor checks while a newer candidate
-fails to download; the saved pointer alone grants no authority. After
+fails to download; the saved pointer alone grants no authority. When the
+recovered publication's persisted verified inventory, map, holdings and runtime
+directory all equal the fresh current inventory and none of its digests is
+revoked, recovery records that snapshot and finishes without staging, loading or
+warming it again; an absent or damaged record, or any difference, takes the full
+update while the recovered predecessor keeps serving. After
 startup, synchronization runs independently of wallet requests. Without the
 fixed archive option below, this remains a recent worker, **not a complete history
 provider**: the accounting-only archive row does not qualify a route.
@@ -205,13 +215,19 @@ Only an activated snapshot supplies a conditional token.
 Unchanged responses do not fetch inventories/artifacts, update a success-time
 lease, or authorize an activation. Transparent still has no lease.
 
-Completed objects live under `objects/<sha256>`. Every reuse verifies exact
-length and digest; each fresh staging tree receives separate copies, then the
-production loader verifies tables and prewarms required native runtimes. On
+Completed objects live under `objects/<sha256>`, read-only. Downloads stream into
+a unique `<sha256>.partial-*` name while hashing and enforcing the declared length
+and body budget, and are synced before and after their rename. Every reuse of a
+regular object verifies exact length and digest again; anything else under that
+name is unlinked, never followed. Each fresh staging tree hard-links those
+verified inodes, which nothing writes, so staging does not hash them again; only
+a filesystem that reports linking unsupported receives a copy that is verified
+on its own. Then the production loader verifies tables and prewarms required
+native runtimes. On
 later preparation, native files are also loaded and self-checked independently of
 resident cache hits before recording a replacement directory, even on the same map. Files,
 child directories and staging parents are synced before publishing an active
-pointer. Incomplete copies have a `.partial` name and are never reuse candidates.
+pointer. Interrupted partials are removed before staging and never reused.
 A corrupt object is downloaded again; a bad download never replaces its completed
 object. Successful artifacts from an interrupted attempt are reusable without
 relying on old inventories, deltas or saved proofs. Interrupted staging and old
@@ -582,7 +598,7 @@ match the approved publisher. `publisher_ca`/`archive_ca`, when needed, name
 operator-installed PEM trust roots outside writable state; ordinary certificate
 and hostname validation stays enabled.
 
-Canonicality comes from the publisher's live `anchors/{height}/{hash}` HTTPS
+Canonicality comes from the publisher's live `anchors/check` HTTPS
 attestations, delegated to its existing NodeClient chain checks. The provider
 trusts that configured publisher for these checks and indexed completeness;
 locally verified files/digests are not chain proofs or offline authority. There

@@ -11,7 +11,11 @@ use crate::{
     routing::bootstrap::{self, Config, Source},
 };
 use pir_pipeline::Input;
-use std::{collections::BTreeSet, path::Path, time::Duration};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::Path,
+    time::Duration,
+};
 use transparent_shared::publication::{self, Current, Error, Inventory};
 use transparent_shared::{
     history::{
@@ -580,24 +584,31 @@ impl Prepared<'_> {
                     // revisions, before permitting a newer recovery to clear them.
                     let map: transparent_filter::ShardMap =
                         serde_json::from_slice(&std::fs::read(&map_path)?)?;
-                    let mut keep = BTreeSet::new();
-                    for shard in &map.shards {
-                        if !source
-                            .anchor(&latest, shard.end_height, &shard.terminal_block_hash)
-                            .await?
-                        {
-                            revoke_digests(
-                                root,
-                                &checked_live,
-                                &latest,
-                                BTreeSet::from([shard.manifest_digest.clone()]),
-                                revocations,
-                            )
-                            .await?;
-                            return Err("candidate anchor is noncanonical".into());
-                        }
-                        keep.insert(shard.manifest_digest.clone());
+                    let anchors = map.shards.iter().map(|shard| {
+                        (
+                            shard.end_height,
+                            shard.terminal_block_hash.clone(),
+                            shard.manifest_digest.clone(),
+                        )
+                    });
+                    if !fresh_anchors(
+                        source,
+                        root,
+                        &checked_live,
+                        &latest,
+                        anchors,
+                        true,
+                        revocations,
+                    )
+                    .await?
+                    {
+                        return Err("candidate anchor is noncanonical".into());
                     }
+                    let keep: BTreeSet<String> = map
+                        .shards
+                        .iter()
+                        .map(|shard| shard.manifest_digest.clone())
+                        .collect();
                     if latest.revision > combined_floor(root, revocations)?.revision {
                         checked_live.restore_verified(&keep)?;
                         let mut intent = combined_floor(root, revocations)?;
@@ -786,28 +797,66 @@ async fn apply_snapshot(
     }
     // Revalidate all retained anchors after missed revisions, rather than infer
     // their validity from the publisher's most recent invalidation range.
+    let mut anchors = Vec::with_capacity(revisions.len());
     for revision in revisions {
-        let height = revision["end_height"]
-            .as_u64()
-            .ok_or("invalid owner anchor")?;
-        let hash = revision["terminal_block_hash"]
-            .as_str()
-            .ok_or("invalid owner hash")?;
-        if !source.anchor(current, height, hash).await? {
-            revoke_digests(
-                root,
-                live,
-                current,
-                BTreeSet::from([revision["digest"]
-                    .as_str()
-                    .ok_or("owner missing digest")?
-                    .into()]),
-                memory,
-            )
-            .await?;
+        anchors.push((
+            revision["end_height"]
+                .as_u64()
+                .ok_or("invalid owner anchor")?,
+            revision["terminal_block_hash"]
+                .as_str()
+                .ok_or("invalid owner hash")?
+                .to_string(),
+            revision["digest"]
+                .as_str()
+                .ok_or("owner missing digest")?
+                .to_string(),
+        ));
+    }
+    fresh_anchors(source, root, live, current, anchors, false, memory).await?;
+    Ok(())
+}
+
+/// Fresh canonicality of exact `(height, hash, digest)` anchors in bounded
+/// batches, each pair asked once. Authenticated negatives from each completed
+/// batch are revoked before any later batch is requested, so neither a later
+/// failure nor a persistence error can discard them. A transport, outage or
+/// identity failure answers for no anchor of its batch. Returns whether every
+/// checked anchor was canonical; `stop` ends after the first negative batch.
+async fn fresh_anchors(
+    source: &mut Source,
+    root: &Path,
+    live: &LiveService,
+    current: &Current,
+    anchors: impl IntoIterator<Item = (u64, String, String)>,
+    stop: bool,
+    memory: &mut Revocations,
+) -> Result<bool, Error> {
+    let mut digests: BTreeMap<publication::AnchorPair, BTreeSet<String>> = BTreeMap::new();
+    for (height, hash, digest) in anchors {
+        digests
+            .entry(publication::AnchorPair { height, hash })
+            .or_default()
+            .insert(digest);
+    }
+    let pairs: Vec<_> = digests.keys().cloned().collect();
+    let mut canonical = true;
+    for batch in pairs.chunks(publication::MAX_ANCHOR_BATCH) {
+        let answers = source.anchors(current, batch).await?;
+        let negative: BTreeSet<String> = batch
+            .iter()
+            .filter(|pair| !answers[*pair])
+            .flat_map(|pair| digests[pair].iter().cloned())
+            .collect();
+        if !negative.is_empty() {
+            canonical = false;
+            revoke_digests(root, live, current, negative, memory).await?;
+            if stop {
+                break;
+            }
         }
     }
-    Ok(())
+    Ok(canonical)
 }
 
 /// Every live poll boundary applies authenticated positive evidence even if a
