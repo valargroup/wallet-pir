@@ -1,8 +1,9 @@
 //! The recovery directory's durable state, kept in its own database apart from chain
 //! coverage so that no rewind, rebuild of the index or restart loses it: the
 //! payment-history epoch, the seen set's union and the payment records of every
-//! interval published. Carry the database to a replacement host, or rebuild it there
-//! from the live publication with [`RecoveryStore::adopt`].
+//! interval published. Carry the database to a replacement host and
+//! [`RecoveryStore::import`] it there, or, without it, [`RecoveryStore::adopt`] the
+//! live publication.
 use crate::Error;
 use receiver_directory::{catalog::CatalogHead, seen::SeenSet, Hash};
 use rusqlite::{params, Connection, OptionalExtension};
@@ -162,14 +163,59 @@ impl RecoveryStore {
         Ok(epoch)
     }
 
-    /// Takes over from a publication made elsewhere, as on a replacement host:
+    /// Takes over from a publication made elsewhere whose recovery database is lost:
     /// merges `seen`, which must be the set `head` names (see [`merge_seen`]), and
-    /// raises the epoch to `head`'s if it is lower. Any refusal changes nothing.
+    /// raises the epoch above `head`'s, since a correction made since cannot be compared
+    /// with the unknown published records. Any refusal changes nothing.
     pub fn adopt(&mut self, head: &CatalogHead, seen: &SeenSet) -> Result<(), Error> {
         head.check_seen(seen)?;
         let tx = self.db.transaction()?;
         merge_seen(&tx, &self.genesis, seen)?;
-        raise_epoch(&tx, head.epoch)?;
+        let above = head.epoch.checked_add(1).ok_or(Error::Malformed)?;
+        raise_epoch(&tx, above)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Takes over another host's recovery database at `path`, on the same network:
+    /// merges its seen union (see [`merge_seen`]), raises the epoch to its own, and
+    /// takes the segments this database lacks as the baseline [`Self::commit`] compares
+    /// later publications with. A segment both hold with the same boundary hashes but
+    /// other records increments the epoch. Any refusal changes nothing.
+    pub fn import(&mut self, path: impl AsRef<Path>) -> Result<(), Error> {
+        let other = Self::open(path, self.genesis)?;
+        let tx = self.db.transaction()?;
+        if let Some(seen) = other.seen()? {
+            merge_seen(&tx, &self.genesis, &seen)?;
+        }
+        let mut corrected = false;
+        let starts = other
+            .db
+            .prepare("SELECT start FROM segments")?
+            .query_map([], |r| r.get::<_, u32>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        for start in starts {
+            let theirs = recorded_segment(&other.db, start)?.expect("a listed segment");
+            match recorded_segment(&tx, start)? {
+                None => write_segment(
+                    &tx,
+                    &Segment {
+                        start,
+                        start_hash: theirs.0,
+                        end_hash: theirs.1,
+                        records: theirs.2,
+                        blocks: recorded_blocks(&other.db, start)?,
+                    },
+                )?,
+                Some(ours) => {
+                    corrected |= (ours.0, ours.1) == (theirs.0, theirs.1) && ours != theirs
+                }
+            }
+        }
+        raise_epoch(&tx, other.epoch()?)?;
+        if corrected {
+            tx.execute("UPDATE state SET epoch=epoch+1", [])?;
+        }
         tx.commit()?;
         Ok(())
     }

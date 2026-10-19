@@ -263,10 +263,11 @@ The service publishes from memory and writes no publication files; the index kee
 only `directory.sqlite`, `providers.sqlite` and `recovery.sqlite`. A
 `publications/` directory left by an earlier release can be deleted. Back up
 `providers.sqlite` with the index: rebuilding it means one read of every swap since
-`--near-since`. Never delete `recovery.sqlite`, and carry it to a replacement host:
-it holds the payment-history epoch and the seen union that published recovery
-objects must never lose. Without it, run `receiver-directory recovery adopt` with
-the live catalog head and seen set before starting the service there (see
+`--near-since`. Never delete `recovery.sqlite`: it holds the payment-history
+epoch, the seen union and the published records that published recovery objects
+depend on. On a replacement host, run `receiver-directory recovery import` with
+the old host's copy before starting the service there, or, if it is lost,
+`recovery adopt` with the live catalog head and seen set (see
 [the receiver README](../../../docs/receiver/README.md#recovery-objects)). Logs go to the
 journal through `tracing`; `RUST_LOG` in the unit sets the level.
 

@@ -281,9 +281,16 @@ pub enum Command {
     /// in a way the indexer cannot detect, so wallets recheck it; see
     /// [`RecoveryStore::commit`] for what it detects itself.
     BumpEpoch,
-    /// Take over from the live publication, as on a replacement host: raise the epoch
-    /// to the catalog head's and adopt its seen set, both as served at
-    /// `/v1/receiver/catalog/<digest>` and `/v1/receiver/seen/<digest>`.
+    /// Take over another host's `recovery.sqlite` at `from`, as on a replacement host:
+    /// its epoch, seen union and published records; see [`RecoveryStore::import`].
+    Import {
+        #[arg(long)]
+        from: PathBuf,
+    },
+    /// Take over the live publication when the old host's database is lost: adopt its
+    /// seen set and raise the epoch above the catalog head's, both as served at
+    /// `/v1/receiver/catalog/<digest>` and `/v1/receiver/seen/<digest>`; see
+    /// [`RecoveryStore::adopt`].
     Adopt {
         #[arg(long)]
         catalog: PathBuf,
@@ -302,6 +309,7 @@ pub fn run(args: Args) -> Result<()> {
         Command::BumpEpoch => {
             store.bump_epoch()?;
         }
+        Command::Import { from } => store.import(from)?,
         Command::Adopt { catalog, seen } => {
             let read = |path: &Path| std::fs::read(path);
             let head = CatalogHead::decode(&read(catalog)?)?;
@@ -634,7 +642,7 @@ mod tests {
         assert!(rebuilt.recovery().commit(&[], &smaller, hash_at).is_err());
     }
 
-    /// Adoption raises the epoch to the live catalog's and takes its seen set when it
+    /// Adoption raises the epoch above the live catalog's and takes its seen set when it
     /// holds the recorded union.
     #[test]
     fn a_replacement_host_adopts_the_live_epoch_and_seen_set() {
@@ -655,7 +663,7 @@ mod tests {
         let other = tempfile::tempdir().unwrap();
         let mut fresh = RecoveryStore::open(other.path().join(RECOVERY), GENESIS).unwrap();
         fresh.adopt(&head, &live).unwrap();
-        assert_eq!(fresh.epoch().unwrap(), 5);
+        assert_eq!(fresh.epoch().unwrap(), 6);
         assert_eq!(fresh.seen().unwrap(), Some(live.clone()));
         // A seen set that is not the one the head names is refused.
         let mut wrong = head.clone();
@@ -722,5 +730,52 @@ mod tests {
         assert_eq!(index.build(10, &[]).0.epoch, 0);
         assert_eq!(index.recovery().bump_epoch().unwrap(), 1);
         assert_eq!(index.build(10, &[]).0.epoch, 1);
+    }
+
+    /// A replacement host that imports the old host's database detects a correction
+    /// its own rebuilt index makes to history older than retention.
+    #[test]
+    fn an_imported_baseline_catches_a_correction_on_a_new_host() {
+        let mut old = Index::new();
+        old.extend(400, 1, |h| (h == 60).then_some(1));
+        assert_eq!(old.build(2, &provider(&[7], 10, 20)).0.epoch, 0);
+        let mut new = Index::new();
+        new.extend(400, 1, |h| (h == 60).then_some(2));
+        new.recovery()
+            .import(old.dir.path().join(RECOVERY))
+            .unwrap();
+        let (head, recovery) = new.build(2, &[]);
+        assert_eq!(head.epoch, 1);
+        let seen = recovery
+            .objects()
+            .find(|(o, _)| matches!(o, receiver_pir_server::Object::Seen(_)))
+            .map(|(_, b)| SeenSet::decode(b).unwrap())
+            .unwrap();
+        assert_eq!(seen.matches(&[[7; 43]]), [true]);
+        // Without the import the same rebuild would have kept epoch zero.
+        let mut blind = Index::new();
+        blind.extend(400, 1, |h| (h == 60).then_some(2));
+        assert_eq!(blind.build(2, &[]).0.epoch, 0);
+    }
+
+    /// Without the old database, adoption publishes above the live epoch at once, and
+    /// later corrections compare against the new host's own first publication.
+    #[test]
+    fn adopting_without_the_old_database_moves_past_the_live_epoch() {
+        let mut old = Index::new();
+        old.extend(400, 1, |h| (h == 60).then_some(1));
+        let (head, recovery) = old.build(2, &provider(&[7], 10, 20));
+        let seen = recovery
+            .objects()
+            .find(|(o, _)| matches!(o, receiver_pir_server::Object::Seen(_)))
+            .map(|(_, b)| SeenSet::decode(b).unwrap())
+            .unwrap();
+        let mut new = Index::new();
+        new.extend(400, 1, |h| (h == 60).then_some(2));
+        new.recovery().adopt(&head, &seen).unwrap();
+        assert_eq!(new.build(2, &[]).0.epoch, head.epoch + 1);
+        new.store.rewind(59, block_hash(59, 1)).unwrap();
+        new.extend(400, 1, |h| (h == 60).then_some(3));
+        assert_eq!(new.build(2, &[]).0.epoch, head.epoch + 2);
     }
 }

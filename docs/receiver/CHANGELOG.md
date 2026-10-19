@@ -10,8 +10,8 @@
   `recovery/` by one-shot runs and read by `serve-publication`. `recovery.sqlite`
   keeps the payment-history epoch, which a detected correction of published
   history increments, and the seen union across restarts, rebuilds and reorgs;
-  `receiver-directory recovery` bumps the epoch or adopts the live state on a new
-  host. `--retained-buckets` sets the catalog's retention (720 by default).
+  `receiver-directory recovery` bumps the epoch, imports another host's recovery
+  database, or adopts the live state above its epoch on a new host. `--retained-buckets` sets the catalog's retention (720 by default).
 
 - Validate records and witness proofs before writing one-shot publication files,
   including when reading an existing database; refuse invalid output before any

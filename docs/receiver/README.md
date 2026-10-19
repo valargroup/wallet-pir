@@ -159,9 +159,14 @@ block that held none, above that block, in an interval the same reorg changed,
 goes unseen. After such a correction, or any other the indexer cannot detect, run
 `receiver-directory recovery --data-dir <dir> bump-epoch`. The database refuses
 lowering the epoch or recording a seen set that lacks a recorded value.
-`recovery adopt --catalog <file> --seen <file>` takes over the live epoch and seen
-set on a replacement host from the objects as served. Both hold the data
-directory's lock, so they run only while the service is stopped.
+On a replacement host, `recovery --data-dir <dir> import --from <old
+recovery.sqlite>` takes over the old host's epoch, seen union and published
+records, so a correction the new host's rebuilt index makes is still detected,
+however old. Without the old database, `recovery adopt --catalog <file> --seen
+<file>` takes the seen set from the objects as served and raises the epoch above
+the live catalog's, since the published records it would compare with are lost.
+These commands hold the data directory's lock, so they run only while the service
+is stopped.
 
 A seen set over its format's 4,194,304 values stops publication with an error
 naming that limit; the served publication stays.
