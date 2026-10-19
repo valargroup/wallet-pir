@@ -28,12 +28,10 @@ compact-export = ["benchmarks", "rocksdb-reader"]
 [[bin]]
 name = "transparent-measure"
 path = "src/measure/main.rs"
-test = false
 
 [[bin]]
 name = "transparent-regression"
 path = "src/regression/main.rs"
-test = false
 
 [[bin]]
 name = "hierarchical-filter-eval"
@@ -42,12 +40,10 @@ path = "src/bin/hierarchical-filter-eval.rs"
 [[bin]]
 name = "regression-export"
 path = "src/bin/regression-export.rs"
-test = false
 
 [[bin]]
 name = "transparent-filter-cli"
 path = "src/bin/transparent-filter-cli.rs"
-test = false
 
 [[bin]]
 name = "txid-quality-canary"

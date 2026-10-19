@@ -1130,6 +1130,7 @@ mod tests {
     }
     /// A block where a few busy scripts receive several times, so events are
     /// pushed out of the directory every block, and a new script appears.
+    #[cfg(feature = "qualification-tests")]
     fn busy_block(store: &mut EventStore, h: u64, fork: u8) {
         use transparent_events::{ReceiveEvent, TransparentEvent};
         let mut events = Vec::new();
@@ -1166,6 +1167,7 @@ mod tests {
     /// Small enough that a few dozen blocks close many page shards and
     /// several directory shards, by page rows, by the child limit and by
     /// directory bytes.
+    #[cfg(feature = "qualification-tests")]
     fn small(geometry: &Geometry) -> DecoupledPolicy {
         use transparent_shard::seal::Limit;
         DecoupledPolicy {
@@ -1177,6 +1179,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "qualification-tests")]
     fn single_tier(output: &Path, previous: Option<&Path>, through: u64) -> PublishOptions {
         PublishOptions {
             archive_geometry: None,
@@ -1186,6 +1189,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "qualification-tests")]
     fn read_manifest(dir: &Path, e: &transparent_filter::ShardMapEntry) -> ShardManifest {
         serde_json::from_slice(
             &std::fs::read(dir.join(&e.manifest_digest).join("manifest.json")).unwrap(),

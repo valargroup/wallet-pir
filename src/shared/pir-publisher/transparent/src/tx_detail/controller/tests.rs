@@ -3,7 +3,9 @@ use crate::tx_detail::fixture::{self, chain_records};
 #[cfg(feature = "qualification-tests")]
 use crate::tx_detail::fixture::{block_hash, chain_sources};
 use crate::tx_detail::offline::{bench_recent, plan_start, synthetic_records, verify};
-use crate::tx_detail::publisher::{bootstrap, CANDIDATE_PREFIX, SEALED_DIR};
+#[cfg(feature = "qualification-tests")]
+use crate::tx_detail::publisher::CANDIDATE_PREFIX;
+use crate::tx_detail::publisher::{bootstrap, SEALED_DIR};
 #[cfg(feature = "qualification-tests")]
 use crate::tx_detail::serving::WorkersFile;
 use crate::tx_detail::serving::{Transport, WorkerRole};
@@ -916,6 +918,7 @@ async fn a_combined_worker_is_staged_follows_every_map_and_is_invalidated() {
     assert_eq!(pending_invalidations(&root), json!({}));
 }
 
+#[cfg(feature = "qualification-tests")]
 fn commands(log: &Log, worker: &str) -> Vec<Value> {
     log.lock()
         .unwrap()
@@ -1490,6 +1493,7 @@ fn bench_records_follow_the_requested_case_mix() {
     assert!(lines[0]["fill"].as_f64().unwrap() > 0.0);
 }
 
+#[cfg(feature = "qualification-tests")]
 mod live {
     //! Live follow against a mock node, as `controller.rs`'s RPC fixture.
     use super::*;
