@@ -58,7 +58,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 Path(control + ".entered").touch()
                 while Path(control).read_text().strip() == fault:
                     time.sleep(0.01)
-        if fault == "pause-anchor" and "/anchors/" in self.path:
+        pause_anchor = fault == "pause-anchor" or (
+            fault.startswith("pause-anchor-") and self.path.endswith(fault.removeprefix("pause-anchor-"))
+        )
+        if pause_anchor and "/anchors/" in self.path:
             Path(control + ".entered").touch()
             while Path(control).read_text().strip() == fault:
                 time.sleep(0.01)
