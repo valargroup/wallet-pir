@@ -5,6 +5,7 @@
 //! has its own rollout mode (`PIR_APM_SCALING_ALERT_MODE`, default `shadow`) and shares
 //! the incident database and Slack outbox with the other families. A missing,
 //! oversized, unparseable or stale file makes every rule unknown, never healthy.
+//! Disabling the family retires its stored incidents ([`retire_disabled`]).
 use anyhow::Result;
 use pir_apm::incidents::{Condition, Store};
 use serde::Deserialize;
@@ -40,7 +41,8 @@ impl Settings {
         Self::from_map(&vars)
     }
 
-    /// Absent `PIR_APM_SCALER_STATUS` disables the family; no other state changes.
+    /// Absent `PIR_APM_SCALER_STATUS` disables the family; the only state change is
+    /// [`retire_disabled`] closing incidents the family left behind.
     pub fn from_map(vars: &HashMap<String, String>) -> Result<Option<Self>> {
         let get = |name: &str| {
             vars.get(name)
@@ -476,6 +478,35 @@ impl Family {
             dashboard,
         )
     }
+}
+
+/// Retire incidents this family left in the shared database while it was enabled.
+/// Disabling the family removes its only evaluator, so without this a firing row
+/// would stay active forever. Uses the normal `RETIRED` transition: an announced
+/// incident gets exactly one closing Slack message, a shadow one gets none, and
+/// other families' rows and modes are untouched. Writes nothing when no rows exist.
+pub fn retire_disabled(
+    store: &mut Store,
+    now: u64,
+    environment: &str,
+    dashboard: &str,
+) -> Result<()> {
+    let stale: Vec<Condition> = store
+        .incidents()?
+        .into_iter()
+        .filter_map(|i| i.condition)
+        .filter(|c| c.resource == RESOURCE && c.key.starts_with("scaling_"))
+        .map(|mut c| {
+            c.retired = true;
+            c.sample = now;
+            c.observed = format!("{STATUS_VAR} is unset; scaling family disabled");
+            c
+        })
+        .collect();
+    if stale.is_empty() {
+        return Ok(());
+    }
+    store.evaluate(&stale, now, true, environment, dashboard)
 }
 
 #[cfg(test)]
@@ -1025,6 +1056,113 @@ mod tests {
             vec!["modeactive", "mode:qualityshadow", "mode:scalingactive"]
         );
         drop((enhance, quality, f, db));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn disabling_retires_stored_incidents_once_and_only_announced_ones_reach_slack() {
+        let dir = temp("disabled");
+        std::fs::create_dir(&dir).unwrap();
+        let path = dir.join("incidents.sqlite");
+        let condition = |key: &str, resource: &str, at: u64| Condition {
+            retired: false,
+            key: key.into(),
+            resource: resource.into(),
+            severity: "warning".into(),
+            firing: Some(true),
+            observed: "x".into(),
+            threshold: "y".into(),
+            hold_seconds: 0,
+            sample: at,
+        };
+        let mut enhance = Store::open(&path).unwrap();
+        enhance
+            .evaluate(
+                &[condition("query_5xx", "query", 1000)],
+                1000,
+                false,
+                "test",
+                "",
+            )
+            .unwrap();
+        let mut quality = Store::open(&path).unwrap().with_family("quality-txid");
+        quality
+            .evaluate(
+                &[condition("quality_storage", "txid", 1000)],
+                1000,
+                true,
+                "test",
+                "",
+            )
+            .unwrap();
+        // A shadow heartbeat incident (never announced) and an announced operation.
+        let mut scaling = Store::open(&path).unwrap().with_family("scaling");
+        scaling
+            .evaluate(
+                &[condition("scaling_heartbeat", RESOURCE, 1000)],
+                1000,
+                true,
+                "test",
+                "",
+            )
+            .unwrap();
+        let mut f = family(&dir, false);
+        write(&dir, &fenced(1000, "op1"));
+        f.evaluate(1000, "test", "").unwrap();
+        let op = "scaling_operation_fenced_op1";
+        assert!(active(&f, op) && active(&f, "scaling_heartbeat"));
+
+        // Enabled but unreadable: unknown keeps both incidents active.
+        std::fs::remove_file(dir.join("status.json")).unwrap();
+        f.evaluate(1005, "test", "").unwrap();
+        assert!(active(&f, op) && active(&f, "scaling_heartbeat"));
+
+        let db = rusqlite::Connection::open(&path).unwrap();
+        let rows = |sql: &str| -> Vec<String> {
+            db.prepare(sql)
+                .unwrap()
+                .query_map([], |r| r.get::<_, String>(0))
+                .unwrap()
+                .collect::<rusqlite::Result<_>>()
+                .unwrap()
+        };
+        let others = "SELECT key||value FROM incidents WHERE key NOT LIKE 'scaling\\_%' ESCAPE '\\' ORDER BY key";
+        let outbox = "SELECT incident||char(31)||body FROM outbox ORDER BY id";
+        let events = "SELECT body FROM events ORDER BY id";
+        let before = (rows(others), rows(outbox), rows(events));
+        assert_eq!(before.0.len(), 2);
+
+        // Restart with the family disabled: a fresh store over the persisted rows.
+        drop((enhance, quality, scaling, f));
+        let mut store = Store::open(&path).unwrap().with_family("scaling");
+        retire_disabled(&mut store, 2000, "test", "").unwrap();
+        assert!(store.incidents().unwrap().iter().all(|i| !i
+            .condition
+            .as_ref()
+            .unwrap()
+            .key
+            .starts_with("scaling_")));
+        assert_eq!(rows(others), before.0);
+        let outbox_after = rows(outbox);
+        assert_eq!(outbox_after.len(), before.1.len() + 1);
+        assert_eq!(outbox_after[..before.1.len()], before.1[..]);
+        let closing = outbox_after.last().unwrap();
+        assert!(
+            closing.starts_with(&format!("{op}-1000\u{1f}")),
+            "{closing}"
+        );
+        assert!(closing.contains("RETIRED") && !closing.contains("SHADOW"));
+        let events_after = rows(events);
+        assert_eq!(events_after.len(), before.2.len() + 2);
+        assert!(events_after
+            .iter()
+            .any(|e| e.contains("SHADOW RETIRED") && e.contains("scaling_heartbeat")));
+
+        // Later cycles find nothing and write nothing.
+        retire_disabled(&mut store, 2005, "test", "").unwrap();
+        assert_eq!(rows(outbox), outbox_after);
+        assert_eq!(rows(events), events_after);
+        drop((store, db));
         std::fs::remove_dir_all(dir).unwrap();
     }
 }
