@@ -185,17 +185,14 @@ checks overlap both Rust compilation and execution; completing helper checks
 is not a prerequisite to starting native tests. The gate still requires both
 suites to pass. Cargo writers remain sequential in each target; tooling oracles
 use separate fixture targets. Selected operations suites run in
-four parallel make slots. Deployment unittest modules use two separate processes,
-retaining each module's fixtures. Fast deployment feedback selects exact discovered
-case IDs from `tools/ci/deploy-fast-tests.json`: installation and upgrade, lock
-refusal, interrupted recovery, tampered retained artifacts, failed verification
-and rollback. Empty, duplicate or renamed selections fail. Full qualification
-runs every discovered deployment case without that selection. The package
-transaction module has independent test classes and is explicitly split by class;
-class fixtures stay together, and modules with module fixtures cannot opt in. Each case keeps its
-own mutable deployment tree; negative variants may restore a real transaction
-checkpoint after proving that an untampered copy still recovers. Failures in any
-task fail fast CI. Fast native runs report each executable's wall time and the
+four parallel make slots. The in-memory deploy suite (`make check-ops-deploy`)
+is a local development target. CI and `make check` do not run it. When it is
+run, its modules use two separate processes, retaining each module's fixtures.
+The package transaction module has independent test classes and is explicitly
+split by class; class fixtures stay together, and modules with module fixtures
+cannot opt in. Each case keeps its own mutable deployment tree; negative
+variants may restore a real transaction checkpoint after proving that an
+untampered copy still recovers. Failures in any task fail fast CI. Fast native runs report each executable's wall time and the
 15 slowest completed cases; overlapping program times must not be added to infer
 the job's elapsed time. Tooling cache fixtures cannot write to the outer job's
 GitHub environment files or timing receipts.

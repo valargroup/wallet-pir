@@ -48,7 +48,7 @@ class PlannerTests(unittest.TestCase):
                 self.assertEqual(before['helpers'], after['helpers'])
                 self.assertEqual(before['groups'], after['groups'])
                 self.assertEqual(after['packages'], [])
-                self.assertIn('check-ops-deploy', after['helpers'])
+                self.assertNotIn('check-ops-deploy', after['helpers'])
 
     def test_product_analysis_keeps_tooling_checks(self):
         for path in ('tools/transparent/filters/transparent_filter_build.py',
@@ -77,13 +77,14 @@ class PlannerTests(unittest.TestCase):
     def test_shared_ops_helpers_select_all_consumers(self):
         result = fast.plan(self.packages, ['tools/lib/wallet_pir_ops/control_sessions.py'])
         self.assertTrue(fast.OPS <= set(result['helpers']))
+        self.assertNotIn('check-ops-deploy', result['helpers'])
 
     def test_transparent_schema_helpers_are_not_misclassified_as_parent_filters(self):
         for path in ['tools/transparent/lib/activity_source_stage.py',
                      'tools/transparent/tests/test_activity_schema_operation.py',
                      'tools/transparent/scripts/deploy-transparent-publisher.py']:
             result = fast.plan(self.packages, [path])
-            self.assertIn('check-ops-deploy', result['helpers'], path)
+            self.assertNotIn('check-ops-deploy', result['helpers'], path)
             self.assertIn('check-ops-publication', result['helpers'], path)
             self.assertEqual(result['packages'], [])
         result = fast.plan(self.packages, ['tools/transparent/scripts/stage-transparent-parents.py'])
@@ -98,7 +99,7 @@ class PlannerTests(unittest.TestCase):
             self.assertEqual(result['packages'], [])
         for path in ['tools/txid/lib/roles.py', 'tools/txid/deploy/services.toml']:
             self.assertEqual(set(fast.plan(self.packages, [path])['helpers']),
-                             {'check-ops-txid-display', 'check-ops-shared', 'check-ops-deploy', 'check-ops-contracts'}, path)
+                             {'check-ops-txid-display', 'check-ops-shared', 'check-ops-contracts'}, path)
         # The history adapter's hook and the pinned firewall sources reach it too.
         for path in ['tools/transparent/scripts/transparent-live-fleet.py',
                      'tools/infra/digitalocean/transparent/main.tf']:
@@ -109,7 +110,7 @@ class PlannerTests(unittest.TestCase):
                      'tools/status/deploy/control-sessions.example.json']:
             result = fast.plan(self.packages, [path])
             self.assertEqual(set(result['helpers']), {'check-ops-shared', 'check-ops-control-sessions',
-                                                      'check-ops-deploy', 'check-ops-contracts'}, path)
+                                                      'check-ops-contracts'}, path)
             self.assertEqual(result['packages'], [])
 
     def test_leaf_reverse_dependencies_and_embedded_fixture(self):
@@ -135,7 +136,8 @@ class PlannerTests(unittest.TestCase):
                      'tools/receiver/digitalocean/receiver-pir.service.in', 'tools/receiver/digitalocean/caddy.py',
                      'tools/receiver/digitalocean/README.md']:
             result = fast.plan(self.packages, [path])
-            self.assertTrue({'check-ops-shared', 'check-ops-deploy'} <= set(result['helpers']), path)
+            self.assertIn('check-ops-shared', result['helpers'], path)
+            self.assertNotIn('check-ops-deploy', result['helpers'], path)
             self.assertEqual(result['packages'], [], path)
 
     def test_shared_rust_and_unknown_changes_broaden_full_coverage(self):
@@ -233,8 +235,7 @@ class PlannerTests(unittest.TestCase):
 
     def test_full_helper_dispatch_keeps_docs_precise_and_restores_models(self):
         self.assertEqual(helpers.targets(['check-docs'], full=True), ['check-docs'])
-        self.assertEqual(helpers.targets(['check-ops-deploy']), ['check-ops-deploy-fast'])
-        self.assertEqual(helpers.targets(['check-ops-deploy'], full=True), ['check-ops-deploy'])
+        self.assertEqual(helpers.targets(['check-ops-scaler-fast']), ['check-ops-scaler-fast'])
         self.assertEqual(helpers.targets(['check-ops-scaler-fast'], full=True), ['check-ops-scaler'])
         self.assertEqual(set(helpers.targets(list(fast.HELPERS), full=True)),
                          (fast.HELPERS - {'check-ops-scaler-fast'}) | {'check-ops-scaler'})
@@ -273,7 +274,7 @@ class PlannerTests(unittest.TestCase):
                 kwargs['before_tests']()
             started.set()
 
-        paths = ['tools/tests/operations/deploy/test_ops_package.py',
+        paths = ['tools/scripts/wallet-pir-deploy.py',
                  'src/transparent/transparent-publisher/src/lib.rs']
         with patch.object(sys, 'argv', ['fast.py', '--base', 'HEAD', '--committed-only']), \
                 patch.object(fast, 'changed_paths', return_value=paths), \

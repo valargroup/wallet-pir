@@ -447,29 +447,24 @@ class RecoveryTests(PackageCase):
                 self.host.after = None
                 self.assertEqual(self.package().rollback(journal.id).status, 'rolled-back')
 
-    def test_reconcile_rechecks_completed_selection_with_changed_package(self):
-        self.check_completed_marker('select', 'package content')
-
-    def test_reconcile_rechecks_completed_selection_with_changed_package_mode(self):
-        self.check_completed_marker('select', 'package mode')
-
-    def test_reconcile_rechecks_completed_selection_with_extra_package_file(self):
-        self.check_completed_marker('select', 'extra package file')
-
-    def test_reconcile_rechecks_completed_selection_with_changed_fleet(self):
-        self.check_completed_marker('select', 'fleet')
-
-    def test_reconcile_rechecks_completed_selection_with_changed_fleet_mode(self):
-        self.check_completed_marker('select', 'fleet mode')
-
-    def test_reconcile_rechecks_completed_selection_with_changed_link(self):
-        self.check_completed_marker('select', 'selection')
-
-    def test_reconcile_rechecks_completed_verification_with_changed_package(self):
-        self.check_completed_marker('verify', 'package content')
-
-    def test_reconcile_rechecks_completed_promotion_with_changed_package(self):
-        self.check_completed_marker('promote', 'package content')
+    def test_reconcile_rechecks_a_completed_marker_before_any_new_effect(self):
+        pairs = (
+            ('select', 'package content'),
+            ('select', 'package mode'),
+            ('select', 'extra package file'),
+            ('select', 'fleet'),
+            ('select', 'fleet mode'),
+            ('select', 'selection'),
+            ('verify', 'package content'),
+            ('promote', 'package content'),
+        )
+        for index, (completed, drift) in enumerate(pairs):
+            # Each pair needs the fresh layout a separate test would get from setUp.
+            if index:
+                self.doCleanups()
+                self.setUp()
+            with self.subTest(completed=completed, drift=drift):
+                self.check_completed_marker(completed, drift)
 
     def check_completed_marker(self, completed, drift):
         plan, _, archive = self.plan()

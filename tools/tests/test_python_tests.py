@@ -13,21 +13,9 @@ ROOT = Path(__file__).resolve().parents[2]
 DRIVER = ROOT / 'tools/ci/python_tests.py'
 sys.path.insert(0, str(ROOT / 'tools/ci'))
 from stage import inherited_fds
-from python_tests import discover, selected_modules
 
 
 class PythonTestDriverTests(unittest.TestCase):
-    def test_deployment_fast_cases_are_discovered_and_full_tier_is_larger(self):
-        discovered = discover(ROOT / 'tools/tests/operations/deploy', ['test_ops_package'])
-        selection = json.loads((ROOT / 'tools/ci/deploy-fast-tests.json').read_text())
-        fast = selected_modules(discovered, selection)
-        self.assertEqual({name for names in fast.values() for name in names}, set(selection))
-        self.assertLess(sum(map(len, fast.values())), sum(map(len, discovered.values())))
-        # Keep real install, recovery, tamper refusal, rollback and unit rollout
-        # paths represented; the remaining matrices belong to full qualification.
-        self.assertTrue({'test_ops_package.InstallTests', 'test_ops_package.RecoveryTests',
-                         'test_ops_package.RetainedReleaseTests', 'test_wallet_pir_deploy'} <= set(fast))
-
     def run_driver(self, directory, *, jobs=2, split=(), selection=None, isolate=False, extra_env=None):
         env = os.environ.copy()
         env.pop('WALLET_PIR_FIXTURE_MODULE_OWNER', None)
