@@ -1,7 +1,6 @@
-//! Enhance PIR coordinator and worker entrypoint.
+//! Enhance PIR coordinator entrypoint.
 use clap::{Parser, Subcommand};
 use enhance_publisher::{control::PlacementPolicy, coordinator::Coordinator, zakura::ZakuraClient};
-use enhance_query_server::worker::Worker;
 use std::{net::SocketAddr, path::PathBuf};
 
 #[derive(Parser)]
@@ -17,11 +16,6 @@ struct Cli {
 enum Command {
     /// Report compiled capabilities without opening state or loading a GPU driver.
     BuildInfo,
-    /// Check the selected evaluator and GPU driver without opening worker state.
-    CheckBackend {
-        #[command(flatten)]
-        matvec: enhance_query_server::matvec::MatvecConfig,
-    },
     /// Confirm retained sessions already have router-prepared packing artifacts.
     PreparePackingArtifacts {
         #[arg(long)]
@@ -54,49 +48,6 @@ enum Command {
         concurrency: usize,
         #[arg(long, default_value_t = enhance_publisher::zakura::DEFAULT_CACHE_OUTPUTS)]
         cache_outputs: usize,
-    },
-    /// Offline repair of journal-referenced rows from a peer row archive.
-    RepairRows {
-        #[arg(long)]
-        data_dir: PathBuf,
-        #[arg(long)]
-        source_rows: PathBuf,
-    },
-    Worker {
-        #[command(flatten)]
-        matvec: enhance_query_server::matvec::MatvecConfig,
-        #[arg(long, default_value = "127.0.0.1:8091")]
-        listen: SocketAddr,
-        #[arg(long)]
-        data_dir: PathBuf,
-    },
-    QueryIngress {
-        #[arg(long)]
-        data_dir: PathBuf,
-        #[arg(long, default_value = "127.0.0.1:8082")]
-        listen: SocketAddr,
-        #[arg(long, default_value = "127.0.0.1:8083")]
-        control_listen: SocketAddr,
-        #[arg(long, default_value_t = 16)]
-        requests: usize,
-        /// Bodies buffered concurrently before router admission; 4 per client.
-        #[arg(long, default_value_t = enhance_query_server::query_ingress::DEFAULT_UPLOADS)]
-        uploads: usize,
-    },
-    /// Decode and pack wallet queries on a dedicated private host.
-    PackingRouter {
-        #[arg(long)]
-        data_dir: PathBuf,
-        #[arg(long)]
-        artifact_origin: String,
-        #[arg(long, default_value = "127.0.0.1:8092")]
-        listen: SocketAddr,
-        #[arg(long, default_value = "127.0.0.1:8093")]
-        control_listen: SocketAddr,
-        #[arg(long, default_value_t = 6)]
-        max_objects: usize,
-        #[arg(long, default_value_t = 4)]
-        requests: usize,
     },
     Coordinator {
         /// Independently scheduled live Status controller; omitted disables Status.
@@ -163,13 +114,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             println!(
                 "{}",
                 serde_json::json!({
-                    "cuda": enhance_query_server::matvec::CUDA_COMPILED,
                     "native_reinspiring": cfg!(feature = "native-reinspiring"),
                     "source_revision": option_env!("WALLET_PIR_SOURCE_REVISION"),
                 })
             );
         }
-        Command::CheckBackend { matvec } => matvec.validate()?,
         Command::PreparePackingArtifacts { data_dir } => Coordinator::backfill_prepared(&data_dir)?,
         Command::RestoreLegacyPlacement { control_dir } => {
             enhance_publisher::control::Store::open(&control_dir)?.restore_legacy_placement()?;
@@ -195,70 +144,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             )
             .await?;
             println!("{}", serde_json::to_string(&receipt)?);
-        }
-        Command::RepairRows {
-            data_dir,
-            source_rows,
-        } => {
-            let restored = Worker::repair_rows(&data_dir, &source_rows)?;
-            println!(
-                "{}",
-                serde_json::json!({"status":"rows_verified", "restored_units":restored,
-                "readiness":"requires_worker_restart", "qualification":"unqualified"})
-            );
-        }
-        Command::Worker {
-            listen,
-            data_dir,
-            matvec,
-        } => {
-            enhance_query_server::service::run_worker(
-                enhance_query_server::service::WorkerConfig {
-                    listen,
-                    data_dir,
-                    sealed_shards: placement_policy.sealed_shards,
-                    matvec,
-                },
-            )
-            .await?;
-        }
-        Command::QueryIngress {
-            data_dir,
-            listen,
-            control_listen,
-            requests,
-            uploads,
-        } => {
-            enhance_query_server::service::run_ingress(
-                enhance_query_server::service::IngressConfig {
-                    data_dir,
-                    listen,
-                    control_listen,
-                    requests,
-                    uploads,
-                },
-            )
-            .await?;
-        }
-        Command::PackingRouter {
-            data_dir,
-            artifact_origin,
-            listen,
-            control_listen,
-            max_objects,
-            requests,
-        } => {
-            enhance_query_server::service::run_router(
-                enhance_query_server::service::RouterConfig {
-                    data_dir,
-                    artifact_origin,
-                    listen,
-                    control_listen,
-                    max_objects,
-                    requests,
-                },
-            )
-            .await?;
         }
         Command::Coordinator {
             status_config,

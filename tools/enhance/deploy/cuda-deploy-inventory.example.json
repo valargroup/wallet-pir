@@ -19,6 +19,14 @@
           "host": "enhance-pir-gpu-01",
           "unit": "enhance-pir-gpu-worker.service",
           "vars": {"listen": "10.250.90.3:8091"},
+          "settings": {
+            "listen": "10.250.90.3:8091",
+            "data_dir": "/srv/enhance-pir/worker",
+            "sealed_shards": 6,
+            "matvec_backend": "cuda",
+            "cuda_device": 0,
+            "credentials": ["/etc/enhance-pir/internal-token.env"]
+          },
           "health_equals": {
             "protocol": "ironwood-enhance-pir-v9-native-two-mask-m29",
             "matvec.matvec_backend": "cuda",

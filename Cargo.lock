@@ -2153,6 +2153,7 @@ dependencies = [
  "hex",
  "libc",
  "pir-pipeline",
+ "pir-query-server",
  "receiver-indexer",
  "reqwest",
  "serde",

@@ -56,12 +56,26 @@
             "host": "worker-01",
             "vars": {
               "listen": "192.0.2.15:8091"
+            },
+            "settings": {
+              "listen": "192.0.2.15:8091",
+              "data_dir": "/srv/enhance-pir/worker",
+              "sealed_shards": 6,
+              "matvec_backend": "cpu",
+              "credentials": ["/etc/enhance-pir/internal-token.env"]
             }
           },
           {
             "host": "worker-02",
             "vars": {
               "listen": "192.0.2.16:8091"
+            },
+            "settings": {
+              "listen": "192.0.2.16:8091",
+              "data_dir": "/srv/enhance-pir/worker",
+              "sealed_shards": 6,
+              "matvec_backend": "cpu",
+              "credentials": ["/etc/enhance-pir/internal-token.env"]
             }
           },
           {
@@ -70,6 +84,14 @@
             "artifact_kind": "enhance-pir-native-cuda",
             "vars": {
               "listen": "192.0.2.19:8091"
+            },
+            "settings": {
+              "listen": "192.0.2.19:8091",
+              "data_dir": "/srv/enhance-pir/worker",
+              "sealed_shards": 6,
+              "matvec_backend": "cuda",
+              "cuda_device": 0,
+              "credentials": ["/etc/enhance-pir/internal-token.env"]
             },
             "health_equals": {
               "matvec.matvec_backend": "cuda",
@@ -82,12 +104,28 @@
             "host": "router-01",
             "vars": {
               "control_listen": "192.0.2.14:8093"
+            },
+            "settings": {
+              "listen": "192.0.2.14:8092",
+              "control_listen": "192.0.2.14:8093",
+              "data_dir": "/srv/enhance-pir-router",
+              "artifact_origin": "http://192.0.2.10:8080",
+              "credentials": ["/etc/enhance-pir/internal-token.env"]
             }
           }
         ],
         "query-ingress": [
           {
-            "host": "coordinator"
+            "host": "coordinator",
+            "vars": {
+              "control_listen": "127.0.0.1:8083"
+            },
+            "settings": {
+              "listen": "127.0.0.1:8082",
+              "control_listen": "127.0.0.1:8083",
+              "data_dir": "/srv/enhance-pir-ingress",
+              "credentials": ["/etc/enhance-pir/internal-token.env"]
+            }
           }
         ],
         "coordinator": [

@@ -161,7 +161,7 @@ run-server:
 	cargo run --release -p enhance-publisher --bin enhance-pir-server -- --help
 
 run-worker:
-	cargo run --release -p enhance-publisher --bin enhance-pir-server -- worker --help
+	cargo run --release -p pir-query-server --features enhance,native-reinspiring -- --help
 
 load-test:
 	@mkdir -p .local-pir/runs/enhance

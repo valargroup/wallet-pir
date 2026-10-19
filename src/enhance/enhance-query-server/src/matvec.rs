@@ -103,7 +103,7 @@ impl MatvecConfig {
 
 #[cfg(not(feature = "cuda"))]
 fn missing_cuda() -> KernelError {
-    KernelError("CUDA selection requires an enhance-pir-server build with --features cuda".into())
+    KernelError("CUDA selection requires a pir-query-server build with --features cuda".into())
 }
 
 #[cfg(test)]

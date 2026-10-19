@@ -1,3 +1,6 @@
+# Enhance query ingress, rendered by tools/enhance/lib/roles.py.
+# ExecStart, the config path and ReadWritePaths are rendered. The internal
+# token is the inventory's credential file.
 [Unit]
 Description=Enhance PIR query ingress
 After=network-online.target
@@ -6,7 +9,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=enhance-pir
-ExecStart=/opt/enhance-pir/current/enhance-pir-server query-ingress --data-dir /srv/enhance-pir-ingress --listen 127.0.0.1:8082 --control-listen 127.0.0.1:8083 --requests 16
+ExecStart=/bin/false
 Restart=on-failure
 RestartSec=3
 MemoryMax=256M
@@ -16,7 +19,6 @@ NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
-ReadWritePaths=/srv/enhance-pir-ingress
 Environment=RUST_LOG=info
 
 [Install]

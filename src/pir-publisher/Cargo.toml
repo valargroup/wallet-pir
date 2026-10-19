@@ -14,7 +14,7 @@ transparent = ["dep:transparent-publisher"]
 receiver = ["dep:receiver-indexer"]
 native-reinspiring = ["enhance-publisher?/native-reinspiring", "status-publisher?/native-reinspiring"]
 # The moved Enhance hint cache records whether this build includes CUDA.
-cuda = ["enhance-publisher?/cuda"]
+cuda = ["enhance-query-server?/cuda"]
 # Larger hint oracles. Ordinary correctness leaves this off.
 qualification-tests = []
 # Wallet-client and chain-fixture regressions. Production features do not enable these.
@@ -23,6 +23,7 @@ enhance-tests = [
     "enhance-publisher/fault-injection",
     "enhance-publisher/fixtures",
     "dep:enhance-query-server",
+    "dep:pir-query-server",
     "enhance-query-server/client",
     "dep:zakura-server-chain",
     "zakura-server-chain/enhance",
@@ -58,6 +59,7 @@ transparent-publisher = { path = "../transparent/transparent-publisher", optiona
 receiver-indexer = { path = "../receiver/receiver-indexer", optional = true }
 # Test binaries and host regressions. Production builds leave these off.
 enhance-query-server = { path = "../enhance/enhance-query-server", optional = true }
+pir-query-server = { path = "../pir-query-server", optional = true, features = ["enhance"] }
 transparent-query-server = { path = "../transparent/transparent-query-server", optional = true }
 transparent-shared = { path = "../transparent/transparent-shared", optional = true }
 zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "a2f87e6f235dc16840be1dd7fc88e6dd06f0a268", default-features = false, optional = true }
@@ -77,6 +79,12 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 [[bin]]
 name = "enhance-pir-server-test"
 path = "../enhance/enhance-publisher/src/bin/server.rs"
+required-features = ["enhance-tests"]
+test = false
+
+[[bin]]
+name = "pir-query-server-test"
+path = "../pir-query-server/src/main.rs"
 required-features = ["enhance-tests"]
 test = false
 

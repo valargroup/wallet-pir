@@ -48,6 +48,18 @@ class SmokeAcceptance(unittest.TestCase):
                 report[key] = value
                 smoke.validate_report(report)
 
+    def test_worker_config_is_one_cuda_role(self):
+        config = smoke.worker_config('127.0.0.1:8091', '/srv/enhance-pir/worker', '127.0.0.1:18080', 0)
+        self.assertEqual(config, {
+            'management_listen': '127.0.0.1:18080',
+            'enhance': {'enabled': True, 'settings': {
+                'role': 'worker',
+                'listen': '127.0.0.1:8091',
+                'data_dir': '/srv/enhance-pir/worker',
+                'matvec': {'matvec_backend': 'cuda', 'cuda_device': 0},
+            }},
+        })
+
     def test_counter_requires_one_finite_value(self):
         self.assertEqual(smoke.counter(smoke.METRIC + ' 7\n'), 7)
         for value in ['', smoke.METRIC + ' NaN', smoke.METRIC + ' -1',

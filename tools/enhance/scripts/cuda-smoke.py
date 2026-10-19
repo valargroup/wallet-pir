@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
-"""Run downloaded native CUDA release binaries against fresh public fixture state.
+"""Run a CUDA query server and a native coordinator against fresh public fixture state.
 
-No production state, service units, or inventories are opened. Both isolated
-replicas use CUDA, so every successful encrypted fixture query executes on the GPU.
+Workers are the CUDA `pir-query-server` in `--release-dir`. The coordinator is
+the native `enhance-pir-server` passed as `--coordinator`. GPU hosts do not run
+the publisher as the worker. No production state, service units, or inventories
+are opened. Both isolated replicas use CUDA, so every successful encrypted
+fixture query executes on the GPU.
 """
 import argparse
 import hashlib
@@ -52,6 +55,19 @@ def port():
         return listener.getsockname()[1]
 
 
+def worker_config(listen, data_dir, management, device):
+    """One Enhance worker role. The matrix backend lives in this file."""
+    return {
+        'management_listen': management,
+        'enhance': {'enabled': True, 'settings': {
+            'role': 'worker',
+            'listen': listen,
+            'data_dir': str(data_dir),
+            'matvec': {'matvec_backend': 'cuda', 'cuda_device': device},
+        }},
+    }
+
+
 def fixture_endpoints():
     ports = []
     while len(ports) < 3:
@@ -75,6 +91,8 @@ def validate_worker_health(health, device):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--release-dir', type=Path, required=True)
+    parser.add_argument('--coordinator', type=Path, required=True,
+                        help='native enhance-pir-server; used only as the coordinator')
     parser.add_argument('--evidence-dir', type=Path, required=True)
     parser.add_argument('--cuda-device', type=int, default=0)
     parser.add_argument('--timeout', type=int, default=300)
@@ -82,14 +100,19 @@ def main():
     if args.timeout < 30 or args.cuda_device < 0:
         parser.error('timeout must be at least 30 seconds and device must be nonnegative')
     release = args.release_dir.resolve()
+    query_server = release / 'pir-query-server'
+    coordinator_bin = args.coordinator.resolve()
+    client = release / 'enhance-pir-cli'
+    load = release / 'enhance-pir-load-test'
+    binaries = {}
+    for path in (query_server, coordinator_bin, client, load):
+        if not path.is_file():
+            parser.error('missing binary ' + str(path))
+        binaries[path.name] = hashlib.sha256(path.read_bytes()).hexdigest()
     evidence = args.evidence_dir.resolve()
     evidence.mkdir(parents=True, exist_ok=True)
     if any(evidence.iterdir()):
         parser.error('evidence directory must be empty')
-    server = release / 'enhance-pir-server'
-    client = release / 'enhance-pir-cli'
-    load = release / 'enhance-pir-load-test'
-    binaries = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in (server, client, load)}
     root = Path(tempfile.mkdtemp(prefix='enhance-cuda-smoke-'))
     workers, origin, fixture = fixture_endpoints()
     inventory = root / 'workers.json'
@@ -110,11 +133,19 @@ def main():
                                           env=os.environ.copy()))
 
     try:
+        used = {int(url.rsplit(':', 1)[1]) for url in (*workers, origin)}
         for index, worker in enumerate(workers, 1):
-            launch(f'worker{index}', [str(server), 'worker', '--data-dir', str(root / f'worker{index}'),
-                   '--listen', worker.removeprefix('http://'), '--matvec-backend', 'cuda',
-                   '--cuda-device', str(args.cuda_device)])
-        launch('coordinator', [str(server), 'coordinator', '--data-dir', str(root / 'coordinator'),
+            while True:
+                management = port()
+                if management not in used:
+                    used.add(management)
+                    break
+            data = root / f'worker{index}'
+            config = root / f'worker{index}.json'
+            config.write_text(json.dumps(worker_config(
+                worker.removeprefix('http://'), data, f'127.0.0.1:{management}', args.cuda_device)))
+            launch(f'worker{index}', [str(query_server), '--config', str(config)])
+        launch('coordinator', [str(coordinator_bin), 'coordinator', '--data-dir', str(root / 'coordinator'),
                '--listen', origin.removeprefix('http://'), '--worker-config', str(inventory),
                '--isolated-fixture', '--fixture-records', '67', '--fixture-append-records', '0',
                '--poll-seconds', '1'])

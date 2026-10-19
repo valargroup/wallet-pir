@@ -108,7 +108,9 @@ def build(family):
         for name in sorted({name for kind in KINDS[family] for name in release.BINARIES[kind]}):
             command += ['--bin', name]
     else:
-        command += ['-p', 'enhance-publisher', '-p', 'enhance-pir-client', '-p', 'enhance-pir-load-test', '-p', 'pir-apm']
+        # v7 bundle: the query server enables Enhance serving and not the native protocol.
+        command += ['-p', 'enhance-publisher', '-p', 'enhance-pir-client', '-p', 'enhance-pir-load-test',
+                    '-p', 'pir-apm', '-p', 'pir-query-server', '--features', 'pir-query-server/enhance']
         for name in release.BINARIES['enhance-pir']:
             command += ['--bin', name]
     run(command, stage=f'compile:release-{family}')

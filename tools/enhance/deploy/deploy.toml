@@ -15,14 +15,20 @@
 #                 release directory, and each name in the service's
 #                 `template_vars` comes from the inventory) into
 #                 /etc/systemd/system/<unit>.
+#   role          Replace the whole unit from the product renderer. A role may
+#                 name `binary`; otherwise it runs the service binary. Serving
+#                 roles run pir-query-server. The coordinator keeps
+#                 enhance-pir-server.
 #
 # Drop-ins that set ExecStart are refused unless they match
 # `adoptable_drop_ins`. An adoptable drop-in that sets only ExecStart is retired
 # into the transaction directory (with --retire-historical); one that also sets
-# other directives stays in place, and the managed drop-in, which sorts after
-# it, overrides its ExecStart. Other drop-ins stay and still apply, except on a
-# template role with `owns_unit = true`, where any drop-in that would stay is
-# refused, so the rendered unit is the whole configuration.
+# other directives stays in place on an exec-drop-in role, and the managed
+# drop-in, which sorts after it, overrides its ExecStart. Other drop-ins stay
+# and still apply, except where the role owns its unit (a template with
+# `owns_unit = true`, or any role-mode role). A drop-in that would stay is
+# refused, and an ExecStart drop-in that also sets other directives is refused,
+# so the rendered unit is the whole configuration.
 #
 # Readiness after a restart: the unit is active, sha256(/proc/<MainPID>/exe)
 # equals the release, `health` answers 200 (a `binary_sha256` field, if
@@ -42,8 +48,12 @@ ancillary = ["routing"]
 
 [services.enhance.roles.worker]
 unit = "enhance-pir-worker.service"
-mode = "exec-drop-in"
-# ENHANCE_WORKER_LISTEN: the worker's private address, port 8091.
+binary = "pir-query-server"
+mode = "role"
+template = "enhance-pir-worker.role.service"
+renderer = "tools.enhance.lib.roles:worker"
+# Settings: listen, data_dir, sealed_shards?, matvec_backend?, cuda_device?,
+# credentials (the ENHANCE_INTERNAL_TOKEN environment file). Health uses vars.listen.
 health = "http://{listen}/internal/health"
 ready = { field = "published", nonempty = true }
 ready_timeout = 300
@@ -56,9 +66,10 @@ adoptable_drop_ins = ["90-v7.conf", "zz-cleanup-*.conf"]
 # authority still comes from the product's controller, never from the deploy.
 [services.enhance.roles.external-worker]
 unit = "enhance-pir-worker.service"
+binary = "pir-query-server"
 mode = "role"
 template = "enhance-pir-worker.role.service"
-renderer = "tools.enhance.lib.roles:worker"
+renderer = "tools.enhance.lib.roles:external_worker"
 optional = true
 # Settings: listen, data_dir, sealed_shards?, matvec_backend?, cuda_device?,
 # limits?, credentials (the ENHANCE_INTERNAL_TOKEN environment file).
@@ -68,8 +79,12 @@ ready_timeout = 300
 
 [services.enhance.roles.packing-router]
 unit = "enhance-pir-packing-router.service"
-mode = "exec-drop-in"
-# ENHANCE_ROUTER_CONTROL_LISTEN. Ready once the running coordinator re-activates it.
+binary = "pir-query-server"
+mode = "role"
+template = "enhance-pir-packing-router.role.service"
+renderer = "tools.enhance.lib.roles:packing_router"
+# Settings: data_dir, artifact_origin, listen, control_listen, credentials.
+# Ready once the running coordinator re-activates it. Health uses vars.control_listen.
 health = "http://{control_listen}/internal/health"
 ready = { field = "ready", equals = true }
 ready_timeout = 300
@@ -77,8 +92,12 @@ adoptable_drop_ins = ["zz-cleanup-*.conf"]
 
 [services.enhance.roles.query-ingress]
 unit = "enhance-pir-query-ingress.service"
-mode = "exec-drop-in"
-health = "http://127.0.0.1:8083/internal/health"
+binary = "pir-query-server"
+mode = "role"
+template = "enhance-pir-query-ingress.role.service"
+renderer = "tools.enhance.lib.roles:query_ingress"
+# Settings: listen, control_listen, data_dir, credentials. Health uses vars.control_listen.
+health = "http://{control_listen}/internal/health"
 ready = { field = "ready", equals = true }
 ready_timeout = 300
 adoptable_drop_ins = ["zz-cleanup-*.conf"]

@@ -5,7 +5,7 @@ import sys
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from test_wallet_pir_deploy import Fleet, NEW_SHA, SERVICES, ROOT  # noqa: E402
+from test_wallet_pir_deploy import ENHANCE, Fleet, NEW_SHA, SERVING_SELECTORS, SERVICES, ROOT  # noqa: E402
 from wallet_pir_ops.deploy import cli  # noqa: E402
 from wallet_pir_ops.deploy.lifecycle import Lifecycle  # noqa: E402
 from wallet_pir_ops.fleet import Fleet as ConfiguredFleet  # noqa: E402
@@ -28,7 +28,7 @@ class LifecycleTests(Fleet):
         self.assertTrue(result.transaction)
         status = lifecycle.status()
         self.assertEqual(status.transaction, result.transaction)
-        self.assertEqual(len(status.targets), 5)
+        self.assertEqual(len(status.targets), len(ENHANCE))
         self.assertTrue(all(t['binary_sha256'] == NEW_SHA for t in status.targets))
         rollback = lifecycle.rollback(result.transaction)
         self.assertEqual(rollback.phase, 'rolled-back')
@@ -37,13 +37,14 @@ class LifecycleTests(Fleet):
     def test_json_cli_emits_one_result_instead_of_progress_text(self):
         self.enhance_fleet()
         output = []
+        selected = [item for role in SERVING_SELECTORS for item in ('--only', role)]
         code = cli.main(['--inventory', str(self.inventory_path), '--state-dir', str(self.state),
-                         '--json', 'plan', 'enhance', '--binary', str(self.binary), '--retire-historical'],
+                         '--json', 'plan', 'enhance', '--binary', str(self.binary), '--retire-historical', *selected],
                         executor=self.fake, out=output.append)
-        self.assertEqual(code, 0)
+        self.assertEqual(code, 0, output)
         self.assertEqual(len(output), 1)
         self.assertEqual(json.loads(output[0])['operation'], 'plan')
-        self.assertEqual(len(json.loads(output[0])['targets']), 5)
+        self.assertEqual(len(json.loads(output[0])['targets']), len(ENHANCE))
         self.assertEqual(self.fake.log, [])
 
     def test_product_publications_cannot_use_the_binary_deploy_driver(self):
