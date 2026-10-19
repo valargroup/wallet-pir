@@ -15,17 +15,12 @@ import subprocess
 import tempfile
 import time
 
+from backend_features import NATIVE, CUDA, TRANSPARENT
 from full_packages import inventory, commands as full_commands, qualification_features
 from stage import ROOT, run, install_cancellation, inherited_fds
 
 REGISTRY = ROOT / 'tools/ci/test-matrix.json'
 EXPORT = 'tools/txid/txid-sizing/export/Cargo.toml'
-NATIVE = ['enhance-query-server/native-reinspiring', 'status-query-server/native-reinspiring',
-          'enhance-publisher/native-reinspiring', 'status-publisher/native-reinspiring', 'status-publisher/cli',
-          'enhance-pir-client/native-reinspiring', 'enhance-pir-load-test/native-reinspiring',
-          'native-certificate/native-reinspiring']
-CUDA = ['enhance-query-server/cuda', 'status-query-server/cuda', 'enhance-publisher/cuda', 'status-publisher/cuda',
-        'enhance-publisher/native-reinspiring', 'enhance-pir-load-test/native-reinspiring']
 # Reference arithmetic runs the query server's protocol units and composed-runtime
 # oracles, its protocol contract tests, and the publisher's independent hint,
 # damaged-artifact and encrypted lifecycle checks.
@@ -42,7 +37,7 @@ MANUAL_CAMPAIGNS = {('pir-publisher', 'controller_update_campaign'),
 
 def variants(groups):
     return {
-        'transparent': dict(family='transparent', packages=[*groups['transparent'], 'pir-publisher'], features=['transparent-publisher/rocksdb-reader', 'transparent-tools/test-support', 'transparent-tools/compact-export', 'pir-publisher/transparent-tests'] + qualification_features([*groups['transparent'], 'pir-publisher'])),
+        'transparent': dict(family='transparent', packages=[*groups['transparent'], 'pir-publisher'], features=TRANSPARENT + qualification_features([*groups['transparent'], 'pir-publisher'])),
         'export': dict(family='transparent', packages=['txid-sizing-export'], features=[], manifest=EXPORT),
         'native': dict(family='enhance', packages=groups['enhance'], features=NATIVE + ['pir-publisher/enhance-tests', 'pir-publisher/status-tests', 'pir-publisher/native-reinspiring'] + qualification_features(groups['enhance'])),
         'reference': dict(family='enhance', packages=['enhance-query-server', 'status-query-server', 'pir-publisher'],
