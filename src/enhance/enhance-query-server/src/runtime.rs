@@ -695,7 +695,6 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ROW_BYTES;
     fn records(start: u64, count: usize) -> Result<Vec<u8>, String> {
         let mut bytes = vec![0; count * RECORD_BYTES];
         for (i, row) in bytes.chunks_exact_mut(RECORD_BYTES).enumerate() {
@@ -1404,6 +1403,7 @@ mod tests {
     #[cfg(feature = "qualification-tests")]
     #[test]
     fn tail_domain_reuses_b_units_and_decodes_b_at_unchanged_coordinates() {
+        use crate::ROW_BYTES;
         #[cfg(not(feature = "native-reinspiring"))]
         use ipir_sp::modulus_switch::recover_published_c1;
         #[cfg(not(feature = "native-reinspiring"))]
