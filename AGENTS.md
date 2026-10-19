@@ -78,6 +78,7 @@ Preserve existing Cargo package and binary names.
 - Keep Cargo writers sequential within one target directory. For independent
   concurrent work use separate worktrees/target lanes; reuse each lane across
   edits. Do not create a new cold target per command or weaken trust boundaries.
+- Keep fast-suite fixtures small enough to finish in a few seconds; retain deployed-size parameter combinations in full qualification.
 
 ## Branches and production changes
 

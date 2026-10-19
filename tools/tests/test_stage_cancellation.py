@@ -14,12 +14,16 @@ from target_lease import inherited_fds
 
 @unittest.skipUnless(os.name == 'posix', 'process-group cancellation is POSIX-specific')
 class CancellationTests(unittest.TestCase):
-    def test_fifty_cancellations_leave_no_descendant_listener(self):
+    def test_cancellation_releases_descendant_listener(self):
         leaf = ("import os,signal,socket; s=socket.socket(); s.bind(('127.0.0.1',0)); s.listen(); "
                 "print('READY:'+str(s.getsockname()[1])+':'+str(os.getpid()),flush=True); signal.pause()")
         nested = [sys.executable, str(ROOT / 'tools/ci/stage.py'), 'nested', '--', sys.executable, '-c', leaf]
         controller = f'import subprocess; subprocess.run({nested!r},check=True,pass_fds={inherited_fds().get("pass_fds", ())!r})'
-        for trial in range(50):
+        # Every repetition checks the same real process tree and bound socket.
+        # Fast feedback needs a few independent lifetimes; full qualification
+        # retains the larger campaign for intermittent cancellation races.
+        repetitions = 3 if os.environ.get('WALLET_PIR_FAST_TESTS') == '1' else 50
+        for trial in range(repetitions):
             with self.subTest(trial=trial):
                 command = [sys.executable, str(ROOT / 'tools/ci/stage.py'), 'cancellation', '--',
                            sys.executable, '-c', controller]
