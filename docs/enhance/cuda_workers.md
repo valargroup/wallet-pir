@@ -108,15 +108,11 @@ cargo test --locked --profile release-fast -p enhance-query-server --features cu
   --lib cuda_partial_preparation_failure_preserves_published_and_retries -- --ignored
 cargo test --locked --profile release-fast -p enhance-query-server --features cuda \
   --lib cuda_backend_evaluation_failure_over_http_releases_permit_and_recovers -- --ignored
-cargo run --locked --release -p enhance-publisher --features cuda --example cuda_domain
 ```
 
 The HTTP test covers encrypted requests through real coordinator/worker listeners,
-retention, failover, and restart. The domain benchmark compares CPU and GPU over
-wallet-pir's actual unit composition at 32768 rows by 12288 coefficients. It checks
-100 queries per repetition, three repetitions, one and two concurrent callers,
-and reports preparation separately from evaluation. Sample `nvidia-smi` during
-the run to record total device memory, and record CPU limits and thread count.
+retention, failover, and restart. Sample `nvidia-smi` during the run to record
+total device memory, and record CPU limits and thread count.
 
 Failure regressions also run with CPU kernels in ordinary library tests. The GPU
 variants wrap real CUDA kernels and inject preparation failure after the second

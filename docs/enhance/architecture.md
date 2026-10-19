@@ -502,7 +502,11 @@ split. `src/enhance/enhance-query-server` (unpublished) owns the wallet protocol
 (`enhance_query_server::protocol`), the client (`enhance_query_server::client`),
 record types and constants, prepared runtimes, workers, query ingress, packing
 routers, admission, response guards, serving fences, pure placement policy
-(`placement`) and the public `QueryGateway` (`gateway`). `src/status/status-query-server`
+(`placement`) and the public `QueryGateway` (`gateway`). `pir-query-server` (`src/shared/pir-query-server`) is the serving host. It
+compiles Enhance, Status, and Transparent only behind the matching Cargo
+feature, and one process may enable any subset. Enhance still names one role
+per process (`worker`, `query-ingress`, or `packing-router`); Status names
+`worker` or `router`. `src/status/status-query-server`
 holds Status generations, the distributed controller and its roles over the
 `status_query_server::protocol` wire contract. Both use `src/shared/pir-serving` for the profile
 modulus and native hints, wallet-libraries PIR packages and other `src/shared/`
@@ -512,8 +516,8 @@ ingestion, publishers, applications, tools or another product's packages.
 record journals (`ingest`), the durable control store, publication, preparation
 orchestration (`serving_control`), activation, recovery, retention and artifact
 collection, pool and capacity planning, publication telemetry, rebuilds and the
-`enhance-pir-server` command line, and can host the Status publisher. Its
-`coordinator::Coordinator` is the composition API and composes the `QueryGateway`.
+`enhance-pir-server` command line. Status publication is its own process. The
+Enhance `coordinator::Coordinator` is the composition API and composes the `QueryGateway`.
 Dependencies run only from publisher to query server. The gateway reads publisher
 state through the read-only `PublisherStatus` trait, which the publisher
 implements; revocations are read live from publisher state at query acceptance and

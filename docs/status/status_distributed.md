@@ -5,10 +5,11 @@ and independent serving roles; it does not establish production qualification.
 
 ## Deployment
 
-The coordinator integration is `enhance-pir-server coordinator --status-config
-<file>`. Omission disables Status. Its Status controller runs on a dedicated,
-bounded Tokio runtime with its own journal and source cache. It uses the
-coordinator-local Zakura cookie; the Status host never receives that credential.
+Status runs as its own process. `enhance-pir-server coordinator --status-config`
+is rejected; configure Status on `pir-publisher` or `status-pir` instead. Its
+Status controller runs on a dedicated, bounded Tokio runtime with its own
+journal and source cache. It uses the coordinator-local Zakura cookie; the
+Status host never receives that credential.
 
 The initial SSH rollout runs the same controller through `status-pir
 serve-distributed` in `status-controller-qualification.service` on the coordinator

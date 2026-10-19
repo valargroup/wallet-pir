@@ -182,27 +182,11 @@ pub async fn run(config: Config, http: Http<axum::Router>, shutdown: Shutdown) -
         });
         tasks.own(&heartbeat_task);
     }
-    let status_publisher = status_config
-        .map(|path| -> Result<_> {
-            if isolated_fixture {
-                return Err("live Status cannot use isolated Enhance fixtures".into());
-            }
-            let config: status_publisher::publisher::Config =
-                serde_json::from_slice(&std::fs::read(path)?)?;
-            let enabled = config.public_enabled;
-            let publisher = status_publisher::publisher::Publisher::new(config)?;
-            let cookie = zakura_cookie
-                .as_ref()
-                .ok_or("Status requires canonical node authentication")?;
-            publisher.start(ZakuraClient::from_cookie_file(&zakura_rpc_url, cookie)?)?;
-            Ok((publisher, enabled))
-        })
-        .transpose()?;
-    let serving = coordinator.clone();
-    let mut routes = serving.router();
-    if let Some((publisher, true)) = status_publisher {
-        routes = routes.merge(publisher.routes());
+    if status_config.is_some() {
+        return Err("configure Status as its own process".into());
     }
+    let serving = coordinator.clone();
+    let routes = serving.router();
     let task = tokio::spawn(http.serve(listen, routes));
     tasks.own(&task);
     let journal = EnhanceJournal::open(&data_dir)?;

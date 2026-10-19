@@ -618,19 +618,33 @@ impl Coordinator {
                             runtime::rlwe().d,
                         )
                         .map_err(|e| e.to_string())?;
-                        let pack = Packing::new(
-                            plan.shard.logical_rows,
-                            &hint,
-                            self.gateway.packing_budget(),
-                        )?;
-                        if self.serving.is_some() {
-                            crate::prepared_packing::persist(&self.root, &pack)?;
-                        }
-                        let pack = Arc::new(PublishedPacking::new(
-                            plan.shard.logical_rows,
-                            pack,
-                            self.serving.is_none(),
-                        ));
+                        let routers = self.serving.as_ref().map(|serving| serving.routers.clone());
+                        let pack = if let Some(routers) = routers {
+                            let prepared = prepare_on_router(
+                                &self.http,
+                                &routers,
+                                plan.shard.id,
+                                plan.shard.logical_rows,
+                                bytes.as_slice(),
+                            )
+                            .await?;
+                            let public = crate::prepared_packing::install(
+                                &self.root,
+                                plan.shard.logical_rows,
+                                &prepared,
+                            )?;
+                            Arc::new(PublishedPacking::metadata(plan.shard.logical_rows, public))
+                        } else {
+                            Arc::new(PublishedPacking::new(
+                                plan.shard.logical_rows,
+                                Packing::new(
+                                    plan.shard.logical_rows,
+                                    &hint,
+                                    self.gateway.packing_budget(),
+                                )?,
+                                true,
+                            ))
+                        };
                         let reference = pack.reference(plan.shard.id)?;
                         if let Some(existing) = packing.get(&plan.shard.id) {
                             let existing: &Arc<PublishedPacking> = existing;
@@ -844,4 +858,38 @@ impl Coordinator {
         }
         self.reconcile_inner().await
     }
+}
+
+async fn prepare_on_router(
+    http: &reqwest::Client,
+    routers: &[crate::packing_router::RouterRegistration],
+    shard: u64,
+    rows: u64,
+    hint: &[u8],
+) -> Result<Vec<u8>, String> {
+    let router = routers
+        .iter()
+        .find(|router| router.domains.is_empty() || router.domains.contains(&shard))
+        .ok_or("no packing router is assigned to this shard")?;
+    let response = http
+        .post(format!(
+            "{}/internal/prepare-packing?rows={rows}",
+            router.url
+        ))
+        .timeout(std::time::Duration::from_secs(600))
+        .body(hint.to_vec())
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "packing router prepare failed: {}",
+            response.status()
+        ));
+    }
+    response
+        .bytes()
+        .await
+        .map(|bytes| bytes.to_vec())
+        .map_err(|e| e.to_string())
 }

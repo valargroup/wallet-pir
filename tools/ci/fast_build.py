@@ -43,6 +43,7 @@ FAST_FEATURE_ROOTS = frozenset({
     'enhance-query-server',
     'pir-monitor',
     'pir-publisher',
+    'pir-query-server',
     'status-publisher',
     'transparent-publisher',
     'transparent-query-server',

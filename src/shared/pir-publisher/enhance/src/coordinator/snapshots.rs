@@ -123,17 +123,23 @@ pub(super) fn restore(
             return Err("invalid persisted hint identity".into());
         }
         let public_path = root.join("public").join(name);
-        let pack = if remote_packing
-            && public_path.is_file()
-            && crate::prepared_packing::describe_hint(root, name, shard.logical_rows).is_ok_and(
-                |a| {
-                    crate::prepared_packing::verify(
-                        &root.join(crate::prepared_packing::DIRECTORY).join(&a.name),
-                        &a,
-                    )
-                    .is_ok()
-                },
-            ) {
+        let pack = if remote_packing {
+            if !(public_path.is_file()
+                && crate::prepared_packing::describe_hint(root, name, shard.logical_rows)
+                    .is_ok_and(|artifact| {
+                        crate::prepared_packing::verify(
+                            &root
+                                .join(crate::prepared_packing::DIRECTORY)
+                                .join(&artifact.name),
+                            &artifact,
+                        )
+                        .is_ok()
+                    }))
+            {
+                return Err(
+                    "prepared packing artifact is missing; the packing router prepares it".into(),
+                );
+            }
             PublishedPacking::metadata(
                 shard.logical_rows,
                 fs::read(&public_path).map_err(|e| e.to_string())?,
@@ -148,14 +154,11 @@ pub(super) fn restore(
             )
             .map_err(|e| e.to_string())?;
             let serving = Packing::new(shard.logical_rows, &blocks, budget)?;
-            if remote_packing {
-                crate::prepared_packing::persist(root, &serving)?;
-            }
             crate::artifact::write_atomic(&root.join("public"), name, |f| {
                 f.write_all(&serving.public)
             })
             .map_err(|e| e.to_string())?;
-            PublishedPacking::new(shard.logical_rows, serving, !remote_packing)
+            PublishedPacking::new(shard.logical_rows, serving, true)
         };
         if !manifest.sessions.contains(&pack.reference(shard.id)?) {
             return Err("restored session digest differs".into());

@@ -1,6 +1,6 @@
 //! Process-local matrix evaluator configuration; never part of artifact identity.
 use ipir_sp::{server::KernelError, IPIRServer, YpirSchemeParams};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// Whether this evaluator was compiled with the CUDA implementation.
 pub const CUDA_COMPILED: bool = cfg!(feature = "cuda");
@@ -9,7 +9,7 @@ pub const CUDA_COMPILED: bool = cfg!(feature = "cuda");
 #[path = "matvec_test.rs"]
 pub(crate) mod testing;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, clap::ValueEnum, Serialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, clap::ValueEnum, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Backend {
     #[default]
@@ -18,7 +18,7 @@ pub enum Backend {
 }
 
 /// CLI and environment configuration, shared by the worker library entrypoint.
-#[derive(Clone, Copy, Debug, Default, clap::Args, Serialize)]
+#[derive(Clone, Copy, Debug, Default, clap::Args, Serialize, Deserialize)]
 pub struct MatvecConfig {
     /// Matrix-vector evaluator; packing always runs on the CPU.
     #[arg(

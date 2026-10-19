@@ -1,8 +1,7 @@
 //! The Enhance PIR publisher: chain reading, ingestion and the record journals,
 //! durable control state, publication decisions, preparation orchestration,
 //! activation, recovery, retention, placement and capacity planning, and the
-//! `enhance-pir-server` command line. The coordinator can host the Status
-//! publisher from `status-publisher`.
+//! `enhance-pir-server` command line. Status publication is a separate process.
 //!
 //! Query serving lives in `enhance-query-server`, which never depends on this
 //! package. [`coordinator::Coordinator`] composes its public

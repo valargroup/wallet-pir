@@ -156,7 +156,7 @@ fn main() {
                     let shard: u64 = flags.get("shard").map_or(0, |s| s.parse().unwrap());
                     let columns = synthetic_columns(fill, *seed, rows, n::COLS);
                     let masks = n::query_masks(shard);
-                    let hint = zakura_pir_publisher::native::hint(
+                    let hint = zakura_pir_server_core::native::hint(
                         &masks[..rows / n::D],
                         rows,
                         n::COLS,

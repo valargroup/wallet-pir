@@ -7,14 +7,17 @@ description = "Configurable host for all Wallet PIR publishers"
 
 [features]
 default = []
-native-reinspiring = ["enhance-publisher/native-reinspiring", "status-publisher/native-reinspiring"]
-cuda = ["enhance-publisher/cuda", "status-publisher/cuda"]
+enhance = ["dep:enhance-publisher"]
+status = ["dep:status-publisher"]
+transparent = ["dep:transparent-publisher"]
+receiver = ["dep:receiver-indexer"]
+native-reinspiring = ["enhance-publisher?/native-reinspiring", "status-publisher?/native-reinspiring"]
 
 [dependencies]
-enhance-publisher = { path = "../enhance" }
-status-publisher = { path = "../status" }
-transparent-publisher = { path = "../transparent" }
-receiver-indexer = { path = "../receiver" }
+enhance-publisher = { path = "../enhance", optional = true }
+status-publisher = { path = "../status", optional = true }
+transparent-publisher = { path = "../transparent", optional = true }
+receiver-indexer = { path = "../receiver", optional = true }
 pir-pipeline = { path = "../pipeline" }
 axum = "0.7"
 clap = { version = "4", features = ["derive"] }
