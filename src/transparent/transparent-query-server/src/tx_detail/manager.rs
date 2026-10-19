@@ -166,6 +166,7 @@ impl Manager {
     }
     pub async fn poll_once(&mut self) -> Result<serde_json::Value, Error> {
         self.source.reset_budget();
+        self.live.command(DisplayCommand::Collect).await?;
         let result = self.update().await;
         match &result {
             Ok(report) => {
@@ -201,6 +202,7 @@ impl Manager {
             }
         };
         self.activate(&current, publication).await?;
+        self.live.command(DisplayCommand::Collect).await?;
         self.current = Some(current.clone());
         Ok(
             serde_json::json!({"unchanged":false,"revision":current.revision,"downloaded_bytes":self.source.downloaded}),
