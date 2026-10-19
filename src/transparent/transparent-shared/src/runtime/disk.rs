@@ -1294,7 +1294,7 @@ mod shipped_tests {
             let table = Table::TxDirectory;
             let dir = tempfile::tempdir().unwrap();
             let s = segment(dir.path(), table, filled, 1);
-            let local = TableRuntime::build(&s.shared, &s.rows).unwrap();
+            let local = crate::runtime::tests::prepared_fixture(&s.shared, &s.rows).unwrap();
             let shipped = candidate(dir.path(), "candidate");
             let bytes = shipped
                 .write(&s.key, &s.shared, s.source.sha256(), &local)
@@ -1357,7 +1357,7 @@ mod shipped_tests {
     async fn refused_shipped_files_fall_back_to_a_counted_local_build() {
         let dir = tempfile::tempdir().unwrap();
         let s = segment(dir.path(), Table::TxDirectory, 700, 2);
-        let local = TableRuntime::build(&s.shared, &s.rows).unwrap();
+        let local = crate::runtime::tests::prepared_fixture(&s.shared, &s.rows).unwrap();
         let mut other_revision = s.key.clone();
         other_revision.0 = "cd".repeat(32);
         let mut other_bucket = s.key.clone();
@@ -1467,11 +1467,11 @@ mod shipped_tests {
         let dir = tempfile::tempdir().unwrap();
         let a = segment(dir.path(), Table::TxDirectory, 2_048, 4);
         let b = segment(dir.path(), Table::TxDirectory, 2_048, 5);
-        let from_a = TableRuntime::build(&a.shared, &a.rows).unwrap();
+        let from_a = crate::runtime::tests::prepared_fixture(&a.shared, &a.rows).unwrap();
         let expected = from_a.public_params.clone();
         // The matching runtime is checked before its parts are moved into the forgery.
         assert!(from_a.self_check(&a.shared, &a.rows).unwrap() < 2_048);
-        let from_b = TableRuntime::build(&b.shared, &b.rows).unwrap();
+        let from_b = crate::runtime::tests::prepared_fixture(&b.shared, &b.rows).unwrap();
         // Other rows while that runtime is still whole; forging moves its preprocessing.
         expect_self_check_fallback(dir.path(), "other rows", &a, &from_b, &expected, true).await;
         let TableRuntime { native, db, .. } = from_a;
@@ -1580,7 +1580,7 @@ mod shipped_tests {
         let dir = tempfile::tempdir().unwrap();
         let s = history_segment(dir.path(), table, 900, 3);
         let table = s.shared.table;
-        let local = TableRuntime::build(&s.shared, &s.rows).unwrap();
+        let local = crate::runtime::tests::prepared_fixture(&s.shared, &s.rows).unwrap();
         let other_kind = match table {
             Table::Directory => Table::Pages,
             _ => Table::Directory,
@@ -1696,7 +1696,7 @@ mod shipped_tests {
                 &s.key,
                 &s.shared,
                 s.source.sha256(),
-                &TableRuntime::build(&s.shared, &s.rows).unwrap(),
+                &crate::runtime::tests::prepared_fixture(&s.shared, &s.rows).unwrap(),
             )
             .unwrap();
         let mut corrupt = s.rows.clone();
@@ -1731,7 +1731,7 @@ mod shipped_tests {
                 &s.key,
                 &s.shared,
                 s.source.sha256(),
-                &TableRuntime::build(&s.shared, &s.rows).unwrap(),
+                &crate::runtime::tests::prepared_fixture(&s.shared, &s.rows).unwrap(),
             )
             .unwrap();
         let metrics = Arc::new(Metrics::default());
@@ -1825,7 +1825,7 @@ mod shipped_tests {
                 &s.key,
                 &s.shared,
                 s.source.sha256(),
-                &TableRuntime::build(&other.shared, &other.rows).unwrap(),
+                &crate::runtime::tests::prepared_fixture(&other.shared, &other.rows).unwrap(),
             )
             .unwrap();
         let disk = DiskCache::new(dir.path().join("cache"), s.shared.reserved_bytes() * 4).unwrap();
@@ -1905,7 +1905,7 @@ mod shipped_tests {
         assert_eq!(Metrics::get(&metrics.builds), 1);
         assert_eq!(Metrics::get(&metrics.shipped_loads), 0);
         assert!(cache.refused_shipped.lock().unwrap().is_empty());
-        let expected = TableRuntime::build(&s.shared, &s.rows).unwrap();
+        let expected = crate::runtime::tests::prepared_fixture(&s.shared, &s.rows).unwrap();
         assert_eq!(handle.get().public_params, expected.public_params);
         // A new production operation, once the runtime is gone, tries the
         // offered file afresh: a valid one now.
@@ -1950,7 +1950,7 @@ mod shipped_tests {
                 &s.key,
                 &s.shared,
                 s.source.sha256(),
-                &TableRuntime::build(&s.shared, &s.rows).unwrap(),
+                &crate::runtime::tests::prepared_fixture(&s.shared, &s.rows).unwrap(),
             )
             .unwrap();
         let metrics = Arc::new(Metrics::default());

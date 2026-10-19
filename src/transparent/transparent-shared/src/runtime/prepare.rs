@@ -208,7 +208,9 @@ mod tests {
             .await
             .is_err());
         assert_eq!(Metrics::get(&metrics.shipped_fallbacks), 0);
-        prepare_segment(&out, &[], &key, &shared, &source, "pages".into()).unwrap();
+        let prepared = prepare_segment(&out, &[], &key, &shared, &source, "pages".into()).unwrap();
+        assert!(!prepared.linked);
+        assert!(prepared.build_seconds > 0.0);
         let (handle, produced) = cache
             .get_from(
                 key.clone(),
@@ -264,9 +266,12 @@ mod tests {
         let (shared, source) = segment(dir.path(), 1);
         let key = ("ab".repeat(32), shared.table, 0);
         let first = publication(dir.path(), "first");
-        let built = prepare_segment(&first, &[], &key, &shared, &source, "pages".into()).unwrap();
-        assert!(!built.linked);
-        assert!(built.build_seconds > 0.0);
+        let rows = fs::read(source.path()).unwrap();
+        let runtime = crate::runtime::tests::prepared_fixture(&shared, &rows).unwrap();
+        let prepared_bytes = first
+            .write(&key, &shared, source.sha256(), &runtime)
+            .unwrap();
+        drop(runtime);
         // Preparing the same publication again keeps its file.
         let again = prepare_segment(&first, &[], &key, &shared, &source, "pages".into()).unwrap();
         assert!(again.linked);
@@ -282,7 +287,7 @@ mod tests {
         )
         .unwrap();
         assert!(linked.linked);
-        assert_eq!(linked.bytes, built.bytes);
+        assert_eq!(linked.bytes, prepared_bytes);
         let (a, b) = (
             fs::metadata(first.path(&key, &shared, source.sha256())).unwrap(),
             fs::metadata(second.path(&key, &shared, source.sha256())).unwrap(),
@@ -300,7 +305,7 @@ mod tests {
             .write(true)
             .open(truncated.path(&key, &shared, source.sha256()))
             .unwrap()
-            .set_len(built.bytes / 2)
+            .set_len(prepared_bytes / 2)
             .unwrap();
         let third = publication(dir.path(), "third");
         let rebuilt = prepare_segment(

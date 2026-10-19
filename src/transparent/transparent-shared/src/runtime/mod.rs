@@ -1546,6 +1546,53 @@ pub(crate) mod tests {
         }
     }
 
+    /// Prepare immutable native bytes once; every consumer gets a private file
+    /// before testing corruption, replacement or retirement. Qualification
+    /// deliberately keeps independent cold builds.
+    pub(crate) fn prepared_fixture(
+        shared: &SharedParams,
+        rows: &[u8],
+    ) -> Result<TableRuntime, String> {
+        use disk::ShippedRuntimes;
+        if cfg!(feature = "qualification-tests") {
+            return TableRuntime::build(shared, rows);
+        }
+        static LOCAL: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
+        let root = std::env::var_os("WALLET_PIR_TEST_RUNTIME_CACHE")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| {
+                LOCAL
+                    .get_or_init(|| tempfile::tempdir().unwrap())
+                    .path()
+                    .to_path_buf()
+            })
+            .join("transparent-predecessors");
+        std::fs::create_dir_all(&root).unwrap();
+        let shared_files = ShippedRuntimes::new(root.clone());
+        let key = ("ab".repeat(32), shared.table, 0);
+        let digest = hex::encode(Sha256::digest(rows));
+        let path = shared_files.path(&key, shared, &digest);
+        let lock = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(root.join("fixture.lock"))
+            .unwrap();
+        lock.lock().unwrap();
+        if !path.exists() {
+            let runtime = TableRuntime::build(shared, rows)?;
+            shared_files.write(&key, shared, &digest, &runtime).unwrap();
+        }
+        let private = tempfile::tempdir().unwrap();
+        let files = ShippedRuntimes::new(private.path().to_path_buf());
+        std::fs::copy(&path, files.path(&key, shared, &digest)).unwrap();
+        // Loaded runtimes own their mappings after the private pathname is
+        // removed; no consumer can mutate the retained fixture's inode.
+        files
+            .load(&key, shared, &digest)
+            .map_err(|error| error.to_string())
+    }
+
     fn reference_masks(profile: &native::TableProfile, rows: &[u8]) -> Vec<u8> {
         let hint = if profile.native.entry_bytes() == 1 {
             let columns: Vec<Vec<u8>> = (0..profile.cols)

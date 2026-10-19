@@ -67,6 +67,8 @@ class MatrixTests(unittest.TestCase):
         reference_features = matrix.package_features('enhance-query-server', contexts['reference'], packages)
         self.assertEqual(reference_features, ['enhance-query-server/qualification-tests'])
         self.assertIn('enhance-publisher/qualification-tests', contexts['reference']['features'])
+        self.assertIn('status-query-server/qualification-tests', contexts['reference']['features'])
+        self.assertIn('status-query-server/qualification-tests', contexts['native']['features'])
         self.assertNotIn('enhance-publisher/native-reinspiring', native)
         commands = matrix.cargo_commands(registry['enhance-cuda-check']['targets'], contexts, targets, packages)
         self.assertEqual(len(commands), 1)

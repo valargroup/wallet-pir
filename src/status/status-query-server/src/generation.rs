@@ -47,17 +47,47 @@ pub(super) struct Unit {
 /// reconstruction. The candidate owns its hint; admitted views are immutable.
 /// The native profile uses the same exact negacyclic product modulo 2^54.
 fn incremental_hint(old: &Unit, bytes: &[u8], setup: &[u64]) -> Option<Vec<CrsBlock>> {
-    let p = profile();
-    let d = p.rlwe().d;
-    let q = modulus();
-    let columns = ROW_BYTES / 2;
+    sparse_hint_update(
+        &old.rows,
+        &old.hint,
+        bytes,
+        setup,
+        HintShape {
+            degree: profile().rlwe().d,
+            columns: ROW_BYTES / 2,
+            modulus: modulus(),
+        },
+    )
+}
+
+/// Dimensions of the existing negacyclic hint calculation. Production always
+/// uses the pinned profile; small rings let its arithmetic oracle stay cheap.
+#[derive(Clone, Copy)]
+struct HintShape {
+    degree: usize,
+    columns: usize,
+    modulus: u64,
+}
+
+fn sparse_hint_update(
+    old_rows: &[u8],
+    old_hint: &[CrsBlock],
+    bytes: &[u8],
+    setup: &[u64],
+    shape: HintShape,
+) -> Option<Vec<CrsBlock>> {
+    let HintShape {
+        degree: d,
+        columns,
+        modulus: q,
+    } = shape;
     let mut changes = Vec::new();
-    if bytes.len() != old.rows.len() {
+    if bytes.len() != old_rows.len() {
         return None;
     }
     for (i, (value, prior)) in bytes
         .chunks_exact(2)
-        .zip(old.rows.chunks_exact(2))
+        .zip(old_rows.chunks_exact(2))
         .enumerate()
     {
         let value = u16::from_le_bytes(value.try_into().unwrap());
@@ -71,7 +101,7 @@ fn incremental_hint(old: &Unit, bytes: &[u8], setup: &[u64]) -> Option<Vec<CrsBl
             changes.push((row, col, i64::from(value) - i64::from(prior)));
         }
     }
-    let mut hint = old.hint.clone();
+    let mut hint = old_hint.to_vec();
     for (row, col, delta) in changes {
         let out = &mut hint[col / d].rows[col % d];
         for (j, a) in setup.iter().enumerate() {
