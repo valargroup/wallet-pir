@@ -50,3 +50,6 @@ mod http_metrics;
 mod query_timing;
 
 pub mod prepared_packing;
+
+#[cfg(test)]
+mod test_support;

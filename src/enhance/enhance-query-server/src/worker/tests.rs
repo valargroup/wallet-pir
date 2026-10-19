@@ -205,18 +205,19 @@ async fn placement_policy_is_persisted_and_fences_reservations() {
 
 #[test]
 fn restart_rebuilds_lost_cache_only_from_verified_durable_rows() {
-    use super::super::runtime::{plan, unit_rows, Packing};
+    use super::super::runtime::{plan, unit_rows, PublishedPacking};
     use crate::protocol::{Geometry, Lifecycle, SCHEMA_VERSION};
     let root = tempfile::tempdir().unwrap();
     let worker = Worker::open(root.path()).unwrap();
     let coverage = Lifecycle::default()
-        .coverage(1, Geometry::default())
+        .coverage(67, Geometry::default())
         .unwrap();
-    let source = |_: u64, count: usize| Ok(vec![7; count * crate::RECORD_BYTES]);
+    let source = crate::test_support::records;
     let plan = plan(coverage.shards[0].clone(), source).unwrap();
     let rows = unit_rows(&plan.shard, &plan.shard.units[0], &mut { source }).unwrap();
     let path = root.path().join("rows").join(plan.units[0].digest());
     fs::write(&path, &rows).unwrap();
+    crate::test_support::seed_published_fixture(root.path(), &plan);
     let eval = worker
         .inner
         .lock()
@@ -227,12 +228,9 @@ fn restart_rebuilds_lost_cache_only_from_verified_durable_rows() {
         .prepare(plan.clone(), source)
         .unwrap()
         .0;
-    let packing = Packing::new(
-        4096,
-        &eval.hint().unwrap(),
-        &crate::packing_budget::PackingBudget::coordinator(),
-    )
-    .unwrap();
+    // Workers bind the session reference but never serve packing material.
+    // Real packing and decoding are exercised by the encrypted HTTP tests.
+    let packing = PublishedPacking::metadata(4096, b"recovery-test-session".to_vec());
     let manifest = Manifest {
         recovery_epoch: 0,
         placement_revision: 0,
@@ -296,7 +294,7 @@ fn restart_rebuilds_lost_cache_only_from_verified_durable_rows() {
     );
     assert_eq!(inner.disk.epoch, 3);
     assert_eq!(fs::read(root.path().join("worker.json")).unwrap(), durable);
-    assert!(staged_records(root.path(), &plan, 1, 1).is_err());
+    assert!(staged_records(root.path(), &plan, plan.shard.records, 1).is_err());
     assert!(staged_records(root.path(), &plan, 0, usize::MAX).is_err());
 }
 
