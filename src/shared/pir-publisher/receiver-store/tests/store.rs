@@ -232,9 +232,9 @@ fn provider_receivers_are_an_append_only_union() {
 
 /// A sweep is recorded page by page and resumes from its last page after a reopen, and
 /// a recent and a full pass run side by side. One that reaches into the history
-/// extends it, and only one from its start marks it fully reread. A page of any other
-/// sweep, a second pass of a kind while one runs, or a floor after the start is
-/// refused without recording.
+/// extends it, and only one from its start marks it fully reread, keeping the later
+/// start of two that finish out of order. A page of any other sweep, a second pass of
+/// a kind while one runs, or a floor after the start is refused without recording.
 #[test]
 fn sweeps_resume_and_extend_the_history() {
     use receiver_store::{History, Pass, ProviderStore, Sweep};
@@ -308,7 +308,16 @@ fn sweeps_resume_and_extend_the_history() {
     store
         .sweep_page(feed, full, 2_500, &[], &[], None, None)
         .unwrap();
-    assert_eq!(store.history(feed).unwrap(), history(50, 3_500, 3_500));
+    assert_eq!(store.history(feed).unwrap(), history(50, 3_500, 3_500)); // On a history shorter than a week a recent pass reads from its start too. Two
+                                                                         // such passes finishing out of order keep the later start.
+    store.begin_sweep(feed, full, 50, 4_000).unwrap();
+    store.begin_sweep(feed, Pass::Recent, 50, 4_500).unwrap();
+    for (pass, began) in [(Pass::Recent, 4_500), (full, 4_000)] {
+        store
+            .sweep_page(feed, pass, began, &[], &[], None, None)
+            .unwrap();
+        assert_eq!(store.history(feed).unwrap(), history(50, 4_500, 4_500));
+    }
 }
 
 /// A read that fails partway, here on its completions, records nothing: neither its

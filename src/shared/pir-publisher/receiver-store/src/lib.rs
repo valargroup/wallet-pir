@@ -625,7 +625,8 @@ impl ProviderStore {
             }
             None => {
                 // A sweep that reaches into the history extends it, and one from its
-                // start reads all of it. One that would leave a gap replaces it, so the
+                // start reads all of it, so the later of two such starts stands however
+                // the sweeps finish. One that would leave a gap replaces it, so the
                 // history never claims a span no sweep read.
                 tx.execute(
                     "INSERT INTO history VALUES (?1,?2,?3,?3) ON CONFLICT(feed) DO UPDATE SET
@@ -633,9 +634,10 @@ impl ProviderStore {
                             THEN MIN(since,excluded.since) ELSE excluded.since END,
                         through=CASE WHEN excluded.since<=through AND excluded.through>=since
                             THEN MAX(through,excluded.through) ELSE excluded.through END,
-                        full=CASE WHEN excluded.since<=since OR excluded.since>through
-                                OR excluded.through<since
-                            THEN excluded.through ELSE full END",
+                        full=CASE WHEN excluded.since<since OR excluded.since>through
+                                OR excluded.through<since THEN excluded.through
+                            WHEN excluded.since=since THEN MAX(full,excluded.through)
+                            ELSE full END",
                     params![feed, floor, began],
                 )?;
                 tx.execute(
