@@ -1,4 +1,7 @@
-//! Coordinator-produced public packing artifacts and bounded verified loading.
+//! Prepared public packing artifacts and bounded verified loading.
+//! The packing router builds an artifact from a worker hint. The coordinator
+//! installs those bytes when a router is configured, and still builds packing
+//! itself only when no router is configured.
 use crate::runtime::{self, Packing};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -120,6 +123,67 @@ pub fn persist(root: &Path, pack: &Packing) -> Result<Artifact, String> {
         .map_err(|e| e.to_string())?;
     Ok(a)
 }
+
+/// Install router-built prepared bytes. The file layout matches [`persist`].
+pub fn install(root: &Path, rows: u64, prepared: &[u8]) -> Result<Vec<u8>, String> {
+    let public = public_parameters(rows, prepared)?;
+    let digest = hex::encode(Sha256::digest(&public));
+    let name = artifact_name(rows, &digest)?;
+    if !valid_len(prepared.len() as u64, rows)? {
+        return Err("prepared artifact length".into());
+    }
+    let directory = root.join(DIRECTORY);
+    fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
+    if let Ok(existing) = describe(root, &name) {
+        if existing.validate(rows, &digest).is_ok()
+            && verify(&directory.join(&name), &existing).is_ok()
+        {
+            return Ok(public);
+        }
+    }
+    crate::artifact::write_atomic_cold(&directory, &name, |file| file.write_all(prepared))
+        .map_err(|e| e.to_string())?;
+    let path = directory.join(&name);
+    let a = Artifact {
+        name: name.clone(),
+        sha256: hash_file(&path)?,
+        bytes: fs::metadata(&path).map_err(|e| e.to_string())?.len(),
+        format: FORMAT,
+    };
+    a.validate(rows, &digest)?;
+    crate::artifact::write_atomic(&directory, &format!("{name}.json"), |f| {
+        serde_json::to_writer(f, &a).map_err(io::Error::other)
+    })
+    .map_err(|e| e.to_string())?;
+    File::open(&directory)
+        .and_then(|f| f.sync_all())
+        .map_err(|e| e.to_string())?;
+    Ok(public)
+}
+
+fn public_parameters(rows: u64, prepared: &[u8]) -> Result<Vec<u8>, String> {
+    if prepared.len() < 8 {
+        return Err("prepared artifact too short".into());
+    }
+    let stored = u64::from_le_bytes(prepared[..8].try_into().unwrap());
+    let params = crate::protocol::parameters(rows)?;
+    if stored != params.db_rows as u64 {
+        return Err("prepared row count mismatch".into());
+    }
+    #[cfg(feature = "native-reinspiring")]
+    let public_len = crate::native::public_len(crate::native::COLS);
+    #[cfg(not(feature = "native-reinspiring"))]
+    let public_len =
+        (params.db_cols * ipir_sp::modulus_switch::modulus_bits(runtime::rlwe().q)).div_ceil(8);
+    let end = 8usize
+        .checked_add(public_len)
+        .ok_or("public parameter length overflows")?;
+    if prepared.len() < end {
+        return Err("prepared artifact is missing public parameters".into());
+    }
+    Ok(prepared[8..end].to_vec())
+}
+
 pub fn hash_file(path: &Path) -> Result<String, String> {
     let mut f = File::open(path).map_err(|e| e.to_string())?;
     let mut hash = Sha256::new();
@@ -232,6 +296,7 @@ mod tests {
         )
         .unwrap();
         assert!(describe_hint(root.path(), &format!("{public}.bin"), 4096).is_err());
+        assert!(install(root.path(), 4096, &[0; 7]).is_err());
         let budget = crate::PackingBudget::router();
         assert!(load(&root.path().join("absent"), &a, 4096, &budget).is_err());
         assert_eq!(budget.charged_bytes(), 0);

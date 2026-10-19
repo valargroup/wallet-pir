@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "src/shared/pir-publisher/server",
+    "src/shared/pir-query-server",
     "src/shared/pir-publisher/receiver-store",
     "src/shared/pir-publisher/receiver",
     "src/receiver/receiver-pir-server",

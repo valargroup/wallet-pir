@@ -22,7 +22,7 @@ enum Command {
         #[command(flatten)]
         matvec: enhance_query_server::matvec::MatvecConfig,
     },
-    /// Offline migration: coordinator-owned artifacts for all retained sessions.
+    /// Confirm retained sessions already have router-prepared packing artifacts.
     PreparePackingArtifacts {
         #[arg(long)]
         data_dir: PathBuf,
@@ -212,13 +212,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             data_dir,
             matvec,
         } => {
-            let worker = Worker::open_with_backend(&data_dir, placement_policy, matvec)?;
-            // A stopped replica drains accepted evaluations; new ones are
-            // refused and retried by the packing router on another replica.
-            enhance_query_server::shutdown::serve_until(
-                tokio::net::TcpListener::bind(listen).await?,
-                worker.router(),
-                enhance_query_server::shutdown::signal(),
+            enhance_query_server::service::run_worker(
+                enhance_query_server::service::WorkerConfig {
+                    listen,
+                    data_dir,
+                    sealed_shards: placement_policy.sealed_shards,
+                    matvec,
+                },
             )
             .await?;
         }
@@ -229,27 +229,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             requests,
             uploads,
         } => {
-            let ingress = enhance_query_server::query_ingress::QueryIngress::open_with_uploads(
-                &data_dir, requests, uploads,
-            )?;
-            tokio::try_join!(
-                async {
-                    axum::serve(
-                        tokio::net::TcpListener::bind(listen).await?,
-                        ingress
-                            .public_router()
-                            .into_make_service_with_connect_info::<SocketAddr>(),
-                    )
-                    .await
+            enhance_query_server::service::run_ingress(
+                enhance_query_server::service::IngressConfig {
+                    data_dir,
+                    listen,
+                    control_listen,
+                    requests,
+                    uploads,
                 },
-                async {
-                    axum::serve(
-                        tokio::net::TcpListener::bind(control_listen).await?,
-                        ingress.control_router(),
-                    )
-                    .await
-                },
-            )?;
+            )
+            .await?;
         }
         Command::PackingRouter {
             data_dir,
@@ -259,29 +248,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             max_objects,
             requests,
         } => {
-            let router = enhance_query_server::packing_router::PackingRouter::open(
-                &data_dir,
-                &artifact_origin,
-                max_objects,
-                requests,
-            )?;
-            router.start_worker_health_monitor();
-            tokio::try_join!(
-                async {
-                    axum::serve(
-                        tokio::net::TcpListener::bind(listen).await?,
-                        router.public_router(),
-                    )
-                    .await
+            enhance_query_server::service::run_router(
+                enhance_query_server::service::RouterConfig {
+                    data_dir,
+                    artifact_origin,
+                    listen,
+                    control_listen,
+                    max_objects,
+                    requests,
                 },
-                async {
-                    axum::serve(
-                        tokio::net::TcpListener::bind(control_listen).await?,
-                        router.control_router(),
-                    )
-                    .await
-                },
-            )?;
+            )
+            .await?;
         }
         Command::Coordinator {
             status_config,

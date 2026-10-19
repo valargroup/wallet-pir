@@ -856,7 +856,6 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
- "status-publisher",
  "status-query-server",
  "tempfile",
  "thiserror 2.0.18",
@@ -892,12 +891,14 @@ dependencies = [
  "prometheus",
  "rand 0.8.5",
  "rand_chacha 0.3.1",
+ "rayon",
  "reinspiring",
  "reqwest",
  "serde",
  "serde_json",
  "sha2",
  "simplepir-kernel",
+ "status-query-server",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
@@ -906,6 +907,7 @@ dependencies = [
  "tracing",
  "zakura-pir-client",
  "zakura-pir-query-server",
+ "zakura-pir-server-core",
 ]
 
 [[package]]
@@ -2153,6 +2155,25 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "transparent-publisher",
+]
+
+[[package]]
+name = "pir-query-server"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "clap",
+ "enhance-query-server",
+ "pir-pipeline",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "status-query-server",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "transparent-query-server",
 ]
 
 [[package]]

@@ -16,7 +16,8 @@
     "enhance-publisher",
     "pir-apm",
     "pir-monitor",
-    "pir-publisher"
+    "pir-publisher",
+    "pir-query-server"
   ],
   "receiver": [
     "receiver-indexer",

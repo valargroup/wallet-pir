@@ -3,16 +3,8 @@
 use clap::Parser;
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::sync::Arc;
-use tower_http::limit::RequestBodyLimitLayer;
 use tracing_subscriber::EnvFilter;
-use transparent_query_server::history::service::{
-    router, ReadinessMode, ServiceConfig, ServiceState,
-};
-use transparent_shared::history::assignment::Assignment;
-use transparent_shared::history::shardset::{
-    LoadOptions, LoadScope, ShardSet, DEFAULT_RETAIN_REVISIONS,
-};
+use transparent_shared::history::shardset::DEFAULT_RETAIN_REVISIONS;
 
 #[derive(Parser)]
 #[command(
@@ -146,248 +138,40 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .with_writer(std::io::stderr)
         .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
         .init();
-    let mut cli = Cli::parse();
-    if let Some(publisher) = cli.publisher {
-        if cli.control_socket.is_some()
-            || cli.assignment.is_some()
-            || cli.runtime_cache_dir.is_some()
-        {
-            return Err("HTTPS bootstrap verification requires its own directory and no fleet/cache configuration".into());
-        }
-        let roots = cli
-            .publisher_ca
-            .map(
-                |path| -> Result<_, Box<dyn std::error::Error + Send + Sync>> {
-                    Ok(reqwest::Certificate::from_pem(&std::fs::read(path)?)?)
-                },
-            )
-            .transpose()?
-            .into_iter()
-            .collect();
-        let provider = transparent_query_server::routing::bootstrap::Config {
-            publisher,
-            network: cli.publisher_network.unwrap(),
-            genesis_hash: cli.publisher_genesis.unwrap(),
-            directory: cli.shard_dir,
+    let cli = Cli::parse();
+    transparent_query_server::history::process::run(
+        transparent_query_server::history::process::HistoryProcess {
+            publisher: cli.publisher,
+            archive_upstream: cli.archive_upstream,
+            archive_ca: cli.archive_ca,
+            publisher_network: cli.publisher_network,
+            publisher_genesis: cli.publisher_genesis,
+            publisher_ca: cli.publisher_ca,
+            bootstrap_max_bytes: cli.bootstrap_max_bytes,
+            full_holdings: cli.full_holdings,
+            listen: cli.listen,
+            shard_dir: cli.shard_dir,
             cache_bytes: cli.cache_bytes,
-            max_download_bytes: cli.bootstrap_max_bytes,
-            roots,
-        };
-        if !cli.verify_only || cli.archive_upstream.is_some() || cli.full_holdings {
-            let service = ServiceConfig {
-                cache_bytes: cli.cache_bytes,
-                build_slots: cli.build_slots,
-                query_slots: cli.query_slots,
-                max_waiters: cli.query_waiters,
-                max_body_bytes: cli.body_bytes,
-                upload_deadline: std::time::Duration::from_secs(cli.upload_deadline_secs),
-                query_deadline: std::time::Duration::from_secs(cli.query_deadline_secs),
-                readiness: ReadinessMode::Warm,
-            };
-            let mut manager =
-                transparent_query_server::routing::manager::Manager::new(provider, service)?;
-            if cli.full_holdings {
-                manager = manager.with_full_holdings();
-            }
-            if let Some(origin) = cli.archive_upstream {
-                let roots = cli
-                    .archive_ca
-                    .map(
-                        |path| -> Result<_, Box<dyn std::error::Error + Send + Sync>> {
-                            Ok(reqwest::Certificate::from_pem(&std::fs::read(path)?)?)
-                        },
-                    )
-                    .transpose()?
-                    .into_iter()
-                    .collect();
-                manager = manager.with_archive(
-                    transparent_query_server::routing::archive::Archive::new(&origin, roots)?,
-                );
-            }
-            if let Err(error) = manager.poll_once().await {
-                tracing::warn!(%error, "initial synchronization failed; checking recovered active view");
-                if manager.live().is_none() {
-                    return Err(error);
-                }
-            }
-            if cli.verify_only {
-                // Same strict managed loader, owner and archive configuration as
-                // startup. No listener; saved bytes never bypass fresh authority.
-                let live = manager.live().ok_or("provider did not activate")?;
-                println!(
-                    "{}",
-                    serde_json::to_string(
-                        &live
-                            .command(transparent_query_server::history::live::Command::Status)
-                            .await?
-                    )?
-                );
-                return Ok(());
-            }
-            let app = manager.router()?;
-            let listener = tokio::net::TcpListener::bind(cli.listen).await?;
-            let polling = tokio::spawn(manager.run());
-            axum::serve(listener, app).await?;
-            polling.abort();
-            return Ok(());
-        }
-        let report = transparent_query_server::routing::bootstrap::verify(provider).await?;
-        println!("{}", serde_json::to_string(&report)?);
-        return Ok(());
-    }
-    let active_record = cli
-        .active_record
-        .clone()
-        .unwrap_or_else(|| cli.shard_dir.with_extension("active.json"));
-    // The runtimes the active publication was staged with, if any: a
-    // restarted worker is offered them as its prepare was.
-    let mut runtimes = None;
-    if cli.control_socket.is_some() && active_record.exists() {
-        let active: transparent_query_server::history::live::Publication =
-            serde_json::from_slice(&std::fs::read(&active_record)?)?;
-        cli.shard_dir = active.directory;
-        cli.assignment = active.assignment;
-        runtimes = active.runtimes;
-    }
-    let disk = cli
-        .runtime_cache_dir
-        .clone()
-        .map(|dir| {
-            let mut disk = transparent_shared::runtime::disk::DiskCache::new(
-                dir,
-                cli.runtime_cache_max_bytes
-                    .unwrap_or(cli.cache_bytes.saturating_mul(2)),
-            )?;
-            disk.restore_slots = usize::from(cli.runtime_restore_slots);
-            Ok::<_, std::io::Error>(disk)
-        })
-        .transpose()?;
-    if !cli.runtime_cache_prune_set.is_empty() {
-        let mut keep = std::collections::HashSet::new();
-        for set in &cli.runtime_cache_prune_set {
-            keep.extend(transparent_shared::runtime::disk::retained_digests(set)?);
-        }
-        let freed = disk
-            .as_ref()
-            .expect("clap requires cache directory")
-            .prune(&keep)?;
-        println!("runtime cache pruned: {freed} bytes freed");
-        return Ok(());
-    }
-
-    let scope = match (&cli.assignment, &cli.worker_id) {
-        (Some(path), Some(worker_id)) => LoadScope::Assigned {
-            assignment: Arc::new(Assignment::load(path)?),
-            worker_id: worker_id.clone(),
+            runtime_cache_dir: cli.runtime_cache_dir,
+            runtime_cache_max_bytes: cli.runtime_cache_max_bytes,
+            runtime_restore_slots: cli.runtime_restore_slots,
+            runtime_cache_prune_set: cli.runtime_cache_prune_set,
+            build_slots: cli.build_slots,
+            query_slots: cli.query_slots,
+            retain_revisions: cli.retain_revisions,
+            query_waiters: cli.query_waiters,
+            body_bytes: cli.body_bytes,
+            upload_deadline_secs: cli.upload_deadline_secs,
+            query_deadline_secs: cli.query_deadline_secs,
+            assignment: cli.assignment,
+            worker_id: cli.worker_id,
+            retain_bytes: cli.retain_bytes,
+            prune_excess: cli.prune_excess,
+            pilot_cold: cli.pilot_cold,
+            verify_only: cli.verify_only,
+            control_socket: cli.control_socket,
+            active_record: cli.active_record,
         },
-        _ => LoadScope::Whole,
-    };
-    let options = LoadOptions {
-        retain_revisions: cli.retain_revisions,
-        retain_bytes: cli.retain_bytes,
-        prune_excess: cli.prune_excess,
-        scope,
-    };
-    // Loading verifies every shard against its own manifest digest. A corrupt
-    // shard must fail here rather than be served, or every client would reject
-    // its rows as a PIR fault instead of as a corrupt shard.
-    let set = ShardSet::open_with(&cli.shard_dir, &options)?;
-    tracing::info!(
-        shards = set.len(),
-        assigned = set.assigned_len(),
-        revisions = set.revisions().len(),
-        prunable = set.prunable().len(),
-        geometries = ?set.geometries().iter().map(|g| g.name).collect::<Vec<_>>(),
-        map_sha256 = set.map_digest,
-        worker_id = set.scope().map(|scope| scope.worker_id.as_str()),
-        assignment_sha256 = set.scope().map(|scope| scope.assignment_sha256.as_str()),
-        start = set.map.start_height,
-        covered_through = set.map.shards.last().map(|s| s.end_height),
-        "loaded shard set"
-    );
-    for prunable in set.prunable() {
-        tracing::warn!(
-            shard = prunable.shard_id,
-            revision = prunable.revision,
-            bytes = prunable.bytes,
-            path = %prunable.path.display(),
-            "superseded revision past the retention bound; prune it"
-        );
-    }
-
-    let readiness = if cli.assignment.is_some() && !cli.pilot_cold {
-        ReadinessMode::Warm
-    } else {
-        ReadinessMode::LoadedOnly
-    };
-    let config = ServiceConfig {
-        cache_bytes: cli.cache_bytes,
-        build_slots: cli.build_slots,
-        query_slots: cli.query_slots,
-        max_waiters: cli.query_waiters,
-        max_body_bytes: cli.body_bytes,
-        upload_deadline: std::time::Duration::from_secs(cli.upload_deadline_secs),
-        query_deadline: std::time::Duration::from_secs(cli.query_deadline_secs),
-        readiness,
-    };
-    if cli.verify_only {
-        let report = disk.as_ref().map(|disk| disk.check_set(&set)).transpose()?;
-        // Everything the service would check before listening has been
-        // checked, including that the assignment fits the cache in warm mode.
-        ServiceState::build(set, config)
-            .map_err(|error| -> Box<dyn std::error::Error + Send + Sync> { error.into() })?;
-        println!(
-            "{}",
-            serde_json::json!({"verified":true,"runtime_cache":report})
-        );
-        return Ok(());
-    }
-    let map_sha256 = set.map_digest.clone();
-    let state = ServiceState::build_with_runtimes(
-        set,
-        config,
-        disk,
-        runtimes
-            .clone()
-            .map(transparent_shared::runtime::disk::ShippedRuntimes::new),
     )
-    .map_err(|error| -> Box<dyn std::error::Error + Send + Sync> { error.into() })?;
-    let limit = state.max_query_bytes();
-    let app = if let Some(socket) = cli.control_socket {
-        let live = transparent_query_server::history::live::LiveService::new(
-            state.clone(),
-            transparent_query_server::history::live::Publication {
-                directory: cli.shard_dir,
-                assignment: cli.assignment,
-                map_sha256,
-                runtimes,
-            },
-            config,
-            options,
-            active_record,
-        )?;
-        let app = live.router();
-        tokio::spawn(async move {
-            if let Err(error) = live.listen(&socket).await {
-                tracing::error!(%error, "control socket failed");
-                std::process::exit(1);
-            }
-        });
-        app
-    } else {
-        router(state.clone())
-    }
-    .layer(RequestBodyLimitLayer::new(limit));
-
-    // Bound before the prewarm starts, so the operator routes answer while
-    // the runtimes build and a router's health check sees "not ready" rather
-    // than "connection refused".
-    let listener = tokio::net::TcpListener::bind(cli.listen).await?;
-    tracing::info!(listen = %cli.listen, max_query_bytes = limit, ?readiness, "serving");
-    let _prewarm = state.spawn_prewarm();
-    // The live service owns the initial snapshot. Keeping this startup clone
-    // across serve() would pin the oldest retired generation forever.
-    drop(state);
-    axum::serve(listener, app).await?;
-    Ok(())
+    .await
 }
