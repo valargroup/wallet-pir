@@ -22,6 +22,7 @@
 //! chunks no retained candidate links are.
 
 use zakura_pir_publisher::transparent as transparent_shard;
+#[cfg(test)]
 use zakura_pir_publisher::transparent::filter as transparent_filter;
 
 use super::cache::flatten;
