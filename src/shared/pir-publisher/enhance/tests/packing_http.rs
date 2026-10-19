@@ -96,7 +96,7 @@ async fn dithered_queries_take_the_public_path(
             &n::packing_setup(),
             &n::query_masks(0),
             rows,
-            { (position / 33) as usize },
+            (position / 33) as usize,
         )
         .unwrap();
         let mut body = query.body()[..HEADER_BYTES].to_vec();
