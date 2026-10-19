@@ -11,7 +11,7 @@ export CARGO_TARGET_DIR=target/native-cuda
 export RUSTFLAGS='-C target-cpu=x86-64-v3 -C target-feature=+pclmulqdq'
 export CFLAGS=-mpclmul CXXFLAGS=-mpclmul
 export WALLET_PIR_SOURCE_REVISION
-WALLET_PIR_SOURCE_REVISION=$(git rev-parse HEAD)
+WALLET_PIR_SOURCE_REVISION=${WALLET_PIR_SOURCE_REVISION:-$(git rev-parse HEAD)}
 mkdir -p "$CARGO_TARGET_DIR"
 python3 tools/ci/stage.py compile:cuda -- cargo build --locked --release \
   -p enhance-publisher -p enhance-pir-client -p enhance-pir-load-test \
