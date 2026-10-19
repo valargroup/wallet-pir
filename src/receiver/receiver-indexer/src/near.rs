@@ -194,7 +194,8 @@ pub struct Capture {
 
 /// Reads [`provider_sets`] and the inputs of a report on a publication whose terminal
 /// block has time `anchor_time`, in Unix seconds, in one read transaction of `store`.
-pub fn capture(store: &ProviderStore, anchor_time: i64) -> Result<Capture> {
+/// Running sweep duration uses wall-clock `now`, independently of chain progress.
+pub fn capture(store: &ProviderStore, anchor_time: i64, now: i64) -> Result<Capture> {
     store.view(|store| {
         let (mut feeds, mut history) = (serde_json::Map::new(), serde_json::Map::new());
         let mut full_pass_secs = None;
@@ -211,7 +212,7 @@ pub fn capture(store: &ProviderStore, anchor_time: i64) -> Result<Capture> {
             let span = store.history(feed)?;
             let running = store
                 .sweep(feed, Pass::Full)?
-                .map(|s| anchor_time - s.began);
+                .map(|s| now.saturating_sub(s.began));
             let secs = span.map(|h| h.full_secs).max(running);
             full_pass_secs = full_pass_secs.max(secs.map(|s| s.max(0) as u64));
             history.insert(
@@ -1230,7 +1231,11 @@ mod tests {
         explorer.sync(&mut store, Feed::Payouts).await.unwrap();
         assert_eq!(store.payouts(i64::MAX).unwrap(), first);
         assert_eq!(store.payouts(first_seen).unwrap(), first);
-        let counted = |anchor_time| capture(&store, anchor_time).unwrap().uncheckable;
+        let counted = |anchor_time| {
+            capture(&store, anchor_time, anchor_time)
+                .unwrap()
+                .uncheckable
+        };
         assert_eq!(counted(first_seen + COMPLETION_GRACE_SECS), 2);
         assert_eq!(counted(first_seen + RECENT_SECS + 1), 0);
     }
@@ -1563,7 +1568,7 @@ mod tests {
         let progress = serde_json::json!({"since": null, "through": null, "full": null,
             "full_secs": null, "sweeps": {"recent": null, "full": sweep}});
         assert_eq!(history(&store)[payouts], progress);
-        assert_eq!(capture(&store, now).unwrap().full_pass_secs, Some(5));
+        assert_eq!(capture(&store, now, now).unwrap().full_pass_secs, Some(5));
         store
             .sweep_page(payouts, pass, now - 5, &[], &[], Some(400), None, now)
             .unwrap();
@@ -1593,19 +1598,26 @@ mod tests {
             .unwrap();
         let history = store.history(feed).unwrap().unwrap();
         assert_eq!((history.full, history.full_secs), (began, 49 * hour));
-        let secs = |store: &ProviderStore, now| capture(store, now).unwrap().full_pass_secs;
+        let secs = |store: &ProviderStore, now| capture(store, now, now).unwrap().full_pass_secs;
         assert_eq!(secs(&store, now), Some(49 * hour as u64));
         store
             .begin_sweep(feed, Pass::Full, 0, now - 10 * hour)
             .unwrap();
         assert_eq!(secs(&store, now), Some(49 * hour as u64));
         assert_eq!(secs(&store, now + 40 * hour), Some(50 * hour as u64));
+        // The chain stays behind the sweep's start while wall time continues.
+        assert_eq!(
+            capture(&store, now - 20 * hour, now + 40 * hour)
+                .unwrap()
+                .full_pass_secs,
+            Some(50 * hour as u64)
+        );
     }
 
     /// [`Capture::report`] for the current state of `provider` on a terminal block with
     /// time `now`.
     fn report(provider: &ProviderStore, index: &Store, now: i64) -> serde_json::Value {
-        capture(provider, now).unwrap().report(index).unwrap()
+        capture(provider, now, now).unwrap().report(index).unwrap()
     }
 
     /// A receiver from the spending key with every byte `seed`.

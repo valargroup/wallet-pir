@@ -459,7 +459,7 @@ impl<'a> Collected<'a> {
         // The report describes the reconciled index the publication is built from.
         // A block dated ahead of the wall clock must not end a payout's grace early.
         let anchor_time = rpc.block_time(tip.hash).await?.min(unix_now());
-        let capture = crate::near::capture(provider_store, anchor_time)?;
+        let capture = crate::near::capture(provider_store, anchor_time, unix_now())?;
         let inputs = crate::near::digest(&capture.sets);
         let full_pass_secs = capture.full_pass_secs;
         let report = capture.report(store)?;
