@@ -24,6 +24,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         pass
 
     def do_GET(self):
+        # Read a POSTed batch first so every early fault reply keeps the
+        # connection framed; its bytes are forwarded unchanged.
+        body = self.rfile.read(int(self.headers.get("Content-Length", "0"))) if self.command == "POST" else None
         with Path(control + ".requests").open("a") as requests:
             requests.write(self.path + "\n")
         fault = Path(control).read_text().strip()
@@ -59,7 +62,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 while Path(control).read_text().strip() == fault:
                     time.sleep(0.01)
         pause_anchor = fault == "pause-anchor" or (
-            fault.startswith("pause-anchor-") and self.path.endswith(fault.removeprefix("pause-anchor-"))
+            fault.startswith("pause-anchor-")
+            and (self.path.endswith(fault.removeprefix("pause-anchor-"))
+                 or fault.removeprefix("pause-anchor-").encode() in (body or b""))
         )
         if pause_anchor and "/anchors/" in self.path:
             Path(control + ".entered").touch()
@@ -96,7 +101,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         connection = http.client.HTTPConnection(upstream, timeout=10)
         try:
-            connection.request("GET", self.path, headers={k: v for k, v in self.headers.items() if k.lower() in {"if-none-match", "cache-control"}})
+            connection.request(self.command, self.path, body=body, headers={k: v for k, v in self.headers.items() if k.lower() in {"if-none-match", "cache-control", "content-type"}})
             response = connection.getresponse()
             # Faults affect actual transport bytes, never replace the producer
             # or the provider loader with a mock implementation.
@@ -132,6 +137,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             pass
         finally:
             connection.close()
+
+    do_POST = do_GET
 
 server = http.server.ThreadingHTTPServer(("127.0.0.1", port), Handler)
 server.daemon_threads = True

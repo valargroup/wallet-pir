@@ -105,16 +105,15 @@ impl Source {
         .into()
     }
     pub(crate) async fn get(&mut self, suffix: &str) -> Result<reqwest::Response, Error> {
+        let url = self.origin.join(&format!("{}{}", self.prefix, suffix))?;
+        let request = self.client.get(url);
+        self.send(request).await
+    }
+    async fn send(&mut self, request: reqwest::RequestBuilder) -> Result<reqwest::Response, Error> {
         if self.downloaded >= self.budget {
             return Err(self.budget_error());
         }
-        let url = self.origin.join(&format!("{}{}", self.prefix, suffix))?;
-        let mut response = self
-            .client
-            .get(url)
-            .header("cache-control", "no-cache")
-            .send()
-            .await?;
+        let mut response = request.header("cache-control", "no-cache").send().await?;
         if response.status() != reqwest::StatusCode::OK {
             // Refused response bytes consume the same attempt budget. Never
             // retry or reset accounting after a status or validation failure.
@@ -144,7 +143,14 @@ impl Source {
         Ok(chunk)
     }
     pub(crate) async fn small(&mut self, suffix: &str, limit: usize) -> Result<Vec<u8>, Error> {
-        let mut response = self.get(suffix).await?;
+        let response = self.get(suffix).await?;
+        self.read_small(response, limit).await
+    }
+    async fn read_small(
+        &mut self,
+        mut response: reqwest::Response,
+        limit: usize,
+    ) -> Result<Vec<u8>, Error> {
         let mut bytes = Vec::new();
         while let Some(chunk) = self.chunk(&mut response).await? {
             if chunk.len() > limit.saturating_sub(bytes.len()) {
@@ -365,6 +371,36 @@ impl Source {
             return Err("canonicality attestation identity/snapshot superseded".into());
         }
         Ok(check.canonical)
+    }
+    /// Fresh canonicality of every anchor in one batch, for exactly
+    /// `current`'s snapshot. Bodies, refused ones included, consume the same
+    /// budget as every other source read; any failure answers for no anchor.
+    pub(crate) async fn anchors(
+        &mut self,
+        current: &Current,
+        anchors: &[publication::AnchorPair],
+    ) -> Result<std::collections::BTreeMap<publication::AnchorPair, bool>, Error> {
+        let request = publication::AnchorBatchRequest::new(current, anchors.to_vec())?;
+        let body = serde_json::to_vec(&request)?;
+        if body.len() > publication::MAX_ANCHOR_BATCH_BYTES {
+            return Err("anchor batch request exceeds limit".into());
+        }
+        let url = self.origin.join(&format!(
+            "{}{}",
+            self.prefix,
+            publication::ANCHOR_BATCH_PATH
+        ))?;
+        let post = self
+            .client
+            .post(url)
+            .header("content-type", "application/json")
+            .body(body);
+        let response = self.send(post).await?;
+        let raw = self
+            .read_small(response, publication::MAX_ANCHOR_BATCH_BYTES)
+            .await?;
+        let batch: publication::AnchorBatch = serde_json::from_slice(&raw)?;
+        batch.answers(&request, &current.genesis_hash)
     }
     pub(crate) async fn current(&mut self, directory: &std::path::Path) -> Result<Current, Error> {
         let current: Current = serde_json::from_slice(&self.small("current", 16 << 10).await?)?;
