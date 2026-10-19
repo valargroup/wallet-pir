@@ -1142,7 +1142,7 @@ mod lifecycle_wallet_tests {
         ));
     }
     use transport::Loopback;
-    use zakura_pir_status as wallet;
+    use zakura_pir_client::status as wallet;
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn shared_status_lifecycle_collects_publishes_and_advances_over_real_roles() {

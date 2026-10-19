@@ -20,6 +20,8 @@
 //! published set's filters are well under a megabyte, so holding them costs
 //! little and removes the filesystem from the request path.
 
+use zakura_pir_publisher::transparent::filter as transparent_filter;
+
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

@@ -22,6 +22,9 @@
 //!   gzip -dc mainnet-day.jsonl.gz > day.jsonl
 //!   publication_bench --day day.jsonl --work DIR --initial-copies 13.5 \
 //!       --cycles 5 [--runtime] [--record out.json]
+use zakura_pir_protocol::transparent::events as transparent_events;
+use zakura_pir_publisher::transparent::filter as transparent_filter;
+
 use clap::Parser;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};

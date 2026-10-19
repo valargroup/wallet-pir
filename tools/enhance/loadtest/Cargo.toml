@@ -10,7 +10,7 @@ native-reinspiring = ["enhance-query-server/native-reinspiring"]
 [dependencies]
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
-enhance-query-server = { path = "../../../src/enhance/enhance-query-server" }
+enhance-query-server = { path = "../../../src/enhance/enhance-query-server" , features = ["client"] }
 hdrhistogram = "7"
 humantime = "2"
 rand = "0.8"

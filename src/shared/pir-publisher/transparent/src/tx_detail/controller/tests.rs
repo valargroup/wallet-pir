@@ -1,3 +1,9 @@
+#[cfg(feature = "qualification-tests")]
+use zakura_pir_client::transparent::txid_client as transparent_txid_client;
+use zakura_pir_publisher::transparent as transparent_shard;
+#[cfg(feature = "qualification-tests")]
+use zakura_pir_publisher::transparent::filter as transparent_filter;
+
 use super::*;
 use crate::tx_detail::fixture::{self, chain_records};
 #[cfg(feature = "qualification-tests")]
@@ -8,11 +14,13 @@ use crate::tx_detail::publisher::CANDIDATE_PREFIX;
 use crate::tx_detail::publisher::{bootstrap, SEALED_DIR};
 #[cfg(feature = "qualification-tests")]
 use crate::tx_detail::serving::WorkersFile;
+#[cfg(feature = "qualification-tests")]
 use crate::tx_detail::serving::{Transport, WorkerRole};
 use crate::tx_detail::source::{open_writer, Script, ScriptStep};
 use crate::tx_detail::timeline::read_timeline;
 use std::collections::BTreeSet;
 use std::os::unix::fs::{FileExt, MetadataExt};
+#[cfg(feature = "qualification-tests")]
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 #[cfg(feature = "qualification-tests")]
 use transparent_filter::BlockHash;
@@ -570,6 +578,7 @@ async fn the_window_drops_oldest_archives_and_keeps_the_rest() {
     assert_eq!(drops, whole.len() - 2);
 }
 
+#[cfg(feature = "qualification-tests")]
 type Log = Arc<std::sync::Mutex<Vec<(String, Value)>>>;
 #[cfg(feature = "qualification-tests")]
 type States = BTreeMap<String, Arc<std::sync::Mutex<Fake>>>;
@@ -738,6 +747,7 @@ fn spawn_fakes(dir: &Path, workers: &[(&str, &'static str)]) -> (Log, States) {
     (log, states)
 }
 
+#[cfg(feature = "qualification-tests")]
 fn socket_worker(dir: &Path, name: &str, role: WorkerRole) -> WorkerConfig {
     WorkerConfig {
         name: name.into(),
@@ -1912,9 +1922,10 @@ async fn metrics_report_cycles_stages_and_freshness() {
 
 // Reuse the serving tests' independent wallet transport and per-process pure
 // profile cache. This controller still owns fresh journal/root/worker state.
-#[path = "../../../../../../transparent/transparent-query-server/tests/support/display_world.rs"]
-mod display_world;
+#[cfg(feature = "qualification-tests")]
+use crate::tx_detail::display_world;
 
+#[cfg(feature = "qualification-tests")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn shared_display_lifecycle_serves_before_and_after_ordered_seals_and_restart() {
     use transparent_query_server::tx_detail::live::{reply_line, DisplayCommand};

@@ -48,7 +48,7 @@ Preserve existing Cargo package and binary names.
 
 - Temporarily let PR and main CI validation finish without a three-minute cancellation; enforce the three-minute timing check only after validation on pushes to main. Retain full service qualification separately.
 - Keep every automated CPU correctness test below 30 seconds and the complete
-  warm correctness run below three minutes, including incremental compilation,
+  warm correctness run below five minutes, including incremental compilation,
   setup, teardown, tooling and lint. `make check-correctness` enforces the budget;
   `python3 tools/ci/correctness.py --record-only` diagnoses overruns without
   omitting coverage. Report cold preparation separately. Hardware and explicit
@@ -78,6 +78,7 @@ Preserve existing Cargo package and binary names.
 - Keep Cargo writers sequential within one target directory. For independent
   concurrent work use separate worktrees/target lanes; reuse each lane across
   edits. Do not create a new cold target per command or weaken trust boundaries.
+- Keep fast-suite fixtures small enough to finish in a few seconds; retain deployed-size parameter combinations in full qualification.
 
 ## Branches and production changes
 

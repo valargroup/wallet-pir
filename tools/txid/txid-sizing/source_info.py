@@ -21,7 +21,7 @@ def read(binary):
         raise ValueError("export source identity does not match the executing binary")
     for field, package in (("node_parser", "zakura-chain"),
                            ("server_adapter", "zakura-server-chain"),
-                           ("event_codec", "zakura-transparent-events")):
+                           ("event_codec", "zakura-pir-protocol")):
         entry = identity.get(field)
         if not isinstance(entry, dict) or entry.get("package") != package or not isinstance(entry.get("version"), str) or not entry["version"]:
             raise ValueError("missing compiled package identity: " + package)

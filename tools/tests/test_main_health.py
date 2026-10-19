@@ -83,7 +83,7 @@ class MainHealthTest(unittest.TestCase):
     def test_deadline_cancellation_is_red_but_superseded_work_is_not(self):
         cancelled = dict(self.RED, conclusion='cancelled')
         job = dict(name='Fast checks', conclusion='cancelled', steps=[],
-                   startedAt='2026-10-16T03:21:36Z', completedAt='2026-10-16T03:24:57Z')
+                   startedAt='2026-10-16T03:21:36Z', completedAt='2026-10-16T03:26:57Z')
         allowed, message = main_health.verdict([cancelled, self.GREEN], lambda _: [job])
         self.assertFalse(allowed)
         self.assertIn('Fast checks', message)

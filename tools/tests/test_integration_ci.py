@@ -14,10 +14,13 @@ import integration_tests as tests
 
 
 class IntegrationTests(unittest.TestCase):
-    def test_repository_registry_is_complete_and_each_service_has_a_smoke(self):
+    def test_repository_registry_preserves_fast_checks_and_full_encrypted_lifecycle(self):
         registry = tests.inventory()
-        for package in ['receiver-pir-server', 'transparent-query-server', 'enhance-publisher']:
+        for package in ['receiver-pir-server', 'transparent-query-server']:
             self.assertIn('ci_smoke', registry[package]['fast'])
+        enhance = registry['enhance-publisher']
+        self.assertIn('ci_hint', enhance['fast'])
+        self.assertIn('encrypted_lifecycle', enhance['full'])
 
     def test_publisher_smoke_feedback_runs_its_encrypted_smoke_only(self):
         registry = {'enhance-publisher': {'fast': ['ci_smoke', 'layout'], 'full': []}}
@@ -52,9 +55,8 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(manifest['package']['name'], 'transparent-tools')
         for binary in ['transparent-filter-cli', 'txid-quality-canary']:
             self.assertTrue((directory / 'src/bin' / (binary + '.rs')).is_file(), binary)
-        self.assertIn('client', manifest['dependencies']['transparent-filter']['features'])
-        self.assertEqual(manifest['dependencies']['transparent-txid-client']['package'],
-                         'zakura-transparent-txid-client')
+        self.assertIn('transparent', manifest['dependencies']['zakura-pir-client']['features'])
+        self.assertNotIn('wallet', manifest['dependencies']['zakura-pir-client']['features'])
         registry = json.loads((ROOT / 'tools/ci/integration-tests.json').read_text())
         self.assertIn('service_tools', registry['transparent-tools']['full'])
 

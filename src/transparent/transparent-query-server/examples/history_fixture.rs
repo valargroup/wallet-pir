@@ -4,6 +4,10 @@
 //! zero of shard zero over a synthetic chain from the first indexed height through
 //! `FIRST + END`, its `shards.json`, and nothing else. Exact answers are checked
 //! by `soak-query`, which reads the expected rows from these files, not the server.
+use zakura_pir_protocol::transparent::events as transparent_events;
+use zakura_pir_protocol::transparent::filter as transparent_filter;
+use zakura_pir_publisher::transparent as transparent_shard;
+
 use std::path::Path;
 use transparent_events::{ReceiveEvent, TransparentEvent, Txid};
 use transparent_filter::{BlockHash, ScriptBytes, SealParameters, ShardMap};

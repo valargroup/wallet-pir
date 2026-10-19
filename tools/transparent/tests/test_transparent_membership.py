@@ -7,12 +7,24 @@ import os
 from pathlib import Path
 import tempfile
 import time
+from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, patch
 
 SPEC = importlib.util.spec_from_file_location('fleet', Path(__file__).resolve().parents[1]/'scripts/transparent-live-fleet.py')
 M = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(M)
+
+
+async def poll_tick(_seconds):
+    """Let roster loops poll again without waiting for their production interval."""
+    await asyncio.sleep(0)
+
+
+async def wait_for_state(predicate):
+    async with asyncio.timeout(5):
+        while not predicate():
+            await asyncio.sleep(0)
 
 
 class MembershipTests(unittest.IsolatedAsyncioTestCase):
@@ -257,6 +269,9 @@ if __name__ == '__main__':
 
 class DynamicRosterTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
+        polling = patch.object(M, 'asyncio', SimpleNamespace(**(vars(asyncio) | {'sleep': poll_tick})))
+        polling.start()
+        self.addCleanup(polling.stop)
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
@@ -347,42 +362,46 @@ class DynamicRosterTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(value['members']['r2']['drained_since_unix'])
 
     async def test_the_reconciler_follows_enrolled_and_retired_members(self):
-        seen = []
+        running = set()
+        retired = asyncio.Event()
         async def managed_once(worker):
-            seen.append(worker['id'])
-            await asyncio.sleep(0.05)
+            running.add(worker['id'])
+            try:
+                await asyncio.Event().wait()
+            finally:
+                running.discard(worker['id'])
+                if worker['id'] == 'r1':
+                    retired.set()
         self.f.managed_once = managed_once
         self.f.refresh_routing = AsyncMock()
         task = asyncio.create_task(self.f.serve_reconciler())
-        await asyncio.sleep(0.3)
+        await wait_for_state(lambda: running == {'owner', 'r1', 'r2'})
         self.members.append(dict(id='r3', role='recent-replica', ssh_host='r3', upstream='r3:8093', intent='enrolled'))
         self.members = [m for m in self.members if m['id'] != 'r1']
         self.write_roster()
-        await asyncio.sleep(2.5)
-        seen.clear()
-        await asyncio.sleep(1.2)
+        await wait_for_state(lambda: retired.is_set() and running == {'owner', 'r2', 'r3'})
         task.cancel()
         with self.assertRaises(asyncio.CancelledError):
             await task
-        self.assertIn('r3', seen)
-        self.assertNotIn('r1', seen)
+        self.assertTrue(retired.is_set())
+        self.assertEqual(running, set(), 'cancellation stops every member loop')
 
     async def test_control_sessions_follow_the_roster(self):
         running = set()
         async def control_session(worker):
             running.add(worker['id'])
             try:
-                await asyncio.sleep(3600)
+                await asyncio.Event().wait()
             finally:
                 running.discard(worker['id'])
         self.f.control_session = control_session
         task = asyncio.create_task(self.f.serve_control_sessions())
-        await asyncio.sleep(0.3)
+        await wait_for_state(lambda: running == {'owner', 'r1', 'r2'})
         self.assertEqual(running, {'owner', 'r1', 'r2'})
         self.members = [m for m in self.members if m['id'] != 'r2']
         self.members.append(dict(id='r3', role='recent-replica', ssh_host='r3', upstream='r3:8093', intent='enrolled'))
         self.write_roster()
-        await asyncio.sleep(1.5)
+        await wait_for_state(lambda: running == {'owner', 'r1', 'r3'})
         self.assertEqual(running, {'owner', 'r1', 'r3'})
         task.cancel()
         with self.assertRaises(asyncio.CancelledError):
@@ -571,6 +590,30 @@ class HttpsRecentTests(unittest.IsolatedAsyncioTestCase):
         await self.f.activate({'map_sha256': 'c'*64, 'prepared': prepared})
         self.assertEqual(self.routed(), ['owner', 'r1'])
 
+    async def test_partial_activation_drops_workers_that_moved_to_the_candidate(self):
+        await self.f.reconcile_https(self.https)
+        self.assertIn('h1', self.routed())
+        prepared = {'workers': {'owner': {'expected': 'a'*64}, 'r1': {'expected': 'a'*64}},
+                    'assignment': str(self.assignment)}
+        async def control(worker, value):
+            self.assertNotEqual(worker['id'], 'h1')
+            if worker['id'] == 'owner':
+                raise RuntimeError('archive activation failed')
+            return {'active': {'map_sha256': 'c'*64}, 'warm': True, 'invalidated': False}
+        self.f.control = control
+        with self.assertRaisesRegex(RuntimeError, 'activation quorum unavailable'):
+            await self.f.activate({'map_sha256': 'c'*64, 'prepared': prepared})
+        self.assertEqual(self.f.rendered_ids(), [])
+        self.assertEqual(json.loads((self.root/'active.json').read_text())['map_sha256'], 'a'*64)
+        self.assertEqual(self.routed(), ['h1', 'owner'])
+        self.rendered.clear()
+        # The provider followed the candidate. Withdrawing it routes whatever
+        # active.json still lists, so the moved replica must already be gone.
+        self.provider = self.serving('c'*64)
+        await self.f.reconcile_https(self.https)
+        self.assertNotIn('r1', self.routed())
+        self.assertFalse(any('r1:8093' in body for body in self.rendered))
+
     async def test_invalidation_sends_it_nothing_and_its_failure_never_withdraws(self):
         await self.f.reconcile_https(self.https)
         self.rendered.clear()
@@ -592,10 +635,10 @@ class HttpsRecentTests(unittest.IsolatedAsyncioTestCase):
         running = set()
         async def control_session(worker):
             running.add(worker['id'])
-            await asyncio.sleep(3600)
+            await asyncio.Event().wait()
         self.f.control_session = control_session
         task = asyncio.create_task(self.f.serve_control_sessions())
-        await asyncio.sleep(0.3)
+        await wait_for_state(lambda: {'owner', 'r1'} <= running)
         task.cancel()
         with self.assertRaises(asyncio.CancelledError):
             await task
@@ -603,14 +646,17 @@ class HttpsRecentTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_the_reconciler_runs_an_admission_loop_for_it(self):
         seen = []
+        admitted = asyncio.Event()
         async def reconcile_https(worker):
             seen.append(worker['id'])
+            admitted.set()
         async def managed_once(worker):
-            await asyncio.sleep(0.05)
+            await asyncio.Event().wait()
         self.f.reconcile_https = reconcile_https
         self.f.managed_once = managed_once
         task = asyncio.create_task(self.f.serve_reconciler())
-        await asyncio.sleep(0.3)
+        async with asyncio.timeout(5):
+            await admitted.wait()
         task.cancel()
         with self.assertRaises(asyncio.CancelledError):
             await task

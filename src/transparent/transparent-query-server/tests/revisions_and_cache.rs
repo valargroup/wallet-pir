@@ -15,6 +15,10 @@
 //! for a cold shard each built a full runtime and discarded all but one. That
 //! is asserted against directly here: the build counter must reach one, not N.
 
+use zakura_pir_protocol::transparent::events as transparent_events;
+use zakura_pir_protocol::transparent::filter as transparent_filter;
+use zakura_pir_publisher::transparent as transparent_shard;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use std::path::Path;

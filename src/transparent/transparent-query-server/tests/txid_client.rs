@@ -5,6 +5,10 @@
 //! Entries are fixed-size, so every lookup that reaches a shard sends the
 //! same transcript: found or absent, a complete entry or one with omissions.
 
+use zakura_pir_client::transparent::txid_client as transparent_txid_client;
+use zakura_pir_protocol::transparent::events as transparent_events;
+use zakura_pir_publisher::transparent as transparent_shard;
+
 use sha2::{Digest, Sha256};
 use std::cell::Cell;
 use std::path::Path;

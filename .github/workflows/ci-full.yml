@@ -479,7 +479,7 @@ jobs:
           python3 tools/ci/stage.py compile:native -- cargo build --locked --release \
             -p enhance-publisher -p status-publisher -p enhance-pir-client -p enhance-pir-load-test -p pir-publisher \
             --bin enhance-pir-server --bin enhance-pir-load-test --bin enhance-pir-cli --bin status-pir --bin pir-publisher \
-            --features enhance-pir-client/native-reinspiring,enhance-publisher/native-reinspiring,status-publisher/native-reinspiring,enhance-pir-load-test/native-reinspiring
+            --features enhance-pir-client/native-reinspiring,enhance-publisher/native-reinspiring,status-publisher/native-reinspiring,status-publisher/cli,enhance-pir-load-test/native-reinspiring
           python3 tools/ci/qualification.py assemble --family enhance --native --sha "$GITHUB_SHA"
       - name: Report Cargo cache reuse
         if: always() && inputs.family != 'ops'
@@ -557,6 +557,8 @@ jobs:
           CACHE_HIT: ${{ steps.restore.outputs.cache-hit }}
         run: umask 022 && python3 tools/ci/cargo_cache.py restored --lane native-cuda --cache-hit "$CACHE_HIT"
       - name: Build isolated native CUDA binaries and record ABI
+        env:
+          WALLET_PIR_SOURCE_REVISION: ${{ github.sha }}
         run: umask 022 && tools/ci/build-cuda.sh
       - name: Assemble checksummed native CUDA bundle
         env:

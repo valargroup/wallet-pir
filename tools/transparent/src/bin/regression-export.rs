@@ -1,5 +1,7 @@
 //! Read-only journal export of explicit wallet cases and accepted checkpoint hashes.
 //! No expected data comes from PIR responses or the wallet ledger reducer.
+use zakura_pir_client::transparent::filter as transparent_filter;
+
 use clap::Parser;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -12,7 +14,7 @@ use transparent_tools::regression::journal::EventStore;
 use transparent_tools::regression::{
     reference, validate, Case, Checkpoint, EventRecord, Fixture, SCHEMA,
 };
-use zakura_pir_transparent::engine::Anchor;
+use zakura_pir_client::transparent::engine::Anchor;
 
 type Error = Box<dyn std::error::Error + Send + Sync>;
 #[derive(Parser)]

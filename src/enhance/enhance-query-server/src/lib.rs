@@ -12,6 +12,7 @@
 
 use pir_control::admission;
 pub mod artifact;
+#[cfg(any(test, feature = "client"))]
 pub mod client;
 pub mod gateway;
 pub mod internal_auth;
@@ -49,3 +50,6 @@ mod http_metrics;
 mod query_timing;
 
 pub mod prepared_packing;
+
+#[cfg(test)]
+mod test_support;

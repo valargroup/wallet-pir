@@ -42,6 +42,10 @@
 //! and `health` only set counters and cache totals, so neither builds a
 //! `TableRuntime`. The cost here is publishing two shards and hashing them.
 
+use zakura_pir_protocol::transparent::events as transparent_events;
+use zakura_pir_protocol::transparent::filter as transparent_filter;
+use zakura_pir_publisher::transparent as transparent_shard;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use std::collections::BTreeMap;

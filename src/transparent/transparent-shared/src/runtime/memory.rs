@@ -343,7 +343,7 @@ mod query_memory_tests {
     use crate::runtime::tests::GENESIS_RUNTIMES;
     use crate::runtime::SharedParams;
     use std::sync::Arc;
-    use transparent_shard::display::TXID_2K8;
+    use zakura_pir_protocol::transparent::shard::display::TXID_2K8;
 
     /// The combined display worker runs under `MemoryMax=48G` and holds every
     /// archive runtime and the recent one. Admission allows

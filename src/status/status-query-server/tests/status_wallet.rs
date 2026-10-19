@@ -17,7 +17,10 @@ fn native_client_decodes_real_server_two_mask_material() {
     };
     let snapshot = fixture::snapshot(entries, false).unwrap();
     let (g, _) = Generation::prepare(&snapshot, 1, 1, now_ms(), None, backend).unwrap();
-    assert_eq!(g.public().len(), pir_native::public_len(server::COLS));
+    assert_eq!(
+        g.public().len(),
+        zakura_pir_query_server::native::public_len(server::COLS)
+    );
     let anchor = server::AcceptedAnchor {
         network: snapshot.network,
         height: snapshot.height,
@@ -30,7 +33,7 @@ fn native_client_decodes_real_server_two_mask_material() {
             .unwrap();
         assert_eq!(
             query.body.len(),
-            server::HEADER_BYTES + pir_native::request_len(server::ROWS)
+            server::HEADER_BYTES + zakura_pir_query_server::native::request_len(server::ROWS)
         );
         let coefficients = g.coefficients(&query.body).unwrap();
         let values = g.evaluate(&coefficients).unwrap();
@@ -56,7 +59,7 @@ fn native_client_decodes_real_server_two_mask_material() {
 /// with the published rows. Every other length is refused.
 #[test]
 fn native_server_answers_dithered_queries_in_the_same_envelope() {
-    use pir_native as n;
+    use zakura_pir_client::native as n;
     let snapshot = fixture::snapshot(32, false).unwrap();
     let (g, _) = Generation::prepare(&snapshot, 1, 1, now_ms(), None, MatvecBackend::Cpu).unwrap();
     let setup = server::native_packing_setup(&g.manifest().network, &g.manifest().salt);
@@ -67,7 +70,7 @@ fn native_server_answers_dithered_queries_in_the_same_envelope() {
     assert_eq!(header.len(), server::HEADER_BYTES);
     for row in [0, 1_234, server::ROWS - 1] {
         let (secret, payload) =
-            pir_native::prepare_dithered(&setup, &masks, server::ROWS, row).unwrap();
+            zakura_pir_client::native::prepare_dithered(&setup, &masks, server::ROWS, row).unwrap();
         let mut body = header.clone();
         body.extend(payload);
         assert_eq!(

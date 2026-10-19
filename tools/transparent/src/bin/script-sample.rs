@@ -29,6 +29,8 @@
 //! and describe no real wallet. The file must not be published beside a claim
 //! that it is a user population.
 
+use zakura_pir_protocol::transparent::events as transparent_events;
+
 use clap::Parser;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap, HashSet};

@@ -13,6 +13,9 @@
 //!
 //! Runs on the coordinator; it never contacts a worker.
 
+use zakura_pir_protocol::transparent::events as transparent_events;
+use zakura_pir_protocol::transparent::shard as transparent_shard;
+
 use clap::{Parser, Subcommand};
 use serde::Serialize;
 use sha2::{Digest, Sha256};

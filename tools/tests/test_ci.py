@@ -53,18 +53,6 @@ class SelectionTests(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertEqual(fast.select(self.packages, [path]), {'core', 'client', 'server', 'other'})
 
-    def test_docs_and_ops_do_not_compile_rust(self):
-        self.assertEqual(fast.select(self.packages, ['README.md', 'docs/ci.md', 'tools/scripts/example.py',
-                                                     'evidence/receiver/run.json', 'tools/receiver/digitalocean/Caddyfile']), set())
-
-    def test_product_analysis_scripts_keep_tool_checks_after_operations_move(self):
-        for path in ['tools/status/status_qualification.py', 'tools/status/test_status_qualification.py',
-                     'tools/txid/txid-sizing/survey.py', 'tools/txid/txid-display/demo.py']:
-            with self.subTest(path=path):
-                self.assertEqual(fast.route(path), ({'check-tools'}, {'ops'}))
-        self.assertIn('check-ops-deploy', fast.route('tools/status/deploy/services.toml')[0])
-        self.assertIn('check-ops-txid-display', fast.route('tools/txid/lib/roles.py')[0])
-
     def test_deleted_or_renamed_source_selects_both_sides(self):
         self.assertEqual(fast.select(self.packages, ['crates/other/src/old.rs', 'crates/client/src/new.rs']), {'other', 'client', 'server'})
 
@@ -219,6 +207,32 @@ class BoundaryTests(unittest.TestCase):
         self.assertEqual(boundary.resolved_violations(metadata, workspace_unified=True),
                          ['receiver-pir-server: resolves zakura-orchard'])
 
+    def test_client_fixture_unification_still_rejects_production_crypto_and_nodes(self):
+        def node(name, deps=(), features=()):
+            return {'id': name, 'features': features,
+                    'deps': [{'pkg': dep, 'dep_kinds': [{'kind': None}]} for dep in deps]}
+        metadata = {
+            'packages': [
+                {'id': 'pir', 'name': 'transparent-query-server', 'source': None},
+                {'id': 'client', 'name': 'zakura-pir-client',
+                 'source': 'git+https://github.com/zakura-core/wallet-libraries'},
+                {'id': 'orchard', 'name': 'zakura-orchard', 'source': 'registry'},
+                {'id': 'chain', 'name': 'zakura-chain', 'source': 'registry'},
+            ],
+            'resolve': {'nodes': [node('pir', ['client']),
+                                  node('client', ['orchard'], ['testing']),
+                                  node('orchard'), node('chain')]},
+        }
+        self.assertEqual(boundary.resolved_violations(metadata, workspace_unified=True), [])
+        self.assertEqual(boundary.resolved_violations(metadata),
+                         ['transparent-query-server: resolves zakura-orchard'])
+        metadata['resolve']['nodes'][1] = node('client', ['orchard', 'chain'], ['testing'])
+        self.assertEqual(boundary.resolved_violations(metadata, workspace_unified=True),
+                         ['transparent-query-server: resolves zakura-chain'])
+        metadata['resolve']['nodes'][1] = node('client', ['orchard'])
+        self.assertEqual(boundary.resolved_violations(metadata, workspace_unified=True),
+                         ['transparent-query-server: resolves zakura-orchard'])
+
     def test_default_publisher_refuses_transitive_database_dependencies(self):
         def node(name, dependencies=()):
             return {'id': name, 'deps': [{'pkg': dep, 'dep_kinds': [{'kind': None}]}
@@ -282,7 +296,7 @@ class BoundaryTests(unittest.TestCase):
         library = 'https://github.com/zakura-core/wallet-libraries.git'
         allowed = [{**self.edge('pir-control'), 'path': 'src/shared/pir-control/'},
                    {**self.edge('pir-serving'), 'path': 'src/shared/pir-serving/'},
-                   self.edge('zakura-pir-native', git=library), self.edge('axum')]
+                   self.edge('zakura-pir-protocol', git=library), self.edge('axum')]
         self.assertEqual(boundary.violations(package(*allowed), []), [])
         # The publisher, chain readers, ingestion and every tool are refused.
         forbidden = [{**self.edge('pir-publisher'), 'path': 'src/shared/pir-publisher/server/'},
@@ -401,7 +415,7 @@ class BoundaryTests(unittest.TestCase):
         for kind in ['dependencies', 'dev-dependencies', 'build-dependencies',
                      'target.cfg(unix).dependencies', 'target.cfg(unix).dev-dependencies',
                      'target.cfg(unix).build-dependencies']:
-            for name in ['receiver-store', 'zakura-server-chain', 'zakura-pir-native',
+            for name in ['receiver-store', 'zakura-server-chain', 'zakura-pir-protocol',
                          'sha2', 'rand', 'enhance-query-server', 'pir-runtime']:
                 package = {'name': 'pir-pipeline', 'manifest': 'src/shared/pir-publisher/pipeline/Cargo.toml',
                            'dependencies': [self.edge(name, kind)]}

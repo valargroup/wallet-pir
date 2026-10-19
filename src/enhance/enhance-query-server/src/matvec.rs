@@ -2,6 +2,9 @@
 use ipir_sp::{server::KernelError, IPIRServer, YpirSchemeParams};
 use serde::Serialize;
 
+/// Whether this evaluator was compiled with the CUDA implementation.
+pub const CUDA_COMPILED: bool = cfg!(feature = "cuda");
+
 #[cfg(test)]
 #[path = "matvec_test.rs"]
 pub(crate) mod testing;

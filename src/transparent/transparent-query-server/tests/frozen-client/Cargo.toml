@@ -12,6 +12,8 @@ publish = false
 zakura-pir-transparent = { version = "=0.0.1-rc0", features = ["wallet"] }
 transparent-wallet = { version = "=0.1.0-rc.3" }
 transparent-filter = { version = "=0.1.0-rc.3" }
+# Only lowers the fixture's recent anonymity floor; original crate bytes remain verified.
+transparent-txid-client = { version = "=0.1.0-rc.3", features = ["testing"] }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
 serde_json = "1"
 hex = "0.4"

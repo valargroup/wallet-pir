@@ -2,6 +2,10 @@
 //! archive-owner and a recent-replica worker behind an edge that routes
 //! `/v2/txid/archive/` to the owner, as the deployment's static route does,
 //! and the wallet client (`transparent-txid-client`).
+use zakura_pir_client::transparent::txid_client as transparent_txid_client;
+use zakura_pir_protocol::transparent::events as transparent_events;
+use zakura_pir_publisher::transparent as transparent_shard;
+
 #[path = "../examples/support/bytemeter.rs"]
 mod bytemeter;
 

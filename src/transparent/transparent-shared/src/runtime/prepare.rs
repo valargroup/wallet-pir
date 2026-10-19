@@ -157,17 +157,22 @@ mod tests {
     use sha2::{Digest, Sha256};
     use std::fs;
     use std::os::unix::fs::MetadataExt;
-    use transparent_shard::layout::DECOUPLED_2K_8K;
+    use zakura_pir_protocol::transparent::shard::layout::DECOUPLED_2K_8K;
 
-    fn segment(dir: &std::path::Path, seed: u8) -> (SharedParams, SegmentSource) {
+    fn segment(dir: &std::path::Path, seed: u8) -> (std::sync::Arc<SharedParams>, SegmentSource) {
         let (geometry, table) =
             crate::runtime::tests::fixture_shape(&DECOUPLED_2K_8K, Table::Pages);
-        let shared = SharedParams::build(geometry, table).unwrap();
+        let shared = crate::runtime::tests::fixture_params(geometry, table, false);
         let profile = &shared.profile;
-        let mut rows = vec![0u8; profile.rows * profile.row_bytes];
-        for (i, byte) in rows[..300 * profile.row_bytes].iter_mut().enumerate() {
-            *byte = (i as u8).wrapping_mul(31) ^ seed;
-        }
+        let rows = if cfg!(feature = "qualification-tests") {
+            let mut rows = vec![0u8; profile.rows * profile.row_bytes];
+            for (i, byte) in rows[..300 * profile.row_bytes].iter_mut().enumerate() {
+                *byte = (i as u8).wrapping_mul(31) ^ seed;
+            }
+            rows
+        } else {
+            crate::runtime::tests::recovery_rows(&shared, false)
+        };
         let path = dir.join(format!("pages-{seed}.bin"));
         fs::write(&path, &rows).unwrap();
         let source = SegmentSource::published(
@@ -192,7 +197,6 @@ mod tests {
         use std::sync::Arc;
         let dir = tempfile::tempdir().unwrap();
         let (shared, source) = segment(dir.path(), 3);
-        let shared = Arc::new(shared);
         let key = ("12".repeat(32), shared.table, 0);
         let out = publication(dir.path(), "strict");
         let strict = ShippedRuntimes::required(out.directory().to_path_buf());
@@ -208,7 +212,16 @@ mod tests {
             .await
             .is_err());
         assert_eq!(Metrics::get(&metrics.shipped_fallbacks), 0);
-        prepare_segment(&out, &[], &key, &shared, &source, "pages".into()).unwrap();
+        if cfg!(feature = "qualification-tests") {
+            let prepared =
+                prepare_segment(&out, &[], &key, &shared, &source, "pages".into()).unwrap();
+            assert!(!prepared.linked);
+            assert!(prepared.build_seconds > 0.0);
+        } else {
+            let rows = fs::read(source.path()).unwrap();
+            let runtime = crate::runtime::tests::prepared_fixture(&shared, &rows).unwrap();
+            out.write(&key, &shared, source.sha256(), &runtime).unwrap();
+        }
         let (handle, produced) = cache
             .get_from(
                 key.clone(),
@@ -240,19 +253,23 @@ mod tests {
             .is_err());
         assert_eq!(Metrics::get(&metrics.shipped_fallbacks), 0);
         assert_eq!(Metrics::get(&metrics.builds), 0);
-        // An existing optional deployment still builds when no shipped file
-        // exists. Its behavior is preserved, with a counted fallback.
-        let (_handle, produced) = cache
-            .get_from(
-                key.clone(),
-                shared.clone(),
-                source.clone(),
-                Some(out.clone()),
-            )
-            .await
-            .unwrap();
-        assert!(matches!(produced, Produced::Fallback));
-        assert_eq!(Metrics::get(&metrics.shipped_fallbacks), 1);
+        // Optional fallback is covered by the shipped-runtime recovery test.
+        // Qualification retains the combined strict/optional lifecycle.
+        if cfg!(feature = "qualification-tests") {
+            // An existing optional deployment still builds when no shipped file
+            // exists. Its behavior is preserved, with a counted fallback.
+            let (_handle, produced) = cache
+                .get_from(
+                    key.clone(),
+                    shared.clone(),
+                    source.clone(),
+                    Some(out.clone()),
+                )
+                .await
+                .unwrap();
+            assert!(matches!(produced, Produced::Fallback));
+            assert_eq!(Metrics::get(&metrics.shipped_fallbacks), 1);
+        }
     }
 
     /// A retained publication's completed file is linked, not rebuilt; a
@@ -264,9 +281,12 @@ mod tests {
         let (shared, source) = segment(dir.path(), 1);
         let key = ("ab".repeat(32), shared.table, 0);
         let first = publication(dir.path(), "first");
-        let built = prepare_segment(&first, &[], &key, &shared, &source, "pages".into()).unwrap();
-        assert!(!built.linked);
-        assert!(built.build_seconds > 0.0);
+        let rows = fs::read(source.path()).unwrap();
+        let runtime = crate::runtime::tests::prepared_fixture(&shared, &rows).unwrap();
+        let prepared_bytes = first
+            .write(&key, &shared, source.sha256(), &runtime)
+            .unwrap();
+        drop(runtime);
         // Preparing the same publication again keeps its file.
         let again = prepare_segment(&first, &[], &key, &shared, &source, "pages".into()).unwrap();
         assert!(again.linked);
@@ -282,7 +302,7 @@ mod tests {
         )
         .unwrap();
         assert!(linked.linked);
-        assert_eq!(linked.bytes, built.bytes);
+        assert_eq!(linked.bytes, prepared_bytes);
         let (a, b) = (
             fs::metadata(first.path(&key, &shared, source.sha256())).unwrap(),
             fs::metadata(second.path(&key, &shared, source.sha256())).unwrap(),
@@ -300,7 +320,7 @@ mod tests {
             .write(true)
             .open(truncated.path(&key, &shared, source.sha256()))
             .unwrap()
-            .set_len(built.bytes / 2)
+            .set_len(prepared_bytes / 2)
             .unwrap();
         let third = publication(dir.path(), "third");
         let rebuilt = prepare_segment(
@@ -314,58 +334,70 @@ mod tests {
         .unwrap();
         assert!(!rebuilt.linked);
 
-        // A file of another identity placed under this one's name is not
-        // linked either.
-        let foreign = publication(dir.path(), "foreign");
-        let other = ("cd".repeat(32), shared.table, 0);
-        let runtime = first.load(&key, &shared, source.sha256()).unwrap();
-        foreign
-            .write(&other, &shared, source.sha256(), &runtime)
+        // Check every refusal to link; the truncated case above already
+        // exercises the common build path. Qualification repeats that build.
+        {
+            // A file of another identity placed under this one's name is not
+            // linked either.
+            let foreign = publication(dir.path(), "foreign");
+            let other = ("cd".repeat(32), shared.table, 0);
+            let runtime = first.load(&key, &shared, source.sha256()).unwrap();
+            foreign
+                .write(&other, &shared, source.sha256(), &runtime)
+                .unwrap();
+            drop(runtime);
+            fs::rename(
+                foreign.path(&other, &shared, source.sha256()),
+                foreign.path(&key, &shared, source.sha256()),
+            )
             .unwrap();
-        drop(runtime);
-        fs::rename(
-            foreign.path(&other, &shared, source.sha256()),
-            foreign.path(&key, &shared, source.sha256()),
-        )
-        .unwrap();
-        // Only an interrupted write's partial file in another.
-        let interrupted = publication(dir.path(), "interrupted");
-        fs::copy(
-            first.path(&key, &shared, source.sha256()),
-            interrupted
-                .path(&key, &shared, source.sha256())
-                .with_extension("partial"),
-        )
-        .unwrap();
-        let fourth = publication(dir.path(), "fourth");
-        let rebuilt = prepare_segment(
-            &fourth,
-            &[foreign, interrupted],
-            &key,
-            &shared,
-            &source,
-            "pages".into(),
-        )
-        .unwrap();
-        assert!(!rebuilt.linked);
-        // An invalid file already in the publication is replaced.
-        fs::write(fourth.path(&key, &shared, source.sha256()), b"invalid").unwrap();
-        let replaced = prepare_segment(
-            &fourth,
-            std::slice::from_ref(&first),
-            &key,
-            &shared,
-            &source,
-            "pages".into(),
-        )
-        .unwrap();
-        assert!(replaced.linked);
-        assert_eq!(
-            fs::metadata(fourth.path(&key, &shared, source.sha256()))
-                .unwrap()
-                .ino(),
-            a.ino()
-        );
+            // Only an interrupted write's partial file in another.
+            let interrupted = publication(dir.path(), "interrupted");
+            fs::copy(
+                first.path(&key, &shared, source.sha256()),
+                interrupted
+                    .path(&key, &shared, source.sha256())
+                    .with_extension("partial"),
+            )
+            .unwrap();
+            let fourth = publication(dir.path(), "fourth");
+            assert!(foreign.completed(&key, &shared, source.sha256()).is_err());
+            assert!(interrupted
+                .completed(&key, &shared, source.sha256())
+                .is_err());
+            assert!(link(&foreign, &fourth, &key, &shared, source.sha256()).is_none());
+            assert!(link(&interrupted, &fourth, &key, &shared, source.sha256()).is_none());
+            if cfg!(feature = "qualification-tests") {
+                let rebuilt = prepare_segment(
+                    &fourth,
+                    &[foreign, interrupted],
+                    &key,
+                    &shared,
+                    &source,
+                    "pages".into(),
+                )
+                .unwrap();
+                assert!(!rebuilt.linked);
+            }
+            // An invalid file already in the publication is replaced.
+            fs::write(fourth.path(&key, &shared, source.sha256()), b"invalid").unwrap();
+            let replaced = prepare_segment(
+                &fourth,
+                std::slice::from_ref(&first),
+                &key,
+                &shared,
+                &source,
+                "pages".into(),
+            )
+            .unwrap();
+            assert!(replaced.linked);
+            assert_eq!(
+                fs::metadata(fourth.path(&key, &shared, source.sha256()))
+                    .unwrap()
+                    .ino(),
+                a.ino()
+            );
+        }
 
         // A source that no longer matches its digest is the publication's
         // fault, not an optional runtime's.

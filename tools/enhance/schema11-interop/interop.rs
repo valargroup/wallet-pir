@@ -10,7 +10,7 @@ use enhance_query_server::{
     worker::Worker,
 };
 use futures_util::StreamExt;
-use zakura_pir_enhance::{
+use zakura_pir_client::enhance::{
     transport::{Client, Method, PendingClient, Request, ResponseBody, Transport},
     AcceptedAnchor, ClientError, ClientResourceLimits, EnhanceRecord, GenerationAcceptance,
     RECORD_BYTES,
@@ -360,7 +360,7 @@ async fn scanned_wallet_applies_one_real_pir_row_atomically() {
     let pending = PendingClient::fetch(&transport, &origin).await.unwrap();
     // This synthetic local chain uses the same mainnet wire contract. Bind to
     // the actual wallet-scanned anchor, rather than trusting the server's claim.
-    let anchor = zakura_pir_enhance::wallet::snapshot_anchor(pending.manifest()).unwrap();
+    let anchor = zakura_pir_client::enhance::wallet::snapshot_anchor(pending.manifest()).unwrap();
     assert_eq!(
         wallet
             .wallet()
@@ -433,18 +433,18 @@ fn frozen_wallet_and_server_share_the_24_shard_ceiling() {
     let server = enhance_query_server::protocol::Lifecycle::default()
         .coverage(24 * span - 1, enhance_query_server::protocol::Geometry::default())
         .unwrap();
-    let wallet: zakura_pir_enhance::types::Coverage =
+    let wallet: zakura_pir_client::enhance::types::Coverage =
         serde_json::from_value(serde_json::to_value(server).unwrap()).unwrap();
     wallet
-        .validate(zakura_pir_enhance::types::Geometry::default())
+        .validate(zakura_pir_client::enhance::types::Geometry::default())
         .unwrap();
     assert!(enhance_query_server::protocol::Lifecycle::default()
         .coverage(24 * span + 1, enhance_query_server::protocol::Geometry::default())
         .is_err());
-    assert!(zakura_pir_enhance::types::Lifecycle::default()
+    assert!(zakura_pir_client::enhance::types::Lifecycle::default()
         .coverage(
             24 * span + 1,
-            zakura_pir_enhance::types::Geometry::default()
+            zakura_pir_client::enhance::types::Geometry::default()
         )
         .is_err());
 }

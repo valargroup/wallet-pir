@@ -33,13 +33,24 @@ Common releases and copies resolved from another source, including stale lockfil
 entries. The released frozen-client fixture retains its independent historical
 dependencies for interoperability checks.
 
+PIR primitives come from the role packages in wallet-libraries. Publishers use
+`zakura-pir-publisher`, query evaluation uses `zakura-pir-query-server`, and
+shared records use `zakura-pir-protocol`. Native preparation shared by the two
+server roles uses `zakura-pir-server-core`. Probe clients and integration tests
+use `zakura-pir-client`; the query libraries expose their local client helpers
+only with the explicit `client` feature (or in unit tests).
+
 Each `zakura-server-chain` consumer selects its product (`transparent`, `enhance`,
 `status` or `receiver`) with default features disabled. Test dependencies add
 `testing` alongside that same product; fixture support alone does not enable an
 adapter. Database readers additionally enable the existing `rocksdb-reader` feature.
 
-Fast Rust checks run every library and binary unit test in `release-fast`, plus
-classified bounded integration targets. There are no named slow-unit exclusions.
+Fast Rust checks run every library unit test, and every binary that declares one,
+in `release-fast`, plus classified bounded integration targets. The compile names
+a stable dev-dependency closure so a smaller affected set reuses the warm
+dependency graph; only affected packages run. A binary with no
+unit tests is left out of that compile; qualification still builds every binary.
+There are no named slow-unit exclusions.
 Required CLI features are enabled for binary unit targets. Ordinary cache,
 identity and fault matrices exercise one native column instance with the real
 ring parameters. These component fixtures are not advertised publication
@@ -55,7 +66,7 @@ HTTP integrations and the small-runner publisher protection remain intact.
 
 `make check-correctness` runs that complete bounded unit/integration population
 with native arithmetic, the independent reference checks, exporter contracts,
-doctests, formatting, lint and Python helpers. Its 180-second deadline includes
+doctests, formatting, lint and Python helpers. Its 300-second deadline includes
 warm compilation, fixture construction, execution and cleanup. Every CPU case
 retains its 30-second deadline. `--record-only` records overruns without omitting
 cases and never establishes an enforced timing pass.
@@ -99,11 +110,11 @@ validation** on its branch. Cold preparation and hosted cache priming run
 separately from main CI. The optional `correctness` input first diagnoses the
 complete CPU run (including cold native/reference and lint preparation) and
 requires three enforced warm runs on that same source. It also repeats complete
-fast feedback three times with its 180-second command deadline. This explicit
+fast feedback three times with its 300-second command deadline. This explicit
 preparation rebuilds the changed test crates once, retaining dependency caches;
 that cold rebuild is separate from the enforced warm measurements. Their per-case, stage
 and source receipts are retained as an attempt-specific Actions artifact; cold
-diagnostics never count as a three-minute pass. A main push preempts fast preparation.
+diagnostics never count as a five-minute pass. A main push preempts fast preparation.
 
 ## Keep changes focused
 

@@ -1,4 +1,6 @@
 //! Identity of this compiled reader, separately from any journal's ingest.
+use zakura_pir_protocol::transparent::events as transparent_events;
+
 use crate::AnyError;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};

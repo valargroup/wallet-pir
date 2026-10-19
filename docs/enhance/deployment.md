@@ -197,6 +197,12 @@ which is enough for a no-op check or an already staged release.
   skipped, so deploying the running binary is a no-op.
 - Every host must accept the deploy identity before anything changes. Mutating
   commands hold `/run/lock/wallet-pir-production.lock` on the coordinator.
+- CUDA builds must match Cargo's compiler feature report and the packaged
+  executable's `build-info` output before ABI metadata is written. Staging a
+  GPU worker also runs `check-backend --matvec-backend cuda` on that host,
+  using its configured device, before restarting the working service. This
+  checks compiled support and driver initialization without opening worker state;
+  publication readiness and encrypted answers remain separate activation checks.
 - After each restart the tool requires the unit to be active, `/proc/<MainPID>/exe`
   to have the release digest, and the role's health endpoint to report ready
   (and the same `binary_sha256`, when the endpoint reports one). After all roles

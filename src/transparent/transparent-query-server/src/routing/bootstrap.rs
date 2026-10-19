@@ -2,6 +2,8 @@
 //! authority. This entry point intentionally cannot start a wallet listener:
 //! fresh publisher canonicality attestation is checked around verification.
 //! Continuous reconciliation/activation belongs to the manager.
+use zakura_pir_protocol::transparent::filter as transparent_filter;
+
 use crate::{
     history::service::{ReadinessMode, ServiceConfig, ServiceState},
     routing::router::{plan, RosterEntry},
@@ -54,9 +56,18 @@ pub(crate) struct Source {
     budget: u64,
     pub(crate) downloaded: u64,
     observed: Option<Current>,
+    prefix: &'static str,
+    schema: &'static str,
 }
 impl Source {
     pub(crate) fn new(config: &Config) -> Result<Self, Error> {
+        Self::for_product(config, publication::PREFIX, publication::SCHEMA)
+    }
+    pub(crate) fn for_product(
+        config: &Config,
+        prefix: &'static str,
+        schema: &'static str,
+    ) -> Result<Self, Error> {
         let origin = reqwest::Url::parse(&config.publisher)?;
         if origin.scheme() != "https"
             || origin.host_str().is_none()
@@ -82,6 +93,8 @@ impl Source {
             budget: config.max_download_bytes,
             downloaded: 0,
             observed: None,
+            prefix,
+            schema,
         })
     }
     fn budget_error(&self) -> Error {
@@ -91,13 +104,11 @@ impl Source {
         )
         .into()
     }
-    async fn get(&mut self, suffix: &str) -> Result<reqwest::Response, Error> {
+    pub(crate) async fn get(&mut self, suffix: &str) -> Result<reqwest::Response, Error> {
         if self.downloaded >= self.budget {
             return Err(self.budget_error());
         }
-        let url = self
-            .origin
-            .join(&format!("{}{}", publication::PREFIX, suffix))?;
+        let url = self.origin.join(&format!("{}{}", self.prefix, suffix))?;
         let mut response = self
             .client
             .get(url)
@@ -116,7 +127,7 @@ impl Source {
         }
         Ok(response)
     }
-    async fn chunk(
+    pub(crate) async fn chunk(
         &mut self,
         response: &mut reqwest::Response,
     ) -> Result<Option<axum::body::Bytes>, Error> {
@@ -132,7 +143,7 @@ impl Source {
         }
         Ok(chunk)
     }
-    async fn small(&mut self, suffix: &str, limit: usize) -> Result<Vec<u8>, Error> {
+    pub(crate) async fn small(&mut self, suffix: &str, limit: usize) -> Result<Vec<u8>, Error> {
         let mut response = self.get(suffix).await?;
         let mut bytes = Vec::new();
         while let Some(chunk) = self.chunk(&mut response).await? {
@@ -256,7 +267,7 @@ impl Source {
         if check.revision != current.revision || check.recovery_epoch != current.recovery_epoch {
             return Err("publication superseded during canonicality validation".into());
         }
-        if check.schema != publication::SCHEMA
+        if check.schema != self.schema
             || check.genesis_hash != current.genesis_hash
             || check.height != current.anchor_height
             || check.hash != current.anchor_hash
@@ -287,10 +298,7 @@ impl Source {
         }
         let mut request = self
             .client
-            .get(
-                self.origin
-                    .join(&format!("{}current", publication::PREFIX))?,
-            )
+            .get(self.origin.join(&format!("{}current", self.prefix))?)
             .header("cache-control", "no-cache");
         if let Some(previous) = previous {
             request = request.header(
@@ -320,7 +328,7 @@ impl Source {
             return Err(format!("publisher refused current with HTTP {status}").into());
         }
         let current: Current = serde_json::from_slice(&bytes)?;
-        if current.schema != publication::SCHEMA
+        if current.schema != self.schema
             || current.revision == 0
             || !publication::is_digest(&current.inventory_sha256)
             || !publication::is_digest(&current.anchor_hash)
@@ -347,7 +355,7 @@ impl Source {
                 .small(&format!("anchors/{height}/{hash}"), 16 << 10)
                 .await?,
         )?;
-        if check.schema != publication::SCHEMA
+        if check.schema != self.schema
             || check.revision != current.revision
             || check.recovery_epoch != current.recovery_epoch
             || check.genesis_hash != current.genesis_hash
@@ -360,7 +368,7 @@ impl Source {
     }
     pub(crate) async fn current(&mut self, directory: &std::path::Path) -> Result<Current, Error> {
         let current: Current = serde_json::from_slice(&self.small("current", 16 << 10).await?)?;
-        if current.schema != publication::SCHEMA
+        if current.schema != self.schema
             || current.revision == 0
             || !publication::is_digest(&current.inventory_sha256)
             || !publication::is_digest(&current.genesis_hash)
@@ -447,6 +455,10 @@ pub(crate) struct Staged {
     pub inventory: Inventory,
     pub options: LoadOptions,
     pub downloaded_files: usize,
+    /// Wall time spent on the inventory request and artifact bodies; the rest
+    /// of the stage is local copying, verification and syncing.
+    pub transfer_seconds: f64,
+    pub stage_seconds: f64,
 }
 pub(crate) async fn stage(
     config: &Config,
@@ -454,6 +466,16 @@ pub(crate) async fn stage(
     current: &Current,
     cache: bool,
 ) -> Result<Staged, Error> {
+    stage_holdings(config, source, current, cache, false).await
+}
+pub(crate) async fn stage_holdings(
+    config: &Config,
+    source: &mut Source,
+    current: &Current,
+    cache: bool,
+    full: bool,
+) -> Result<Staged, Error> {
+    let started = std::time::Instant::now();
     let raw = source
         .small(
             &format!("inventories/{}", current.inventory_sha256),
@@ -463,12 +485,13 @@ pub(crate) async fn stage(
     if publication::digest(&raw) != current.inventory_sha256 {
         return Err("inventory digest mismatch".into());
     }
+    let mut transfer = started.elapsed();
     let inventory: Inventory = serde_json::from_slice(&raw)?;
     inventory.validate(&config.network, &config.genesis_hash)?;
     let total = inventory
         .artifacts
         .iter()
-        .filter(|f| f.kind.local())
+        .filter(|f| full || f.kind.local())
         .try_fold(source.downloaded, |n, f| n.checked_add(f.bytes))
         .ok_or("download budget overflow")?;
     if !cache && total > config.max_download_bytes {
@@ -495,7 +518,7 @@ pub(crate) async fn stage(
             inventory
                 .artifacts
                 .iter()
-                .filter(|f| f.kind.local() && f.path != "shards.json"),
+                .filter(|f| (full || f.kind.local()) && f.path != "shards.json"),
         ) {
             let target = stage.join(&artifact.path);
             std::fs::create_dir_all(target.parent().ok_or("artifact has no parent")?)?;
@@ -506,6 +529,7 @@ pub(crate) async fn stage(
             if reuse {
                 tokio::fs::copy(&cached, &target).await?;
             } else {
+                let fetching = std::time::Instant::now();
                 let mut output = tokio::fs::OpenOptions::new()
                     .create_new(true)
                     .write(true)
@@ -525,6 +549,7 @@ pub(crate) async fn stage(
                 if remaining != 0 {
                     return Err("artifact incomplete".into());
                 }
+                transfer += fetching.elapsed();
                 output.sync_all().await?;
                 drop(output);
                 downloaded_files += 1;
@@ -562,44 +587,48 @@ pub(crate) async fn stage(
         }
         // Reuse the production assignment planner, with an explicitly inert
         // archive row for cost/accounting only. Nothing here qualifies routes.
-        let mut roster = vec![RosterEntry {
-            id: "provider".into(),
-            role: WorkerRole::RecentReplica,
-            replica_group: Some("recent".into()),
-            ssh_host: String::new(),
-            upstream: "127.0.0.1:0".into(),
-            cache_bytes: config.cache_bytes,
-            archive_range: None,
-        }];
-        if inventory.recent_from_shard > 0 {
-            roster.push(RosterEntry {
-                id: "archive-metadata-only".into(),
-                role: WorkerRole::ArchiveOwner,
-                replica_group: None,
+        let options = if full {
+            LoadOptions::whole(0)
+        } else {
+            let mut roster = vec![RosterEntry {
+                id: "provider".into(),
+                role: WorkerRole::RecentReplica,
+                replica_group: Some("recent".into()),
                 ssh_host: String::new(),
-                upstream: "unconfigured.invalid:0".into(),
-                cache_bytes: u64::MAX,
+                upstream: "127.0.0.1:0".into(),
+                cache_bytes: config.cache_bytes,
                 archive_range: None,
-            });
-        }
-        let assignment = plan(
-            &map,
-            &inventory.map_sha256,
-            &roster,
-            inventory.recent_from_shard,
-            0.15,
-            GeneratedBy {
-                tool: "HTTPS bootstrap verifier".into(),
-                source_sha: None,
-                generated_at: "not-serving".into(),
-            },
-        )?;
-        let options = LoadOptions {
-            scope: LoadScope::Assigned {
-                assignment: Arc::new(assignment),
-                worker_id: "provider".into(),
-            },
-            ..LoadOptions::whole(0)
+            }];
+            if inventory.recent_from_shard > 0 {
+                roster.push(RosterEntry {
+                    id: "archive-metadata-only".into(),
+                    role: WorkerRole::ArchiveOwner,
+                    replica_group: None,
+                    ssh_host: String::new(),
+                    upstream: "unconfigured.invalid:0".into(),
+                    cache_bytes: u64::MAX,
+                    archive_range: None,
+                });
+            }
+            let assignment = plan(
+                &map,
+                &inventory.map_sha256,
+                &roster,
+                inventory.recent_from_shard,
+                0.15,
+                GeneratedBy {
+                    tool: "HTTPS bootstrap verifier".into(),
+                    source_sha: None,
+                    generated_at: "not-serving".into(),
+                },
+            )?;
+            LoadOptions {
+                scope: LoadScope::Assigned {
+                    assignment: Arc::new(assignment),
+                    worker_id: "provider".into(),
+                },
+                ..LoadOptions::whole(0)
+            }
         };
         if let LoadScope::Assigned { assignment, .. } = &options.scope {
             crate::control::persist(&stage.join("assignment.json"), assignment.as_ref())?;
@@ -612,6 +641,8 @@ pub(crate) async fn stage(
             inventory,
             options,
             downloaded_files,
+            transfer_seconds: transfer.as_secs_f64(),
+            stage_seconds: started.elapsed().as_secs_f64(),
         })
     }
     .await;
@@ -623,7 +654,7 @@ pub(crate) async fn stage(
 
 // Persist child entries before their parents and before the owner's active
 // pointer. Cached copies require the same durability as downloaded files.
-fn sync_tree(path: &std::path::Path) -> Result<(), Error> {
+pub(crate) fn sync_tree(path: &std::path::Path) -> Result<(), Error> {
     for entry in std::fs::read_dir(path)? {
         let entry = entry?;
         if entry.file_type()?.is_dir() {

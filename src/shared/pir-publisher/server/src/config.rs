@@ -153,6 +153,7 @@ impl Config {
             );
         }
         if let Some(c) = active(&self.transparent_history)? {
+            c.validate()?;
             if c.distribute_prepared && !c.ship_runtimes {
                 return Err("prepared distribution requires ship_runtimes".into());
             }
@@ -165,7 +166,9 @@ impl Config {
                 layout.root("transparent_history", path)?;
             }
             layout.probe("transparent_history", c.listen, "/v1/status", "history");
-            layout.probe("transparent_history", c.listen, "/v2/shards/init", "status");
+            if !c.http_only {
+                layout.probe("transparent_history", c.listen, "/v2/shards/init", "status");
+            }
         }
         if let Some(c) = active(&self.transaction_details)? {
             c.validate()?;

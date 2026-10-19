@@ -23,6 +23,8 @@
 //! skips verification. Display runtimes are keyed by revision digest, so the
 //! revision, not the segment, is the unit a later publication can inherit.
 
+use zakura_pir_protocol::transparent::shard as transparent_shard;
+
 use crate::history::shardset::{LoadError, SegmentSource, VerificationClock, VerificationReport};
 use crate::runtime::disk::ShippedRuntimes;
 use crate::tx_detail::{kind, runtime_key, serves, DisplayRole};

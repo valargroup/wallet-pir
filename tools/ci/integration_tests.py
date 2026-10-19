@@ -13,6 +13,7 @@ import tomllib
 import tempfile
 
 from fast import ROOT, workspace_packages
+from full_packages import qualification_features
 from stage import run, inherited_fds
 
 
@@ -86,6 +87,8 @@ def execute(packages, tier, *, offline=False, compile_only=False, smoke_only=Fal
                 continue
             tiers = {'fast': ['ci_smoke'], 'full': []}
         features = target_features(package, tiers['fast'] if tier == 'fast' else tiers['fast'] + tiers['full'])
+        if tier == 'full' and (campaigns := qualification_features([package])):
+            features += ['--features', ','.join(campaigns)]
         args = cargo_args(package, tiers, tier) + features + (['--offline'] if offline else [])
         if compile_only:
             run(['cargo', 'test', '--no-run', *args], env=env, stage=f'compile:integration-{package}')

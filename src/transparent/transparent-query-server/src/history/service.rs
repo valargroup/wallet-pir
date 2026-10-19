@@ -36,6 +36,9 @@
 //! paths on its own host, so two origins remain available to a wallet that
 //! wants them.
 
+use zakura_pir_protocol::transparent::shard as transparent_shard;
+use zakura_pir_query_server::transparent::native as transparent_native;
+
 use crate::admission::{Admission, Admitted};
 pub use crate::config::{ReadinessMode, ServiceConfig};
 use crate::request::{answer_query, json, within, Query, RequestError, Worker};

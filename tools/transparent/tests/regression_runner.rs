@@ -1,11 +1,13 @@
 //! Exercise the executable, actual HTTP paths, reopened stores and report files.
+use zakura_pir_publisher::transparent as transparent_shard;
+
 #[path = "../../../src/transparent/transparent-query-server/tests/common/mod.rs"]
 mod common;
 use common::*;
 use sha2::{Digest, Sha256};
 use transparent_shard::layout::DECOUPLED_2K_8K;
 use transparent_tools::regression::{reference, Case, Checkpoint, EventRecord, Fixture, SCHEMA};
-use zakura_pir_transparent::engine::Anchor;
+use zakura_pir_client::transparent::engine::Anchor;
 #[tokio::test(flavor = "multi_thread")]
 async fn executable_checks_frozen_checkpoints_and_reports_publication_drift() {
     let all = chain();

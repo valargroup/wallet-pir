@@ -1,5 +1,9 @@
 //! Synthetic display journals for the controller's tests.
 
+use zakura_pir_protocol::transparent::events as transparent_events;
+use zakura_pir_publisher::transparent as transparent_shard;
+use zakura_pir_publisher::transparent::filter as transparent_filter;
+
 use super::publisher::DisplayRoot;
 use crate::history::publication::Journal;
 use sha2::{Digest, Sha256};

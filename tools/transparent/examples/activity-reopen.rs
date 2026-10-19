@@ -1,9 +1,12 @@
 //! Reopen retained real HTTP recoveries and export facts for an independent comparison.
+use zakura_pir_protocol::transparent::events as transparent_events;
+use zakura_pir_publisher::transparent as transparent_shard;
+
 use serde_json::json;
 use std::path::{Path, PathBuf};
 use transparent_events::FeeState;
-use zakura_pir_transparent::engine::WalletStore;
-use zakura_pir_transparent::engine_store::SqliteStore;
+use zakura_pir_client::transparent::engine::WalletStore;
+use zakura_pir_client::transparent::engine_store::SqliteStore;
 
 fn databases(root: &Path, paths: &mut Vec<PathBuf>) -> std::io::Result<()> {
     for entry in std::fs::read_dir(root)? {

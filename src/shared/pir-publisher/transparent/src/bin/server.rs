@@ -5,6 +5,9 @@
 //! archive node, but it shares no state with the coordinator and can be
 //! stopped, restarted or moved without touching it.
 
+use zakura_pir_publisher::transparent as transparent_shard;
+use zakura_pir_publisher::transparent::filter as transparent_filter;
+
 use clap::Parser;
 use std::net::SocketAddr;
 use std::path::PathBuf;

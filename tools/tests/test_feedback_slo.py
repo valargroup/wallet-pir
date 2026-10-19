@@ -21,7 +21,7 @@ def row(number, category='shared', seconds=120, **changes):
 
 class FeedbackTests(unittest.TestCase):
     def test_final_timing_check_reports_before_failing_at_the_limit(self):
-        for seconds, fails in [(179, False), (180, True), (240, True)]:
+        for seconds, fails in [(120, False), (179.999, False), (180, True), (240, True)]:
             result = {'jobs': [{'name': 'Fast checks', 'job_seconds': seconds,
                                 'reused_from_previous_attempt': False}]}
             with patch.object(sys, 'argv', ['timings.py', '--run', '1', '--check-fast-seconds', '180']), patch.object(timings, 'report', return_value=result), patch.dict(timings.os.environ, {'GITHUB_STEP_SUMMARY': ''}), contextlib.redirect_stdout(io.StringIO()) as output:
@@ -36,7 +36,7 @@ class FeedbackTests(unittest.TestCase):
         return [row(i, ['shared', 'docs', 'ops'][i % 3]) for i in range(20)]
 
     def test_timeout_cancellation_and_rerun_do_not_erase_failed_validation(self):
-        for changes in [dict(conclusion='cancelled', dispatch_seconds=200), dict(attempt=2)]:
+        for changes in [dict(conclusion='cancelled', dispatch_seconds=180), dict(attempt=2)]:
             rows = self.samples()
             rows[0].update(changes)
             result = timings.feedback_slo(rows)
@@ -45,7 +45,9 @@ class FeedbackTests(unittest.TestCase):
 
     def test_twenty_representative_warm_runs_are_needed(self):
         self.assertFalse(timings.feedback_slo(self.samples()[:19])['accepted'])
-        self.assertTrue(timings.feedback_slo(self.samples())['accepted'])
+        accepted = timings.feedback_slo(self.samples())
+        self.assertTrue(accepted['accepted'])
+        self.assertEqual(accepted['target_seconds'], 180)
         self.assertFalse(timings.feedback_slo([row(i, 'docs') for i in range(20)])['accepted'])
 
     def test_cold_missing_or_workflow_only_evidence_cannot_satisfy_the_target(self):

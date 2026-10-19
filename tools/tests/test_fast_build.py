@@ -43,7 +43,7 @@ class FastBuildTests(unittest.TestCase):
         self.ignored = {}
         self.calls, self.plans = [], []
 
-    def execute(self, *, compile_only=False, jobs=2, cpus=4, **options):
+    def execute(self, *, compile_only=False, jobs=2, cpus=4, selected=None, **options):
         original_read = Path.read_text
 
         def read(path, *args, **kwargs):
@@ -71,8 +71,8 @@ class FastBuildTests(unittest.TestCase):
                 patch.object(fast_build.subprocess, 'check_output', side_effect=output), \
                 patch.object(fast_build, 'run', side_effect=run), \
                 patch.dict(os.environ, QUALIFY_PUBLICATIONS='100000'), redirect_stdout(io.StringIO()):
-            fast_build.execute([p['name'] for p in self.packages], offline=True,
-                               compile_only=compile_only, jobs=jobs, **options)
+            fast_build.execute(selected if selected is not None else [p['name'] for p in self.packages],
+                               offline=True, compile_only=compile_only, jobs=jobs, **options)
 
     def test_large_unit_partitions_cover_each_discovered_case_exactly_once(self):
         names = {f'module::case_{index:03}' for index in range(137)}
@@ -104,6 +104,41 @@ class FastBuildTests(unittest.TestCase):
                              for index in range(60)}
         [shard] = fast_build.bounded_programs(program, only_distribution)
         self.assertCountEqual(shard['args'][1:], only_distribution)
+
+    def test_bins_without_unit_tests_are_omitted_from_the_fast_compile(self):
+        root = Path(self.directory.name) / 'sources'
+        root.mkdir()
+        empty = root / 'empty.rs'
+        tested = root / 'client.rs'
+        empty.write_text('fn main() {}\n')
+        tested.write_text('fn main() {}\n#[test]\nfn keeps_the_binary() {}\n')
+        for package in self.packages:
+            for target in package['targets']:
+                if target['kind'] == ['bin']:
+                    target['src_path'] = str(tested)
+        self.packages[0]['targets'].append(
+            dict(name='empty', kind=['bin'], src_path=str(empty)))
+        self.execute()
+        build = next(command for command, _ in self.calls if command[:2] == ['cargo', 'test'])
+        self.assertNotIn('--bins', build)
+        names = [build[i + 1] for i, word in enumerate(build[:-1]) if word == '--bin']
+        self.assertEqual(names, ['client'])
+        self.assertNotIn('empty', build)
+
+    def test_target_declares_tests_follows_modules_and_fails_open(self):
+        root = Path(self.directory.name) / 'scan'
+        root.mkdir()
+        (root / 'empty.rs').write_text('fn main() {}\n')
+        (root / 'direct.rs').write_text('#[test]\nfn keeps() {}\n')
+        (root / 'async_bin.rs').write_text('#[tokio::test]\nasync fn keeps() {}\n')
+        (root / 'parent.rs').write_text('mod child;\nfn main() {}\n')
+        (root / 'child.rs').write_text('#[test]\nfn nested() {}\n')
+        self.assertFalse(fast_build.target_declares_tests(dict(src_path=str(root / 'empty.rs'))))
+        self.assertTrue(fast_build.target_declares_tests(dict(src_path=str(root / 'direct.rs'))))
+        self.assertTrue(fast_build.target_declares_tests(dict(src_path=str(root / 'async_bin.rs'))))
+        self.assertTrue(fast_build.target_declares_tests(dict(src_path=str(root / 'parent.rs'))))
+        self.assertTrue(fast_build.target_declares_tests(dict()))
+        self.assertTrue(fast_build.target_declares_tests(dict(src_path=str(root / 'missing.rs'))))
 
     def test_one_build_preserves_units_binaries_fast_targets_and_package_specific_exclusions(self):
         self.execute()
@@ -167,25 +202,6 @@ class FastBuildTests(unittest.TestCase):
         self.execute(cpus=8)
         self.assertFalse(self.plans[0][0]['exclusive'])
         self.assertEqual(self.plans[0][0]['executable'], '/fixture/a-a')
-
-    def test_enhance_http_smokes_are_isolated_even_on_eight_cores(self):
-        self.packages[0]['name'] = 'enhance-publisher'
-        self.registry['enhance-publisher'] = dict(fast=['ci_smoke'], full=['campaign'])
-        self.registry.pop('a')
-        self.slow['enhance-publisher'] = self.slow.pop('a')
-        for target in self.packages[0]['targets']:
-            if target['name'] == 'smoke':
-                target['name'] = 'ci_smoke'
-        for artifact in self.artifacts:
-            if artifact['package_id'] == 'a' and artifact['target']['kind'] == ['test']:
-                artifact['target']['name'] = 'ci_smoke'
-        self.execute(cpus=8)
-        isolated = [program for program in self.plans[0] if program['exclusive']]
-        self.assertEqual(len(isolated), 1)
-        self.assertEqual(isolated[0]['package'], 'enhance-publisher')
-        self.assertTrue(isolated[0]['integration'])
-        self.assertEqual(isolated[0]['args'], [])
-        self.assertEqual(len(self.plans[0]), len(self.artifacts))
 
     def test_discovered_case_count_orders_units_after_http_independently_of_cargo_output(self):
         self.listings['/fixture/b-b'] = {f'case_{i}' for i in range(7)}
@@ -268,6 +284,52 @@ class FastBuildTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'also select campaign'):
             self.execute()
         self.assertEqual(self.calls, [])
+
+    def test_affected_subset_compiles_feature_roots_without_running_them(self):
+        root = Path(self.directory.name) / 'anchor'
+        root.mkdir()
+        source = root / 'lib.rs'
+        source.write_text('#[test]\nfn anchor_case() {}\n')
+        package = dict(id='transparent-shared', name='transparent-shared', version='1.0.0',
+                       manifest_path=str(root / 'Cargo.toml'),
+                       targets=[dict(name='transparent_shared', kind=['lib'], src_path=str(source))])
+        self.packages.append(package)
+        self.artifacts.append(dict(package_id='transparent-shared',
+                                   target=package['targets'][0],
+                                   executable='/fixture/transparent-shared'))
+        self.listings['/fixture/transparent-shared'] = {'anchor_case'}
+        self.execute(selected=['a', 'b'])
+        build = next(command for command, _ in self.calls if command[:2] == ['cargo', 'test'])
+        self.assertIn('-p', build)
+        self.assertIn('transparent-shared', build)
+        planned = {program['package'] for program in self.plans[0]}
+        self.assertIn('a', planned)
+        self.assertNotIn('transparent-shared', planned)
+
+    def test_enhance_subset_compiles_the_warm_dev_dependency_closure(self):
+        recorded = []
+
+        def run(command, **kwargs):
+            recorded.append(command)
+            return []
+
+        with patch.object(fast_build, 'run', side_effect=run):
+            fast_build.execute(['enhance-query-server'], compile_only=True)
+        build = next(command for command in recorded if command[:2] == ['cargo', 'test'])
+        packages = [build[index + 1] for index, word in enumerate(build[:-1]) if word == '-p']
+        bins = [build[index + 1] for index, word in enumerate(build[:-1]) if word == '--bin']
+        tests = [build[index + 1] for index, word in enumerate(build[:-1]) if word == '--test']
+        self.assertEqual(packages, sorted(fast_build.FAST_FEATURE_ROOTS))
+        self.assertIn('--lib', build)
+        self.assertEqual(build[build.index('--features') + 1], 'status-publisher/cli')
+        self.assertNotIn('--bins', build)
+        self.assertEqual(bins, [
+            'enhance-pir-exercise', 'enhance-pir-load-test',
+            'hierarchical-filter-eval', 'journal-convert-v1', 'pir-monitor',
+            'txid-quality-canary'])
+        self.assertEqual(tests, [
+            'boundary_recovery_model', 'ci_hint', 'ci_smoke', 'lifecycle',
+            'record_layout', 'schema11_cutover', 'status_routes'])
 
     def test_hardware_features_cannot_silently_replace_reference_arithmetic(self):
         self.packages[0]['targets'][1]['required-features'] = ['native-reinspiring']

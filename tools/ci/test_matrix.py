@@ -21,16 +21,22 @@ from stage import ROOT, run, install_cancellation, inherited_fds
 REGISTRY = ROOT / 'tools/ci/test-matrix.json'
 EXPORT = 'tools/txid/txid-sizing/export/Cargo.toml'
 NATIVE = ['enhance-query-server/native-reinspiring', 'status-query-server/native-reinspiring',
-          'enhance-publisher/native-reinspiring', 'status-publisher/native-reinspiring',
+          'enhance-publisher/native-reinspiring', 'status-publisher/native-reinspiring', 'status-publisher/cli',
           'enhance-pir-client/native-reinspiring', 'enhance-pir-load-test/native-reinspiring']
 CUDA = ['enhance-query-server/cuda', 'status-query-server/cuda', 'enhance-publisher/cuda', 'status-publisher/cuda',
         'enhance-publisher/native-reinspiring', 'enhance-pir-load-test/native-reinspiring']
-# Reference arithmetic runs the IPIR units and the absorbed protocol, client and
-# record units of the query-server library, its protocol contract tests, and the
-# publisher's independent hint and damaged-artifact checks.
-REFERENCE_LIB_FILTERS = ['ipir::tests', 'client::', 'protocol::', 'record::', 'record_types::']
+# Reference arithmetic runs the query server's protocol units and composed-runtime
+# oracles, its protocol contract tests, and the publisher's independent hint,
+# damaged-artifact and encrypted lifecycle checks.
+REFERENCE_LIB_FILTERS = ['ipir::tests', 'client::', 'protocol::', 'record::', 'record_types::',
+                         'runtime::tests::unequal_units_match_monolithic_preprocessing_and_evaluation',
+                         'runtime::tests::tail_domain_reuses_b_units_and_decodes_b_at_unchanged_coordinates']
 REFERENCE_TESTS = {('enhance-query-server', 'routing_contract'), ('enhance-query-server', 'v7_contract'),
-                   ('enhance-publisher', 'ci_hint')}
+                   ('enhance-publisher', 'ci_hint'), ('enhance-publisher', 'encrypted_lifecycle')}
+# Real-process campaigns are compiled and listed here but run only by their
+# scripts under tools/transparent/scripts; every case must stay ignored.
+MANUAL_CAMPAIGNS = {('transparent-publisher', 'controller_update_campaign'),
+                    ('transparent-publisher', 'unified_http_sync_campaign')}
 
 
 def variants(groups):
@@ -39,7 +45,7 @@ def variants(groups):
         'export': dict(family='transparent', packages=['txid-sizing-export'], features=[], manifest=EXPORT),
         'native': dict(family='enhance', packages=groups['enhance'], features=NATIVE + qualification_features(groups['enhance'])),
         'reference': dict(family='enhance', packages=['enhance-query-server', 'enhance-publisher', 'status-query-server'],
-                          features=[]),
+                          features=qualification_features(['enhance-query-server', 'enhance-publisher', 'status-query-server'])),
         'cuda': dict(family='enhance', packages=['enhance-query-server', 'status-query-server', 'enhance-publisher',
                                              'status-publisher', 'enhance-pir-load-test'], features=CUDA),
         'receiver': dict(family='receiver', packages=groups['receiver'], features=[]),
@@ -216,7 +222,7 @@ def test_programs(artifacts, variant, packages, env):
     actual, programs, cases = set(), [], {}
     for artifact in artifacts:
         package = next(p for p in packages.values() if p['id'] == artifact['package_id'])
-        if (variant in ('transparent', 'native')
+        if (variant in ('transparent', 'native', 'reference')
                 and 'qualification-tests' in package.get('features', {})
                 and 'qualification-tests' not in artifact.get('features', [])):
             raise ValueError(f"{package['name']}: qualification fixture feature missing from executable")
@@ -239,7 +245,10 @@ def test_programs(artifacts, variant, packages, env):
             [program['executable'], *args, '--ignored', '--list'],
             cwd=program['directory'], env=env, text=True, **inherited_fds(env))
         ignored = {line[:-6] for line in ignored_listing.splitlines() if line.endswith(': test')}
-        if not set(names) - ignored and program['integration']:
+        if identity in MANUAL_CAMPAIGNS:
+            if not names or set(names) - ignored:
+                raise ValueError(f'manual campaign must contain only ignored cases: {identity}')
+        elif not set(names) - ignored and program['integration']:
             raise ValueError(f'empty integration executable: {identity}')
         cases[':'.join((variant, *identity))] = dict(tests=names, ignored=sorted(ignored),
                                                    features=sorted(artifact.get('features', [])))
@@ -318,10 +327,12 @@ def baseline_commands(family):
     if family == 'enhance':
         options = ['--locked', '--profile', 'release-fast']
         result += [
-            ('reference', [*options, '-p', 'enhance-query-server', '--lib', '--', *REFERENCE_LIB_FILTERS]),
+            ('reference', [*options, '-p', 'enhance-query-server', '--features', 'qualification-tests',
+                           '--lib', '--', *REFERENCE_LIB_FILTERS]),
             ('reference', [*options, '-p', 'enhance-query-server', '--test', 'routing_contract', '--test', 'v7_contract']),
-            ('reference', [*options, '-p', 'enhance-publisher', '--test', 'ci_hint']),
-            ('reference', [*options, '-p', 'status-query-server', '--lib', '--tests']),
+            ('reference', [*options, '-p', 'enhance-publisher', '--features', 'qualification-tests',
+                           '--test', 'ci_hint', '--test', 'encrypted_lifecycle']),
+            ('reference', [*options, '-p', 'status-query-server', '--features', 'qualification-tests', '--lib', '--tests']),
             ('cuda', [*options, '-p', 'enhance-publisher', '--features', 'native-reinspiring,cuda', '--test', 'matvec_config']),
             ('cuda', [*options, '-p', 'enhance-query-server', '--features', 'native-reinspiring,cuda', '--lib',
                       'backend_load_failure_does_not_rebuild_or_replace_published_units']),

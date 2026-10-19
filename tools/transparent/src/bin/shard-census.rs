@@ -13,6 +13,10 @@
 //! The one exception is `--shard-matches`, which spills sorted runs to a
 //! directory the caller names and removes them when it has merged them.
 
+use zakura_pir_protocol::transparent::native as transparent_native;
+use zakura_pir_publisher::transparent as transparent_shard;
+use zakura_pir_publisher::transparent::filter as transparent_filter;
+
 use clap::Parser;
 use std::collections::HashSet;
 use std::path::PathBuf;

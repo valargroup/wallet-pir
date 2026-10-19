@@ -92,11 +92,13 @@ async fn dithered_queries_take_the_public_path(
     let rows = served.params.db_rows;
     for position in [0, 33, records - 1] {
         let (query, slot) = session.prepare_position(position).unwrap();
-        let (secret, payload) =
-            pir_native::prepare_dithered(&n::packing_setup(), &n::query_masks(0), rows, {
-                (position / 33) as usize
-            })
-            .unwrap();
+        let (secret, payload) = zakura_pir_client::native::prepare_dithered(
+            &n::packing_setup(),
+            &n::query_masks(0),
+            rows,
+            (position / 33) as usize,
+        )
+        .unwrap();
         let mut body = query.body()[..HEADER_BYTES].to_vec();
         body.extend(payload);
         assert_eq!(body.len() + rows * 5 / 8, query.body().len());

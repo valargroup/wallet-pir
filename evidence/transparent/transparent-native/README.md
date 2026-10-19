@@ -9,5 +9,6 @@ hashes in that capture's unchanged manifest. They keep its relative links
 usable offline. Do not regenerate or edit the captured output here.
 
 This directory contains no Cargo package or production implementation.
-The maintained implementation and oracle live in
+These files document a retired proof of concept and are not run by Wallet PIR.
+Historical upstream source is available in
 [wallet-libraries](https://github.com/zakura-core/wallet-libraries/tree/1b0cda2e09c1e496889b2d85962321a8df750fea/zakura/transparent-native).

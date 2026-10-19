@@ -1,5 +1,8 @@
 //! Parent-free inventory using canonical transactions, shared flags and codec.
 //! Unknown fees remain unknown; Python bounds their optional encoded length.
+use zakura_pir_protocol::transparent::events as transparent_events;
+use zakura_pir_publisher::transparent as transparent_shard;
+
 use super::*;
 use std::io::{self, BufRead, Read, Write};
 use transparent_events::TransactionMetadata;

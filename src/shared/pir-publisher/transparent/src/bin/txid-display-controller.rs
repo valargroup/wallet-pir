@@ -1,4 +1,7 @@
 //! Time-tiered txid display publication: bootstrap, run, verify and bench.
+use zakura_pir_publisher::transparent as transparent_shard;
+use zakura_pir_publisher::transparent::filter as transparent_filter;
+
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 use std::time::Duration;

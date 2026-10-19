@@ -527,12 +527,9 @@ cache file rather than copied, so the advice cannot evict it and admission count
 
 Runtime construction encodes the segment, computes the public hint with exact lifted
 products against the table's query masks, and builds two-mask preprocessing per block.
-For the recent geometries only, trailing all-zero row blocks are left out of the product
-and the hint (`transparent_native::batched_hint`) transforms 32 columns at a time under
-three 30-bit primes and reduces the CRT-reconstructed integer sum modulo `q`. It equals the
-shared `pir_native::hint` exactly, and masks beyond its checked capacity are handed to that
-reference. Archive geometries, and any geometry not listed, use `pir_native::hint` over
-every block.
+Every geometry uses `zakura_pir_server_core::native::hint` over all row blocks.
+The column-batched hint proof of concept and its geometry-specific dispatch have
+been removed from Wallet PIR.
 Database-dependent preprocessing is rebuilt for each changed table; client secrets and
 uploaded key bodies are never shared. The cache admits a new runtime against the database,
 the published masks and the preprocessing at its eight-byte-word bound (64 MiB per block),

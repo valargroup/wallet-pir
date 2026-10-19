@@ -3,7 +3,7 @@
 use ipir_sp::server::MatvecBackend;
 use status_query_server::{fixture, now_ms, Controller, Generation};
 use std::sync::atomic::{AtomicBool, Ordering};
-use zakura_pir_status as wallet;
+use zakura_pir_client::status as wallet;
 
 #[path = "support/status_http.rs"]
 mod status_http;

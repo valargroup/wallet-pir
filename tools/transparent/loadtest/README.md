@@ -1,5 +1,12 @@
 # Transparent recovery simulation
 
+For explicit prepared-publication artifact transfers with 10/100 logical HTTP
+consumers, use `distribution.py` and
+[its usage notes](../../../docs/transparent/prepared-distribution.md#distribution-load-diagnostics).
+It is separate from wallet simulation and ordinary CPU correctness acceptance.
+The driver pins the preflight publication, enforces a shared retained-content
+budget, uses absolute request deadlines and retains each retry body separately.
+
 `transparent-loadtest` supports reproducible mixed-wallet recovery scenarios as
 well as the existing stepped-concurrency load test. Both use the reference
 wallet HTTP adapters and verify recovered events against a pinned journal
