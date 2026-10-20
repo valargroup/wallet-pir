@@ -298,7 +298,7 @@ class HttpsServing(Serving):
             budget = min(maximum, resources['memory_available'] - (resources['memory_total'] + 4) // 5)
             require(resources['memory_available'] - budget >= resources['memory_total'] * .2,
                     'production snapshot verification would leave less than 20 percent memory')
-            settings = {data_key: source, 'verify_only': True, 'cache_bytes': budget,
+            settings = {data_key: source, 'cache_bytes': budget,
                         'listen': '127.0.0.1:18990'}
             if section == 'transaction_details':
                 settings['role'] = 'combined'
@@ -309,7 +309,7 @@ class HttpsServing(Serving):
                          lambda path=path, config=config: self.write(owner.host, path,
                              json.dumps(config, sort_keys=True) + '\n', 0o600))
             target = self.deployer.service.release_binary(self.release['binary_sha256'], 'pir-query-server')
-            code, output = owner.ex.run(owner.host, [target, '--config', path], 300)
+            code, output = owner.ex.run(owner.host, [target, '--config', path, '--verify-only'], 300)
             reports = []
             for line in output.splitlines():
                 try:

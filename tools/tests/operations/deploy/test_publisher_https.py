@@ -75,8 +75,11 @@ class HttpsTests(PublisherFixture, unittest.TestCase):
                 return 0, json.dumps({'map_sha256': publisher.sha(json.dumps(json.loads(raw), separators=(',', ':')))})
             if argv[0].endswith('/pir-query-server') and '--config' in argv and '--check' not in argv:
                 config = json.loads(self.ex.read(host, argv[argv.index('--config') + 1]))
+                sections = ('transparent_history', 'transaction_details')
                 if any(config.get(section, {}).get('settings', {}).get('verify_only') is True
-                       for section in ('transparent_history', 'transaction_details')):
+                       for section in sections):
+                    return 1, 'product verify_only requires the root command flag'
+                if '--verify-only' in argv:
                     source = config.get('transaction_details', {}).get('settings', {}).get('publication_dir')
                     return 0, json.dumps({'verified': True, 'map_sha256': self.ex.sha256(host, source + '/txid-shards.json') if source else None})
             if '--check' in argv and argv[0].endswith('/pir-query-server'):
