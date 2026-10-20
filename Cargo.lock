@@ -2144,6 +2144,7 @@ dependencies = [
  "zakura-pir-client",
  "zakura-pir-protocol",
  "zakura-pir-publisher",
+ "zakura-pir-query-server",
  "zakura-server-chain",
 ]
 

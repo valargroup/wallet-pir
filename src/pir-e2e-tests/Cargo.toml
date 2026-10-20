@@ -16,9 +16,12 @@ native-reinspiring = ["enhance-publisher?/native-reinspiring"]
 cuda = ["enhance-query-server?/cuda"]
 # Larger hint oracles. Ordinary correctness leaves this off.
 qualification-tests = []
+# The copied query-host entrypoint the process tests start.
+query-host = ["dep:pir-query-server"]
 # Wallet-client and chain-fixture regressions.
 enhance-tests = [
     "enhance",
+    "query-host",
     "dep:enhance-publisher",
     "enhance-publisher/fault-injection",
     "enhance-publisher/fixtures",
@@ -35,6 +38,12 @@ enhance-tests = [
     "zakura-pir-client/testing",
 ]
 transparent-tests = [
+    "query-host",
+    "pir-query-server/transparent-history",
+    "pir-query-server/transparent-detail",
+    # The copied shard-assign administration tool.
+    "dep:hex",
+    "dep:sha2",
     "dep:transparent-publisher",
     "transparent-publisher/fixtures",
     "dep:transparent-query-server",
@@ -65,6 +74,8 @@ zakura-pir-client = { git = "https://github.com/zakura-core/wallet-libraries.git
 zakura-pir-publisher = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "f48b62b80ec7d9d7fb7893401435a24b189b8ec2", default-features = false, optional = true }
 zakura-pir-protocol = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "f48b62b80ec7d9d7fb7893401435a24b189b8ec2", default-features = false, optional = true }
 pir-pipeline = { path = "../shared/pir-pipeline" }
+hex = { version = "0.4", optional = true }
+sha2 = { version = "0.10", optional = true }
 axum = "0.7"
 clap = { version = "4", features = ["derive"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
@@ -84,7 +95,7 @@ test = false
 [[bin]]
 name = "pir-query-server-test"
 path = "../pir-query-server/src/main.rs"
-required-features = ["enhance-tests"]
+required-features = ["query-host"]
 test = false
 
 [[bin]]
@@ -93,7 +104,27 @@ path = "../transparent/transparent-publisher/src/bin/transparent-publish-control
 required-features = ["transparent-tests"]
 test = false
 
+# Transparent administration tools, built from their transparent-tools sources.
+[[bin]]
+name = "shard-assign-test"
+path = "../../tools/transparent/src/bin/shard-assign.rs"
+required-features = ["transparent-tests"]
+test = false
+
+[[bin]]
+name = "shard-prune-test"
+path = "../../tools/transparent/src/bin/shard-prune.rs"
+required-features = ["transparent-tests"]
+test = false
+
+[[bin]]
+name = "txid-control-test"
+path = "../../tools/transparent/src/bin/txid-control.rs"
+required-features = ["transparent-tests"]
+test = false
+
 [dev-dependencies]
+zakura-pir-query-server = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "f48b62b80ec7d9d7fb7893401435a24b189b8ec2", default-features = false, features = ["transparent"] }
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
 sha2 = "0.10"
@@ -185,4 +216,14 @@ required-features = ["transparent-tests"]
 [[test]]
 name = "unified_http_sync_campaign"
 path = "tests/unified_http_sync_campaign.rs"
+required-features = ["transparent-tests"]
+
+[[test]]
+name = "transparent_host_processes"
+path = "tests/transparent_host_processes.rs"
+required-features = ["transparent-tests"]
+
+[[test]]
+name = "transparent_provider_installation"
+path = "tests/transparent_provider_installation.rs"
 required-features = ["transparent-tests"]

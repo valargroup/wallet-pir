@@ -65,6 +65,8 @@
       "transparent:pir-e2e-tests:test:event_codec_bounds",
       "transparent:pir-e2e-tests:test:service_round_trip",
       "transparent:pir-e2e-tests:test:shard_filters",
+      "transparent:pir-e2e-tests:test:transparent_host_processes",
+      "transparent:pir-e2e-tests:test:transparent_provider_installation",
       "transparent:transparent-tools:bin:compact-export",
       "transparent:transparent-tools:bin:event-spotcheck",
       "transparent:transparent-tools:bin:filter-sweep",
@@ -164,7 +166,8 @@
       "native:pir-publisher:test:lifecycle",
       "native:pir-query-server:bin:pir-query-server",
       "native:pir-query-server:doc:pir_query_server",
-      "native:pir-query-server:lib:pir_query_server"
+      "native:pir-query-server:lib:pir_query_server",
+      "native:pir-query-server:test:operator"
     ]
   },
   "enhance-http": {

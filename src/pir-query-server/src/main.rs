@@ -64,10 +64,22 @@ fn enhance_command(command: EnhanceCommand) -> pir_query_server::Result<()> {
 
 #[tokio::main]
 async fn main() -> pir_query_server::Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .init();
     let args = Args::parse();
+    if args.verify_only {
+        // Stdout carries only the verification report; diagnostics go to
+        // stderr at the level the Transparent verifiers have always logged.
+        tracing_subscriber::fmt()
+            .with_writer(std::io::stderr)
+            .with_env_filter(
+                tracing_subscriber::EnvFilter::try_from_default_env()
+                    .unwrap_or_else(|_| "info".into()),
+            )
+            .init();
+    } else {
+        tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .init();
+    }
     #[cfg(feature = "enhance")]
     if let Some(command) = args.command {
         return enhance_command(command);

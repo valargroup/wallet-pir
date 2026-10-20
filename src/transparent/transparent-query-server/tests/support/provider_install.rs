@@ -1,4 +1,5 @@
 //! Artifact consumer: all runtime commands run in a new extracted tree without PYTHONPATH.
+//! The packaged `pir-query-server` runs the rendered provider configuration.
 use zakura_pir_client::transparent::native::TableClientExt as _;
 
 use zakura_pir_publisher::transparent as transparent_shard;
@@ -6,10 +7,14 @@ use zakura_pir_query_server::transparent::native as transparent_native;
 
 use super::*;
 use std::{
+    collections::BTreeMap,
     path::{Path, PathBuf},
     process::Stdio,
+    sync::Arc,
 };
 use tokio::io::{AsyncBufReadExt, BufReader};
+use transparent_shard::layout::DECOUPLED_2K_8K;
+use transparent_shared::history::shardset::ShardSet;
 use transparent_shared::publication::{self, Finalized};
 
 async fn command(args: &[&str], cwd: &Path) -> Vec<u8> {
@@ -31,7 +36,7 @@ async fn tls(root: &Path, upstream: &str) -> (String, tokio::process::Child) {
     let mut child = tokio::process::Command::new("python3")
         .arg(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/tests/support/provider_tls.py"
+            "/../transparent/transparent-query-server/tests/support/provider_tls.py"
         ))
         .arg(upstream.strip_prefix("http://").unwrap())
         .arg(root.join("ca.pem"))
@@ -105,6 +110,96 @@ async fn row_query(origin: &str, set: &ShardSet, id: u64) {
         source[row * width..(row + 1) * width]
     );
 }
+/// The one host configuration the renderer installs for this role.
+fn rendered_config(rendered: &serde_json::Value) -> serde_json::Value {
+    let files = rendered["files"].as_object().unwrap();
+    assert_eq!(files.len(), 1, "provider renders one configuration file");
+    let (path, text) = files.iter().next().unwrap();
+    let check = rendered["check"].as_array().unwrap();
+    assert_eq!(
+        check,
+        &[
+            serde_json::json!("--config"),
+            serde_json::json!(path),
+            serde_json::json!("--verify-only")
+        ]
+    );
+    let mut document: serde_json::Value = serde_json::from_str(text.as_str().unwrap()).unwrap();
+    let object = document.as_object().unwrap();
+    assert_eq!(object.len(), 2, "management and one Transparent section");
+    let settings = &document["transparent_history"]["settings"];
+    assert!(settings.get("verify_only").is_none());
+    let management = document["management_listen"].as_str().unwrap();
+    assert!(management.starts_with("127.0.0.1:"));
+    assert_ne!(settings["listen"].as_str().unwrap(), management);
+    // The role's fixed host port would collide between concurrent test cases.
+    document["management_listen"] = free_address().into();
+    document
+}
+/// Installs a rendered configuration at a test-owned path.
+fn write_config(dir: &Path, name: &str, document: &serde_json::Value) -> PathBuf {
+    let path = dir.join(format!("{name}.json"));
+    std::fs::write(&path, serde_json::to_vec_pretty(document).unwrap()).unwrap();
+    path
+}
+fn config_args(path: &Path, verify_only: bool) -> Vec<String> {
+    let mut args = vec!["--config".to_string(), path.display().to_string()];
+    if verify_only {
+        args.push("--verify-only".into());
+    }
+    args
+}
+fn free_address() -> String {
+    let socket = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    socket.local_addr().unwrap().to_string()
+}
+/// Starts the host on material its product must refuse; returns the product's
+/// logged refusal once management reports it failed and never ready.
+async fn refused_start(
+    binary: &Path,
+    config: &Path,
+    document: &serde_json::Value,
+    cwd: &Path,
+) -> String {
+    let log = cwd.join("refused-start.log");
+    let file = std::fs::File::create(&log).unwrap();
+    // The serving host logs to stdout; capture both streams at the level the
+    // product's diagnostics are written.
+    let mut child = tokio::process::Command::new(binary)
+        .args(config_args(config, false))
+        .current_dir(cwd)
+        .env("RUST_LOG", "info")
+        .kill_on_drop(true)
+        .stderr(file.try_clone().unwrap())
+        .stdout(file)
+        .spawn()
+        .unwrap();
+    let management = format!(
+        "http://{}/health",
+        document["management_listen"].as_str().unwrap()
+    );
+    let mut failed = false;
+    for _ in 0..3000 {
+        if let Ok(response) = reqwest::get(&management).await {
+            let health: serde_json::Value = response.json().await.unwrap();
+            if health["products"]["transparent_history"]["phase"] == "failed" {
+                assert_eq!(health["ready"], false);
+                failed = true;
+                break;
+            }
+        }
+        assert!(
+            child.try_wait().unwrap().is_none(),
+            "host exited: {}",
+            std::fs::read_to_string(&log).unwrap()
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    child.kill().await.unwrap();
+    child.wait().await.unwrap();
+    assert!(failed, "refused product was not reported failed");
+    std::fs::read_to_string(&log).unwrap()
+}
 async fn status(origin: &str) -> serde_json::Value {
     reqwest::get(format!("{origin}/v1/provider-status"))
         .await
@@ -142,17 +237,14 @@ async fn start(binary: &Path, args: &[String], cwd: &Path, origin: &str) -> toki
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "retired binary: relocate to pir-e2e-tests with pir-query-server --config"]
 async fn checkout_free_artifacts_support_queries_and_restart() {
     installation_case(Case::Restart).await;
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "retired binary: relocate to pir-e2e-tests with pir-query-server --config"]
 async fn checkout_free_artifacts_refuse_missing_and_incompatible_runtimes() {
     installation_case(Case::Invalid).await;
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "retired binary: relocate to pir-e2e-tests with pir-query-server --config"]
 async fn independent_processes_recover_during_peer_restart_and_outages() {
     installation_case(Case::Independent).await;
 }
@@ -363,9 +455,10 @@ async fn installation_case(case: Case) {
     terminal.spawn_prewarm().await.unwrap();
     let (archive, archive_server) = serve(terminal).await;
     let (archive, mut archive_tls) = tls(root, &archive).await;
+    // Compiled into pir-e2e-tests: src/pir-e2e-tests is two levels below the root.
     let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .ancestors()
-        .nth(3)
+        .nth(2)
         .unwrap()
         .to_path_buf();
     // Package using existing release kinds, then use only the extracted consumer.
@@ -373,18 +466,11 @@ async fn installation_case(case: Case) {
     std::fs::create_dir_all(&build).unwrap();
     for (name, path) in [
         (
-            "transparent-query-server",
-            std::env::var("CARGO_BIN_EXE_transparent-query-server")
-                .expect("pir-query-server host binary"),
+            "pir-query-server",
+            env!("CARGO_BIN_EXE_pir-query-server-test"),
         ),
-        (
-            "shard-assign",
-            std::env::var("CARGO_BIN_EXE_shard-assign").expect("transparent-tools shard-assign"),
-        ),
-        (
-            "shard-prune",
-            std::env::var("CARGO_BIN_EXE_shard-prune").expect("transparent-tools shard-prune"),
-        ),
+        ("shard-assign", env!("CARGO_BIN_EXE_shard-assign-test")),
+        ("shard-prune", env!("CARGO_BIN_EXE_shard-prune-test")),
     ] {
         std::fs::copy(path, build.join(name)).unwrap();
     }
@@ -426,45 +512,43 @@ async fn installation_case(case: Case) {
         .await,
     )
     .unwrap();
-    let check: Vec<String> = rendered["check"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|v| v.as_str().unwrap().to_string())
-        .collect();
-    let binary = root.join("binary/transparent-query-server");
+    let document = rendered_config(&rendered);
+    let check = config_args(&write_config(root, "provider", &document), true);
+    let binary = root.join("binary/pir-query-server");
     if matches!(case, Case::Invalid) {
         corrupt_runtime.store(false, std::sync::atomic::Ordering::Release);
         for (mode, name) in [(1, "missing"), (2, "incompatible")] {
             inventory_fault.store(mode, std::sync::atomic::Ordering::Release);
             let state = root.join(format!("state-{name}"));
-            let mut arguments = check.clone();
-            let at = arguments.iter().position(|a| a == "--shard-dir").unwrap() + 1;
-            arguments[at] = state.to_str().unwrap().to_string();
-            for verify_only in [true, false] {
-                let args = if verify_only {
-                    &arguments[..]
-                } else {
-                    &arguments[..arguments.len() - 1]
-                };
-                let refused = tokio::process::Command::new(&binary)
-                    .args(args)
-                    .current_dir(root)
-                    .kill_on_drop(true)
-                    .output()
-                    .await
-                    .unwrap();
-                let error = String::from_utf8_lossy(&refused.stderr);
-                assert!(
-                    !refused.status.success(),
-                    "{name} material unexpectedly accepted"
-                );
-                assert!(
-                    error.contains("runtime"),
-                    "{name} refused for another reason: {error}"
-                );
-                assert!(!state.join("active.json").exists(), "{name} became active");
-            }
+            let mut variant = document.clone();
+            variant["transparent_history"]["settings"]["shard_dir"] =
+                state.display().to_string().into();
+            let config = write_config(root, name, &variant);
+            let refused = tokio::process::Command::new(&binary)
+                .args(config_args(&config, true))
+                .current_dir(root)
+                .kill_on_drop(true)
+                .output()
+                .await
+                .unwrap();
+            let error = String::from_utf8_lossy(&refused.stderr);
+            assert!(
+                !refused.status.success(),
+                "{name} material unexpectedly accepted"
+            );
+            assert!(
+                error.contains("runtime"),
+                "{name} refused for another reason: {error}"
+            );
+            assert!(!state.join("active.json").exists(), "{name} became active");
+            // Ordinary startup refuses the same material: the product fails
+            // and is never ready, while the host reports it as failed.
+            let error = refused_start(&binary, &config, &variant, root).await;
+            assert!(
+                error.contains("runtime"),
+                "{name} start refused for another reason: {error}"
+            );
+            assert!(!state.join("active.json").exists(), "{name} became active");
         }
         inventory_fault.store(0, std::sync::atomic::Ordering::Release);
         let control = tokio::process::Command::new(&binary)
@@ -497,7 +581,7 @@ async fn installation_case(case: Case) {
         independent_processes(
             root,
             &binary,
-            args,
+            &document,
             &origin,
             &set,
             (&mut publisher_tls, &mut archive_tls),
@@ -600,7 +684,7 @@ async fn installation_case(case: Case) {
 async fn independent_processes(
     root: &Path,
     binary: &Path,
-    args: &[String],
+    document: &serde_json::Value,
     origin: &str,
     set: &ShardSet,
     transports: (&mut tokio::process::Child, &mut tokio::process::Child),
@@ -611,14 +695,15 @@ async fn independent_processes(
     let addr = socket.local_addr().unwrap();
     drop(socket);
     let second_origin = format!("http://{addr}");
-    let mut second_args = args.to_vec();
-    for (flag, value) in [
-        ("--listen", addr.to_string()),
-        ("--shard-dir", second.join("state").display().to_string()),
-    ] {
-        let at = second_args.iter().position(|a| a == flag).unwrap() + 1;
-        second_args[at] = value;
-    }
+    let args = config_args(&root.join("provider.json"), false);
+    // A separate process: its own state, wallet listener and management address.
+    let mut second_document = document.clone();
+    let settings = &mut second_document["transparent_history"]["settings"];
+    settings["listen"] = addr.to_string().into();
+    settings["shard_dir"] = second.join("state").display().to_string().into();
+    second_document["management_listen"] = free_address().into();
+    let second_args = config_args(&write_config(&second, "provider", &second_document), false);
+    let args = &args[..];
     let (mut first, mut other) = tokio::join!(
         start(binary, args, root, origin),
         start(binary, &second_args, &second, &second_origin)

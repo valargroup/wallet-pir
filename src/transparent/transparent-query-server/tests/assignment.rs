@@ -19,44 +19,27 @@ use std::path::Path;
 use std::sync::Arc;
 use tower::ServiceExt;
 use transparent_events::{ReceiveEvent, TransparentEvent, Txid};
-use transparent_filter::{BlockHash, ScriptBytes, SealParameters, ShardMap, ShardMapEntry};
+use transparent_filter::{ScriptBytes, SealParameters, ShardMap, ShardMapEntry};
+#[path = "support/history_set.rs"]
+mod history_set;
 #[path = "support/revision.rs"]
 mod revision;
+use history_set::*;
 use transparent_query_server::history::service::{
     router, ReadinessMode, ServiceConfig, ServiceState,
 };
-use transparent_query_server::routing::router::{files_for, plan, render_caddyfile, RosterEntry};
+use transparent_query_server::routing::router::{files_for, plan, render_caddyfile};
 use transparent_shard::layout::{Geometry, DECOUPLED_2K_8K};
 use transparent_shard::manifest::{ShardManifest, SCHEMA};
 use transparent_shared::history::assignment::{
-    Assignment, GeneratedBy, SetIdentity, WorkerAssignment, WorkerRole, ASSIGNMENT_SCHEMA,
+    Assignment, SetIdentity, WorkerAssignment, WorkerRole, ASSIGNMENT_SCHEMA,
 };
 use transparent_shared::history::shardset::{LoadOptions, LoadScope, ShardSet};
 
-const GENESIS: &str = transparent_filter::MAINNET_GENESIS_DISPLAY;
-const FIRST: u64 = 3_428_143;
 const SPAN: u64 = 40;
 /// Four archive shards at the narrow geometry, two recent at the wider one.
 const ARCHIVE: u64 = 4;
 const RECENT: u64 = 2;
-
-fn genesis() -> BlockHash {
-    BlockHash::from_display_hex(GENESIS).unwrap()
-}
-
-fn hash_at(height: u64) -> BlockHash {
-    let mut bytes = [0u8; 32];
-    bytes[..8].copy_from_slice(&height.to_le_bytes());
-    BlockHash::from_internal_bytes(bytes)
-}
-
-fn script(tag: u32) -> ScriptBytes {
-    let mut bytes = vec![0x76, 0xa9, 0x14];
-    bytes.extend_from_slice(&tag.to_le_bytes());
-    bytes.extend_from_slice(&[0u8; 16]);
-    bytes.extend_from_slice(&[0x88, 0xac]);
-    ScriptBytes::new(bytes)
-}
 
 fn events(start: u64, end: u64) -> Vec<(ScriptBytes, TransparentEvent)> {
     (start..=end)
@@ -151,47 +134,6 @@ fn publish(dir: &Path) -> ShardMap {
     )
     .unwrap();
     map
-}
-
-fn map_sha256(map: &ShardMap) -> String {
-    hex::encode(<sha2::Sha256 as sha2::Digest>::digest(
-        serde_json::to_vec(map).unwrap(),
-    ))
-}
-
-fn roster() -> Vec<RosterEntry> {
-    let mut roster = Vec::new();
-    for i in 0..2 {
-        roster.push(RosterEntry {
-            id: format!("archive-0{}", i + 1),
-            role: WorkerRole::ArchiveOwner,
-            replica_group: None,
-            ssh_host: format!("10.0.1.{}", i + 1),
-            upstream: format!("10.0.1.{}:8093", i + 1),
-            cache_bytes: 4 << 30,
-            archive_range: None,
-        });
-    }
-    for i in 0..2 {
-        roster.push(RosterEntry {
-            id: format!("recent-0{}", i + 1),
-            role: WorkerRole::RecentReplica,
-            replica_group: Some("recent".into()),
-            ssh_host: format!("10.0.2.{}", i + 1),
-            upstream: format!("10.0.2.{}:8093", i + 1),
-            cache_bytes: 4 << 30,
-            archive_range: None,
-        });
-    }
-    roster
-}
-
-fn generated() -> GeneratedBy {
-    GeneratedBy {
-        tool: "test".into(),
-        source_sha: None,
-        generated_at: "2026-09-08T00:00:00Z".into(),
-    }
 }
 
 fn planned(map: &ShardMap) -> Assignment {

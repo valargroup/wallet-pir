@@ -123,9 +123,12 @@ def build(family):
     if family == 'receiver':
         command += ['-p', 'receiver-indexer', '--bin', 'receiver-directory', '--bin', 'receiver-probe']
     elif family == 'transparent':
-        command += ['-p', 'transparent-publisher', '-p', 'transparent-query-server',
+        # The history and display processes are pir-query-server with both
+        # Transparent features; the admin tools are transparent-tools binaries.
+        command += ['-p', 'transparent-publisher', '-p', 'pir-query-server',
                     '-p', 'transparent-tools', '--features',
-                    'transparent-publisher/rocksdb-reader,transparent-tools/test-support']
+                    'transparent-publisher/rocksdb-reader,transparent-tools/test-support,'
+                    'pir-query-server/transparent-history,pir-query-server/transparent-detail']
         for name in sorted({name for kind in KINDS[family] for name in release.BINARIES[kind]}):
             command += ['--bin', name]
     else:

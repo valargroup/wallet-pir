@@ -9,7 +9,6 @@ autotests = false
 [[test]]
 name = "operator"
 path = "tests/operator.rs"
-required-features = ["enhance"]
 
 [features]
 default = []
