@@ -158,9 +158,6 @@ impl Config {
         #[cfg(feature = "enhance")]
         if let Some(c) = active(&self.enhance)? {
             c.validate()?;
-            if c.status_config.is_some() {
-                return Err("configure Status in its own product section".into());
-            }
             layout.listener("enhance", c.listen)?;
             if let Some(addr) = c.artifact_listen {
                 layout.listener("enhance", addr)?;
@@ -255,6 +252,37 @@ mod tests {
         let layout = config.validate().unwrap();
         assert_eq!(layout.listeners.len(), 1);
         assert!(layout.roots.is_empty());
+    }
+    #[cfg(all(feature = "enhance", feature = "status"))]
+    #[test]
+    fn enhance_and_status_can_be_enabled_independently() {
+        let example: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../tools/deploy/publisher/publisher.example.json"
+        ))
+        .unwrap();
+        for product in ["enhance", "status"] {
+            let config: Config = serde_json::from_value(serde_json::json!({
+                "management_listen": "127.0.0.1:18080",
+                product: example[product].clone(),
+            }))
+            .unwrap();
+            assert!(config.validate().is_ok(), "{product}");
+        }
+    }
+    #[cfg(feature = "enhance")]
+    #[test]
+    fn embedded_status_setting_is_rejected() {
+        let mut config: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../tools/deploy/publisher/publisher.example.json"
+        ))
+        .unwrap();
+        config["enhance"]["settings"]["status_config"] = serde_json::Value::Null;
+        assert!(
+            serde_json::from_value::<enhance_publisher::service::Config>(
+                config["enhance"]["settings"].clone()
+            )
+            .is_err()
+        );
     }
     #[test]
     fn overlapping_and_symlinked_state_is_rejected() {

@@ -138,18 +138,6 @@ impl Publisher {
             c.revoke();
         }
     }
-    /// Dedicated runtime bounds Status scheduling independently of Enhance's loop.
-    pub fn start(&self, rpc: ZakuraClient) -> Result<(), Failure> {
-        let this = self.clone();
-        std::thread::Builder::new().name("status-controller".into()).spawn(move || {
-            let result = tokio::runtime::Builder::new_multi_thread().worker_threads(2).max_blocking_threads(2)
-                .enable_all().build().map_err(|e| -> Failure { Box::new(e) })
-                .and_then(|runtime| runtime.block_on(this.run(rpc)));
-            this.stop();
-            if let Err(error) = result { tracing::error!(%error, "Status controller stopped; Enhance remains independent"); }
-        })?;
-        Ok(())
-    }
     async fn post<T: Serialize, R: serde::de::DeserializeOwned>(
         &self,
         origin: &str,
@@ -419,16 +407,6 @@ impl Publisher {
             "Status live publication"
         );
         Ok(expected)
-    }
-    async fn run(&self, rpc: ZakuraClient) -> Result<(), Failure> {
-        self.run_managed(
-            rpc,
-            pir_pipeline::service::Http::new(|addr, app| async move {
-                axum::serve(tokio::net::TcpListener::bind(addr).await?, app).await
-            }),
-            pir_pipeline::service::Shutdown::default(),
-        )
-        .await
     }
     /// Runs on a dedicated runtime, with all auxiliary work owned by this call.
     pub async fn run_managed(

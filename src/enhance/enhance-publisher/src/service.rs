@@ -1,4 +1,4 @@
-//! Enhance coordinator application, shared by the legacy command and unified host.
+//! Enhance publication application hosted by pir-publisher.
 use crate::{
     application::load_inventory, control::PlacementPolicy, coordinator::Coordinator,
     ingest::EnhanceJournal, zakura::ZakuraClient,
@@ -10,8 +10,6 @@ type Result<T, E = Box<dyn std::error::Error + Send + Sync>> = std::result::Resu
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
-    #[serde(default)]
-    pub status_config: Option<PathBuf>,
     #[serde(default)]
     pub packing_router_config: Option<PathBuf>,
     #[serde(default)]
@@ -70,7 +68,6 @@ pub async fn run(config: Config, http: Http<axum::Router>, shutdown: Shutdown) -
         sealed_shards: config.sealed_shards,
     };
     let Config {
-        status_config,
         packing_router_config,
         query_ingress,
         pool_placement,
@@ -181,9 +178,6 @@ pub async fn run(config: Config, http: Http<axum::Router>, shutdown: Shutdown) -
             }
         });
         tasks.own(&heartbeat_task);
-    }
-    if status_config.is_some() {
-        return Err("configure Status as its own process".into());
     }
     let serving = coordinator.clone();
     let routes = serving.router();

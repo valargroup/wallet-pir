@@ -1,4 +1,4 @@
-//! Publication commands stay on enhance-pir-server. Serving commands do not.
+//! Offline maintenance stays available; production runs on pir-publisher.
 use std::process::Command;
 
 fn server() -> Command {
@@ -20,12 +20,11 @@ fn build_info_omits_cuda() {
 }
 
 #[test]
-fn publication_commands_remain() {
+fn maintenance_commands_remain() {
     let output = server().arg("--help").output().unwrap();
     assert!(output.status.success());
     let help = String::from_utf8(output.stdout).unwrap();
     for name in [
-        "coordinator",
         "rebuild-journal",
         "prepare-packing-artifacts",
         "restore-legacy-placement",
@@ -38,6 +37,7 @@ fn publication_commands_remain() {
 #[test]
 fn serving_commands_are_rejected() {
     for name in [
+        "coordinator",
         "worker",
         "query-ingress",
         "packing-router",
