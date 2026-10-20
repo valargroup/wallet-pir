@@ -62,9 +62,7 @@
               "data_dir": "/srv/enhance-pir/worker",
               "sealed_shards": 6,
               "matvec_backend": "cpu",
-              "credentials": [
-                "/etc/enhance-pir/internal-token.env"
-              ]
+              "credentials": ["/etc/enhance-pir/internal-token.env"]
             }
           },
           {
@@ -77,9 +75,7 @@
               "data_dir": "/srv/enhance-pir/worker",
               "sealed_shards": 6,
               "matvec_backend": "cpu",
-              "credentials": [
-                "/etc/enhance-pir/internal-token.env"
-              ]
+              "credentials": ["/etc/enhance-pir/internal-token.env"]
             }
           },
           {
@@ -95,9 +91,7 @@
               "sealed_shards": 6,
               "matvec_backend": "cuda",
               "cuda_device": 0,
-              "credentials": [
-                "/etc/enhance-pir/internal-token.env"
-              ]
+              "credentials": ["/etc/enhance-pir/internal-token.env"]
             },
             "health_equals": {
               "matvec.matvec_backend": "cuda",
@@ -116,9 +110,7 @@
               "control_listen": "192.0.2.14:8093",
               "data_dir": "/srv/enhance-pir-router",
               "artifact_origin": "http://192.0.2.10:8080",
-              "credentials": [
-                "/etc/enhance-pir/internal-token.env"
-              ]
+              "credentials": ["/etc/enhance-pir/internal-token.env"]
             }
           }
         ],
@@ -132,9 +124,7 @@
               "listen": "127.0.0.1:8082",
               "control_listen": "127.0.0.1:8083",
               "data_dir": "/srv/enhance-pir-ingress",
-              "credentials": [
-                "/etc/enhance-pir/internal-token.env"
-              ]
+              "credentials": ["/etc/enhance-pir/internal-token.env"]
             }
           }
         ]

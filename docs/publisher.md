@@ -337,24 +337,11 @@ Shared listener ownership and graceful shutdown continue to use the existing
 
 ## Retired standalone production commands
 
-`pir-publisher --config FILE` is the production host for Enhance and Status as
-well as Transparent history and transaction details. The `enhance-pir-server
-coordinator` and `status-pir serve-distributed` commands have been removed;
-Enhance's unused `status_config` field is also rejected. Configure Status in its
-own product section. Binary and Cargo package names remain unchanged:
-`enhance-pir-server` retains offline maintenance and build information, while
-`status-pir` retains live probes and isolated qualification tools.
-
-Current deployment inventories place these four products under `publisher` and
-retain their existing query workers, routers, public routing and supervision.
-Standalone Enhance coordinator and Status controller roles are no longer valid
-in current inventories. Historical commands are parsed only to adopt existing
-units. Cutover rollback restores captured unit text and retained old executable
-paths; it does not launch the retired commands with a newly built executable.
-Keep those old executable paths available until the rollback rehearsal completes.
-
-CUDA worker preflight uses `cuda-smoke.py --publisher /path/to/pir-publisher`.
-The smoke test creates its own loopback management listener, Enhance-only
-configuration and temporary fixture state. The staged publisher comes from the
-installed unified publisher unit and is checked by checksum before use; the GPU
-query workers and their exact-answer acceptance rules are unchanged.
+Production publishing runs through `pir-publisher --config FILE`. The removed
+commands are `enhance-pir-server coordinator` and `status-pir serve-distributed`;
+Enhance's unused `status_config` field is also rejected. Maintenance and probe
+commands remain available under their existing binary names. Current inventories
+use the publisher role; historical commands are parsed only for cutover. Rollback
+restores captured units and old executables, which must remain available through
+the rollback rehearsal. CUDA smoke callers now pass `--publisher` and use isolated
+Enhance fixture state.

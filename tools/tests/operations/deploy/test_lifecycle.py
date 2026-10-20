@@ -3,19 +3,13 @@ import json
 from pathlib import Path
 import sys
 import unittest
-from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from test_wallet_pir_deploy import ENHANCE, Fleet, NEW_SHA, SERVING_SELECTORS, SERVICES, ROOT  # noqa: E402
-from wallet_pir_ops.deploy import cli, descriptors  # noqa: E402
+from test_wallet_pir_deploy import ENHANCE, Fleet, NEW_SHA, SERVING_SELECTORS, ROOT  # noqa: E402
+from wallet_pir_ops.deploy import cli  # noqa: E402
 from wallet_pir_ops.deploy.lifecycle import Lifecycle  # noqa: E402
 from wallet_pir_ops.fleet import Fleet as ConfiguredFleet  # noqa: E402
 
-
-def historical_cli(*args, **kwargs):
-    """Exercise CLI recovery against the captured pre-cutover service registry."""
-    with patch.object(descriptors, 'load_descriptors', return_value=SERVICES):
-        return cli.main(*args, **kwargs)
 
 
 class LifecycleTests(Fleet):
@@ -45,7 +39,7 @@ class LifecycleTests(Fleet):
         self.enhance_fleet()
         output = []
         selected = [item for role in SERVING_SELECTORS for item in ('--only', role)]
-        code = historical_cli(['--inventory', str(self.inventory_path), '--state-dir', str(self.state),
+        code = cli.main(['--inventory', str(self.inventory_path), '--state-dir', str(self.state),
                          '--json', 'plan', 'enhance', '--binary', str(self.binary), '--retire-historical', *selected],
                         executor=self.fake, out=output.append)
         self.assertEqual(code, 0, output)
@@ -60,7 +54,7 @@ class LifecycleTests(Fleet):
             {'host': 'worker-01', 'vars': {'listen': '127.0.0.1:8093'}}]}}
         self.inventory_path.write_text(json.dumps(inventory))
         output = []
-        code = historical_cli(['--inventory', str(self.inventory_path), 'deploy', 'transparent-history',
+        code = cli.main(['--inventory', str(self.inventory_path), 'deploy', 'transparent-history',
                          '--binary', str(self.binary)], executor=self.fake, out=output.append)
         self.assertEqual(code, 1)
         self.assertIn('product recipes', output[0])
@@ -71,7 +65,7 @@ class ReadOnlyStatusTests(Fleet):
     def test_status_reads_only_selected_targets_and_reports_unreachable_ones(self):
         self.enhance_fleet()
         output = []
-        code = historical_cli(['--inventory', str(self.inventory_path), '--state-dir', str(self.state), '--json',
+        code = cli.main(['--inventory', str(self.inventory_path), '--state-dir', str(self.state), '--json',
                          'status', 'enhance', '--only', 'worker'], executor=self.fake, out=output.append)
         result = json.loads(output[0])
         self.assertEqual((code, [t['host'] for t in result['targets']]), (0, ['worker-01', 'worker-02']))
@@ -79,7 +73,7 @@ class ReadOnlyStatusTests(Fleet):
             raise RuntimeError('ssh: connect to host worker-02: timed out')
         self.fake.probe_unit, original = unreachable, self.fake.probe_unit
         output.clear()
-        historical_cli(['--inventory', str(self.inventory_path), '--state-dir', str(self.state), '--json',
+        cli.main(['--inventory', str(self.inventory_path), '--state-dir', str(self.state), '--json',
                   'status', 'enhance', '--only', 'worker@worker-02'], executor=self.fake, out=output.append)
         self.fake.probe_unit = original
         self.assertIn('timed out', json.loads(output[0])['targets'][0]['error'])
@@ -96,7 +90,7 @@ class ReadOnlyStatusTests(Fleet):
                           files={'/usr/bin/caddy': b'caddy'})
         self.fake.log.clear()
         output = []
-        code = historical_cli(['--inventory', str(self.inventory_path), 'ancillary-status'],
+        code = cli.main(['--inventory', str(self.inventory_path), 'ancillary-status'],
                         executor=self.fake, out=output.append)
         units = {u['name']: u for u in json.loads(output[0])['ancillary']}
         self.assertEqual((code, units['edge']['active_state'], units['gone']['load_state']),

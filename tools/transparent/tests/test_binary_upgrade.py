@@ -838,7 +838,7 @@ class UnifiedHistoryUpgrade(UnifiedOwner, Harness):
             self.refuses()
         self.write_inventory()
         with self.subTest('registry without the publisher'):
-            self.descriptors = ()
+            self.descriptors = ('--descriptors', str(ROOT / 'tools/transparent/deploy/services.toml'))
             self.refuses()
         self.assertEqual(set(self.running().values()), {sha256(OLD)})
         self.publisher_untouched()
