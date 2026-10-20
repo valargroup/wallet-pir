@@ -202,16 +202,16 @@ class HttpsServing(Serving):
             old_binary = units.split_exec(command)[1]
             arguments = shlex.split(units.split_exec(command)[2])
             seed_paths = []
+            legacy_active = None
+            legacy_shards = None
             if specification['kind'] != 'transaction-details':
                 for flag in ('--shard-dir', '--runtime-cache-dir'):
                     if flag in arguments:
                         seed_paths.append(arguments[arguments.index(flag) + 1])
+                if '--shard-dir' in arguments:
+                    legacy_shards = arguments[arguments.index('--shard-dir') + 1]
                 if '--active-record' in arguments:
-                    record = self.cutover.ex.read(host, arguments[arguments.index('--active-record') + 1])
-                    if record:
-                        if '--shard-dir' in arguments:
-                            seed_paths.remove(arguments[arguments.index('--shard-dir') + 1])
-                        seed_paths.append(json.loads(record)['directory'])
+                    legacy_active = arguments[arguments.index('--active-record') + 1]
                 require(all(path.startswith('/srv/') and '..' not in PurePosixPath(path).parts
                             for path in seed_paths), 'legacy object sources must stay under /srv')
             require(self.cutover.ex.sha256(host, old_binary) == state['exe_sha256'],
@@ -246,7 +246,8 @@ class HttpsServing(Serving):
             consumers.append({**specification, 'before': state, 'binary': binary,
                               'old_binary': old_binary, 'root': root,
                               'unit_text': candidate, 'config_before': self.cutover.ex.read(host, path),
-                              'seed_paths': sorted(set(seed_paths))})
+                              'seed_paths': sorted(set(seed_paths)), 'legacy_active_record': legacy_active,
+                              'legacy_shard_dir': legacy_shards})
         plan['https_consumers'] = consumers
         return plan
 
@@ -365,12 +366,37 @@ class HttpsServing(Serving):
         super().verify(parent, restored)
         owner = self.cutover
         owner.resources()
+        if not restored:
+            deadline = owner.clock() + 900
+            while True:
+                owner.lock.verify()
+                available = True
+                for prefix in ('/provider/v1/current', '/provider/txid/v1/current'):
+                    status, body = owner.ex.http_get(owner.host, owner.request['https']['origin'] + prefix)
+                    try:
+                        current = json.loads(body)
+                        available &= status == 200 and current.get('eligibility') == 'canonical'
+                        available &= current.get('network') == 'main' and len(current.get('inventory_sha256', '')) == 64
+                    except (ValueError, TypeError, AttributeError):
+                        available = False
+                if available:
+                    break
+                require(owner.clock() < deadline, 'prepared HTTPS publication readiness deadline exceeded')
+                owner.sleep(3)
         for consumer in parent['plan']['serving']['https_consumers']:
             host, unit = consumer['host'], consumer['unit']
             if not restored and consumer['seed_paths']:
                 def seed(consumer=consumer):
+                    sources = consumer['seed_paths']
+                    if consumer['legacy_active_record']:
+                        record = owner.ex.read(consumer['host'], consumer['legacy_active_record'])
+                        if record:
+                            active = json.loads(record)['directory']
+                            require(active.startswith('/srv/') and '..' not in PurePosixPath(active).parts,
+                                    'legacy active bytes are outside /srv')
+                            sources = [p for p in sources if p != consumer['legacy_shard_dir']] + [active]
                     code, output = owner.ex.run(consumer['host'], ['python3', '-c', SEED_OBJECTS,
-                        json.dumps({'root': consumer['root'], 'sources': consumer['seed_paths']})], 300)
+                        json.dumps({'root': consumer['root'], 'sources': sources})], 300)
                     require(code == 0, 'could not reuse legacy immutable objects: ' + output[-1000:])
                     parent.setdefault('reused_objects', {})[consumer['unit']] = json.loads(output)
                 owner.effect(parent, 'reuse immutable objects ' + unit, seed)

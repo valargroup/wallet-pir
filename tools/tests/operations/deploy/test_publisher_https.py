@@ -80,6 +80,8 @@ class HttpsTests(PublisherFixture, unittest.TestCase):
                     return 0, 'configuration accepted'
             return original_run(host, argv, timeout)
         def get(host, url, timeout=5):
+            if url.endswith('/current'):
+                return 200, json.dumps({'eligibility': 'canonical', 'network': 'main', 'inventory_sha256': 'a' * 64})
             if ':1830' in url:
                 return 200, '{"ready":true}'
             return original_get(host, url, timeout)
@@ -220,6 +222,19 @@ class HttpsTests(PublisherFixture, unittest.TestCase):
         result = self.target.rollback()
         self.assertTrue(result['staging_only'])
         self.assertFalse(any(action[0] == 'stop' for action in self.ex.effects))
+
+    def test_lifecycle_ready_publisher_without_a_prepared_view_cannot_start_consumers(self):
+        original = self.ex.http_get
+        def get(host, url, timeout=5):
+            if url.endswith('/current'):
+                return 503, '{"error":"preparing"}'
+            return original(host, url, timeout)
+        with patch.object(self.ex, 'http_get', side_effect=get):
+            with self.assertRaisesRegex(DeployError, 'prepared HTTPS publication readiness deadline exceeded'):
+                self.deploy()
+        units = {c['unit'] for c in self.request['https']['consumers']}
+        self.assertFalse(any(action[0] == 'restart' and action[1] in units for action in self.ex.effects))
+        self.assertEqual(self.target.rollback()['phase'], 'rolled-back')
 
     def test_reusing_legacy_bytes_does_not_copy_authority_or_follow_symlinks(self):
         source, root = self.root / 'legacy', self.root / 'provider'
