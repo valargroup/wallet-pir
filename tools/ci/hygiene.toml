@@ -41,6 +41,10 @@ pattern = "tools/tests/operations/fixtures/*.json"
 reason = "DigitalOcean layout contract used by operations tests."
 
 [[allow_data]]
+pattern = "src/shared/pir-chain/tests/fixtures/*.json"
+reason = "Independent Ironwood record oracle for the chain reader's decoder tests."
+
+[[allow_data]]
 pattern = "src/receiver/receiver-store/tests/fixtures/*.json"
 reason = "Receiver record and independent action oracles used by tests."
 

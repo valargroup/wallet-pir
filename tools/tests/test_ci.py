@@ -152,6 +152,46 @@ class BoundaryTests(unittest.TestCase):
                 self.assertEqual(len(boundary.violations(packages, [])), 1, (kind, name))
                 self.assertEqual(boundary.violations(packages, [f'svc -> {name}']), [])
 
+    def reader(self, *dependencies, manifest=boundary.CHAIN_READER_MANIFEST):
+        return {'name': boundary.CHAIN_READER, 'manifest': manifest, 'dependencies': list(dependencies)}
+
+    def reader_edges(self, rev='d' * 40):
+        node = 'https://github.com/zakura-core/zakura.git'
+        return [{**self.edge(name, git=node if name in boundary.NODE else ''), 'rev': rev if name in boundary.NODE else ''}
+                for name in boundary.CHAIN_READER_EDGES]
+
+    def test_only_the_local_chain_reader_declares_its_exact_common_and_node_edges(self):
+        self.assertEqual(boundary.violations([self.reader(*self.reader_edges())], []), [])
+        # Every permitted edge has a reason and is still declared.
+        self.assertTrue(all(boundary.CHAIN_READER_EDGES.values()))
+        self.assertTrue(any('no longer exists' in p for p in
+                            boundary.violations([self.reader(*self.reader_edges()[1:])], [])))
+        # An edge outside the list, a package elsewhere under the reader's name and
+        # another package declaring the reader's edges all still fail.
+        self.assertEqual(len(boundary.violations(
+            [self.reader(*self.reader_edges(), self.edge('zakura-consensus'))], [])), 1)
+        moved = boundary.violations([self.reader(*self.reader_edges(), manifest='tools/chain/Cargo.toml')], [])
+        self.assertTrue(any('belongs at' in p for p in moved))
+        self.assertTrue(any('node package zakura-state' in p for p in moved))
+        other = boundary.violations([{'name': 'transparent-publisher', 'manifest': 'p/Cargo.toml',
+                                      'dependencies': self.reader_edges()}], [])
+        self.assertEqual(len(other), len(boundary.CHAIN_READER_EDGES))
+
+    def test_chain_reader_node_edges_share_one_exact_revision(self):
+        edges = self.reader_edges()
+        state = next(e for e in edges if e['name'] == 'zakura-state')
+        state['rev'] = 'e' * 40
+        self.assertTrue(boundary.violations([self.reader(*edges)], []))
+        self.assertTrue(boundary.violations([self.reader(*self.reader_edges(rev='main'))], []))
+
+    def test_serving_libraries_still_cannot_reach_the_local_chain_reader(self):
+        edge = {**self.edge(boundary.CHAIN_READER), 'path': 'src/shared/pir-chain/'}
+        for name in sorted(boundary.SERVING):
+            packages = [{'name': name, 'manifest': f'src/shared/{name}/Cargo.toml', 'dependencies': [edge]}]
+            with self.subTest(name=name):
+                self.assertTrue(any('chain reading or ingestion package' in p
+                                    for p in boundary.violations(packages, [])))
+
     def test_runtime_free_cores_declare_no_transport_edge_of_any_kind(self):
         core = next(iter(sorted(boundary.RUNTIME_FREE - boundary.RUNTIME_PENDING)))
         for kind in ['dependencies', 'dev-dependencies', 'build-dependencies',

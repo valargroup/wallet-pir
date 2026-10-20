@@ -1,4 +1,4 @@
-//! The canonical chain through wallet-libraries' server chain adapters. They own the
+//! The canonical chain through the shared server chain adapters. They own the
 //! node client, block and transaction decoding, fees and spent-output resolution;
 //! this module maps their Enhance actions onto Enhance records.
 use enhance_query_server::{EnhanceRecord, EnhanceRecordParts, EnhanceTransactionMetadata};

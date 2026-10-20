@@ -40,7 +40,10 @@ server roles uses `zakura-pir-server-core`. Probe clients and integration tests
 use `zakura-pir-client`; the query libraries expose their local client helpers
 only with the explicit `client` feature (or in unit tests).
 
-Each `zakura-server-chain` consumer selects its product (`transparent`, `enhance`,
+The chain reader `zakura-server-chain` (`src/shared/pir-chain`) is the only
+package that declares direct Common and node dependencies; `tools/ci/boundary.py`
+lists each permitted edge and `tools/ci/chain_graph.py` checks its fresh
+consumers. Each `zakura-server-chain` consumer selects its product (`transparent`, `enhance`,
 `status` or `receiver`) with default features disabled. Test dependencies add
 `testing` alongside that same product; fixture support alone does not enable an
 adapter. Database readers additionally enable the existing `rocksdb-reader` feature.

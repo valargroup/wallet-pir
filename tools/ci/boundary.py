@@ -33,9 +33,14 @@ default standalone graphs resolve none. `RUNTIME_PENDING` lists the cores that
 still own transport while that refactor moves it into the hosts; an entry that is
 no longer needed fails the resolved check.
 
-Common and node packages are named exactly: wallet-libraries adapters are
-intentionally `zakura-*` packages too, and low-level PIR cryptography (ipir-sp,
-reinspiring, spiral, hashes, randomness) is wallet-pir's own.
+The chain reader (`CHAIN_READER`, src/shared/pir-chain) is the one package that
+reads node data. It alone may declare the direct Common and node edges listed in
+`CHAIN_READER_EDGES`, each with its reason, and its node edges share one exact Git
+revision; tools/ci/chain_graph.py checks its fresh consumer graphs.
+
+Common and node packages are named exactly: wallet-libraries packages and the
+chain reader are intentionally `zakura-*` packages too, and low-level PIR
+cryptography (ipir-sp, reinspiring, spiral, hashes, randomness) is wallet-pir's own.
 """
 from __future__ import annotations
 
@@ -74,6 +79,20 @@ NODE = {
     'zakura-state', 'zakura-test',
 }
 WALLET_LIBRARIES = 'github.com/zakura-core/wallet-libraries'
+# The chain reader and the only direct Common and node edges it may declare.
+CHAIN_READER = 'zakura-server-chain'
+CHAIN_READER_MANIFEST = 'src/shared/pir-chain/Cargo.toml'
+CHAIN_READER_EDGES = {
+    'zakura-primitives': 'Common transaction decoding and transaction IDs for RPC reads',
+    'zakura-protocol': 'Common network parameters and consensus branch identities',
+    'zakura-transparent': 'Common transparent bundle decoding',
+    'zakura-orchard': 'Common Ironwood action decoding',
+    'zakura-chain': 'node encoders for synthetic fixtures, the RocksDB block conversion and '
+                    'the independent decoder oracle in tests',
+    'zakura-state': "the opt-in RocksDB reader of the node's finalized state; its format "
+                    "must match the running node's",
+    'zakura-test': 'historical node block vectors for decoder comparison tests',
+}
 # Protocol framing packages that must not acquire chain or wallet behaviour.
 PURE = {
     'receiver-pir-server',
@@ -241,6 +260,7 @@ def manifests(root=ROOT):
                         local = relative_directory(path.parent / local, root)
                     dependencies.append({'name': value.get('package', key),
                                          'kind': prefix + kind, 'git': value.get('git', ''),
+                                         'rev': value.get('rev', ''),
                                          'path': local,
                                          'optional': value.get('optional', False),
                                          'default-features': value.get('default-features', True),
@@ -277,7 +297,12 @@ def serving_binary_violations(packages):
 def violations(packages, allowed):
     """Direct edges that cross the boundary, and allowlist entries that are stale."""
     found, problems = set(), []
+    reader_edges, reader_revisions = set(), set()
     for package in packages:
+        reader = (package['name'] == CHAIN_READER and package['manifest'] == CHAIN_READER_MANIFEST
+                  and not package.get('preserved'))
+        if package['name'] == CHAIN_READER and not reader and not package.get('preserved'):
+            problems.append(f"{package['manifest']}: the chain reader belongs at {CHAIN_READER_MANIFEST}")
         for dependency in package['dependencies']:
             name = dependency['name']
             reason = runtime_edge_problem(package, dependency)
@@ -296,6 +321,11 @@ def violations(packages, allowed):
                     or dependency['git']):
                 problems.append(f"{package['manifest']}: pipeline has a "
                                 f"{dependency['kind']} outside its utility boundary: {name}")
+            if reader and name in CHAIN_READER_EDGES:
+                reader_edges.add(name)
+                if name in NODE:
+                    reader_revisions.add((dependency['git'], dependency.get('rev', '')))
+                continue
             if name in COMMON or name in NODE:
                 edge = f"{package['name']} -> {name}"
                 found.add(edge)
@@ -317,6 +347,12 @@ def violations(packages, allowed):
                 if reason:
                     problems.append(f"{package['manifest']}: serving library has a "
                                     f"{dependency['kind']} on {reason} {name}")
+    if any(p['name'] == CHAIN_READER and p['manifest'] == CHAIN_READER_MANIFEST for p in packages):
+        for name in sorted(set(CHAIN_READER_EDGES) - reader_edges):
+            problems.append(f'{CHAIN_READER} -> {name}: permitted reader edge no longer exists; '
+                            'remove it from CHAIN_READER_EDGES')
+        if len(reader_revisions) > 1 or any(len(rev) != 40 for _, rev in reader_revisions):
+            problems.append(f'{CHAIN_READER_MANIFEST}: node edges must share one exact Git revision')
     for edge in sorted(set(allowed) - found):
         problems.append(f'{edge}: allowlisted edge no longer exists; remove it from '
                         f'{ALLOWLIST.relative_to(ROOT)}')

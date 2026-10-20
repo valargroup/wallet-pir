@@ -30,8 +30,8 @@ re-ingested. Never open v6 controller or worker state with the v7 binary.
 
 ## Node RPC policy
 
-The current source reads the node through wallet-libraries' server-only
-`zakura-server-chain` adapter. Enhance and Status read their RPC cookie when the
+The current source reads the node through the server-only
+`zakura-server-chain` adapter (`src/shared/pir-chain`). Enhance and Status read their RPC cookie when the
 client is constructed and report HTTP 401 as an invalid cookie. Each request has
 a 120-second total deadline, including connection establishment and reading the
 body, with no separate connection timeout. Each whole response, including a

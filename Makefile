@@ -338,6 +338,7 @@ transparent-burst:
 .PHONY: check-tools
 check-tools:
 	python3 tools/ci/boundary.py --resolved $(if $(filter 1,$(OFFLINE)),--offline)
+	python3 tools/ci/chain_graph.py $(if $(filter 1,$(OFFLINE)),--offline)
 	python3 tools/ci/workflow_paths.py
 	python3 tools/ci/scaler_tests.py
 	python3 tools/ci/full_packages.py

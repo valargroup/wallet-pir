@@ -6,7 +6,8 @@
     "pir-pipeline",
     "pir-sync-manager",
     "pir-serving",
-    "pir-cuda"
+    "pir-cuda",
+    "zakura-server-chain"
   ],
   "enhance": [
     "enhance-query-server",

@@ -1,6 +1,6 @@
 //! The Zakura JSON-RPC client this service reads the node through.
 //!
-//! The client is wallet-libraries' `zakura_server_chain::NodeClient`, which also
+//! The client is the shared chain reader's `zakura_server_chain::NodeClient`, which also
 //! reads and checks blocks and transactions. Blocks and transactions are fetched
 //! raw (verbosity 0) and parsed there. The verbose JSON form renders scripts
 //! through the node's own notion of what is standard; raw parsing yields every

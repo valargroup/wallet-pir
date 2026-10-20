@@ -257,7 +257,7 @@ tempfile = "3"
 tokio = { version = "1", features = ["full"] }
 tokio-util = { version = "0.7", features = ["io"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "f48b62b80ec7d9d7fb7893401435a24b189b8ec2", default-features = false, features = ["transparent", "rpc"], optional = true }
+zakura-server-chain = { path = "../../src/shared/pir-chain", default-features = false, features = ["transparent", "rpc"], optional = true }
 
 zakura-pir-protocol = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "f48b62b80ec7d9d7fb7893401435a24b189b8ec2", default-features = false, features = ["transparent"] }
 zakura-pir-publisher = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "f48b62b80ec7d9d7fb7893401435a24b189b8ec2", default-features = false, features = ["transparent"] }
