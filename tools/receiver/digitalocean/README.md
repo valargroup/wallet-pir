@@ -107,7 +107,7 @@ tools/receiver/digitalocean/caddy.py cutover tools/receiver/digitalocean/Caddyfi
   deploy receiver --archive receiver-pir.tar.gz --sha <rev> [--allow-unit-drift]
 ```
 
-It installs the Caddyfile, keeping the live one as `/etc/caddy/Caddyfile.before-<UTC time>`,
+It installs the Caddyfile, keeping the live one as `/etc/caddy/Caddyfile.before-<UTC time>-<random>`,
 then deploys. The deploy's exact check probes the new binary through the new routes,
 and a failed deploy restores the previous binary and Caddyfile and verifies them
 together. To roll back after a committed cutover, restore both the same way, with
