@@ -274,6 +274,37 @@ class ParallelStagingTests(Fleet):
 
 
 class DeployTests(Fleet):
+    def test_router_launch_overlays_retire_and_rollback_restores_their_bytes(self):
+        self.enhance_fleet()
+        unit = 'enhance-pir-packing-router.service'
+        path = dropin(unit, 'zzzzzzzz-native2m-1dae185.conf')
+        old_command = '/opt/enhance-pir/releases/' + OLD_SHA + '/pir-query-server'
+        overlay = '[Service]\nExecStart=\nExecStart=' + old_command + ' --config /etc/enhance-pir/packing-router.json\nReadWritePaths=/srv/old-router\n'
+        self.fake.edit('router-01', path, overlay)
+        deployer = self.deployer(only=['packing-router'])
+        deployer.capture_baseline()
+        _, problems = deployer.assess(NEW_SHA, str(self.binary), allow_drift=True)
+        self.assertTrue(problems, 'retirement requires an explicit operator choice')
+        journal = deployer.deploy(NEW_SHA, str(self.binary), allow_drift=True, retire_historical=True)
+        self.assertEqual(journal.status, 'committed')
+        self.assertNotIn(path, self.fake.host('router-01').files)
+        deployer.rollback(journal.id)
+        self.assertEqual(self.fake.read('router-01', path), overlay)
+
+    def test_router_overlay_cannot_hide_credentials_or_limits_during_retirement(self):
+        self.enhance_fleet()
+        unit = 'enhance-pir-packing-router.service'
+        path = dropin(unit, 'zzzzzzzz-native2m-1dae185.conf')
+        old_command = '/opt/enhance-pir/releases/' + OLD_SHA + '/pir-query-server'
+        for extra in ('EnvironmentFile=/etc/other.env', 'MemoryMax=1G'):
+            with self.subTest(extra=extra):
+                overlay = '[Service]\nExecStart=\nExecStart=' + old_command + '\n' + extra + '\n'
+                self.fake.edit('router-01', path, overlay)
+                deployer = self.deployer(only=['packing-router'])
+                deployer.capture_baseline()
+                _, problems = deployer.assess(NEW_SHA, str(self.binary), allow_drift=True, retire_historical=True)
+                self.assertTrue(any('more than ExecStart' in p for p in problems), problems)
+
     def test_cuda_driver_failure_refuses_before_restarting_the_working_worker(self):
         deployer = self.enhance_fleet()
         deployer.targets = [dataclasses.replace(deployer.targets[0],

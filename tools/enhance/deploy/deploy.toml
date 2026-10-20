@@ -87,7 +87,10 @@ renderer = "tools.enhance.lib.roles:packing_router"
 health = "http://{control_listen}/internal/health"
 ready = { field = "ready", equals = true }
 ready_timeout = 300
-adoptable_drop_ins = ["zz-cleanup-*.conf"]
+# Historical launch overlays are retained in the deployment's rollback journal.
+# Retirement accepts only ExecStart and the old ReadWritePaths grant.
+adopt_command_write_paths = true
+adoptable_drop_ins = ["zz-cleanup-*.conf", "zzz-gpu-5ad545d.conf", "zzzz-main-3685438.conf", "zzzzz-mapped-4d14feb.conf", "zzzzzz-native-ac06df3.conf", "zzzzzzz-native2m-dc0355b.conf", "zzzzzzzz-native2m-1dae185.conf", "zzzzzzzzzzzz-observability.conf", "zzzzzzzzzzzzzzzz-main.conf"]
 
 [services.enhance.roles.query-ingress]
 unit = "enhance-pir-query-ingress.service"

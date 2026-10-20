@@ -157,6 +157,17 @@ def exec_start_only(text):
     return bool(found) and all(section == 'Service' and key == 'ExecStart' for section, key, _ in found)
 
 
+def command_and_write_paths_only(text):
+    """Historical launch overlays may also grant their old state directory.
+
+    A complete rendered role replaces both directives. Never discard credentials,
+    resource limits or other service settings through this classification.
+    """
+    found = entries(text)
+    return (sets_exec_start(text) and all(section == 'Service' and key in ('ExecStart', 'ReadWritePaths')
+                                         for section, key, _ in found))
+
+
 def adoptable(path, patterns):
     return any(fnmatch.fnmatchcase(os.path.basename(path), pattern) for pattern in patterns)
 
