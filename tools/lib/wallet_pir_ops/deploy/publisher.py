@@ -406,6 +406,20 @@ class Cutover:
                         'predecessor service configuration changed: ' + name)
             if self.serving:
                 self.serving.restore_guard(journal)
+            if journal['phase'] == 'staging':
+                require(all(self.read(path) == previous['text'] for path, previous in plan['before'].items()),
+                        'managed files changed during read-only staging')
+                require(all(stable_unit(self.ex.probe_unit(self.host, name)) == before
+                            for name, before in plan['units'].items()),
+                        'publisher service changed during read-only staging')
+                if self.serving:
+                    serving = plan['serving']
+                    require(all(stable_unit(self.ex.probe_unit(role['host'], role['unit'])) == before
+                                for role, before in zip(serving['roles'], serving['units'])),
+                            'query service changed during read-only staging')
+                journal['staging_only'] = True
+                self.save(journal, 'rolled-back')
+                return journal
             self.save(journal, 'restoring')
             for name in (LOAD, UNIT, *self.old):
                 if self.ex.probe_unit(self.host, name)['load_state'] != 'not-found':

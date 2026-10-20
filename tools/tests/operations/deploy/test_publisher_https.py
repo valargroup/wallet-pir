@@ -1,10 +1,14 @@
 """A guarded distribution switch preserves worker ownership and can recover."""
 import json
+import hashlib
+import os
+import subprocess
+import sys
 import unittest
 from unittest.mock import patch
 
 from publisher_fixture import PublisherFixture
-from wallet_pir_ops.deploy import publisher, units
+from wallet_pir_ops.deploy import publisher, publisher_https, units
 from wallet_pir_ops.deploy.engine import DeployError
 from wallet_pir_ops.deploy.remote import RemoteError
 
@@ -26,7 +30,7 @@ class HttpsTests(PublisherFixture, unittest.TestCase):
             host, unit = entry['host'], entry['unit']
             section = 'transaction_details' if kind == 'transaction-details' else 'transparent_history'
             body = {'publisher': 'https://example.test', 'publisher_network': 'main',
-                    'publisher_genesis': '0' * 64, 'listen': entry['vars']['listen']}
+                    'publisher_genesis': '0' * 64, 'listen': entry['vars']['listen'], 'bootstrap_max_bytes': 1 << 30}
             root = '/srv/https-' + kind
             if section == 'transaction_details':
                 body.update(role='combined', state_dir=root)
@@ -126,6 +130,7 @@ class HttpsTests(PublisherFixture, unittest.TestCase):
 
     def test_consumer_disk_budget_is_checked_before_staging(self):
         self.request['https']['consumers'][0]['budget_bytes'] = 70 << 30
+        self.request['https']['consumers'][0]['configuration']['transparent_history']['settings']['bootstrap_max_bytes'] = 70 << 30
         self.target = self.make_target()
         self.target.serving.binary = self.serving_binary
         with self.assertRaisesRegex(DeployError, 'disk headroom'):
@@ -212,7 +217,27 @@ class HttpsTests(PublisherFixture, unittest.TestCase):
         self.ex.remove('coordinator', root + '/immutable-snapshot/shards.json')
         with self.assertRaisesRegex(DeployError, 'snapshot map differs'):
             self.deploy()
+        result = self.target.rollback()
+        self.assertTrue(result['staging_only'])
         self.assertFalse(any(action[0] == 'stop' for action in self.ex.effects))
+
+    def test_reusing_legacy_bytes_does_not_copy_authority_or_follow_symlinks(self):
+        source, root = self.root / 'legacy', self.root / 'provider'
+        source.mkdir(); root.mkdir()
+        (source / 'table.bin').write_bytes(b'immutable table')
+        (source / 'active.json').write_bytes(b'old authority')
+        os.link(source / 'table.bin', source / 'same-table.bin')
+        outside = self.root / 'outside'
+        outside.write_bytes(b'outside the legacy tree')
+        (source / 'link').symlink_to(outside)
+        result = subprocess.run([sys.executable, '-c', publisher_https.SEED_OBJECTS,
+            json.dumps({'root': str(root), 'sources': [str(source)]})], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)['linked_objects'], 2)
+        digest = hashlib.sha256(b'immutable table').hexdigest()
+        self.assertEqual((root / 'objects' / digest).stat().st_ino, (source / 'table.bin').stat().st_ino)
+        self.assertFalse((root / 'active.json').exists())
+        self.assertFalse((root / 'objects' / hashlib.sha256(outside.read_bytes()).hexdigest()).exists())
 
 
 if __name__ == '__main__':

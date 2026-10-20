@@ -8,6 +8,7 @@ import base64
 import copy
 import json
 from pathlib import PurePosixPath
+import shlex
 from urllib.parse import urlsplit
 
 from ..role_config import directory, render, service_settings
@@ -16,6 +17,33 @@ from .publisher import require, sha, stable_unit
 from .publisher_serving import Serving
 
 KINDS = ('history-archive', 'history-recent', 'transaction-details')
+
+# The old workers have stopped before this runs. Only immutable bytes are
+# reused: the provider still verifies every object against fresh HTTPS authority.
+SEED_OBJECTS = r'''
+import hashlib,json,os,pathlib,stat,sys
+request=json.loads(sys.argv[1]); root=pathlib.Path(request['root'])
+assert root.is_dir() and not root.is_symlink()
+objects=root/'objects'; objects.mkdir(mode=0o700,exist_ok=True)
+assert objects.is_dir() and not objects.is_symlink()
+seen=set();count=0;size=0
+for source in request['sources']:
+    source=pathlib.Path(source)
+    if not source.exists():continue
+    assert source.is_dir() and not source.is_symlink()
+    for directory,dirs,files in os.walk(source,followlinks=False):
+        dirs[:]=[d for d in dirs if not (pathlib.Path(directory)/d).is_symlink()]
+        for name in files:
+            path=pathlib.Path(directory)/name; metadata=path.lstat()
+            key=(metadata.st_dev,metadata.st_ino)
+            if not stat.S_ISREG(metadata.st_mode) or key in seen:continue
+            seen.add(key)
+            with path.open('rb') as stream:digest=hashlib.file_digest(stream,'sha256').hexdigest()
+            target=objects/digest
+            if not target.exists():
+                os.link(path,target,follow_symlinks=False);count+=1;size+=metadata.st_size
+print(json.dumps({'linked_objects':count,'reused_bytes':size}))
+'''
 
 
 def validate(request, inventory):
@@ -75,6 +103,8 @@ def validate(request, inventory):
                         'terminal archive must be local to its TLS edge')
         require(type(consumer['budget_bytes']) is int and consumer['budget_bytes'] > 0,
                 'consumer storage budget must be explicit')
+        require(body.get('bootstrap_max_bytes') == consumer['budget_bytes'],
+                'consumer transfer limit must match its storage budget')
     expected = set()
     listeners = {}
     for service in ('transparent-history', 'transparent-display'):
@@ -170,6 +200,20 @@ class HttpsServing(Serving):
             effective = units.effective([text, *(d['text'] for d in source['drop_ins'])])
             command = units.exec_start(effective)
             old_binary = units.split_exec(command)[1]
+            arguments = shlex.split(units.split_exec(command)[2])
+            seed_paths = []
+            if specification['kind'] != 'transaction-details':
+                for flag in ('--shard-dir', '--runtime-cache-dir'):
+                    if flag in arguments:
+                        seed_paths.append(arguments[arguments.index(flag) + 1])
+                if '--active-record' in arguments:
+                    record = self.cutover.ex.read(host, arguments[arguments.index('--active-record') + 1])
+                    if record:
+                        if '--shard-dir' in arguments:
+                            seed_paths.remove(arguments[arguments.index('--shard-dir') + 1])
+                        seed_paths.append(json.loads(record)['directory'])
+                require(all(path.startswith('/srv/') and '..' not in PurePosixPath(path).parts
+                            for path in seed_paths), 'legacy object sources must stay under /srv')
             require(self.cutover.ex.sha256(host, old_binary) == state['exe_sha256'],
                     'consumer rollback executable differs: ' + unit)
             config = specification['configuration']
@@ -201,7 +245,8 @@ class HttpsServing(Serving):
                         'consumer has an unmanaged launch overlay')
             consumers.append({**specification, 'before': state, 'binary': binary,
                               'old_binary': old_binary, 'root': root,
-                              'unit_text': candidate, 'config_before': self.cutover.ex.read(host, path)})
+                              'unit_text': candidate, 'config_before': self.cutover.ex.read(host, path),
+                              'seed_paths': sorted(set(seed_paths))})
         plan['https_consumers'] = consumers
         return plan
 
@@ -319,8 +364,16 @@ class HttpsServing(Serving):
     def verify(self, parent, restored=False):
         super().verify(parent, restored)
         owner = self.cutover
+        owner.resources()
         for consumer in parent['plan']['serving']['https_consumers']:
             host, unit = consumer['host'], consumer['unit']
+            if not restored and consumer['seed_paths']:
+                def seed(consumer=consumer):
+                    code, output = owner.ex.run(consumer['host'], ['python3', '-c', SEED_OBJECTS,
+                        json.dumps({'root': consumer['root'], 'sources': consumer['seed_paths']})], 300)
+                    require(code == 0, 'could not reuse legacy immutable objects: ' + output[-1000:])
+                    parent.setdefault('reused_objects', {})[consumer['unit']] = json.loads(output)
+                owner.effect(parent, 'reuse immutable objects ' + unit, seed)
             owner.effect(parent, ('restore start ' if restored else 'start HTTPS ') + unit,
                          lambda host=host, unit=unit: owner.ex.systemctl(host, 'start', unit))
             deadline = owner.clock() + 900
@@ -345,6 +398,11 @@ class HttpsServing(Serving):
                 # Recent startup verifies the terminal archive through this TLS
                 # origin, so expose the ready archive before starting recent.
                 self.route_history(parent)
+            resources = owner.ex.publisher_resources(host, [consumer['root']])
+            require(all(disk['available'] >= disk['total'] * .2 for disk in resources['disks'].values()),
+                    'HTTPS synchronization used the reserved disk headroom')
+            require(resources['memory_available'] >= resources['memory_total'] * .2,
+                    'HTTPS synchronization used the reserved memory headroom')
 
     def route(self, parent):
         # Called early, before producer startup, then again by the common cutover.

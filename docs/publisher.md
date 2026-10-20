@@ -277,7 +277,13 @@ its existing `host` and `unit`, a root-owned `config_path`, its root query-serve
 `configuration`, and a disk `budget_bytes`. Consumer configurations use the
 publisher's main-network identity, their existing wallet listeners and separate
 new state directories under `/srv`. The archive holds all shards; recent uses
-the archive's existing TLS origin. Fleet-controlled state cannot be reused.
+the archive's existing TLS origin. Fleet-controlled serving authority cannot be
+reused. After stopping each predecessor, the tool hashes its immutable tables
+and runtime files into the new private object cache by hard link. The provider
+still checks every reused object against fresh HTTPS authority; no active-state
+or withdrawal record is imported. Each consumer's `bootstrap_max_bytes` must
+equal its explicit incremental disk budget. The cutover checks the memory and
+disk reserves again after synchronization.
 
 Pin `https.history_edge` with its `host`, existing archive TLS `origin` and
 installed Caddyfile `before_sha256`. The cutover replaces the frozen shard-number
