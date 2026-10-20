@@ -5,7 +5,7 @@ After=network-online.target
 [Service]
 User=status-pir
 Group=status-pir
-# The operator installs the role config; status-worker.example.json shows it.
+# Deployment renders and retains the role config; status-worker.example.json shows it.
 ExecStart=@RELEASE@/pir-query-server --config /etc/status-pir/worker.json
 Environment=RAYON_NUM_THREADS=4
 # Candidate preparation has its own pool at nice 10, below query evaluation.

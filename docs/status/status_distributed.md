@@ -223,3 +223,15 @@ The 1,572,864-entry admission ceiling and 20-second freshness limit are unchange
 Block hashes remain internal source/publication metadata, not wallet-visible
 inclusion evidence. All retained v1 timing/resource captures are historical and
 protocol-incompatible; they cannot qualify v2.
+
+
+### Installing CPU query-role configurations
+
+The Status worker and router deployment roles render their configuration files
+with their units. Supply each role's `settings` in the private fleet inventory:
+`network_hex`, `state_dir`, `listen`, `artifact_origin`, and `worker_origin`;
+the router may also supply `query_listen`. Retain the current network identity,
+loopback peers and durable state paths. The deployment stages each configuration,
+runs the new executable's `--check` before restarting, and restores the previous
+configuration (or its absence) on rollback. The examples beside the unit templates
+show the resulting files; do not install their placeholder network hash.
