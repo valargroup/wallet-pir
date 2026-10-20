@@ -14,6 +14,7 @@
 //! replaced tail, and unfinished work dropped and done again under the shard
 //! that now covers it. The same re-cut undeclared is refused, and one
 //! published while a sync is reading ends that sync and not the next.
+#![cfg(feature = "transparent-history")]
 use zakura_pir_protocol::transparent::events as transparent_events;
 use zakura_pir_protocol::transparent::filter as transparent_filter;
 use zakura_pir_publisher::transparent as transparent_shard;

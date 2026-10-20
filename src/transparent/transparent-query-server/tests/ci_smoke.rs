@@ -1,4 +1,5 @@
 //! A real encrypted HTTP query matches nonzero public rows before and after restart.
+#![cfg(feature = "transparent-history")]
 use zakura_pir_client::transparent::native::TableClientExt as _;
 
 use zakura_pir_protocol::transparent::events as transparent_events;

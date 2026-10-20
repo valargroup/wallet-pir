@@ -7,6 +7,7 @@
 //! Equality is exact — every UTXO and every spend — not just the balance. Two
 //! errors can sum to the right number, and a balance check would pass a
 //! reconstruction that had lost a receive and a spend of equal value.
+#![cfg(feature = "transparent-history")]
 
 use zakura_pir_client::transparent::native::TableClientExt as _;
 

@@ -5,6 +5,7 @@
 //! The point is that *many shards in one process* behave: rows come back from
 //! the shard they were asked of, a query built for one shard is refused by
 //! another, and the parameters really are shared rather than per shard.
+#![cfg(feature = "transparent-history")]
 
 use zakura_pir_client::transparent::native::TableClientExt as _;
 

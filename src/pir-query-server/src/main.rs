@@ -12,6 +12,11 @@ struct Args {
     /// Check static configuration without opening state, listeners, or credentials.
     #[arg(long, requires = "config")]
     check: bool,
+    /// Verify the one enabled Transparent history or transaction-detail
+    /// section through its one-shot path, print the report, and exit without
+    /// binding management or wallet listeners.
+    #[arg(long, requires = "config", conflicts_with = "check")]
+    verify_only: bool,
     #[cfg(feature = "enhance")]
     #[command(subcommand)]
     command: Option<EnhanceCommand>,
@@ -70,6 +75,9 @@ async fn main() -> pir_query_server::Result<()> {
     let config_path = args.config.ok_or("query server requires --config FILE")?;
     let config: pir_query_server::config::Config =
         serde_json::from_slice(&std::fs::read(config_path)?)?;
+    if args.verify_only {
+        return pir_query_server::verify(config).await;
+    }
     config.validate()?;
     if args.check {
         println!("Query server configuration is valid; runtime readiness was not checked");

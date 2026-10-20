@@ -8,7 +8,8 @@ use crate::{
         live::{Command, LiveService, Publication},
         service::{ReadinessMode, ServiceConfig, ServiceState},
     },
-    routing::bootstrap::{self, Config, Source},
+    routing::bootstrap::{self, Config},
+    source::Source,
 };
 use pir_pipeline::Input;
 use std::{

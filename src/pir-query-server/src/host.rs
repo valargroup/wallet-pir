@@ -1,4 +1,9 @@
-#[cfg(any(feature = "enhance", feature = "status", feature = "transparent"))]
+#[cfg(any(
+    feature = "enhance",
+    feature = "status",
+    feature = "transparent-history",
+    feature = "transparent-detail"
+))]
 use crate::config::active;
 use crate::{
     config::{Config, Probe},
@@ -7,7 +12,12 @@ use crate::{
 use axum::{extract::State, http::StatusCode, routing::get, Json, Router};
 use pir_pipeline::service::{Http, Shutdown, Tasks};
 use serde_json::{json, Value};
-#[cfg(any(feature = "enhance", feature = "status", feature = "transparent"))]
+#[cfg(any(
+    feature = "enhance",
+    feature = "status",
+    feature = "transparent-history",
+    feature = "transparent-detail"
+))]
 use std::future::Future;
 use std::{
     collections::{BTreeMap, HashMap},
@@ -87,7 +97,12 @@ fn http(listeners: Arc<Mutex<BTreeMap<SocketAddr, TcpListener>>>, stop: Shutdown
     })
 }
 
-#[cfg(any(feature = "enhance", feature = "status", feature = "transparent"))]
+#[cfg(any(
+    feature = "enhance",
+    feature = "status",
+    feature = "transparent-history",
+    feature = "transparent-detail"
+))]
 fn take(
     listeners: &Mutex<BTreeMap<SocketAddr, TcpListener>>,
     addr: SocketAddr,
@@ -99,7 +114,12 @@ fn take(
         .ok_or_else(|| "listener was not reserved".into())
 }
 
-#[cfg(any(feature = "enhance", feature = "status", feature = "transparent"))]
+#[cfg(any(
+    feature = "enhance",
+    feature = "status",
+    feature = "transparent-history",
+    feature = "transparent-detail"
+))]
 fn spawn<F>(
     name: &'static str,
     future: F,
@@ -113,11 +133,37 @@ fn spawn<F>(
     owners.insert(id, (name, stop));
 }
 
-#[cfg(any(feature = "enhance", feature = "status", feature = "transparent"))]
+#[cfg(any(
+    feature = "enhance",
+    feature = "status",
+    feature = "transparent-history",
+    feature = "transparent-detail"
+))]
 async fn stopped(local: Shutdown, process: Shutdown) {
     tokio::select! {
         _ = local.cancelled() => {}
         _ = process.cancelled() => {}
+    }
+}
+
+/// Load and verify the one enabled Transparent section through its existing
+/// one-shot path, print its report and return. No management or wallet
+/// listener is bound.
+pub async fn verify(config: Config) -> Result<()> {
+    match config.verification()? {
+        #[cfg(feature = "transparent-history")]
+        crate::config::Verification::History(worker) => {
+            let mut worker = worker.clone();
+            worker.verify_only = true;
+            transparent_query_server::history::process::run(worker).await
+        }
+        #[cfg(feature = "transparent-detail")]
+        crate::config::Verification::Detail(worker) => {
+            let mut worker = worker.clone();
+            worker.verify_only = true;
+            transparent_query_server::tx_detail::process::run(worker).await
+        }
+        crate::config::Verification::_Unused(_) => unreachable!(),
     }
 }
 
@@ -211,7 +257,7 @@ pub async fn run(config: Config, shutdown: Shutdown) -> Result<()> {
             &mut owners,
         );
     }
-    #[cfg(feature = "transparent")]
+    #[cfg(feature = "transparent-history")]
     if let Some(worker) = active(&config.transparent_history)? {
         let worker = worker.clone();
         let listen = take(&listeners, worker.listen)?;
@@ -236,7 +282,7 @@ pub async fn run(config: Config, shutdown: Shutdown) -> Result<()> {
             &mut owners,
         );
     }
-    #[cfg(feature = "transparent")]
+    #[cfg(feature = "transparent-detail")]
     if let Some(worker) = active(&config.transaction_details)? {
         let worker = worker.clone();
         let listen = take(&listeners, worker.listen)?;

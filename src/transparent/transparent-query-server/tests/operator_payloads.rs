@@ -41,6 +41,7 @@
 //! Cheap for a reason worth knowing: `init` reads only the prepared parameters
 //! and `health` only set counters and cache totals, so neither builds a
 //! `TableRuntime`. The cost here is publishing two shards and hashing them.
+#![cfg(feature = "transparent-history")]
 
 use zakura_pir_protocol::transparent::events as transparent_events;
 use zakura_pir_protocol::transparent::filter as transparent_filter;
@@ -315,20 +316,23 @@ async fn the_operator_payloads_match_what_ops_parses() {
 }
 
 #[test]
+#[ignore = "retired binary: relocate to pir-e2e-tests with pir-query-server --config"]
 fn verify_only_stdout_is_machine_readable_and_checks_cache_capacity() {
     let dir = tempfile::tempdir().unwrap();
     publish(dir.path());
     let cache = tempfile::tempdir().unwrap();
     let run = |limit: &str| {
-        std::process::Command::new(env!("CARGO_BIN_EXE_transparent-query-server"))
-            .arg("--shard-dir")
-            .arg(dir.path())
-            .arg("--verify-only")
-            .arg("--runtime-cache-dir")
-            .arg(cache.path())
-            .args(["--runtime-cache-max-bytes", limit])
-            .output()
-            .unwrap()
+        std::process::Command::new(
+            std::env::var("CARGO_BIN_EXE_transparent-query-server").expect("retired"),
+        )
+        .arg("--shard-dir")
+        .arg(dir.path())
+        .arg("--verify-only")
+        .arg("--runtime-cache-dir")
+        .arg(cache.path())
+        .args(["--runtime-cache-max-bytes", limit])
+        .output()
+        .unwrap()
     };
     let output = run("17179869184");
     assert!(

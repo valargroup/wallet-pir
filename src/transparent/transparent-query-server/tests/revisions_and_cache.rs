@@ -14,6 +14,7 @@
 //! **Single-flight.** The build ran outside the lock, so N concurrent requests
 //! for a cold shard each built a full runtime and discarded all but one. That
 //! is asserted against directly here: the build counter must reach one, not N.
+#![cfg(feature = "transparent-history")]
 
 use zakura_pir_protocol::transparent::events as transparent_events;
 use zakura_pir_protocol::transparent::filter as transparent_filter;

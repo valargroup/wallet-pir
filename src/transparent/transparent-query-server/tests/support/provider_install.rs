@@ -142,14 +142,17 @@ async fn start(binary: &Path, args: &[String], cwd: &Path, origin: &str) -> toki
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "retired binary: relocate to pir-e2e-tests with pir-query-server --config"]
 async fn checkout_free_artifacts_support_queries_and_restart() {
     installation_case(Case::Restart).await;
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "retired binary: relocate to pir-e2e-tests with pir-query-server --config"]
 async fn checkout_free_artifacts_refuse_missing_and_incompatible_runtimes() {
     installation_case(Case::Invalid).await;
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "retired binary: relocate to pir-e2e-tests with pir-query-server --config"]
 async fn independent_processes_recover_during_peer_restart_and_outages() {
     installation_case(Case::Independent).await;
 }
@@ -371,10 +374,17 @@ async fn installation_case(case: Case) {
     for (name, path) in [
         (
             "transparent-query-server",
-            env!("CARGO_BIN_EXE_transparent-query-server"),
+            std::env::var("CARGO_BIN_EXE_transparent-query-server")
+                .expect("pir-query-server host binary"),
         ),
-        ("shard-assign", env!("CARGO_BIN_EXE_shard-assign")),
-        ("shard-prune", env!("CARGO_BIN_EXE_shard-prune")),
+        (
+            "shard-assign",
+            std::env::var("CARGO_BIN_EXE_shard-assign").expect("transparent-tools shard-assign"),
+        ),
+        (
+            "shard-prune",
+            std::env::var("CARGO_BIN_EXE_shard-prune").expect("transparent-tools shard-prune"),
+        ),
     ] {
         std::fs::copy(path, build.join(name)).unwrap();
     }

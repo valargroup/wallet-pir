@@ -5,7 +5,7 @@ use super::{
 };
 use crate::{
     control::persist,
-    routing::bootstrap::{Config, Source},
+    source::{Config, Source},
 };
 use std::{
     collections::BTreeSet,
@@ -276,7 +276,7 @@ impl DisplaySync {
                 return Err("display anchor names another map".into());
             }
             persist(&stage.join("verified-display-inventory.json"), &inventory)?;
-            crate::routing::bootstrap::sync_tree(&stage)?;
+            crate::source::sync_tree(&stage)?;
             Ok(DisplayPublication {
                 directory: stage.clone(),
                 map_sha256: inventory.map_sha256,

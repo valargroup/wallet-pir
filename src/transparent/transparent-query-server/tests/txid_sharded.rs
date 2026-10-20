@@ -2,6 +2,7 @@
 //! archive-owner and a recent-replica worker behind an edge that routes
 //! `/v2/txid/archive/` to the owner, as the deployment's static route does,
 //! and the wallet client (`transparent-txid-client`).
+#![cfg(feature = "transparent-detail")]
 use zakura_pir_client::transparent::txid_client as transparent_txid_client;
 use zakura_pir_protocol::transparent::events as transparent_events;
 use zakura_pir_publisher::transparent as transparent_shard;
@@ -1375,6 +1376,7 @@ impl Drop for Spawned {
 /// The worker binary starts with nothing to serve, takes a publication
 /// through `txid-control`, and serves it again from its record on restart.
 #[test]
+#[ignore = "retired binary: relocate to pir-e2e-tests with pir-query-server --config"]
 fn the_worker_binary_takes_and_restores_a_publication_by_control() {
     use std::io::Write;
     use std::process::{Command, Stdio};
@@ -1398,20 +1400,21 @@ fn the_worker_binary_takes_and_restores_a_publication_by_control() {
     let url = format!("http://127.0.0.1:{port}");
     let spawn = || {
         let _ = std::fs::remove_file(&socket);
-        let child = Command::new(env!("CARGO_BIN_EXE_transparent-txid-server"))
-            .args([
-                "--role",
-                "recent-replica",
-                "--listen",
-                &format!("127.0.0.1:{port}"),
-            ])
-            .arg("--control-socket")
-            .arg(&socket)
-            .arg("--active-record")
-            .arg(&record)
-            .stderr(Stdio::null())
-            .spawn()
-            .unwrap();
+        let child =
+            Command::new(std::env::var("CARGO_BIN_EXE_transparent-txid-server").expect("retired"))
+                .args([
+                    "--role",
+                    "recent-replica",
+                    "--listen",
+                    &format!("127.0.0.1:{port}"),
+                ])
+                .arg("--control-socket")
+                .arg(&socket)
+                .arg("--active-record")
+                .arg(&record)
+                .stderr(Stdio::null())
+                .spawn()
+                .unwrap();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
         while !(socket.exists() && reqwest::blocking::get(format!("{url}/v1/health")).is_ok()) {
             assert!(std::time::Instant::now() < deadline, "worker did not start");
@@ -1420,7 +1423,7 @@ fn the_worker_binary_takes_and_restores_a_publication_by_control() {
         Spawned(child)
     };
     let control = |command: serde_json::Value| {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_txid-control"))
+        let mut child = Command::new(std::env::var("CARGO_BIN_EXE_txid-control").expect("retired"))
             .arg(&socket)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())

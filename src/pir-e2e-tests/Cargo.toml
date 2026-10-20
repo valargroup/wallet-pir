@@ -58,7 +58,7 @@ enhance-publisher = { path = "../enhance/enhance-publisher", optional = true }
 transparent-publisher = { path = "../transparent/transparent-publisher", optional = true }
 enhance-query-server = { path = "../enhance/enhance-query-server", optional = true }
 pir-query-server = { path = "../pir-query-server", optional = true }
-transparent-query-server = { path = "../transparent/transparent-query-server", optional = true }
+transparent-query-server = { path = "../transparent/transparent-query-server", optional = true, features = ["transparent-history", "transparent-detail"] }
 transparent-shared = { path = "../transparent/transparent-shared", optional = true }
 zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "f48b62b80ec7d9d7fb7893401435a24b189b8ec2", default-features = false, optional = true }
 zakura-pir-client = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "f48b62b80ec7d9d7fb7893401435a24b189b8ec2", default-features = false, optional = true }

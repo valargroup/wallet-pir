@@ -24,7 +24,15 @@ status = [
     "dep:rayon",
     "dep:sha2",
 ]
-transparent = ["dep:transparent-query-server"]
+# Transparent history and transaction-detail serving compile independently.
+transparent-history = [
+    "dep:transparent-query-server",
+    "transparent-query-server/transparent-history",
+]
+transparent-detail = [
+    "dep:transparent-query-server",
+    "transparent-query-server/transparent-detail",
+]
 native-reinspiring = [
     "enhance-query-server?/native-reinspiring",
     "status-query-server?/native-reinspiring",
