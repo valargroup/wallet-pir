@@ -1,7 +1,8 @@
 #[cfg(any(
     feature = "enhance",
     feature = "status",
-    feature = "transparent",
+    feature = "transparent-history",
+    feature = "transparent-detail",
     feature = "receiver"
 ))]
 use crate::config::active;
@@ -75,7 +76,7 @@ impl Management {
             return false;
         };
         match probe.kind {
-            "history" => value["phase"] == "serving",
+            "history" | "filter" => value["phase"] == "serving",
             "display" => {
                 value["phase"] == "running"
                     && value["halted"].is_null()
@@ -104,7 +105,8 @@ fn http(listeners: Arc<Mutex<BTreeMap<SocketAddr, TcpListener>>>, stop: Shutdown
     not(any(
         feature = "enhance",
         feature = "status",
-        feature = "transparent",
+        feature = "transparent-history",
+        feature = "transparent-detail",
         feature = "receiver"
     )),
     allow(dead_code)
@@ -167,7 +169,8 @@ pub async fn run(config: Config, shutdown: Shutdown) -> Result<()> {
     #[cfg(any(
         feature = "enhance",
         feature = "status",
-        feature = "transparent",
+        feature = "transparent-history",
+        feature = "transparent-detail",
         feature = "receiver"
     ))]
     macro_rules! product {
@@ -194,12 +197,17 @@ pub async fn run(config: Config, shutdown: Shutdown) -> Result<()> {
     product!(enhance, enhance_publisher::service::run);
     #[cfg(feature = "status")]
     product!(status, status_publisher::service::run);
-    #[cfg(feature = "transparent")]
+    #[cfg(feature = "transparent-history")]
     product!(
         transparent_history,
         transparent_publisher::history::controller::run_managed
     );
-    #[cfg(feature = "transparent")]
+    #[cfg(feature = "transparent-history")]
+    product!(
+        transparent_filters,
+        transparent_publisher::history::filter_service::run
+    );
+    #[cfg(feature = "transparent-detail")]
     product!(
         transaction_details,
         transparent_publisher::tx_detail::service::run

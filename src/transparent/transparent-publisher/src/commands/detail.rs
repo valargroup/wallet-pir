@@ -2,23 +2,19 @@
 use zakura_pir_publisher::transparent as transparent_shard;
 use zakura_pir_publisher::transparent::filter as transparent_filter;
 
-use clap::{Args, Parser, Subcommand, ValueEnum};
-use std::path::PathBuf;
-use std::time::Duration;
-use transparent_publisher::history::publication::BoxError;
-use transparent_publisher::tx_detail::{
-    controller::{self, Controller, Outcome, Settings},
+use crate::history::publication::BoxError;
+use crate::tx_detail::{
     offline,
     publisher::{self, DisplayRoot},
-    serving::WorkersFile,
-    source::{open_writer, LiveSource, ReplaySource, Source},
 };
+use clap::{Args, Parser, Subcommand};
+use std::path::PathBuf;
 use transparent_shard::display::DisplaySealParams;
 use transparent_shared::journal::events::EventStore;
 
 #[derive(Parser)]
 #[command(
-    name = "txid-display-controller",
+    name = "pir-publisher detail",
     about = "Seal, rebuild and publish tiered txid display shards"
 )]
 struct Cli {
@@ -61,13 +57,6 @@ impl SealArgs {
     }
 }
 
-#[derive(Clone, Copy, ValueEnum)]
-enum Mode {
-    Live,
-    Replay,
-    ReplayThenLive,
-}
-
 #[derive(Subcommand)]
 enum Command {
     /// Publish a fresh root from the journal: every seal through `--through`,
@@ -98,47 +87,6 @@ enum Command {
         replay_seals: u64,
         #[command(flatten)]
         seal: SealArgs,
-    },
-    /// Follow a source and publish to the display workers.
-    Run {
-        #[arg(long)]
-        root: PathBuf,
-        #[arg(long)]
-        journal: PathBuf,
-        #[arg(long, value_enum)]
-        mode: Mode,
-        /// `{"workers": [...]}`; an empty list publishes locally only.
-        #[arg(long)]
-        workers: PathBuf,
-        #[arg(long, default_value = "http://127.0.0.1:8232")]
-        rpc_url: String,
-        #[arg(long)]
-        rpc_cookie: Option<PathBuf>,
-        #[arg(long, default_value_t = 500)]
-        poll_ms: u64,
-        #[arg(long, default_value_t = 25)]
-        blocks_per_step: u64,
-        #[arg(long, default_value_t = 2_000)]
-        step_interval_ms: u64,
-        /// Last height replay makes visible; defaults to the journal end.
-        #[arg(long)]
-        replay_end: Option<u64>,
-        /// Skip re-verifying sealed revisions at startup.
-        #[arg(long)]
-        trust_sealed: bool,
-        /// Build the recent revision's runtimes into every candidate, so
-        /// recent replicas load and self-check them instead of building.
-        /// `TRANSPARENT_BUILD_THREADS` sizes the build pool.
-        #[arg(long)]
-        ship_runtimes: bool,
-        #[arg(long, default_value = "127.0.0.1:8099")]
-        status_listen: std::net::SocketAddr,
-        /// Alert when the recent shard holds more records than this.
-        #[arg(long)]
-        max_recent_records: Option<u64>,
-        /// Exit once replay is exhausted and published (bounded runs).
-        #[arg(long)]
-        exit_when_idle: bool,
     },
     /// Re-bootstrap at the journal end and check every recorded seal against
     /// it; verify every revision of the active candidate. Exits 1 on a
@@ -187,14 +135,8 @@ fn print(value: &serde_json::Value) {
     println!("{}", serde_json::to_string(value).expect("JSON"));
 }
 
-#[tokio::main]
-async fn main() -> Result<(), BoxError> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
-        )
-        .init();
-    match Cli::parse().command {
+pub async fn run(args: Vec<std::ffi::OsString>) -> Result<(), BoxError> {
+    match Cli::parse_from(args).command {
         Command::Bootstrap {
             root,
             journal,
@@ -251,74 +193,6 @@ async fn main() -> Result<(), BoxError> {
                 replay_seals,
                 seal.max_archive_shards,
             )?);
-        }
-        Command::Run {
-            root,
-            journal,
-            mode,
-            workers,
-            rpc_url,
-            rpc_cookie,
-            poll_ms,
-            blocks_per_step,
-            step_interval_ms,
-            replay_end,
-            trust_sealed,
-            ship_runtimes,
-            status_listen,
-            max_recent_records,
-            exit_when_idle,
-        } => {
-            let workers = WorkersFile::load(&workers)?.workers;
-            let store = open_writer(&journal)?;
-            let live = match mode {
-                Mode::Replay => None,
-                Mode::Live | Mode::ReplayThenLive => {
-                    let cookie = rpc_cookie.ok_or("live modes need --rpc-cookie")?;
-                    let rpc = transparent_publisher::ingest::zakura::connect(&rpc_url, &cookie)?;
-                    if rpc.block_hash_display(0).await? != store.genesis_hash() {
-                        return Err("the node's genesis differs from the journal's".into());
-                    }
-                    Some(LiveSource::new(rpc, Duration::from_millis(poll_ms)))
-                }
-            };
-            let end = store.covered_through().ok_or("the journal is empty")?;
-            let replay = || {
-                ReplaySource::new(
-                    blocks_per_step,
-                    Duration::from_millis(step_interval_ms),
-                    replay_end.unwrap_or(end).min(end),
-                )
-            };
-            let source = match (mode, live) {
-                (Mode::Live, Some(live)) => Source::Live(live),
-                (_, live) => Source::Replay(replay(), live),
-            };
-            let settings = Settings {
-                trust_sealed,
-                ship_runtimes: ship_runtimes.then_some(
-                    transparent_shared::tx_detail::prebuild::build_shipped as controller::Prebuild,
-                ),
-                max_recent_records,
-                exit_when_idle,
-                ..Settings::default()
-            };
-            controller::serve_status(
-                status_listen,
-                settings.status.clone(),
-                settings.metrics.clone(),
-            )
-            .await?;
-            let mut controller = Controller::open(&root, store, source, workers, settings)?;
-            match controller.run().await? {
-                Outcome::Idle => {}
-                Outcome::Halted(reason) => {
-                    // Stay up so the status endpoint shows why; a restart
-                    // would only find halted.json and stop here again.
-                    tracing::error!(alert = "txid_display_halt", %reason, "halted; idling");
-                    std::future::pending::<()>().await;
-                }
-            }
         }
         Command::Verify {
             root,

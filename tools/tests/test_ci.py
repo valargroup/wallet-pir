@@ -619,7 +619,7 @@ class BoundaryTests(unittest.TestCase):
 class ReleaseTests(unittest.TestCase):
     def bundle(self, directory, mutate=None):
         data = {name: b'binary' for name in release.BINARIES['transparent-filter']}
-        data['transparent-filter-server.service'] = b'unit'
+        data.update({Path(name).name: b'unit' for name in release.FILES['transparent-filter']})
         data['revision'] = (SHA + '\n').encode()
         data['SHA256SUMS'] = ''.join(f'{hashlib.sha256(v).hexdigest()}  {k}\n' for k, v in data.items()).encode()
         if mutate:
@@ -636,11 +636,11 @@ class ReleaseTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             release.extract(self.bundle(root), root / 'artifact', SHA, 'transparent-filter')
-            self.assertTrue((root / 'artifact/transparent-publisher').stat().st_mode & 0o111)
+            self.assertTrue((root / 'artifact/pir-publisher').stat().st_mode & 0o111)
 
     def test_wrong_sha_tampered_missing_extra_or_path_escape_refused_before_write(self):
         mutations = [lambda d: d.update(revision=b'b' * 40),
-                     lambda d: d.update({'transparent-publisher': b'tampered'}),
+                     lambda d: d.update({'pir-publisher': b'tampered'}),
                      lambda d: d.pop('transparent-filter-server.service'),
                      lambda d: d.update({'extra': b'x'}),
                      lambda d: d.update({'../outside': b'x'}),
@@ -695,10 +695,9 @@ class ReleaseTests(unittest.TestCase):
                 release.extract(root / 'bundles-enhance-pir-native' / 'enhance-pir-native.tar.gz', root / 'cross', revision, 'enhance-pir')
             # The Status bundle carries the unit templates its deploy renders, and no candidate claim.
             self.assertEqual(sorted(p.name for p in (root / 'status-pir').iterdir()),
-                             ['SHA256SUMS', 'pir-query-server', 'revision',
-                              'status-pir', 'status-router.example.json', 'status-router.service.in',
+                             ['SHA256SUMS', 'pir-publisher', 'pir-query-server', 'revision', 'status-router.example.json', 'status-router.service.in',
                               'status-worker.example.json', 'status-worker.service.in'])
-            self.assertTrue((root / 'status-pir' / 'status-pir').stat().st_mode & 0o111)
+            self.assertTrue((root / 'status-pir' / 'pir-publisher').stat().st_mode & 0o111)
             with self.assertRaises(ValueError):
                 release.extract(root / 'bundles-status-pir' / 'status-pir.tar.gz', root / 'cross-status', revision, 'enhance-pir-native')
 

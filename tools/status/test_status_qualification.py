@@ -11,7 +11,7 @@ class QualificationTests(unittest.TestCase):
         self.summary = {
             "phase": "load",
             "latency_basis": "scheduled_to_completed",
-            "protocol": "status-pir-v2-q48", "rows": 8192, "slots": 256,
+            "protocol": "status-pir-v3-native-two-mask-m29", "rows": 8192, "slots": 256,
             "slot_bytes": 40, "columns": 6144, "row_bytes": 12288,
             "database_bytes": 100663296,
             "source": "live",
@@ -63,18 +63,9 @@ class QualificationTests(unittest.TestCase):
         del self.summary["latency_basis"]
         self.assertFalse(self.assess()["passed"])
 
-    def test_native_protocol_requires_explicit_selection_and_retains_safety_gates(self):
-        self.summary["protocol"] = "status-pir-v3-native-two-mask-m29"
+    def test_retired_protocol_is_rejected(self):
+        self.summary["protocol"] = "status-pir-v2-q48"
         self.assertFalse(self.assess()["passed"])
-        def native():
-            return qualification.assess(self.summary, self.requests, self.publications, self.resources,
-                                        expected_protocol="status-pir-v3-native-two-mask-m29")
-        self.assertTrue(native()["passed"])
-        self.requests[0]["observation_age_ms"] = 20001
-        self.assertFalse(native()["passed"])
-        self.requests[0]["observation_age_ms"] = 0
-        self.summary["columns"] *= 2
-        self.assertFalse(native()["passed"])
 
     def test_complete_live_capture_passes(self):
         self.assertTrue(self.assess()["passed"])

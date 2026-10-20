@@ -13,10 +13,10 @@ import time
 
 
 ARTIFACTS = (
-    'transparent-event-ingest', 'shard-publish', 'event-spotcheck',
-    'shard-verify', 'script-sample', 'transparent-publish-controller',
+    'pir-publisher', 'event-spotcheck',
+    'shard-verify', 'script-sample',
     'shard-cutoff', 'journal-inventory', 'shard-census', 'shard-assign', 'shard-control',
-    'pir-query-server', 'transparent-filter-server',
+    'pir-query-server',
     'transparent-loadtest', 'transparent-measure',
     'examples/rate-query', 'examples/native_certificate', 'examples/activity-reopen',
 )
@@ -27,7 +27,6 @@ ARTIFACTS = (
 # `transparent-shard-server` was the retired flag-driven executable, which
 # their frozen pins still describe.
 ARTIFACT_SOURCES = {
-    'transparent-filter-server': 'transparent-publisher',
     'examples/rate-query': 'rate-query',
 }
 
@@ -41,9 +40,9 @@ def build_commands(profile):
     """
     commands = [
         ['cargo', 'build', '--locked', '--profile', profile,
-         '-p', 'transparent-publisher',
+         '-p', 'pir-publisher',
          '-p', 'transparent-tools', '--features',
-         'transparent-publisher/rocksdb-reader,transparent-tools/benchmarks,transparent-tools/rocksdb-reader', '--bins'],
+         'pir-publisher/transparent-history,pir-publisher/transparent-detail,pir-publisher/rocksdb-reader,transparent-tools/benchmarks,transparent-tools/rocksdb-reader', '--bins'],
         # Transparent history and transaction-detail serving: the configured host.
         ['cargo', 'build', '--locked', '--profile', profile,
          '-p', 'pir-query-server', '--features', 'transparent-history,transparent-detail', '--bin', 'pir-query-server'],

@@ -61,7 +61,7 @@ SCOPES = {
     ('full-test', 'shared'): ('dev,release-fast', 'clippy CPU features; pir-control/admission'),
     ('full-test', 'receiver'): ('dev,release-fast', 'clippy CPU features'),
     ('release', 'q48'): ('release', 'enhance-pir-client'),
-    ('release', 'publisher'): ('release,release-fast', 'pir-publisher/transparent; transparent regression, history rate and txid rate acceptance tools'),
+    ('release', 'publisher'): ('release,release-fast', 'pir-publisher/transparent-history,transparent-detail; transparent regression, history rate and txid rate acceptance tools'),
     ('release-native', 'native'): ('release', 'enhance-pir-client,native-reinspiring,pir-query-server/enhance,native-reinspiring'),
     ('cuda-test', 'cuda'): ('dev,release-fast', 'explicit CUDA checks, lint and driver-free tests'),
     ('native-cuda', 'cuda'): ('release', 'enhance-pir-client,native-reinspiring,pir-query-server/enhance,native-reinspiring,cuda'),

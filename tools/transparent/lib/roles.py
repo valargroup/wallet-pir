@@ -7,7 +7,7 @@ from wallet_pir_ops.role_config import directory, render, sizes
 from wallet_pir_ops.deploy import units
 
 
-def publisher(config, *, config_path, state_dir, executable='/usr/local/bin/transparent-publish-controller',
+def publisher(config, *, config_path, state_dir, executable='/usr/local/bin/pir-publisher',
               template=None):
     """Render a journal writer or follower with permissions derived from its config."""
     if not isinstance(config, dict):
@@ -42,7 +42,7 @@ def publisher(config, *, config_path, state_dir, executable='/usr/local/bin/tran
                 template_reads.clear()
     reads.extend(p for p in template_reads if p != data and p not in writes and p != config_path)
     return render(template, executable,
-                  ['--config', config_path], {config_path: config}, writes, reads)
+                  ['--config', config_path], {config_path: document('127.0.0.1:18197', config.get('listen'), 'transparent_history', config)}, writes, reads)
 
 
 HISTORY_TEMPLATE = ROOT / 'tools/transparent/deploy/transparent-history-worker.role.service'

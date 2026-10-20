@@ -125,7 +125,7 @@ def main():
         "test", "-p", "pir-e2e-tests", "--features", "transparent-tests", "--test", TEST, "--no-run"])
     test = executable(built, TEST)
     controller = next(a["executable"] for a in built
-                      if a.get("target", {}).get("name") == "transparent-publish-controller-test")
+                      if a.get("target", {}).get("name") == "pir-publisher-test")
     library = executable(cargo_artifacts(args.profile, [
         "test", "-p", "transparent-publisher", "--lib", "--features", "fixtures,qualification-tests",
         "--no-run"]), "transparent_publisher")
@@ -142,7 +142,7 @@ def main():
         "updates": args.updates, "consumers": args.consumers,
         "binaries": {name: {"path": path, "sha256": sha256(path)} for name, path in
                      [("pir-query-server", provider), ("campaign-test", test),
-                      ("transparent-publish-controller", controller),
+                      ("pir-publisher", controller),
                       ("in-process-tests", library), ("frozen-provider-client", client)]},
         "frozen_client": json.loads((run / "client-sources/provenance.json").read_text()),
         "host": {"machine": platform.machine(), "cpus": os.cpu_count(),

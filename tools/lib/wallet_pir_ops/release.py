@@ -17,26 +17,26 @@ BINARIES = {
     'wallet-pir-ops': [],
     # pir-apm is the Enhance/Status/Transparent dashboard and alerting sidecar;
     # it has no native variant.
-    'enhance-pir': ['enhance-pir-server', 'pir-query-server', 'enhance-pir-cli', 'enhance-pir-load-test', 'pir-apm'],
+    'enhance-pir': ['pir-publisher', 'pir-query-server', 'enhance-pir-cli', 'enhance-pir-load-test', 'pir-apm'],
     # Same binaries built with `native-reinspiring`; they serve an incompatible
     # protocol and come from a separate target directory.
-    'enhance-pir-native': ['enhance-pir-server', 'pir-query-server', 'enhance-pir-cli', 'enhance-pir-load-test'],
+    'enhance-pir-native': ['pir-publisher', 'pir-query-server', 'enhance-pir-cli', 'enhance-pir-load-test'],
     # GPU hosts run this query server, not the publisher. The clients are diagnostics.
     'enhance-pir-native-cuda': ['pir-query-server', 'enhance-pir-cli', 'enhance-pir-load-test'],
-    'transparent-filter': ['transparent-publisher'],
+    'transparent-filter': ['pir-publisher'],
     # Transparent history and txid display processes run pir-query-server
     # (features `transparent-history,transparent-detail`) with `--config`; the
     # admin tools come from transparent-tools.
     'transparent-shard': ['pir-query-server', 'shard-assign', 'shard-prune'],
-    'transparent-publisher': ['transparent-publish-controller', 'pir-query-server', 'shard-control', 'shard-assign'],
+    'transparent-publisher': ['pir-publisher', 'pir-query-server', 'shard-control', 'shard-assign'],
     # Tiered txid display proof of concept beside history; deployed only by
     # `wallet-pir-deploy.py txid-display-*` (tools/txid/lib/txid_display_poc.py).
     'transparent-txid-display': ['pir-query-server', 'txid-control', 'txid-inventory',
-                                 'txid-display-controller', 'transparent-event-ingest',
+                                 'pir-publisher',
                                  'txid-quality-canary'],
     # Status publisher and the query server its roles run, from the native target
     # like `enhance-pir-native`; tools/scripts/wallet-pir-deploy.py renders its units.
-    'status-pir': ['status-pir', 'pir-query-server'],
+    'status-pir': ['pir-publisher', 'pir-query-server'],
     # The receiver directory's indexer and server, which
     # tools/scripts/wallet-pir-deploy.py deploys and whose `probe` is the deploy's
     # exact check, and the standalone probe pir-monitor runs.
@@ -51,7 +51,8 @@ FILES = {
         'tools/enhance/scripts/sample-worker.py',
         'tools/enhance/scripts/summarize-samples.py', 'tools/enhance/scripts/assess-campaign.py',
         'tools/enhance/deploy/workers.example.json'],
-    'transparent-filter': ['tools/transparent/deploy/transparent-filter-server.service'],
+    'transparent-filter': ['tools/transparent/deploy/transparent-filter-server.service',
+                           'tools/transparent/deploy/transparent-filters.example.json'],
     'transparent-shard': ['tools/transparent/deploy/transparent-shard-server.service', 'tools/transparent/deploy/transparent-Caddyfile'],
     'transparent-publisher': [],
     'transparent-txid-display': ['tools/txid/deploy/transparent-txid-display-worker.service.in',

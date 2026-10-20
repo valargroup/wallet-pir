@@ -63,7 +63,7 @@ def commands(group, groups, lint=False, compile_only=False):
     runner = ['cargo', 'test', '--no-run'] if compile_only else ['bash', 'tools/ci/full-test.sh']
     features = {
         'enhance': NATIVE + [
-            'pir-publisher/enhance', 'pir-publisher/status', 'pir-publisher/transparent',
+            'pir-publisher/enhance', 'pir-publisher/status', 'pir-publisher/transparent-history', 'pir-publisher/transparent-detail',
             'pir-publisher/receiver', 'pir-publisher/native-reinspiring',
             'pir-publisher/status-tests', 'pir-e2e-tests/enhance-tests',
             'pir-e2e-tests/native-reinspiring',

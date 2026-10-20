@@ -8,7 +8,7 @@ The two packages have separate responsibilities:
 
 - `status-publisher` reads blocks and the mempool, checkpoints source state,
   owns publication authority, and prepares and activates datasets on serving
-  workers. It also provides the existing `status-pir` executable and its commands.
+  workers. Its diagnostic commands run through `pir-publisher status`.
 - `status-query-server` serves prepared datasets through controllers, routers and
   workers. Its `protocol` module defines the wire contract and probe client; its
   pure snapshot helpers encode datasets without reading the chain.

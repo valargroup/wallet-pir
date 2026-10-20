@@ -1,4 +1,4 @@
-//! The `status-pir` subcommands. The binary only parses arguments and calls one
+//! The `pir-publisher status` subcommands. The binary only parses arguments and calls one
 //! function here per subcommand.
 //!
 //! Production diagnostics use `probe-live` and `probe-live-load`.

@@ -287,6 +287,10 @@ impl NodeClient {
     /// The node rejects 1.0 batches, so batches use 2.0 while single calls
     /// stay on 1.0. Per-entry RPC errors are returned to the caller; a
     /// malformed batch response is an error for the whole batch.
+    #[cfg_attr(
+        not(any(feature = "enhance", feature = "transparent")),
+        allow(dead_code)
+    )]
     pub(crate) async fn batch<T: DeserializeOwned>(
         &self,
         method: &str,
@@ -303,6 +307,10 @@ impl NodeClient {
 
     /// [`Self::batch`] for calls of any methods, each given as
     /// `{"method": ..., "params": ...}`.
+    #[cfg_attr(
+        not(any(feature = "enhance", feature = "transparent")),
+        allow(dead_code)
+    )]
     pub(crate) async fn batch_mixed<T: DeserializeOwned>(
         &self,
         calls: Vec<serde_json::Value>,

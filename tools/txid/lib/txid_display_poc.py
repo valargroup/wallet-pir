@@ -48,8 +48,7 @@ PLAN_SCHEMA = 'txid-display-poc-plan-v1'
 JOURNAL_KIND = 'txid-display-poc-transaction-v1'
 FLEET_SCHEMA = 'txid-display-fleet-v1'
 KIND = 'transparent-txid-display'
-BINARIES = ('pir-query-server', 'txid-control', 'txid-inventory', 'txid-display-controller',
-            'transparent-event-ingest', 'txid-quality-canary')
+BINARIES = ('pir-query-server', 'txid-control', 'txid-inventory', 'pir-publisher', 'txid-quality-canary')
 SCRIPTS = ('txid-display-fleet.py', 'txid-display-observe.py')
 TEMPLATES = ('transparent-txid-display-worker.service.in', 'transparent-txid-display-controller.service.in',
              'txid-display-routes.caddy.in')
@@ -58,7 +57,7 @@ RELEASE_FILES = {name: 'tools/txid/deploy/' + name for name in TEMPLATES}
 RELEASE_FILES.update({name: 'tools/txid/scripts/' + name for name in SCRIPTS})
 # What each host runs. Workers never receive the controller or the backfill.
 HOST_RELEASE = {
-    'coordinator': ('txid-display-controller', 'transparent-event-ingest', 'txid-inventory', 'txid-control', *SCRIPTS),
+    'coordinator': ('pir-publisher', 'txid-inventory', 'txid-control', *SCRIPTS),
     'archive': ('pir-query-server', 'txid-control'),
 }
 # One combined worker on the archive host, which also serves the site.
@@ -537,6 +536,10 @@ class Poc:
     def release_dir(self):
         return '%s/%s' % (self.n.RELEASES, self.request['source_sha'])
 
+    @property
+    def publisher_config_path(self):
+        return str(Path(self.n.WORKERS_JSON).with_name('publisher.json'))
+
     def binary(self, name):
         return '%s/%s' % (self.release_dir, name)
 
@@ -596,8 +599,21 @@ class Poc:
             'MODE': controller['mode'], 'STATUS_PORT': str(r['ports']['controller_status']),
             'WORKERS_JSON': self.n.WORKERS_JSON, 'STATE': self.n.STATE,
             'RPC_URL': controller['rpc_url'], 'RPC_COOKIE': controller['rpc_cookie'], 'EXTRA_ARGS': extra,
+            'PUBLISHER_CONFIG': self.publisher_config_path,
             'MEMORY_MAX': limits['memory_max'], 'CPU_QUOTA': limits['cpu_quota'],
             'CPU_WEIGHT': str(limits['cpu_weight']), 'NICE': str(limits['nice'])})
+        settings = {
+            'root': r['publication']['root'], 'journal': r['journal']['data_dir'],
+            'workers': self.n.WORKERS_JSON, 'mode': controller['mode'],
+            'rpc_url': controller['rpc_url'], 'rpc_cookie': controller['rpc_cookie'],
+            'poll_ms': controller.get('poll_ms', 500),
+            'status_listen': '127.0.0.1:%s' % r['ports']['controller_status'],
+            'blocks_per_step': controller.get('blocks_per_step', 25),
+            'step_interval_ms': controller.get('step_interval_ms', 2000),
+            'max_recent_records': controller.get('max_recent_records'),
+        }
+        files['publisher.json'] = json.dumps({'management_listen': '127.0.0.1:18198',
+            'transaction_details': {'enabled': True, 'settings': settings}}, indent=2) + '\n'
         for name in ['unit:' + key for key in self.worker_keys] + ['unit:controller']:
             starts = [value for _, key, value in units.entries(files[name]) if key == 'ExecStart']
             require(len(starts) == 1, '%s must have exactly one ExecStart' % name)
@@ -627,6 +643,7 @@ class Poc:
             **{'config:' + key: (key, WORKER_CONFIG, 0o644) for key in self.worker_keys},
             'unit:controller': ('coordinator', '%s/%s' % (SYSTEM, self.n.CONTROLLER_UNIT), 0o644),
             'workers.json': ('coordinator', self.n.WORKERS_JSON, 0o600),
+            'publisher.json': ('coordinator', self.publisher_config_path, 0o600),
             'fleet.json': ('coordinator', self.n.FLEET_JSON, 0o600),
             'routes.caddy': (self.route_host, self.routes_path, 0o644),
             'withdrawn.caddy': (self.route_host, self.routes_path, 0o644),
@@ -654,10 +671,10 @@ class Poc:
         """Argv of every transient unit; `{start}`, `{through}` and `{run}` are filled at start."""
         r = self.request
         journal, root = r['journal'], r['publication']['root']
-        ingest = [self.binary('transparent-event-ingest'), '--state-dir', journal['node_cache_dir'],
+        ingest = [self.binary('pir-publisher'), 'ingest-events', '--state-dir', journal['node_cache_dir'],
                   '--workers', str(r['units']['ingest']['workers']), '--txid-display',
                   '--start-height', str(journal['start_height'])]
-        controller = self.binary('txid-display-controller')
+        controller = self.binary('pir-publisher')
         seal = ['--geometry', r['controller']['geometry']]
         for key in SEAL_KEYS:
             seal += ['--' + key.replace('_', '-'), str(r['controller'][key])]
@@ -672,14 +689,14 @@ class Poc:
                 wait=True),
             'plan-start': self.systemd_run(self.n.PLAN_START_UNIT,
                                            self.unit_limits('bootstrap'), [
-                controller, 'plan-start', '--journal', journal['data_dir'],
+                controller, 'detail', 'plan-start', '--journal', journal['data_dir'],
                 '--archives', str(r['controller']['archives']),
                 '--replay-seals', str(r['controller']['replay_seals']), *seal], wait=True),
             'bootstrap': self.systemd_run(self.n.BOOTSTRAP_UNIT, self.unit_limits('bootstrap'), [
-                controller, 'bootstrap', '--root', root, '--journal', journal['data_dir'],
+                controller, 'detail', 'bootstrap', '--root', root, '--journal', journal['data_dir'],
                 '--start', '{start}', '--through', '{through}', *seal]),
             'verify': self.systemd_run(self.n.VERIFY_UNIT, self.unit_limits('controller'),
-                                       [controller, 'verify', '--root', root, '--journal', journal['data_dir']],
+                                       [controller, 'detail', 'verify', '--root', root, '--journal', journal['data_dir']],
                                        wait=True),
             'observer': self.systemd_run(self.n.OBSERVER_UNIT, MEASURE_LIMITS, observe + [
                 'observer', '--rpc-url', r['controller']['rpc_url'], '--cookie', r['controller']['rpc_cookie'],
@@ -1297,6 +1314,7 @@ class Poc:
         self.ex.mkdir(coordinator, self.n.STATE + '/ssh', 0o700)
         transaction.change('coordinator', self.n.FLEET_JSON, files['fleet.json'], 0o600)
         transaction.change('coordinator', self.n.WORKERS_JSON, files['workers.json'], 0o600)
+        transaction.change('coordinator', self.publisher_config_path, files['publisher.json'], 0o600)
         if self.running('coordinator', self.n.CONTROLLER_UNIT):
             transaction.undo('post', 'coordinator', 'start-unit', unit=self.n.CONTROLLER_UNIT)
         transaction.undo('pre', 'coordinator', 'stop-unit', unit=self.n.CONTROLLER_UNIT)

@@ -95,7 +95,7 @@ class MatrixTests(unittest.TestCase):
         keys = registry['transparent-publisher']['targets']
         commands = matrix.cargo_commands(keys, contexts, targets, packages)
         for package, binary, feature in (
-                ('transparent-publisher', 'transparent-event-ingest', 'transparent-publisher/rocksdb-reader'),
+                ('pir-publisher', 'pir-publisher', 'pir-publisher/rocksdb-reader'),
                 ('transparent-tools', 'shard-cutoff', 'transparent-tools/rocksdb-reader'),
                 ('transparent-tools', 'journal-inventory', 'transparent-tools/rocksdb-reader'),
                 ('transparent-tools', 'compact-export', 'transparent-tools/compact-export')):

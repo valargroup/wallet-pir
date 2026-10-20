@@ -1,7 +1,7 @@
 //! The Status publisher and its diagnostics. Query roles run in `pir-query-server`;
 //! this binary never serves wallets.
+use crate::cli;
 use clap::{Parser, Subcommand};
-use status_publisher::cli;
 use std::{net::SocketAddr, path::PathBuf};
 
 #[derive(Parser)]
@@ -80,13 +80,8 @@ enum Command {
     },
 }
 
-#[tokio::main]
-async fn main() -> Result<(), cli::AnyError> {
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .with_writer(std::io::stderr)
-        .init();
-    match Args::parse().command {
+pub async fn run(args: Vec<std::ffi::OsString>) -> Result<(), cli::AnyError> {
+    match Args::parse_from(args).command {
         Command::ProbeLiveLoad {
             origin,
             rpc_url,
@@ -150,14 +145,14 @@ mod tests {
 
     #[test]
     fn standalone_controller_is_rejected_and_probes_remain() {
-        assert!(Args::try_parse_from(["status-pir", "serve-distributed"]).is_err());
+        assert!(Args::try_parse_from(["pir-publisher status", "serve-distributed"]).is_err());
         for command in [
             "probe-live",
             "probe-live-load",
             "observe-live",
             "validate-distributed",
         ] {
-            let error = Args::try_parse_from(["status-pir", command, "--help"])
+            let error = Args::try_parse_from(["pir-publisher status", command, "--help"])
                 .err()
                 .unwrap();
             assert_eq!(error.kind(), clap::error::ErrorKind::DisplayHelp);

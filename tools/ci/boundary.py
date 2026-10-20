@@ -276,7 +276,8 @@ def manifests(root=ROOT):
 
 # Serving libraries; `pir-query-server` is their only executable entrypoint.
 SERVING_LIBRARIES = ('enhance-query-server', 'status-query-server',
-                     'transparent-query-server', 'receiver-pir-server')
+                     'transparent-query-server', 'receiver-pir-server',
+                     'enhance-publisher', 'status-publisher', 'transparent-publisher')
 
 
 def serving_binary_violations(packages):
@@ -290,7 +291,7 @@ def serving_binary_violations(packages):
             problems.append(f"{package['name']}: serving library must set autobins = false")
         for name in package.get('bins', []):
             problems.append(f"{package['name']}: serving library declares binary {name}; "
-                            'run it through pir-query-server')
+                            'run it through pir-query-server or pir-publisher')
     return problems
 
 

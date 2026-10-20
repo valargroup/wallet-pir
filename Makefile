@@ -153,7 +153,7 @@ test:
 	tools/ci/full-test.sh --locked --workspace --profile release-fast --features enhance-publisher/qualification-tests,enhance-query-server/qualification-tests,transparent-publisher/qualification-tests,transparent-shared/qualification-tests,transparent-publisher/rocksdb-reader,transparent-tools/test-support,transparent-tools/compact-export,transparent-query-server/transparent-history,transparent-query-server/transparent-detail
 
 run-server:
-	cargo run --release -p enhance-publisher --bin enhance-pir-server -- --help
+	cargo run --release -p pir-publisher --features enhance -- --help
 
 run-worker:
 	cargo run --release -p pir-query-server --features enhance,native-reinspiring -- --help
@@ -342,7 +342,7 @@ check-tools:
 	python3 tools/ci/workflow_paths.py
 	python3 tools/ci/scaler_tests.py
 	python3 tools/ci/full_packages.py
-	python3 tools/ci/integration_tests.py --package enhance-publisher
+	python3 tools/ci/integration_tests.py --package pir-publisher
 	python3 -m unittest discover -s tools/transparent/filters -p 'test_*.py'
 	python3 -m unittest discover -s tools/transparent/parent-filters -p 'test_*.py'
 	python3 tools/ci/python_tests.py tools/tests --jobs 2 --isolate-ci-output

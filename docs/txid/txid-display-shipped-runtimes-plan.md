@@ -197,7 +197,7 @@ before starting.
   `~/.config/wallet-pir-deploy/txid-display/measure-20qps-20261007/`: `events.jsonl`,
   `TRIPPED`. Do not restart anything inside one of its load windows.
 - **Build** release binaries with the CI flags:
-  - `RUSTFLAGS="-C target-cpu=x86-64-v3 -C target-feature=+pclmulqdq" cargo build --locked --release -p pir-query-server -p transparent-publisher --features pir-query-server/transparent-detail --bin pir-query-server --bin txid-display-controller`
+  - `RUSTFLAGS="-C target-cpu=x86-64-v3 -C target-feature=+pclmulqdq" cargo build --locked --release -p pir-query-server -p pir-publisher --features pir-query-server/transparent-detail,pir-publisher/transparent-detail --bin pir-query-server --bin pir-publisher`
   - Check the minimum glibc version against the hosts (2.39).
 - **Order:**
   1. **Worker first.** Its behavior is unchanged when no shipped files are present.

@@ -49,11 +49,6 @@
   "transparent-publisher": {
     "family": "transparent",
     "targets": [
-      "transparent:transparent-publisher:bin:shard-publish",
-      "transparent:transparent-publisher:bin:transparent-event-ingest",
-      "transparent:transparent-publisher:bin:transparent-publish-controller",
-      "transparent:transparent-publisher:bin:transparent-publisher",
-      "transparent:transparent-publisher:bin:txid-display-controller",
       "transparent:transparent-publisher:doc:transparent_publisher",
       "transparent:transparent-tools:bin:publication_bench",
       "transparent:transparent-publisher:lib:transparent_publisher",
@@ -80,7 +75,8 @@
       "transparent:transparent-tools:bin:shard-verify",
       "transparent:transparent-tools:example:transparent-txid-demo",
       "transparent:transparent-tools:test:compact_export",
-      "transparent:transparent-tools:test:txid_shipped_runtimes"
+      "transparent:transparent-tools:test:txid_shipped_runtimes",
+      "transparent:pir-publisher:test:commands"
     ]
   },
   "transparent-backend": {
@@ -147,17 +143,14 @@
   "enhance-publisher-contracts": {
     "family": "enhance",
     "targets": [
-      "native:enhance-publisher:bin:enhance-pir-server",
       "native:enhance-publisher:doc:enhance_publisher",
       "native:enhance-publisher:lib:enhance_publisher",
       "native:pir-e2e-tests:test:boundary_recovery_model",
       "native:pir-e2e-tests:test:ci_hint",
       "native:pir-e2e-tests:test:encrypted_lifecycle",
-      "native:enhance-publisher:test:publisher_cli",
       "native:pir-e2e-tests:test:packing_http",
       "native:pir-e2e-tests:test:record_layout",
       "native:pir-e2e-tests:test:status_routes",
-      "native:status-publisher:bin:status-pir",
       "native:status-query-server:test:status_wallet",
       "native:native-certificate:bin:native_certificate",
       "native:pir-publisher:lib:pir_publisher",
@@ -167,7 +160,8 @@
       "native:pir-query-server:bin:pir-query-server",
       "native:pir-query-server:doc:pir_query_server",
       "native:pir-query-server:lib:pir_query_server",
-      "native:pir-query-server:test:operator"
+      "native:pir-query-server:test:operator",
+      "native:pir-publisher:test:commands"
     ]
   },
   "enhance-http": {

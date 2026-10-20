@@ -18,8 +18,15 @@ cuda = ["enhance-query-server?/cuda"]
 qualification-tests = []
 # The copied query-host entrypoint the process tests start.
 query-host = ["dep:pir-query-server"]
+publisher-host = ["dep:pir-publisher"]
+transparent-history = []
+transparent-detail = []
+status = ["dep:status-publisher", "pir-publisher/status"]
+rocksdb-reader = ["transparent-history", "pir-publisher/rocksdb-reader"]
 # Wallet-client and chain-fixture regressions.
 enhance-tests = [
+    "publisher-host",
+    "pir-publisher/enhance",
     "enhance",
     "query-host",
     "dep:enhance-publisher",
@@ -38,6 +45,11 @@ enhance-tests = [
     "zakura-pir-client/testing",
 ]
 transparent-tests = [
+    "publisher-host",
+    "transparent-history",
+    "transparent-detail",
+    "pir-publisher/transparent-history",
+    "pir-publisher/transparent-detail",
     "query-host",
     "pir-query-server/transparent-history",
     "pir-query-server/transparent-detail",
@@ -63,6 +75,8 @@ transparent-tests = [
 ]
 
 [dependencies]
+pir-publisher = { path = "../pir-publisher", optional = true }
+status-publisher = { path = "../status/status-publisher", optional = true }
 enhance-publisher = { path = "../enhance/enhance-publisher", optional = true }
 transparent-publisher = { path = "../transparent/transparent-publisher", optional = true }
 enhance-query-server = { path = "../enhance/enhance-query-server", optional = true }
@@ -87,9 +101,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # The tests start these processes beside the in-process publishers.
 [[bin]]
-name = "enhance-pir-server-test"
-path = "../enhance/enhance-publisher/src/bin/server.rs"
-required-features = ["enhance-tests"]
+name = "pir-publisher-test"
+path = "../pir-publisher/src/main.rs"
+required-features = ["publisher-host"]
 test = false
 
 [[bin]]
@@ -98,11 +112,6 @@ path = "../pir-query-server/src/main.rs"
 required-features = ["query-host"]
 test = false
 
-[[bin]]
-name = "transparent-publish-controller-test"
-path = "../transparent/transparent-publisher/src/bin/transparent-publish-controller.rs"
-required-features = ["transparent-tests"]
-test = false
 
 # Transparent administration tools, built from their transparent-tools sources.
 [[bin]]

@@ -1,8 +1,13 @@
 //! Minimal decoded chain data for RPC ingestion. Transaction decoding and IDs use
 //! Common's wallet primitives; consensus and proof verification remain the node's
 //! responsibility. The optional RocksDB adapter converts through canonical bytes.
+// Product features use different parts of the same private decoded wire data.
+// Keep the complete decoder available without requiring every product at once.
+#![allow(dead_code)]
 mod transaction;
-pub(crate) use transaction::{Action, Transaction};
+#[cfg(feature = "transparent")]
+pub(crate) use transaction::Action;
+pub(crate) use transaction::Transaction;
 
 use sha2::{Digest, Sha256};
 use std::{

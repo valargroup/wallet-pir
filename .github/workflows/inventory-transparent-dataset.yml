@@ -164,7 +164,7 @@ jobs:
               systemctl cat "$unit" 2>/dev/null | grep -E '^(ExecStart|MemoryMax)' || echo "(no persistent unit)"
             done
             echo; echo "## binaries"
-            sudo sha256sum /usr/local/bin/transparent-publisher /usr/local/bin/transparent-event-ingest 2>/dev/null || true
+            sudo sha256sum /usr/local/bin/pir-publisher 2>/dev/null || true
             echo; echo "## filter service (loopback)"
             curl -fsS --max-time 10 http://127.0.0.1:8090/v1/health || echo "(no answer)"
             echo; printf 'filters map sha256 (loopback): '; curl -fsS --max-time 10 http://127.0.0.1:8090/v1/filters/shards | sha256sum | cut -d' ' -f1 || echo "(no answer)"

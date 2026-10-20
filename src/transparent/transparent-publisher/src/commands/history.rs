@@ -1,12 +1,15 @@
 //! One-shot shard publication; continuous operation uses the same builder.
 use zakura_pir_publisher::transparent::filter as transparent_filter;
 
+use crate::history::publication::{publish, BoxError, PublishOptions};
 use clap::Parser;
 use transparent_filter::BlockHash;
-use transparent_publisher::history::publication::{publish, BoxError, PublishOptions};
 use transparent_shared::journal::events::EventStore;
 #[derive(Parser)]
-#[command(name = "shard-publish", about = "Publish a transparent shard set")]
+#[command(
+    name = "pir-publisher publish-history",
+    about = "Publish a transparent shard set"
+)]
 struct Cli {
     #[command(flatten)]
     options: PublishOptions,
@@ -28,13 +31,12 @@ struct Cli {
     follow_journal: bool,
 }
 
-#[tokio::main]
-async fn main() -> Result<(), BoxError> {
+pub async fn run(args: Vec<std::ffi::OsString>) -> Result<(), BoxError> {
     let Cli {
         options: cli,
         parent_block_hash,
         follow_journal,
-    } = Cli::parse();
+    } = Cli::parse_from(args);
     // A standalone build has no controller snapshot. Unless told to follow a
     // live writer, refuse concurrent ingest rather than reading through a
     // truncation/reorg under an old checkpoint.
@@ -61,10 +63,7 @@ async fn main() -> Result<(), BoxError> {
     } else if let Some(parent) = parent_block_hash {
         BlockHash::from_display_hex(&parent)?
     } else {
-        let rpc = transparent_publisher::ingest::zakura::connect(
-            &cli.zakura_rpc_url,
-            &cli.zakura_cookie,
-        )?;
+        let rpc = crate::ingest::zakura::connect(&cli.zakura_rpc_url, &cli.zakura_cookie)?;
         BlockHash::from_internal_bytes(rpc.block_hash(store.start_height() - 1).await?)
     };
     let endpoint = cli

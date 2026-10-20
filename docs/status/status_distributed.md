@@ -11,9 +11,9 @@ journal and source cache. The publisher reads the coordinator-local Zakura
 cookie; query workers and routers never receive that credential.
 
 The standalone production controller command has been removed. Follow the
-[unified publisher cutover](../publisher.md#expand-the-coordinator-to-enhance-and-status)
-to adopt an existing standalone controller. Rollback uses its captured old
-executable and unit; current source does not rebuild that historical entrypoint.
+[unified publisher operations](../publisher.md#updating-the-unified-coordinator)
+for updates to the deployed shared process. Retained cutover journals can restore
+their captured executables and units; current source does not rebuild standalone controllers.
 
 The publisher never faces wallets. Its private listener serves candidate
 transfer (`/artifact/:id`), `/control/active` (the active manifest, 503 until a
@@ -223,3 +223,51 @@ The 1,572,864-entry admission ceiling and 20-second freshness limit are unchange
 Block hashes remain internal source/publication metadata, not wallet-visible
 inclusion evidence. All retained v1 timing/resource captures are historical and
 protocol-incompatible; they cannot qualify v2.
+
+
+### Installing CPU query-role configurations
+
+The Status worker and router deployment roles render their configuration files
+with their units. Supply each role's `settings` in the private fleet inventory:
+`network_hex`, `state_dir`, `listen`, `artifact_origin`, and `worker_origin`;
+the router may also supply `query_listen`. Retain the current network identity,
+loopback peers and durable state paths. The deployment stages each configuration,
+runs the new executable's `--check` before restarting, and restores the previous
+configuration (or its absence) on rollback. The examples beside the unit templates
+show the resulting files; do not install their placeholder network hash.
+
+For aggregate live-load acceptance against the router's loopback wallet listener,
+run `tools/status/lib/live_probe.py` with the installed `status-pir` diagnostic
+client, node cookie reference, router origin and a fresh report directory. It
+runs the unchanged encrypted probe at twenty lookups per second across eight
+simulated client addresses. The router allows two concurrent queries per client;
+a single client's overload test is a separate check. The wrapper preserves
+failures without retrying and records its transport and client count beside the
+probe's raw arrival records. It refuses public upstream origins and never
+changes the server's admission policy.
+
+### Cutting over the existing wallet edge
+
+The query router and its public route must move together. The retired publisher
+wallet gateway does not preserve forwarded client addresses, so leaving it in
+front of the updated router collapses unrelated clients into one concurrency
+limit. Keep the shared publisher running and send the existing `/v1/status/*`
+edge route directly to the router's loopback query tunnel at `127.0.0.1:8492`.
+
+Use `wallet-pir-deploy.py status-routing-plan`, `status-routing-preflight` and
+`status-routing-deploy`, with the private `--request` and `--request-sha256`.
+The request schema is `status-wallet-route/1`, with `host`, `machine_id`,
+`router_host`, `router_sha256` and the existing HTTPS `public_origin`. The private
+Status inventory also supplies `route_probe_client`, the checksummed diagnostic
+client at `/opt/status-pir/releases/<sha256>/status-pir`, and its independent
+`exact_check`. Deployment requires the reviewed `--expect-plan-sha256`.
+
+Plan can run before the new router starts. Preflight and deployment require its
+exact executable and wallet listener to be active. The operation validates Caddy,
+changes only the Status upstream in the installed file, reloads rather than
+restarts Caddy, and checks encrypted answers through the existing public TLS
+origin and the aggregate private load. It preserves every other route and TLS
+setting. An interrupted or failed operation is recovered with
+`status-routing-rollback`; `status-routing-status` reports its journal and
+current configuration digest. For a complete service rollback, restore routing
+first and then restore the router executable through its retained transaction.

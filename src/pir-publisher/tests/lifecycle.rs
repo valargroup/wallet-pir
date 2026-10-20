@@ -1,12 +1,5 @@
 //! Real loopback listeners exercise the host without chain or worker fixtures.
 use pir_pipeline::service::Shutdown;
-#[cfg(all(
-    feature = "enhance",
-    feature = "status",
-    feature = "transparent",
-    feature = "receiver"
-))]
-use pir_publisher::config::Config;
 use pir_publisher::run;
 use serde_json::{json, Value};
 use std::{net::SocketAddr, time::Duration};
@@ -19,7 +12,8 @@ fn port() -> SocketAddr {
 #[cfg(all(
     feature = "enhance",
     feature = "status",
-    feature = "transparent",
+    feature = "transparent-history",
+    feature = "transparent-detail",
     feature = "receiver"
 ))]
 fn example() -> Value {
@@ -31,7 +25,8 @@ fn example() -> Value {
 #[cfg(all(
     feature = "enhance",
     feature = "status",
-    feature = "transparent",
+    feature = "transparent-history",
+    feature = "transparent-detail",
     feature = "receiver"
 ))]
 #[tokio::test]
@@ -66,7 +61,8 @@ async fn report(url: &str) -> Value {
 #[cfg(all(
     feature = "enhance",
     feature = "status",
-    feature = "transparent",
+    feature = "transparent-history",
+    feature = "transparent-detail",
     feature = "receiver"
 ))]
 #[tokio::test]
@@ -111,7 +107,8 @@ async fn management_alone_becomes_ready_and_releases_its_listener() {
 #[cfg(all(
     feature = "enhance",
     feature = "status",
-    feature = "transparent",
+    feature = "transparent-history",
+    feature = "transparent-detail",
     feature = "receiver"
 ))]
 #[tokio::test]

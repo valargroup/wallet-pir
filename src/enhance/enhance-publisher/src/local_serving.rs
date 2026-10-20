@@ -88,6 +88,38 @@ impl Roles {
         Self::open(root, artifact, EPHEMERAL.parse().unwrap()).await
     }
 
+    /// Writes the packing inventory and returns the root publisher configuration
+    /// used by the real-process tests.
+    pub fn publisher_config(
+        &self,
+        root: &Path,
+        listen: &str,
+        rpc: &str,
+    ) -> Result<serde_json::Value> {
+        self.coordinator_args(root)?;
+        let example: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../tools/deploy/publisher/publisher.example.json"
+        ))
+        .map_err(|e| e.to_string())?;
+        let mut settings = example["enhance"]["settings"].clone();
+        settings["listen"] = serde_json::json!(listen);
+        settings["poll_seconds"] = serde_json::json!(1);
+        settings["zakura_rpc_url"] = serde_json::json!(rpc);
+        settings["data_dir"] = serde_json::json!(root.join("data"));
+        settings["worker_config"] = serde_json::json!(root.join("workers.json"));
+        settings["zakura_cookie"] = serde_json::json!(root.join("cookie"));
+        settings["packing_router_config"] = serde_json::json!(root.join("packing-routers.json"));
+        settings["query_ingress"] = serde_json::json!([self.ingress_control.clone()]);
+        settings["artifact_listen"] = serde_json::json!(self.artifact_listen);
+        let management = std::net::TcpListener::bind(EPHEMERAL)
+            .map_err(|e| e.to_string())?
+            .local_addr()
+            .map_err(|e| e.to_string())?;
+        Ok(
+            serde_json::json!({"management_listen":management.to_string(),"enhance":{"enabled":true,"settings":settings}}),
+        )
+    }
+
     /// Writes the packing-router inventory under `root` and returns the
     /// coordinator flags that connect a coordinator process to these roles.
     pub fn coordinator_args(&self, root: &Path) -> Result<Vec<std::ffi::OsString>> {

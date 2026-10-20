@@ -53,7 +53,6 @@ class PlannerTests(unittest.TestCase):
     def test_product_analysis_keeps_tooling_checks(self):
         for path in ('tools/transparent/filters/transparent_filter_build.py',
                      'tools/transparent/parent-filters/transparent_parent_evaluate.py',
-                     'tools/enhance/v7-qualification/assess.py',
                      'tools/enhance/schema11-interop/run.py',
                      'tools/status/status_qualification.py',
                      'tools/txid/txid-sizing/survey.py', 'tools/txid/txid-display/demo.py'):
@@ -367,7 +366,7 @@ class IntegrityTests(unittest.TestCase):
                 self.assertIn('path: release-bundles/%s/%s.tar.gz' % (kind, kind), job)
             self.assertEqual(build[:4], ['cargo', 'build', '--locked', '--release'])
             if family == 'enhance':
-                self.assertEqual(build[build.index('--features') + 1], 'pir-query-server/enhance')
+                self.assertEqual(build[build.index('--features') + 1], 'pir-query-server/enhance,pir-publisher/enhance')
 
     def test_workflows_invoke_only_scripts_that_exist(self):
         import re

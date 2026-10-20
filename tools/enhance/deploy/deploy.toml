@@ -37,7 +37,7 @@
 
 [services.enhance]
 root = "/opt/enhance-pir"
-binary = "enhance-pir-server"
+binary = "pir-publisher"
 artifact_kinds = ["enhance-pir", "enhance-pir-native", "enhance-pir-native-cuda"]
 self_check = ["--help"]
 min_free_bytes = 1073741824
@@ -102,4 +102,5 @@ renderer = "tools.enhance.lib.roles:query_ingress"
 health = "http://{control_listen}/internal/health"
 ready = { field = "ready", equals = true }
 ready_timeout = 300
-adoptable_drop_ins = ["zz-cleanup-*.conf"]
+adopt_command_write_paths = true
+adoptable_drop_ins = ["zz-cleanup-*.conf", "99-apm-hour.conf", "zzzz-main-3685438.conf", "zzzzzz-native-ac06df3.conf", "zzzzzzz-native2m-dc0355b.conf", "zzzzzzzz-native2m-1dae185.conf", "zzzzzzzzzzzzzzzz-main.conf"]

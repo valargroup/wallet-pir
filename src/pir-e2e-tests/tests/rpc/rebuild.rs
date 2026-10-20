@@ -32,7 +32,7 @@ impl Drop for Process {
 }
 
 fn binary() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_enhance-pir-server-test"))
+    Command::new(env!("CARGO_BIN_EXE_pir-publisher-test"))
 }
 
 fn log(root: &Path) -> std::fs::File {
@@ -49,25 +49,20 @@ fn read_log(root: &Path) -> String {
 
 fn start(root: &Path, address: &str, rpc: &str, roles: &crate::serving::Roles) -> Process {
     let log = log(root);
+    let config = root.join("publisher.json");
+    std::fs::write(
+        &config,
+        roles
+            .publisher_config(root, address, rpc)
+            .unwrap()
+            .to_string(),
+    )
+    .unwrap();
     Process(
         binary()
             .env("RUST_LOG", "info")
-            .args([
-                "coordinator",
-                "--listen",
-                address,
-                "--poll-seconds",
-                "1",
-                "--zakura-rpc-url",
-                rpc,
-            ])
-            .arg("--data-dir")
-            .arg(root.join("data"))
-            .arg("--worker-config")
-            .arg(root.join("workers.json"))
-            .arg("--zakura-cookie")
-            .arg(root.join("cookie"))
-            .args(roles.coordinator_args(root).unwrap())
+            .arg("--config")
+            .arg(config)
             .stdout(Stdio::from(log.try_clone().unwrap()))
             .stderr(Stdio::from(log))
             .spawn()
@@ -79,6 +74,7 @@ fn rebuild_command(root: &Path, rpc: &str) -> Command {
     let mut command = binary();
     command
         .args([
+            "enhance",
             "rebuild-journal",
             "--zakura-rpc-url",
             rpc,

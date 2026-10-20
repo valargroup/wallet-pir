@@ -131,6 +131,10 @@ class Deployer:
     def plan_target(self, target, state, sha, retire_historical=False):
         plan = TargetPlan(target, state)
         role = target.role
+        for path, digest in role.launcher:
+            if self.ex.sha256(target.host, path) != digest:
+                plan.refusals.append('credential launcher changed: ' + path)
+        launcher = tuple(path for path, _ in role.launcher)
         if not role.shared_lifecycle:
             plan.refusals.append('operator-managed role: stop and preflight as the rendered unit user; '
                                  'generic deployment cannot check its exclusive state')
@@ -155,7 +159,7 @@ class Deployer:
         try:
             current = units.effective(text for _, text in unit_files(state))
             plan.exec_start = units.exec_start(current)
-            prefix, plan.exec_binary, tail = units.split_exec(plan.exec_start)
+            prefix, plan.exec_binary, tail = units.split_exec(plan.exec_start, launcher)
         except units.UnitError as error:
             plan.refusals.append(str(error))
             return plan
@@ -224,9 +228,9 @@ class Deployer:
                 if fragment != state['fragment_text']:
                     plan.changes.insert(0, {'op': 'write', 'path': path, 'previous': state['fragment_text'], 'new': fragment})
             desired = units.effective([fragment] + [kept[name] for name in sorted(kept)])
-            if units.split_exec(units.exec_start(desired))[1] != release:
+            if units.split_exec(units.exec_start(desired), launcher)[1] != release:
                 plan.refusals.append('the new unit would not run %s' % release)
-            plan.drift = units.differences(units.normalized(current), units.normalized(desired))
+            plan.drift = units.differences(units.normalized(current, launcher), units.normalized(desired, launcher))
         except (units.UnitError, descriptors.DescriptorError, ValueError) as error:
             plan.refusals.append(str(error))
             return plan
@@ -457,6 +461,7 @@ class Deployer:
                        'ready_url': target.url(target.role.ready_url), 'timeout': target.role.ready_timeout,
                        'health_equals': target.health_equals},
             'directories': list(plan.directories), 'check': list(plan.check),
+            'launcher': [{'path': path, 'sha256': digest} for path, digest in target.role.launcher],
         }
 
     def stage(self, hosts, sha, binary, journal=None):
@@ -520,11 +525,14 @@ class Deployer:
                                       % (host, code, output[-500:]))
         self.out('%s: staged %s and it runs' % (host, path))
 
-    def activate(self, journal, index, sha):
+    def activate(self, journal, index, sha, *, verify=True):
         record = journal.hosts[index]
         host, unit = record['host'], record['unit']
         directory = '%s/%s' % (self.service.transaction_dir(journal.id), unit)
         self.lock.verify()
+        for item in record.get('launcher', []):
+            if self.ex.sha256(host, item['path']) != item['sha256']:
+                raise DeployError('credential launcher changed before restart: ' + item['path'])
         guard = self.service.roles[record['role']].product_guard()
         if guard is not None:
             # Observed again under the lock, immediately before any effect.
@@ -555,6 +563,9 @@ class Deployer:
         journal.set_phase(index, 'restarting')
         self.ex.systemctl(host, 'restart', unit)
         journal.set_phase(index, 'verifying')
+        if not verify:
+            # A coordinated publisher cutover verifies after its matching owner starts.
+            return
         self.wait_verified(record, sha)
         journal.set_phase(index, 'verified')
         self.out('%s: running %s and ready' % (record['key'], sha))
@@ -683,6 +694,9 @@ class Deployer:
 
     def restore_conflicts(self, record):
         conflicts = []
+        for item in record.get('launcher', []):
+            if self.ex.sha256(record['host'], item['path']) != item['sha256']:
+                conflicts.append('credential launcher changed: ' + item['path'])
         for change in record['changes']:
             current = self.ex.sha256(record['host'], change['path'])
             if current not in (change['previous_sha256'], change['new_sha256']):
@@ -707,7 +721,7 @@ class Deployer:
         return all(self.ex.sha256(record['host'], change['path']) == change['previous_sha256']
                    for change in record['changes'])
 
-    def restore(self, journal, index):
+    def restore(self, journal, index, *, verify=True):
         record = journal.hosts[index]
         host, unit = record['host'], record['unit']
         self.lock.verify()
@@ -738,6 +752,8 @@ class Deployer:
                         and state.get('invocation_id')):
                     journal.event('restore process started', target=record['key'],
                                   exe_sha256=expected, invocation_id=state['invocation_id'])
+        if not verify:
+            return
         self.wait_verified(record, expected)
         self.lock.verify()
         journal.set_phase(index, 'restored')
