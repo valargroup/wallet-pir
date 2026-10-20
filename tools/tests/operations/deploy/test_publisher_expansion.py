@@ -19,12 +19,11 @@ class ExpandedCoordinator(baseline_tests.Coordinator):
         return super().run(host, argv, timeout)
 
 
-class ExpansionTests(unittest.TestCase):
+class ExpansionFixture:
     def setUp(self):
         baseline = baseline_tests.PublisherCutoverTests()
         baseline.setUp()
         self.addCleanup(baseline.doCleanups)
-        baseline.deploy()
         self.baseline = baseline
         self.ex = ExpandedCoordinator()
         self.ex.__dict__.update(baseline.ex.__dict__)
@@ -68,6 +67,13 @@ class ExpansionTests(unittest.TestCase):
         request, inventory = publisher.load_request(path, publisher.sha(path.read_text()))
         return publisher.Cutover(request, inventory, self.ex, self.root, clock=self.ex.clock, sleep=self.ex.sleep)
 
+
+class ExpansionTests(ExpansionFixture, unittest.TestCase):
+    def setUp(self):
+        super().setUp()
+        self.baseline.deploy()
+        self.ex.effects.clear()
+
     def test_deploy_restart_and_rollback_preserve_the_original_mixed_owners(self):
         before = self.ex.read('coordinator', publisher.CONFIG)
         self.target.deploy(self.binary, self.target.plan()['plan_sha256'])
@@ -103,6 +109,8 @@ class ExpansionTests(unittest.TestCase):
         self.target.rollback()
         self.assertTrue(all(self.ex.probe_unit('coordinator', n)['active_state'] == 'active' for n in (*publisher.ADOPTED, publisher.UNIT)))
 
+
+class ExpansionRequestTests(ExpansionFixture, unittest.TestCase):
     def test_an_omitted_product_check_or_https_change_is_refused(self):
         original = copy.deepcopy(self.request)
         self.request['checks'].pop('status')

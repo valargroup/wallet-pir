@@ -57,13 +57,6 @@ class FleetInventoryTests(unittest.TestCase):
         self.assertIn('worker@transparent-v12-01:transparent-v12-archive.service', keys)
         self.assertEqual(len(keys), len(set(keys)))
 
-    def test_unified_process_has_its_own_deploy_descriptor(self):
-        services = descriptors.load_descriptors(ROOT / 'tools/deploy/publisher/services.toml')
-        service = services['publisher']
-        self.assertEqual(service.binary, 'pir-publisher')
-        self.assertEqual(service.order, ('server',))
-        self.assertTrue(service.roles['server'].owns_unit)
-
     def test_unified_publisher_refuses_standalone_owners_and_missing_checks(self):
         document = copy.deepcopy(EXAMPLE)
         descriptors.publisher_ownership(document['services'])

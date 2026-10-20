@@ -1025,6 +1025,10 @@ class UnitTests(unittest.TestCase):
                          ('worker', 'external-worker', 'packing-router', 'query-ingress'))
         self.assertEqual(SERVICES['status'].order, ('worker', 'external-worker', 'router'))
         self.assertEqual(SERVICES['receiver'].order, ('server', 'serve-publication'))
+        publisher = SERVICES['publisher']
+        self.assertEqual(publisher.binary, 'pir-publisher')
+        self.assertEqual(publisher.order, ('server',))
+        self.assertTrue(publisher.roles['server'].owns_unit)
         # Optional roles are rendered whole. Required Enhance serving roles are role mode too.
         self.assertTrue(all(not role.optional or role.mode == 'role'
                             for service in SERVICES.values() for role in service.roles.values()))

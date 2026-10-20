@@ -34,35 +34,6 @@ fn example() -> Value {
     feature = "transparent",
     feature = "receiver"
 ))]
-#[test]
-fn every_mode_is_independently_configurable() {
-    for enabled in [
-        "enhance",
-        "status",
-        "transparent_history",
-        "transaction_details",
-        "receiver",
-    ] {
-        let mut value = example();
-        for name in [
-            "enhance",
-            "status",
-            "transparent_history",
-            "transaction_details",
-            "receiver",
-        ] {
-            value[name]["enabled"] = json!(name == enabled);
-        }
-        let config: Config = serde_json::from_value(value).unwrap();
-        assert_eq!(config.validate().unwrap().probes.len(), 1, "{enabled}");
-    }
-}
-#[cfg(all(
-    feature = "enhance",
-    feature = "status",
-    feature = "transparent",
-    feature = "receiver"
-))]
 #[tokio::test]
 async fn bind_failure_cannot_start_a_publisher_or_create_its_state() {
     let temp = tempfile::tempdir().unwrap();

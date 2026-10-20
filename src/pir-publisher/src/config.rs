@@ -253,20 +253,27 @@ mod tests {
         assert_eq!(layout.listeners.len(), 1);
         assert!(layout.roots.is_empty());
     }
-    #[cfg(all(feature = "enhance", feature = "status"))]
     #[test]
-    fn enhance_and_status_can_be_enabled_independently() {
+    fn each_compiled_product_can_be_enabled_independently() {
         let example: serde_json::Value = serde_json::from_str(include_str!(
             "../../../tools/deploy/publisher/publisher.example.json"
         ))
         .unwrap();
-        for product in ["enhance", "status"] {
-            let config: Config = serde_json::from_value(serde_json::json!({
-                "management_listen": "127.0.0.1:18080",
-                product: example[product].clone(),
-            }))
-            .unwrap();
-            assert!(config.validate().is_ok(), "{product}");
+        for (product, compiled) in [
+            ("enhance", cfg!(feature = "enhance")),
+            ("status", cfg!(feature = "status")),
+            ("transparent_history", cfg!(feature = "transparent")),
+            ("transaction_details", cfg!(feature = "transparent")),
+            ("receiver", cfg!(feature = "receiver")),
+        ] {
+            if compiled {
+                let config: Config = serde_json::from_value(serde_json::json!({
+                    "management_listen": "127.0.0.1:18080",
+                    product: example[product].clone(),
+                }))
+                .unwrap();
+                assert_eq!(config.validate().unwrap().probes.len(), 1, "{product}");
+            }
         }
     }
     #[cfg(feature = "enhance")]

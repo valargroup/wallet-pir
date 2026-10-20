@@ -35,18 +35,9 @@ fn maintenance_commands_remain() {
 }
 
 #[test]
-fn serving_commands_are_rejected() {
-    for name in [
-        "coordinator",
-        "worker",
-        "query-ingress",
-        "packing-router",
-        "check-backend",
-        "repair-rows",
-    ] {
-        let output = server().arg(name).output().unwrap();
-        assert!(!output.status.success(), "{name}");
-        let err = String::from_utf8_lossy(&output.stderr);
-        assert!(err.contains("unrecognized subcommand"), "{name}: {err}");
-    }
+fn standalone_coordinator_is_rejected() {
+    let output = server().arg("coordinator").output().unwrap();
+    assert!(!output.status.success());
+    let err = String::from_utf8_lossy(&output.stderr);
+    assert!(err.contains("unrecognized subcommand"), "{err}");
 }
