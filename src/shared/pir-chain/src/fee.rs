@@ -6,8 +6,9 @@
 //! values are not in the transaction; they come from the outputs it spends.
 //! An input whose spent output is unknown makes the fee unknown, so this
 //! module never substitutes zero, guesses, or sums only the inputs it found.
-// The cross-block cache serves the `rpc` reads; decoding alone leaves it unused.
-#![cfg_attr(not(feature = "rpc"), allow(dead_code))]
+// The cross-block fee cache serves Enhance RPC reads; other product selections
+// still expose the shared fee error and cache-size constant.
+#![cfg_attr(not(all(feature = "rpc", feature = "enhance")), allow(dead_code))]
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
