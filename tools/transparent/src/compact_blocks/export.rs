@@ -1,6 +1,6 @@
 //! Compact messages reconstructed from raw blocks, independently of journal events.
 //!
-//! wallet-libraries' `zakura_server_chain::transparent` reads the compact fields
+//! The shared chain reader's `zakura_server_chain::transparent` reads the compact fields
 //! out of the raw block; this module frames them as lightwalletd's protobuf
 //! messages.
 use super::proto::*;

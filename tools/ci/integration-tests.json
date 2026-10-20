@@ -106,5 +106,16 @@
       "transparent_provider_installation",
       "unified_http_sync_campaign"
     ]
+  },
+  "zakura-server-chain": {
+    "fast": [
+      "enhance",
+      "receiver",
+      "status",
+      "transparent"
+    ],
+    "full": [
+      "state"
+    ]
   }
 }

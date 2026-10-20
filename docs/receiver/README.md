@@ -22,7 +22,7 @@ publications over HTTP. `receiver-indexer` builds them from a Zakura node; its
 binary is `receiver-directory`. The service shares process identity and
 admission (`pir-control`), metrics (`pir-observability`) and the PIR profile
 (`pir-native`) with the other services, and reads the node through
-wallet-libraries' server-only chain adapters (`zakura-server-chain`), which decode
+the server-only chain adapters (`zakura-server-chain`, `src/shared/pir-chain`), which decode
 blocks, count note positions and recover receivers.
 
 The indexer's `receiver_indexer::application` supplies operations to the internal
@@ -42,7 +42,7 @@ store, protocol, queue or authority ([lifecycle boundaries](../enhance/architect
 
 ## Node RPC policy
 
-The current indexer source uses wallet-libraries' server-only chain adapter with
+The current indexer source uses the server-only chain adapter with
 a 20-second connection timeout and a 120-second total request timeout. The total
 deadline includes connection establishment and response reading. The RPC cookie
 is reread for every request; HTTP 401 remains an HTTP error. Responses retain the

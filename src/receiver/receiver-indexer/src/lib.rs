@@ -1,5 +1,5 @@
 //! The receiver directory's indexer: it reads Ironwood blocks from a Zakura node
-//! through wallet-libraries' server chain adapters,
+//! through the shared server chain adapters,
 //! keeps the payments recoverable with the zero outgoing viewing key, and publishes them
 //! as receiver directory revisions. The binary is `receiver-directory`; see
 //! `docs/receiver/README.md`.

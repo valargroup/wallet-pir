@@ -1,4 +1,4 @@
 {
-  "comment": "Direct Zakura Common and node dependencies still to move behind wallet-libraries adapters. Only remove entries; tools/ci/boundary.py fails on a new edge or a stale entry.",
+  "comment": "Direct Zakura Common and node dependencies outside the chain reader, whose permitted edges are CHAIN_READER_EDGES in tools/ci/boundary.py. Only remove entries; tools/ci/boundary.py fails on a new edge or a stale entry.",
   "edges": []
 }

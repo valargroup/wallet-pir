@@ -1,7 +1,7 @@
 //! The canonical guard shared by the indexer and `serve-publication`: which node a
 //! pass reads, whether an anchor is on its chain, and the revocation of served
-//! anchors that fall off it. Block and chain decoding stay in wallet-libraries
-//! behind the server-only chain adapter.
+//! anchors that fall off it. Block and chain decoding stay in the
+//! server-only chain adapter.
 use receiver_directory::Hash;
 use receiver_pir_server::Publications;
 use tracing::warn;

@@ -8,7 +8,7 @@
 //! lookups, and the machinery built to avoid them — a bounded output cache, a
 //! batching pre-pass, a pipelined fetch — existed only to hide the round trip.
 //!
-//! The reader is wallet-libraries'
+//! The reader is the shared chain reader's
 //! `zakura_server_chain::transparent::state::StateReader`, which opens the node's
 //! RocksDB as a **secondary instance**: a running node's database is read without
 //! stopping it and without a copy, and previous outputs resolve from its

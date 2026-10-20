@@ -4,7 +4,7 @@
 mod support;
 use enhance_publisher::local_serving as serving;
 // The offline journal repair shares the RPC double; producer fee derivation is
-// tested with the producer in wallet-libraries' server chain adapters.
+// tested with the producer in the shared server chain adapters.
 #[path = "rpc/rebuild.rs"]
 mod rebuild;
 
