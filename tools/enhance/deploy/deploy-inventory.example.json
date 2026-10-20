@@ -62,7 +62,9 @@
               "data_dir": "/srv/enhance-pir/worker",
               "sealed_shards": 6,
               "matvec_backend": "cpu",
-              "credentials": ["/etc/enhance-pir/internal-token.env"]
+              "credentials": [
+                "/etc/enhance-pir/internal-token.env"
+              ]
             }
           },
           {
@@ -75,7 +77,9 @@
               "data_dir": "/srv/enhance-pir/worker",
               "sealed_shards": 6,
               "matvec_backend": "cpu",
-              "credentials": ["/etc/enhance-pir/internal-token.env"]
+              "credentials": [
+                "/etc/enhance-pir/internal-token.env"
+              ]
             }
           },
           {
@@ -91,7 +95,9 @@
               "sealed_shards": 6,
               "matvec_backend": "cuda",
               "cuda_device": 0,
-              "credentials": ["/etc/enhance-pir/internal-token.env"]
+              "credentials": [
+                "/etc/enhance-pir/internal-token.env"
+              ]
             },
             "health_equals": {
               "matvec.matvec_backend": "cuda",
@@ -110,7 +116,9 @@
               "control_listen": "192.0.2.14:8093",
               "data_dir": "/srv/enhance-pir-router",
               "artifact_origin": "http://192.0.2.10:8080",
-              "credentials": ["/etc/enhance-pir/internal-token.env"]
+              "credentials": [
+                "/etc/enhance-pir/internal-token.env"
+              ]
             }
           }
         ],
@@ -124,14 +132,10 @@
               "listen": "127.0.0.1:8082",
               "control_listen": "127.0.0.1:8083",
               "data_dir": "/srv/enhance-pir-ingress",
-              "credentials": ["/etc/enhance-pir/internal-token.env"]
+              "credentials": [
+                "/etc/enhance-pir/internal-token.env"
+              ]
             }
-          }
-        ],
-        "coordinator": [
-          {
-            "host": "coordinator",
-            "unit": "enhance-pir-server.service"
           }
         ]
       },
@@ -172,11 +176,6 @@
         "router": [
           {
             "host": "status-01"
-          }
-        ],
-        "controller": [
-          {
-            "host": "coordinator"
           }
         ]
       },
@@ -251,18 +250,6 @@
               "listen": "192.0.2.21:8193"
             }
           }
-        ],
-        "controller": [
-          {
-            "host": "coordinator",
-            "unit": "transparent-v12-publish-controller.service",
-            "vars": {
-              "listen": "192.0.2.10:8096"
-            },
-            "responsibilities": [
-              "journal-writer"
-            ]
-          }
         ]
       }
     },
@@ -276,19 +263,84 @@
               "listen": "192.0.2.22:8095"
             }
           }
-        ],
-        "controller": [
+        ]
+      }
+    },
+    "publisher": {
+      "managed_products": [
+        "enhance",
+        "status",
+        "transparent_history",
+        "transaction_details"
+      ],
+      "roles": {
+        "server": [
           {
             "host": "coordinator",
-            "unit": "transparent-txid-display-k8-controller.service",
             "vars": {
-              "listen": "127.0.0.1:8098"
-            },
-            "responsibilities": [
-              "journal-writer"
-            ]
+              "management_listen": "127.0.0.1:18080"
+            }
           }
         ]
+      },
+      "exact_check": {
+        "products": {
+          "enhance": {
+            "host": "coordinator",
+            "argv": [
+              "/opt/enhance-pir/tools/enhance-pir-load-test",
+              "--oracle",
+              "/path/to/public-oracle.json",
+              "--server",
+              "https://enhance.example",
+              "--parallelism",
+              "2",
+              "--rate",
+              "2",
+              "--duration",
+              "60s",
+              "--warmup",
+              "10s",
+              "--max-error-rate",
+              "0",
+              "--json-out",
+              "/root/wallet-pir-deploy-{transaction}-exact.json"
+            ],
+            "timeout": 900
+          },
+          "status": {
+            "host": "coordinator",
+            "argv": [
+              "{release_dir}/status-pir",
+              "probe-live-load",
+              "--origin",
+              "http://127.0.0.1:8480",
+              "--query-origin",
+              "http://127.0.0.1:8492",
+              "--cookie",
+              "/root/.cache/zakura/.cookie",
+              "--seconds",
+              "60",
+              "--report-dir",
+              "/root/wallet-pir-deploy-{transaction}-status-probe"
+            ],
+            "timeout": 900
+          },
+          "transparent_history": {
+            "host": "coordinator",
+            "argv": [
+              "/opt/wallet-pir/probes/transparent_history"
+            ],
+            "timeout": 900
+          },
+          "transaction_details": {
+            "host": "coordinator",
+            "argv": [
+              "/opt/wallet-pir/probes/transaction_details"
+            ],
+            "timeout": 900
+          }
+        }
       }
     }
   },

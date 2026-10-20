@@ -17,8 +17,7 @@
 #                 /etc/systemd/system/<unit>.
 #   role          Replace the whole unit from the product renderer. A role may
 #                 name `binary`; otherwise it runs the service binary. Serving
-#                 roles run pir-query-server. The coordinator keeps
-#                 enhance-pir-server.
+#                 roles run pir-query-server. Publication runs on pir-publisher.
 #
 # Drop-ins that set ExecStart are refused unless they match
 # `adoptable_drop_ins`. An adoptable drop-in that sets only ExecStart is retired
@@ -42,7 +41,7 @@ binary = "enhance-pir-server"
 artifact_kinds = ["enhance-pir", "enhance-pir-native", "enhance-pir-native-cuda"]
 self_check = ["--help"]
 min_free_bytes = 1073741824
-order = ["worker", "external-worker", "packing-router", "query-ingress", "coordinator"]
+order = ["worker", "external-worker", "packing-router", "query-ingress"]
 # The coordinator's public edge, listed once in the inventory's `ancillary`.
 ancillary = ["routing"]
 
@@ -101,11 +100,3 @@ health = "http://{control_listen}/internal/health"
 ready = { field = "ready", equals = true }
 ready_timeout = 300
 adoptable_drop_ins = ["zz-cleanup-*.conf"]
-
-[services.enhance.roles.coordinator]
-unit = "enhance-pir-server.service"
-mode = "exec-drop-in"
-health = "http://127.0.0.1:8080/v1/health"
-ready_url = "http://127.0.0.1:8080/ready"
-ready_timeout = 600
-adoptable_drop_ins = ["90-v7.conf", "zz-cleanup-*.conf"]

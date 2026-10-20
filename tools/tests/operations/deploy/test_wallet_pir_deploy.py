@@ -1,6 +1,6 @@
 """The transactional Enhance, Status and Receiver deploy CLI against an in-memory fleet.
 
-Uses the repository's own descriptors and unit templates; only hosts are fake.
+Uses current serving descriptors and historical publisher recovery fixtures.
 """
 import dataclasses
 import hashlib
@@ -49,7 +49,8 @@ class ImmutableWrapperSource(unittest.TestCase):
 
 DEPLOY = ROOT / 'tools/enhance/deploy'
 STATUS_DEPLOY = ROOT / 'tools/status/deploy'
-SERVICES = descriptors.load_descriptors(ROOT / 'tools/deploy/services.toml')
+from historical_publishers import services as historical_services, UNITS as HISTORICAL_UNITS
+SERVICES = historical_services(descriptors.load_descriptors(ROOT / 'tools/deploy/services.toml'))
 LOCK = ('coordinator', descriptors.LOCK_PATH)
 
 OLD = b'enhance-pir-server built from 71be21f'
@@ -187,7 +188,7 @@ class Fleet(unittest.TestCase):
         release = '/opt/enhance-pir/releases/' + OLD_SHA
         for target in descriptors.targets(service, self.inventory):
             if target.role.name == 'coordinator':
-                fragment = (DEPLOY / target.unit).read_text()
+                fragment = (HISTORICAL_UNITS / target.unit).read_text()
                 kept = cleanup_drop_in(fragment)
                 drop_ins = [(dropin(target.unit, 'zz-cleanup-71be21f.conf'), kept),
                             (dropin(target.unit, '90-v7.conf'), kept + 'ReadWritePaths=/srv/enhance-pir-v7\n')]
@@ -410,10 +411,10 @@ class DeployTests(Fleet):
         self.assertEqual((prefix, binary), ('', release))
         self.assertIn('--worker-config /etc/enhance-pir/workers.json', tail)
         self.assertIn('coordinator', tail)
-        self.assertEqual(tail, units.split_exec(units.exec_start(units.effective([(DEPLOY / unit).read_text()])))[2])
+        self.assertEqual(tail, units.split_exec(units.exec_start(units.effective([(HISTORICAL_UNITS / unit).read_text()])))[2])
         self.assertNotIn(dropin(unit, 'zz-cleanup-71be21f.conf'), self.fake.host(host).files)
         retired = '/opt/enhance-pir/transactions/%s/%s/retired/zz-cleanup-71be21f.conf' % (journal.id, unit)
-        self.assertEqual(self.fake.read(host, retired), cleanup_drop_in((DEPLOY / unit).read_text()))
+        self.assertEqual(self.fake.read(host, retired), cleanup_drop_in((HISTORICAL_UNITS / unit).read_text()))
         # The v7 drop-in also sets ReadWritePaths, so it stays and its ExecStart is overridden.
         self.assertIn(dropin(unit, '90-v7.conf'), self.fake.host(host).files)
 
@@ -1097,13 +1098,14 @@ class UnitTests(unittest.TestCase):
             units.render((STATUS_DEPLOY / 'status-worker.service.in').read_text(), {'RELEASE': '/opt/status-pir/releases/x'})
 
     def test_repository_descriptors_and_example_inventory_load(self):
+        SERVICES = descriptors.load_descriptors(ROOT / 'tools/deploy/services.toml')
         inventory = descriptors.load_inventory(DEPLOY / 'deploy-inventory.example.json')
         for name, service in SERVICES.items():
             keys = [t.key for t in descriptors.targets(service, inventory)]
             self.assertEqual(len(keys), len(set(keys)))
         self.assertEqual(SERVICES['enhance'].order,
-                         ('worker', 'external-worker', 'packing-router', 'query-ingress', 'coordinator'))
-        self.assertEqual(SERVICES['status'].order, ('worker', 'external-worker', 'router', 'controller'))
+                         ('worker', 'external-worker', 'packing-router', 'query-ingress'))
+        self.assertEqual(SERVICES['status'].order, ('worker', 'external-worker', 'router'))
         self.assertEqual(SERVICES['receiver'].order, ('server', 'serve-publication'))
         # Optional roles are rendered whole. Required Enhance serving roles are role mode too.
         self.assertTrue(all(not role.optional or role.mode == 'role'
@@ -1111,8 +1113,8 @@ class UnitTests(unittest.TestCase):
         enhance = SERVICES['enhance']
         self.assertEqual({name for name, role in enhance.roles.items() if role.binary == 'pir-query-server'},
                          {'worker', 'external-worker', 'packing-router', 'query-ingress'})
-        self.assertIsNone(enhance.roles['coordinator'].binary)
-        self.assertEqual(enhance.roles['coordinator'].mode, 'exec-drop-in')
+        self.assertNotIn('coordinator', enhance.roles)
+        self.assertNotIn('controller', SERVICES['status'].roles)
         self.assertEqual(SERVICES['receiver'].artifact_kinds, ('receiver-pir',))
         self.assertIn('receiver-directory', cli.load_release().BINARIES['receiver-pir'])
         (server,) = descriptors.targets(SERVICES['receiver'], inventory)
@@ -1244,8 +1246,9 @@ class HelperTests(unittest.TestCase):
 class CommandLineTests(Fleet):
     def run_cli(self, *argv):
         self.lines.clear()
-        return cli.main(['--inventory', str(self.inventory_path), '--state-dir', str(self.state), *argv],
-                        executor=self.fake, out=self.lines.append, sleep=self.clock.sleep, clock=self.clock)
+        with mock.patch.object(descriptors, 'load_descriptors', return_value=SERVICES):
+            return cli.main(['--inventory', str(self.inventory_path), '--state-dir', str(self.state), *argv],
+                            executor=self.fake, out=self.lines.append, sleep=self.clock.sleep, clock=self.clock)
 
     def serving_cli(self, *argv):
         selected = [item for role in SERVING_SELECTORS for item in ('--only', role)]

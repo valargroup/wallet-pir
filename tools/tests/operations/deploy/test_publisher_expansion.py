@@ -30,7 +30,10 @@ class ExpansionTests(unittest.TestCase):
         self.ex.__dict__.update(baseline.ex.__dict__)
         self.request = copy.deepcopy(baseline.request)
         self.root = baseline.root
-        self.binary = baseline.binary
+        self.binary = self.root / 'expanded-publisher'
+        self.binary.write_bytes(b'new unified publisher')
+        self.request['release'].update(binary_sha256=publisher.file_sha256(self.binary),
+                                       binary_bytes=self.binary.stat().st_size)
         self.ex.install('coordinator', publisher.ADOPTED[0],
                         '[Service]\nEnvironmentFile=/etc/pir/credentials.env\nExecStart=/bin/enhance --sealed-shards 6 coordinator '
                         '--data-dir /srv/enhance --worker-config /etc/enhance/workers.json '
@@ -51,7 +54,7 @@ class ExpansionTests(unittest.TestCase):
         inventory['hosts'].update(source['hosts'])
         for name, role in [('enhance', 'coordinator'), ('status', 'controller')]:
             inventory['services'][name] = copy.deepcopy(source['services'][name])
-            inventory['services'][name]['roles'].pop(role)
+            inventory['services'][name]['roles'].pop(role, None)
         inventory['ancillary'] = {k: v for k, v in source['ancillary'].items()
                                   if set(v['consumers']) <= set(inventory['services'])}
         inventory['services']['publisher']['managed_products'] = publisher.EXPANDED_PRODUCTS
@@ -74,6 +77,10 @@ class ExpansionTests(unittest.TestCase):
         self.assertEqual(self.target.restart()['phase'], 'committed')
         self.assertEqual(self.target.rollback()['phase'], 'rolled-back')
         self.assertEqual(self.ex.read('coordinator', publisher.CONFIG), before)
+        for name in (*publisher.ADOPTED, publisher.UNIT):
+            restored = self.ex.probe_unit('coordinator', name)['exe_sha256']
+            self.assertEqual(restored, self.target.latest()['plan']['units'][name]['exe_sha256'])
+            self.assertNotEqual(restored, self.request['release']['binary_sha256'])
         self.assertTrue(all(self.ex.probe_unit('coordinator', n)['active_state'] == 'active' for n in (*publisher.ADOPTED, publisher.UNIT)))
 
     def test_changed_product_policy_is_refused_before_any_stop(self):
@@ -105,6 +112,13 @@ class ExpansionTests(unittest.TestCase):
         self.request['configuration']['transparent_history']['settings']['http_only'] = True
         with self.assertRaisesRegex(DeployError, 'HTTP publishing is out of scope'):
             self.make_target()
+
+    def test_old_embedded_status_is_refused_and_removed_from_new_settings(self):
+        state = self.ex.probe_unit('coordinator', publisher.ADOPTED[0])
+        self.assertNotIn('status_config', products.enhance_settings(state))
+        state['fragment_text'] = state['fragment_text'].rstrip() + ' --status-config /etc/old-status.json\n'
+        with self.assertRaisesRegex(DeployError, 'embedded Status'):
+            products.enhance_settings(state)
 
     def test_unknown_predecessor_argument_is_refused(self):
         state = self.ex.probe_unit('coordinator', publisher.ADOPTED[0])

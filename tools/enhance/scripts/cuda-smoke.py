@@ -2,7 +2,7 @@
 """Run a CUDA query server and a native coordinator against fresh public fixture state.
 
 Workers are the CUDA `pir-query-server` in `--release-dir`. The coordinator is
-the native `enhance-pir-server` passed as `--coordinator`. GPU hosts do not run
+the native `pir-publisher` passed as `--publisher`. GPU hosts do not run
 the publisher as the worker. No production state, service units, or inventories
 are opened. Both isolated replicas use CUDA, so every successful encrypted
 fixture query executes on the GPU.
@@ -68,6 +68,21 @@ def worker_config(listen, data_dir, management, device):
     }
 
 
+def publisher_config(listen, data_dir, workers, management):
+    """One Enhance fixture publisher, with independent loopback management."""
+    return {
+        'management_listen': management,
+        'enhance': {'enabled': True, 'settings': {
+            'listen': listen, 'data_dir': str(data_dir), 'worker_config': str(workers),
+            'isolated_fixture': True, 'fixture_records': 67, 'fixture_append_records': 0,
+            'poll_seconds': 1, 'frontier_replicas': 2, 'sealed_shards': 6,
+            'zakura_rpc_url': 'http://127.0.0.1:8232', 'prevout_cache_outputs': 250000,
+            'capacity_fallback_rows_per_second': 1.0, 'capacity_readiness_seconds': 21600.0,
+            'capacity_burst_rows': 4096,
+        }},
+    }
+
+
 def fixture_endpoints():
     ports = []
     while len(ports) < 3:
@@ -91,8 +106,8 @@ def validate_worker_health(health, device):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--release-dir', type=Path, required=True)
-    parser.add_argument('--coordinator', type=Path, required=True,
-                        help='native enhance-pir-server; used only as the coordinator')
+    parser.add_argument('--publisher', type=Path, required=True,
+                        help='native pir-publisher; hosts the isolated Enhance application')
     parser.add_argument('--evidence-dir', type=Path, required=True)
     parser.add_argument('--cuda-device', type=int, default=0)
     parser.add_argument('--timeout', type=int, default=300)
@@ -101,11 +116,11 @@ def main():
         parser.error('timeout must be at least 30 seconds and device must be nonnegative')
     release = args.release_dir.resolve()
     query_server = release / 'pir-query-server'
-    coordinator_bin = args.coordinator.resolve()
+    publisher_bin = args.publisher.resolve()
     client = release / 'enhance-pir-cli'
     load = release / 'enhance-pir-load-test'
     binaries = {}
-    for path in (query_server, coordinator_bin, client, load):
+    for path in (query_server, publisher_bin, client, load):
         if not path.is_file():
             parser.error('missing binary ' + str(path))
         binaries[path.name] = hashlib.sha256(path.read_bytes()).hexdigest()
@@ -145,10 +160,15 @@ def main():
             config.write_text(json.dumps(worker_config(
                 worker.removeprefix('http://'), data, f'127.0.0.1:{management}', args.cuda_device)))
             launch(f'worker{index}', [str(query_server), '--config', str(config)])
-        launch('coordinator', [str(coordinator_bin), 'coordinator', '--data-dir', str(root / 'coordinator'),
-               '--listen', origin.removeprefix('http://'), '--worker-config', str(inventory),
-               '--isolated-fixture', '--fixture-records', '67', '--fixture-append-records', '0',
-               '--poll-seconds', '1'])
+        while True:
+            management = port()
+            if management not in used:
+                break
+        config = root / 'publisher.json'
+        config.write_text(json.dumps(publisher_config(
+            origin.removeprefix('http://'), root / 'coordinator', inventory,
+            f'127.0.0.1:{management}')))
+        launch('coordinator', [str(publisher_bin), '--config', str(config)])
         while True:
             remaining()
             if any(p.poll() is not None for p in processes):

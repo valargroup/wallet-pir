@@ -58,7 +58,7 @@ def enhance_settings(state):
         'capacity_fallback_rows_per_second': 1.0, 'capacity_readiness_seconds': 21600.0,
         'capacity_burst_rows': 4096, 'sealed_shards': 6,
     }, flags=('pool_placement', 'isolated_fixture'), repeated=('query_ingress',))
-    require(values['status_config'] is None, 'embedded Status must not run alongside the adopted Status publisher')
+    require(values.pop('status_config') is None, 'embedded Status must not run alongside the adopted Status publisher')
     require(not values['isolated_fixture'] and values['zakura_cookie'], 'Enhance must retain its canonical source')
     return values
 
