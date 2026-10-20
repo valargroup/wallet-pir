@@ -88,6 +88,23 @@ product probes. Running a task alone does not establish readiness. Existing
 product health and metrics endpoints retain their response contracts. An empty
 configuration is useful for management diagnostics and has no product work.
 
+### Service discovery
+
+The management listener also serves `GET /.well-known/pir-service-discovery`
+with `{"service":"pir-publisher","version":"1.0.0"}` and `Cache-Control:
+no-store`. The version comes from the
+[`pir-service-discovery`](../src/shared/pir-service-discovery/README.md) crate
+the publisher is built with; there is no configuration override. Query servers
+that synchronize over HTTPS (Transparent history and transaction details) read
+it from the configured publisher origin before they start and before every
+synchronization pass, and refuse to start without it.
+
+This is a cutover: before upgrading those query servers, the publisher's HTTPS
+edge must proxy exactly that path, for `GET` only, to the management listener.
+Do not proxy `/health`, `/ready` or any other management or control route. The
+document is compatibility metadata only; it is not health and grants no
+publication authority.
+
 Status retains a bounded dedicated runtime. Receiver also uses a dedicated
 runtime thread because its SQLite connections belong to their owner thread.
 Other product tasks remain independently scheduled with existing preparation

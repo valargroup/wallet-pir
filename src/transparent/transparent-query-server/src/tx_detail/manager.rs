@@ -33,7 +33,10 @@ pub struct Manager {
     sync: pir_sync_manager::SyncManager<DisplaySync>,
 }
 impl Manager {
-    pub fn new(config: Config, service: crate::config::ServiceConfig) -> Result<Self, Error> {
+    /// Check publisher discovery, then open the provider root. An unreachable or
+    /// incompatible publisher opens no state.
+    pub async fn new(config: Config, service: crate::config::ServiceConfig) -> Result<Self, Error> {
+        crate::source::discover(&config).await?;
         Ok(Self {
             sync: pir_sync_manager::SyncManager::new(DisplaySync::new(config, service)?),
         })
@@ -47,8 +50,10 @@ impl Manager {
     pub async fn poll_once(&mut self) -> Result<serde_json::Value, Error> {
         self.sync.poll_once().await
     }
-    pub async fn run(self) {
-        self.sync.run().await;
+    /// Synchronize until a publisher contract version mismatch, which is
+    /// returned unchanged. Every other failure is retried.
+    pub async fn run(self) -> Error {
+        self.sync.run().await
     }
 }
 
@@ -381,6 +386,13 @@ impl pir_sync_manager::SyncTask for DisplaySync {
     type Report = serde_json::Value;
     type Error = Error;
     async fn synchronize(&mut self) -> Result<Self::Report, Error> {
+        // Every pass, unchanged ones included, rechecks the publisher's contract
+        // version before any product request.
+        if let Err(error) = self.source.discover().await {
+            *self.synchronization.write().unwrap() =
+                serde_json::json!({"state":"refused","error":error.to_string()});
+            return Err(error);
+        }
         self.source.reset_budget();
         *self.synchronization.write().unwrap() = serde_json::json!({"state":"synchronizing"});
         self.live.command(DisplayCommand::Collect).await?;
@@ -396,6 +408,9 @@ impl pir_sync_manager::SyncTask for DisplaySync {
             }
         }
         result
+    }
+    fn terminal(&self, error: &Error) -> bool {
+        crate::source::is_incompatible(error)
     }
     fn report(&self, result: &Result<Self::Report, Error>) {
         if let Err(error) = result {
