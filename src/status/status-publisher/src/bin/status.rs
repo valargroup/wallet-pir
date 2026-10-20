@@ -28,20 +28,6 @@ enum Command {
         #[arg(long)]
         report_dir: PathBuf,
     },
-    /// Qualification controller using the same publisher integrated into Enhance.
-    ServeDistributed {
-        #[arg(long)]
-        config: PathBuf,
-        #[arg(long, default_value = "http://127.0.0.1:8232")]
-        rpc_url: String,
-        #[arg(long)]
-        cookie: PathBuf,
-        /// Loopback listener for the public `/v1/status/*` routes that the
-        /// HTTPS ingress proxies to. Required when the config enables public
-        /// routes; refused otherwise.
-        #[arg(long)]
-        public_listen: Option<SocketAddr>,
-    },
     /// Encrypted oracle validation across real router and worker child processes.
     ValidateDistributed {
         #[arg(long, default_value_t = 32)]
@@ -202,12 +188,6 @@ async fn main() -> Result<(), cli::AnyError> {
         } => {
             cli::probe_live_load(origin, query_origin, rpc_url, cookie, seconds, report_dir).await?
         }
-        Command::ServeDistributed {
-            config,
-            rpc_url,
-            cookie,
-            public_listen,
-        } => cli::serve_distributed(config, rpc_url, cookie, public_listen).await?,
         Command::ValidateDistributed {
             entries,
             cuda,
@@ -338,4 +318,25 @@ async fn main() -> Result<(), cli::AnyError> {
         } => cli::validate(entries, cuda, state_dir).await?,
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn standalone_controller_is_rejected_and_probes_remain() {
+        assert!(Args::try_parse_from(["status-pir", "serve-distributed"]).is_err());
+        for command in [
+            "probe-live",
+            "probe-live-load",
+            "observe-live",
+            "validate-distributed",
+        ] {
+            let error = Args::try_parse_from(["status-pir", command, "--help"])
+                .err()
+                .unwrap();
+            assert_eq!(error.kind(), clap::error::ErrorKind::DisplayHelp);
+        }
+    }
 }

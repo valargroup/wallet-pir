@@ -56,8 +56,7 @@ FILES = {
                                  'tools/txid/deploy/txid-display-routes.caddy.in',
                                  'tools/txid/scripts/txid-display-fleet.py',
                                  'tools/txid/scripts/txid-display-observe.py'],
-    'status-pir': ['tools/status/deploy/status-worker.service.in', 'tools/status/deploy/status-router.service.in',
-                   'tools/status/deploy/status-controller-qualification.service.in'],
+    'status-pir': ['tools/status/deploy/status-worker.service.in', 'tools/status/deploy/status-router.service.in'],
     'receiver-pir': ['tools/receiver/digitalocean/receiver-pir.service.in', 'tools/receiver/digitalocean/Caddyfile',
                      'tools/receiver/digitalocean/cloud-init.yaml'],
 }

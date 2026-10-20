@@ -118,7 +118,7 @@ class PublisherCutoverTests(unittest.TestCase):
         document['services'] = {name: value for name, value in document['services'].items()
                                 if name in ('transparent-history', 'transparent-display')}
         for service in document['services'].values():
-            service['roles'].pop('controller')
+            service['roles'].pop('controller', None)
         document['services']['publisher'] = {
             'roles': {'server': [{'host': 'coordinator', 'vars': {'management_listen': '127.0.0.1:18080'}}]},
             'managed_products': publisher.PRODUCTS,

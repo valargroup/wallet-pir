@@ -298,3 +298,50 @@ current `rate-query` and `txid-rate` reference clients. Use those pinned clients
 with the independently exported fixtures for bounded live checks, including
 recent/archive found records and absent display controls. A legacy client that
 rejects the fixture before querying provides no deployment correctness evidence.
+
+## Expand the coordinator to Enhance and Status
+
+The versioned request `publisher-cutover/2` adds Enhance and Status to the
+running Transparent publisher. It enables exactly `enhance`, `status`,
+`transparent_history` and `transaction_details`; both Transparent settings
+retain `http_only: false`. Use `tools/deploy/publisher/all-services.toml` for
+one complete inventory with the existing query workers, routers and supervision.
+Remove Enhance coordinator and Status controller roles from that inventory;
+`publisher.managed_products` lists the four sections in the order above. Its
+`exact_check` is a `products` map containing the same four host/argv/timeout
+checks as the request, so later binary deployments also verify every product.
+
+The tool translates the effective commands of `enhance-pir-coordinator.service`
+and `status-controller-qualification.service`. Unknown options, embedded Status,
+changed Transparent settings and conflicting owners are refused. Retain the
+existing Enhance inventory/pool policy, Status controller configuration, node
+cookie and environment-file references. The reviewed plan also pins referenced
+configuration contents. Credentials stay in their existing files.
+
+Run the same `publisher-cutover-plan`, `preflight` and `deploy` commands with
+this request. Capture a fresh plan before each cutover. The transaction records
+the running Transparent-only unit and both standalone publishers, so rollback
+restores that mixed deployment rather than starting retired Transparent owners.
+`publisher-cutover-restart` cooperatively restarts the committed shared process
+and repeats every product's exact probe without replacing its rollback baseline.
+An interrupted restart is reconciled through the same rollback operation.
+
+The expanded unit uses a 40 GiB combined memory ceiling with no swap, matching
+the sum of the predecessor limits. Preflight requires at least 50 GiB total RAM
+and twenty percent available memory and disk. The limit is a ceiling, not a
+reservation or hardware qualification. Query workers and public routes are not
+changed. Announce intentional cutover and rollback rehearsals before execution;
+keep their expected coverage alerts separate from the healthy acceptance window.
+Shared listener ownership and graceful shutdown continue to use the existing
+`pir-pipeline` HTTP adapter. The HTTPS synchronization manager is unchanged.
+
+## Retired standalone production commands
+
+Production publishing runs through `pir-publisher --config FILE`. The removed
+commands are `enhance-pir-server coordinator` and `status-pir serve-distributed`;
+Enhance's unused `status_config` field is also rejected. Maintenance and probe
+commands remain available under their existing binary names. Current inventories
+use the publisher role; historical commands are parsed only for cutover. Rollback
+restores captured units and old executables, which must remain available through
+the rollback rehearsal. CUDA smoke callers now pass `--publisher` and use isolated
+Enhance fixture state.

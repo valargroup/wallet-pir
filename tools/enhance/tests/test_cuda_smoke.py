@@ -60,6 +60,20 @@ class SmokeAcceptance(unittest.TestCase):
             }},
         })
 
+    def test_publisher_config_uses_only_isolated_enhance_state(self):
+        config = smoke.publisher_config('127.0.0.1:8103', '/tmp/fixture/coordinator',
+                                        '/tmp/fixture/workers.json', '127.0.0.1:8104')
+        self.assertEqual(set(config), {'management_listen', 'enhance'})
+        settings = config['enhance']['settings']
+        self.assertEqual(settings['listen'], '127.0.0.1:8103')
+        self.assertNotEqual(settings['listen'], config['management_listen'])
+        self.assertEqual(settings['data_dir'], '/tmp/fixture/coordinator')
+        self.assertEqual(settings['worker_config'], '/tmp/fixture/workers.json')
+        self.assertTrue(settings['isolated_fixture'])
+        self.assertNotIn('zakura_cookie', settings)
+        self.assertNotIn('status_config', settings)
+        self.assertEqual(settings['fixture_append_records'], 0)
+
     def test_counter_requires_one_finite_value(self):
         self.assertEqual(smoke.counter(smoke.METRIC + ' 7\n'), 7)
         for value in ['', smoke.METRIC + ' NaN', smoke.METRIC + ' -1',

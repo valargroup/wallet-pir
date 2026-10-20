@@ -84,6 +84,9 @@ class Role:
     # A deploy runs one transaction per binary, and the release directory is
     # named by the sha256 of that file.
     binary: str = None
+    # Explicit product opt-in: recognized old launch overlays may include their
+    # writable state paths when the complete role replaces both directives.
+    adopt_command_write_paths: bool = False
 
     def render(self, settings, release, unit=None):
         """The product adapter's `RenderedRole` for one instance.
@@ -224,10 +227,13 @@ def load_descriptors(path, _parents=()):
             binary = spec.get('binary')
             require(binary is None or (isinstance(binary, str) and PLAIN_NAME.match(binary)),
                     '%s.%s: binary must be a plain file name' % (name, role_name))
+            adopt_paths = spec.get('adopt_command_write_paths', False)
+            require(type(adopt_paths) is bool and (not adopt_paths or mode == 'role'),
+                    '%s.%s: command/path adoption is boolean, true only for a rendered role' % (name, role_name))
             roles[role_name] = Role(role_name, spec['unit'], mode, spec['health'], template, ready,
                                     spec.get('ready_url'), int(spec.get('ready_timeout', 180)),
                                     tuple(spec.get('adoptable_drop_ins', ())), owns_unit or mode == 'role',
-                                    tuple(duties), renderer, optional, shared_lifecycle, guard, binary)
+                                    tuple(duties), renderer, optional, shared_lifecycle, guard, binary, adopt_paths)
         order = tuple(raw.get('order', ()))
         require(order and sorted(order) == sorted(roles), '%s: order must list every role once' % name)
         require(PLAIN_PATH.match(raw.get('root', '')), '%s: root must be a plain absolute path' % name)
@@ -414,6 +420,18 @@ def template_values(service, inventory, sha):
 def exact_check(service, inventory):
     """The post-deploy exact-answer command, `{"host", "argv", "timeout"}`, or None."""
     check = inventory.services.get(service.name, {}).get('exact_check')
+    if service.name == 'publisher' and isinstance(check, dict) and 'products' in check:
+        products = inventory.services['publisher']['managed_products']
+        require(set(check) == {'products'} and isinstance(check['products'], dict)
+                and set(check['products']) == set(products), 'publisher exact checks must cover every managed product')
+        for product, command in check['products'].items():
+            require(isinstance(command, dict) and set(command) == {'host', 'argv', 'timeout'}
+                    and command['host'] in inventory.hosts and command['host'] not in inventory.retired_hosts
+                    and isinstance(command['argv'], list) and command['argv']
+                    and all(isinstance(a, str) and a for a in command['argv'])
+                    and type(command['timeout']) is int and 1 <= command['timeout'] <= 900,
+                    'invalid publisher exact check: ' + product)
+        return check
     if check is not None:
         require(check.get('host') not in inventory.retired_hosts, '%s.exact_check names a retired host' % service.name)
         require(check.get('host') in inventory.hosts and isinstance(check.get('argv'), list) and check['argv'],

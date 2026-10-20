@@ -6,7 +6,7 @@ writes `/etc/enhance-pir/<role>.json` and a unit whose command is
 `{release}/pir-query-server --config` that file. A second external worker on
 the same host is another unit: it gets a file named for that unit and its own
 loopback management port, so the two processes do not share a configuration
-or a listener. The coordinator keeps `enhance-pir-server` and is not rendered
+or a listener. The publication application runs on `pir-publisher` and is not rendered
 here.
 
 An Enhance worker is reserved, filled and activated by its coordinator and

@@ -1,7 +1,7 @@
 //! The `status-pir` subcommands. The binary only parses arguments and calls one
 //! function here per subcommand.
 //!
-//! Production runs `role`, `serve-distributed`, `probe-live` and
+//! Production diagnostics use `role`, `probe-live` and
 //! `probe-live-load`. The other commands serve or check the synthetic fixture,
 //! or run the experimental single-process live loop.
 pub mod http_client;
@@ -11,7 +11,7 @@ mod production;
 mod synthetic;
 pub use live::{observe_live, serve_live, LiveConfig};
 pub use live_load::probe_live_load;
-pub use production::{probe_live, role, serve_distributed, RoleConfig};
+pub use production::{probe_live, role, RoleConfig};
 pub use synthetic::{probe, serve, validate, validate_distributed, ProbeConfig};
 
 use ipir_sp::server::MatvecBackend;

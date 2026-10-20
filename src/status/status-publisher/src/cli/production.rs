@@ -1,61 +1,17 @@
-//! Production subcommands: a private Status role (`role`), the controller
-//! (`serve-distributed`) and the live encrypted probe that monitoring parses
-//! (`probe-live`).
+//! Status role diagnostics and the live encrypted probe used by monitoring.
 use super::{require, AnyError};
 use crate::{status, zakura::ZakuraClient};
 use serde_json::json;
 use status_query_server::protocol::*;
 use std::{
-    net::SocketAddr,
     path::PathBuf,
     time::{Duration, Instant},
 };
-use tokio::net::TcpListener;
 
 pub use status::distributed::RoleConfig;
 
 pub async fn role(config: RoleConfig) -> Result<(), AnyError> {
     status::distributed::serve_role(config).await
-}
-
-pub async fn serve_distributed(
-    config: PathBuf,
-    rpc_url: String,
-    cookie: PathBuf,
-    public_listen: Option<SocketAddr>,
-) -> Result<(), AnyError> {
-    let config: crate::publisher::Config = serde_json::from_slice(&std::fs::read(config)?)?;
-    require(
-        !config.public_enabled || public_listen.is_some(),
-        "public_enabled requires --public-listen",
-    )?;
-    require(
-        config.public_enabled || public_listen.is_none(),
-        "--public-listen requires public_enabled in the controller config",
-    )?;
-    require(
-        public_listen.is_none_or(|l| l.ip().is_loopback()),
-        "--public-listen must be loopback; the HTTPS ingress proxies to it",
-    )?;
-    let publisher = crate::publisher::Publisher::new(config)?;
-    // Bind before starting the controller so a port conflict fails fast.
-    let public = match public_listen {
-        Some(listen) => Some(TcpListener::bind(listen).await?),
-        None => None,
-    };
-    publisher.start(ZakuraClient::from_cookie_file(rpc_url, cookie)?)?;
-    match public {
-        // Public admission still depends on the publisher's healthy flag.
-        Some(listener) => {
-            let routes = publisher.routes();
-            tokio::select! {
-                result = axum::serve(listener, routes) => result?,
-                result = tokio::signal::ctrl_c() => result?,
-            }
-        }
-        None => tokio::signal::ctrl_c().await?,
-    }
-    Ok(())
 }
 
 pub async fn probe_live(

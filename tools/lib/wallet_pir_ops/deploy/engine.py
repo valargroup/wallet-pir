@@ -169,6 +169,12 @@ class Deployer:
             name = os.path.basename(path)
             if role.mode == 'exec-drop-in' and path == managed:
                 disposition = 'managed'
+            elif (role.owns_unit and role.adopt_command_write_paths and retire_historical
+                  and units.adoptable(path, role.adoptable_drop_ins)
+                  and units.command_and_write_paths_only(text)):
+                # The reviewed complete role owns its command and writable paths.
+                # Save each recognized old overlay in the rollback transaction.
+                disposition = 'retire'
             elif not units.sets_exec_start(text) and role.owns_unit:
                 disposition = 'refuse'
                 plan.refusals.append('role %s owns its whole unit; remove or fold in %s' % (role.name, path))
@@ -593,6 +599,11 @@ class Deployer:
             self.out('%s: product check passed' % record['key'])
 
     def run_exact_check(self, check, journal, sha):
+        if 'products' in check:
+            for product, command in check['products'].items():
+                journal.event('product exact check', product=product)
+                self.run_exact_check(command, journal, sha)
+            return
         argv = [argument.replace('{release_dir}', self.service.release_dir(sha)).replace('{transaction}', journal.id)
                 for argument in check['argv']]
         journal.event('exact check', host=check['host'], argv=argv)

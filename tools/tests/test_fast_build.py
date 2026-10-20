@@ -326,7 +326,7 @@ class FastBuildTests(unittest.TestCase):
         self.assertNotIn('--bins', build)
         self.assertEqual(bins, [
             'enhance-pir-exercise', 'enhance-pir-load-test',
-            'hierarchical-filter-eval', 'journal-convert-v1', 'pir-monitor',
+            'hierarchical-filter-eval', 'journal-convert-v1', 'pir-monitor', 'status-pir',
             'txid-quality-canary'])
         self.assertEqual(tests, [
             'boundary_recovery_model', 'ci_hint', 'ci_smoke', 'lifecycle',

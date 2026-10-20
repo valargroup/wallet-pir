@@ -1,6 +1,6 @@
 [Unit]
 Description=Enhance PIR APM dashboard and alerting sidecar
-After=network-online.target enhance-pir-server.service
+After=network-online.target pir-publisher.service
 Wants=network-online.target
 
 [Service]

@@ -35,12 +35,13 @@ class FleetInventoryTests(unittest.TestCase):
         view = self.fleet().describe(complete=True)
         self.assertEqual(view['view'], 'configured')
         self.assertEqual({r['service'] for r in view['roles']}, set(SERVICES))
+        managed = {descriptors.PUBLISHER_PRODUCTS[p] for p in EXAMPLE['services']['publisher']['managed_products']}
         for name, service in SERVICES.items():
             # Optional external workers are additions a complete fleet need not have.
             self.assertEqual({r['role'] for r in view['roles'] if r['service'] == name},
-                             {r for r in service.order if not service.roles[r].optional})
+                             {r for r in service.order if not service.roles[r].optional and (name, r) not in managed})
         writers = [(r['service'], r['role']) for r in view['roles'] if 'journal-writer' in r['responsibilities']]
-        self.assertEqual(sorted(writers), [('transparent-display', 'controller'), ('transparent-history', 'controller')])
+        self.assertEqual(writers, [])
         kinds = {(a['kind'], c) for a in view['ancillary'] for c in a['consumers']}
         self.assertIn(('supervision', 'status'), kinds)
         self.assertIn(('routing', 'transparent-history'), kinds)
@@ -56,30 +57,19 @@ class FleetInventoryTests(unittest.TestCase):
         self.assertIn('worker@transparent-v12-01:transparent-v12-archive.service', keys)
         self.assertEqual(len(keys), len(set(keys)))
 
-    def test_unified_process_has_its_own_deploy_descriptor(self):
-        services = descriptors.load_descriptors(ROOT / 'tools/deploy/publisher/services.toml')
-        service = services['publisher']
-        self.assertEqual(service.binary, 'pir-publisher')
-        self.assertEqual(service.order, ('server',))
-        self.assertTrue(service.roles['server'].owns_unit)
-
     def test_unified_publisher_refuses_standalone_owners_and_missing_checks(self):
-        def add(document):
-            document['services']['publisher'] = {
-                'managed_products': ['enhance', 'status'],
-                'roles': {'server': [{'host': 'coordinator'}]},
-                'exact_check': {'host': 'coordinator', 'argv': ['/opt/probes/all-products']},
-            }
-        with self.assertRaisesRegex(descriptors.DescriptorError, 'both own publishing'):
-            self.fleet(add)
         document = copy.deepcopy(EXAMPLE)
-        add(document)
-        document['services']['enhance']['roles'].pop('coordinator')
-        document['services']['status']['roles'].pop('controller')
         descriptors.publisher_ownership(document['services'])
         document['services']['publisher'].pop('exact_check')
         with self.assertRaisesRegex(descriptors.DescriptorError, 'independent exact_check'):
             descriptors.publisher_ownership(document['services'])
+        for service, role in [('enhance', 'coordinator'), ('status', 'controller')]:
+            with self.subTest(service=service):
+                self.assertNotIn(role, SERVICES[service].roles)
+                def retired(d):
+                    d['services'].pop('publisher')
+                    d['services'][service]['roles'][role] = [{'host': 'coordinator'}]
+                self.refused(retired, 'unknown '+service+' roles', complete=False)
 
     def test_each_managed_product_rejects_its_existing_standalone_owner(self):
         for product, service, role in (
@@ -96,6 +86,7 @@ class FleetInventoryTests(unittest.TestCase):
                     'roles': {'server': [{'host': 'coordinator'}]},
                     'exact_check': {'host': 'coordinator', 'argv': ['/opt/probes/all-products']},
                 }
+                document['services'][service]['roles'][role] = [{'host': 'coordinator'}]
                 with self.assertRaisesRegex(descriptors.DescriptorError, 'both own publishing'):
                     descriptors.publisher_ownership(document['services'])
                 document['services'][service]['roles'].pop(role)
@@ -104,12 +95,19 @@ class FleetInventoryTests(unittest.TestCase):
     def test_required_roles_services_responsibilities_and_ancillary(self):
         self.refused(lambda d: d['services']['enhance']['roles'].pop('packing-router'), 'required roles missing')
         self.refused(lambda d: d['services'].pop('receiver'), 'services missing')
-        self.refused(lambda d: d['services']['transparent-history']['roles']['controller'][0].pop('responsibilities'),
-                     'exactly one controller must hold journal-writer')
+        def historical(d, service):
+            d['services'].pop('publisher')
+            d['services'][service]['roles']['controller'] = [
+                {'host': 'coordinator', 'vars': {'listen': '127.0.0.1:8510'}}]
+        def missing_writer(d):
+            historical(d, 'transparent-history')
+        self.refused(missing_writer, 'exactly one controller must hold journal-writer')
         def two_writers(d):
+            historical(d, 'transparent-display')
             roles = d['services']['transparent-display']['roles']
+            roles['controller'][0]['responsibilities'] = ['journal-writer']
             roles['controller'].append({'host': 'coordinator', 'unit': 'second-display-controller.service',
-                                        'vars': {'listen': '127.0.0.1:8510'}, 'responsibilities': ['journal-writer']})
+                                        'vars': {'listen': '127.0.0.1:8511'}, 'responsibilities': ['journal-writer']})
         self.refused(two_writers, 'exactly one controller must hold journal-writer')
         def writer_on_worker(d):
             d['services']['transparent-history']['roles']['worker'][0]['responsibilities'] = ['journal-writer']
@@ -119,9 +117,9 @@ class FleetInventoryTests(unittest.TestCase):
     def test_ownership_is_unique_per_machine_and_unit(self):
         def alias(d):
             d['hosts']['coordinator-alias'] = {'address': d['hosts']['coordinator']['address']}
-            d['services']['status']['roles']['controller'][0]['host'] = 'coordinator-alias'
-            d['services']['status']['roles']['controller'][0]['unit'] = 'enhance-pir-server.service'
-        self.refused(alias, 'both own enhance-pir-server.service', complete=False)
+            d['services']['status']['roles']['router'][0]['host'] = 'coordinator-alias'
+            d['services']['status']['roles']['router'][0]['unit'] = 'pir-publisher.service'
+        self.refused(alias, 'both own pir-publisher.service', complete=False)
         def shared_edge(d):
             d['ancillary']['second-edge'] = {'host': 'coordinator', 'unit': 'caddy.service', 'kind': 'routing',
                                              'consumers': ['status']}
@@ -179,7 +177,7 @@ class FleetInventoryTests(unittest.TestCase):
         self.assertTrue(fleet.describe()['roles'])
         self.assertTrue(any('services missing' in p for p in fleet.problems(complete=True)))
         targets = descriptors.targets(SERVICES['enhance'], fleet.inventory)
-        self.assertEqual(len(targets), 6)
+        self.assertEqual(len(targets), 5)
 
 
     def test_hosts_may_use_their_own_identity_and_pin(self):

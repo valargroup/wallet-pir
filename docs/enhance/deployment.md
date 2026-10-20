@@ -15,8 +15,7 @@ the memory observation is promising but not a completed qualification.
 The binaries are `enhance-pir-server` (package `enhance-publisher`),
 `pir-query-server` (package `pir-query-server`),
 `enhance-pir-cli` (`enhance-pir-client`), `enhance-pir-load-test` and the local
-`enhance-pir-exercise`. `enhance-pir-server` commands are `coordinator`,
-`rebuild-journal`, `prepare-packing-artifacts`, `restore-legacy-placement`, and
+`enhance-pir-exercise`. `enhance-pir-server` maintenance commands are `rebuild-journal`, `prepare-packing-artifacts`, `restore-legacy-placement`, and
 `build-info`. `build-info` reports native reinspiring and the source revision
 and has no CUDA field. Each Enhance serving role (`worker`, `query-ingress`,
 `packing-router`) is its own `pir-query-server --config FILE` process.
@@ -111,9 +110,9 @@ replica is retried on its peer. The public Caddy query route disables upstream
 keepalive so overload responses are not lost on stale local connections. Check
 the `enhance_query_*` metrics and public 429/502 counts after rollout.
 
-The coordinator example is
-[enhance-pir-server.service](../../tools/enhance/deploy/enhance-pir-server.service):
-`enhance-pir-server coordinator`. A worker, query ingress, or packing router is
+Run the publication application with `pir-publisher --config FILE`, enabling
+the `enhance` section in the [publisher configuration](../publisher.md).
+A worker, query ingress, or packing router is
 a separate `pir-query-server --config` process, one Enhance role in that file.
 The role file carries the listen address, absolute data directory, sealed-shard
 count, and, for a worker, the matrix backend. `ENHANCE_INTERNAL_TOKEN`, when

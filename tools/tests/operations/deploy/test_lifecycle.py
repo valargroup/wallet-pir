@@ -5,10 +5,11 @@ import sys
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from test_wallet_pir_deploy import ENHANCE, Fleet, NEW_SHA, SERVING_SELECTORS, SERVICES, ROOT  # noqa: E402
+from test_wallet_pir_deploy import ENHANCE, Fleet, NEW_SHA, SERVING_SELECTORS, ROOT  # noqa: E402
 from wallet_pir_ops.deploy import cli  # noqa: E402
 from wallet_pir_ops.deploy.lifecycle import Lifecycle  # noqa: E402
 from wallet_pir_ops.fleet import Fleet as ConfiguredFleet  # noqa: E402
+
 
 
 class LifecycleTests(Fleet):
@@ -102,7 +103,7 @@ class FleetViewTests(unittest.TestCase):
         fleet = ConfiguredFleet.load(ROOT / 'tools/enhance/deploy/deploy-inventory.example.json')
         view = fleet.describe()
         self.assertEqual(view['view'], 'configured')
-        self.assertEqual({r['service'] for r in view['roles']}, set(SERVICES))
+        self.assertEqual({r['service'] for r in view['roles']}, set(fleet.services))
         self.assertEqual({r['lifecycle_driver'] for r in view['roles']},
                          {'binary', 'transparent-history', 'txid-display'})
 

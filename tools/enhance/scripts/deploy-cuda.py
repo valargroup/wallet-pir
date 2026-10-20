@@ -212,25 +212,25 @@ def repair_reviewed_fee_oracle(path, replacement, expected, held, evidence, writ
 
 
 def installed_native_publisher():
-    """Coordinator `enhance-pir-server` on this runner.
+    """Native `pir-publisher` installed on this runner.
 
     GPU validation needs that native binary for the fixture coordinator. The
     CUDA archive ships `pir-query-server` and the clients, not the publisher.
     """
-    fragment = Path('/etc/systemd/system/enhance-pir-server.service')
+    fragment = Path('/etc/systemd/system/pir-publisher.service')
     try:
         texts = [fragment.read_text()]
     except OSError as error:
-        raise ValueError('CUDA smoke requires the installed native enhance-pir-server') from error
+        raise ValueError('CUDA smoke requires the installed native pir-publisher') from error
     drop_in = fragment.with_name(fragment.name + '.d') / units.MANAGED_DROP_IN
     if drop_in.is_file():
         texts.append(drop_in.read_text())
     try:
         binary = Path(units.split_exec(units.exec_start(units.effective(texts)))[1])
     except units.UnitError as error:
-        raise ValueError('CUDA smoke requires the installed native enhance-pir-server') from error
-    if binary.name != 'enhance-pir-server' or not binary.is_file():
-        raise ValueError('CUDA smoke requires the installed native enhance-pir-server')
+        raise ValueError('CUDA smoke requires the installed native pir-publisher') from error
+    if binary.name != 'pir-publisher' or not binary.is_file():
+        raise ValueError('CUDA smoke requires the installed native pir-publisher')
     return binary
 
 
@@ -344,7 +344,7 @@ def main():
             publisher = installed_native_publisher()
             payloads = [(bundle / name, name) for name in (
                 'pir-query-server', 'enhance-pir-cli', 'enhance-pir-load-test', 'cuda-smoke.py')]
-            payloads.append((publisher, 'enhance-pir-server'))
+            payloads.append((publisher, 'pir-publisher'))
             for source, name in payloads:
                 held.verify()
                 path = staged + '/' + name
@@ -358,7 +358,7 @@ def main():
             code, output = executor.run(target.host, ['sudo', '-n', '-u', user, '--', 'env',
                 'LD_LIBRARY_PATH=/usr/local/cuda-12.2/targets/x86_64-linux/lib',
                 'python3', staged + '/cuda-smoke.py', '--release-dir', staged,
-                '--coordinator', staged + '/enhance-pir-server',
+                '--publisher', staged + '/pir-publisher',
                 '--evidence-dir', smoke_path], 360)
             result['smoke_exit_code'] = code
             result['smoke_output'] = output[-4000:]

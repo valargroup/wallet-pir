@@ -5,33 +5,29 @@ and independent serving roles; it does not establish production qualification.
 
 ## Deployment
 
-Status runs as its own process. `enhance-pir-server coordinator --status-config`
-is rejected; configure Status on `pir-publisher` or `status-pir` instead. Its
-Status controller runs on a dedicated, bounded Tokio runtime with its own
-journal and source cache. It uses the coordinator-local Zakura cookie; the
-Status host never receives that credential.
+Status publication runs in `pir-publisher --config FILE`, with an enabled
+`status` section. Its controller uses a dedicated bounded runtime and its own
+journal and source cache. The publisher reads the coordinator-local Zakura
+cookie; query workers and routers never receive that credential.
 
-The initial SSH rollout runs the same controller through `status-pir
-serve-distributed` in `status-controller-qualification.service` on the coordinator
-host. This isolates qualification from the existing Enhance process. Switching
-the deployed Enhance executable to the integrated entry point remains a separate
-cutover gate: the deployed native Enhance binary has an older upstream revision,
-so its serving compatibility must be checked before replacement.
+The standalone production controller command has been removed. Follow the
+[unified publisher cutover](../publisher.md#expand-the-coordinator-to-enhance-and-status)
+to adopt an existing standalone controller. Rollback uses its captured old
+executable and unit; current source does not rebuild that historical entrypoint.
 
-When a controller config sets `public_enabled`, `serve-distributed` requires
-`--public-listen <loopback addr>` and serves the public `/v1/status/init`,
+When the Status controller config sets `public_enabled`, the unified settings require
+`public_listen` with a loopback address and serves the public `/v1/status/init`,
 `/v1/status/session/:id` and `/v1/status/query` routes only there; the private
 listener keeps telemetry and candidate transfer. `public_enabled` without
-`--public-listen`, or the flag without `public_enabled`, is refused. Public
+`public_listen`, or that address without `public_enabled`, is refused. Public
 admission still depends on the publisher's live-publication health flag, so an
 unpublished or fenced controller answers 503 on the public listener. The
 forwarded query route also caps each client (first `X-Forwarded-For` address,
-else `X-Real-IP`) at two concurrent requests and answers 429 beyond that. The
+else `X-Real-IP`) at two concurrent requests and answers 429 beyond that. Set `status.settings.public_listen` to `127.0.0.1:8489`. The
 intended HTTPS ingress wiring is:
 
 ```
-status-pir serve-distributed --config /etc/status-pir-control/controller.json \
-  --cookie /root/.cache/zakura/.cookie --public-listen 127.0.0.1:8489
+pir-publisher --config /etc/wallet-pir/publisher.json
 ```
 
 ```
@@ -47,7 +43,7 @@ configuration.
 | Endpoint | Owner | Reachability |
 | --- | --- | --- |
 | Coordinator `127.0.0.1:8480` | Private Status routes and immutable candidate transfer | Coordinator loopback |
-| Coordinator `127.0.0.1:8489` | Public `/v1/status/*` when `public_enabled` (`--public-listen`) | Coordinator loopback; Caddy `handle /v1/status/*` |
+| Coordinator `127.0.0.1:8489` | Public `/v1/status/*` when `public_enabled` (`public_listen`) | Coordinator loopback; Caddy `handle /v1/status/*` |
 | Status host `127.0.0.1:8481` | CPU evaluation worker and private control | Loopback; coordinator SSH forward |
 | Status host `127.0.0.1:8482` | CPU packing router private control, public material, telemetry | Loopback; coordinator SSH forward (`status-control-tunnel`, local 8482) |
 | Status host `127.0.0.1:8484` | CPU packing router query route only (`/v1/status/query`, `--query-listen`) | Loopback; coordinator SSH forward (`status-query-tunnel`, local 8492) |
@@ -130,7 +126,7 @@ one and refuses any difference beyond the binary unless `--allow-unit-drift` is
 given. On 2026-09-30 the live worker and router units matched their templates
 (`MemoryMax=12G` and 3G, `STATUS_PREPARATION_THREADS=6`), and a preflight with
 the running binary planned no restart. The controller is not rendered: its
-arguments (`controller-native.json`, `--public-listen`) live in drop-ins from
+arguments (`controller-native.json`, `public_listen`) live in drop-ins from
 earlier rollouts, so it is an `exec-drop-in` role like the Enhance units.
 
 ## Publication and recovery

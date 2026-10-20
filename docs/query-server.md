@@ -25,8 +25,7 @@ pir-query-server repair-rows --data-dir DIR --source-rows DIR
 
 A process includes at most one Enhance role. `enhance-pir-server` does not start a
 worker, query ingress, or packing router. Those roles are only
-`pir-query-server --config FILE`. `enhance-pir-server` keeps `coordinator`,
-`rebuild-journal`, `prepare-packing-artifacts`, `restore-legacy-placement`, and
+`pir-query-server --config FILE`. `enhance-pir-server` keeps `rebuild-journal`, `prepare-packing-artifacts`, `restore-legacy-placement`, and
 `build-info`. `build-info` reports native reinspiring and the source revision;
 it has no CUDA field.
 

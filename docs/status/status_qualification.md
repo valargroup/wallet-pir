@@ -71,6 +71,35 @@ python3 tools/status/status_qualification.py \
   --publications publications.jsonl --resources resources.jsonl
 ```
 
+The read-only `tools/scripts/wallet-pir-status-capture.py` collector independently
+encodes rows from the node's canonical block JSON and complete mempool. Run it
+for 21,615 seconds beside the native live-load client: it measures six hours of
+source observations, then drains their verification for fifteen seconds. Keep
+its raw observations and resource samples. Align the assessor's observation IDs
+and resource samples to the load client's actual timestamps; missing or failed
+captures must remain failures. Require the collector to exit successfully and its
+`result.json` to report `passed: true`; the assessor alone does not consume
+collector errors. The collector verifies retained block contents against the node,
+starts at the retained coverage boundary, and permanently prunes capacity-evicted
+blocks so reduced mempool pressure cannot restore discarded history.
+If block reads overlap a reorganization, the collector retries from its last
+validated history; an incomplete or disconnected read never replaces that state.
+
+Freeze retained fork inputs before the cutover and provide the frozen file with
+`--retained-source` and `--retained-source-sha256`. Old fork blocks may no longer
+be available from the node: those records use the unchanged pre-cutover raw
+inputs as their expected values, with an independent check that their block is
+noncanonical. This establishes preservation of historical fork inputs, not a
+new independent reconstruction of discarded blocks. Canonical blocks and the
+mempool are always read independently from the node; the collector does not
+trust a publisher's rows or digest.
+
+For a deployed native controller, explicitly pass
+`--protocol status-pir-v3-native-two-mask-m29`. The same geometry, six-hour
+arrival coverage, independent source/publication oracle, freshness and resource
+gates apply. The default remains compact v2; native results do not establish
+compact-v2 wallet compatibility or qualify a wallet without a native client.
+
 The assessor exits nonzero for missing evidence, any failed or skipped arrival,
 stale answer, publication taking more than twenty seconds, incorrect publication,
 one-second p99 breach, OOM, or swap use. It also requires both block and

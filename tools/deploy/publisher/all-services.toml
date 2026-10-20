@@ -1,0 +1,2 @@
+# One publisher with existing Enhance, Status and Transparent serving roles.
+include = ["services.toml", "../../enhance/deploy/deploy.toml", "../../status/deploy/services.toml", "../../transparent/deploy/services.toml", "../../txid/deploy/services.toml"]

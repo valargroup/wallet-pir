@@ -213,7 +213,7 @@ class PlanTests(PackageCase):
 
     def incomplete_fleet(self):
         document = json.loads(self.fleet.read_text())
-        del document['services']['transparent-history']['roles']['controller']
+        del document['services']['publisher']['roles']['server']
         path = self.dir / 'incomplete.json'
         path.write_text(json.dumps(document))
         return path
