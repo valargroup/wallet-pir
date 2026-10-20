@@ -38,8 +38,8 @@ async fn live_load(
     report_dir: PathBuf,
 ) -> Result<(), AnyError> {
     require(
-        seconds > 0 && seconds <= 21_600,
-        "live load duration must be 1..=21600 seconds",
+        seconds > 0 && seconds <= 21_660,
+        "live load duration must be 1..=21660 seconds",
     )?;
     std::fs::create_dir_all(&report_dir)?;
     let mut report = BufWriter::new(

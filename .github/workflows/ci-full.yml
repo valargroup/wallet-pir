@@ -580,6 +580,7 @@ jobs:
           cargo test --locked --release -p pir-publisher --features enhance,status,transparent,native-reinspiring --lib
           python3 -B tools/tests/operations/deploy/test_publisher_expansion.py
           python3 -B tools/status/test_status_qualification.py
+          python3 -B tools/status/test_publication_capture.py
       - name: Build independent acceptance tools
         run: |
           cargo build --locked --profile release-fast -p status-publisher -p enhance-pir-client -p enhance-pir-load-test --bin status-pir --bin enhance-pir-cli --bin enhance-pir-load-test --features status-publisher/cli,status-publisher/native-reinspiring,enhance-pir-client/native-reinspiring,enhance-pir-load-test/native-reinspiring

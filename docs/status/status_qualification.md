@@ -71,6 +71,23 @@ python3 tools/status/status_qualification.py \
   --publications publications.jsonl --resources resources.jsonl
 ```
 
+The read-only `tools/scripts/wallet-pir-status-capture.py` collector independently
+encodes rows from the node's canonical block JSON and complete mempool. Run it
+for 21,615 seconds beside the native live-load client: it measures six hours of
+source observations, then drains their verification for fifteen seconds. Keep
+its raw observations and resource samples. Align the assessor's observation IDs
+and resource samples to the load client's actual timestamps; missing or failed
+captures must remain failures.
+
+Freeze retained fork inputs before the cutover and provide the frozen file with
+`--retained-source` and `--retained-source-sha256`. Old fork blocks may no longer
+be available from the node: those records use the unchanged pre-cutover raw
+inputs as their expected values, with an independent check that their block is
+noncanonical. This establishes preservation of historical fork inputs, not a
+new independent reconstruction of discarded blocks. Canonical blocks and the
+mempool are always read independently from the node; the collector does not
+trust a publisher's rows or digest.
+
 For a deployed native controller, explicitly pass
 `--protocol status-pir-v3-native-two-mask-m29`. The same geometry, six-hour
 arrival coverage, independent source/publication oracle, freshness and resource
