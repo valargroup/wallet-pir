@@ -73,6 +73,8 @@ class HttpsTests(PublisherFixture, unittest.TestCase):
             if len(argv) > 1 and argv[1] == 'verify-filters':
                 raw = self.ex.read(host, argv[argv.index('--shard-dir') + 1] + '/shards.json')
                 return 0, json.dumps({'map_sha256': publisher.sha(json.dumps(json.loads(raw), separators=(',', ':')))})
+            if argv[:3] == ['python3', '-c', publisher_https.VERIFY_SNAPSHOT]:
+                argv = [argv[3], '--config', argv[4], '--verify-only']
             if argv[0].endswith('/pir-query-server') and '--config' in argv and '--check' not in argv:
                 config = json.loads(self.ex.read(host, argv[argv.index('--config') + 1]))
                 sections = ('transparent_history', 'transaction_details')
@@ -261,6 +263,36 @@ class HttpsTests(PublisherFixture, unittest.TestCase):
         self.assertEqual((root / 'objects' / digest).stat().st_ino, (source / 'table.bin').stat().st_ino)
         self.assertFalse((root / 'active.json').exists())
         self.assertFalse((root / 'objects' / hashlib.sha256(outside.read_bytes()).hexdigest()).exists())
+
+
+class SnapshotReportTests(unittest.TestCase):
+    def test_large_report_survives_the_remote_output_limit(self):
+        import tempfile
+        from pathlib import Path
+        from wallet_pir_ops.deploy import host_helper
+        with tempfile.TemporaryDirectory() as directory:
+            binary = Path(directory) / 'verifier'
+            config = Path(directory) / 'snapshot.json'
+            config.write_text('{}')
+            report = {'verified': True, 'map_sha256': 'a' * 64, 'held': ['b' * 64] * 96}
+            binary.write_text('#!' + sys.executable + '\nimport sys\n'
+                              + 'assert sys.argv[1:] == ' + repr(['--config', str(config), '--verify-only']) + '\n'
+                              + 'print(' + repr(json.dumps(report)) + ')\n'
+                              + 'print("diagnostic", file=sys.stderr)\n')
+            binary.chmod(0o700)
+            reply = host_helper.run(['python3', '-c', publisher_https.VERIFY_SNAPSHOT,
+                                     str(binary), str(config)], 5)
+            self.assertEqual(reply['returncode'], 0, reply['output'])
+            self.assertEqual(json.loads(reply['output']), {'verified': True, 'map_sha256': 'a' * 64})
+            saved = Path(str(config) + '.verification.stdout')
+            self.assertGreater(saved.stat().st_size, 4000)
+            self.assertEqual(json.loads(saved.read_text()), report)
+            self.assertEqual(saved.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(Path(str(config) + '.verification.stderr').read_text(), 'diagnostic\n')
+            binary.write_text('#!' + sys.executable + '\nimport sys\nprint(' + repr('{"verified":true}') + ')\nsys.exit(7)\n')
+            reply = host_helper.run(['python3', '-c', publisher_https.VERIFY_SNAPSHOT,
+                                     str(binary), str(config)], 5)
+            self.assertEqual(reply['returncode'], 7)
 
 
 if __name__ == '__main__':

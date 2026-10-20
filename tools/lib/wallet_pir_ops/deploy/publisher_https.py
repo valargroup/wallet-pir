@@ -18,6 +18,23 @@ from .publisher_serving import Serving
 
 KINDS = ('history-archive', 'history-recent', 'transaction-details')
 
+# The remote command transport retains only its last 4,000 characters. Keep
+# the complete verifier streams beside the staged config, and return the small
+# authority fields rather than the potentially large list of held shard hashes.
+VERIFY_SNAPSHOT = r'''
+import json,os,pathlib,subprocess,sys
+binary,config=sys.argv[1:]
+result=subprocess.run([binary,'--config',config,'--verify-only'],capture_output=True,text=True,timeout=290)
+for name,content in [('stdout',result.stdout),('stderr',result.stderr)]:
+    path=pathlib.Path(config+'.verification.'+name)
+    with open(path,'w',opener=lambda p,flags:os.open(p,flags,0o600)) as stream:stream.write(content)
+if result.returncode:
+    print(result.stderr[-1000:]);sys.exit(result.returncode)
+report=json.loads(result.stdout)
+assert report.get('verified') is True, 'verifier did not confirm the publication'
+print(json.dumps({key:report[key] for key in ('verified','map_sha256','shards','warm_target') if key in report}))
+'''
+
 # The old workers have stopped before this runs. Only immutable bytes are
 # reused: the provider still verifies every object against fresh HTTPS authority.
 SEED_OBJECTS = r'''
@@ -309,7 +326,7 @@ class HttpsServing(Serving):
                          lambda path=path, config=config: self.write(owner.host, path,
                              json.dumps(config, sort_keys=True) + '\n', 0o600))
             target = self.deployer.service.release_binary(self.release['binary_sha256'], 'pir-query-server')
-            code, output = owner.ex.run(owner.host, [target, '--config', path, '--verify-only'], 300)
+            code, output = owner.ex.run(owner.host, ['python3', '-c', VERIFY_SNAPSHOT, target, path], 300)
             reports = []
             for line in output.splitlines():
                 try:
