@@ -45,7 +45,10 @@ package that declares direct Common and node dependencies; `tools/ci/boundary.py
 lists each permitted edge and `tools/ci/chain_graph.py` checks its fresh
 consumers. Fast feedback resolves those consumers and applies the graph rules.
 The standalone tool also type-checks each one; that compile stays out of the
-fast job. Each `zakura-server-chain` consumer selects its product (`transparent`, `enhance`,
+fast job. Fast feedback runs the Enhance and Transparent reader RPC targets.
+Receiver, status and RocksDB reader targets stay in full qualification so a
+fast compile does not toggle those features and rebuild every consumer.
+Each `zakura-server-chain` consumer selects its product (`transparent`, `enhance`,
 `status` or `receiver`) with default features disabled. Test dependencies add
 `testing` alongside that same product; fixture support alone does not enable an
 adapter. Database readers additionally enable the existing `rocksdb-reader` feature.

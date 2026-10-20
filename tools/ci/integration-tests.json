@@ -105,12 +105,12 @@
   "zakura-server-chain": {
     "fast": [
       "enhance",
-      "receiver",
-      "status",
       "transparent"
     ],
     "full": [
-      "state"
+      "receiver",
+      "state",
+      "status"
     ]
   }
 }
