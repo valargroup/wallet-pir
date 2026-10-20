@@ -50,6 +50,9 @@ class Host(FakeFleet):
         if argv[:2] == ['install', '-d']:
             self.directories.add(argv[-1])
             return 0, ''
+        if argv[0] == 'systemctl':
+            self.systemctl(host, *argv[1:])
+            return 0, ''
         if argv[0] == 'exact':
             new = self.host('coordinator').units['pir-publisher.service']['exe'] != self.old_publisher
             return (1, 'wrong encrypted answer') if new and self.fail_new_checks else (0, 'exact answers')
@@ -177,6 +180,77 @@ class CutoverTests(unittest.TestCase):
         self.host.run = delayed
         with self.assertRaisesRegex(DeployError, 'recovery window expired'):
             self.cutover.deploy(self.cutover.plan()['plan_sha256'])
+        self.assertEqual(Journal.load(Path(self.root.name), 'status-https').status, 'rolled-back')
+
+    def test_slow_stops_restore_without_installing_expired_candidates(self):
+        original = self.host.systemctl
+        original_run = self.host.run
+        stops = 0
+        candidate_starts = []
+        stop_timeouts = []
+
+        def bounded(host, argv, timeout):
+            if argv[:2] == ['systemctl', 'stop']:
+                stop_timeouts.append(timeout)
+            return original_run(host, argv, timeout)
+
+        def delayed(host, *args):
+            nonlocal stops
+            original(host, *args)
+            if args[0] == 'stop' and stops < 3:
+                stops += 1
+                self.clock += 401
+            if args[0] == 'start':
+                installed = self.host.probe_unit(host, args[1])['exe_sha256']
+                if any(role['unit'] == args[1] and role['binary_sha256'] == installed
+                       for role in self.request['roles'].values()):
+                    candidate_starts.append(args[1])
+
+        self.host.systemctl = delayed
+        self.host.run = bounded
+        with self.assertRaisesRegex(DeployError, 'deadline|recovery window expired'):
+            self.cutover.deploy(self.cutover.plan()['plan_sha256'])
+        self.assertEqual(candidate_starts, [])
+        self.assertEqual(stop_timeouts, [600, 600, 398])
+        self.assertEqual(Journal.load(Path(self.root.name), 'status-https').status, 'rolled-back')
+
+    def test_expiration_while_saving_intent_prevents_forward_service_changes(self):
+        original = self.cutover.save
+        original_control = self.host.systemctl
+        forward_controls = []
+
+        def expired(journal, status=None):
+            original(journal, status)
+            if journal.status == 'preparing' and journal.data.get('intent') == 'stop publisher':
+                self.clock = WINDOW
+
+        def tracked(host, *args):
+            if Journal.load(Path(self.root.name), 'status-https').status == 'preparing':
+                forward_controls.append(args)
+            return original_control(host, *args)
+
+        self.cutover.save = expired
+        self.host.systemctl = tracked
+        with self.assertRaisesRegex(DeployError, 'recovery window expired'):
+            self.cutover.deploy(self.cutover.plan()['plan_sha256'])
+        self.assertEqual(forward_controls, [])
+        self.assertEqual(Journal.load(Path(self.root.name), 'status-https').status, 'rolled-back')
+
+    def test_expiration_at_file_install_restores_before_installing_more_files(self):
+        original = self.host.write
+        installed = []
+
+        def delayed(host, path, data, mode):
+            original(host, path, data, mode)
+            if path in {role['config_path'] for role in self.request['roles'].values()}:
+                if Journal.load(Path(self.root.name), 'status-https').status == 'preparing':
+                    installed.append(path)
+                    self.clock = WINDOW
+
+        self.host.write = delayed
+        with self.assertRaisesRegex(DeployError, 'recovery window expired'):
+            self.cutover.deploy(self.cutover.plan()['plan_sha256'])
+        self.assertEqual(installed, ['/etc/wallet-pir/publisher.json'])
         self.assertEqual(Journal.load(Path(self.root.name), 'status-https').status, 'rolled-back')
 
     def test_foreign_configuration_and_policy_changes_refuse_before_stopping(self):

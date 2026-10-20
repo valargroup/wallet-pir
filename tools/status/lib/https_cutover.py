@@ -242,11 +242,22 @@ class Cutover:
 
     def checks(self, deadline=None):
         for name, check in self.request['checks'].items():
-            timeout = check['timeout']
-            if deadline is not None:
-                require(self.clock() < deadline, 'twenty-minute recovery window expired')
-                timeout = min(timeout, max(1, int(deadline - self.clock())))
+            timeout = self.remaining(deadline, check['timeout'])
             self.run(check['host'], check['argv'], timeout)
+
+    def check_deadline(self, deadline):
+        if deadline is not None:
+            require(self.clock() < deadline, 'twenty-minute recovery window expired')
+
+    def remaining(self, deadline, timeout):
+        self.check_deadline(deadline)
+        return timeout if deadline is None else min(timeout, deadline - self.clock())
+
+    def systemctl(self, host, *args, deadline=None):
+        if deadline is None:
+            self.ex.systemctl(host, *args)
+        else:
+            self.run(host, ['systemctl', *args], self.remaining(deadline, 600))
 
     def save(self, journal, status=None):
         self.lock.verify()
@@ -257,26 +268,33 @@ class Cutover:
         self.ex.mkdir(self.host, root, 0o700)
         self.ex.write(self.host, root + '/journal.json', durable.canonical(journal.data), 0o600)
 
-    def effect(self, journal, label, action):
+    def effect(self, journal, label, action, deadline=None):
+        self.check_deadline(deadline)
         journal.data['intent'] = label
         self.save(journal)
         self.lock.verify()
+        self.check_deadline(deadline)
         action()
+        self.check_deadline(deadline)
         journal.data['intent'] = None
         self.save(journal)
+        self.check_deadline(deadline)
 
-    def write(self, item, before=False):
+    def write(self, item, before=False, deadline=None):
+        self.check_deadline(deadline)
         text = item['before'] if before else item['after']
         if text is None:
             self.ex.remove(item['host'], item['path'])
         else:
             self.ex.mkdir(item['host'], str(Path(item['path']).parent), 0o755)
+            self.check_deadline(deadline)
             self.ex.write(item['host'], item['path'], text.encode(), item['mode'])
 
-    def restart(self, journal, plan, restoring=False):
+    def restart(self, journal, plan, restoring=False, deadline=None):
         for name in ('worker', 'router', 'publisher') if restoring else ('publisher', 'worker', 'router'):
             role = plan['roles'][name]
-            self.effect(journal, 'start ' + name, lambda r=role: self.ex.systemctl(r['host'], 'start', r['unit']))
+            self.effect(journal, 'start ' + name,
+                        lambda r=role: self.systemctl(r['host'], 'start', r['unit'], deadline=deadline), deadline)
 
     def restore(self, journal):
         plan = journal.data['plan']
@@ -309,13 +327,15 @@ class Cutover:
         while self.clock() < deadline:
             ready = True
             for name, role in self.roles.items():
+                self.check_deadline(deadline)
                 state = self.ex.probe_unit(role['host'], role['unit'])
                 expected = plan['roles'][name]['before']['exe_sha256'] if restoring else role['binary_sha256']
                 path = role['configuration']['status']['settings']['publisher']['private_listen'] + '/control/active' if name == 'publisher' else role['configuration']['status']['settings']['listen'] + '/control/health'
-                status, body = self.ex.http_get(role['host'], 'http://' + path, timeout=min(5, max(1, int(deadline - self.clock()))))
+                status, body = self.ex.http_get(role['host'], 'http://' + path, timeout=self.remaining(deadline, 5))
                 product_ready = status == 200 and (name == 'publisher' or json.loads(body).get('ready') is True)
                 ready &= state['active_state'] == 'active' and state['exe_sha256'] == expected and product_ready
             if ready:
+                self.check_deadline(deadline)
                 return
             self.sleep(min(2, max(0, deadline - self.clock())))
         raise DeployError('Status HTTPS: service did not recover before the deadline')
@@ -340,13 +360,16 @@ class Cutover:
                 journal.data['recovery_started_unix'] = int(time.time())
                 for name in ('publisher', 'router', 'worker'):
                     role = self.roles[name]
-                    self.effect(journal, 'stop ' + name, lambda r=role: self.ex.systemctl(r['host'], 'stop', r['unit']))
+                    self.effect(journal, 'stop ' + name,
+                                lambda r=role: self.systemctl(r['host'], 'stop', r['unit'], deadline=deadline), deadline)
                 for item in plan['files']:
-                    self.effect(journal, 'install ' + item['path'], lambda i=item: self.write(i))
+                    self.effect(journal, 'install ' + item['path'], lambda i=item: self.write(i, deadline=deadline), deadline)
                 for host in self.request['machine_ids']:
-                    self.ex.systemctl(host, 'daemon-reload')
-                self.ex.systemctl(self.host, 'reload', 'caddy.service')
-                self.restart(journal, plan)
+                    self.effect(journal, 'reload service definitions',
+                                lambda h=host: self.systemctl(h, 'daemon-reload', deadline=deadline), deadline)
+                self.effect(journal, 'reload TLS edge',
+                            lambda: self.systemctl(self.host, 'reload', 'caddy.service', deadline=deadline), deadline)
+                self.restart(journal, plan, deadline=deadline)
                 self.wait_ready(plan, deadline=deadline)
                 self.checks(deadline)
                 require(self.clock() < deadline, 'twenty-minute recovery window expired')

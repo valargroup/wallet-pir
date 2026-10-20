@@ -126,6 +126,8 @@ distribution handler; then starts the publisher and both consumers. New consumer
 state directories are separate from the predecessor directories.
 
 The twenty-minute recovery window starts at the first service-affecting change.
+Every forward effect checks that window; service commands use its remaining
+time. Expiration goes directly to restoration without starting another candidate.
 The runner verifies executable identities, fresh readiness and all four independent
 answer probes. Failure or expiration starts rollback. Run this operation in the
 persistent operator job infrastructure: a durable journal permits recovery after
