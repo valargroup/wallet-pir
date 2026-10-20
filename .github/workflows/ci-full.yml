@@ -573,6 +573,8 @@ jobs:
         run: python3 -B tools/ci/python_tests.py tools/tests/operations/deploy --jobs 2 --split-module test_ops_package
       - name: Build the unified native publisher
         run: cargo build --locked --release -p pir-publisher --features enhance,status,transparent-history,transparent-detail,native-reinspiring
+      - name: Build the matching native query server
+        run: cargo build --locked --release -p pir-query-server --features enhance,status,transparent-history,transparent-detail,native-reinspiring
       - name: Check both compiled product configurations
         run: |
           jq '{management_listen, enhance, status, transparent_history, transaction_details}' tools/deploy/publisher/publisher.example.json > "$RUNNER_TEMP/publisher-transparent.json"
@@ -597,10 +599,11 @@ jobs:
         run: |
           python3 tools/ci/release.py assemble --kind pir-publisher --sha "$GITHUB_SHA" --output .local-pir/publisher-candidate
           python3 tools/scripts/wallet-pir-bundle.py assemble --sha "$GITHUB_SHA" --archive .local-pir/publisher-candidate/wallet-pir-ops.tar.gz
+          cp "$CARGO_TARGET_DIR/release/pir-query-server" .local-pir/publisher-candidate/
           cp "$CARGO_TARGET_DIR/release-fast/transparent-regression" "$CARGO_TARGET_DIR/release-fast/regression-export" "$CARGO_TARGET_DIR/release-fast/txid-quality-canary" .local-pir/publisher-candidate/
           cp "$CARGO_TARGET_DIR/release-fast/rate-query" "$CARGO_TARGET_DIR/release-fast/txid-rate" .local-pir/publisher-candidate/
           cp "$CARGO_TARGET_DIR/release-fast/enhance-pir-cli" "$CARGO_TARGET_DIR/release-fast/enhance-pir-load-test" .local-pir/publisher-candidate/
-          sha256sum .local-pir/publisher-candidate/enhance-pir-cli .local-pir/publisher-candidate/enhance-pir-load-test .local-pir/publisher-candidate/rate-query .local-pir/publisher-candidate/txid-rate .local-pir/publisher-candidate/*.tar.gz .local-pir/publisher-candidate/transparent-regression .local-pir/publisher-candidate/regression-export .local-pir/publisher-candidate/txid-quality-canary > .local-pir/publisher-candidate/SHA256SUMS
+          sha256sum .local-pir/publisher-candidate/pir-query-server .local-pir/publisher-candidate/enhance-pir-cli .local-pir/publisher-candidate/enhance-pir-load-test .local-pir/publisher-candidate/rate-query .local-pir/publisher-candidate/txid-rate .local-pir/publisher-candidate/*.tar.gz .local-pir/publisher-candidate/transparent-regression .local-pir/publisher-candidate/regression-export .local-pir/publisher-candidate/txid-quality-canary > .local-pir/publisher-candidate/SHA256SUMS
       - uses: actions/upload-artifact@v4
         with:
           name: transparent-publisher-candidate-${{ github.sha }}
