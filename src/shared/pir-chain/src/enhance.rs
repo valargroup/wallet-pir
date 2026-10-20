@@ -6,13 +6,17 @@
 //! cache, then batched `getrawtransaction` reads; an unresolved spent output fails
 //! the block rather than publishing an absent or partial fee.
 use std::collections::HashMap;
+#[cfg(feature = "rpc")]
 use std::sync::Mutex;
+#[cfg(feature = "rpc")]
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::chain::{Amount, Hash as TxHash, OutPoint, Transaction, Utxo};
 
 use crate::NodeError;
-use crate::fee::{self, OutputCache};
+use crate::fee;
+#[cfg(feature = "rpc")]
+use crate::fee::OutputCache;
 
 /// Previous transactions requested per JSON-RPC batch.
 pub const PREVOUT_BATCH: usize = 256;
@@ -43,12 +47,13 @@ pub struct EnhanceBlock {
 }
 
 /// Spent-output resolution shared across blocks: a bounded cache and counters.
-#[cfg_attr(not(feature = "rpc"), allow(dead_code))]
+#[cfg(feature = "rpc")]
 pub struct Prevouts {
     cache: Mutex<OutputCache>,
     counts: PrevoutCounters,
 }
 
+#[cfg(feature = "rpc")]
 #[derive(Default)]
 struct PrevoutCounters {
     same_block_hits: AtomicU64,
@@ -58,6 +63,7 @@ struct PrevoutCounters {
 }
 
 /// Cumulative spent-output resolution counts.
+#[cfg(feature = "rpc")]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PrevoutCounts {
     pub same_block_hits: u64,
@@ -66,6 +72,7 @@ pub struct PrevoutCounts {
     pub batches: u64,
 }
 
+#[cfg(feature = "rpc")]
 impl Prevouts {
     /// A cache holding at most about `outputs` transparent outputs; see
     /// [`crate::DEFAULT_CACHE_OUTPUTS`].

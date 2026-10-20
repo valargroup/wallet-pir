@@ -6,13 +6,15 @@
 //! values are not in the transaction; they come from the outputs it spends.
 //! An input whose spent output is unknown makes the fee unknown, so this
 //! module never substitutes zero, guesses, or sums only the inputs it found.
-// The cross-block fee cache serves Enhance RPC reads; other product selections
-// still expose the shared fee error and cache-size constant.
-#![cfg_attr(not(all(feature = "rpc", feature = "enhance")), allow(dead_code))]
+#[cfg(any(test, all(feature = "enhance", feature = "rpc")))]
+use std::collections::VecDeque;
+#[cfg(any(test, feature = "enhance"))]
+use std::collections::{HashMap, HashSet};
 
-use std::collections::{HashMap, HashSet, VecDeque};
-
-use crate::chain::{Amount, Hash as TxHash, Input, OutPoint, Output, Script, Transaction, Utxo};
+#[cfg(any(test, all(feature = "enhance", feature = "rpc")))]
+use crate::chain::Hash as TxHash;
+#[cfg(any(test, feature = "enhance"))]
+use crate::chain::{Amount, Input, OutPoint, Output, Script, Transaction, Utxo};
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum FeeError {
@@ -20,13 +22,12 @@ pub enum FeeError {
     MissingPrevout(String),
     #[error("transaction spends {0} more than once")]
     DuplicateInput(String),
-    #[error("invalid value balance: {0}")]
-    ValueBalance(String),
     #[error("transaction value pool is negative or out of range: {0}")]
     Negative(String),
 }
 
 /// Display form of an outpoint: RPC-order txid and output index.
+#[cfg(any(test, feature = "enhance"))]
 pub(crate) fn outpoint_label(outpoint: &OutPoint) -> String {
     format!("{}:{}", outpoint.hash, outpoint.index)
 }
@@ -36,6 +37,7 @@ pub(crate) fn outpoint_label(outpoint: &OutPoint) -> String {
 /// `utxos` must hold the output spent by every transparent input. A coinbase
 /// transaction has no fee of its own and is answered without reading `utxos`.
 /// Presence and duplicate spends are checked before calculating the balance.
+#[cfg(any(test, feature = "enhance"))]
 pub(crate) fn transaction_fee(
     transaction: &Transaction,
     utxos: &HashMap<OutPoint, Utxo>,
@@ -60,6 +62,7 @@ pub(crate) fn transaction_fee(
 }
 
 /// Whether publishing this transaction's fee needs spent-output values.
+#[cfg(any(test, all(feature = "enhance", feature = "rpc")))]
 pub(crate) fn needs_prevouts(transaction: &Transaction) -> bool {
     !transaction
         .inputs()
@@ -85,6 +88,7 @@ pub const DEFAULT_CACHE_OUTPUTS: usize = 250_000;
 /// is only a wasted entry. Eviction removes whole transactions, so a
 /// transaction is either fully present or absent, while the budget counts
 /// outputs because transaction counts are a poor proxy for memory.
+#[cfg(any(test, all(feature = "enhance", feature = "rpc")))]
 pub(crate) struct OutputCache {
     values: HashMap<OutPoint, Amount>,
     order: VecDeque<(TxHash, u32)>,
@@ -92,6 +96,7 @@ pub(crate) struct OutputCache {
     capacity: usize,
 }
 
+#[cfg(any(test, all(feature = "enhance", feature = "rpc")))]
 impl OutputCache {
     pub(crate) fn new(capacity: usize) -> Self {
         Self {
@@ -154,6 +159,7 @@ impl OutputCache {
 }
 
 /// The cached spent output retains only its value; fee calculation needs no script.
+#[cfg(any(test, feature = "enhance"))]
 pub(crate) fn spent_output(value: Amount) -> Utxo {
     Utxo {
         output: Output {

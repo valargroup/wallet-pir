@@ -257,7 +257,7 @@ fn decode_block(bytes: &[u8]) -> Result<Block, NodeError> {
 /// Checks `block`'s transactions against its header's merkle root, which binds every
 /// transaction ID and their order. A v5 ID covers every Action field the indexer reads,
 /// so a node cannot alter them under a real header.
-#[cfg_attr(not(feature = "rpc"), allow(dead_code))]
+#[cfg(feature = "rpc")]
 fn check_transactions(block: &Block) -> Result<(), NodeError> {
     if block.merkle_root() != block.header.merkle_root {
         return Err(NodeError::Block(
