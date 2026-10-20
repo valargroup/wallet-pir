@@ -59,6 +59,16 @@ maintenance command does not grant serving authority or change consumer state;
 production synchronization still follows the deployed implementation until the
 complete cutover passes its gates.
 
+The next increment exposes complete prepared inventories and immutable objects
+under `/provider/enhance/v1/` on the root publisher's configured Enhance artifact
+listener. `current` and the bounded `authority` POST validate the requested
+retained anchor against the node; their source observation time is separate from
+the durable publication identity and retains Enhance's five-second authority
+window. Source failures cannot renew it. Restart starts withdrawn until material
+and canonical authority are revalidated. Publishing and revocation remain
+independent of consumer acknowledgments. Public TLS routing and autonomous role
+configuration join the later complete cutover.
+
 ```sh
 cargo build --locked --profile release-fast -p pir-publisher -p pir-query-server -p enhance-pir-client -p enhance-pir-load-test --bins --features pir-publisher/enhance,pir-query-server/enhance
 python3 tools/enhance/scripts/test-local.py --help

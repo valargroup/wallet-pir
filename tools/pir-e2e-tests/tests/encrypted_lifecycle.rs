@@ -1,6 +1,8 @@
 //! Encrypted publication and restart through real listeners.
 #[path = "support/encrypted.rs"]
 mod encrypted;
+#[path = "encrypted_lifecycle/publication.rs"]
+mod publication;
 use encrypted::{record, workers};
 use enhance_publisher::local_serving as serving;
 use enhance_publisher::store::RecordJournal;

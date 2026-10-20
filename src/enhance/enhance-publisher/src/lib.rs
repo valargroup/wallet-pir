@@ -19,6 +19,7 @@ pub mod application;
 pub mod capacity;
 pub mod control;
 pub mod coordinator;
+pub mod distribution;
 pub mod ingest;
 #[cfg(feature = "local-serving")]
 pub mod local_serving;
