@@ -232,7 +232,7 @@ def warm(specification):
             'listen': '127.0.0.1:18990', 'cache_bytes': specification['memory_bytes'],
             'runtime_cache_dir': specification['pin'],
             'runtime_cache_max_bytes': specification['disk_bytes'],
-            'runtime_restore_slots': 1, 'build_slots': 1, 'retain_revisions': 0,
+            'runtime_restore_slots': 1, 'build_slots': 1,
             'active_record': str(root / 'validation-active.json'),
         }
         digest = None

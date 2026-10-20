@@ -330,6 +330,8 @@ service has a memory ceiling that preserves the coordinator's twenty percent
 reserve. History is checked one shard at a time; transaction details use combined
 holdings. Loopback readiness must report the expected map, executable, assignment
 and complete runtime coverage. Pending cache writes must finish without errors.
+The verifier keeps the query server's normal revision retention, so superseded
+revisions in an immutable snapshot are checked without pruning its files.
 Each snapshot has a one-hour staging allowance, with at most fifteen minutes
 for any one history shard or the combined transaction-detail group. These
 preparation limits leave the publisher startup and consumer readiness gates unchanged.
