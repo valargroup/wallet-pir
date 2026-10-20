@@ -27,7 +27,7 @@ def candidate(text):
             'expected the existing Enhance publisher fallback and no competing wallet route')
     # Keep the query admission route (including keepalive policy) and every
     # unrelated route unchanged; init and sessions get the same query ingress.
-    return text.replace(FALLBACK, WALLET + FALLBACK)
+    return text.replace(FALLBACK, WALLET + '\thandle {\n\t\trespond 404\n\t}')
 
 
 def validate_request(request, inventory):
