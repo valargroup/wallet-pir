@@ -8,6 +8,37 @@ from wallet_pir_ops.deploy.remote import RemoteError
 
 
 class PublisherTests(PublisherFixture, unittest.TestCase):
+    def test_rollback_terminates_only_the_stalled_candidate_invocation(self):
+        self.deploy()
+        original = self.ex.systemctl
+        def systemctl(host, *args):
+            if args == ('stop', publisher.UNIT, '--no-block'):
+                self.ex.effects.append(args)
+                return  # Native preparation ignores SIGTERM until its current work finishes.
+            if args == ('kill', publisher.UNIT, '--signal=SIGKILL'):
+                self.ex.effects.append(args)
+                return original(host, 'stop', publisher.UNIT)
+            return original(host, *args)
+        self.ex.systemctl = systemctl
+        journal = self.target.rollback()
+        self.assertEqual(journal['phase'], 'rolled-back')
+        self.assertIn('terminate stalled candidate publisher', journal['completed'])
+        self.assertIn(('kill', publisher.UNIT, '--signal=SIGKILL'), self.ex.effects)
+        self.assertGreaterEqual(self.ex.clock(), 60)
+
+    def test_recovery_refuses_to_terminate_a_replaced_invocation(self):
+        self.deploy()
+        original = self.ex.systemctl
+        def systemctl(host, *args):
+            if args == ('stop', publisher.UNIT, '--no-block'):
+                self.ex.host(host).units[publisher.UNIT]['pid'] += 1
+                return
+            return original(host, *args)
+        self.ex.systemctl = systemctl
+        with self.assertRaisesRegex(DeployError, 'invocation changed'):
+            self.target.rollback()
+        self.assertFalse(any(args[0] == 'kill' for args in self.ex.effects))
+
     def test_plan_and_preflight_do_not_mutate(self):
         self.target.plan()
         self.assertEqual(self.ex.mutations(), [])

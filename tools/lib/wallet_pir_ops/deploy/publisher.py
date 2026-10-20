@@ -269,6 +269,40 @@ class Cutover:
         observed = self.ex.probe_unit(self.host, name)
         require(not observed['main_pid'] and observed['active_state'] in ('inactive', 'failed'), 'owner did not stop: ' + name)
 
+    def stop_candidate_for_restore(self, journal):
+        """Bound rollback of our candidate without terminating another owner.
+
+        Runtime preparation can outlive SIGTERM. Stop the service first, then
+        terminate only the same candidate invocation if its graceful stop stalls.
+        The ordinary predecessor stop path keeps its existing behavior.
+        """
+        before = self.ex.probe_unit(self.host, UNIT)
+        candidate = self.request['release']['binary_sha256']
+        if not before['main_pid'] or before['exe_sha256'] != candidate:
+            require(not before['main_pid'] or before['exe_sha256'] == journal['plan']['units'][UNIT]['exe_sha256'],
+                    'publisher owner changed before recovery stop')
+            return self.stop(UNIT)
+        self.ex.systemctl(self.host, 'stop', UNIT, '--no-block')
+        deadline = self.clock() + 60
+        forced = False
+        while True:
+            self.lock.verify()
+            state = self.ex.probe_unit(self.host, UNIT)
+            if not state['main_pid'] and state['active_state'] in ('inactive', 'failed'):
+                return
+            require(state['invocation_id'] == before['invocation_id'] and
+                    all(state[key] == before[key] for key in ('fragment_text', 'drop_ins')) and
+                    (not state['main_pid'] or (state['main_pid'] == before['main_pid'] and
+                                               state['exe_sha256'] == candidate)),
+                    'publisher invocation changed during recovery stop')
+            if self.clock() >= deadline:
+                require(not forced, 'candidate publisher did not stop after termination')
+                self.effect(journal, 'terminate stalled candidate publisher',
+                            lambda: self.ex.systemctl(self.host, 'kill', UNIT, '--signal=SIGKILL'))
+                forced = True
+                deadline = self.clock() + 30
+            self.sleep(1)
+
     def unlocked(self):
         config = self.request['configuration']
         history, display = (config[name]['settings'] for name in PRODUCTS)
@@ -423,7 +457,8 @@ class Cutover:
             self.save(journal, 'restoring')
             for name in (LOAD, UNIT, *self.old):
                 if self.ex.probe_unit(self.host, name)['load_state'] != 'not-found':
-                    self.effect(journal, 'restore stop ' + name, lambda name=name: self.stop(name))
+                    self.effect(journal, 'restore stop ' + name,
+                                lambda name=name: self.stop_candidate_for_restore(journal) if name == UNIT else self.stop(name))
             self.unlocked()
             if self.serving:
                 self.serving.restore(journal)

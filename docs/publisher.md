@@ -310,6 +310,11 @@ limits and credential references remain intact. Archive readiness precedes the
 edge switch and recent startup; all product probes precede commit. Rollback
 restores the previous edges, executable overlays, workers and publisher together,
 while retaining the separate HTTPS state and its observed withdrawals.
+A stalled candidate receives sixty seconds for cooperative shutdown during
+rollback. The locked controller may then terminate that same executable and
+service invocation; changed ownership is refused. It verifies that the process
+has stopped and the writer locks are free before restoring the previous owner.
+Ordinary predecessor stops keep their existing shutdown behavior.
 
 Before stopping the publisher, the HTTPS path runs the new query server's
 read-only verifier against both complete active publication snapshots. It checks
