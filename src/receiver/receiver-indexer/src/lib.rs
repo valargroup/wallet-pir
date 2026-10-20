@@ -88,5 +88,11 @@ mod tests {
 #[cfg(test)]
 #[path = "../../receiver-pir-server/tests/common/prepared.rs"]
 pub(crate) mod prepared;
+#[cfg(test)]
+#[path = "../../receiver-pir-server/tests/common/router.rs"]
+pub(crate) mod router;
 
 pub mod service;
+
+#[cfg(test)]
+mod block_hints_tests;

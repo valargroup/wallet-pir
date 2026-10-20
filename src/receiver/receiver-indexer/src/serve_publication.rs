@@ -2,7 +2,7 @@
 //! publications an operator stages, without indexing.
 //!
 //! The operator stages a complete publication directory, in the files a one-shot
-//! indexer run writes (`<revision>.json`, `.rows`, `.filters` and optionally
+//! indexer run writes (`<revision>.json`, `.rows` and optionally
 //! `.witness`), and then atomically replaces a small record naming it:
 //! `{"directory": "/abs/path", "revision": "<hex>"}`. The record is a private, local
 //! control input: there is no update route. This mode opens no index database,
@@ -10,7 +10,7 @@
 //!
 //! Each record is loaded and verified in full before it can be served: the manifest
 //! must digest to the expected revision, cover history from Ironwood activation on
-//! mainnet, and commit to the row, filter and witness files beside it, which the
+//! mainnet, and commit to the row and witness files beside it, which the
 //! Receiver server library re-validates record by record while preparing PIR. Its
 //! anchor must then be canonical on the freshest node. Throughout, an independent
 //! guard checks every served anchor and revokes on a confirmed reorg, as the
@@ -19,18 +19,17 @@
 //!
 //! Updates are serial. A newer record supersedes one still preparing; a record that
 //! does not verify is refused and the valid publication already served stays. A
-//! restart reads the record again and verifies everything before serving: the
+//! A validated higher history revision revokes old answers before loading its rows,
+//! even if replacement preparation fails. A restart reads the record again and
+//! verifies everything before serving: the
 //! status file in the state directory is a report for operators, never an input.
 //!
 //! The publisher remains trusted for completeness: verification proves the files are
 //! the publication the record names and that it is internally consistent and anchored
 //! on the canonical chain, not that it holds every payment.
 use crate::canonical::{freshest, is_canonical};
+use receiver_directory::snapshot::{Manifest, Snapshot, ROW_BYTES};
 use receiver_directory::Hash;
-use receiver_directory::{
-    filter::MAX_FILTERS_BYTES,
-    snapshot::{Manifest, Snapshot, ROW_BYTES},
-};
 use receiver_pir_server::{Publication, Publications};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -258,10 +257,12 @@ impl VerifiedPublication {
 }
 
 /// Loads and verifies the publication `record` names. Blocking: it reads up to a few
-/// hundred megabytes and prepares PIR.
+/// hundred megabytes and prepares PIR. When serving, a validated correction manifest
+/// revokes older sessions before any row loading or preparation.
 pub fn load(
     record: &PublicationRecord,
     config: &Config,
+    serving: Option<&Publications>,
 ) -> std::result::Result<VerifiedPublication, Refusal> {
     let invalid = |message: String| Refusal::InvalidSource(message);
     let file = |extension: &str| {
@@ -299,11 +300,16 @@ pub fn load(
             manifest.rows, config.min_rows
         )));
     }
+    // A trusted operator correction invalidates old answers immediately, even if
+    // replacement rows are missing or preparation later fails.
+    if serving.is_some_and(|publications| {
+        !publications.advance_history_revision(manifest.history_revision)
+    }) {
+        return Err(invalid("history revision moved backwards".into()));
+    }
     let rows_bytes = u64::from(manifest.rows) * ROW_BYTES as u64;
     let data =
         read_exact_len(&file("rows"), rows_bytes).map_err(|e| invalid(format!("rows: {e}")))?;
-    let filters = read_bounded(&file("filters"), MAX_FILTERS_BYTES as u64)
-        .map_err(|e| invalid(format!("filters: {e}")))?;
     let witness_path = file("witness");
     let witnesses = match std::fs::symlink_metadata(&witness_path) {
         Ok(_) => Some(
@@ -319,15 +325,8 @@ pub fn load(
         Err(e) => return Err(invalid(format!("witness: {e}"))),
     };
     let anchor = (manifest.end_height, manifest.end_hash);
-    let publication = crate::verify::prepare(
-        Snapshot {
-            manifest,
-            data,
-            filters,
-        },
-        witnesses,
-    )
-    .map_err(|e| invalid(format!("publication/witness: {e}")))?;
+    let publication = crate::verify::prepare(Snapshot { manifest, data }, witnesses)
+        .map_err(|e| invalid(format!("publication/witness: {e}")))?;
     let report = serde_json::json!({
         "mode": "serve-publication",
         "directory": record.directory,
@@ -488,11 +487,13 @@ impl Updater {
             let started = std::time::Instant::now();
             let config = self.config.clone();
             let loading = record.clone();
-            let loaded = tokio::task::spawn_blocking(move || load(&loading, &config))
-                .await
-                .unwrap_or_else(|e| {
-                    Err(Refusal::InvalidSource(format!("preparation failed: {e}")))
-                });
+            let serving = self.publications.clone();
+            let loaded =
+                tokio::task::spawn_blocking(move || load(&loading, &config, Some(&serving)))
+                    .await
+                    .unwrap_or_else(|e| {
+                        Err(Refusal::InvalidSource(format!("preparation failed: {e}")))
+                    });
             info!(
                 revision = %record.revision,
                 elapsed_ms = started.elapsed().as_millis() as u64,
@@ -637,7 +638,7 @@ impl Updater {
 /// exactly as the service does before serving it, without serving or activating.
 pub fn check(config: &Config) -> std::result::Result<VerifiedPublication, Refusal> {
     let record = PublicationRecord::read(&config.publication_record)?;
-    load(&record, config)
+    load(&record, config, None)
 }
 
 pub async fn main(args: Args) -> Result<()> {
@@ -729,6 +730,9 @@ async fn shutdown() {
 }
 
 #[cfg(test)]
+use crate::probe::common;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -767,6 +771,35 @@ mod tests {
         }))
         .unwrap_err();
         assert!(error.to_string().contains("unknown field"));
+    }
+
+    /// A validated correction fences existing sessions before reading or preparing rows.
+    #[test]
+    fn staged_correction_fences_before_row_loading() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut manifest = common::manifest(receiver_pir::MIN_ROWS);
+        manifest.genesis = Network::Mainnet.genesis_hash();
+        manifest.start_height = crate::blocks::ironwood_activation();
+        manifest.end_height = manifest.start_height;
+        let old = receiver_directory::snapshot::Snapshot::build(manifest.clone(), &[]).unwrap();
+        let publications = Publications::default();
+        assert!(publications.publish(crate::verify::prepare(old, None).unwrap(), 0));
+        manifest.history_revision = 1;
+        let revision = hex::encode(manifest.revision().unwrap());
+        std::fs::write(
+            dir.path().join(format!("{revision}.json")),
+            serde_json::to_vec(&manifest).unwrap(),
+        )
+        .unwrap();
+        let record = PublicationRecord {
+            directory: dir.path().to_owned(),
+            revision,
+        };
+        let failure = load(&record, &config(), Some(&publications)).err().unwrap();
+        assert!(failure.to_string().contains("rows:"));
+        assert!(publications.current_anchor().is_none());
+        assert_eq!(publications.epoch(), 1);
+        assert!(publications.ready_at().is_none());
     }
 
     #[test]

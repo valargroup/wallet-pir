@@ -597,23 +597,29 @@ def standalone_metadata(names, features=None):
 def common_family_violations(packages, patches):
     """Reject stale Common releases and mixed sources, including unused lock entries.
 
-    Common's protocol patch selects the family revision. Every Common patch and
-    resolved package must use it, so updating a direct dependency cannot leave an
-    older copy hidden behind a transitive or optional dependency.
+    A root protocol patch selects a development family. Without it, the published
+    rc3 family is required. Both modes reject mixed sources and stale releases.
     """
     names = {name for name in COMMON if name.startswith('zakura-')}
     patches = {name: patch for name, patch in patches.items() if name in names}
-    selected = patches['zakura-protocol']
-    expected = f"git+{selected['git']}?rev={selected['rev']}#{selected['rev']}"
+    selected = patches.get('zakura-protocol')
     problems = []
-    for name, patch in patches.items():
-        if patch.get('git') != selected['git'] or patch.get('rev') != selected['rev']:
-            problems.append(f'{name}: Common patch must use the same revision as zakura-protocol')
+    if selected:
+        expected = f"git+{selected['git']}?rev={selected['rev']}#{selected['rev']}"
+        for name, patch in patches.items():
+            if patch.get('git') != selected['git'] or patch.get('rev') != selected['rev']:
+                problems.append(f'{name}: Common patch must use the same revision as zakura-protocol')
+    else:
+        expected = 'registry+https://github.com/rust-lang/crates.io-index'
+        if patches:
+            problems.append('Common patches require a matching zakura-protocol patch')
     for package in packages:
         if package['name'] not in names:
             continue
-        if package['version'].split('.')[0] != '4' or package.get('source') != expected:
-            problems.append(f"{package['name']} {package['version']}: Common must use the selected v4 main revision")
+        version_ok = (package['version'].split('.')[0] == '4' if selected
+                      else package['version'] == '4.0.0-rc3')
+        if not version_ok or package.get('source') != expected:
+            problems.append(f"{package['name']} {package['version']}: Common must use the selected v4 family")
     return problems
 
 

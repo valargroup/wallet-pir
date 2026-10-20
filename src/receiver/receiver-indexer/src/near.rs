@@ -1,15 +1,6 @@
-//! NEAR Intents explorer feed for the receiver directory's recent and seen filters
-//! (`receiver_directory::filter`). It reads every swap into or out of ZEC, newest first,
-//! whichever app created it, and records the Orchard receiver of each payout
-//! (`recipient`) and refund (`refundTo`) address with the swap's creation time. Unfunded
-//! quotes count: they hold an address until their deadline. The explorer allows one
-//! request every five seconds per partner key, which this module never logs.
-use receiver_directory::{
-    filter::{RECENT, SEEN},
-    snapshot::ProviderSet,
-    ReceiverBytes,
-};
-use receiver_store::{ProviderStore, Store};
+//! Optional NEAR payout audit. Provider data never governs issuance or publication.
+use receiver_directory::ReceiverBytes;
+use receiver_store::{PayoutStore, Store};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::{
@@ -23,9 +14,6 @@ use std::{
 use zakura_receiver_crypto::{Network, Receiver};
 
 const ENDPOINT: &str = "https://explorer.near-intents.org/api/v0/transactions";
-/// Every status the explorer's `statuses` filter accepts (its OpenAPI spec). The 1Click
-/// status API's `KNOWN_DEPOSIT_TX` is not one: the explorer rejects the request.
-const STATUSES: &str = "FAILED,INCOMPLETE_DEPOSIT,PENDING_DEPOSIT,PROCESSING,REFUNDED,SUCCESS";
 /// The status of a completed swap, whose payout transactions the explorer reports.
 const SUCCESS: &str = "SUCCESS";
 const PAGE: usize = 1000;
@@ -33,19 +21,12 @@ const PAGE: usize = 1000;
 const MAX_PAGE_BYTES: usize = 8 * 1024 * 1024;
 /// The explorer's per-partner rate limit, with margin.
 const REQUEST_INTERVAL: Duration = Duration::from_millis(5_500);
-/// How far back a read starts before the cursor, for swaps the explorer lists late. A
-/// payout read also rescans successful swaps back [`RECENT_SECS`] before the cursor, so
-/// it sees a payout complete up to a day after its swap was created. Swaps are refunded
-/// at their deadline, so later completions are out of scope.
-const OVERLAP_SECS: i64 = 3600;
 /// Bound on one read, about a month of swaps, so an explorer that ignores paging cannot
 /// loop forever. It bounds a first read too: one from a `since` too far back fails
 /// rather than record a feed that skipped unread history.
 const MAX_PAGES: usize = 500;
-/// The provider name in the directory's filter set labels.
-pub const PROVIDER: &str = "near-intents";
-/// How far back the recent set reaches from the feeds' last complete read.
-pub const RECENT_SECS: i64 = 24 * 60 * 60;
+/// Overlap for late completions, and retention for uncheckable audit records.
+pub const AUDIT_LOOKBACK_SECS: i64 = 24 * 60 * 60;
 /// How long before a publication's terminal block's time a read must first have seen
 /// a payout complete for the report to check its payment. The chain's clock, capped at
 /// the wall clock, measures it, so payouts stay pending, not missing, while the chain
@@ -56,7 +37,7 @@ const COMPLETION_GRACE_SECS: i64 = 60 * 60;
 /// which no transaction hash starts with, then a digest of its swap's length-prefixed
 /// deposit address and optional memo, the explorer's identity for a swap, so one row
 /// per swap. [`Capture::report`] counts these (`payouts_uncheckable`) while first seen
-/// within [`RECENT_SECS`].
+/// within [`AUDIT_LOOKBACK_SECS`].
 const UNCHECKABLE_ZEROS: usize = 16;
 
 /// Whether `txid` is the record of an uncheckable payout; see [`UNCHECKABLE_ZEROS`].
@@ -65,7 +46,8 @@ fn uncheckable(txid: &receiver_directory::Hash) -> bool {
 }
 
 /// The receiver of every uncheckable payout record: a fixed valid address (zero
-/// diversifier, transmission key with x-coordinate 1) that never enters a filter set.
+/// diversifier, transmission key with x-coordinate 1) that the audit uses only as a
+/// sentinel and never checks against the index.
 fn uncheckable_receiver() -> ReceiverBytes {
     let mut bytes = [0; 43];
     bytes[11] = 1;
@@ -74,95 +56,23 @@ fn uncheckable_receiver() -> ReceiverBytes {
         .as_bytes()
 }
 
-/// The NEAR filter sets, `near-intents/recent` and `near-intents/seen`, once both feeds
-/// have completed a read. Both hold payout and refund receivers, so a feed that never
-/// completed a read holds back both, and wallets do not mistake its absence for an empty
-/// set. Each set declares when its feeds started and when their last complete read
-/// began, the point from which the recent window reaches back. They are read from one
-/// state of `store`.
-pub fn provider_sets(store: &ProviderStore) -> Result<Vec<ProviderSet>> {
-    store.view(sets_in)
-}
-
-/// See [`provider_sets`].
-fn sets_in(store: &ProviderStore) -> Result<Vec<ProviderSet>> {
-    // A feed's start and the beginning of its last complete read.
-    let span = |feed: Feed| -> Result<Option<(i64, i64)>> {
-        let span = store.started(feed.name())?.zip(store.read(feed.name())?);
-        Ok(span.filter(|(since, until)| since <= until))
-    };
-    let both = span(Feed::Payouts)?
-        .zip(span(Feed::Refunds)?)
-        .map(|(p, r)| (p.0.max(r.0), p.1.min(r.1)))
-        .filter(|(since, until)| since <= until);
-    let Some((since_unix, until_unix)) = both else {
-        return Ok(Vec::new());
-    };
-    let (recent, seen) = store.sets(until_unix - RECENT_SECS)?;
-    Ok(vec![
-        ProviderSet {
-            label: format!("{PROVIDER}/{RECENT}"),
-            window_secs: Some(RECENT_SECS as u64),
-            since_unix,
-            until_unix,
-            receivers: recent,
-        },
-        ProviderSet {
-            label: format!("{PROVIDER}/{SEEN}"),
-            window_secs: None,
-            since_unix,
-            until_unix,
-            receivers: seen,
-        },
-    ])
-}
-
-/// A digest of every field of `sets` and their receivers in any order, so a
-/// publication built from them can tell whether newer sets differ.
-pub fn digest(sets: &[ProviderSet]) -> [u8; 32] {
-    let mut h = Sha256::new();
-    h.update(b"receiver-indexer/provider-sets\0");
-    h.update((sets.len() as u64).to_le_bytes());
-    for set in sets {
-        h.update((set.label.len() as u64).to_le_bytes());
-        h.update(set.label.as_bytes());
-        h.update(set.window_secs.map_or([0; 9], |w| {
-            let mut field = [1; 9];
-            field[1..].copy_from_slice(&w.to_le_bytes());
-            field
-        }));
-        h.update(set.since_unix.to_le_bytes());
-        h.update(set.until_unix.to_le_bytes());
-        let mut receivers: Vec<_> = set.receivers.iter().collect();
-        receivers.sort_unstable();
-        h.update((receivers.len() as u64).to_le_bytes());
-        receivers.into_iter().for_each(|r| h.update(r));
-    }
-    h.finalize().into()
-}
-
-/// The provider sets and report inputs read from one state of a [`ProviderStore`], so
-/// a publication's filters and its [`Capture::report`] describe the same feed state.
+/// Payout audit inputs read from one consistent database snapshot.
 pub struct Capture {
-    /// The NEAR filter sets; see [`provider_sets`].
-    pub sets: Vec<ProviderSet>,
     /// When each feed's last complete read began.
     feeds: serde_json::Map<String, serde_json::Value>,
     /// Checkable payouts first seen complete more than [`COMPLETION_GRACE_SECS`]
     /// before the terminal block's time.
     payouts: Vec<(ReceiverBytes, receiver_directory::Hash)>,
-    /// Uncheckable payouts first seen in that span but within [`RECENT_SECS`].
+    /// Uncheckable payouts first seen in that span but within [`AUDIT_LOOKBACK_SECS`].
     uncheckable: usize,
 }
 
-/// Reads [`provider_sets`] and the inputs of a report on a publication whose terminal
-/// block has time `anchor_time`, in Unix seconds, in one read transaction of `store`.
-pub fn capture(store: &ProviderStore, anchor_time: i64) -> Result<Capture> {
+/// Captures the audit for chain time `anchor_time` in one read transaction.
+pub fn capture(store: &PayoutStore, anchor_time: i64) -> Result<Capture> {
     store.view(|store| {
         let mut feeds = serde_json::Map::new();
-        for feed in [Feed::Payouts, Feed::Refunds] {
-            feeds.insert(feed.name().into(), store.read(feed.name())?.into());
-        }
+        let feed = Feed::Payouts.name();
+        feeds.insert(feed.into(), store.read(feed)?.into());
         // Those first seen by the earlier bound are a subset of those seen by the later.
         let count = |until| -> Result<usize> {
             let payouts = store.payouts(until)?;
@@ -171,11 +81,10 @@ pub fn capture(store: &ProviderStore, anchor_time: i64) -> Result<Capture> {
         let mut payouts = store.payouts(anchor_time - COMPLETION_GRACE_SECS)?;
         payouts.retain(|p| !uncheckable(&p.1));
         Ok(Capture {
-            sets: sets_in(store)?,
             feeds,
             payouts,
             uncheckable: count(anchor_time - COMPLETION_GRACE_SECS)?
-                - count(anchor_time - RECENT_SECS)?,
+                - count(anchor_time - AUDIT_LOOKBACK_SECS)?,
         })
     })
 }
@@ -214,16 +123,15 @@ type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>
 pub enum Feed {
     /// Swaps into ZEC, whose `recipient` is a payout address.
     Payouts,
-    /// Swaps out of ZEC, whose `refundTo` is a refund address.
-    Refunds,
 }
 
 impl Feed {
-    /// The feed's cursor name in the provider store.
+    /// The feed's cursor name in the provider store. The previous release's
+    /// `near-payouts` cursor also bounds its receiver set, so this audit keeps its own
+    /// and leaves that one for a rollback to resume from.
     pub fn name(self) -> &'static str {
         match self {
-            Self::Payouts => "near-payouts",
-            Self::Refunds => "near-refunds",
+            Self::Payouts => "near-payout-audit",
         }
     }
 
@@ -231,19 +139,17 @@ impl Feed {
     fn chain_filter(self) -> &'static str {
         match self {
             Self::Payouts => "toChainId",
-            Self::Refunds => "fromChainId",
         }
     }
 }
 
-/// This process's evidence that the explorer served its key: for each feed, when the
-/// last read this process completed began, in Unix seconds. Health reports it as
-/// `near.reads`, null for a feed this process has not read, so without a key both stay
-/// null. The report's `feeds` cannot serve as this evidence: they come from the
-/// published capture of `providers.sqlite`, so they lag publication and may hold an
-/// earlier process's reads.
+/// This process's evidence that the explorer served its key: when the last payout read
+/// this process completed began, in Unix seconds. Health reports it as `near.reads`,
+/// null until this process completes a read, so it stays null without a key. The
+/// report's `feeds` cannot serve as this evidence: they come from `providers.sqlite`,
+/// which may hold an earlier process's reads.
 #[derive(Clone, Default)]
-pub struct Reads(Arc<[AtomicI64; 2]>);
+pub struct Reads(Arc<[AtomicI64; 1]>);
 
 impl Reads {
     /// Records that a read of `feed` that began at `began` completed.
@@ -251,9 +157,9 @@ impl Reads {
         self.0[feed as usize].store(began, Ordering::SeqCst);
     }
 
-    /// Health's `near` field: `{"reads": {"near-payouts": <began>|null, "near-refunds": ...}}`.
+    /// Health's `near` field: `{"reads": {"near-payout-audit": <began>|null}}`.
     pub fn health(&self) -> serde_json::Map<String, serde_json::Value> {
-        let reads: serde_json::Map<_, _> = [Feed::Payouts, Feed::Refunds]
+        let reads: serde_json::Map<_, _> = [Feed::Payouts]
             .into_iter()
             .map(|feed| {
                 let began = self.0[feed as usize].load(Ordering::SeqCst);
@@ -264,20 +170,20 @@ impl Reads {
     }
 }
 
-/// Reads both feeds once, in turn, into the provider store at `path` (see
+/// Reads the payout audit once into the audit store at `path` (see
 /// [`Explorer::sync`]), recording each completed read in `reads`. A failure is logged
 /// and leaves its feed's entry unchanged.
 pub async fn poll(explorer: &mut Explorer, path: &Path, since: i64, reads: &Reads) {
-    let mut store = match ProviderStore::open(path) {
+    let mut store = match PayoutStore::open(path) {
         Ok(store) => store,
         Err(error) => return tracing::warn!(%error, "near provider store unavailable"),
     };
-    for feed in [Feed::Payouts, Feed::Refunds] {
+    for feed in [Feed::Payouts] {
         let began = unix_now();
         match explorer.sync(&mut store, feed, since).await {
-            Ok(receivers) => {
+            Ok(payout_records) => {
                 reads.record(feed, began);
-                tracing::info!(feed = feed.name(), receivers, "near feed read")
+                tracing::info!(feed = feed.name(), payout_records, "near feed read")
             }
             Err(error) => tracing::warn!(feed = feed.name(), %error, "near feed deferred"),
         }
@@ -301,7 +207,6 @@ struct Swap {
     deposit_address: String,
     deposit_memo: Option<String>,
     recipient: Option<String>,
-    refund_to: Option<String>,
     status: Option<String>,
     /// The payout transactions, displayed (reversed) hex as on ZEC explorers.
     destination_chain_tx_hashes: Option<Vec<String>>,
@@ -335,6 +240,37 @@ impl Explorer {
         })
     }
 
+    /// Audits completed ZEC payouts with a bounded overlap for late completion, returning
+    /// how many payout records the read found. A failed or oversized read commits
+    /// neither payouts nor its cursor.
+    pub async fn sync(&mut self, store: &mut PayoutStore, feed: Feed, since: i64) -> Result<usize> {
+        let read_at = unix_now();
+        let cursor = store.cursor(feed.name())?;
+        let floor = cursor.map_or(since, |c| c - AUDIT_LOOKBACK_SECS);
+        let mut newest = cursor.unwrap_or(since).min(read_at);
+        let mut completed = Vec::new();
+        self.scan(
+            feed,
+            SUCCESS,
+            floor,
+            read_at,
+            cursor.is_none(),
+            |swap, created| {
+                newest = newest.max(created);
+                if let Some(receiver) = swap.recipient.as_deref().and_then(orchard_receiver) {
+                    completions(swap, receiver, &mut completed);
+                }
+            },
+        )
+        .await?;
+        let seen_at = unix_now();
+        let completed: Vec<_> = completed
+            .into_iter()
+            .map(|(r, t)| (r, t, seen_at))
+            .collect();
+        store.record(feed.name(), &completed, newest, read_at)?;
+        Ok(completed.len())
+    }
     /// An explorer client that reads `endpoint` instead of NEAR's, without waiting
     /// between requests.
     #[cfg(test)]
@@ -345,86 +281,6 @@ impl Explorer {
             ..Self::new(String::new()).unwrap()
         }
     }
-
-    /// Reads `feed` back to an hour before its cursor (`OVERLAP_SECS`), or to `since` on
-    /// the first read, and records each swap's Orchard receiver in `store`, with when the read
-    /// began, and each completed payout to one with its reported transactions, dated
-    /// when both scans finished so a long read cannot use up its grace. A payout
-    /// read that found a cursor also rescans successful swaps created up to
-    /// [`RECENT_SECS`] before it, for their completions only. Both scans are recorded in
-    /// one transaction once both finish (see [`ProviderStore::record`]), so a failed or
-    /// over-long scan records nothing. Only a read that began without a cursor records
-    /// `since` as where the feed started, so a restart with another `since` cannot move
-    /// the start past history it never read. Times are capped at the read's start, so a
-    /// record dated in the future cannot hide later swaps. Returns how many receivers
-    /// it recorded.
-    pub async fn sync(
-        &mut self,
-        store: &mut ProviderStore,
-        feed: Feed,
-        since: i64,
-    ) -> Result<usize> {
-        let read_at = unix_now();
-        let cursor = store.cursor(feed.name())?;
-        // Decided before fetching: a read that found a cursor reads back only to it.
-        let initial_since = cursor.is_none().then_some(since);
-        let floor = cursor.map_or(since, |c| c - OVERLAP_SECS);
-        let mut newest = cursor.unwrap_or(since).min(read_at);
-        let mut found = Vec::new();
-        let mut completed = Vec::new();
-        self.scan(
-            feed,
-            STATUSES,
-            floor,
-            read_at,
-            cursor.is_none(),
-            |swap, created| {
-                newest = newest.max(created);
-                let address = match feed {
-                    Feed::Payouts => &swap.recipient,
-                    Feed::Refunds => &swap.refund_to,
-                };
-                if let Some(receiver) = address.as_deref().and_then(orchard_receiver) {
-                    found.push((receiver, feed == Feed::Payouts, created));
-                    if feed == Feed::Payouts {
-                        completions(swap, receiver, &mut completed);
-                    }
-                }
-            },
-        )
-        .await?;
-        if let (Feed::Payouts, Some(cursor)) = (feed, cursor) {
-            self.scan(
-                feed,
-                SUCCESS,
-                cursor - RECENT_SECS,
-                read_at,
-                false,
-                |swap, _| {
-                    if let Some(receiver) = swap.recipient.as_deref().and_then(orchard_receiver) {
-                        completions(swap, receiver, &mut completed);
-                    }
-                },
-            )
-            .await?;
-        }
-        let seen_at = unix_now();
-        let completed: Vec<_> = completed
-            .into_iter()
-            .map(|(r, t)| (r, t, seen_at))
-            .collect();
-        // Only a completed initial read says where the feed started.
-        store.record(
-            feed.name(),
-            initial_since,
-            &found,
-            &completed,
-            newest,
-            read_at,
-        )?;
-        Ok(found.len())
-    }
-
     /// Pages `feed`'s swaps in `statuses`, newest first, passing `each` every swap with
     /// its creation time, capped at `read_at`, from `floor` on. Past [`MAX_PAGES`] it
     /// fails, suggesting a later `--near-since` when the read is the feed's `first`.
@@ -468,7 +324,6 @@ impl Explorer {
         }
         Ok(())
     }
-
     /// One page of `feed`'s swaps in `statuses`, newest first, older than `after` when
     /// given.
     async fn page(
@@ -556,9 +411,6 @@ fn completions(
 mod tests {
     use super::*;
 
-    /// A mainnet payout transaction from 2026-10-07, displayed hex.
-    const PAYOUT_TXID: &str = "7f79a9262c301e3da38907fdbfca663c1fcb04b6a890ea737c281fc2ff707e7f";
-
     #[test]
     fn only_mainnet_unified_orchard_receivers_count() {
         // A Vizor swap address from 2026-10-07.
@@ -571,522 +423,9 @@ mod tests {
         assert!(orchard_receiver("check-alice.near").is_none());
     }
 
-    #[test]
-    fn provider_sets_reach_back_from_the_last_complete_read() {
-        let dir = tempfile::tempdir().unwrap();
-        let mut store = ProviderStore::open(dir.path().join("providers.sqlite")).unwrap();
-        let (payouts, refunds) = (Feed::Payouts.name(), Feed::Refunds.name());
-        // A feed that never finished a read publishes nothing.
-        assert!(provider_sets(&store).unwrap().is_empty());
-        let until = 2_000 + RECENT_SECS;
-        let old = (receiver(1), true, 1_500);
-        let recent = (receiver(2), true, until - 60);
-        store
-            .record(payouts, Some(1_000), &[old, recent], &[], until, until + 30)
-            .unwrap();
-        // Both sets hold refunds too, so neither is published before that feed reads.
-        assert!(provider_sets(&store).unwrap().is_empty());
-        let old_refund = (receiver(3), false, 1_500);
-        let refund = (receiver(4), false, until - 120);
-        // A receiver given as both a payout and a refund address counts once.
-        let both = (receiver(2), false, until - 90);
-        store
-            .record(
-                refunds,
-                Some(2_000),
-                &[old_refund, refund, both],
-                &[],
-                until,
-                until,
-            )
-            .unwrap();
-        // Each set covers both feeds, and recent reaches back from the older read.
-        let sets = provider_sets(&store).unwrap();
-        let labels: Vec<_> = sets.iter().map(|set| set.label.as_str()).collect();
-        assert_eq!(labels, ["near-intents/recent", "near-intents/seen"]);
-        for set in &sets {
-            assert_eq!((set.since_unix, set.until_unix), (2_000, until));
-        }
-        let sorted = |mut receivers: Vec<ReceiverBytes>| {
-            receivers.sort();
-            receivers
-        };
-        assert_eq!(
-            sorted(sets[0].receivers.clone()),
-            sorted(vec![receiver(2), receiver(4)])
-        );
-        assert_eq!(
-            sorted(sets[1].receivers.clone()),
-            sorted(vec![receiver(1), receiver(2), receiver(3), receiver(4)])
-        );
-    }
-
-    /// A failed first read, including one over the page bound, records no start, so a
-    /// restart that begins later cannot leave the feed claiming coverage it never read.
-    #[tokio::test]
-    async fn a_feed_starts_only_once_a_read_completes() {
-        use axum::{http::StatusCode, routing::get, Router};
-        let app = Router::new()
-            .route("/fail", get(|| async { (StatusCode::BAD_GATEWAY, "") }))
-            // Valid JSON, but over the page bound.
-            .route(
-                "/large",
-                get(|| async { format!("[{}]", " ".repeat(MAX_PAGE_BYTES)) }),
-            )
-            .route("/ok", get(|| async { "[]" }));
-        let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let origin = format!("http://{}", socket.local_addr().unwrap());
-        tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
-        let dir = tempfile::tempdir().unwrap();
-        let mut store = ProviderStore::open(dir.path().join("providers.sqlite")).unwrap();
-        let feed = Feed::Payouts;
-        for route in ["fail", "large"] {
-            let mut failing = Explorer::at(format!("{origin}/{route}"));
-            assert!(failing.sync(&mut store, feed, 1_000).await.is_err());
-            assert_eq!(store.started(feed.name()).unwrap(), None);
-        }
-        let mut working = Explorer::at(format!("{origin}/ok"));
-        working.sync(&mut store, feed, 2_000).await.unwrap();
-        assert_eq!(store.started(feed.name()).unwrap(), Some(2_000));
-    }
-
-    /// Health's `near.reads` shows only this process's completed reads: null at start
-    /// although `providers.sqlite` holds an earlier run's read times, still null after
-    /// reads the explorer refuses, and each feed's begin time once a read of it completes.
-    #[tokio::test]
-    async fn health_reports_only_this_processs_completed_reads() {
-        use axum::{extract::RawQuery, http::StatusCode, routing::get, Router};
-        use serde_json::{json, Value};
-        let app = Router::new()
-            .route("/denied", get(|| async { (StatusCode::UNAUTHORIZED, "") }))
-            // Accepts the payout feed (`toChainId`) only.
-            .route(
-                "/payouts",
-                get(|RawQuery(query): RawQuery| async move {
-                    match query.unwrap_or_default().contains("fromChainId") {
-                        true => (StatusCode::BAD_REQUEST, ""),
-                        false => (StatusCode::OK, "[]"),
-                    }
-                }),
-            )
-            .route("/ok", get(|| async { "[]" }));
-        let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let explorer = format!("http://{}", socket.local_addr().unwrap());
-        tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("providers.sqlite");
-        let mut store = ProviderStore::open(&path).unwrap();
-        for feed in [Feed::Payouts, Feed::Refunds] {
-            store
-                .record(feed.name(), Some(1_000), &[], &[], 2_000, 2_000)
-                .unwrap();
-        }
-        drop(store);
-        let reads = Reads::default();
-        let app = receiver_pir_server::router_with_health(
-            receiver_pir_server::Publications::default(),
-            {
-                let reads = reads.clone();
-                Arc::new(move || reads.health())
-            },
-        );
-        let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let health = format!("http://{}/v1/receiver/health", socket.local_addr().unwrap());
-        tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
-        let near_reads = || async {
-            let health: Value = reqwest::get(&health).await.unwrap().json().await.unwrap();
-            health["near"]["reads"].clone()
-        };
-        let unread = json!({"near-payouts": null, "near-refunds": null});
-        assert_eq!(near_reads().await, unread);
-        let mut denied = Explorer::at(format!("{explorer}/denied"));
-        poll(&mut denied, &path, 1_000, &reads).await;
-        assert_eq!(near_reads().await, unread);
-        let store = ProviderStore::open(&path).unwrap();
-        assert_eq!(store.read(Feed::Payouts.name()).unwrap(), Some(2_000));
-        let before = unix_now();
-        let mut payouts = Explorer::at(format!("{explorer}/payouts"));
-        poll(&mut payouts, &path, 1_000, &reads).await;
-        let read = near_reads().await;
-        assert!(read["near-payouts"].as_i64().unwrap() >= before);
-        assert!(read["near-refunds"].is_null());
-        poll(
-            &mut Explorer::at(format!("{explorer}/ok")),
-            &path,
-            1_000,
-            &reads,
-        )
-        .await;
-        let read = near_reads().await;
-        assert!(read["near-refunds"].as_i64().unwrap() >= before);
-    }
-
-    /// A restart with an earlier or later `since` follows the saved cursor, so the
-    /// published seen set keeps declaring the first read's start rather than claim
-    /// history no read fetched.
-    #[tokio::test]
-    async fn a_restart_with_another_since_keeps_the_published_start() {
-        use axum::{routing::get, Router};
-        let app = Router::new().route("/", get(|| async { "[]" }));
-        let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let origin = format!("http://{}/", socket.local_addr().unwrap());
-        tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("providers.sqlite");
-        // The seen set's declared start.
-        let since_unix = |store: &ProviderStore| {
-            let sets = provider_sets(store).unwrap();
-            assert_eq!(sets[1].label, "near-intents/seen");
-            sets[1].since_unix
-        };
-        let sync = |mut store: ProviderStore, since| {
-            let origin = origin.clone();
-            async move {
-                for feed in [Feed::Payouts, Feed::Refunds] {
-                    Explorer::at(origin.clone())
-                        .sync(&mut store, feed, since)
-                        .await
-                        .unwrap();
-                }
-                store
-            }
-        };
-        let mut store = sync(ProviderStore::open(&path).unwrap(), 2_000).await;
-        assert_eq!(since_unix(&store), 2_000);
-        for since in [1_000, 3_000] {
-            drop(store);
-            store = sync(ProviderStore::open(&path).unwrap(), since).await;
-            assert_eq!(since_unix(&store), 2_000);
-        }
-    }
-
-    /// A read that reaches its page bound, first read included, or receives a page
-    /// longer than it asked for fails and records nothing; one that ends on its last
-    /// allowed page succeeds.
-    #[tokio::test]
-    async fn every_read_is_bounded_and_records_nothing_when_it_fails() {
-        use axum::{extract::State, routing::get, Router};
-        use std::sync::{
-            atomic::{AtomicUsize, Ordering},
-            Arc,
-        };
-        const SWAP: &str = "u14nnj43rj7dpf7qh6gu24fuyu8vld9fgatxd32xre27yqgu6p0yq0sf0t3uxnwts4968hf7d8nvyh4wfzqtmcdt6xzk7el6pn0ufx6pdg";
-        // Serves `full` pages of `len` records, each record with a fresh paging token
-        // and a completed payout, then an empty page.
-        #[derive(Clone)]
-        struct Pages {
-            served: Arc<AtomicUsize>,
-            full: usize,
-            len: usize,
-        }
-        async fn page(State(feed): State<Pages>) -> String {
-            let page = feed.served.fetch_add(1, Ordering::SeqCst);
-            let len = if page < feed.full { feed.len } else { 0 };
-            let records: Vec<_> = (0..len)
-                .map(|i| {
-                    serde_json::json!({"recipient": SWAP, "createdAtTimestamp": 9_000_000 - page,
-                        "depositAddress": format!("{page}-{i}"), "status": "SUCCESS",
-                        "destinationChainTxHashes": [PAYOUT_TXID]})
-                })
-                .collect();
-            serde_json::Value::from(records).to_string()
-        }
-        let serve = |full, len| async move {
-            let app = Router::new().route("/", get(page)).with_state(Pages {
-                served: Arc::default(),
-                full,
-                len,
-            });
-            let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-            let origin = format!("http://{}/", socket.local_addr().unwrap());
-            tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
-            origin
-        };
-        let dir = tempfile::tempdir().unwrap();
-        let mut store = ProviderStore::open(dir.path().join("providers.sqlite")).unwrap();
-        let feed = Feed::Payouts.name();
-        let nothing_recorded = |store: &ProviderStore| {
-            store.cursor(feed).unwrap().is_none()
-                && store.read(feed).unwrap().is_none()
-                && store.started(feed).unwrap().is_none()
-                && store.payouts(i64::MAX).unwrap().is_empty()
-                && store.sets(0).unwrap() == (vec![], vec![])
-        };
-        // Full pages that never end, and a page one record too long.
-        for (full, len) in [(usize::MAX, PAGE), (1, PAGE + 1)] {
-            let mut explorer = Explorer::at(serve(full, len).await);
-            explorer.max_pages = 3;
-            assert!(explorer
-                .sync(&mut store, Feed::Payouts, 1_000)
-                .await
-                .is_err());
-            assert!(nothing_recorded(&store));
-        }
-        // The last allowed page ends the read.
-        let mut explorer = Explorer::at(serve(2, PAGE).await);
-        explorer.max_pages = 3;
-        assert_eq!(
-            explorer
-                .sync(&mut store, Feed::Payouts, 1_000)
-                .await
-                .unwrap(),
-            2 * PAGE
-        );
-        assert_eq!(store.started(feed).unwrap(), Some(1_000));
-        assert_eq!(store.payouts(i64::MAX).unwrap().len(), 1);
-    }
-
-    /// A payout read that follows a cursor also rescans successful swaps back a day
-    /// before that cursor, however long ago it was, for their completions only: swaps
-    /// older than the overlap that have since succeeded are recorded, without their
-    /// receivers, and one older than the day is not. If the rescan fails, neither scan
-    /// records anything. The first read scans all statuses alone and sets the start.
-    #[tokio::test]
-    async fn a_payout_read_rescans_successes_a_day_before_its_cursor() {
-        use axum::{
-            extract::{Query, State},
-            http::StatusCode,
-            routing::get,
-            Router,
-        };
-        use serde_json::{json, Value};
-        use std::{
-            collections::HashMap,
-            sync::{Arc, Mutex},
-        };
-        /// The `statuses` of every request, and the pages served for all statuses and
-        /// for successes, `None` failing.
-        #[derive(Clone, Default)]
-        struct Served {
-            asked: Arc<Mutex<Vec<String>>>,
-            pages: Arc<Mutex<(Value, Option<Value>)>>,
-        }
-        async fn page(
-            State(served): State<Served>,
-            Query(query): Query<HashMap<String, String>>,
-        ) -> std::result::Result<String, StatusCode> {
-            let statuses = query["statuses"].clone();
-            served.asked.lock().unwrap().push(statuses.clone());
-            let (all, successes) = served.pages.lock().unwrap().clone();
-            match (statuses == SUCCESS, successes) {
-                (false, _) => Ok(all.to_string()),
-                (true, Some(page)) => Ok(page.to_string()),
-                (true, None) => Err(StatusCode::BAD_GATEWAY),
-            }
-        }
-        let served = Served::default();
-        let app = Router::new()
-            .route("/", get(page))
-            .with_state(served.clone());
-        let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let mut explorer = Explorer::at(format!("http://{}/", socket.local_addr().unwrap()));
-        tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
-        // A swap to `receiver(seed)` paid in transaction `[seed; 32]` when it succeeded.
-        let swap = |seed: u8, created: i64, status: &str| {
-            let address = Receiver::from_bytes(receiver(seed))
-                .unwrap()
-                .to_unified_address(Network::Main);
-            json!({"recipient": address, "createdAtTimestamp": created,
-                "depositAddress": seed.to_string(), "status": status,
-                "destinationChainTxHashes": [format!("{seed:02x}").repeat(32)]})
-        };
-        let serve = |all: Value, successes: Option<Value>| {
-            *served.pages.lock().unwrap() = (all, successes);
-        };
-        let asked = || served.asked.lock().unwrap().clone();
-        let dir = tempfile::tempdir().unwrap();
-        let mut store = ProviderStore::open(dir.path().join("providers.sqlite")).unwrap();
-        let feed = Feed::Payouts;
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64;
-        // Three days of downtime follow the first read.
-        let since = now - 3 * RECENT_SECS;
-        let cursor = since + 100;
-        serve(json!([swap(1, cursor, "PENDING_DEPOSIT")]), Some(json!([])));
-        explorer.sync(&mut store, feed, since).await.unwrap();
-        assert_eq!(asked(), [STATUSES]);
-        assert_eq!(store.cursor(feed.name()).unwrap(), Some(cursor));
-        let read = store.read(feed.name()).unwrap();
-
-        serve(json!([swap(2, now - 600, SUCCESS)]), None);
-        assert!(explorer.sync(&mut store, feed, since).await.is_err());
-        assert_eq!(asked()[1..], [STATUSES, SUCCESS]);
-        assert_eq!(store.cursor(feed.name()).unwrap(), Some(cursor));
-        assert_eq!(store.read(feed.name()).unwrap(), read);
-        assert!(store.payouts(i64::MAX).unwrap().is_empty());
-        assert_eq!(store.sets(0).unwrap().1, [receiver(1)]);
-
-        let successes = json!([
-            swap(1, cursor, SUCCESS),
-            swap(3, cursor - 2 * OVERLAP_SECS, SUCCESS),
-            swap(4, cursor - RECENT_SECS - 1, SUCCESS),
-        ]);
-        serve(json!([swap(2, now - 600, SUCCESS)]), Some(successes));
-        assert_eq!(explorer.sync(&mut store, feed, since).await.unwrap(), 1);
-        assert_eq!(asked()[3..], [STATUSES, SUCCESS]);
-        let mut payouts = store.payouts(i64::MAX).unwrap();
-        payouts.sort();
-        let mut expected: Vec<_> = [1, 2, 3].map(|seed| (receiver(seed), [seed; 32])).into();
-        expected.sort();
-        assert_eq!(payouts, expected);
-        let mut seen = store.sets(0).unwrap().1;
-        seen.sort();
-        let mut expected = vec![receiver(1), receiver(2)];
-        expected.sort();
-        assert_eq!(seen, expected);
-        assert_eq!(store.cursor(feed.name()).unwrap(), Some(now - 600));
-        assert_eq!(store.started(feed.name()).unwrap(), Some(since));
-    }
-
-    /// A record missing its address is skipped, a future date is capped at the read's
-    /// start, and a completed payout is recorded, without a parsable transaction as
-    /// uncheckable, one row per swap, dated when the read finished, not began.
-    #[tokio::test]
-    async fn a_read_skips_bad_records_caps_future_dates_and_notes_completions() {
-        use axum::{routing::get, Router};
-        let swap = "u14nnj43rj7dpf7qh6gu24fuyu8vld9fgatxd32xre27yqgu6p0yq0sf0t3uxnwts4968hf7d8nvyh4wfzqtmcdt6xzk7el6pn0ufx6pdg";
-        let page = serde_json::json!([
-            {"recipient": swap, "refundTo": null, "createdAtTimestamp": 9_999_999_999i64,
-             "depositAddress": "a", "depositMemo": null, "status": "SUCCESS",
-             "destinationChainTxHashes": [PAYOUT_TXID, "not hex"]},
-            {"recipient": null, "createdAtTimestamp": 2_000, "depositAddress": "b"},
-            {"recipient": swap, "createdAtTimestamp": 3_000, "depositAddress": "c",
-             "status": "SUCCESS", "destinationChainTxHashes": ["not hex"]},
-            {"recipient": swap, "createdAtTimestamp": 3_000, "depositAddress": "d",
-             "status": "SUCCESS"},
-        ])
-        .to_string();
-        // A page that takes over a second, so the read ends in a later second.
-        let app = Router::new().route(
-            "/",
-            get(move || {
-                let page = page.clone();
-                async move {
-                    tokio::time::sleep(Duration::from_millis(1100)).await;
-                    page
-                }
-            }),
-        );
-        let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let origin = format!("http://{}/", socket.local_addr().unwrap());
-        tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
-        let dir = tempfile::tempdir().unwrap();
-        let mut store = ProviderStore::open(dir.path().join("providers.sqlite")).unwrap();
-        let read = Explorer::at(origin)
-            .sync(&mut store, Feed::Payouts, 1_000)
-            .await
-            .unwrap();
-        assert_eq!(read, 3);
-        let began = store.read(Feed::Payouts.name()).unwrap().unwrap();
-        assert!(store.payouts(began).unwrap().is_empty());
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64;
-        assert!(store.cursor(Feed::Payouts.name()).unwrap().unwrap() <= now);
-        let mut completed = store.payouts(now + 60).unwrap();
-        completed.retain(|p| !uncheckable(&p.1));
-        assert_eq!(completed.len(), 1);
-        assert_eq!(store.payouts(now + 60).unwrap().len(), 3);
-        // The explorer's displayed hex is reversed into protocol byte order.
-        assert_eq!(completed[0].1[0], 0x7f);
-        assert_eq!(completed[0].1[31], 0x7f);
-        assert_eq!(completed[0].1[1], 0x7e);
-    }
-
-    /// A completed payout to an Orchard receiver without a parsable transaction is one
-    /// uncheckable record per swap, told apart by memo, under a receiver that enters no
-    /// filter set; one whose recipient is missing, malformed, for another network or
-    /// without an Orchard receiver is not recorded, with or without a transaction. A
-    /// reread after reopening derives the same records, keeping when each was first
-    /// seen, and the report counts them for a day after their grace.
-    #[tokio::test]
-    async fn uncheckable_payouts_are_one_record_per_swap() {
-        use axum::{routing::get, Router};
-        let swap = "u14nnj43rj7dpf7qh6gu24fuyu8vld9fgatxd32xre27yqgu6p0yq0sf0t3uxnwts4968hf7d8nvyh4wfzqtmcdt6xzk7el6pn0ufx6pdg";
-        let orchard = orchard_receiver(swap).unwrap();
-        let excluded = [
-            None,
-            Some("not an address".to_owned()),
-            Some(
-                Receiver::from_bytes(orchard)
-                    .unwrap()
-                    .to_unified_address(Network::Test),
-            ),
-            Some("t1KfwsnwJeNRVjQGBDZhwKskpQbih2qx5Ua".to_owned()),
-            // Mainnet P2SH and Sapling addresses of all-one bytes, and a unified address of
-            // those Sapling and P2PKH receivers, encoded with zakura-address 3.0.0.
-            Some("t3JevopkKaLy85HNJG8bqunxoPsQ5o8GRya".to_owned()),
-            Some("zs1qyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszvsj7ke".to_owned()),
-            Some("u1cux9lm2ndc6034mtnny5m0ussphqtgc3ept4979nq82mqsrjgda3r7s6gcvl7jy0056nkcmxr7r50x7kvcw5he63rs8mf0t0963j2r7ygcnunx9nxpnvcwzn3ng5gcwdg87gy9yyq9s".to_owned()),
-        ];
-        let record =
-            |recipient: Option<&str>, address: &str, memo: Option<&str>, txids: &[&str]| {
-                serde_json::json!({"recipient": recipient, "createdAtTimestamp": 9_999_999_999i64,
-                "depositAddress": address, "depositMemo": memo, "status": "SUCCESS",
-                "destinationChainTxHashes": txids})
-            };
-        let mut page = vec![
-            record(Some(swap), "a", None, &[]),
-            record(Some(swap), "a", Some("m"), &["not hex"]),
-        ];
-        for (i, recipient) in excluded.iter().enumerate() {
-            for txids in [&[][..], &[PAYOUT_TXID]] {
-                page.push(record(
-                    recipient.as_deref(),
-                    &format!("{i}-{}", txids.len()),
-                    None,
-                    txids,
-                ));
-            }
-        }
-        let page = serde_json::Value::from(page).to_string();
-        let app = Router::new().route(
-            "/",
-            get(move || {
-                let page = page.clone();
-                async move { page }
-            }),
-        );
-        let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let mut explorer = Explorer::at(format!("http://{}/", socket.local_addr().unwrap()));
-        tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("providers.sqlite");
-        let mut store = ProviderStore::open(&path).unwrap();
-        explorer
-            .sync(&mut store, Feed::Payouts, 1_000)
-            .await
-            .unwrap();
-        let first_seen = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64;
-        let first = store.payouts(first_seen).unwrap();
-        assert_eq!(first.len(), 2);
-        assert!(first
-            .iter()
-            .all(|p| p.0 == uncheckable_receiver() && uncheckable(&p.1)));
-        assert_eq!(store.sets(0).unwrap(), (vec![orchard], vec![orchard]));
-        tokio::time::sleep(Duration::from_millis(1100)).await;
-        drop(store);
-        let mut store = ProviderStore::open(&path).unwrap();
-        explorer
-            .sync(&mut store, Feed::Payouts, 1_000)
-            .await
-            .unwrap();
-        assert_eq!(store.payouts(i64::MAX).unwrap(), first);
-        assert_eq!(store.payouts(first_seen).unwrap(), first);
-        let counted = |anchor_time| capture(&store, anchor_time).unwrap().uncheckable;
-        assert_eq!(counted(first_seen + COMPLETION_GRACE_SECS), 2);
-        assert_eq!(counted(first_seen + RECENT_SECS + 1), 0);
-    }
-
     /// [`Capture::report`] for the current state of `provider` on a terminal block with
     /// time `now`.
-    fn report(provider: &ProviderStore, index: &Store, now: i64) -> serde_json::Value {
+    fn report(provider: &PayoutStore, index: &Store, now: i64) -> serde_json::Value {
         capture(provider, now).unwrap().report(index).unwrap()
     }
 
@@ -1149,22 +488,20 @@ mod tests {
         let (mut index, block) = paid_index(&index_path);
         index.append(&block).unwrap();
         let now = 1_000_000;
-        ProviderStore::open(&provider_path)
+        PayoutStore::open(&provider_path)
             .unwrap()
             .record(
-                "near-payouts",
-                Some(0),
-                &[],
+                "near-payout-audit",
                 &[(receiver(1), [7; 32], now - 2 * 60 * 60)],
                 now,
                 now - 2 * 60 * 60,
             )
             .unwrap();
-        let provider = ProviderStore::open(&provider_path).unwrap();
+        let provider = PayoutStore::open(&provider_path).unwrap();
         assert_eq!(report(&provider, &index, now)["payouts_missing"], 0);
         index.rewind(99, [2; 32]).unwrap();
         drop((provider, index));
-        let provider = ProviderStore::open(&provider_path).unwrap();
+        let provider = PayoutStore::open(&provider_path).unwrap();
         let (mut index, block) = paid_index(&index_path);
         assert_eq!(report(&provider, &index, now)["payouts_missing"], 1);
         index.append(&block).unwrap();
@@ -1178,7 +515,7 @@ mod tests {
     #[test]
     fn report_counts_completed_payouts_missing_from_the_index() {
         let dir = tempfile::tempdir().unwrap();
-        let mut provider = ProviderStore::open(dir.path().join("providers.sqlite")).unwrap();
+        let mut provider = PayoutStore::open(dir.path().join("providers.sqlite")).unwrap();
         let (mut index, block) = paid_index(&dir.path().join("directory.sqlite"));
         index.append(&block).unwrap();
         let now = 1_000_000;
@@ -1190,14 +527,14 @@ mod tests {
             (receiver(2), [0; 32], early),
         ];
         provider
-            .record("near-payouts", Some(0), &[], &payouts, now, early)
+            .record("near-payout-audit", &payouts, now, early)
             .unwrap();
         let payouts = [(receiver(2), [9; 32], now - 60)];
         provider
-            .record("near-payouts", None, &[], &payouts, now, now - 60)
+            .record("near-payout-audit", &payouts, now, now - 60)
             .unwrap();
         provider
-            .record("near-payouts", None, &[], &[], now, now - 30)
+            .record("near-payout-audit", &[], now, now - 30)
             .unwrap();
         let first = report(&provider, &index, now);
         assert_eq!(first["payouts_checked"], 2);
@@ -1209,8 +546,10 @@ mod tests {
         assert_eq!(report["payouts_checked"], 3);
         assert_eq!(report["payouts_missing"], 2);
         assert_eq!(report["payouts_uncheckable"], 0);
-        assert_eq!(report["feeds"]["near-payouts"], now - 30);
-        assert!(report["feeds"]["near-refunds"].is_null());
+        assert_eq!(
+            report["feeds"],
+            serde_json::json!({"near-payout-audit": now - 30})
+        );
     }
 
     /// A completion ages from when a read saw it, not when the read began: after a read
@@ -1228,25 +567,36 @@ mod tests {
                 (receiver(1), [8; 32], seen_at),
                 (uncheckable_receiver(), [0; 32], seen_at),
             ];
-            ProviderStore::open(&path)
+            PayoutStore::open(&path)
                 .unwrap()
-                .record("near-payouts", Some(0), &[], &payouts, read_at, read_at)
+                .record("near-payout-audit", &payouts, read_at, read_at)
                 .unwrap();
         };
         record(began, seen);
         let due = seen + COMPLETION_GRACE_SECS;
-        let provider = ProviderStore::open(&path).unwrap();
+        let provider = PayoutStore::open(&path).unwrap();
         let pending = report(&provider, &index, due - 1);
-        assert_eq!(pending["feeds"]["near-payouts"], began);
+        assert_eq!(pending["feeds"]["near-payout-audit"], began);
         assert_eq!(pending["payouts_checked"], 0);
         assert_eq!(pending["payouts_uncheckable"], 0);
         drop(provider);
         record(seen, seen + 60 * 60);
-        let provider = ProviderStore::open(&path).unwrap();
+        let provider = PayoutStore::open(&path).unwrap();
         let checked = report(&provider, &index, due);
-        assert_eq!(checked["feeds"]["near-payouts"], seen);
+        assert_eq!(checked["feeds"]["near-payout-audit"], seen);
         assert_eq!(checked["payouts_missing"], 1);
         assert_eq!(checked["payouts_uncheckable"], 1);
+    }
+
+    /// Health reports only the payout feed's reads, null until one completes.
+    #[test]
+    fn reads_report_only_the_payout_feed() {
+        let reads = Reads::default();
+        let health = |reads: &Reads| serde_json::Value::Object(reads.health());
+        let expected = |began| serde_json::json!({"near": {"reads": {"near-payout-audit": began}}});
+        assert_eq!(health(&reads), expected(serde_json::Value::Null));
+        reads.record(Feed::Payouts, 5);
+        assert_eq!(health(&reads), expected(5.into()));
     }
 
     #[test]
@@ -1259,42 +609,106 @@ mod tests {
         assert_eq!(page[0].created_at_timestamp, 5);
         assert_eq!(page[0].deposit_memo, None);
     }
-
-    /// Reads the last hour of the live feed. Needs a partner key in
-    /// `NEAR_INTENTS_EXPLORER`.
+    /// The reduced audit keeps real HTTP bounds and commits nothing on a partial read.
     #[tokio::test]
-    #[ignore]
-    async fn live_feed_records_recent_receivers() {
-        let key = std::env::var("NEAR_INTENTS_EXPLORER").expect("partner key");
+    async fn audit_reads_only_completed_payouts_and_bounds_failed_reads() {
+        use axum::{
+            extract::{Query, State},
+            routing::get,
+            Json, Router,
+        };
+        use std::sync::atomic::AtomicBool;
+        let oversized = Arc::new(AtomicBool::new(false));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let origin = format!("http://{}", listener.local_addr().unwrap());
+        let app = Router::new().route("/", get(|State(oversized): State<Arc<AtomicBool>>, Query(query): Query<std::collections::HashMap<String,String>>| async move {
+            assert_eq!(query["toChainId"], "zec");
+            assert_eq!(query["statuses"], SUCCESS);
+            let swap = serde_json::json!({"createdAtTimestamp":100,"depositAddress":"d",
+                "recipient":"u14nnj43rj7dpf7qh6gu24fuyu8vld9fgatxd32xre27yqgu6p0yq0sf0t3uxnwts4968hf7d8nvyh4wfzqtmcdt6xzk7el6pn0ufx6pdg",
+                "status":"SUCCESS","destinationChainTxHashes":["7f79a9262c301e3da38907fdbfca663c1fcb04b6a890ea737c281fc2ff707e7f"]});
+            Json(vec![swap; if oversized.load(Ordering::SeqCst) { PAGE } else { 1 }])
+        })).with_state(oversized.clone());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let mut explorer = Explorer::at(origin);
+        explorer.max_pages = 1;
         let dir = tempfile::tempdir().unwrap();
-        let mut store = ProviderStore::open(dir.path().join("providers.sqlite")).unwrap();
-        let mut explorer = Explorer::new(key).unwrap();
-        let since = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64
-            - 3600;
-        let payouts = explorer
-            .sync(&mut store, Feed::Payouts, since)
-            .await
-            .unwrap();
-        let refunds = explorer
-            .sync(&mut store, Feed::Refunds, since)
-            .await
-            .unwrap();
-        let (recent, seen) = store.sets(since).unwrap();
-        eprintln!(
-            "payouts={payouts} refunds={refunds} recent={} seen={}",
-            recent.len(),
-            seen.len()
+        let path = dir.path().join("audit.sqlite");
+        let mut store = PayoutStore::open(&path).unwrap();
+        assert_eq!(
+            explorer.sync(&mut store, Feed::Payouts, 0).await.unwrap(),
+            1
         );
-        assert!(payouts > 0 && refunds > 0);
-        assert!(store.cursor(Feed::Payouts.name()).unwrap().unwrap() >= since);
-        // A second read starts from the cursor and finds nothing new to lose.
-        explorer
-            .sync(&mut store, Feed::Payouts, since)
-            .await
-            .unwrap();
-        assert!(store.sets(since).unwrap().0.len() >= recent.len());
+        let before = store.payouts(i64::MAX).unwrap();
+        assert_eq!(before.len(), 1);
+        let read = store.read("near-payout-audit").unwrap();
+        oversized.store(true, Ordering::SeqCst);
+        assert!(explorer.sync(&mut store, Feed::Payouts, 0).await.is_err());
+        assert_eq!(store.payouts(i64::MAX).unwrap(), before);
+        assert_eq!(store.read("near-payout-audit").unwrap(), read);
+        server.abort();
+    }
+
+    /// A read leaves the previous release's own feed and receiver set as they were, so
+    /// after a rollback that release resumes its receiver scan from its own cursor,
+    /// before every swap this audit read, rather than from this audit's.
+    #[tokio::test]
+    async fn the_audit_leaves_the_previous_releases_receiver_coverage() {
+        use axum::{routing::get, Json, Router};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let origin = format!("http://{}", listener.local_addr().unwrap());
+        // A swap created two hours after the previous release's cursor.
+        let (cursor, created) = (1_000_000, 1_000_000 + 2 * 60 * 60);
+        let app = Router::new().route("/", get(move || async move {
+            Json(vec![serde_json::json!({"createdAtTimestamp": created, "depositAddress": "d",
+                "recipient": "u14nnj43rj7dpf7qh6gu24fuyu8vld9fgatxd32xre27yqgu6p0yq0sf0t3uxnwts4968hf7d8nvyh4wfzqtmcdt6xzk7el6pn0ufx6pdg",
+                "status": "SUCCESS",
+                "destinationChainTxHashes": ["7f79a9262c301e3da38907fdbfca663c1fcb04b6a890ea737c281fc2ff707e7f"]})])
+        }));
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("providers.sqlite");
+        // The previous release's state: its payout feed and a receiver it ingested.
+        let previous = |db: &rusqlite::Connection| -> (i64, i64, i64, i64) {
+            let (started, cursor, read) = db
+                .query_row(
+                    "SELECT started_at,cursor,read_at FROM feeds WHERE feed='near-payouts'",
+                    [],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                )
+                .unwrap();
+            let receivers = db
+                .query_row("SELECT COUNT(*) FROM receivers", [], |r| r.get(0))
+                .unwrap();
+            (started, cursor, read, receivers)
+        };
+        let db = rusqlite::Connection::open(&path).unwrap();
+        db.execute_batch(
+            "CREATE TABLE receivers (receiver BLOB NOT NULL, payout INTEGER NOT NULL,
+                seen_at INTEGER NOT NULL, PRIMARY KEY(receiver,payout)) WITHOUT ROWID;
+            CREATE TABLE feeds (feed TEXT PRIMARY KEY, started_at INTEGER,
+                cursor INTEGER NOT NULL, read_at INTEGER NOT NULL);
+            INSERT INTO feeds VALUES ('near-payouts', 900000, 1000000, 1000000);",
+        )
+        .unwrap();
+        db.execute(
+            "INSERT INTO receivers VALUES (?1, 1, 1000000)",
+            [receiver(1).as_slice()],
+        )
+        .unwrap();
+        let before = previous(&db);
+        let mut store = PayoutStore::open(&path).unwrap();
+        let mut explorer = Explorer::at(origin);
+        assert_eq!(
+            explorer.sync(&mut store, Feed::Payouts, 0).await.unwrap(),
+            1
+        );
+        assert_eq!(store.cursor(Feed::Payouts.name()).unwrap(), Some(created));
+        assert_eq!(store.payouts(i64::MAX).unwrap().len(), 1);
+        assert_eq!(previous(&db), before);
+        // The previous release rescans from its own cursor, less its overlap, which
+        // reaches the swap this audit read.
+        assert!(before.1 == cursor && cursor < created);
+        server.abort();
     }
 }

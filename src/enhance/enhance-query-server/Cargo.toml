@@ -46,14 +46,14 @@ tokio = { version = "1", features = ["full"] }
 tokio-stream = "0.1"
 tracing = "0.1"
 
-zakura-pir-query-server = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "f48b62b80ec7d9d7fb7893401435a24b189b8ec2", default-features = false, features = ["enhance"], optional = true }
-zakura-pir-client = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "f48b62b80ec7d9d7fb7893401435a24b189b8ec2", default-features = false, features = ["native"], optional = true }
+zakura-pir-query-server = { version = "=0.0.1-rc1", default-features = false, features = ["enhance"], optional = true }
+zakura-pir-client = { version = "=0.0.1-rc1", default-features = false, features = ["native"], optional = true }
 
 [dev-dependencies]
 simplepir-kernel = "=0.1.0-rc.4"
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
-zakura-pir-client = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "f48b62b80ec7d9d7fb7893401435a24b189b8ec2", default-features = false, features = ["native"] }
+zakura-pir-client = { version = "=0.0.1-rc1", default-features = false, features = ["native"] }
 
 
 [dev-dependencies.enhance-query-server]

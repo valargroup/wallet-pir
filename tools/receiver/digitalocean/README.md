@@ -5,8 +5,8 @@ One Droplet, `receiver-pir-poc-01`, runs `receiver-pir.service`, which starts
 polls every 10 seconds and publishes two blocks below the tip. The service listens
 on the Droplet's private address, `10.70.0.11:18380`, and nothing listens on its
 public interface. Caddy terminates public TLS for `receiver-pir.valargroup.dev` and
-proxies only the wallet routes (`init`, `public`, `query`, `witness` and `filters`
-under `/v1/receiver/`). `/v1/receiver/health` and `/metrics` stay off
+proxies only the wallet routes (`init`, `public`, `query`, `witness` and
+`block-filters` under `/v1/receiver/`). `/v1/receiver/health` and `/metrics` stay off
 the edge, as Transparent keeps its operator routes: the PIR monitor's probe reads
 health over the private network. `/metrics` is private and nothing collects it
 yet; collection belongs in pir-apm when something consumes it.
@@ -93,15 +93,32 @@ running digest and a set `serving`, which stays null until the first publication
 Then, still under the lock and before it commits, it runs the inventory's
 `exact_check` on the Droplet, since the coordinator cannot reach the private
 health route: `{release_dir}/receiver-directory probe`, the probe built into the
-deployed binary with its pinned fixture. It first waits up to 300 seconds
-(`--await-feed-reads`) for the restarted process to read both NEAR feeds, which
-proves the key file the unit names, and for the served publication to hold those
-reads, then looks up the pinned payment with one live encrypted query over the
-public origin and checks the filter file and private health. Its chain checks use
-the fleet nodes the service reads, so it gates the deploy but is not an independent
-oracle; the monitor's probe is. A failed check, one still running at its
-480-second `timeout`, or `rollback` restores the previous unit file and binary.
+deployed binary with its pinned fixture. It looks up the payment through encrypted PIR, checks current rolling block hints and private health, and validates witnesses when enabled. Provider audit availability is checked separately and never delays publication. Its chain checks use the fleet nodes, so the monitor's separate node remains the independent oracle. A failed check, its 300-second timeout, or `rollback` restores the previous unit and binary.
 Report `status receiver` and the rollback command after each deploy.
+
+A release that changes the wallet routes changes the probe with them, so the
+binary cannot verify through the old Caddyfile and the old binary cannot verify
+through the new one. Deploy such a release, including the one that replaces the
+aggregate `filters` route with `block-filters`, as one locked cutover of both with
+[`caddy.py`](caddy.py), which takes the production lock itself:
+
+```sh
+tools/receiver/digitalocean/caddy.py cutover tools/receiver/digitalocean/Caddyfile \
+  deploy receiver --archive receiver-pir.tar.gz --sha <rev> [--allow-unit-drift]
+```
+
+It installs the Caddyfile, keeping the live one as `/etc/caddy/Caddyfile.before-<UTC time>`,
+then deploys. The deploy's exact check probes the new binary through the new routes,
+and a failed deploy restores the previous binary and Caddyfile and verifies them
+together. To roll back after a committed cutover, restore both the same way, with
+the kept predecessor fetched to the coordinator:
+
+```sh
+tools/receiver/digitalocean/caddy.py cutover <saved Caddyfile.before-...> rollback receiver [--transaction ID]
+```
+
+A plain `rollback receiver` would leave the new routes in front of the previous
+binary.
 
 A deploy whose binary and effective unit already run is a no-op: it commits no
 transaction and runs no check, so it is not a fresh qualification. A change to
@@ -120,28 +137,18 @@ Before the first tool deploy, once:
 1. Add the Droplet to the coordinator's real inventory as in
    [`deploy-inventory.example.json`](../../enhance/deploy/deploy-inventory.example.json):
    a host with its SSH address, `services.receiver.template_vars.NEAR_KEY` set to
-   a new key id `<id>`, such as the date, `services.receiver.roles.server` on the host with
+   a key id `<id>`, such as the date, `services.receiver.roles.server` on the host with
    `vars.listen` set to the `--bind` address, `10.70.0.11:18380`, and
    `services.receiver.exact_check` on the same host, as there. Add its host key
    to the inventory's pinned `known_hosts` and update `known_hosts_sha256`.
 2. Authorize the deploy key (`ssh.key`, `~/.ssh/wallet-pir-deploy` in the example)
    for root on the Droplet.
-3. Install the key the Droplet runs with as key file `<id>`, from Infisical as
-   [below](#installing-or-rotating-the-near-key).
+3. To run the optional payout audit, install its key as key file `<id>`, from
+   Infisical as [below](#installing-or-rotating-the-near-key). Without that file
+   the service indexes and serves without the audit.
 4. Run `tools/scripts/wallet-pir-deploy.py capture-baseline receiver` and review it.
    `preflight` and `deploy` refuse any unit change made after it.
-5. Delete and stop nothing: the new release keeps its provider store in
-   `providers.sqlite`, which it builds from `--near-since` on first start, and leaves
-   the earlier build's `provider.sqlite` untouched for rollback. Delete
-   `/srv/receiver-pir/index/provider.sqlite*` only once the rollback window has passed.
-   That build reads every swap since `--near-since`, one feed after the other: in
-   production on 2026-10-10, on a fresh `providers.sqlite`, the payouts feed's first
-   read took about 14 minutes and the refunds feed's about 18. So for the first
-   deploy raise the inventory's `--await-feed-reads` to 3600 and the exact check's
-   `timeout` to 3900. A deploy that rolls back keeps the reads it completed in
-   `providers.sqlite`, so a retry waits only for what remains. During a rollback the
-   old and new processes briefly share the partner key's rate limit, so the explorer
-   may answer one request with HTTP 429, which the next poll retries.
+5. Preserve the chain index and full payment/commitment history. The optional payout audit reads under its own `near-payout-audit` cursor, starting from `--near-since`, and leaves the previous release's `near-payouts` cursor, `receivers` table and feed start column in `providers.sqlite` untouched. A rollback reuses the file and that release resumes its receiver scan from its own cursor. A later release drops them. No global address backfill or feed-wait flag is needed. Review old publication artifacts separately after the rollback window. This source change does not deploy or delete operator files.
 
 The live Droplet still runs the unit installed by hand, which starts
 `/opt/receiver-pir/current/receiver-directory`, reads the key from the optional
@@ -150,7 +157,8 @@ tool replaces the unit at `/etc/systemd/system`, the only fragment path a templa
 role accepts, and keeps the old text in the transaction for rollback. Besides the
 binary path only the key file should differ, so `plan` and `preflight` should show
 a `write` of the unit and one `drift` line, `Service.EnvironmentFile`, from
-`-/etc/receiver-pir/near.env` to the versioned file; review it and deploy with
+`-/etc/receiver-pir/near.env` to the optional versioned file
+`-/etc/receiver-pir/near-<id>.env`; review it and deploy with
 `--allow-unit-drift`, even for the binary that already runs. Any other drift line
 means the live unit differs from the template; reconcile the template in a reviewed
 commit rather than accept it unread. The role owns its whole unit (`owns_unit` in
@@ -161,11 +169,12 @@ the hand-installed unit, so leave `current` and `near.env` alone.
 
 ### Installing or rotating the NEAR key
 
-The unit reads the NEAR Intents explorer partner key, as `NEAR_INTENTS_EXPLORER`,
-from `/etc/receiver-pir/near-<id>.env`, where `<id>` is the inventory's
-`services.receiver.template_vars.NEAR_KEY`, and does not start without that file.
-A key change installs a new file and deploys a unit that names it, on the
-coordinator:
+The optional payout audit reads the NEAR Intents explorer partner key, as
+`NEAR_INTENTS_EXPLORER`, from `/etc/receiver-pir/near-<id>.env`, where `<id>` is
+the inventory's `services.receiver.template_vars.NEAR_KEY`. The unit names that
+file as optional. Without it the service indexes, publishes and serves, and only
+the audit is off. To enable the audit or change its key, install a new file and
+deploy a unit that names it, on the coordinator:
 
 1. Install the key under a new id, such as the date, with
    [`near-key.py`](near-key.py), which reaches the Droplet over the pinned SSH of
@@ -190,12 +199,7 @@ coordinator:
    tools/scripts/wallet-pir-deploy.py deploy receiver --archive receiver-pir.tar.gz --sha <rev> --allow-unit-drift
    ```
 
-The exact check's `--await-feed-reads` passes only once the restarted process has
-read both feeds, so with the new key. On a failure the tool rolls back to the
-previous unit, which names the previous key file. Rollback restores the unit, not
-the inventory, so then set `NEAR_KEY` back to the previous id. A rolled-back
-receiver passed readiness again, which does not show that the explorer still
-accepts the previous key: check on the Droplet that health's `near.reads` fill in.
+Verify the new audit key separately by checking that health's `near.reads.near-payout-audit` advances after restart. The discovery probe does not certify the key. On rollback, restore the inventory's `NEAR_KEY` to the previous id as well as checking the running unit. To turn the audit off, point `NEAR_KEY` at an id with no installed file and deploy the same way.
 
 After `preflight --stage` of a new release, run the check's `argv` once by hand on
 the Droplet, with `{release_dir}` replaced by the staged release directory, and
@@ -226,11 +230,11 @@ before its baseline is captured.
      -e 's|^Description=.*|& (bootstrap)|' receiver-pir.service.in >/etc/systemd/system/receiver-pir.service
    ```
 
-   `--near-since` sets where a new provider database's first read starts; keep it
-   at the feed's original start.
-4. Install the NEAR Intents explorer partner key, which the recent and seen filters
-   need, as key file `<id>` with steps 1 to 3 [before the first tool
-   deploy](#release-and-deploy). Without it the service does not start.
+   `--near-since` sets where a new audit database's first read starts, the oldest
+   completion the payout audit checks. It bounds only the audit.
+4. Optionally install the NEAR Intents explorer partner key for the payout audit,
+   as key file `<id>` with steps 1 to 3 [before the first tool
+   deploy](#release-and-deploy). Without it the service runs without the audit.
 5. Enable and start `receiver-pir` and reload `caddy`. Check that
    `https://receiver-pir.valargroup.dev/v1/receiver/health` returns 404 and that
    `http://10.70.0.11:18380/v1/receiver/health` answers from the monitor host.
@@ -257,12 +261,17 @@ flock -n /run/lock/wallet-pir-production.lock tools/receiver/digitalocean/caddy.
 ```
 
 A Caddy change touches neither the unit nor the binary, so the baseline stays valid.
+A change of the wallet routes is a cutover with the binary instead, as
+[above](#release-and-deploy).
 
 The service publishes from memory and writes no publication files; the index keeps
-only `directory.sqlite` and `providers.sqlite`. A `publications/` directory left by
-an earlier release can be deleted. Back up `providers.sqlite` with the index:
-rebuilding it means one read of every swap since `--near-since`. Logs go to the
-journal through `tracing`; `RUST_LOG` in the unit sets the level.
+only `directory.sqlite` and, with the audit, `providers.sqlite`. A `publications/`
+directory left by an earlier release can be deleted. Back up `directory.sqlite`,
+the chain index. `providers.sqlite` holds only the payout audit. If it is lost,
+the next read starts again from `--near-since`, and payouts completed before then
+go unchecked. Nothing else depends on it. A first read that exceeds its page
+bound fails, so deploy a later `--near-since` in that case. Logs go to the journal through
+`tracing`; `RUST_LOG` in the unit sets the level.
 
 ## Monitoring
 
@@ -329,15 +338,17 @@ The fixture pins the public NEAR refund
 `2060cf68088b55dcd9e2f91556c72528e1ab8c6834ea3f71b8c80fca9fc51653` (height
 3,496,114, Action 0, note position 610503), which every publication holds, and
 its receiver as decoded independently from NEAR's refund address (see
-`src/receiver/receiver-directory/tests/fixtures/zero-ovk-action-oracle`); the
-probe refuses a recovery that does not reproduce it. It alerts when the served
+[`src/receiver/receiver-store/tests/fixtures/zero-ovk-action-oracle`](../../../src/receiver/receiver-store/tests/fixtures/zero-ovk-action-oracle));
+the probe refuses a recovery that does not reproduce it. It alerts when the served
 anchor leaves the chain, the lookup misses or misreports the pinned payment, the
-filter file is wrong or a completed NEAR payout is missing from the index
-(correctness, `answer_mismatch`), when the built-in fixture is malformed, recovers
-another receiver, is off the node's chain or outside the publication
-(`oracle_invalid`), and after three failed probes when the publication or the
-recent set goes stale, a recent completed payout to an Orchard receiver has no
-parsable transaction (`payouts_uncheckable`) or a request fails (availability).
+witness file or the current block hint is wrong, or the audit reports a completed
+NEAR payout missing from the index (correctness, `answer_mismatch`), when the
+built-in fixture is malformed, recovers another receiver, is off the node's chain
+or outside the publication (`oracle_invalid`), and after three failed probes when
+the publication goes stale, health reports another publication, no node can check
+it or a request fails (availability). Audit data that is absent, incomplete or
+uncheckable (`payouts_uncheckable`) is only logged, so the probe passes without
+the audit.
 
 `pir-monitor` is not a deploy-tool service for any product, so install
 `receiver-probe` on the monitor host from the bundle, checked against its

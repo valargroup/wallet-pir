@@ -26,11 +26,10 @@ Line Tools. `make doctor NETWORK=1` checks authenticated GitHub/dependency acces
 it suppresses subprocess output and never prints tokens. Missing dependencies are
 fixed explicitly, not by interactive repair in a test command.
 
-The current service workspace and standalone txid sizing exporter pin the Common
-family to one Git revision through their Cargo patches. Move those patches
-together when updating Common; the dependency boundary check rejects older
-Common releases and copies resolved from another source, including stale lockfile
-entries. The released frozen-client fixture retains its independent historical
+The service workspace and standalone txid sizing exporter use published Common
+4.0.0-rc3. Their root patches keep the wallet-library family on one source revision.
+Update both roots and lockfiles together. The dependency boundary check rejects
+older Common releases and mixed sources, including stale lockfile entries. The released frozen-client fixture retains its independent historical
 dependencies for interoperability checks.
 
 PIR primitives come from the role packages in wallet-libraries. Publishers use

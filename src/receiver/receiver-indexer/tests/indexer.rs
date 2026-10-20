@@ -220,85 +220,27 @@ async fn cli_resumes_and_replaces_an_orphaned_publication() {
     let daemon = start();
     wait_height(&client, &endpoint, activation() + 1).await;
     assert_eq!(files(), written, "serving publishes from memory");
-    // The monitor's probe looks up a pinned payment over encrypted PIR: the public refund,
-    // at the height and position this synthetic chain gives it, and checks its path in
-    // the served witness file under the node's root. The index has no NEAR
-    // feed, so after the lookup it reports the recent set as stale.
-    let revision = extended["revision"].as_str().unwrap();
-    let rows = std::fs::read(dir.path().join(format!("publications/{revision}.rows"))).unwrap();
-    let payment = rows
-        .chunks(receiver_directory::snapshot::ROW_BYTES)
-        .flat_map(|row| {
-            row[..receiver_directory::snapshot::SLOTS * receiver_directory::RECORD_BYTES]
-                .chunks(receiver_directory::RECORD_BYTES)
-        })
-        .find_map(|slot| zakura_receiver_crypto::Record::decode(slot).unwrap())
-        .unwrap()
-        .payment;
-    let mut fixture: Value = serde_json::from_str(include_str!(
-        "../../receiver-store/tests/fixtures/zero-ovk-action.json"
-    ))
-    .unwrap();
-    fixture["height"] = payment.height.into();
-    fixture["block_hash"] = zakura_server_chain::hash::display(&payment.block_hash).into();
-    fixture["tx_index"] = payment.tx_index.into();
-    fixture["position"] = payment.position.into();
-    // The deploy gate's form of the probe: `receiver-directory probe`.
-    let probe_nodes = |fixture: &Value, nodes: &[&str]| {
-        let path = dir.path().join("fixture.json");
-        std::fs::write(&path, serde_json::to_vec(fixture).unwrap()).unwrap();
-        let output = Command::new(env!("CARGO_BIN_EXE_receiver-directory"))
-            .args([
-                "probe",
-                "--origin",
-                &format!("http://{addr}"),
-                "--health-url",
-                &format!("http://{addr}/v1/receiver/health"),
-                "--fixture",
-                path.to_str().unwrap(),
-                "--no-auth",
-                "--witnesses",
-            ])
-            .args(nodes.iter().flat_map(|node| ["--rpc-url", node]))
-            .output()
-            .unwrap();
-        serde_json::from_slice::<Value>(&output.stdout).unwrap()
-    };
-    let probe = |fixture: &Value| probe_nodes(fixture, &[&url]);
-    let result = probe(&fixture);
-    assert_eq!(result["phase"], "live_encrypted_probe", "{result}");
-    assert_eq!(
-        (result["queries"].clone(), result["correct"].clone()),
-        (json!(1), json!(1))
-    );
-    assert_eq!(result["category"], "stale_feed");
-    assert_eq!(result["passed"], false);
-    // The fixture carries its receiver's independent decoding; a pin that recovery
-    // does not reproduce is refused before any lookup.
-    let mut repinned = fixture.clone();
-    // The receiver at external index zero of the spending key of all-three bytes.
-    let other: serde_json::Value = serde_json::from_str(include_str!(
-        "../../receiver-store/tests/fixtures/receivers.json"
-    ))
-    .unwrap();
-    repinned["receiver"] = other["seeds"]["3"].clone();
-    let result = probe(&repinned);
+    // The deploy gate's form of the probe, `receiver-directory probe`, with its built-in
+    // mainnet fixture. That payment is above this synthetic chain, so the probe reaches the
+    // served manifest and refuses to check it. The lookup itself is the probe's unit test.
+    let output = Command::new(env!("CARGO_BIN_EXE_receiver-directory"))
+        .args([
+            "probe",
+            "--origin",
+            &format!("http://{addr}"),
+            "--health-url",
+            &format!("http://{addr}/v1/receiver/health"),
+            "--rpc-url",
+            &url,
+            "--no-auth",
+            "--witnesses",
+        ])
+        .output()
+        .unwrap();
+    let result = serde_json::from_slice::<Value>(&output.stdout).unwrap();
+    assert!(!output.status.success());
     assert_eq!(result["category"], "oracle_invalid", "{result}");
-    assert!(result["phase"].is_null(), "{result}");
-    let mut moved = fixture.clone();
-    moved["position"] = (payment.position + 1).into();
-    let result = probe(&moved);
-    assert_eq!(result["category"], "answer_mismatch", "{result}");
-    assert_eq!(result["correct"], 0);
-    // An unreachable node falls back to the next; a node behind the publication can
-    // check nothing, which is unavailability, never a pass.
-    let result = probe_nodes(&fixture, &["http://127.0.0.1:1", &url]);
-    assert_eq!(result["correct"], 1, "{result}");
-    count.store(1, Ordering::SeqCst);
-    let result = probe(&fixture);
-    assert_eq!(result["category"], "oracle_unavailable", "{result}");
-    assert_eq!(result["passed"], false);
-    count.store(2, Ordering::SeqCst);
+    assert_eq!(result["detail"], json!({"fixture": "after coverage"}));
     hold.store(true, Ordering::SeqCst);
     changed.store(false, Ordering::SeqCst);
     tokio::time::timeout(std::time::Duration::from_secs(10), async {

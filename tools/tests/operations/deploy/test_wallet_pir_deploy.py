@@ -74,7 +74,7 @@ NEAR_KEY = '2026-10-01'
 NEAR_KEY_FILE = '/etc/receiver-pir/near-%s.env'
 RECEIVER_LIVE = units.render(RECEIVER_TEMPLATE.read_text(), {'RELEASE': '/opt/receiver-pir/current', 'NEAR_KEY': NEAR_KEY})
 # The unit installed by hand before the tool, with the optional unversioned key file.
-RECEIVER_HAND_INSTALLED = RECEIVER_LIVE.replace('EnvironmentFile=' + NEAR_KEY_FILE % NEAR_KEY,
+RECEIVER_HAND_INSTALLED = RECEIVER_LIVE.replace('EnvironmentFile=-' + NEAR_KEY_FILE % NEAR_KEY,
                                                 'EnvironmentFile=-/etc/receiver-pir/near.env')
 RECEIVER_PROBE = ['{release_dir}/receiver-directory', 'probe', '--origin', 'https://receiver.example', '--no-auth']
 
@@ -829,7 +829,7 @@ class ReceiverTests(Fleet):
         sha = sha256(RECEIVER_NEW)
         before = dict(self.fake.host('receiver-01').files)
         # Besides the binary path, only the key file differs, and is reviewed drift.
-        drift = ["Service.EnvironmentFile: ['-/etc/receiver-pir/near.env'] -> ['%s']" % (NEAR_KEY_FILE % NEAR_KEY)]
+        drift = ["Service.EnvironmentFile: ['-/etc/receiver-pir/near.env'] -> ['-%s']" % (NEAR_KEY_FILE % NEAR_KEY)]
         with self.assertRaisesRegex(DeployError, 'allow-unit-drift'):
             deployer.deploy(sha, self.receiver_binary)
         self.assertEqual(self.fake.log, [])
@@ -975,7 +975,7 @@ class ReceiverTests(Fleet):
         self.fake.log.clear()
         plans, problems = deployer.assess(sha)
         self.assertEqual(plans[0].action, 'restart')
-        self.assertEqual(plans[0].drift, ["Service.EnvironmentFile: ['%s'] -> ['%s']"
+        self.assertEqual(plans[0].drift, ["Service.EnvironmentFile: ['-%s'] -> ['-%s']"
                                           % (NEAR_KEY_FILE % NEAR_KEY, NEAR_KEY_FILE % 'next')])
         self.assertTrue(any('allow-unit-drift' in problem for problem in problems), problems)
         with self.assertRaisesRegex(DeployError, 'allow-unit-drift'):
@@ -1013,28 +1013,30 @@ class ReceiverTests(Fleet):
                 self.assertEqual(self.fake.log, [])
                 self.assertEqual(Journal.load(self.state, 'receiver'), None)
 
-    def test_a_rotation_failing_its_check_or_start_restores_the_previous_key(self):
+    def test_a_rotation_failing_its_check_restores_the_previous_key(self):
         sha = sha256(RECEIVER_NEW)
-        for i, (key, exact) in enumerate([('next', (1, '{"passed":false,"category":"feeds_not_read"}')),
-                                          ('uninstalled', (0, 'exact answers ok'))]):
-            with self.subTest(key=key):
-                self.fake, self.state = FakeFleet(), self.dir / ('state-%d' % i)
-                self.inventory_path.write_text(json.dumps(INVENTORY))
-                self.inventory = descriptors.load_inventory(self.inventory_path)
-                self.receiver_fleet().deploy(sha, self.receiver_binary)
-                previous = self.unit()
-                self.fake.put('receiver-01', NEAR_KEY_FILE % 'next', 'NEAR_INTENTS_EXPLORER=new\n')
-                deployer = self.rotated(key)
-                self.fake.exact_result = exact
-                self.fake.log.clear()
-                with self.assertRaises(DeployError):
-                    deployer.deploy(sha, allow_drift=True)
-                self.assertEqual(Journal.load(self.state, 'receiver').status, 'rolled-back')
-                self.assertEqual(self.unit(), previous)
-                self.assertEqual(self.restarts(), [('receiver-01', 'receiver-pir.service')] * 2)
-                state = self.fake.host('receiver-01').units['receiver-pir.service']
-                self.assertEqual((state['active'], state['exe']), ('active', sha))
-                self.assertIn(NEAR_KEY_FILE % NEAR_KEY, units.effective([previous])['Service']['EnvironmentFile'])
+        self.receiver_fleet().deploy(sha, self.receiver_binary)
+        previous = self.unit()
+        self.fake.put('receiver-01', NEAR_KEY_FILE % 'next', 'NEAR_INTENTS_EXPLORER=new\n')
+        deployer = self.rotated('next')
+        self.fake.exact_result = (1, '{"passed":false,"category":"answer_mismatch"}')
+        self.fake.log.clear()
+        with self.assertRaises(DeployError):
+            deployer.deploy(sha, allow_drift=True)
+        self.assertEqual(Journal.load(self.state, 'receiver').status, 'rolled-back')
+        self.assertEqual(self.unit(), previous)
+        self.assertEqual(self.restarts(), [('receiver-01', 'receiver-pir.service')] * 2)
+        state = self.fake.host('receiver-01').units['receiver-pir.service']
+        self.assertEqual((state['active'], state['exe']), ('active', sha))
+        self.assertIn('-' + NEAR_KEY_FILE % NEAR_KEY, units.effective([previous])['Service']['EnvironmentFile'])
+
+    def test_an_uninstalled_key_starts_the_service_without_the_audit(self):
+        sha = sha256(RECEIVER_NEW)
+        self.receiver_fleet().deploy(sha, self.receiver_binary)
+        journal = self.rotated('uninstalled').deploy(sha, allow_drift=True)
+        self.assertEqual(journal.status, 'committed')
+        state = self.fake.host('receiver-01').units['receiver-pir.service']
+        self.assertEqual((state['active'], state['exe']), ('active', sha))
 
     def test_a_failed_or_timed_out_probe_rolls_back(self):
         sha = sha256(RECEIVER_NEW)

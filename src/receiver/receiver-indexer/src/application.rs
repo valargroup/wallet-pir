@@ -7,7 +7,7 @@ use crate::{
 use pir_pipeline::{FailurePolicy, Input};
 use receiver_directory::snapshot::{Snapshot, MAX_ROWS};
 use receiver_pir_server::{Publication, Publications};
-use receiver_store::{Config as StoreConfig, Error, ProviderStore, Store};
+use receiver_store::{Config as StoreConfig, Error, PayoutStore, Store};
 use std::{
     io::Write,
     path::{Path, PathBuf},
@@ -34,8 +34,10 @@ pub struct Config {
     pub depth: u32,
     pub batch_size: u32,
     pub concurrency: u32,
-    /// Without an enabled feed, ignore even persisted provider sets.
-    pub providers_enabled: bool,
+    /// Whether to include the optional payout audit in health.
+    pub audit_enabled: bool,
+    pub filter_blocks: u32,
+    pub history_revision: u64,
 }
 
 use crate::verify::prepare as prepare_snapshot;
@@ -44,9 +46,7 @@ use crate::verify::prepare as prepare_snapshot;
 struct Active {
     /// Its terminal height and hash.
     anchor: (u32, [u8; 32]),
-    /// The [`crate::near::digest`] of its provider sets.
-    inputs: [u8; 32],
-    report: serde_json::Value,
+    history_revision: u64,
 }
 
 /// In-memory publication identity and reusable witness preparation across polls.
@@ -134,11 +134,11 @@ impl pir_pipeline::Task for Ingestion<'_> {
 
 /// Brings the index to the requested end on the canonical chain of the freshest of
 /// `nodes` on `genesis`'s network, which serves the whole pass, rewinding past a
-/// reorg, then publishes a directory with fresh NEAR filters and report if that node
+/// reorg, then publishes rolling hints and a directory if that node
 /// is still on `genesis`'s network. While
 /// serving, `active` stays while it is served at an unmoved tip and was built from the
-/// same provider sets and report, which time alone can change; otherwise a new one is
-/// built once the previous revision's grace ends.
+/// same history correction revision, taking the optional audit's latest report in
+/// place; otherwise a new one is built once the previous revision's grace ends.
 pub async fn refresh(
     args: &Config,
     nodes: &[NodeClient],
@@ -163,10 +163,13 @@ pub async fn refresh(
             start_position: boundary.position,
         },
     )?;
-    // An empty in-memory store without a key; see `Config::providers_enabled`.
-    let provider_store = match args.providers_enabled {
-        true => ProviderStore::open(args.data_dir.join(PROVIDERS))?,
-        false => ProviderStore::open(":memory:")?,
+    // An empty in-memory store without a key; see `Config::audit_enabled`.
+    let provider_store = match args.audit_enabled {
+        true => PayoutStore::open(args.data_dir.join(PROVIDERS)).or_else(|error| {
+            warn!(%error, "payout audit unavailable; continuing chain publication");
+            PayoutStore::open(":memory:")
+        })?,
+        false => PayoutStore::open(":memory:")?,
     };
     if let Some(collected) = collect(
         args,
@@ -286,10 +289,8 @@ async fn collect_inner<'a>(
     if end < tip.height {
         return Err("end height precedes stored tip".into());
     }
-    // Wait out the previous revision's grace before building the next (see
-    // `Publications::ready_at`); a later poll publishes.
-    if serving.is_some_and(|s| s.ready_at().is_some()) {
-        return Ok(None);
+    if serving.is_some_and(|s| !s.advance_history_revision(args.history_revision)) {
+        return Err("history correction revision cannot decrease".into());
     }
     // Capture the fence after any rewind; a concurrent revocation invalidates preparation below.
     let epoch = serving.map(Publications::epoch);
@@ -327,6 +328,25 @@ async fn collect_inner<'a>(
         );
     }
     log_stage("ingestion", started);
+    // Hints activate before witness/PIR preparation and are not held by session grace.
+    // The guard also checks this anchor while expensive preparation runs.
+    let filter_started = std::time::Instant::now();
+    let filters = store.block_filters(args.filter_blocks, args.history_revision)?;
+    if let Some(serving) = serving {
+        let window =
+            receiver_pir_server::blocks::BlockWindow::new(genesis, args.history_revision, filters)?;
+        rpc.check_network(genesis).await?;
+        if !is_canonical(rpc, tip.height, tip.hash).await?
+            || !serving.publish_filters(window, epoch.unwrap())
+        {
+            return Err("filter anchor changed during collection; retrying".into());
+        }
+    }
+    log_stage("block_filters", filter_started);
+    if serving.is_some_and(|s| s.ready_at().is_some()) {
+        return Ok(None);
+    }
+
     Ok(Some(Collected {
         args,
         rpc,
@@ -340,10 +360,10 @@ async fn collect_inner<'a>(
 }
 
 impl<'a> Collected<'a> {
-    /// Build from committed records and one complete provider capture, then write
+    /// Build from committed records and an optional audit report, then write
     /// files or prepare and activate in memory. Preparation failures keep commits;
     /// anchor revalidation and the captured publication fence govern activation.
-    pub async fn publish(self, provider_store: &ProviderStore, state: &'a mut State) -> Result<()> {
+    pub async fn publish(self, provider_store: &PayoutStore, state: &'a mut State) -> Result<()> {
         pir_pipeline::advance(
             Input::Work(self),
             |work| work.prepare(provider_store, state),
@@ -356,7 +376,7 @@ impl<'a> Collected<'a> {
 
     async fn prepare(
         self,
-        provider_store: &ProviderStore,
+        provider_store: &PayoutStore,
         state: &'a mut State,
     ) -> Result<Input<Prepared<'a>>> {
         let Self {
@@ -373,19 +393,23 @@ impl<'a> Collected<'a> {
             active,
             witness_cache,
         } = state;
-        // A publication's filters and report come from one capture of the provider store,
-        // so a feed read committing meanwhile cannot make them describe different states.
-        // The report describes the reconciled index the publication is built from.
-        // A block dated ahead of the wall clock must not end a payout's grace early.
+        // The optional audit cannot prevent chain publication when its store is unavailable.
         let anchor_time = rpc.block_time(tip.hash).await?.min(unix_now());
-        let capture = crate::near::capture(provider_store, anchor_time)?;
-        let inputs = crate::near::digest(&capture.sets);
-        let report = capture.report(store)?;
+        let report = crate::near::capture(provider_store, anchor_time)
+            .and_then(|capture| capture.report(store))
+            .unwrap_or_else(|error| {
+                warn!(%error, "payout audit unavailable");
+                serde_json::Value::Null
+            });
         if let (Some(serving), Some(active)) = (serving, active.as_ref()) {
             if active.anchor == (tip.height, tip.hash)
-                && serving.anchors().first() == Some(&active.anchor)
-                && (active.inputs, &active.report) == (inputs, &report)
+                && serving.current_anchor() == Some(active.anchor)
+                && active.history_revision == args.history_revision
             {
+                // The audit never rebuilds a publication; its report refreshes in place.
+                if !serving.update_report(active.anchor, report, epoch.unwrap()) {
+                    return Err("publication invalidated during the audit refresh; retrying".into());
+                }
                 return Ok(Input::Unchanged);
             }
         }
@@ -399,7 +423,7 @@ impl<'a> Collected<'a> {
                     "directory exceeds the maximum row count; no publication created".into(),
                 );
             }
-            match store.snapshot(rows, &capture.sets) {
+            match store.snapshot(rows, args.history_revision) {
                 Ok(s) => break s,
                 Err(Error::Capacity) => rows *= 2,
                 Err(e) => return Err(e.into()),
@@ -456,8 +480,7 @@ impl<'a> Collected<'a> {
         "end_height":snapshot.manifest.end_height,"records":snapshot.manifest.records,
         "actions":snapshot.manifest.end_position-snapshot.manifest.start_position,
         "excluded_coinbase_actions":store.counts()?.1,"rows":rows,"row_bytes":snapshot.data.len(),
-        "filter_bytes":snapshot.filters.len(),"filter_sets":snapshot.manifest.filters.iter()
-            .map(|set| (set.label.clone(), set.count)).collect::<std::collections::BTreeMap<_, _>>()});
+        "history_revision":args.history_revision});
         let candidate = if serving.is_some() {
             let started = std::time::Instant::now();
             let publication =
@@ -478,7 +501,7 @@ impl<'a> Collected<'a> {
             serving,
             epoch,
             active,
-            inputs,
+            history_revision: args.history_revision,
             report,
             refresh_started,
             revision,
@@ -502,7 +525,7 @@ struct Prepared<'a> {
     serving: Option<&'a Publications>,
     epoch: Option<u64>,
     active: &'a mut Option<Active>,
-    inputs: [u8; 32],
+    history_revision: u64,
     report: serde_json::Value,
     refresh_started: std::time::Instant,
     revision: String,
@@ -517,7 +540,7 @@ impl Prepared<'_> {
             serving,
             epoch,
             active,
-            inputs,
+            history_revision,
             report,
             refresh_started,
             revision,
@@ -545,13 +568,12 @@ impl Prepared<'_> {
             return Err("chain changed during PIR preparation; retrying".into());
         }
         let anchor = (anchor.end_height, anchor.end_hash);
-        if !serving.publish(publication.with_report(report.clone()), epoch.unwrap()) {
+        if !serving.publish(publication.with_report(report), epoch.unwrap()) {
             return Err("publication invalidated during preparation; retrying".into());
         }
         *active = Some(Active {
             anchor,
-            inputs,
-            report,
+            history_revision,
         });
         log_stage("activate", started);
         info!(
@@ -574,8 +596,7 @@ fn log_stage(stage: &str, started: std::time::Instant) {
     );
 }
 
-/// Durably write a revision's row and filter files and any witness file, then its
-/// manifest. A manifest over [`receiver_pir::MAX_MANIFEST_BYTES`], which clients read
+/// Durably write a revision's rows and any witness file, then its manifest. A manifest over [`receiver_pir::MAX_MANIFEST_BYTES`], which clients read
 /// no more of, or invalid records or witnesses, writes nothing.
 fn write_publication(root: &Path, snapshot: &Snapshot, witnesses: Option<Vec<u8>>) -> Result<()> {
     verify::check_publication(snapshot, witnesses.as_deref())?;
@@ -586,7 +607,6 @@ fn write_publication(root: &Path, snapshot: &Snapshot, witnesses: Option<Vec<u8>
     std::fs::create_dir_all(root)?;
     let revision = hex::encode(snapshot.manifest.revision()?);
     write_revision_file(root, &format!("{revision}.rows"), &snapshot.data)?;
-    write_revision_file(root, &format!("{revision}.filters"), &snapshot.filters)?;
     if let Some(proof) = witnesses {
         // Witnesses are not covered by the revision, so a rebuild replaces them.
         let mut temp = tempfile::NamedTempFile::new_in(root)?;
@@ -702,7 +722,7 @@ mod tests {
     fn publication(hash: u8) -> Publication {
         let mut manifest = super::common::manifest(receiver_pir::MIN_ROWS);
         manifest.end_hash = [hash; 32];
-        let snapshot = Snapshot::build(manifest, &[], &[]).unwrap();
+        let snapshot = Snapshot::build(manifest, &[]).unwrap();
         prepare_snapshot(snapshot, None).unwrap()
     }
 
@@ -771,13 +791,13 @@ mod tests {
     impl Paused {
         /// Indexes the activation block and serves it. Each block hash request first
         /// runs `on_hash` on the provider store, as a concurrent feed read would.
-        async fn new(on_hash: impl Fn(&mut ProviderStore) + Send + Sync + 'static) -> Self {
+        async fn new(on_hash: impl Fn(&mut PayoutStore) + Send + Sync + 'static) -> Self {
             let height = u64::from(crate::blocks::ironwood_activation());
             let dir = tempfile::tempdir().unwrap();
             let provider = dir.path().join(PROVIDERS);
             let node = Node {
                 hook: Some(Arc::new(move || {
-                    on_hash(&mut ProviderStore::open(&provider).unwrap())
+                    on_hash(&mut PayoutStore::open(&provider).unwrap())
                 })),
                 ..Node::default()
             };
@@ -821,12 +841,14 @@ mod tests {
                 depth: 0,
                 batch_size: crate::blocks::MAX_RECEIVER_BATCH_BLOCKS,
                 concurrency: 8,
-                providers_enabled: true,
+                audit_enabled: true,
+                filter_blocks: receiver_store::blocks::MAX_FILTER_BLOCKS,
+                history_revision: 0,
             };
             let publications = Publications::default();
             let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
             let origin = format!("http://{}", socket.local_addr().unwrap());
-            let app = receiver_pir_server::router_with_publications(publications.clone());
+            let app = crate::router::router_with_publications(publications.clone());
             tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
             Self {
                 dir,
@@ -871,8 +893,8 @@ mod tests {
         }
 
         /// The provider store.
-        fn provider(&self) -> ProviderStore {
-            ProviderStore::open(self.dir.path().join(PROVIDERS)).unwrap()
+        fn provider(&self) -> PayoutStore {
+            PayoutStore::open(self.dir.path().join(PROVIDERS)).unwrap()
         }
     }
 
@@ -895,6 +917,19 @@ mod tests {
         paused.state = State::default();
         paused.refresh().await.unwrap();
         assert_eq!(paused.get("init").await, first);
+    }
+
+    /// Restoring hints after revocation cannot masquerade as a live PIR publication.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn unchanged_anchor_rebuilds_revoked_pir() {
+        let mut paused = Paused::new(|_| {}).await;
+        paused.refresh().await.unwrap();
+        let first = paused.get("init").await;
+        paused.publications.revoke();
+        assert!(paused.publications.current_anchor().is_none());
+        paused.refresh().await.unwrap();
+        assert_eq!(paused.get("init").await, first);
+        assert!(paused.publications.current_anchor().is_some());
     }
 
     /// Revocation and durable rewind precede collection: a source that cannot supply
@@ -1139,20 +1174,18 @@ mod tests {
         );
     }
 
-    /// A refresh with nothing new keeps the publication, and a changed report
-    /// republishes it: a completed payout stays pending until the terminal block's time
-    /// passes its grace, however long the chain pauses.
+    /// A refresh with nothing new keeps the publication, and a changed audit report
+    /// replaces only its health without rebuilding it: a completed payout stays pending
+    /// until the terminal block's time passes its grace, however long the chain pauses.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn a_paused_chain_republishes_only_for_new_sets_or_reports() {
+    async fn a_paused_chain_refreshes_its_report_without_rebuilding() {
         let mut paused = Paused::new(|_| {}).await;
         // A completed read of the payout feed that saw a payout complete.
         let payout = super::common::receiver();
         paused
             .provider()
             .record(
-                "near-payouts",
-                Some(NOW - 100),
-                &[(payout, true, NOW - 50)],
+                "near-payout-audit",
                 &[(payout, [7; 32], NOW - 10)],
                 NOW - 50,
                 NOW - 10,
@@ -1164,9 +1197,10 @@ mod tests {
         paused.refresh().await.unwrap();
         assert_eq!(paused.get("health").await, first);
         assert!(paused.publications.ready_at().is_none());
-        // A terminal block past the payout's grace: the same session is republished in
-        // place with the new report.
+        // A terminal block past the payout's grace. Any rebuild would now exceed the
+        // row limit, so success shows the same session took the new report in place.
         *paused.node.time.lock().unwrap() = NOW - 10 + 3600;
+        paused.args.min_rows = u32::MAX;
         paused.refresh().await.unwrap();
         let reported = paused.get("health").await;
         assert_eq!(reported["indexer"]["payouts_missing"], 1);
@@ -1248,31 +1282,6 @@ mod tests {
         }
     }
 
-    /// Without a key, a refresh publishes no provider sets and reports no feed, though
-    /// `providers.sqlite` holds completed reads of both feeds.
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn without_a_key_no_provider_sets_are_published() {
-        let mut paused = Paused::new(|_| {}).await;
-        for feed in [crate::near::Feed::Payouts, crate::near::Feed::Refunds] {
-            let mut provider = paused.provider();
-            provider
-                .record(feed.name(), Some(NOW - 100), &[], &[], NOW - 50, NOW - 10)
-                .unwrap();
-        }
-        paused.args.providers_enabled = false;
-        paused.refresh().await.unwrap();
-        let filters = paused.get("init").await["directory"]["filters"].clone();
-        let labels: Vec<_> = filters
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|f| f["label"].clone())
-            .collect();
-        assert_eq!(labels, [receiver_directory::filter::PAID]);
-        let feeds = paused.get("health").await["indexer"]["feeds"].clone();
-        assert_eq!(feeds, json!({"near-payouts": null, "near-refunds": null}));
-    }
-
     /// A terminal block dated ahead of the wall clock leaves a fresh payout pending.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_future_block_time_reports_no_payout_missing_early() {
@@ -1281,9 +1290,7 @@ mod tests {
         paused
             .provider()
             .record(
-                "near-payouts",
-                Some(now - 100),
-                &[],
+                "near-payout-audit",
                 &[(payout, [7; 32], now - 10)],
                 now - 50,
                 now - 10,
@@ -1305,33 +1312,8 @@ mod tests {
         assert_eq!(paused.get("init").await["directory"]["end_height"], height);
     }
 
-    /// A feed read committed while a publication is prepared changes neither its
-    /// filters nor its report, which both describe the feed state captured first.
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn a_publication_reports_the_feed_state_of_its_filters() {
-        let reads = std::sync::atomic::AtomicI64::new(NOW - 10);
-        let mut paused = Paused::new(move |provider| {
-            use crate::near::Feed;
-            let read = reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            for feed in [Feed::Payouts, Feed::Refunds] {
-                provider
-                    .record(feed.name(), Some(NOW - 100), &[], &[], NOW - 50, read)
-                    .unwrap();
-            }
-        })
-        .await;
-        paused.refresh().await.unwrap();
-        // The NEAR sets need both feeds, read together here.
-        let until = paused.get("init").await["directory"]["filters"][0]["until_unix"].clone();
-        let read = paused.get("health").await["indexer"]["feeds"]["near-payouts"].clone();
-        assert_eq!(read, until);
-        // Reads committed after the capture, during preparation.
-        let latest = paused.provider().read("near-payouts").unwrap().unwrap();
-        assert!(latest > until.as_i64().unwrap());
-    }
-
     #[test]
-    fn fixture_preparation_returns_protocol_errors_before_reusing_public_rows() {
+    fn fixture_preparation_returns_protocol_errors_before_reusing_a_server() {
         use receiver_directory::Error::Malformed;
         use receiver_pir::Error::Directory;
         let mut manifest = super::common::manifest(receiver_pir::MIN_ROWS);
@@ -1339,12 +1321,12 @@ mod tests {
         let valid = super::common::record(0, 1);
         let mut malformed = valid.clone();
         malformed.payment.cmx = [255; 32];
-        let snapshot = Snapshot::build(manifest.clone(), &[malformed], &[]).unwrap();
+        let snapshot = Snapshot::build(manifest.clone(), &[malformed]).unwrap();
         assert!(matches!(
             prepare_snapshot(snapshot, None),
             Err(Directory(Malformed))
         ));
-        let snapshot = Snapshot::build(manifest, &[valid], &[]).unwrap();
+        let snapshot = Snapshot::build(manifest, &[valid]).unwrap();
         assert!(matches!(
             prepare_snapshot(snapshot, Some(vec![0; 152])),
             Err(Directory(Malformed))
@@ -1356,7 +1338,7 @@ mod tests {
     fn one_shot_output_refuses_invalid_records_and_proofs_before_writing() {
         let mut manifest = super::common::manifest(receiver_pir::MIN_ROWS);
         manifest.end_position = 300;
-        let valid = Snapshot::build(manifest.clone(), &[super::common::record(0, 1)], &[]).unwrap();
+        let valid = Snapshot::build(manifest.clone(), &[super::common::record(0, 1)]).unwrap();
         let dir = tempfile::tempdir().unwrap();
         write_publication(&dir.path().join("valid"), &valid, None).unwrap();
         for field in 0..4 {
@@ -1367,7 +1349,7 @@ mod tests {
                 2 => record.payment.action_nullifier = [255; 32],
                 _ => record.payment.ephemeral_key = [255; 32],
             }
-            let snapshot = Snapshot::build(manifest.clone(), &[record], &[]).unwrap();
+            let snapshot = Snapshot::build(manifest.clone(), &[record]).unwrap();
             let root = dir.path().join(format!("invalid-{field}"));
             assert!(
                 write_publication(&root, &snapshot, None).is_err(),
@@ -1377,26 +1359,6 @@ mod tests {
         }
         let root = dir.path().join("invalid-proof");
         assert!(write_publication(&root, &valid, Some(vec![0; 152])).is_err());
-        assert!(!root.exists());
-    }
-
-    /// A one-shot run writes nothing for a manifest over the size clients read.
-    #[test]
-    fn an_oversized_manifest_is_not_written() {
-        let provider: Vec<_> = (0..300)
-            .map(|i| receiver_directory::snapshot::ProviderSet {
-                label: format!("p{i:03}/seen"),
-                window_secs: None,
-                since_unix: 1,
-                until_unix: 2,
-                receivers: Vec::new(),
-            })
-            .collect();
-        let manifest = super::common::manifest(receiver_pir::MIN_ROWS);
-        let snapshot = Snapshot::build(manifest, &[], &provider).unwrap();
-        let dir = tempfile::tempdir().unwrap();
-        let root = dir.path().join("publications");
-        assert!(write_publication(&root, &snapshot, None).is_err());
         assert!(!root.exists());
     }
 }

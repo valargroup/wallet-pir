@@ -42,6 +42,16 @@ class CommonFamilyTests(unittest.TestCase):
         other = {'name': 'tempfile', 'version': '3.0.0', 'source': 'registry'}
         self.assertEqual(boundary.common_family_violations([other], self.patches), [])
 
+    def test_published_rc3_without_overrides(self):
+        """Published Common is accepted while stale and mixed-source copies are refused."""
+        published = {**self.package, 'version': '4.0.0-rc3',
+                     'source': 'registry+https://github.com/rust-lang/crates.io-index'}
+        self.assertEqual(boundary.common_family_violations([published], {}), [])
+        for bad in [{**published, 'version': '4.0.0-rc2'}, self.package]:
+            self.assertTrue(boundary.common_family_violations([published, bad], {}))
+        self.assertTrue(boundary.common_family_violations([published],
+                        {'zakura-reddsa': self.patch}))
+
 
 if __name__ == '__main__':
     unittest.main()

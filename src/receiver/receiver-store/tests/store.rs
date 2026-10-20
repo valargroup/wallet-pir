@@ -40,68 +40,40 @@ fn other_receiver() -> ReceiverBytes {
 
 #[test]
 fn provider_store_keeps_latest_times_and_never_rewinds_its_cursor() {
-    use receiver_store::ProviderStore;
+    use receiver_store::PayoutStore;
     let dir = tempfile::tempdir().unwrap();
-    let mut store = ProviderStore::open(dir.path().join("providers.sqlite")).unwrap();
-    let (payout, refund) = (receiver(), other_receiver());
-    assert_eq!(store.cursor("near-payouts").unwrap(), None);
-    assert_eq!(store.read("near-payouts").unwrap(), None);
-    assert_eq!(store.started("near-payouts").unwrap(), None);
+    let mut store = PayoutStore::open(dir.path().join("providers.sqlite")).unwrap();
+    let payout = receiver();
+    assert_eq!(store.cursor("near-payout-audit").unwrap(), None);
+    assert_eq!(store.read("near-payout-audit").unwrap(), None);
     // A read that saw no completion.
-    let read = |store: &mut ProviderStore, cursor, read_at| {
+    let read = |store: &mut PayoutStore, cursor, read_at| {
         store
-            .record("near-payouts", None, &[], &[], cursor, read_at)
+            .record("near-payout-audit", &[], cursor, read_at)
             .unwrap()
     };
     store
-        .record(
-            "near-payouts",
-            Some(40),
-            &[(payout, true, 100), (payout, true, 50)],
-            &[(payout, [1; 32], 300)],
-            100,
-            300,
-        )
-        .unwrap();
-    store
-        .record(
-            "near-refunds",
-            Some(40),
-            &[(refund, false, 200)],
-            &[],
-            200,
-            300,
-        )
+        .record("near-payout-audit", &[(payout, [1; 32], 300)], 100, 300)
         .unwrap();
     read(&mut store, 90, 250);
     // A read behind the cursor advances neither the cursor nor the read time, even
     // one that began later.
     read(&mut store, 90, 400);
-    assert_eq!(store.cursor("near-payouts").unwrap(), Some(100));
-    assert_eq!(store.read("near-payouts").unwrap(), Some(300));
+    assert_eq!(store.cursor("near-payout-audit").unwrap(), Some(100));
+    assert_eq!(store.read("near-payout-audit").unwrap(), Some(300));
     // One that reaches the cursor advances the read time, never back.
     read(&mut store, 100, 350);
     read(&mut store, 100, 320);
-    assert_eq!(store.read("near-payouts").unwrap(), Some(350));
+    assert_eq!(store.read("near-payout-audit").unwrap(), Some(350));
     // One that advances the cursor sets its own read time, even an earlier one.
     read(&mut store, 110, 340);
-    assert_eq!(store.cursor("near-payouts").unwrap(), Some(110));
-    assert_eq!(store.read("near-payouts").unwrap(), Some(340));
-    // Recent holds the refund given since 150, and seen every receiver, payout or refund.
-    let (recent, mut seen) = store.sets(150).unwrap();
-    seen.sort();
-    let mut every = vec![payout, refund];
-    every.sort();
-    assert_eq!((recent, seen), (vec![refund], every));
-    // The feed's start is its initial read's; see the test below.
-    assert_eq!(store.started("near-payouts").unwrap(), Some(40));
+    assert_eq!(store.cursor("near-payout-audit").unwrap(), Some(110));
+    assert_eq!(store.read("near-payout-audit").unwrap(), Some(340));
     // A payout keeps the earliest time a read saw it complete, and a reused receiver
     // has one per transaction.
     store
         .record(
-            "near-payouts",
-            None,
-            &[],
+            "near-payout-audit",
             &[(payout, [1; 32], 500), (payout, [2; 32], 500)],
             110,
             500,
@@ -112,12 +84,10 @@ fn provider_store_keeps_latest_times_and_never_rewinds_its_cursor() {
     assert_eq!(store.payouts(600).unwrap(), both);
     // An earlier read committing after a later one lowers the payout to its time,
     // without moving the cursor and read time; a still later read cannot raise it.
-    let saw = |store: &mut ProviderStore, read_at| {
+    let saw = |store: &mut PayoutStore, read_at| {
         store
             .record(
-                "near-payouts",
-                None,
-                &[],
+                "near-payout-audit",
                 &[(payout, [2; 32], read_at)],
                 110,
                 read_at,
@@ -125,61 +95,26 @@ fn provider_store_keeps_latest_times_and_never_rewinds_its_cursor() {
             .unwrap()
     };
     saw(&mut store, 300);
-    assert_eq!(store.cursor("near-payouts").unwrap(), Some(110));
-    assert_eq!(store.read("near-payouts").unwrap(), Some(500));
+    assert_eq!(store.cursor("near-payout-audit").unwrap(), Some(110));
+    assert_eq!(store.read("near-payout-audit").unwrap(), Some(500));
     saw(&mut store, 700);
     assert_eq!(store.payouts(400).unwrap(), both);
     assert!(store.payouts(299).unwrap().is_empty());
     // Reopening keeps everything.
     drop(store);
-    let store = ProviderStore::open(dir.path().join("providers.sqlite")).unwrap();
-    assert_eq!(store.sets(100).unwrap().0.len(), 2);
+    let store = PayoutStore::open(dir.path().join("providers.sqlite")).unwrap();
     assert_eq!(store.payouts(400).unwrap(), both);
-    assert_eq!(store.read("near-payouts").unwrap(), Some(700));
-}
-
-/// Only a feed's first read sets its start. A read that followed the cursor, before
-/// or after a reopen, passes no start and never moves it.
-#[test]
-fn only_a_first_read_sets_a_feed_start() {
-    use receiver_store::ProviderStore;
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("providers.sqlite");
-    let mut store = ProviderStore::open(&path).unwrap();
-    // Initial reads, empty and nonempty, start their feeds.
-    store
-        .record("empty", Some(500), &[], &[], 500, 600)
-        .unwrap();
-    store
-        .record("full", Some(500), &[(receiver(), true, 550)], &[], 550, 600)
-        .unwrap();
-    assert_eq!(store.started("empty").unwrap(), Some(500));
-    assert_eq!(store.started("full").unwrap(), Some(500));
-    // Reads behind, at and past the cursor leave the start alone, and a cursor-based
-    // read never creates one.
-    for cursor in [540, 550, 560] {
-        store.record("full", None, &[], &[], cursor, 700).unwrap();
-        assert_eq!(store.started("full").unwrap(), Some(500));
-    }
-    store.record("unstarted", None, &[], &[], 10, 20).unwrap();
-    assert_eq!(store.started("unstarted").unwrap(), None);
-    // After a reopen, as on a restart with another `--near-since`.
-    drop(store);
-    let mut store = ProviderStore::open(&path).unwrap();
-    for cursor in [300, 900] {
-        store.record("full", None, &[], &[], cursor, 1_000).unwrap();
-        assert_eq!(store.started("full").unwrap(), Some(500));
-    }
+    assert_eq!(store.read("near-payout-audit").unwrap(), Some(700));
 }
 
 /// A read that fails partway, here on its completions, records nothing: neither its
-/// receivers, nor its cursor and read time, nor the feed's start.
+/// receivers, nor its cursor and read time.
 #[test]
 fn a_failed_provider_read_records_nothing() {
-    use receiver_store::ProviderStore;
+    use receiver_store::PayoutStore;
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("providers.sqlite");
-    let mut store = ProviderStore::open(&path).unwrap();
+    let mut store = PayoutStore::open(&path).unwrap();
     rusqlite::Connection::open(&path)
         .unwrap()
         .execute_batch(
@@ -189,46 +124,112 @@ fn a_failed_provider_read_records_nothing() {
         .unwrap();
     let payout = receiver();
     assert!(store
-        .record(
-            "near-payouts",
-            Some(40),
-            &[(payout, true, 100)],
-            &[(payout, [1; 32], 300)],
-            100,
-            300
-        )
+        .record("near-payout-audit", &[(payout, [1; 32], 300)], 100, 300)
         .is_err());
     drop(store);
-    let store = ProviderStore::open(&path).unwrap();
-    assert_eq!(store.sets(0).unwrap(), (vec![], vec![]));
-    assert_eq!(store.cursor("near-payouts").unwrap(), None);
-    assert_eq!(store.read("near-payouts").unwrap(), None);
-    assert_eq!(store.started("near-payouts").unwrap(), None);
+    let store = PayoutStore::open(&path).unwrap();
+    assert_eq!(store.cursor("near-payout-audit").unwrap(), None);
+    assert_eq!(store.read("near-payout-audit").unwrap(), None);
     assert!(store.payouts(i64::MAX).unwrap().is_empty());
+}
+
+/// The previous release's audit store survives this release and its restart: the
+/// previous release's own statements still read and update its feed, with its start
+/// and cursor untouched, and its global receivers afterwards, as after a rollback, while
+/// this release keeps its own feed's cursor, read time and payouts. A store this
+/// release creates takes them too.
+#[test]
+fn the_previous_release_reopens_the_audit_store_after_this_one() {
+    use receiver_store::PayoutStore;
+    // The previous release's schema and feed statement, verbatim.
+    const OPEN: &str =
+        "CREATE TABLE IF NOT EXISTS receivers (receiver BLOB NOT NULL CHECK(length(receiver)=43),
+            payout INTEGER NOT NULL CHECK(payout IN (0,1)), seen_at INTEGER NOT NULL,
+            PRIMARY KEY(receiver,payout)) WITHOUT ROWID;
+        CREATE TABLE IF NOT EXISTS feeds (feed TEXT PRIMARY KEY, started_at INTEGER,
+            cursor INTEGER NOT NULL, read_at INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS payouts (receiver BLOB NOT NULL CHECK(length(receiver)=43),
+            txid BLOB NOT NULL CHECK(length(txid)=32), seen_at INTEGER NOT NULL,
+            PRIMARY KEY(receiver,txid)) WITHOUT ROWID;";
+    const RECORD: &str = "INSERT INTO feeds VALUES (?1,?2,?3,?4) ON CONFLICT(feed)
+        DO UPDATE SET cursor=excluded.cursor, read_at=excluded.read_at
+        WHERE excluded.cursor>cursor OR (excluded.cursor=cursor AND excluded.read_at>read_at)";
+    /// Opens `path` as the previous release does and records one read of `feed`.
+    fn previous(path: &std::path::Path, feed: &str, since: Option<i64>, cursor: i64, read_at: i64) {
+        let db = rusqlite::Connection::open(path).unwrap();
+        db.execute_batch(OPEN).unwrap();
+        db.execute(RECORD, rusqlite::params![feed, since, cursor, read_at])
+            .unwrap();
+        db.execute(
+            "INSERT INTO receivers VALUES (?1,1,?2) ON CONFLICT(receiver,payout)
+             DO UPDATE SET seen_at=MAX(seen_at,excluded.seen_at)",
+            rusqlite::params![receiver().as_slice(), read_at],
+        )
+        .unwrap();
+    }
+    /// The previous release's reads: the feed's start and how many receivers it holds.
+    fn previous_reads(path: &std::path::Path, feed: &str) -> (Option<i64>, i64) {
+        let db = rusqlite::Connection::open(path).unwrap();
+        let started = db
+            .query_row("SELECT started_at FROM feeds WHERE feed=?1", [feed], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        let receivers = db
+            .query_row("SELECT COUNT(*) FROM receivers", [], |r| r.get(0))
+            .unwrap();
+        (started, receivers)
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("providers.sqlite");
+    previous(&path, "near-payouts", Some(40), 100, 300);
+    let mut store = PayoutStore::open(&path).unwrap();
+    store
+        .record("near-payout-audit", &[(receiver(), [1; 32], 400)], 110, 400)
+        .unwrap();
+    drop(store);
+    let store = PayoutStore::open(&path).unwrap();
+    assert_eq!(store.cursor("near-payout-audit").unwrap(), Some(110));
+    assert_eq!(store.read("near-payout-audit").unwrap(), Some(400));
+    assert_eq!(store.payouts(400).unwrap(), [(receiver(), [1; 32])]);
+    assert_eq!(store.cursor("near-payouts").unwrap(), Some(100));
+    drop(store);
+    // Rolled back: the previous release reopens the file and reads on.
+    assert_eq!(previous_reads(&path, "near-payouts"), (Some(40), 1));
+    previous(&path, "near-payouts", None, 120, 500);
+    assert_eq!(previous_reads(&path, "near-payouts"), (Some(40), 1));
+    let store = PayoutStore::open(&path).unwrap();
+    assert_eq!(store.cursor("near-payouts").unwrap(), Some(120));
+    assert_eq!(store.cursor("near-payout-audit").unwrap(), Some(110));
+    assert_eq!(store.payouts(400).unwrap(), [(receiver(), [1; 32])]);
+    // A store this release created accepts the previous release's statements.
+    let fresh = dir.path().join("fresh.sqlite");
+    PayoutStore::open(&fresh)
+        .unwrap()
+        .record("near-payout-audit", &[], 100, 300)
+        .unwrap();
+    previous(&fresh, "near-payouts", Some(50), 100, 300);
+    assert_eq!(previous_reads(&fresh, "near-payouts"), (Some(50), 1));
 }
 
 /// Every query in one view sees the same state, even when a read commits between them.
 #[test]
 fn a_provider_view_reads_one_state() {
-    use receiver_store::ProviderStore;
+    use receiver_store::PayoutStore;
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("providers.sqlite");
-    let mut store = ProviderStore::open(&path).unwrap();
-    store
-        .record("near-payouts", Some(40), &[], &[], 100, 300)
-        .unwrap();
-    let mut writer = ProviderStore::open(&path).unwrap();
+    let mut store = PayoutStore::open(&path).unwrap();
+    store.record("near-payout-audit", &[], 100, 300).unwrap();
+    let mut writer = PayoutStore::open(&path).unwrap();
     let reads = store
         .view(|view| -> Result<_, receiver_store::Error> {
-            let before = view.read("near-payouts")?;
-            writer
-                .record("near-payouts", None, &[], &[], 200, 400)
-                .unwrap();
-            Ok((before, view.read("near-payouts")?))
+            let before = view.read("near-payout-audit")?;
+            writer.record("near-payout-audit", &[], 200, 400).unwrap();
+            Ok((before, view.read("near-payout-audit")?))
         })
         .unwrap();
     assert_eq!(reads, (Some(300), Some(300)));
-    assert_eq!(store.read("near-payouts").unwrap(), Some(400));
+    assert_eq!(store.read("near-payout-audit").unwrap(), Some(400));
 }
 
 #[test]
@@ -243,7 +244,7 @@ fn durable_coverage_atomic_failure_and_reorg() {
         start_position: 200,
     };
     let mut store = Store::open(&path, config.clone()).unwrap();
-    assert!(store.snapshot(8, &[]).is_err());
+    assert!(store.snapshot(8, 0).is_err());
     let empty = IndexedBlock {
         height: 100,
         hash: [10; 32],
@@ -255,7 +256,7 @@ fn durable_coverage_atomic_failure_and_reorg() {
         commitments: vec![],
     };
     store.append(&empty).unwrap();
-    assert_eq!(store.snapshot(8, &[]).unwrap().manifest.end_height, 100);
+    assert_eq!(store.snapshot(8, 0).unwrap().manifest.end_height, 100);
     let mut r = record(0, 1);
     r.payment.position = 202;
     let mut block = IndexedBlock {
@@ -274,7 +275,7 @@ fn durable_coverage_atomic_failure_and_reorg() {
     let mut store = Store::open(&path, config.clone()).unwrap();
     assert_eq!(store.tip().unwrap().position, 204);
     assert_eq!(store.counts().unwrap(), (1, 2));
-    let old = store.snapshot(8, &[]).unwrap();
+    let old = store.snapshot(8, 0).unwrap();
     assert_eq!(
         lookup_row(&old.manifest, &r.receiver, 0, row(&old, &r.receiver, 0))
             .unwrap()
@@ -302,7 +303,7 @@ fn durable_coverage_atomic_failure_and_reorg() {
     block.coinbase_actions = 0;
     block.payments[0].1.block_hash = block.hash;
     store.append(&block).unwrap();
-    let new = store.snapshot(8, &[]).unwrap();
+    let new = store.snapshot(8, 0).unwrap();
     assert_ne!(
         old.manifest.revision().unwrap(),
         new.manifest.revision().unwrap()
@@ -312,7 +313,7 @@ fn durable_coverage_atomic_failure_and_reorg() {
     wrong.genesis = [99; 32];
     assert!(Store::open(&path, wrong).is_err());
     store.rewind(99, config.start_parent).unwrap();
-    assert!(store.snapshot(8, &[]).is_err());
+    assert!(store.snapshot(8, 0).is_err());
 }
 
 /// A payment in the coinbase's leading positions or in transaction zero is refused.
@@ -439,7 +440,7 @@ fn store_positions_end_within_the_tree() {
             ..crossing
         })
         .unwrap();
-    let manifest = store.snapshot(8, &[]).unwrap().manifest;
+    let manifest = store.snapshot(8, 0).unwrap().manifest;
     assert_eq!(manifest.end_position, TREE_SIZE);
 }
 
@@ -485,7 +486,7 @@ fn crowded_buckets_retry_the_salt_before_growing() {
             commitments: vec![[6; 32]; 20],
         })
         .unwrap();
-    let first = store.snapshot(2, &[]).unwrap();
+    let first = store.snapshot(2, 0).unwrap();
     assert_ne!(first.manifest.salt, hash);
     assert_eq!(first.manifest.records, 20);
     for page in 0..20 {
@@ -499,7 +500,7 @@ fn crowded_buckets_retry_the_salt_before_growing() {
     }
     // A rebuild of the same coverage picks the same salt.
     assert_eq!(
-        store.snapshot(2, &[]).unwrap().manifest.revision().unwrap(),
+        store.snapshot(2, 0).unwrap().manifest.revision().unwrap(),
         first.manifest.revision().unwrap()
     );
 }
@@ -535,7 +536,7 @@ fn store_witness_inputs_follow_rewinds_reopen_and_replacement_blocks() {
         commitments: vec![[1; 32], [2; 32], payment.cmx],
     };
     store.append(&block).unwrap();
-    let first = store.snapshot(8, &[]).unwrap();
+    let first = store.snapshot(8, 0).unwrap();
     let expected = WitnessInputs {
         commitments: vec![[1; 32], [2; 32], payment.cmx],
         positions: [2].into_iter().collect(),
@@ -557,7 +558,7 @@ fn store_witness_inputs_follow_rewinds_reopen_and_replacement_blocks() {
     block.commitments = vec![[3; 32], [4; 32]];
     block.payments.clear();
     store.append(&block).unwrap();
-    let second = store.snapshot(8, &[]).unwrap();
+    let second = store.snapshot(8, 0).unwrap();
     let mut longer = expected.clone();
     longer.commitments.extend([[3; 32], [4; 32]]);
     assert_eq!(
@@ -580,7 +581,7 @@ fn store_witness_inputs_follow_rewinds_reopen_and_replacement_blocks() {
     block.hash = [5; 32];
     block.commitments[0] = [9; 32];
     store.append(&block).unwrap();
-    let replacement = store.snapshot(8, &[]).unwrap();
+    let replacement = store.snapshot(8, 0).unwrap();
     let mut replaced = expected.clone();
     replaced.commitments.extend([[9; 32], [4; 32]]);
     assert_eq!(
@@ -622,14 +623,14 @@ fn store_witness_inputs_cover_empty_indexed_blocks() {
     store.append(&block).unwrap();
     (block.height, block.hash, block.parent) = (101, [4; 32], [3; 32]);
     store.append(&block).unwrap();
-    let empty = store.snapshot(8, &[]).unwrap().manifest;
+    let empty = store.snapshot(8, 0).unwrap().manifest;
     assert_eq!((empty.records, empty.end_position), (0, 0));
     let inputs = store.witness_inputs(&empty, TREE_SIZE).unwrap();
     assert!(inputs.commitments.is_empty() && inputs.positions.is_empty());
     (block.height, block.hash, block.parent) = (102, [5; 32], [4; 32]);
     (block.end_position, block.commitments) = (1, vec![[1; 32]]);
     store.append(&block).unwrap();
-    let one = store.snapshot(8, &[]).unwrap().manifest;
+    let one = store.snapshot(8, 0).unwrap().manifest;
     assert_eq!(
         store.witness_inputs(&one, TREE_SIZE).unwrap().commitments,
         [[1; 32]]
@@ -672,9 +673,6 @@ fn a_history_beyond_the_slots_is_a_capacity_failure() {
             commitments: vec![[6; 32]; n as usize],
         })
         .unwrap();
-    assert!(matches!(store.snapshot(1, &[]), Err(Error::Capacity)));
-    assert_eq!(
-        store.snapshot(4, &[]).unwrap().manifest.records,
-        u64::from(n)
-    );
+    assert!(matches!(store.snapshot(1, 0), Err(Error::Capacity)));
+    assert_eq!(store.snapshot(4, 0).unwrap().manifest.records, u64::from(n));
 }

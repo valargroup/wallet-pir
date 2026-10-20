@@ -38,23 +38,23 @@ serde_json = "1"
 thiserror = "2"
 tracing = "0.1"
 tokio = { version = "1", features = ["rt", "macros", "sync"], optional = true }
-# Common RC1 support from https://github.com/zakura-core/zakura/pull/1542.
+# Common RC3 support from the zakura node prerequisite.
 # Changing this revision does not upgrade a deployed node; a direct database
 # reader must match the running node's format.
-zakura-chain = { git = "https://github.com/zakura-core/zakura.git", rev = "dcff84dc42258bb1e4c5d368094e11ea27c7ed4f", optional = true }
+zakura-chain = { git = "https://github.com/zakura-core/zakura.git", rev = "fe97e33b67e6a5f5cd1bfb8b90731192f56d89e6", optional = true }
 sha2 = "0.10"
 zcash_script = "0.6"
-zcash_primitives = { package = "zakura-primitives", version = "=4.0.0-rc1", default-features = false, features = ["std", "backend-halo2"] }
-zcash_protocol = { package = "zakura-protocol", version = "=4.0.0-rc1" }
-transparent = { package = "zakura-transparent", version = "=4.0.0-rc1", default-features = false, features = ["std"] }
-orchard = { package = "zakura-orchard", version = "=4.0.0-rc1", default-features = false, features = ["std", "backend-halo2"] }
+zcash_primitives = { package = "zakura-primitives", version = "=4.0.0-rc3", default-features = false, features = ["std", "backend-halo2"] }
+zcash_protocol = { package = "zakura-protocol", version = "=4.0.0-rc3" }
+transparent = { package = "zakura-transparent", version = "=4.0.0-rc3", default-features = false, features = ["std"] }
+orchard = { package = "zakura-orchard", version = "=4.0.0-rc3", default-features = false, features = ["std", "backend-halo2"] }
 # Pinned to the same revision as `zakura-chain`, and it must stay that way: the
 # `rocksdb` reader opens the node's database directly, so its format must match
 # the running node's.
-zakura-state = { git = "https://github.com/zakura-core/zakura.git", rev = "dcff84dc42258bb1e4c5d368094e11ea27c7ed4f", optional = true }
+zakura-state = { git = "https://github.com/zakura-core/zakura.git", rev = "fe97e33b67e6a5f5cd1bfb8b90731192f56d89e6", optional = true }
 # Receiver recovery is wallet-libraries' canonical codec, at the revision the
 # services pin. wallet-pir consumes wallet-libraries, never the reverse.
-zakura-receiver-crypto = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "f48b62b80ec7d9d7fb7893401435a24b189b8ec2", optional = true }
+zakura-receiver-crypto = { version = "=0.0.1-rc1", optional = true }
 
 [dev-dependencies]
 axum = "0.7"
@@ -63,9 +63,9 @@ hex = "0.4"
 tempfile = "3"
 tokio = { version = "1", features = ["full"] }
 # Independent node decoding and historical block vectors for RPC compatibility tests.
-zakura-chain = { git = "https://github.com/zakura-core/zakura.git", rev = "dcff84dc42258bb1e4c5d368094e11ea27c7ed4f" }
+zakura-chain = { git = "https://github.com/zakura-core/zakura.git", rev = "fe97e33b67e6a5f5cd1bfb8b90731192f56d89e6" }
 # Test vectors from the same node revision.
-zakura-test = { git = "https://github.com/zakura-core/zakura.git", rev = "dcff84dc42258bb1e4c5d368094e11ea27c7ed4f" }
+zakura-test = { git = "https://github.com/zakura-core/zakura.git", rev = "fe97e33b67e6a5f5cd1bfb8b90731192f56d89e6" }
 
 [[test]]
 name = "enhance"

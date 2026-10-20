@@ -175,7 +175,7 @@ mod tests {
                 record
             })
             .collect();
-        let snapshot = Snapshot::build(manifest, &records, &[]).unwrap();
+        let snapshot = Snapshot::build(manifest, &records).unwrap();
         let positions = [0, 5].into_iter().collect();
         let proof =
             WitnessSnapshot::build(&publication(&snapshot.manifest).unwrap(), tree, &positions)
@@ -225,7 +225,7 @@ mod tests {
         let mut manifest = common::manifest(receiver_pir::MIN_ROWS);
         manifest.end_position = 300;
         prepare(
-            Snapshot::build(manifest.clone(), &[common::record(0, 1)], &[]).unwrap(),
+            Snapshot::build(manifest.clone(), &[common::record(0, 1)]).unwrap(),
             None,
         )
         .unwrap();
@@ -238,7 +238,7 @@ mod tests {
                 2 => p.action_nullifier = [255; 32],
                 _ => p.ephemeral_key = [255; 32],
             }
-            let snapshot = Snapshot::build(manifest.clone(), &[record.clone()], &[]).unwrap();
+            let snapshot = Snapshot::build(manifest.clone(), &[record.clone()]).unwrap();
             assert!(prepare(snapshot, None).is_err(), "{field}");
             assert!(matches!(
                 check_payment(&record.receiver, &record.payment),
@@ -312,7 +312,7 @@ mod tests {
             check_publication(snapshot, Some(&cached)).unwrap();
             cached
         };
-        let first = store.snapshot(8, &[]).unwrap();
+        let first = store.snapshot(8, 0).unwrap();
         let expected = check(&store, &mut cache, &first);
         let len = first.manifest.end_position;
         assert!(matches!(
@@ -324,7 +324,7 @@ mod tests {
         block.commitments = vec![[3; 32], [4; 32]];
         block.payments.clear();
         append(&mut store, &block).unwrap();
-        let second = store.snapshot(8, &[]).unwrap();
+        let second = store.snapshot(8, 0).unwrap();
         check(&store, &mut cache, &second);
         store.rewind(100, [3; 32]).unwrap();
         assert_eq!(check(&store, &mut cache, &first), expected);
@@ -333,7 +333,7 @@ mod tests {
         block.hash = [5; 32];
         block.commitments[0] = [9; 32];
         append(&mut store, &block).unwrap();
-        let replacement = store.snapshot(8, &[]).unwrap();
+        let replacement = store.snapshot(8, 0).unwrap();
         let proof = check(&store, &mut cache, &replacement);
         // The replaced block's proof does not prove the replacement publication.
         assert!(check_publication(&second, Some(&proof)).is_err());
@@ -370,7 +370,7 @@ mod tests {
         let manifest = snapshot.manifest.clone();
         let publications = receiver_pir_server::Publications::default();
         assert!(publications.publish(prepare(snapshot, Some(proof)).unwrap(), 0));
-        let app = receiver_pir_server::router_with_publications(publications);
+        let app = crate::router::router_with_publications(publications);
         let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let origin = format!("http://{}", socket.local_addr().unwrap());
         tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });

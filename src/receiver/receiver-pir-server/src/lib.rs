@@ -4,12 +4,12 @@
 mod common;
 #[cfg(test)]
 extern crate self as receiver_pir_server;
+pub mod blocks;
 #[cfg(test)]
 #[path = "../tests/common/prepared.rs"]
 mod prepared;
 pub mod publication;
 use axum::{
-    body::Bytes,
     extract::{Path, Request, State},
     http::{header, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
@@ -57,7 +57,7 @@ fn receiver_endpoint(route: &str) -> Option<&'static str> {
         "public" => "receiver_public",
         "query" => "receiver_query",
         "witness" => "receiver_witness",
-        "filters" => "receiver_filters",
+        "block-filters" => "receiver_block_filters",
         "health" => "receiver_health",
         _ => return None,
     })
@@ -102,7 +102,7 @@ const ENDPOINTS: [&str; 6] = [
     "receiver_public",
     "receiver_query",
     "receiver_witness",
-    "receiver_filters",
+    "receiver_block_filters",
     "receiver_health",
 ];
 
@@ -110,12 +110,8 @@ const ENDPOINTS: [&str; 6] = [
 /// revisions, with the admission and refusals of `docs/serving-contract.md`.
 /// Cancellation never frees a still-running CPU slot. `/v1/receiver/health` and
 /// `/metrics` are for operators; a deployment's edge proxies only the wallet routes.
-pub fn router_with_publications(publications: Publications) -> Router {
-    router_with_health(publications, Arc::new(serde_json::Map::new))
-}
-
-/// [`router_with_publications`], with health also reporting `fields`. Health's own
-/// fields (`identity`, `serving`, `epoch`, `indexer`) take precedence over theirs.
+/// Health also reports `fields`, though its own (`identity`, `serving`, `epoch`,
+/// `indexer`) take precedence over theirs.
 pub fn router_with_health(publications: Publications, fields: HealthFields) -> Router {
     router(Service {
         publications,
@@ -126,7 +122,7 @@ pub fn router_with_health(publications: Publications, fields: HealthFields) -> R
     })
 }
 
-/// The routes of [`router_with_publications`] over `service`.
+/// The routes of [`router_with_health`] over `service`.
 fn router(service: Service) -> Router {
     let metrics = service.metrics.clone();
     metrics.initialize(&ENDPOINTS);
@@ -168,14 +164,20 @@ fn router(service: Service) -> Router {
                 },
             ),
         )
-        .route(
-            "/v1/receiver/filters/:session",
-            get(
-                |State(s): State<Service>, Path(id): Path<String>| async move {
-                    material(&s, &id, Material::Filters)
-                },
-            ),
-        )
+        .route("/v1/receiver/block-filters/head", get(|State(s): State<Service>| async move {
+            match s.publications.filters() {
+                Ok(window) => ([(header::CACHE_CONTROL, "no-store")], Json(window.head().clone())).into_response(),
+                Err(status) => status.into_response(),
+            }
+        }))
+        .route("/v1/receiver/block-filters/:revision/:from/:limit", get(
+            |State(s): State<Service>, Path((revision, from, limit)): Path<(u64, u32, u32)>| async move {
+                match s.publications.filters().and_then(|window| window.batch(revision, from, limit)) {
+                    Ok(bytes) => binary(bytes),
+                    Err(status) => status.into_response(),
+                }
+            }
+        ))
         .layer(axum::middleware::map_response(no_store_errors))
         .layer(axum::middleware::from_fn_with_state(metrics, observe))
         .with_state(service)
@@ -219,7 +221,6 @@ async fn health(State(s): State<Service>) -> Response {
 enum Material {
     Public,
     Witness,
-    Filters,
 }
 
 /// Serves one file of the publication whose hex id is `id`.
@@ -233,7 +234,6 @@ fn material(s: &Service, id: &str, material: Material) -> Response {
     };
     match material {
         Material::Public => binary(p.server.public().to_vec()),
-        Material::Filters => binary(Bytes::from_owner(p.server.filters())),
         Material::Witness => match &p.witnesses {
             Some(bytes) => binary(bytes.clone()),
             None => StatusCode::SERVICE_UNAVAILABLE.into_response(),
@@ -348,7 +348,7 @@ mod tests {
         use receiver_directory::snapshot::Snapshot;
         use receiver_pir::{AcceptedCoverage, Client, MIN_ROWS};
         let snapshot =
-            Snapshot::build(common::manifest(MIN_ROWS), &[common::record(0, 1)], &[]).unwrap();
+            Snapshot::build(common::manifest(MIN_ROWS), &[common::record(0, 1)]).unwrap();
         let publication = crate::prepared::prepare(snapshot, None).unwrap();
         let accepted = AcceptedCoverage {
             genesis: [1; 32],
@@ -406,7 +406,6 @@ mod tests {
     async fn wrong_lengths_are_refused_without_waiting_for_evaluation() {
         let snapshot = receiver_directory::snapshot::Snapshot::build(
             common::manifest(receiver_pir::MIN_ROWS),
-            &[],
             &[],
         )
         .unwrap();
@@ -499,7 +498,7 @@ mod tests {
         use receiver_directory::snapshot::Snapshot;
         use receiver_pir::{server::Server, AcceptedCoverage, Client, MIN_ROWS};
         let snapshot =
-            Snapshot::build(common::manifest(MIN_ROWS), &[common::record(0, 1)], &[]).unwrap();
+            Snapshot::build(common::manifest(MIN_ROWS), &[common::record(0, 1)]).unwrap();
         let server = Server::new(snapshot).unwrap();
         let accepted = AcceptedCoverage {
             genesis: [1; 32],
@@ -517,7 +516,7 @@ mod tests {
         let rotated = held_query(&url, &queue, query.body().to_vec(), || {
             let mut next = common::manifest(MIN_ROWS);
             (next.end_height, next.end_hash) = (102, [9; 32]);
-            let next = Server::new(Snapshot::build(next, &[], &[]).unwrap()).unwrap();
+            let next = Server::new(Snapshot::build(next, &[]).unwrap()).unwrap();
             assert!(publications.publish(Publication::verified(next, None), 0));
         })
         .await;
@@ -544,27 +543,37 @@ mod fixture_cache_tests {
     use super::*;
     use receiver_directory::snapshot::Snapshot;
     fn snapshot() -> Snapshot {
-        Snapshot::build(common::manifest(receiver_pir::MIN_ROWS), &[], &[]).unwrap()
+        Snapshot::build(common::manifest(receiver_pir::MIN_ROWS), &[]).unwrap()
     }
+    /// Only an identical snapshot reuses a cached server; a cached server keeps no
+    /// report and does not hide corrupt input.
     #[test]
-    fn reused_public_rows_do_not_share_reports_or_hide_corruption() {
-        let first = prepared::prepare(snapshot(), None).unwrap();
-        let second = prepared::prepare(snapshot(), None).unwrap();
+    fn reused_servers_do_not_share_reports_or_hide_corruption() {
+        // A cache of its own, so concurrent tests cannot evict its entries.
+        let cache = Default::default();
+        let prepare = |snapshot| prepared::prepare_in(&cache, snapshot, None);
+        let first = prepare(snapshot()).unwrap();
+        let second = prepare(snapshot()).unwrap();
         assert!(std::ptr::eq(
             first.server.public().as_ptr(),
             second.server.public().as_ptr()
+        ));
+        let mut salted = snapshot();
+        salted.manifest.salt[0] ^= 1;
+        let salted = Snapshot::build(salted.manifest, &[]).unwrap();
+        let other = prepare(salted).unwrap();
+        assert!(!std::ptr::eq(
+            first.server.public().as_ptr(),
+            other.server.public().as_ptr()
         ));
         let changed = first.with_report(serde_json::json!({"fixture": "changed"}));
         assert!(changed.report.is_some());
         assert!(second.report.is_none());
         let mut corrupt = snapshot();
         corrupt.data[0] ^= 1;
-        assert!(prepared::prepare(corrupt, None).is_err());
-        let mut corrupt = snapshot();
-        corrupt.filters.push(1);
-        assert!(prepared::prepare(corrupt, None).is_err());
+        assert!(prepare(corrupt).is_err());
         let mut corrupt = snapshot();
         corrupt.manifest.end_height = 0;
-        assert!(prepared::prepare(corrupt, None).is_err());
+        assert!(prepare(corrupt).is_err());
     }
 }

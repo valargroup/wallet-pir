@@ -12,13 +12,30 @@ named by WALLET_PIR_DEPLOY_INVENTORY, whose pinned SSH reaches the Droplet:
 It validates the candidate beside the live file, keeps the live file as
 /etc/caddy/Caddyfile.before-<UTC time>, renames the candidate over it, reloads
 Caddy and verifies: the inventory's exact check from the running release,
-without `--await-feed-reads` since nothing restarts, and `/v1/receiver/health`
+and `/v1/receiver/health`
 and `/metrics` answering exactly 404 at the public origin. On failure it puts
 the backup back, reloads and verifies again. Exit status: 0 applied and
 verified, 1 not applied (see the message), 75 outcome unknown: an SSH step
 timed out or lost its connection, and the remote step may still have run, or
 restoring the predecessor failed, so Caddy may still run the candidate.
+
+A release that changes the wallet routes changes the binary's probe with them,
+so neither alone verifies. `cutover` changes both under one hold of the
+production lock, which it takes itself (do not wrap it in flock):
+
+    caddy.py cutover <candidate Caddyfile> deploy receiver --archive F --sha S ...
+    caddy.py cutover <predecessor Caddyfile> rollback receiver [--transaction ID]
+
+It applies the candidate, checks the operator routes stay off the public edge,
+then runs that deploy tool command in this process under the same lock. A
+deploy's exact check already probes the new binary through the new routes. The
+inventory's probe then runs once more against whatever release is running. If
+the command fails, which leaves the earlier binary running, the predecessor
+Caddyfile comes back and is verified with it. A command that succeeds but whose
+probe then fails is an unknown outcome, since both changed.
 """
+import contextlib
+import functools
 import json
 import os
 from pathlib import Path
@@ -31,7 +48,7 @@ sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / 'tools/lib'))
 from wallet_pir_ops.deploy import descriptors  # noqa: E402
-from wallet_pir_ops.deploy.remote import SSHExecutor  # noqa: E402
+from wallet_pir_ops.deploy.remote import LockHeld, SSHExecutor, production_lock  # noqa: E402
 
 LIVE = '/etc/caddy/Caddyfile'
 DENIED = ('/v1/receiver/health', '/metrics')
@@ -102,8 +119,6 @@ class Droplet:
         if check is None or check['host'] != server.host:
             raise ValueError('services.receiver.exact_check must run on the receiver host %s' % server.host)
         argv = list(check['argv'])
-        if '--await-feed-reads' in argv:
-            del argv[argv.index('--await-feed-reads'):argv.index('--await-feed-reads') + 2]
         self.host, self.unit, self.probe = server.host, server.unit, argv
         self.origin = argv[argv.index('--origin') + 1].rstrip('/')
         prefix = ['sudo', '-n', '--'] if inventory.hosts[server.host].get('sudo') else []
@@ -129,6 +144,11 @@ class Droplet:
             failures = [] if reply['ok'] else ['probe failed: ' + reply['output'][-1000:]]
         except Unknown as error:
             failures = ['probe: %s' % error]
+        return failures + self.exposed()
+
+    def exposed(self):
+        """Operator routes the public origin answers with anything but 404; empty when none."""
+        failures = []
         for path in DENIED:
             status = subprocess.run(['curl', '--silent', '--output', '/dev/null', '--write-out', '%{http_code}',
                                      '--proto', '=https', '--max-time', '15', self.origin + path],
@@ -138,17 +158,25 @@ class Droplet:
         return failures
 
 
-def apply(droplet, candidate):
-    """Applies `candidate`, restoring the predecessor if it fails; returns the exit status."""
+def install(droplet, candidate):
+    """Validates `candidate`, keeps the live file as a backup and reloads Caddy on it.
+
+    Returns the backup's path and the reload's failures, or `(None, [])` when the
+    candidate is invalid and nothing changed.
+    """
     backup = '%s.before-%s' % (LIVE, time.strftime('%Y%m%dT%H%M%SZ', time.gmtime()))
     reply = droplet.call({'op': 'apply', 'backup': backup}, candidate)
     if reply.get('invalid'):
         print('caddy.py: candidate invalid; nothing replaced:\n' + reply['output'], file=sys.stderr)
-        return 1
-    failures = [reply['output']] if not reply['ok'] else droplet.verify()
-    if not failures:
-        print('caddy.py: applied and verified on %s; predecessor kept as %s' % (droplet.host, backup))
-        return 0
+        return None, []
+    return backup, [] if reply['ok'] else [reply['output']]
+
+
+def restore(droplet, backup, failures):
+    """Puts `backup` back after the candidate's `failures` and verifies it; returns 1.
+
+    Raises Unknown if the predecessor does not reload or verify.
+    """
     print('caddy.py: candidate failed: %s; restoring %s' % ('; '.join(failures), backup), file=sys.stderr)
     reply = droplet.call({'op': 'restore', 'backup': backup})
     failures = [reply['output']] if not reply['ok'] else droplet.verify()
@@ -158,13 +186,117 @@ def apply(droplet, candidate):
     return 1
 
 
+def apply(droplet, candidate):
+    """Applies `candidate`, restoring the predecessor if it fails; returns the exit status."""
+    backup, failures = install(droplet, candidate)
+    if backup is None:
+        return 1
+    failures = failures or droplet.verify()
+    if not failures:
+        print('caddy.py: applied and verified on %s; predecessor kept as %s' % (droplet.host, backup))
+        return 0
+    return restore(droplet, backup, failures)
+
+
+def run_deploy(argv, lock, inventory):
+    """Runs the deploy tool command `argv` on `inventory` in this process under the held `lock`.
+
+    Returns its status. `inventory` must be the one `lock` and the Caddyfile belong to.
+    """
+    from wallet_pir_ops.deploy import cli
+    return cli.main(['--inventory', inventory, *argv], lock=lambda: contextlib.nullcontext(lock))
+
+
+def deploy_command(argv, inventory):
+    """Parses the deploy tool command `argv` as that tool will, without running it.
+
+    Returns an error message, or None for a receiver deploy or rollback of `inventory`
+    with the reviewed service descriptors that keeps its exact check. Help, malformed
+    arguments and another inventory are errors, so none can follow an installed
+    Caddyfile or deploy under another inventory's lock.
+    """
+    from wallet_pir_ops.deploy import cli
+    try:
+        with contextlib.redirect_stdout(sys.stderr):
+            args = cli.parser().parse_args(argv)
+    except SystemExit:
+        return 'the deploy command does not parse'
+    if args.command not in ('deploy', 'rollback') or getattr(args, 'service', None) != 'receiver':
+        return 'a cutover runs only deploy receiver or rollback receiver'
+    # The cutover's joint verification is the deploy's exact check and the probe.
+    if getattr(args, 'skip_exact_check', False):
+        return 'a cutover needs the exact check'
+    try:
+        same = os.path.samefile(args.inventory, inventory)
+    except (OSError, TypeError):
+        same = False
+    if not same:
+        return 'the deploy command names another inventory than WALLET_PIR_DEPLOY_INVENTORY'
+    if Path(args.descriptors).resolve() != (ROOT / 'tools/deploy/services.toml').resolve():
+        return 'the deploy command names other service descriptors'
+    return None
+
+
+def still_held(lock):
+    """Verifies `lock` once something changed, raising Unknown without it.
+
+    Nothing may be restored without the lock, so the operator reconciles instead.
+    """
+    try:
+        lock.verify()
+    except Exception as error:
+        raise Unknown('lost the production lock with the candidate installed, so nothing was restored (%s); '
+                      'reacquire the lock, check the running release with wallet-pir-deploy.py status receiver, '
+                      'then rerun caddy.py cutover with the Caddyfile that release needs' % error) from error
+
+
+def cutover(droplet, candidate, argv, lock, deploy):
+    """Applies `candidate` and runs the receiver deploy command `argv` under `lock`; see the module doc.
+
+    Returns the exit status. Raises Unknown when the outcome is unknown.
+    """
+    command = next(word for word in argv if word in ('deploy', 'rollback'))
+    try:
+        lock.verify()
+    except Exception as error:
+        print('caddy.py: nothing changed: %s' % error, file=sys.stderr)
+        return 1
+    backup, failures = install(droplet, candidate)
+    if backup is None:
+        return 1
+    failures = failures or droplet.exposed()
+    if not failures:
+        still_held(lock)
+        try:
+            code = deploy(argv, lock)
+        except BaseException as error:
+            raise Unknown('%s stopped with the candidate live: %r' % (command, error)) from error
+        if code == 0:
+            failures = droplet.verify()
+            if failures:
+                raise Unknown('%s succeeded with the candidate live, then the probe failed: %s'
+                              % (command, '; '.join(failures)))
+            print('caddy.py: cut over on %s with %s; predecessor kept as %s' % (droplet.host, command, backup))
+            return 0
+        failures = ['%s exited %d' % (command, code)]
+    still_held(lock)
+    return restore(droplet, backup, failures)
+
+
 def main(argv=None):
     """Parses the command line; returns the exit status."""
     argv = sys.argv[1:] if argv is None else argv
     inventory = os.environ.get('WALLET_PIR_DEPLOY_INVENTORY')
-    if len(argv) != 2 or argv[0] != 'apply' or not inventory:
-        print('usage: caddy.py apply <candidate Caddyfile>, with WALLET_PIR_DEPLOY_INVENTORY set, under the '
-              'production lock', file=sys.stderr)
+    applying = len(argv) == 2 and argv[0] == 'apply'
+    cutting = len(argv) >= 3 and argv[0] == 'cutover'
+    if not (applying or cutting) or not inventory:
+        print('usage: caddy.py apply <candidate Caddyfile> under the production lock, or caddy.py cutover '
+              '<candidate Caddyfile> deploy|rollback receiver ARGS..., with WALLET_PIR_DEPLOY_INVENTORY set',
+              file=sys.stderr)
+        return 1
+    refusal = cutting and deploy_command(argv[2:], inventory)
+    if refusal:
+        print('caddy.py: nothing changed: %s' % refusal, file=sys.stderr)
         return 1
     try:
         droplet = Droplet(inventory)
@@ -173,7 +305,17 @@ def main(argv=None):
         print('caddy.py: nothing changed: %s' % error, file=sys.stderr)
         return 1
     try:
-        return apply(droplet, candidate)
+        if applying:
+            return apply(droplet, candidate)
+        loaded = descriptors.load_inventory(inventory)
+        with contextlib.ExitStack() as stack:
+            try:
+                lock = stack.enter_context(production_lock(loaded, SSHExecutor(loaded)))
+            except (LockHeld, OSError, ValueError) as error:
+                print('caddy.py: nothing changed: %s' % error, file=sys.stderr)
+                return 1
+            deploy = functools.partial(run_deploy, inventory=inventory)
+            return cutover(droplet, candidate, argv[2:], lock, deploy)
     except Unknown as error:
         print('caddy.py: outcome unknown on %s: %s; under the lock, inspect %s and the newest %s.before-* '
               '(journalctl -u caddy shows whether a reload applied) before anything else'

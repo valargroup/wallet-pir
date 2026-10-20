@@ -49,9 +49,10 @@ pub struct Config {
     #[arg(long)]
     pub end_height: Option<u32>,
     /// Blocks below the node's tip to publish at, so a short reorg never revokes
-    /// sessions. Wallets accept publications up to 100 blocks behind. A stored tip
-    /// above that, as after a restart with a larger depth, is published as it is until
-    /// the chain passes it: it is canonical, and the depth applies to new blocks.
+    /// sessions. A wallet waits for a publication that reaches the frontier it asks
+    /// for, so depth adds to its lookup delay. A stored tip above the depth, as after a
+    /// restart with a larger one, is published as it is until the chain passes it: it
+    /// is canonical, and the depth applies to new blocks.
     #[arg(long, default_value_t = 2, value_parser = clap::value_parser!(u32).range(0..=50))]
     pub depth: u32,
     /// Continuously reconcile the canonical chain and atomically rotate the service,
@@ -71,14 +72,21 @@ pub struct Config {
     /// Maximum simultaneous raw-block RPC requests.
     #[arg(long, default_value_t = 8, value_parser = clap::value_parser!(u32).range(1..=i64::from(MAX_RECEIVER_CONCURRENCY)))]
     pub concurrency: u32,
+    /// Rolling filter retention in blocks, at most seven target days. PIR history is retained.
+    #[arg(long, default_value_t = receiver_store::blocks::MAX_FILTER_BLOCKS)]
+    #[serde(default = "default_filter_blocks")]
+    pub filter_blocks: u32,
+    /// Increase after correcting indexed history on an unchanged chain. Never decrease on restart.
+    #[arg(long, default_value_t = 0)]
+    #[serde(default)]
+    pub history_revision: u64,
     /// Where the NEAR feed starts on its first read, in Unix seconds; a day ago by
     /// default. The feed runs while serving when `NEAR_INTENTS_EXPLORER` holds a key.
     #[arg(long)]
     pub near_since: Option<i64>,
     #[arg(long, default_value_t = 60, value_parser = clap::value_parser!(u64).range(10..))]
     pub near_poll_seconds: u64,
-    /// The partner key `NEAR_INTENTS_EXPLORER` holds, if any. Without one, publications
-    /// carry no provider sets, whatever an earlier run left in `providers.sqlite`.
+    /// Optional payout-audit partner key. It has no role in wallet discovery or issuance.
     #[serde(skip)]
     #[arg(skip)]
     pub near_key: Option<String>,
@@ -96,7 +104,9 @@ impl From<&Config> for application::Config {
             depth: args.depth,
             batch_size: args.batch_size,
             concurrency: args.concurrency,
-            providers_enabled: args.near_key.is_some(),
+            audit_enabled: args.near_key.is_some(),
+            filter_blocks: args.filter_blocks,
+            history_revision: args.history_revision,
         }
     }
 }
@@ -125,6 +135,9 @@ impl Config {
             || self.cookie.is_some() == self.no_auth
             || self.poll_seconds == 0
             || self.near_poll_seconds < 10
+            || self.filter_blocks == 0
+            || self.filter_blocks > receiver_store::blocks::MAX_FILTER_BLOCKS
+            || self.history_revision > i64::MAX as u64
             || self.depth > 50
             || self.batch_size == 0
             || self.batch_size > MAX_RECEIVER_BATCH_BLOCKS
@@ -191,7 +204,7 @@ pub async fn run(
         let path = args.data_dir.join(PROVIDERS);
         let since = args
             .near_since
-            .unwrap_or_else(|| application::unix_now() - crate::near::RECENT_SECS);
+            .unwrap_or_else(|| application::unix_now() - crate::near::AUDIT_LOOKBACK_SECS);
         let poll = Duration::from_secs(args.near_poll_seconds);
         let mut explorer = Explorer::new(key)?;
         let provider = tokio::spawn(async move {
@@ -254,4 +267,9 @@ pub async fn run_isolated(
             })?
     })
     .await?
+}
+
+/// Default rolling suffix, shared by JSON configuration and command-line parsing.
+fn default_filter_blocks() -> u32 {
+    receiver_store::blocks::MAX_FILTER_BLOCKS
 }

@@ -93,7 +93,7 @@ fn publication(offset: u32, hash: Hash) -> (Snapshot, Vec<u8>) {
             record
         })
         .collect();
-    let snapshot = Snapshot::build(manifest, &records, &[]).unwrap();
+    let snapshot = Snapshot::build(manifest, &records).unwrap();
     let tree: Vec<Hash> = (1..=8).map(|i| [i; 32]).collect();
     let proof = WitnessSnapshot::build(
         &receiver_indexer::verify::publication(&snapshot.manifest).unwrap(),
@@ -122,7 +122,6 @@ fn stage(
     )
     .unwrap();
     std::fs::write(dir.join(format!("{revision}.rows")), &snapshot.data).unwrap();
-    std::fs::write(dir.join(format!("{revision}.filters")), &snapshot.filters).unwrap();
     if let Some(witness) = witness {
         std::fs::write(dir.join(format!("{revision}.witness")), witness).unwrap();
     }
@@ -450,12 +449,26 @@ async fn check_staged_publication(case: StagedCase) {
     world.assign(&a_dir, &a_rev);
     let worker = world.start();
     let a_id = session(&a);
+    // The record is reported loaded just after the publication starts serving, so
+    // health can briefly show one without the other.
     let health = world
-        .until("first publication", &mut served, |h| h["serving"] == a_id)
+        .until("first publication", &mut served, |h| {
+            h["serving"] == a_id && h["publication"]["loaded"]["revision"] == a_rev.as_str()
+        })
         .await;
-    assert_eq!(health["publication"]["loaded"]["revision"], a_rev);
     assert_eq!(health["indexer"]["mode"], "serve-publication");
     if case == StagedCase::Payments {
+        assert!(!a_dir.join(format!("{a_rev}.filters")).exists());
+        assert_eq!(
+            world
+                .client
+                .get(format!("{}/v1/receiver/block-filters/head", world.origin))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            reqwest::StatusCode::SERVICE_UNAVAILABLE
+        );
         let mut found = world.lookup(activation() + 1, [0xa1; 32]).await;
         found.sort_by_key(|payment| payment.position);
         let expected: Vec<_> = (0..2)
@@ -515,7 +528,7 @@ async fn check_staged_publication(case: StagedCase) {
         let wrong = root.join("wrong-revision");
         std::fs::create_dir_all(&wrong).unwrap();
         let other_rev = "cd".repeat(32);
-        for ext in ["json", "rows", "filters", "witness"] {
+        for ext in ["json", "rows", "witness"] {
             std::fs::copy(
                 b_dir.join(format!("{b_rev}.{ext}")),
                 wrong.join(format!("{other_rev}.{ext}")),
@@ -533,7 +546,7 @@ async fn check_staged_publication(case: StagedCase) {
         // Another network.
         let (mut other_net, _) = publication(2, [0xb2; 32]);
         other_net.manifest.genesis = [1; 32];
-        let other_net = Snapshot::build(other_net.manifest, &[], &[]).unwrap();
+        let other_net = Snapshot::build(other_net.manifest, &[]).unwrap();
         let (net_dir, net_rev) = stage(&root, "network", &other_net, None);
         // An anchor the node does not have.
         let (fork, fork_witness) = publication(3, [0xf0; 32]);

@@ -236,11 +236,9 @@
           "--rpc-url",
           "http://10.70.0.6:8232",
           "--no-auth",
-          "--witnesses",
-          "--await-feed-reads",
-          "300"
+          "--witnesses"
         ],
-        "timeout": 480
+        "timeout": 300
       }
     },
     "transparent-history": {

@@ -4,7 +4,7 @@ Caddy syntax validation accepts a catch-all proxy, which would put the
 operator routes (`/v1/receiver/health`, `/metrics`) on the public edge. These
 checks pin the edge to the six wallet routes, the unit (the template
 `wallet-pir-deploy.py` renders) to a private listener, its hardening and the one
-NEAR key file the inventory names, cloud-init to the matching account and
+optional NEAR key file the inventory names, cloud-init to the matching account and
 firewall rule, the inventory's `exact_check` to the deployed binary's probe on
 the receiver's host, the Terraform firewall to admitting the coordinator's SSH,
 the runbook's provisioning unit to the template with a bootstrap Description,
@@ -25,7 +25,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[3]
 DIR = ROOT / 'tools/receiver/digitalocean'
 WALLET_ROUTES = {'/v1/receiver/init', '/v1/receiver/query', '/v1/receiver/public/*',
-                 '/v1/receiver/witness/*', '/v1/receiver/filters/*'}
+                 '/v1/receiver/witness/*', '/v1/receiver/block-filters/*'}
 PRIVATE_NETWORK = ipaddress.ip_network('10.70.0.0/16')
 DEPLOY = ROOT / 'tools/receiver/digitalocean/service.toml'
 INVENTORY = ROOT / 'tools/enhance/deploy/deploy-inventory.example.json'
@@ -33,7 +33,8 @@ INFRA = ROOT / 'tools/infra/digitalocean/fleet'
 PROBE = ['{release_dir}/receiver-directory', 'probe']
 USER = 'receiver-pir'
 STATE = '/srv/receiver-pir'
-# The only key source: required, and named by the inventory's NEAR_KEY id.
+# The only key source, named by the inventory's NEAR_KEY id. It is optional, since the
+# payout audit it enables never gates indexing or serving.
 NEAR_KEY_FILE = '/etc/receiver-pir/near-@NEAR_KEY@.env'
 HARDENING = {'NoNewPrivileges': 'true', 'ProtectSystem': 'strict', 'ProtectHome': 'true',
              'PrivateTmp': 'true', 'ReadWritePaths': STATE, 'Restart': 'on-failure'}
@@ -101,7 +102,7 @@ def check_unit(text):
     for key, value in HARDENING.items():
         assert single.get(key) == value, (key, service.get(key))
     assert int(single.get('RestartSec', '0')) > 0, single.get('RestartSec')
-    assert service.get('EnvironmentFile') == [NEAR_KEY_FILE], service.get('EnvironmentFile')
+    assert service.get('EnvironmentFile') == ['-' + NEAR_KEY_FILE], service.get('EnvironmentFile')
     assert 'NEAR_INTENTS_EXPLORER' not in ' '.join(service.get('Environment', [])), service.get('Environment')
     argv = shlex.split(single['ExecStart'])
     assert argv[0] == '@RELEASE@/receiver-directory', argv[0]
@@ -151,7 +152,6 @@ def check_exact_check(service, unit, caddy):
     assert check['host'] == server['host'], check['host']
     argv = check['argv']
     assert argv[:2] == PROBE and not any('{' in word for word in argv[2:]), argv
-    assert not any(word.startswith('--fixture') for word in argv), argv
     option = lambda name: argv[argv.index(name) + 1]
     (site, _), = caddy_tree(caddy)
     assert option('--origin') == 'https://' + site, argv
@@ -163,12 +163,10 @@ def check_exact_check(service, unit, caddy):
     assert ('--no-auth' in argv) == ('--no-auth' in served), argv
     # A service that serves witness files has them checked against the nodes' root.
     assert ('--witnesses' in argv) == ('--witnesses' in served), argv
-    # The probe first waits for the restarted process to read both NEAR feeds, which
-    # proves the key the unit names; the timeout leaves 120 to 300 seconds for the rest.
-    assert '--await-feed-reads' in argv, argv
-    wait = int(option('--await-feed-reads'))
+    # Provider audit availability does not gate wallet discovery or publication.
+    assert '--await-feed-reads' not in argv, argv
     timeout = check.get('timeout')
-    assert wait > 0 and isinstance(timeout, int) and wait + 120 <= timeout <= wait + 300, (wait, timeout)
+    assert isinstance(timeout, int) and 120 <= timeout <= 600, timeout
 
 
 def ssh_sources(tf, firewall):
@@ -210,8 +208,6 @@ def check_probe_config(configs):
     assert config['service'] == 'receiver' and 1 <= config['timeout_seconds'] <= 45, config
     argv = config['command']
     assert argv[0] == '/opt/pir-monitor/receiver-probe', argv
-    # The probe's fixture is built in.
-    assert not any(word.startswith('--fixture') for word in argv), argv
     # The service serves witness files (see check_exact_check), so the monitor checks them too.
     assert '--witnesses' in argv, argv
 
@@ -255,7 +251,7 @@ class ReceiverOpsContract(unittest.TestCase):
         expected['Unit']['Description'] = [description + ' (bootstrap)' for description in expected['Unit']['Description']]
         self.assertEqual(bootstrap, expected)
 
-    def test_the_inventory_names_the_key_file_the_unit_requires(self):
+    def test_the_inventory_names_the_key_file_the_unit_reads(self):
         self.assertEqual(self.descriptor.get('template_vars'), ['NEAR_KEY'])
         self.assertIsInstance(self.service.get('template_vars', {}).get('NEAR_KEY'), str)
 
@@ -274,15 +270,15 @@ class ReceiverOpsContract(unittest.TestCase):
             mutated(swap(PROBE[0], '/opt/receiver-pir/tools/receiver-directory')),
             mutated(swap('https://receiver-pir.valargroup.dev', 'https://receiver.example')),
             mutated(swap('http://10.70.0.6:8232', 'http://127.0.0.1:8232')),
-            mutated(lambda check, argv: argv.__delitem__(slice(argv.index('--await-feed-reads'), None))),
-            mutated(lambda check, argv: check.update(timeout=300)),
+            mutated(lambda check, argv: argv.extend(['--await-feed-reads', '1'])),
+            mutated(lambda check, argv: check.update(timeout=0)),
         ]:
             self.assertNotEqual(service, self.service)
             with self.assertRaises(AssertionError):
                 check_exact_check(service, self.unit, self.caddy)
 
     def test_exposed_operator_routes_or_catch_all_proxy_fail(self):
-        matcher = '/v1/receiver/filters/*'
+        matcher = '/v1/receiver/block-filters/*'
         for mutated in [
             self.caddy.replace(matcher, matcher + ' /metrics'),
             self.caddy.replace(matcher, matcher + ' /v1/receiver/health'),
@@ -297,7 +293,8 @@ class ReceiverOpsContract(unittest.TestCase):
     def test_public_bind_or_another_key_source_fails(self):
         for mutated in [
             self.unit.replace('--bind 10.70.0.11:18380', '--bind 0.0.0.0:18380'),
-            self.unit.replace('=' + NEAR_KEY_FILE, '=-' + NEAR_KEY_FILE),
+            # A required key file would stop keyless indexing and serving.
+            self.unit.replace('=-' + NEAR_KEY_FILE, '=' + NEAR_KEY_FILE),
             self.unit.replace(NEAR_KEY_FILE, '/etc/receiver-pir/near.env'),
             self.unit.replace(NEAR_KEY_FILE, NEAR_KEY_FILE + '\nEnvironmentFile=-/etc/receiver-pir/near.env'),
             self.unit.replace('Environment=RUST_LOG=info', 'Environment=RUST_LOG=info NEAR_INTENTS_EXPLORER=x'),
