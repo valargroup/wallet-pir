@@ -1628,7 +1628,7 @@ async fn live_prepare_activate_and_invalidate() {
 
 #[path = "support/burst.rs"]
 mod burst;
-#[path = "../examples/support/query.rs"]
+#[path = "support/query.rs"]
 mod burst_query;
 
 /// A worker offered the runtimes its publisher prepared loads them at

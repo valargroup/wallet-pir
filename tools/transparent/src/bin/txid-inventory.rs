@@ -6,7 +6,7 @@
 //!   leave out.
 //! - `fixture`: samples txids per (tier, class) with their heights and the
 //!   SHA-256 of each entry's canonical encoding, plus absent controls, for
-//!   `txid-rate` and `txid-bandwidth`. Tables hold tags, not txids, so the
+//!   `txid-rate`. Tables hold tags, not txids, so the
 //!   txids come from the controller's heights index.
 //! - `audit`: checks a series of saved maps for sealed-shard immutability.
 //! - `synth`: writes a synthetic multi-shard publication for local runs.

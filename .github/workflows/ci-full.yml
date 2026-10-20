@@ -585,8 +585,8 @@ jobs:
         run: |
           cargo build --locked --profile release-fast -p status-publisher -p enhance-pir-client -p enhance-pir-load-test --bin status-pir --bin enhance-pir-cli --bin enhance-pir-load-test --features status-publisher/cli,status-publisher/native-reinspiring,enhance-pir-client/native-reinspiring,enhance-pir-load-test/native-reinspiring
           cargo build --locked --profile release-fast -p transparent-tools --bin transparent-regression --bin regression-export --bin txid-quality-canary
-          cargo build --locked --profile release-fast -p transparent-query-server --example rate-query --example txid-rate
-          cargo test --locked --profile release-fast -p transparent-query-server --example rate-query
+          cargo build --locked --profile release-fast -p transparent-tools --bin rate-query --bin txid-rate
+          cargo test --locked --profile release-fast -p transparent-tools --bin rate-query
       - name: Check retired commands and managed Status lifecycle
         run: |
           cargo test --locked --profile release-fast -p enhance-publisher --features native-reinspiring --test publisher_cli
@@ -598,7 +598,7 @@ jobs:
           python3 tools/ci/release.py assemble --kind pir-publisher --sha "$GITHUB_SHA" --output .local-pir/publisher-candidate
           python3 tools/scripts/wallet-pir-bundle.py assemble --sha "$GITHUB_SHA" --archive .local-pir/publisher-candidate/wallet-pir-ops.tar.gz
           cp "$CARGO_TARGET_DIR/release-fast/transparent-regression" "$CARGO_TARGET_DIR/release-fast/regression-export" "$CARGO_TARGET_DIR/release-fast/txid-quality-canary" .local-pir/publisher-candidate/
-          cp "$CARGO_TARGET_DIR/release-fast/examples/rate-query" "$CARGO_TARGET_DIR/release-fast/examples/txid-rate" .local-pir/publisher-candidate/
+          cp "$CARGO_TARGET_DIR/release-fast/rate-query" "$CARGO_TARGET_DIR/release-fast/txid-rate" .local-pir/publisher-candidate/
           cp "$CARGO_TARGET_DIR/release-fast/status-pir" "$CARGO_TARGET_DIR/release-fast/enhance-pir-cli" "$CARGO_TARGET_DIR/release-fast/enhance-pir-load-test" .local-pir/publisher-candidate/
           sha256sum .local-pir/publisher-candidate/status-pir .local-pir/publisher-candidate/enhance-pir-cli .local-pir/publisher-candidate/enhance-pir-load-test .local-pir/publisher-candidate/rate-query .local-pir/publisher-candidate/txid-rate .local-pir/publisher-candidate/*.tar.gz .local-pir/publisher-candidate/transparent-regression .local-pir/publisher-candidate/regression-export .local-pir/publisher-candidate/txid-quality-canary > .local-pir/publisher-candidate/SHA256SUMS
       - uses: actions/upload-artifact@v4

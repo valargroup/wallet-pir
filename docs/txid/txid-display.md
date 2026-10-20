@@ -402,7 +402,7 @@ already name, so it adds no leakage.
 
 `wallet-libraries/zakura/transparent-txid-client` is the wallet's client for this
 publication: synchronous, with no HTTP stack or async runtime. The tooling
-client in `transparent-shard-server/examples/support/txdisplay.rs` remains the
+client in `tools/transparent/src/support/txdisplay.rs` remains the
 reference it is tested against.
 
 The qualified `transparent-txid-display` release includes `txid-quality-canary`,

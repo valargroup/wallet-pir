@@ -15,7 +15,7 @@
 //! connections) and are tagged. Output is JSONL on stdout.
 use zakura_pir_publisher::transparent as transparent_shard;
 
-#[path = "support/txdisplay.rs"]
+#[path = "../support/txdisplay.rs"]
 mod txdisplay;
 
 use clap::Parser;

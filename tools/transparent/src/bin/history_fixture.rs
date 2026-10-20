@@ -11,7 +11,7 @@ use zakura_pir_publisher::transparent as transparent_shard;
 use std::path::Path;
 use transparent_events::{ReceiveEvent, TransparentEvent, Txid};
 use transparent_filter::{BlockHash, ScriptBytes, SealParameters, ShardMap};
-#[path = "../tests/support/revision.rs"]
+#[path = "../../../../src/transparent/transparent-query-server/tests/support/revision.rs"]
 mod revision;
 use transparent_shard::layout::DECOUPLED_2K_8K;
 

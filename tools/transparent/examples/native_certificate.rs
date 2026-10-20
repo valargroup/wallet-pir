@@ -3,7 +3,7 @@
 //! with `--query-rounding dithered` a `native-noise-two-mask-rounded-dithered-v1`
 //! report for the 44-bit dithered query.
 //!
-//! Modelled on `src/enhance/enhance-publisher/examples/native_certificate.rs`.
+//! Modelled on `tools/enhance/native-certificate/src/main.rs`.
 //! The packing weights depend only on the public hint (query masks times the
 //! segment's database) and the table's packing setup, so the tool rebuilds the
 //! hint and two-mask preprocessing from the segment bytes exactly as the server
@@ -13,7 +13,7 @@
 //! Segment mode (the per-snapshot certificate):
 //!
 //! ```text
-//! cargo run --release -p transparent-query-server --example native_certificate -- \
+//! cargo run --release -p transparent-tools --example native_certificate -- \
 //!   segment --geometry decoupled-2k-8k --table directory --rows-bin directory.0.bin \
 //!   [--public-sha256 <hex> | --public <file>] [--worst-case-query true]
 //! ```

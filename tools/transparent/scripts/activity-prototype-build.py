@@ -26,6 +26,7 @@ ARTIFACTS = (
 ARTIFACT_SOURCES = {
     'transparent-shard-server': 'transparent-query-server',
     'transparent-filter-server': 'transparent-publisher',
+    'examples/rate-query': 'rate-query',
 }
 
 
@@ -42,9 +43,7 @@ def build_commands(profile):
          '-p', 'transparent-tools', '--features',
          'transparent-publisher/rocksdb-reader,transparent-tools/benchmarks,transparent-tools/rocksdb-reader', '--bins'],
         ['cargo', 'build', '--locked', '--profile', profile,
-         '-p', 'transparent-query-server', '--example', 'rate-query', '--example', 'native_certificate'],
-        ['cargo', 'build', '--locked', '--profile', profile,
-         '-p', 'transparent-tools', '--example', 'activity-reopen'],
+         '-p', 'transparent-tools', '--example', 'activity-reopen', '--example', 'native_certificate'],
     ]
     if profile == 'release':
         # Focused tests have their own release-fast owner; this lane retains
