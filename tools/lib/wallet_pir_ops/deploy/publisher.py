@@ -92,6 +92,9 @@ def load_request(path, expected):
     require(all(c['host'] in inventory.hosts for c in checks.values()), 'probe host missing from inventory')
     publisher = inventory.services.get('publisher', {})
     require(publisher.get('managed_products') == products, 'managed products differ from configuration')
+    if request['schema'] == EXPANDED_SCHEMA:
+        require(publisher.get('exact_check') == {'products': checks}, 'inventory and cutover exact checks differ')
+        descriptors.exact_check(descriptors.load_descriptors(ROOT / 'tools/deploy/publisher/services.toml')['publisher'], inventory)
     require(publisher.get('roles', {}).get('server') == [{'host': request['host'], 'vars': {'management_listen': '127.0.0.1:18080'}}],
             'publisher must run once on the pinned coordinator')
     registry = ROOT / 'tools/deploy/publisher/all-services.toml' if request['schema'] == EXPANDED_SCHEMA else REGISTRY
@@ -377,6 +380,10 @@ class Cutover:
                     'restart requires this committed publisher transaction')
             for path, text in journal['plan']['desired'].items():
                 require(self.read(path) == text, 'managed file changed before restart: ' + path)
+            for path, digest in journal['plan'].get('inputs', {}).items():
+                require(sha(self.read(path)) == digest, 'adopted input changed before restart: ' + path)
+            require(self.ex.probe_unit(self.host, UNIT)['exe_sha256'] == self.request['release']['binary_sha256'],
+                    'running publisher executable changed before restart')
             self.save(journal, 'restarting')
             self.effect(journal, 'restart pause load', lambda: self.stop(LOAD))
             self.effect(journal, 'restart stop publisher', lambda: self.stop(UNIT))

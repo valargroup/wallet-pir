@@ -593,6 +593,11 @@ class Deployer:
             self.out('%s: product check passed' % record['key'])
 
     def run_exact_check(self, check, journal, sha):
+        if 'products' in check:
+            for product, command in check['products'].items():
+                journal.event('product exact check', product=product)
+                self.run_exact_check(command, journal, sha)
+            return
         argv = [argument.replace('{release_dir}', self.service.release_dir(sha)).replace('{transaction}', journal.id)
                 for argument in check['argv']]
         journal.event('exact check', host=check['host'], argv=argv)

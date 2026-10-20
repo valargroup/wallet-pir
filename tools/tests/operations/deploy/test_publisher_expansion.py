@@ -55,6 +55,7 @@ class ExpansionTests(unittest.TestCase):
         inventory['ancillary'] = {k: v for k, v in source['ancillary'].items()
                                   if set(v['consumers']) <= set(inventory['services'])}
         inventory['services']['publisher']['managed_products'] = publisher.EXPANDED_PRODUCTS
+        inventory['services']['publisher']['exact_check'] = {'products': self.request['checks']}
         self.target = self.make_target()
         self.ex.effects.clear()
 
@@ -94,6 +95,16 @@ class ExpansionTests(unittest.TestCase):
             self.target.deploy(self.binary, self.target.plan()['plan_sha256'])
         self.target.rollback()
         self.assertTrue(all(self.ex.probe_unit('coordinator', n)['active_state'] == 'active' for n in (*publisher.ADOPTED, publisher.UNIT)))
+
+    def test_an_omitted_product_check_or_https_change_is_refused(self):
+        original = copy.deepcopy(self.request)
+        self.request['checks'].pop('status')
+        with self.assertRaisesRegex(DeployError, 'independent exact check'):
+            self.make_target()
+        self.request = original
+        self.request['configuration']['transparent_history']['settings']['http_only'] = True
+        with self.assertRaisesRegex(DeployError, 'HTTP publishing is out of scope'):
+            self.make_target()
 
     def test_unknown_predecessor_argument_is_refused(self):
         state = self.ex.probe_unit('coordinator', publisher.ADOPTED[0])

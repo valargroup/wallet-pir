@@ -307,7 +307,9 @@ running Transparent publisher. It enables exactly `enhance`, `status`,
 retain `http_only: false`. Use `tools/deploy/publisher/all-services.toml` for
 one complete inventory with the existing query workers, routers and supervision.
 Remove Enhance coordinator and Status controller roles from that inventory;
-`publisher.managed_products` lists the four sections in the order above.
+`publisher.managed_products` lists the four sections in the order above. Its
+`exact_check` is a `products` map containing the same four host/argv/timeout
+checks as the request, so later binary deployments also verify every product.
 
 The tool translates the effective commands of `enhance-pir-coordinator.service`
 and `status-controller-qualification.service`. Unknown options, embedded Status,
