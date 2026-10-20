@@ -27,11 +27,9 @@ def records(path: Path):
                 yield value
 
 
-def assess(summary, requests, publications, resources, *, expected_protocol="status-pir-v2-q48"):
+def assess(summary, requests, publications, resources):
     failures = []
-    if expected_protocol not in ("status-pir-v2-q48", "status-pir-v3-native-two-mask-m29"):
-        raise ValueError("unsupported Status protocol")
-    expected_geometry = {"protocol": expected_protocol, "rows": 8192,
+    expected_geometry = {"protocol": "status-pir-v3-native-two-mask-m29", "rows": 8192,
                          "slots": 256, "slot_bytes": 40, "columns": 6144,
                          "row_bytes": 12288, "database_bytes": 100663296}
     if any(summary.get(key) != value for key, value in expected_geometry.items()):
@@ -194,8 +192,6 @@ def main():
     parser.add_argument("--requests", type=Path, required=True)
     parser.add_argument("--publications", type=Path, required=True)
     parser.add_argument("--resources", type=Path, required=True)
-    parser.add_argument("--protocol", choices=("status-pir-v2-q48", "status-pir-v3-native-two-mask-m29"),
-                        default="status-pir-v2-q48")
     args = parser.parse_args()
     summaries = [row for row in records(args.summary) if row.get("phase") == "load"]
     if len(summaries) != 1:
@@ -205,7 +201,6 @@ def main():
         records(args.requests),
         records(args.publications),
         records(args.resources),
-        expected_protocol=args.protocol,
     )
     print(json.dumps(result, sort_keys=True))
     raise SystemExit(0 if result["passed"] else 1)

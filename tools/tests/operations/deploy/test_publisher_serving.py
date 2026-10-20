@@ -7,74 +7,13 @@ import sys
 import unittest
 
 sys.path.insert(0, str(Path(__file__).parent))
-from test_publisher_expansion import ExpansionFixture, ExpandedCoordinator
-from fake_fleet import FakeFleet
-from wallet_pir_ops.deploy import publisher, publisher_products, publisher_serving
+from publisher_fixture import PublisherFixture
+from wallet_pir_ops.deploy import publisher, publisher_serving
 from wallet_pir_ops.deploy.engine import DeployError
 from wallet_pir_ops.deploy.remote import RemoteError
 
 
-class Coordinator(ExpandedCoordinator):
-    def run(self, host, argv, timeout):
-        if argv[:2] == ['stat', '-c']:
-            return 0, '644:0:0\n'
-        return super().run(host, argv, timeout)
-
-    def systemctl(self, host, *args):
-        if args[0] == 'reload' and args[1] == 'caddy.service':
-            self.effects.append(args)
-            return
-        super().systemctl(host, *args)
-
-    def http_get(self, host, url, timeout=5):
-        if (host, url) in self.endpoints:
-            status, body = FakeFleet.http_get(self, host, url, timeout)
-            value = json.loads(body)
-            # The private control versions deliberately cannot interoperate.
-            executable = self.host(host).units[self.endpoints[(host, url)]]['exe']
-            new_publisher = self.probe_unit('coordinator', publisher.UNIT)['exe_sha256'] == self.new_publisher
-            value['ready'] = value['ready'] and ((executable == self.new_serving) == new_publisher)
-            return status, json.dumps(value)
-        return super().http_get(host, url, timeout)
-
-
-class ServingTests(ExpansionFixture, unittest.TestCase):
-    def setUp(self):
-        super().setUp()
-        self.baseline.deploy()
-        self.target.deploy(self.binary, self.target.plan()['plan_sha256'])
-        self.ex.__class__ = Coordinator
-        self.old_publisher = publisher.file_sha256(self.binary)
-        self.binary.write_bytes(b'publication-only publisher')
-        self.request['release'].update(binary_sha256=publisher.file_sha256(self.binary), binary_bytes=self.binary.stat().st_size)
-        self.serving_binary = self.root / 'pir-query-server'
-        self.serving_binary.write_bytes(b'query-only serving')
-        self.request['schema'] = publisher.SERVING_SCHEMA
-        self.request['configuration'] = publisher_products.publication_only(self.request['configuration'])
-        edge = 'example.test {\n' + publisher_serving.FALLBACK + '\n}\n'
-        self.ex.put('coordinator', publisher_serving.CADDY, edge)
-        self.ex.install('coordinator', 'caddy.service', '[Service]\nExecStart=/bin/caddy run --config /etc/caddy/Caddyfile\n', files={'/bin/caddy': b'caddy'})
-        self.request['serving'] = {'git_sha': self.request['release']['git_sha'],
-                                  'binary_sha256': publisher.file_sha256(self.serving_binary),
-                                  'binary_bytes': self.serving_binary.stat().st_size, 'caddy_sha256': publisher.sha(edge)}
-        self.ex.new_publisher = self.request['release']['binary_sha256']
-        self.ex.new_serving = self.request['serving']['binary_sha256']
-        for role in publisher_serving.ROLES:
-            entry = self.request['inventory']['services']['enhance']['roles'][role][0]
-            host = entry['host']
-            unit = 'enhance-pir-' + role + '.service'
-            self.ex.install(host, unit, '[Service]\nExecStart=/bin/old-serving ' + role + '\n', files={'/bin/old-serving': b'old serving'})
-            for path in entry['settings']['credentials']:
-                self.ex.put(host, path, '')
-        self.target = self.make_target()
-        self.target.serving.binary = self.serving_binary
-        for target in self.target.serving.deployer.targets:
-            self.ex.endpoints[(target.host, target.url(target.role.health))] = target.unit
-        self.ex.effects.clear()
-
-    def deploy(self):
-        return self.target.deploy(self.binary, self.target.plan()['plan_sha256'], self.serving_binary)
-
+class ServingTests(PublisherFixture, unittest.TestCase):
     def test_json_response_is_not_mixed_with_progress(self):
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
@@ -90,8 +29,25 @@ class ServingTests(ExpansionFixture, unittest.TestCase):
         self.assertNotIn('127.0.0.1:8080', edge)
         self.assertTrue(all(r['phase'] == 'verified' for r in result['serving_journal']['hosts']))
         self.assertEqual(self.target.rollback()['phase'], 'rolled-back')
-        self.assertNotIn('handle /v1/enhance/*', self.ex.read('coordinator', publisher_serving.CADDY))
+        self.assertEqual(self.ex.read('coordinator', publisher_serving.CADDY), result['plan']['serving']['edge_before'])
         self.assertEqual(self.ex.probe_unit('coordinator', publisher.UNIT)['exe_sha256'], self.old_publisher)
+
+    def test_subsequent_update_keeps_the_installed_wallet_routes(self):
+        self.deploy()
+        edge = self.ex.read('coordinator', publisher_serving.CADDY)
+        self.assertEqual(self.deploy()['phase'], 'committed')
+        self.assertEqual(self.ex.read('coordinator', publisher_serving.CADDY), edge)
+
+    def test_retained_cutover_journal_restores_its_saved_wallet_routes(self):
+        result = self.deploy()
+        # A retained transaction can predate today's route shape. Recovery reads
+        # its saved bytes instead of regenerating an obsolete migration plan.
+        old_edge = 'example.test {\n' + publisher_serving.FALLBACK + '\n}\n'
+        result['plan']['serving']['edge_before'] = old_edge
+        path = publisher.ROOT_DIR + '/transactions/' + result['id'] + '/journal.json'
+        self.ex.put('coordinator', path, json.dumps(result))
+        self.assertEqual(self.target.rollback()['phase'], 'rolled-back')
+        self.assertEqual(self.ex.read('coordinator', publisher_serving.CADDY), old_edge)
 
     def test_lost_role_restart_reply_restores_original_group(self):
         self.ex.crash_on = ('restart', 'enhance-pir-query-ingress.service')
