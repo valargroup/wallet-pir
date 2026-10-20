@@ -235,3 +235,13 @@ loopback peers and durable state paths. The deployment stages each configuration
 runs the new executable's `--check` before restarting, and restores the previous
 configuration (or its absence) on rollback. The examples beside the unit templates
 show the resulting files; do not install their placeholder network hash.
+
+For aggregate live-load acceptance against the router's loopback wallet listener,
+run `tools/status/lib/live_probe.py` with the installed `status-pir` diagnostic
+client, node cookie reference, router origin and a fresh report directory. It
+runs the unchanged encrypted probe at twenty lookups per second across eight
+simulated client addresses. The router allows two concurrent queries per client;
+a single client's overload test is a separate check. The wrapper preserves
+failures without retrying and records its transport and client count beside the
+probe's raw arrival records. It refuses public upstream origins and never
+changes the server's admission policy.
