@@ -32,7 +32,7 @@ def snapshot(blocks, mempool, forks, network, salt):
         raise ValueError('missing chain window or identity')
     for previous, current in zip(blocks, blocks[1:]):
         if current['height'] != previous['height'] + 1 or current['previousblockhash'] != previous['hash']:
-            raise ValueError('noncontiguous canonical window')
+            raise SourceChanged('noncontiguous canonical window')
     first, last = blocks[0]['height'], blocks[-1]['height']
     records = {}
     for txid, height, block in sorted(forks, key=lambda v: (v[1], v[2])):
@@ -182,29 +182,33 @@ class Oracle:
         raise SourceChanged('node source did not stabilize after three complete reads')
 
     def _observe(self):
+        # Failed parallel reads must not alter the last complete observation.
+        blocks, forks = list(self.blocks), list(self.forks)
         tip = self.node.call('getblockcount')
         anchor = self.node.call('getblockhash', tip)
-        while self.blocks and (self.blocks[-1]['height'] > tip or
-                self.node.call('getblockhash', self.blocks[-1]['height']) != self.blocks[-1]['hash']):
-            block = self.blocks.pop()
-            self.forks.extend((txid, block['height'], block['hash']) for txid in block['tx'])
-        start = self.blocks[-1]['height'] + 1 if self.blocks else max(1, tip - self.window + 1)
+        while blocks and (blocks[-1]['height'] > tip or
+                self.node.call('getblockhash', blocks[-1]['height']) != blocks[-1]['hash']):
+            block = blocks.pop()
+            forks.extend((txid, block['height'], block['hash']) for txid in block['tx'])
+        start = blocks[-1]['height'] + 1 if blocks else max(1, tip - self.window + 1)
         with ThreadPoolExecutor(max_workers=8) as pool:
-            self.blocks.extend(pool.map(self.node.block, range(start, tip + 1)))
-        self.blocks = self.blocks[-self.window:]
-        self.forks = [entry for entry in self.forks if entry[1] >= self.blocks[0]['height']]
+            blocks.extend(pool.map(self.node.block, range(start, tip + 1)))
+        blocks = blocks[-self.window:]
+        forks = [entry for entry in forks if entry[1] >= blocks[0]['height']]
         mempool = sorted(self.node.call('getrawmempool', False))
         if self.node.call('getblockcount') != tip or self.node.call('getblockhash', tip) != anchor:
             raise SourceChanged('node tip changed during independent collection')
         observed_ms = int(time.time() * 1000)
-        identity = (anchor, tuple(mempool), tuple(self.forks))
+        identity = (anchor, tuple(mempool), tuple(forks))
+        value = self.cached_snapshot
         if identity != self.cached_identity:
-            self.cached_snapshot = snapshot(self.blocks, mempool, self.forks, self.network, self.salt)
-            first = self.cached_snapshot['coverage_start']
-            self.blocks = [block for block in self.blocks if block['height'] >= first]
-            self.forks = [entry for entry in self.forks if entry[1] >= first]
-            self.cached_identity = (anchor, tuple(mempool), tuple(self.forks))
-        return {'source_observed_ms': observed_ms, 'snapshot': self.cached_snapshot,
+            value = snapshot(blocks, mempool, forks, self.network, self.salt)
+            first = value['coverage_start']
+            blocks = [block for block in blocks if block['height'] >= first]
+            forks = [entry for entry in forks if entry[1] >= first]
+        self.blocks, self.forks = blocks, forks
+        self.cached_identity, self.cached_snapshot = (anchor, tuple(mempool), tuple(forks)), value
+        return {'source_observed_ms': observed_ms, 'snapshot': value,
                 'mempool_digest': hashlib.sha256(json.dumps(mempool).encode()).hexdigest(),
                 'anchor': anchor}
 

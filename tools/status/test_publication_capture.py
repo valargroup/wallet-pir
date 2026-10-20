@@ -115,6 +115,49 @@ class PublicationOracleTests(unittest.TestCase):
     def test_hashes_use_protocol_byte_order(self):
         self.assertEqual(protocol_hash('00' * 31 + '01'), b'\x01' + bytes(31))
 
+    def test_reorganization_during_parallel_reads_retries_without_retaining_a_mixed_chain(self):
+        common = block(1, ['01' * 32])
+        old_second = block(2, ['02' * 32])
+        new_second = dict(block(2, ['12' * 32]), hash='12' * 32)
+        new_tip = dict(block(3, ['13' * 32]), hash='13' * 32,
+                       previousblockhash=new_second['hash'])
+
+        class Node:
+            reorganized = False
+            reads = 0
+
+            def __init__(self, unchanged_tip):
+                self.unchanged_tip = unchanged_tip
+
+            def call(self, method, *args):
+                if method == 'getblockcount':
+                    return 3
+                if method == 'getblockhash':
+                    if args[0] == 3 and (self.reorganized or self.unchanged_tip):
+                        return new_tip['hash']
+                    return block(args[0], [])['hash']
+                if method == 'getrawmempool':
+                    self.reads += 1
+                    self.reorganized = True
+                    return []
+                raise AssertionError(method)
+
+            def block(self, height):
+                if height == 2:
+                    return new_second if self.reorganized else old_second
+                return new_tip
+
+        expected_blocks = [common, new_second, new_tip]
+        for unchanged_tip in (False, True):
+            with self.subTest(unchanged_tip=unchanged_tip):
+                node = Node(unchanged_tip)
+                oracle = Oracle(node, 4096, bytes(32), blocks=[common])
+                value = oracle.observe()
+                self.assertEqual(value['snapshot'], snapshot(expected_blocks, [], [], oracle.network, bytes(32)))
+                self.assertEqual(oracle.blocks, expected_blocks)
+                self.assertEqual(oracle.forks, [])
+                self.assertEqual(node.reads, 2)
+
     def test_block_arriving_during_read_requires_a_complete_new_observation(self):
         class Node:
             height = 1
@@ -143,9 +186,13 @@ class PublicationOracleTests(unittest.TestCase):
                     return []
                 return super().call(method, *args)
         moving = MovingNode()
+        oracle = Oracle(moving, 4096, bytes(32))
         with self.assertRaisesRegex(SourceChanged, 'three complete reads'):
-            Oracle(moving, 4096, bytes(32)).observe()
+            oracle.observe()
         self.assertEqual(moving.reads, 3)
+        self.assertEqual(oracle.blocks, [])
+        self.assertEqual(oracle.forks, [])
+        self.assertIsNone(oracle.cached_snapshot)
 
 
 if __name__ == '__main__':

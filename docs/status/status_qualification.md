@@ -82,6 +82,8 @@ captures must remain failures. Require the collector to exit successfully and it
 collector errors. The collector verifies retained block contents against the node,
 starts at the retained coverage boundary, and permanently prunes capacity-evicted
 blocks so reduced mempool pressure cannot restore discarded history.
+If block reads overlap a reorganization, the collector retries from its last
+validated history; an incomplete or disconnected read never replaces that state.
 
 Freeze retained fork inputs before the cutover and provide the frozen file with
 `--retained-source` and `--retained-source-sha256`. Old fork blocks may no longer
