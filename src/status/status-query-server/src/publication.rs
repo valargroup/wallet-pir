@@ -6,6 +6,7 @@ use sha2::{Digest, Sha256};
 pub const SCHEMA: &str = "status-prepared-distribution-v1";
 pub const PREFIX: &str = "/provider/status/v1/";
 pub const METADATA_LIMIT: usize = 64 << 10;
+pub const MAX_ANCHORS: usize = 256;
 pub type Failure = Box<dyn std::error::Error + Send + Sync>;
 
 pub fn digest(bytes: &[u8]) -> String {
@@ -127,7 +128,7 @@ impl Inventory {
             }
         }
         let expected = if cfg!(feature = "native-reinspiring") {
-            profile().ypir().db_cols / profile().rlwe().d
+            profile().ypir().db_cols.div_ceil(profile().rlwe().d)
         } else {
             1
         };

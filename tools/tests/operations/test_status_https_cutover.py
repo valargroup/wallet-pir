@@ -164,6 +164,21 @@ class CutoverTests(unittest.TestCase):
         self.assertEqual(Journal.load(Path(self.root.name), 'status-https').status, 'rolled-back')
         self.assertTrue(self.host.directories)
 
+    def test_last_answer_check_cannot_commit_after_recovery_deadline(self):
+        original = self.host.run
+
+        def delayed(host, argv, timeout=30):
+            result = original(host, argv, timeout)
+            installed = self.host.probe_unit('coordinator', UNITS['publisher'])['exe_sha256']
+            if argv == ['exact', 'transaction_details'] and installed != self.host.old_publisher:
+                self.clock += WINDOW
+            return result
+
+        self.host.run = delayed
+        with self.assertRaisesRegex(DeployError, 'recovery window expired'):
+            self.cutover.deploy(self.cutover.plan()['plan_sha256'])
+        self.assertEqual(Journal.load(Path(self.root.name), 'status-https').status, 'rolled-back')
+
     def test_foreign_configuration_and_policy_changes_refuse_before_stopping(self):
         plan = self.cutover.plan()
         self.host.put('coordinator', CADDY, 'foreign change')

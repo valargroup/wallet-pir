@@ -19,6 +19,7 @@ pub(super) struct StatusSync {
     floor: Floor,
     conditional: Option<Current>,
     retained: Vec<Object>,
+    deferred: bool,
 }
 impl StatusSync {
     pub fn new(service: Service, config: &RoleConfig) -> Result<Self, Failure> {
@@ -61,6 +62,7 @@ impl StatusSync {
             floor,
             conditional: None,
             retained: Vec::new(),
+            deferred: false,
         })
     }
     async fn save_floor(&self) -> Result<(), Failure> {
@@ -78,21 +80,34 @@ impl StatusSync {
         Ok(())
     }
     async fn revoke(&self) {
-        if let Some(c) = &self.service.state.lock().await.controller {
+        let mut state = self.service.state.lock().await;
+        if let Some(c) = &state.controller {
             c.revoke();
         }
+        state.router_holds.clear();
     }
     async fn observe(&mut self, current: Current) -> Result<(), Failure> {
         current.validate(self.service.network)?;
+        let mut invalidate = !current.eligible;
         if let Some(old) = &self.floor.current {
             if !current.succeeds(old) {
                 return Err("Status publisher replay or identity change".into());
             }
-            if current.recovery_epoch > old.recovery_epoch {
-                self.revoke().await;
-            }
+            invalidate |= current.recovery_epoch > old.recovery_epoch;
         }
-        if !current.eligible {
+        if invalidate {
+            let manifests = self
+                .service
+                .state
+                .lock()
+                .await
+                .controller
+                .as_ref()
+                .map(Controller::serving_manifests)
+                .unwrap_or_default();
+            self.floor
+                .invalid
+                .extend(manifests.iter().map(Manifest::id));
             self.revoke().await;
         }
         self.floor.current = Some(current);
@@ -182,7 +197,7 @@ impl StatusSync {
         result?;
         Ok(target)
     }
-    async fn worker_inventory(&self) -> Result<Object, Failure> {
+    async fn worker_inventory(&self) -> Result<Option<Object>, Failure> {
         let response = self
             .service
             .serving_http
@@ -193,24 +208,26 @@ impl StatusSync {
             .await
             .map_err(|_| "Status worker status unavailable")?;
         let status: ProviderStatus = serde_json::from_slice(&bytes)?;
-        status
+        // An available worker that is still loading is ordinary coordination,
+        // so keep the shared success cadence instead of transport backoff.
+        if status
             .manifest
             .as_ref()
-            .ok_or("Status worker not loaded")?
-            .fresh(now_ms())?;
-        status
-            .inventory
-            .ok_or_else(|| "Status worker has no verified inventory".into())
+            .is_none_or(|m| m.fresh(now_ms()).is_err())
+        {
+            return Ok(None);
+        }
+        Ok(status.inventory)
     }
-    async fn worker_ready(&self, manifest: &Manifest) -> Result<(), Failure> {
+    async fn pin_worker(&self, manifest: &Manifest) -> Result<(), Failure> {
         if self.service.role != Role::Router {
             return Ok(());
         }
         let response = self
             .service
             .serving_http
-            .get(format!(
-                "{}/v1/provider-ready/{}",
+            .post(format!(
+                "{}/v1/provider-pin/{}",
                 self.service.worker_origin,
                 hex::encode(manifest.id())
             ))
@@ -235,7 +252,11 @@ impl StatusSync {
             .map(Controller::serving_manifests)
             .unwrap_or_default();
         let mut manifests = vec![candidate.clone()];
-        manifests.extend(active.into_iter().filter(|m| m.id() != candidate.id()));
+        manifests.extend(
+            active
+                .into_iter()
+                .filter(|m| m.id() != candidate.id() && m.fresh(now_ms()).is_ok()),
+        );
         let request = AnchorRequest {
             current: current.clone(),
             anchors: manifests
@@ -278,6 +299,12 @@ impl StatusSync {
     async fn update(&mut self) -> Result<u64, Failure> {
         self.source.reset_budget();
         let current = self.current().await?;
+        self.service
+            .state
+            .lock()
+            .await
+            .router_holds
+            .retain(|g| g.manifest().fresh(now_ms()).is_ok());
         let active = self
             .service
             .state
@@ -286,11 +313,17 @@ impl StatusSync {
             .controller
             .as_ref()
             .map(|c| c.current().manifest().clone());
-        if let Some(active) = active.filter(|m| m.recovery_epoch == current.recovery_epoch) {
+        if let Some(active) = active
+            .filter(|m| m.recovery_epoch == current.recovery_epoch && m.fresh(now_ms()).is_ok())
+        {
             self.authority(current.clone(), &active).await?;
         }
         let inventory_object = if self.service.role == Role::Router {
-            self.worker_inventory().await?
+            let Some(inventory) = self.worker_inventory().await? else {
+                self.deferred = true;
+                return Ok(0);
+            };
+            inventory
         } else {
             current
                 .inventory
@@ -327,7 +360,8 @@ impl StatusSync {
                 .as_ref()
                 .is_some_and(|c| !c.can_prepare())
         {
-            return Err("Status predecessor queries still running".into());
+            self.deferred = true;
+            return Ok(previous.as_ref().unwrap().manifest().generation);
         }
         let candidate = if unchanged {
             previous.as_ref().map(|g| g.as_ref().clone())
@@ -361,7 +395,7 @@ impl StatusSync {
         let latest = self.current().await?;
         inventory.validate(&latest)?;
         self.authority(latest, &inventory.manifest).await?;
-        self.worker_ready(&inventory.manifest).await?;
+        self.pin_worker(&inventory.manifest).await?;
         inventory.manifest.fresh(now_ms())?;
         if let Some(candidate) = candidate {
             let root = self.service.dir.clone();
@@ -374,17 +408,26 @@ impl StatusSync {
                 return Err(error.into());
             }
             let mut state = self.service.state.lock().await;
-            match state.controller.as_ref() {
+            let mut retired_owner = None;
+            let retired = match state.controller.as_ref() {
                 Some(controller) if !controller.revoked() => {
                     if controller.current().manifest().id() != candidate.manifest().id() {
-                        controller.activate(candidate)?;
+                        controller.activate_deferring_release(candidate)?
+                    } else {
+                        Vec::new()
                     }
                 }
-                _ => state.controller = Some(Controller::new(candidate)),
-            }
+                _ => {
+                    retired_owner = state.controller.replace(Controller::new(candidate));
+                    Vec::new()
+                }
+            };
             state.inventory = Some(inventory_object.clone());
             state.poisoned = false;
             drop(state);
+            if !retired.is_empty() || retired_owner.is_some() {
+                tokio::task::spawn_blocking(move || drop((retired, retired_owner)));
+            }
             self.retained.push(inventory_object.clone());
             if self.retained.len() > 2 {
                 self.retained.remove(0);
@@ -393,6 +436,25 @@ impl StatusSync {
             let retained = self.retained.clone();
             tokio::task::spawn_blocking(move || collect(&root, &retained)).await??;
         }
+        if self.service.role == Role::Router {
+            let release = self
+                .service
+                .serving_http
+                .post(format!(
+                    "{}/v1/provider-commit/{}",
+                    self.service.worker_origin,
+                    hex::encode(inventory.manifest.id())
+                ))
+                .send()
+                .await;
+            match release {
+                Ok(response) if response.status().is_success() => {}
+                _ => {
+                    self.deferred = true;
+                    tracing::warn!("Status router handover acknowledgment deferred");
+                }
+            }
+        }
         Ok(inventory.manifest.generation)
     }
 }
@@ -400,9 +462,12 @@ impl SyncTask for StatusSync {
     type Report = u64;
     type Error = Failure;
     async fn synchronize(&mut self) -> Result<u64, Failure> {
+        self.deferred = false;
         self.service.state.lock().await.synchronization = "synchronizing".into();
         let result = self.update().await;
-        self.service.state.lock().await.synchronization = if result.is_ok() {
+        self.service.state.lock().await.synchronization = if result.is_ok() && self.deferred {
+            "waiting_for_peer"
+        } else if result.is_ok() {
             "synchronized"
         } else {
             "refused"

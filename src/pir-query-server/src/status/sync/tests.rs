@@ -153,7 +153,7 @@ async fn unchanged_https_authority_never_renews_observation_age() {
         stale,
         Arc::new(vec![]),
     )));
-    assert!(task.synchronize().await.is_err()); // Real 304, then a live anchor check.
+    assert!(task.synchronize().await.is_err()); // A real 304 still cannot make the expired view queryable.
     assert!(service.serving().await.is_err());
     let requests = fs::read_to_string(format!("{}.requests", tls.control.display())).unwrap();
     assert!(requests.contains("anchors/check"));
@@ -218,5 +218,97 @@ async fn truncated_objects_never_become_completed_cache_entries() {
     fs::write(&tls.control, "").unwrap();
     let path = task.object(&object).await.unwrap();
     assert_eq!(fs::read(path).unwrap(), b"not an inventory");
+    server.abort();
+}
+
+#[tokio::test]
+async fn worker_retains_the_routers_view_until_handover_commits() {
+    let (_root, service, _task, _source, _tls, server) = setup().await;
+    let controller = service.state.lock().await.controller.clone().unwrap();
+    let first = controller.current().manifest().id();
+    let _ = provider_pin(State(service.clone()), Path(hex::encode(first)))
+        .await
+        .unwrap();
+    let mut second = manifest();
+    second.generation += 1;
+    let second_id = second.id();
+    controller
+        .activate(Generation::public_only(second, Arc::new(vec![])))
+        .unwrap();
+    assert!(
+        !controller.can_prepare(),
+        "the router still serves the predecessor"
+    );
+    let _ = provider_pin(State(service.clone()), Path(hex::encode(second_id)))
+        .await
+        .unwrap();
+    assert!(
+        !controller.can_prepare(),
+        "pinning a candidate must not release the active router view"
+    );
+    let _ = provider_commit(State(service.clone()), Path(hex::encode(second_id)))
+        .await
+        .unwrap();
+    assert!(controller.can_prepare());
+    assert_eq!(service.state.lock().await.router_holds.len(), 1);
+    server.abort();
+}
+#[tokio::test]
+async fn consumer_restart_requires_https_authority_despite_completed_objects() {
+    let (_root, service, mut task, source, tls, server) = setup().await;
+    let current = source.current.read().unwrap().clone();
+    task.observe(current).await.unwrap();
+    let object = Object::new(b"not an inventory");
+    task.object(&object).await.unwrap();
+    let path = service.dir.clone();
+    drop(task);
+    drop(service);
+    fs::write(&tls.control, "refused-body").unwrap();
+    let service = Service::open(Role::Worker, [1; 32], path.clone(), String::new()).unwrap();
+    let config = RoleConfig {
+        role: Role::Worker,
+        network_hex: hex::encode([1; 32]),
+        state_dir: path.clone(),
+        listen: "127.0.0.1:1".parse().unwrap(),
+        query_listen: None,
+        publisher: tls.origin.clone(),
+        publisher_ca: Some(tls.certificate.clone()),
+        worker_origin: String::new(),
+        cuda: false,
+    };
+    let mut task = StatusSync::new(service.clone(), &config).unwrap();
+    assert!(task.synchronize().await.is_err());
+    assert!(service.serving().await.is_err());
+    assert!(path.join("objects").join(object.sha256).is_file());
+    server.abort();
+}
+
+#[tokio::test]
+async fn loading_worker_keeps_normal_poll_cadence_without_serving() {
+    let (root, service, mut task, _pointer, _tls, server) = setup().await;
+    service.state.lock().await.controller = None;
+    let worker = Service::open(
+        Role::Worker,
+        [1; 32],
+        root.path().join("empty-worker"),
+        String::new(),
+    )
+    .unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    task.service.role = Role::Router;
+    task.service.worker_origin = format!("http://{}", listener.local_addr().unwrap());
+    let peer = tokio::spawn(async move {
+        axum::serve(listener, worker.control_routes())
+            .await
+            .unwrap()
+    });
+    assert_eq!(task.synchronize().await.unwrap(), 0);
+    assert!(task.deferred);
+    assert_eq!(
+        service.state.lock().await.synchronization,
+        "waiting_for_peer"
+    );
+    assert!(service.serving().await.is_err());
+    peer.abort();
     server.abort();
 }

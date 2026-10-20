@@ -227,10 +227,10 @@ class Cutover:
     def state_exists(self, role):
         program = ('import os,pwd,grp,stat,sys;from pathlib import Path;'
                    'p=Path(sys.argv[1]);exists=os.path.lexists(p);'
-                   'valid=not exists or (p.is_dir() and not p.is_symlink() and p.resolve()==p '
+                   'valid=p.resolve()==p and (not exists or (p.is_dir() and not p.is_symlink() '
                    'and p.stat().st_uid==pwd.getpwnam(sys.argv[2]).pw_uid '
                    'and p.stat().st_gid==grp.getgrnam(sys.argv[3]).gr_gid '
-                   'and not stat.S_IMODE(p.stat().st_mode)&0o077);'
+                   'and not stat.S_IMODE(p.stat().st_mode)&0o077));'
                    'print("present" if exists else "absent");raise SystemExit(0 if valid else 1)')
         return self.run(role['host'], ['python3', '-c', program, role['state_dir'], role['user'], role['group']]) == 'present'
 
@@ -349,6 +349,7 @@ class Cutover:
                 self.restart(journal, plan)
                 self.wait_ready(plan, deadline=deadline)
                 self.checks(deadline)
+                require(self.clock() < deadline, 'twenty-minute recovery window expired')
                 self.save(journal, 'committed')
             except Exception:
                 try:

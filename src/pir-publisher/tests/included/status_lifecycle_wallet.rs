@@ -44,9 +44,14 @@ async fn wait_manifest(
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn shared_status_lifecycle_collects_publishes_and_advances_over_real_roles() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter("warn")
+        .with_test_writer()
+        .try_init();
     let root = tempfile::tempdir().unwrap();
     let (rpc, source_task, mempool) = source::tests::controlled_fixture(false, false).await;
     let _source = Abort(source_task);
+    *mempool.write().unwrap() = "77".repeat(32);
     let observed = source::observe(&rpc, [1; 32], 1).await.unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
@@ -69,6 +74,27 @@ async fn shared_status_lifecycle_collects_publishes_and_advances_over_real_roles
             .await
             .unwrap()
     }));
+    // Start consumers after the source has a complete publication. Transport
+    // outage and empty/restarted consumer behavior have separate focused tests.
+    let ready = reqwest::Client::new();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    loop {
+        if ready
+            .get(format!("http://{address}/provider/status/v1/current"))
+            .send()
+            .await
+            .unwrap()
+            .status()
+            .is_success()
+        {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "publisher not ready"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
     let tls = tls::Tls::start(&format!("http://{address}")).await;
     let worker_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let worker_origin = format!("http://{}", worker_listener.local_addr().unwrap());

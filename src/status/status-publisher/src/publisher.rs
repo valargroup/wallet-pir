@@ -371,7 +371,7 @@ async fn anchors(
     State(s): State<Publisher>,
     Json(request): Json<AnchorRequest>,
 ) -> Result<Json<AnchorResponse>, StatusCode> {
-    if request.anchors.is_empty() || request.anchors.len() > 3 {
+    if request.anchors.is_empty() || request.anchors.len() > MAX_ANCHORS {
         return Err(StatusCode::BAD_REQUEST);
     }
     let before = s

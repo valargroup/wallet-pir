@@ -26,8 +26,12 @@ loading; neither role falls back to computing hints or packing matrices.
 Worker and router stay separate processes on the existing host. Before announcing
 a generation, the router selects the worker's reported inventory, verifies it
 against the publisher and confirms that the worker can evaluate the exact wallet
-manifest. Independent polling can temporarily produce an explicit unavailable or
-conflict response; it cannot combine material from different generations.
+manifest. A private pin/commit handover holds the router's previous and incoming
+views while it persists and switches them. Worker updates defer through the
+existing retention backpressure until that handover completes; expired views
+remain unusable and their holds are released. A lost acknowledgment is retried on
+the normal shared polling schedule. No publisher heartbeat or new lease is added.
+Independent polling cannot combine material from different generations.
 
 ## HTTPS contract
 

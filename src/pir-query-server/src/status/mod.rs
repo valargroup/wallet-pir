@@ -34,6 +34,7 @@ struct StateData {
     inventory: Option<Object>,
     synchronization: String,
     poisoned: bool,
+    router_holds: Vec<Arc<Generation>>,
 }
 #[derive(Clone)]
 pub struct Service {
@@ -90,6 +91,8 @@ impl Service {
             .route("/control/identity", get(identity))
             .route("/v1/provider-status", get(provider_status))
             .route("/v1/provider-ready/:id", get(provider_ready))
+            .route("/v1/provider-pin/:id", post(provider_pin))
+            .route("/v1/provider-commit/:id", post(provider_commit))
             .route("/evaluate", post(worker_query))
             .layer(axum::middleware::from_fn(|req, next| {
                 telemetry::observe("worker", req, next)
@@ -196,6 +199,70 @@ async fn provider_ready(
     c.check(&g)?;
     Ok(Json(true))
 }
+/// The single colocated router pins its old and incoming views until its local
+/// activation is durable. These references provide backpressure through the
+/// core's existing retention bound; they never renew source observation age.
+async fn provider_pin(
+    State(s): State<Service>,
+    Path(id): Path<String>,
+) -> Result<Json<bool>, StatusCode> {
+    if s.role != Role::Worker {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    let id: Hash = hex::decode(id)
+        .map_err(|_| StatusCode::BAD_REQUEST)?
+        .try_into()
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    let mut state = s.state.lock().await;
+    if state.poisoned {
+        return Err(StatusCode::SERVICE_UNAVAILABLE);
+    }
+    let controller = state
+        .controller
+        .clone()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let generation = controller.resolve(id)?;
+    controller.check(&generation)?;
+    state
+        .router_holds
+        .retain(|g| g.manifest().fresh(now_ms()).is_ok());
+    if state.router_holds.iter().any(|g| g.manifest().id() == id) {
+        return Ok(Json(true));
+    }
+    if state.router_holds.len() >= 2 {
+        return Err(StatusCode::CONFLICT);
+    }
+    state.router_holds.push(generation);
+    Ok(Json(true))
+}
+async fn provider_commit(
+    State(s): State<Service>,
+    Path(id): Path<String>,
+) -> Result<Json<bool>, StatusCode> {
+    if s.role != Role::Worker {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    let id: Hash = hex::decode(id)
+        .map_err(|_| StatusCode::BAD_REQUEST)?
+        .try_into()
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    let mut state = s.state.lock().await;
+    if state.poisoned {
+        return Err(StatusCode::SERVICE_UNAVAILABLE);
+    }
+    let controller = state
+        .controller
+        .as_ref()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let generation = controller.resolve(id)?;
+    controller.check(&generation)?;
+    if !state.router_holds.iter().any(|g| g.manifest().id() == id) {
+        return Err(StatusCode::CONFLICT);
+    }
+    state.router_holds.retain(|g| g.manifest().id() == id);
+    Ok(Json(true))
+}
+
 async fn worker_query(State(s): State<Service>, body: Bytes) -> Result<Vec<u8>, StatusCode> {
     if s.role != Role::Worker {
         return Err(StatusCode::NOT_FOUND);

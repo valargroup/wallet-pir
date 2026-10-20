@@ -130,7 +130,7 @@ impl Generation {
                     let mapped = inspiring::prepared::MappedPrepared::new(
                         map,
                         profile().rlwe(),
-                        profile().ypir().db_cols / profile().rlwe().d,
+                        profile().ypir().db_cols.div_ceil(profile().rlwe().d),
                         generation.public.len(),
                     )?;
                     if mapped.prefix() != generation.public.as_slice() {
