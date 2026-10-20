@@ -99,6 +99,12 @@ class ConsumerTests(unittest.TestCase):
         self.assertFalse(any('node/database' in e for e in problems('product-status-testing')))
         self.assertEqual(problems('server-rocksdb'), [])
 
+    def test_consumer_type_checks_keep_flags_and_cap_lints(self):
+        with patch.dict(graph.os.environ, {'RUSTFLAGS': '-D warnings'}):
+            env = graph.consumer_environment(Path('/t'))
+        self.assertEqual(env['RUSTFLAGS'], '-D warnings --cap-lints=warn')
+        self.assertEqual(env['CARGO_TARGET_DIR'], '/t')
+
     def test_main_reports_violations_without_compiling(self):
         def metadata(manifest, offline):
             return {'packages': [{'id': 'c', 'name': manifest.parent.name + '-consumer', 'source': None},

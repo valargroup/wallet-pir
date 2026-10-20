@@ -201,6 +201,15 @@ def metadata(manifest, offline):
          *(['--offline'] if offline else [])], cwd=ROOT, text=True))
 
 
+def consumer_environment(target):
+    """The type check proves each consumer's public surface, not lint cleanliness:
+    single-product feature subsets of the reader warn (unused imports), and the
+    reader is linted with every feature by full_packages.py --lint. Cap lints so a
+    CI-wide `-D warnings` does not turn those warnings into graph failures."""
+    flags = ' '.join(filter(None, [os.environ.get('RUSTFLAGS', ''), '--cap-lints=warn']))
+    return dict(os.environ, CARGO_TARGET_DIR=str(target), RUSTFLAGS=flags)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument('--offline', action='store_true',
@@ -223,7 +232,7 @@ def main(argv=None):
             if not found and not args.no_check:
                 subprocess.run(['cargo', 'check', '--locked', '--quiet', *(['--offline'] if args.offline else []),
                                 '--manifest-path', str(consumer / 'Cargo.toml')],
-                               cwd=ROOT, check=True, env=dict(os.environ, CARGO_TARGET_DIR=str(target)))
+                               cwd=ROOT, check=True, env=consumer_environment(target))
     if errors:
         raise SystemExit('chain reader graph failed:\n  ' + '\n  '.join(sorted(set(errors))))
     print(f'verified: {len(consumers())} fresh chain reader consumers; decoding is runtime-free, '
