@@ -1,4 +1,4 @@
-"""Transfer the existing Transparent publishers to one owner, without moving data.
+"""Update the unified publisher and its matching serving roles without moving data.
 
 The reviewed request contains configuration and independent probe commands, never
 credentials. A plan captures stable service/configuration state, not moving
@@ -35,11 +35,8 @@ ROOT_DIR = '/opt/pir-publisher'
 CONFIG = '/etc/wallet-pir/publisher.json'
 INVENTORY = '/etc/wallet-pir/transparent-fleet.json'
 SAMPLER = '/etc/pir-quality/hosts.json'
-HISTORY = '/opt/transparent-publisher/v12/controller.json'
 LOAD_DROP = '/etc/systemd/system/' + LOAD + '.d/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-publisher.conf'
 UNIT_PATH = '/etc/systemd/system/' + UNIT
-REGISTRY = ROOT / 'tools/deploy/publisher/transparent-services.toml'
-TEMPLATE = ROOT / 'tools/deploy/publisher/pir-publisher-transparent.service'
 FINAL = ('committed', 'rolled-back')
 
 
@@ -52,7 +49,7 @@ def sha(text):
     return hashlib.sha256(text.encode()).hexdigest() if text is not None else None
 
 
-def load_request(path, expected):
+def load_request(path, expected, *, recovery=False):
     data = Path(path).read_bytes()
     require(hashlib.sha256(data).hexdigest() == expected, 'publisher request checksum differs')
     request = json.loads(data)
@@ -60,6 +57,8 @@ def load_request(path, expected):
                 | ({'serving'} if request.get('schema') == SERVING_SCHEMA else set())),
             'publisher request has unknown or missing fields')
     require(request['schema'] in (SCHEMA, EXPANDED_SCHEMA, SERVING_SCHEMA), 'unsupported publisher cutover schema')
+    require(recovery or request['schema'] == SERVING_SCHEMA,
+            'completed ownership migrations are recovery-only; deploy the unified four-product fleet')
     require(isinstance(request['host'], str) and re.fullmatch('[A-Za-z0-9_.-]+', request['host']), 'invalid host')
     require(isinstance(request['machine_id'], str) and re.fullmatch('[a-f0-9]{32}', request['machine_id']), 'invalid machine id')
     version = request['release']
@@ -99,7 +98,7 @@ def load_request(path, expected):
         descriptors.exact_check(descriptors.load_descriptors(ROOT / 'tools/deploy/publisher/services.toml')['publisher'], inventory)
     require(publisher.get('roles', {}).get('server') == [{'host': request['host'], 'vars': {'management_listen': '127.0.0.1:18080'}}],
             'publisher must run once on the pinned coordinator')
-    registry = ROOT / 'tools/deploy/publisher/all-services.toml' if request['schema'] in (EXPANDED_SCHEMA, SERVING_SCHEMA) else REGISTRY
+    registry = ROOT / 'tools/deploy/publisher/all-services.toml' if request['schema'] in (EXPANDED_SCHEMA, SERVING_SCHEMA) else ROOT / 'tools/deploy/publisher/transparent-services.toml'
     problems = Fleet(inventory, descriptors.load_descriptors(registry)).problems(complete=True)
     require(not problems, 'candidate inventory is incomplete or has conflicting owners: ' + '; '.join(problems))
     if request['schema'] == SERVING_SCHEMA:
@@ -111,32 +110,6 @@ def load_request(path, expected):
 def stable_unit(state):
     return {key: state.get(key) for key in ('load_state', 'active_state', 'main_pid', 'invocation_id',
             'need_daemon_reload', 'fragment_path', 'fragment_text', 'drop_ins', 'exe_sha256', 'unit_file_state')}
-
-
-def display_settings(state):
-    """Translate the live standalone command, rejecting any unhandled behavior."""
-    command = shlex.split(units.exec_start(units.effective(
-        [state['fragment_text'], *(entry['text'] for entry in state['drop_ins'])])))
-    require(len(command) > 2 and command[1] == 'run', 'display controller is not in run mode')
-    values, flags = {}, set()
-    args = iter(command[2:])
-    boolean = {'--trust-sealed', '--ship-runtimes'}
-    allowed = {'--root', '--journal', '--workers', '--rpc-url', '--rpc-cookie', '--poll-ms', '--status-listen',
-               '--mode', '--blocks-per-step', '--step-interval-ms', '--max-recent-records'}
-    for arg in args:
-        require(arg not in values and arg not in flags, 'duplicate display argument')
-        if arg in boolean:
-            flags.add(arg)
-        else:
-            require(arg in allowed, 'unhandled display argument: ' + arg)
-            values[arg] = next(args, None)
-            require(values[arg] is not None, 'missing display argument value')
-    require(values.get('--mode', 'live') in ('live', 'replay-then-live'), 'display replay-only mode cannot be adopted')
-    return {'root': values['--root'], 'journal': values['--journal'], 'workers': values['--workers'],
-            'rpc_url': values.get('--rpc-url', 'http://127.0.0.1:8232'), 'rpc_cookie': values['--rpc-cookie'],
-            'poll_ms': int(values.get('--poll-ms', 500)), 'status_listen': values.get('--status-listen', '127.0.0.1:8098'),
-            'trust_sealed': '--trust-sealed' in flags, 'ship_runtimes': '--ship-runtimes' in flags, 'http_only': False,
-            'max_recent_records': int(values['--max-recent-records']) if '--max-recent-records' in values else None}
 
 
 class Cutover:
@@ -186,6 +159,8 @@ class Cutover:
         return value
 
     def capture(self):
+        require(self.request['schema'] == SERVING_SCHEMA,
+                'completed ownership migrations are recovery-only')
         previous = self.latest()
         require(previous is None or previous['phase'] in FINAL, 'unfinished publisher cutover; reconcile or rollback first')
         resource = self.resources(self.request['release']['binary_bytes'])
@@ -193,24 +168,12 @@ class Cutover:
         for state in states.values():
             require(not state['need_daemon_reload'], 'unit changed without daemon-reload')
         unified = states[UNIT]
-        if unified['active_state'] == 'active':
-            require(all(states[name]['active_state'] == 'inactive' and not states[name]['main_pid'] for name in OLD),
-                    'standalone and unified publishers both own state')
-            require(not unified['drop_ins'], 'unexpected publisher drop-ins; reconcile before changing ownership')
-            installed = json.loads(self.read(CONFIG))
-            if self.expanded:
-                from .publisher_products import verify_adoption
-                verify_adoption(self, states, installed)
-            else:
-                require(self.request['configuration'] == installed,
-                        'publisher updates must preserve the installed product settings')
-        else:
-            require(not self.expanded, 'expanded cutover requires the existing Transparent publisher')
-            require(unified['load_state'] == 'not-found', 'publisher exists but is not running; reconcile it first')
-            require(all(states[name]['active_state'] == 'active' for name in OLD), 'both predecessor controllers must be running')
-        for name in (*self.old, LOAD):
-            state = states[name]
-            require(state['load_state'] == 'loaded' and state['fragment_text'], 'missing captured unit: ' + name)
+        require(unified['active_state'] == 'active' and unified['main_pid'], 'unified publisher must already be running')
+        require(all(states[name]['active_state'] != 'active' and not states[name]['main_pid'] for name in self.old),
+                'standalone and unified publishers both own state')
+        require(not unified['drop_ins'], 'unexpected publisher drop-ins; reconcile before changing ownership')
+        config = self.request['configuration']
+        require(config == json.loads(self.read(CONFIG)), 'publisher updates must preserve every product setting')
         executables = {}
         for name, state in states.items():
             if state['active_state'] == 'active':
@@ -219,57 +182,39 @@ class Cutover:
                 require(self.ex.sha256(self.host, path) == state['exe_sha256'], 'running executable differs from its rollback path: ' + name)
                 executables[path] = state['exe_sha256']
         require(states[LOAD]['active_state'] == 'active', 'continuous exact load must be running at capture')
-        config = self.request['configuration']
-        if unified['active_state'] != 'active':
-            old_history = json.loads(self.read(HISTORY))
-            for key in ('ship_runtimes', 'distribute_prepared', 'http_only'):
-                old_history.setdefault(key, False)
-            require(config['transparent_history']['settings'] == old_history, 'history configuration changes more than process ownership')
-            require(config['transaction_details']['settings'] == display_settings(states[OLD[1]]),
-                    'display configuration changes more than process ownership')
-            status, body = self.ex.http_get(self.host, 'http://' + config['transaction_details']['settings']['status_listen'] + '/v1/status')
-            require(status == 200 and json.loads(body).get('mode') == 'live', 'display replay must finish before cutover')
         sampler = json.loads(self.read(SAMPLER))
         targets = sampler.get('targets', [])
         sources = {source for target in targets for source in target.get('sources', [])}
         require({'transparent-publisher', 'txid-controller'} <= sources, 'both publisher monitoring sources must exist')
-        for target in targets:
-            if set(target.get('sources', [])) & {'transparent-publisher', 'txid-controller'}:
-                target['unit'] = UNIT
-            if 'units' in target:
-                target['units'] = [u for u in target['units'] if u not in OLD]
+        require(all(target.get('unit') == UNIT for target in targets
+                    if set(target.get('sources', [])) & {'transparent-publisher', 'txid-controller'}),
+                'publisher monitoring must already follow the unified owner')
         load_command = units.exec_start(units.effective([states[LOAD]['fragment_text'],
             *(entry['text'] for entry in states[LOAD]['drop_ins'])]))
         load_arguments = shlex.split(load_command)
         require(load_arguments.count('--controller-unit') == 1, 'unknown load controller binding')
         position = load_arguments.index('--controller-unit') + 1
         require(position < len(load_arguments) and load_arguments[position] in
-                ('transparent-v12-publish-controller', 'transparent-v12-publish-controller.service', 'pir-publisher', UNIT),
+                ('pir-publisher', UNIT),
                 'unknown load controller binding')
-        load_arguments[position] = 'pir-publisher'
-        load_command = shlex.join(load_arguments)
+        from .publisher_products import render, inputs
         binary = ROOT_DIR + '/releases/' + self.request['release']['binary_sha256'] + '/pir-publisher'
         desired = {
             CONFIG: json.dumps(config, indent=2) + '\n',
             INVENTORY: json.dumps(self.request['inventory'], indent=2) + '\n',
-            UNIT_PATH: TEMPLATE.read_text().replace('@BIN@', binary),
+            UNIT_PATH: render(config, binary, states),
             SAMPLER: json.dumps(sampler, indent=2) + '\n',
             LOAD_DROP: '[Service]\nExecStart=\nExecStart=' + load_command + '\n',
         }
-        if self.expanded:
-            from .publisher_products import render, inputs, monitoring
-            desired[UNIT_PATH] = render(config, binary, states)
-            monitoring(sampler, self.old)
-            desired[SAMPLER] = json.dumps(sampler, indent=2) + '\n'
-            # Pin inputs without reinstalling them or changing their permissions.
-            for path in inputs(config):
-                require(self.read(path) is not None, 'missing adopted configuration: ' + path)
+        # Pin consumed inputs without changing their contents or permissions.
+        for path in inputs(config):
+            require(self.read(path) is not None, 'missing publisher configuration: ' + path)
         before = {path: {'text': self.read(path), 'mode': (resource['files'][path] or {}).get('mode', 0o600)} for path in desired}
         serving = self.serving.capture() if self.serving else None
         return {'serving': serving, 'request_sha256': durable.digest(self.request), 'before': before, 'units': states,
                 'desired': desired, 'binary': binary, 'executables': executables,
                 'previous_transaction': previous and previous['id'],
-                'inputs': {path: sha(self.read(path)) for path in inputs(config)} if self.expanded else {}}
+                'inputs': {path: sha(self.read(path)) for path in inputs(config)}}
 
     def plan(self):
         plan = self.capture()
@@ -365,14 +310,10 @@ class Cutover:
             self.resources()
             self.save(journal, 'installing')
             self.effect(journal, 'pause continuous load', lambda: self.stop(LOAD))
-            for name in (*self.old, UNIT):
-                if plan['units'][name]['load_state'] != 'not-found':
-                    self.effect(journal, 'stop ' + name, lambda name=name: self.stop(name))
+            self.effect(journal, 'stop ' + UNIT, lambda: self.stop(UNIT))
             self.unlocked()
             if self.serving:
                 self.serving.activate(journal)
-            for name in self.old:
-                self.effect(journal, 'disable ' + name, lambda name=name: self.ex.systemctl(self.host, 'disable', name))
             for path, text in plan['desired'].items():
                 mode = 0o644 if path.startswith('/etc/systemd/') else 0o600
                 self.effect(journal, 'install ' + path, lambda path=path, text=text, mode=mode: self.write(path, text, mode))
@@ -489,12 +430,13 @@ def register(commands):
 
 def dispatch(args, executor=None, **_options):
     from .remote import SSHExecutor
-    request, inventory = load_request(args.request, args.request_sha256)
+    operation = args.command.removeprefix('publisher-cutover-')
+    request, inventory = load_request(args.request, args.request_sha256,
+                                      recovery=operation in ('status', 'rollback', 'reconcile', 'restart'))
     executor = executor or SSHExecutor(inventory)
     target = Cutover(request, inventory, executor, args.state_dir)
     if target.serving:
         target.serving.binary = getattr(args, 'serving_binary', None)
-    operation = args.command.removeprefix('publisher-cutover-')
     if operation in ('rollback', 'reconcile'):
         return target.rollback()
     if operation == 'restart':

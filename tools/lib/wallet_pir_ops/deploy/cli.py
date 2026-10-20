@@ -425,7 +425,8 @@ def main(argv=None, executor=None, out=print, package_layout=None, package_githu
         check_installed(mutation=mutation, revision=None if package_command else getattr(args, 'sha', None))
         if args.command.startswith('publisher-cutover-'):
             from . import publisher
-            request, _inventory = publisher.load_request(args.request, args.request_sha256)
+            request, _inventory = publisher.load_request(args.request, args.request_sha256,
+                recovery=args.command.endswith(('-status', '-rollback', '-reconcile', '-restart')))
             check_installed(mutation=mutation, revision=request['release']['git_sha'])
             result = publisher.dispatch(args, executor=executor, **options)
             out(json.dumps(result, sort_keys=True))

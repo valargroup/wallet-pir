@@ -72,6 +72,7 @@ def provenance(bin_dir):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--publisher', type=Path, help='Matching pir-publisher binary (default: --bin-dir/pir-publisher)')
     parser.add_argument('--bin-dir', type=Path, default=Path('target/release-fast'))
     parser.add_argument('--out', type=Path, required=True)
     parser.add_argument('--seconds', type=int, default=30)
@@ -92,7 +93,7 @@ def main():
     if args.require_publications < 0:
         parser.error('require-publications must be nonnegative')
     args.out.mkdir(parents=True, exist_ok=False)
-    publisher = args.bin_dir.resolve() / 'enhance-pir-server'
+    publisher = args.publisher.resolve() if args.publisher else args.bin_dir.resolve() / 'pir-publisher'
     query_server = args.bin_dir.resolve() / 'pir-query-server'
     load = args.bin_dir.resolve() / 'enhance-pir-load-test'
     manifest = {'kind': 'local-smoke-not-hardware-qualification', 'platform': platform.platform(),
@@ -155,12 +156,22 @@ def main():
             origin = f'http://{ingress_listen}'
             log = (args.out / 'coordinator.log').open('w')
             logs.append(log)
-            processes.append(subprocess.Popen([str(publisher), 'coordinator', '--listen', f'127.0.0.1:{port}',
-                '--data-dir', str(work / 'coordinator'), '--worker-config', str(config), '--isolated-fixture',
-                '--fixture-records', str(args.records), '--fixture-append-records', '1', '--poll-seconds', '5',
-                '--capacity-fallback-rows-per-second', '8' if args.expand_inventory else '1',
-                '--packing-router-config', str(routers), '--query-ingress', f'http://{ingress_control}',
-                '--artifact-listen', artifact_listen], stdout=log, stderr=log))
+            publisher_config = work / 'publisher.json'
+            publisher_config.write_text(json.dumps({
+                'management_listen': f'127.0.0.1:{take_port()}',
+                'enhance': {'enabled': True, 'settings': {
+                    'listen': f'127.0.0.1:{port}', 'data_dir': str(work / 'coordinator'),
+                    'worker_config': str(config), 'isolated_fixture': True,
+                    'fixture_records': args.records, 'fixture_append_records': 1, 'poll_seconds': 5,
+                    'packing_router_config': str(routers), 'query_ingress': [f'http://{ingress_control}'],
+                    'artifact_listen': artifact_listen, 'frontier_replicas': 2,
+                    'zakura_rpc_url': 'http://127.0.0.1:8232', 'prevout_cache_outputs': 250000,
+                    'capacity_fallback_rows_per_second': 8 if args.expand_inventory else 1,
+                    'capacity_readiness_seconds': 21600, 'capacity_burst_rows': 4096, 'sealed_shards': 6,
+                }},
+            }))
+            processes.append(subprocess.Popen([str(publisher), '--config', str(publisher_config)],
+                                               stdout=log, stderr=log))
             deadline = time.monotonic() + 300
             while True:
                 if any(p.poll() is not None for p in processes):

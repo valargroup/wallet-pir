@@ -1,18 +1,17 @@
 # Status PIR production qualification
 
-Public Status remains blocked until the compact `status-pir-v2-q48` candidate
-passes the complete live-source gate. The private production topology has an
-authenticated SSH publication tunnel and separate controller, worker and router
-processes. Integration into the deployed shared Enhance process and restricted
-HTTPS ingress rehearsal remain separate gates.
+The deployed `status-pir-v3-native-two-mask-m29` service must pass the complete
+live-source gate for release qualification. One unified publisher owns source
+capture and publication; separate query worker and router processes serve
+wallets through the existing ingress and authenticated private control sessions.
 
-V2 uses 8,192 rows, 256 slots per row, 40 bytes per slot, 12,288 padded row bytes,
-6,144 u16 columns and a 96 MiB database. Its 75% admission ceiling remains
-1,572,864 entries. The wallet and server must use the same v2 contract and
-20-second freshness limit. Block hashes remain internal source/publication
-metadata; compact wallet replies are status observations, not inclusion proofs.
-Prior v1 timing and resource captures are protocol-incompatible historical
-evidence. Preserve their raw files; remeasure every gate for v2.
+The database uses 8,192 rows, 256 slots per row, 40 bytes per slot, 12,288 padded
+row bytes, 6,144 u16 columns and a 96 MiB database. Its 75% admission ceiling
+remains 1,572,864 entries. The wallet and server must use the same native contract
+and 20-second freshness limit. Block hashes remain internal source/publication
+metadata; wallet replies are status observations, not inclusion proofs.
+Historical v1/v2 timing and resource captures cannot qualify the native service.
+Preserve their raw files and remeasure every gate with the deployed protocol.
 
 ## Residual risks
 
@@ -21,8 +20,8 @@ release decision. (1) Mempool bucket grinding against the public salt can force
 publication `Capacity` failures and is not mitigated in code; it degrades
 availability (stale, then 503), not privacy. (2) `NotFound` and `observed_ms`
 are server assertions, not proofs; see "Residual risks" and the trust boundary
-in `architecture_status.md`. (3) The native `status-pir-v3` profile has no
-wallet implementation; only `status-pir-v2-q48` can be qualified for wallets.
+in `architecture_status.md`. (3) Qualification requires a wallet client that implements the deployed native
+protocol; results from an older client cannot establish native wallet compatibility.
 
 ## Capture contract
 
@@ -34,7 +33,7 @@ oracle. The client retains local coverage evidence for negative answers.
 
 Retain four JSONL files:
 
-- `summary.jsonl`: one `phase: "load"` object with `protocol: "status-pir-v2-q48"`,
+- `summary.jsonl`: one `phase: "load"` object with `protocol: "status-pir-v3-native-two-mask-m29"`,
   `rows: 8192`, `slots: 256`, `slot_bytes: 40`, `columns: 6144`,
   `row_bytes: 12288`, `database_bytes: 100663296`, `source: "live"`,
   `oracle_source: "independent"`, `seconds`, `offered`, `run_started_ms`, and
@@ -94,11 +93,10 @@ new independent reconstruction of discarded blocks. Canonical blocks and the
 mempool are always read independently from the node; the collector does not
 trust a publisher's rows or digest.
 
-For a deployed native controller, explicitly pass
-`--protocol status-pir-v3-native-two-mask-m29`. The same geometry, six-hour
-arrival coverage, independent source/publication oracle, freshness and resource
-gates apply. The default remains compact v2; native results do not establish
-compact-v2 wallet compatibility or qualify a wallet without a native client.
+The assessor accepts only the deployed native Status protocol. It retains the
+same geometry, six-hour arrival coverage, independent source/publication oracle,
+freshness and resource gates. Historical compact-v2 captures cannot qualify the
+current service or a wallet without a native client.
 
 The assessor exits nonzero for missing evidence, any failed or skipped arrival,
 stale answer, publication taking more than twenty seconds, incorrect publication,

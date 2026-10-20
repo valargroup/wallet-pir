@@ -219,169 +219,56 @@ separately reviewed relocation of its index, witnesses, provider state,
 credentials, node access and serving edge. This implementation does not perform
 that relocation, modify DNS or change any production host.
 
-## Transparent coordinator cutover
+## Updating the unified coordinator
 
-The existing v12 history and 4k8 display controllers can be replaced by one
-Transparent-only process without moving their journals or publications. Use the
-`publisher-cutover-*` commands of `tools/scripts/wallet-pir-deploy.py` from a clean
-pinned checkout or matching verified operations bundle. This path deliberately
-keeps fleet-controlled distribution; both products require `http_only: false`.
-It does not deploy or move query workers, change public routes, or enable the
-other publishers.
+Production publishing runs through `pir-publisher --config FILE`; wallet routes
+belong to query ingress. Use `publisher-cutover-*` in
+`tools/scripts/wallet-pir-deploy.py` from a clean pinned checkout or a matching
+verified operations bundle. New plans require the running four-product publisher,
+its current product settings, and already-installed wallet routes. The completed
+Transparent-only and Enhance/Status ownership migrations are recovery-only;
+their standalone command translators and first-install renderers are retired.
 
-Prepare a private request with schema `transparent-publisher-cutover/1`, the
-inventory coordinator `host` and its `machine_id`, and `release` containing the
-full `git_sha`, `binary_sha256` and `binary_bytes`. `configuration` is the typed
-publisher configuration with exactly `transparent_history` and
-`transaction_details` enabled and management at `127.0.0.1:18080`. The history
-settings must match the current controller configuration; display settings must
-match the existing run command, whose initial replay must already have reached
-live mode. Make existing false distribution/runtime defaults explicit. Keep the
-publication's existing `source_sha`; the executable's release identity is recorded
-separately. Unknown display command options are refused rather than ignored.
+Prepare a private `publisher-cutover/3` request with the coordinator `host` and
+`machine_id`, `release` (`git_sha`, `binary_sha256`, `binary_bytes`), the installed
+four-product `configuration`, a complete `inventory`, and independent exact-answer
+`checks` for Enhance, Status, Transparent history and transaction details. Both
+Transparent settings retain `http_only: false`. The inventory uses
+`tools/deploy/publisher/all-services.toml` and has one publisher server managing
+all four products, with no standalone publisher roles. Its `exact_check.products`
+matches the request checks. Credentials stay in their existing files.
 
-`inventory` is the complete Transparent fleet under
-`tools/deploy/publisher/transparent-services.toml`: retain the history/display
-workers and routing ancillary records, replace their controller roles with one
-publisher server, and set its `managed_products` to
-`["transparent_history", "transaction_details"]`. Each entry of `checks` uses
-one of those two product names and contains `host`, `argv` and `timeout` for an
-independent encrypted-answer probe. Timeouts are at most 900 seconds. Credentials
-remain in the existing runtime files, never in the request. Operator requests
-and inventories stay outside Git.
+Private control changes require the publisher, Enhance packing router and query
+ingress to change together. The `serving` object pins the matching query-server
+`git_sha`, `binary_sha256`, `binary_bytes` and installed `caddy_sha256`. Supply
+`--serving-binary` to plan, preflight and deploy. Existing workers retain their
+wallet wire protocol and are not restarted by this command.
 
-Run `publisher-cutover-plan` and `publisher-cutover-preflight` with `--request`
-and its exact `--request-sha256`; preflight additionally verifies `--archive`.
-Review the returned `plan_sha256`, then pass it as `--expect-plan-sha256` to
-`publisher-cutover-deploy` with the same inputs. The archive is the clean,
-checksum-verified `pir-publisher` artifact for that source revision, built with
-`--features transparent`. Its actual typed configuration check runs on the
-coordinator before any existing publisher is stopped. This path does not require
-main CI status and does not change the CI-qualified artifact resolver's policy.
+Run plan and preflight with `--request` and its exact `--request-sha256`;
+preflight also takes the clean `pir-publisher` `--archive`. Review the returned
+`plan_sha256`, then deploy with `--expect-plan-sha256` and the same inputs.
+The tool pins consumed inventories and pool policies, preserves the installed
+sandbox, environment-file references and resource limits, and requires 50 GiB
+host memory plus twenty percent available memory and disk. It refuses changes
+to product policy, foreign file changes, competing owners or altered binaries.
 
-The deployment holds the normal production lock, stages the executable, pauses
-the continuous load, stops the old owners and checks that their state locks are
-free. It installs the restricted 12 GiB shared service budget, publisher
-configuration and `/etc/wallet-pir/transparent-fleet.json`. Existing node and
-worker locations remain unchanged. The capacity sampler is retargeted to the
-shared process and the continuous-load controller-unit reference is updated.
-The load resumes only after aggregate readiness and both encrypted probes pass.
-Keep at least 20 percent memory and filesystem headroom; the executable does not
-provide memory isolation between products.
+Under one production lock, deployment stages and checks both releases before
+stopping the publisher. It pauses continuous load, starts matching serving roles
+and publisher, verifies readiness, and runs all four encrypted-answer probes
+before resuming load and committing. The wallet routes remain unchanged and
+unmatched requests remain 404. Every effect is journaled on the coordinator.
 
-Use `publisher-cutover-status` to inspect observed unit identities and the
-coordinator's journal. Every mutation records intent and completion in
-`/opt/pir-publisher/transactions/<id>/journal.json`; a runner-side copy is retained
-in the chosen state directory. A failed or interrupted deployment is unfinished,
-not accepted. `publisher-cutover-reconcile` restores the captured predecessor
-ownership, as does explicit `publisher-cutover-rollback`. Both take the original
-request and digest. They refuse foreign file changes, stop and join the unified
-process before restoring the old owners, and verify both products before
-resuming load. They restore absent files to absence and never rewind journals or
-publications. Retained executable releases are kept for recovery.
+`publisher-cutover-status` reports the transaction and observed identities.
+`publisher-cutover-restart` repeats cooperative shutdown, readiness and exact
+checks without replacing the rollback baseline. `publisher-cutover-rollback`
+and `publisher-cutover-reconcile` restore the saved edge, serving roles and
+publisher together, then repeat readiness and product probes. Old request
+schemas remain accepted for status, restart and recovery of retained journals;
+they cannot create new ownership migrations. Keep their original request,
+journals and binaries until their rollback guarantees are retired.
 
-Deployment acceptance additionally requires independent canonical publication
-progress, the deployed wallet regression suite with SQLite reopen/recovery,
-recent/archive and absent display checks, a graceful restart, rollback and
-recutover, and the existing bounded load gate. A configuration check, management
-readiness or a passing CI run alone does not establish that acceptance.
-
-During a cutover or rollback rehearsal, monitoring stays enabled. Stopping the
-publisher can therefore fire several coverage warnings after the 45-second
-observation deadline: source, host, HTTP and canonical/public-origin verification
-are separate checks. Each emits its own recovery once fresh observations return.
-These warnings describe missing observations, not a detected wrong-chain
-publication or incorrect answer. Inspect the incident records and verify recovery
-before continuing; do not infer that every alert during a deployment is expected.
-Tell the operator before starting a live recovery rehearsal.
-
-The focused `CI full` dispatch with `publisher-only: true` also packages the
-current `rate-query` and `txid-rate` reference clients. Use those pinned clients
-with the independently exported fixtures for bounded live checks, including
-recent/archive found records and absent display controls. A legacy client that
-rejects the fixture before querying provides no deployment correctness evidence.
-
-## Expand the coordinator to Enhance and Status
-
-The versioned request `publisher-cutover/2` adds Enhance and Status to the
-running Transparent publisher. It enables exactly `enhance`, `status`,
-`transparent_history` and `transaction_details`; both Transparent settings
-retain `http_only: false`. Use `tools/deploy/publisher/all-services.toml` for
-one complete inventory with the existing query workers, routers and supervision.
-Remove Enhance coordinator and Status controller roles from that inventory;
-`publisher.managed_products` lists the four sections in the order above. Its
-`exact_check` is a `products` map containing the same four host/argv/timeout
-checks as the request, so later binary deployments also verify every product.
-
-The tool translates the effective commands of `enhance-pir-coordinator.service`
-and `status-controller-qualification.service`. Unknown options, embedded Status,
-changed Transparent settings and conflicting owners are refused. Retain the
-existing Enhance inventory/pool policy, Status controller configuration, node
-cookie and environment-file references. The reviewed plan also pins referenced
-configuration contents. Credentials stay in their existing files.
-
-Run the same `publisher-cutover-plan`, `preflight` and `deploy` commands with
-this request. Capture a fresh plan before each cutover. The transaction records
-the running Transparent-only unit and both standalone publishers, so rollback
-restores that mixed deployment rather than starting retired Transparent owners.
-`publisher-cutover-restart` cooperatively restarts the committed shared process
-and repeats every product's exact probe without replacing its rollback baseline.
-An interrupted restart is reconciled through the same rollback operation.
-
-The expanded unit uses a 40 GiB combined memory ceiling with no swap, matching
-the sum of the predecessor limits. Preflight requires at least 50 GiB total RAM
-and twenty percent available memory and disk. The limit is a ceiling, not a
-reservation or hardware qualification. Query workers and public routes are not
-changed. Announce intentional cutover and rollback rehearsals before execution;
-keep their expected coverage alerts separate from the healthy acceptance window.
-Shared listener ownership and graceful shutdown continue to use the existing
-`pir-pipeline` HTTP adapter. The HTTPS synchronization manager is unchanged.
-
-## Retired standalone production commands
-
-Production publishing runs through `pir-publisher --config FILE`. The removed
-commands are `enhance-pir-server coordinator` and `status-pir serve-distributed`;
-Enhance's unused `status_config` field is also rejected. Maintenance and probe
-commands remain available under their existing binary names. Current inventories
-use the publisher role; historical commands are parsed only for cutover. Rollback
-restores captured units and old executables, which must remain available through
-the rollback rehearsal. CUDA smoke callers now pass `--publisher` and use isolated
-Enhance fixture state.
-
-## Enhance publisher and wallet route cutover
-
-Enhance private control version changes require the publisher, packing router
-and query ingress to change together. Use `publisher-cutover-*` with schema
-`publisher-cutover/3`, the four-product configuration and complete inventory.
-The additional `serving` object pins `git_sha`, `binary_sha256`, `binary_bytes`
-and the installed `caddy_sha256`. The publisher and serving source revisions
-must match. Supply `--serving-binary` to plan, preflight and deploy. Existing
-workers retain their wallet wire protocol and are not restarted by this command.
-
-The plan captures both serving units, configurations, old executable identities
-and the entire Caddyfile. The only accepted publisher configuration changes are
-removal of the retired Enhance `status_config: null` and Status wallet gateway
-fields (`public_listen`, `public_enabled`, `query_router_origin`). Product
-publication settings and Transparent distribution policy remain unchanged.
-Recognized historical ingress command and writable-path overlays are saved for
-rollback; unrecognized service directives still refuse adoption.
-
-Deploy stages both releases and checks their configurations before stopping any
-owner. Under one production lock it starts the matching serving roles, starts
-the publisher, verifies aggregate and role readiness, then adds the existing
-Enhance wallet prefix to the ingress. The dedicated query route and every other
-edge route remain unchanged. Unmatched requests return 404, keeping publisher
-control endpoints private. Independent encrypted-answer probes must pass for
-all four products before commit. The serving journals are retained inside the
-coordinator's publisher journal before effects.
-
-`publisher-cutover-status` reports the transaction. `publisher-cutover-rollback`
-(or `publisher-cutover-reconcile` after interruption) restores the edge, both
-serving roles and the old publisher as one group, then verifies readiness and
-all product probes. Foreign file changes or altered rollback binaries refuse
-restoration. This path does not change DNS, add HTTPS distribution, update GPU
-artifacts or qualify wallet recovery by itself; retain native wallet, public
-HTTPS and sustained-service evidence separately.
+This path does not change DNS, enable HTTPS distribution, deploy GPU artifacts
+or replace native-wallet and sustained-service qualification.
 
 The APM sidecar must match the wallet ownership change: its init and query
 metrics come from query ingress, while publisher health and publication metrics

@@ -23,11 +23,10 @@ WALLET = '\thandle /v1/enhance/* {\n\t\treverse_proxy 127.0.0.1:8082\n\t}\n'
 
 
 def candidate(text):
-    require(text.count(FALLBACK) == 1 and 'handle /v1/enhance/*' not in text,
-            'expected the existing Enhance publisher fallback and no competing wallet route')
-    # Keep the query admission route (including keepalive policy) and every
-    # unrelated route unchanged; init and sessions get the same query ingress.
-    return text.replace(FALLBACK, WALLET + '\thandle {\n\t\trespond 404\n\t}')
+    require(text.count(WALLET) == 1 and FALLBACK not in text
+            and text.count('\thandle {\n\t\trespond 404\n\t}') == 1,
+            'expected the deployed wallet ingress and private publisher routes')
+    return text
 
 
 def validate_request(request, inventory):
