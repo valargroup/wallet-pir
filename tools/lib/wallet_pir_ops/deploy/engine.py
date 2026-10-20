@@ -520,7 +520,7 @@ class Deployer:
                                       % (host, code, output[-500:]))
         self.out('%s: staged %s and it runs' % (host, path))
 
-    def activate(self, journal, index, sha):
+    def activate(self, journal, index, sha, *, verify=True):
         record = journal.hosts[index]
         host, unit = record['host'], record['unit']
         directory = '%s/%s' % (self.service.transaction_dir(journal.id), unit)
@@ -555,6 +555,9 @@ class Deployer:
         journal.set_phase(index, 'restarting')
         self.ex.systemctl(host, 'restart', unit)
         journal.set_phase(index, 'verifying')
+        if not verify:
+            # A coordinated publisher cutover verifies after its matching owner starts.
+            return
         self.wait_verified(record, sha)
         journal.set_phase(index, 'verified')
         self.out('%s: running %s and ready' % (record['key'], sha))
@@ -707,7 +710,7 @@ class Deployer:
         return all(self.ex.sha256(record['host'], change['path']) == change['previous_sha256']
                    for change in record['changes'])
 
-    def restore(self, journal, index):
+    def restore(self, journal, index, *, verify=True):
         record = journal.hosts[index]
         host, unit = record['host'], record['unit']
         self.lock.verify()
@@ -738,6 +741,8 @@ class Deployer:
                         and state.get('invocation_id')):
                     journal.event('restore process started', target=record['key'],
                                   exe_sha256=expected, invocation_id=state['invocation_id'])
+        if not verify:
+            return
         self.wait_verified(record, expected)
         self.lock.verify()
         journal.set_phase(index, 'restored')
