@@ -184,7 +184,8 @@ async fn discover(config: &Config) -> Result<()> {
 }
 
 /// Prebind every listener, then run one role of each enabled product until shutdown.
-/// A publisher contract version mismatch in any product stops every product.
+/// A publisher contract version mismatch in any product, or a discovery failure
+/// that ends a product's startup, stops every product.
 pub async fn run(config: Config, shutdown: Shutdown) -> Result<()> {
     let layout = config.validate()?;
     discover(&config).await?;
@@ -338,8 +339,12 @@ pub async fn run(config: Config, shutdown: Shutdown) -> Result<()> {
                         stop.request();
                         state.phases.lock().unwrap().insert(name, "failed");
                         match result {
-                            Err(error) if pir_sync_manager::is_incompatible(error.as_ref()) => {
-                                tracing::error!(product = name, %error, "publisher is incompatible; stopping the query server");
+                            // Products retry ordinary discovery failures while
+                            // running, so one that ends a product is either a
+                            // version mismatch or a startup refusal after the
+                            // preflight above; both stop the whole host.
+                            Err(error) if error.downcast_ref::<pir_sync_manager::DiscoveryError>().is_some() => {
+                                tracing::error!(product = name, %error, "publisher service discovery failed; stopping the query server");
                                 fatal = Some(error);
                                 break;
                             }
@@ -416,5 +421,155 @@ mod tests {
         assert!(text.contains(&publisher), "{text}");
         assert!(!pir_sync_manager::is_incompatible(error.as_ref()));
         assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
+    }
+
+    /// One-shot verification of either Transparent section checks discovery
+    /// before it creates any consumer state.
+    #[tokio::test]
+    async fn verify_only_refuses_an_unreachable_publisher_before_any_state() {
+        let root = tempfile::tempdir().unwrap();
+        let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let publisher = format!("https://localhost:{}", closed.local_addr().unwrap().port());
+        drop(closed);
+        let common = serde_json::json!({
+            "publisher": publisher,
+            "publisher_network": "main",
+            "publisher_genesis": "00".repeat(32),
+            "listen": "127.0.0.1:1",
+        });
+        let mut history = common.clone();
+        history["shard_dir"] = root.path().join("history").display().to_string().into();
+        let mut details = common;
+        details["state_dir"] = root.path().join("details").display().to_string().into();
+        details["role"] = "combined".into();
+        for (section, settings) in [
+            ("transparent_history", history),
+            ("transaction_details", details),
+        ] {
+            let config: Config = serde_json::from_value(serde_json::json!({
+                "management_listen": "127.0.0.1:2",
+                section: {"enabled": true, "settings": settings},
+            }))
+            .unwrap();
+            let error = verify(config).await.unwrap_err();
+            assert!(
+                error
+                    .downcast_ref::<pir_sync_manager::DiscoveryError>()
+                    .is_some(),
+                "{section}: {error}"
+            );
+            assert!(error.to_string().contains(&publisher), "{section}: {error}");
+            assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
+        }
+    }
+
+    /// A publisher that passes the host preflight and then refuses a product's
+    /// own startup discovery stops the whole host with that original error:
+    /// management and every product listener close.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn discovery_refused_after_the_preflight_stops_the_whole_host() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let root = tempfile::tempdir().unwrap();
+        let cert = root.path().join("ca.pem");
+        let key = root.path().join("key.pem");
+        assert!(std::process::Command::new("openssl")
+            .args(["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1"])
+            .args([
+                "-subj",
+                "/CN=localhost",
+                "-addext",
+                "subjectAltName=DNS:localhost"
+            ])
+            .args(["-addext", "basicConstraints=critical,CA:FALSE", "-keyout"])
+            .arg(&key)
+            .arg("-out")
+            .arg(&cert)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .unwrap()
+            .success());
+        // The two preflight requests succeed; every later one is refused.
+        let served = Arc::new(AtomicUsize::new(0));
+        let count = served.clone();
+        let upstream = Router::new().route(
+            pir_sync_manager::service_discovery::PATH,
+            get(move || async move {
+                if count.fetch_add(1, Ordering::SeqCst) < 2 {
+                    let document = pir_sync_manager::service_discovery::Document::publisher();
+                    (StatusCode::OK, document.to_json())
+                } else {
+                    (StatusCode::SERVICE_UNAVAILABLE, b"unavailable".to_vec())
+                }
+            }),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let upstream_addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, upstream).await.unwrap() });
+        let control = root.path().join("fault");
+        std::fs::write(&control, "").unwrap();
+        let mut proxy = tokio::process::Command::new("python3")
+            .arg(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../pir-publisher/tests/support/distribution_tls.py"
+            ))
+            .arg(upstream_addr.to_string())
+            .args([&cert, &key, &control])
+            .kill_on_drop(true)
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut line = String::new();
+        tokio::io::AsyncBufReadExt::read_line(
+            &mut tokio::io::BufReader::new(proxy.stdout.take().unwrap()),
+            &mut line,
+        )
+        .await
+        .unwrap();
+        let publisher = format!("https://localhost:{}", line.trim());
+        let addrs: Vec<SocketAddr> = (0..3)
+            .map(|_| {
+                let held = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+                held.local_addr().unwrap()
+            })
+            .collect();
+        let config: Config = serde_json::from_value(serde_json::json!({
+            "management_listen": addrs[0],
+            "transparent_history": {"enabled": true, "settings": {
+                "publisher": publisher,
+                "publisher_ca": cert,
+                "publisher_network": "main",
+                "publisher_genesis": "00".repeat(32),
+                "listen": addrs[1],
+                "shard_dir": root.path().join("history"),
+            }},
+            "transaction_details": {"enabled": true, "settings": {
+                "publisher": publisher,
+                "publisher_ca": cert,
+                "publisher_network": "main",
+                "publisher_genesis": "00".repeat(32),
+                "state_dir": root.path().join("details"),
+                "role": "combined",
+                "listen": addrs[2],
+            }},
+        }))
+        .unwrap();
+        let error = tokio::time::timeout(Duration::from_secs(60), run(config, Shutdown::default()))
+            .await
+            .expect("the host kept running after a product's discovery was refused")
+            .unwrap_err();
+        assert!(served.load(Ordering::SeqCst) > 2);
+        let discovery = error
+            .downcast_ref::<pir_sync_manager::DiscoveryError>()
+            .unwrap_or_else(|| panic!("discovery error lost its type: {error}"));
+        assert_eq!(discovery.origin(), publisher);
+        assert!(discovery.incompatible().is_none());
+        assert!(error.to_string().contains("HTTP 503"), "{error}");
+        for addr in addrs {
+            assert!(
+                tokio::net::TcpStream::connect(addr).await.is_err(),
+                "{addr} outlived the host"
+            );
+        }
     }
 }

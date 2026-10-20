@@ -76,7 +76,8 @@ jobs:
       # The crates.io token lives in Infisical and is read at runtime through a
       # narrowly scoped machine identity using GitHub OIDC; nothing is stored
       # in GitHub secrets or printed.
-      - uses: Infisical/secrets-action@v1
+      # v1.0.18; v1 is not a published ref, so pin the release commit.
+      - uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d
         with:
           method: oidc
           identity-id: ${{ vars.INFISICAL_CRATES_IO_IDENTITY_ID }}
